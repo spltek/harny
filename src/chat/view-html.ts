@@ -352,16 +352,41 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     #temp-input::placeholder { color: #777; font-style: italic; }
     /* Metrics row: same font, label style and horizontal padding as the status
        row above, so "Tokens:" lines up with "AI Model:". */
+    /* Usage footer: a full-width card matching the control cards above. */
     #metrics {
-      display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 0.85rem;
-      border-top: 1px solid var(--border); color: #9a9a9a; flex-wrap: wrap;
+      display: flex; flex-direction: column; gap: 6px;
+      border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+      margin: 0 10px 8px; color: #9a9a9a;
+      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0));
     }
-    #metrics .model-label { color: #999; }
-    #metrics .met { white-space: nowrap; }
+    .metrics-stats { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 0.8rem; }
+    .metrics-stats .model-label { color: #999; }
+    .metrics-stats .met { white-space: nowrap; }
+    .met-sep { color: #666; }
+    #met-pct {
+      padding: 0 6px; border: 1px solid var(--border); border-radius: 10px;
+      background: rgba(255, 255, 255, 0.05);
+    }
+    #met-pct.warn { color: var(--error); border-color: var(--error); background: rgba(244, 71, 71, 0.1); }
+    #met-cache {
+      padding: 1px 7px; border-radius: 10px; white-space: nowrap;
+      color: var(--accent); border: 1px solid var(--accent);
+      background: rgba(255, 255, 255, 0.05);
+    }
     #met-cache.hidden { display: none; }
-    #ctx-bar-wrap { flex: 1; min-width: 60px; height: 6px; background: var(--tool-bg); border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
-    #ctx-bar { height: 100%; background: var(--accent); width: 0%; transition: width 0.3s; }
-    #ctx-bar.warn { background: var(--error); }
+    .metrics-bar { display: flex; align-items: center; gap: 8px; }
+    /* The bar is the hero: taller, rounded, glossy track with inner depth. */
+    #ctx-bar-wrap {
+      flex: 1; min-width: 60px; height: 8px; border-radius: 4px;
+      background: var(--tool-bg); border: 1px solid var(--border); overflow: hidden;
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+    }
+    #ctx-bar {
+      height: 100%; width: 0%; border-radius: 4px; transition: width 0.3s;
+      background-color: var(--accent);
+      background-image: linear-gradient(to bottom, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0) 55%);
+    }
+    #ctx-bar.warn { background-color: var(--error); }
     #compact-btn {
       background: linear-gradient(to bottom, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.02)), transparent;
       border: 1px solid var(--border); color: var(--fg);
@@ -499,12 +524,18 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     </div>
   </div>
   <div id="metrics">
-    <span class="model-label">Tokens:</span><span class="met" id="met-tokens">0</span>
-    <span class="met">/</span><span class="met" id="met-ctx">${DEFAULT_CONTEXT_WINDOW}</span>
-    <span class="met" id="met-pct">(0%)</span>
-    <span class="met" id="met-cache" title="Input tokens served from prompt cache"></span>
-    <div id="ctx-bar-wrap"><div id="ctx-bar"></div></div>
-    <button id="compact-btn" title="Compact context">Compact</button>
+    <div class="metrics-stats">
+      <span class="model-label">Tokens</span>
+      <span class="met" id="met-tokens" title="Input tokens used">0</span>
+      <span class="met-sep">/</span>
+      <span class="met" id="met-ctx" title="Context window (tokens)">${DEFAULT_CONTEXT_WINDOW}</span>
+      <span class="met pct" id="met-pct">(0%)</span>
+      <span class="met" id="met-cache" title="Input tokens served from prompt cache"></span>
+    </div>
+    <div class="metrics-bar">
+      <div id="ctx-bar-wrap"><div id="ctx-bar"></div></div>
+      <button id="compact-btn" title="Compact context">Compact</button>
+    </div>
   </div>
   <div id="name-modal" class="hidden">
     <div class="name-modal-backdrop"></div>

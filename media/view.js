@@ -7598,19 +7598,28 @@
     const n = Number(raw);
     return Number.isFinite(n) ? n : 0;
   }
+  function fmtTokens(n) {
+    if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
+    if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, "") + "k";
+    return String(n);
+  }
   function renderMetrics(c) {
     const ctx = clampContextWindow(c.contextWindow || DEFAULT_CONTEXT_WINDOW);
     const used = c.contextTokens ?? 0;
-    metCtx.textContent = String(ctx);
-    metTokens.textContent = String(used);
+    metCtx.textContent = fmtTokens(ctx);
+    metTokens.textContent = fmtTokens(used);
+    metTokens.title = String(used);
+    metCtx.title = String(ctx);
     const pct = ctx > 0 ? Math.max(0, Math.min(100, Math.round(used / ctx * 100))) : 0;
     metPct.textContent = "(" + pct + "%)";
+    metPct.classList.toggle("warn", pct >= 90);
     ctxBar.style.width = pct + "%";
     ctxBar.classList.toggle("warn", pct >= 90);
     const cached = c.cachedTokens;
     if (cached !== void 0 && cached > 0 && used > 0) {
       const saved = Math.min(100, Math.round(cached / used * 100));
-      metCache.textContent = " \xB7 cache " + cached + " (" + saved + "%)";
+      metCache.textContent = "\u26A1 cache " + fmtTokens(cached) + " (" + saved + "%)";
+      metCache.title = "Input tokens served from prompt cache: " + cached + " / " + saved + "%";
       metCache.classList.remove("hidden");
     } else {
       metCache.textContent = "";

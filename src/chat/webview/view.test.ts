@@ -702,8 +702,8 @@ describe("context metrics line", () => {
   it("shows tokens, percent and bar, and posts compact", async () => {
     await loadView();
     hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 200000, contextTokens: 100000 } });
-    expect(document.getElementById("met-tokens")?.textContent).toBe("100000");
-    expect(document.getElementById("met-ctx")?.textContent).toBe("200000");
+    expect(document.getElementById("met-tokens")?.textContent).toBe("100k");
+    expect(document.getElementById("met-ctx")?.textContent).toBe("200k");
     expect(document.getElementById("met-pct")?.textContent).toBe("(50%)");
     expect((document.getElementById("ctx-bar") as HTMLDivElement).style.width).toBe("50%");
 
