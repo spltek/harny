@@ -608,6 +608,25 @@ describe("ChatViewProvider output tokens reload", () => {
   });
 });
 
+describe("ChatViewProvider temperature reload", () => {
+  it("reapplies the persisted session temperature to the active config on reopen", async () => {
+    const { store, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    // Simulate a session persisted on disk with both model and temperature.
+    (store.load as ReturnType<typeof vi.fn>).mockReturnValue({
+      summary: { id: "s9", name: "S", createdAt: 1, updatedAt: 1, messageCount: 0, model: "gpt-4o", temperature: 0.3 },
+      messages: [],
+    });
+    await handler({ type: "openSession", id: "s9" });
+    await handler({ type: "switchTab", id: "s9" }); // makes it the active runtime
+    await handler({ type: "getConfig" });
+    const configPosts = view.webview.postMessage.mock.calls
+      .map((c) => c[0] as any)
+      .filter((m) => m.type === "config");
+    expect(configPosts[configPosts.length - 1].config.temperature).toBe(0.3);
+  });
+});
+
 describe("ChatViewProvider compaction", () => {
   function compactorFactory(): LLMProviderFactory {
     return {

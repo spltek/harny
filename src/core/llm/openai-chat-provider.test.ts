@@ -48,6 +48,31 @@ describe("OpenAIChatProvider", () => {
     expect(body.tools[0].function.parameters.properties.path.type).toBe("string");
   });
 
+  it("sends temperature only when explicitly set, and 0 stays valid", async () => {
+    // Explicit 0.7 -> sent.
+    const http = new FakeHttpClient();
+    http.respondWith(sseResponse("data: [DONE]"));
+    const provider = new OpenAIChatProvider({ ...config, temperature: 0.7 }, http, tools);
+    await collect(provider.stream([{ role: "user", content: "hi" }]));
+    expect(JSON.parse(http.requests[0].body).temperature).toBe(0.7);
+
+    // Explicit 0 (deterministic) -> sent as 0, NOT dropped as falsy.
+    const http2 = new FakeHttpClient();
+    http2.respondWith(sseResponse("data: [DONE]"));
+    const provider2 = new OpenAIChatProvider({ ...config, temperature: 0 }, http2, tools);
+    await collect(provider2.stream([{ role: "user", content: "hi" }]));
+    expect(JSON.parse(http2.requests[0].body).temperature).toBe(0);
+
+    // Unset / Auto -> the field is omitted entirely (strict providers ok).
+    const http3 = new FakeHttpClient();
+    http3.respondWith(sseResponse("data: [DONE]"));
+    const base = { ...config };
+    delete base.temperature;
+    const provider3 = new OpenAIChatProvider(base, http3, tools);
+    await collect(provider3.stream([{ role: "user", content: "hi" }]));
+    expect(JSON.parse(http3.requests[0].body).temperature).toBeUndefined();
+  });
+
   it("yields text deltas from SSE content", async () => {
     const http = new FakeHttpClient();
     http.respondWith(
