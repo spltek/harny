@@ -406,7 +406,7 @@ function renderEmptyShell(): void {
     '<div class="empty-icon">✨</div>' +
     "<h2>Harny</h2>" +
     "<p>No session is open right now.</p>" +
-    '<p class="empty-hint">Pick one from the list above,<br>or start a brand new conversation.</p>' +
+    '<p class="empty-hint">Pick one from the list above,<br>start a new conversation,<br>or branch an existing session.</p>' +
     '<button id="empty-new-session" class="empty-cta" title="Create a new session">New session</button>';
   messagesEl.appendChild(hero);
   hero.querySelector("#empty-new-session")?.addEventListener("click", () => {
