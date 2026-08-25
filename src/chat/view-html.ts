@@ -329,8 +329,10 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
        same tick (send/compactStart), so the two pulse together. */
     #send-btn.blinking { animation: harny-pulse 1.2s ease-in-out infinite; }
     #model-select {
-      flex: 1; min-width: 0; background: transparent; color: inherit; border: none; outline: none;
-      font-family: var(--font); font-size: 0.85rem; cursor: pointer; height: 1.85rem;
+      width: 100%;
+      background: transparent; color: inherit; border: 1px solid var(--border);
+      border-radius: 4px; outline: none; font-family: var(--font); font-size: 0.85rem;
+      cursor: pointer; padding: 0 4px; height: 1.85rem;
     }
     #model-select option, #model-select optgroup { color: #1e1e1e; }
     #thinking-select {
@@ -509,11 +511,13 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     <button id="abort-btn" class="secondary" disabled>⏹</button>
   </div>
   <div id="status">
-    <div class="ctl-row">
-      <span class="model-label">AI Model:</span>
-      <select id="model-select" title="Switch model"></select>
-    </div>
     <div class="ctl-cards">
+      <div class="ctl-card ctl-card-model">
+        <div class="field">
+          <label class="field-label" for="model-select">AI Model</label>
+          <select id="model-select" title="Switch model"></select>
+        </div>
+      </div>
       <div class="ctl-card">
         <span class="card-title">Window</span>
         <div class="field">
