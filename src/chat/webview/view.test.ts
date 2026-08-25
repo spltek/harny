@@ -27,7 +27,7 @@ function setupDom(initOverrides: Record<string, unknown> = {}): void {
       <button id="send-btn">▶</button>
       <button id="abort-btn" disabled>⏹</button>
     </div>
-    <div id="status">AI Model: <select id="model-select"></select><button id="ctx-minus">−</button><input id="ctx-input" type="text" value="128000"><button id="ctx-plus">+</button><button id="out-minus">−</button><input id="out-input" type="text" value="8192"><button id="out-plus">+</button><button id="temp-minus">−</button><input id="temp-input" type="text" placeholder="Auto"><button id="temp-plus">+</button><button id="temp-auto">Auto</button></div>
+    <div id="status">AI Model: <select id="model-select"></select><button id="ctx-minus">−</button><input id="ctx-input" type="text" value="128000"><button id="ctx-plus">+</button><button id="out-minus">−</button><input id="out-input" type="text" value="8192"><button id="out-plus">+</button><button id="temp-minus">−</button><input id="temp-input" type="text" placeholder="Auto"><button id="temp-plus">+</button><button id="temp-auto">Auto</button><button id="presence-minus">−</button><input id="presence-input" type="text" placeholder="Auto"><button id="presence-plus">+</button><button id="presence-auto">Auto</button><button id="freq-minus">−</button><input id="freq-input" type="text" placeholder="Auto"><button id="freq-plus">+</button><button id="freq-auto">Auto</button></div>
     <div id="metrics"><select id="thinking-select"><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button></div>
     <div id="name-modal" class="hidden">
       <div class="name-modal-backdrop"></div>
@@ -178,6 +178,10 @@ describe("view webview client", () => {
     expect((document.getElementById("temp-minus") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("temp-plus") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("temp-auto") as HTMLButtonElement).disabled).toBe(true);
+    expect((document.getElementById("presence-input") as HTMLInputElement).disabled).toBe(true);
+    expect((document.getElementById("presence-auto") as HTMLButtonElement).disabled).toBe(true);
+    expect((document.getElementById("freq-input") as HTMLInputElement).disabled).toBe(true);
+    expect((document.getElementById("freq-auto") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("user-input") as HTMLTextAreaElement).disabled).toBe(true);
     hostMessage({ type: "status", active: false });
     expect((document.getElementById("compact-btn") as HTMLButtonElement).disabled).toBe(false);
@@ -795,6 +799,20 @@ it("temperature accepts digits and ONE decimal separator only", async () => {
     out.value = "8.5";
     out.dispatchEvent(new Event("input"));
     expect(out.value).toBe("85");
+  });
+
+it("presence/frequency steppers render, step and reset to Auto like temperature", async () => {
+    await loadView();
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], presencePenalty: 1.5, frequencyPenalty: 0.5 } });
+    const p = document.getElementById("presence-input") as HTMLInputElement;
+    const f = document.getElementById("freq-input") as HTMLInputElement;
+    expect(p.value).toBe("1.5");
+    expect(f.value).toBe("0.5");
+    (document.getElementById("presence-plus") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "setPresencePenalty", value: 1.6 });
+    (document.getElementById("freq-auto") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "setFrequencyPenalty", value: null });
+    expect(f.value).toBe("");
   });
 
 function messagesElLastContent(): string {

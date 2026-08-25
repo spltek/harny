@@ -55,6 +55,14 @@ export class SessionManager {
     return this.store.saveTemperature(id, temp);
   }
 
+  savePresencePenalty(id: string, value?: number): SessionSummary {
+    return this.store.savePresencePenalty(id, value);
+  }
+
+  saveFrequencyPenalty(id: string, value?: number): SessionSummary {
+    return this.store.saveFrequencyPenalty(id, value);
+  }
+
   saveContextTokens(id: string, tokens?: number): SessionSummary {
     return this.store.saveContextTokens(id, tokens);
   }

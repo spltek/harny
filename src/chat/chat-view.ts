@@ -449,6 +449,26 @@ export class ChatViewProvider implements WebviewViewProvider {
         void this.pushConfig();
         break;
       }
+      case "setPresencePenalty": {
+        const rt = this.activeRuntime();
+        if (!rt) break;
+        const value = toTemperature(msg.value); // same 0–2, one-decimal clamp
+        rt.presencePenalty = value;
+        this.sessions.savePresencePenalty(rt.sessionId, value);
+        if (rt.model) this.modelSelector.set(this.computeOverrides(rt.model, rt.modelProvider));
+        void this.pushConfig();
+        break;
+      }
+      case "setFrequencyPenalty": {
+        const rt = this.activeRuntime();
+        if (!rt) break;
+        const value = toTemperature(msg.value); // same 0–2, one-decimal clamp
+        rt.frequencyPenalty = value;
+        this.sessions.saveFrequencyPenalty(rt.sessionId, value);
+        if (rt.model) this.modelSelector.set(this.computeOverrides(rt.model, rt.modelProvider));
+        void this.pushConfig();
+        break;
+      }
       case "send":
         if (rt) await this.send(rt, msg);
         break;
@@ -582,6 +602,8 @@ export class ChatViewProvider implements WebviewViewProvider {
     // Only when explicitly set: Auto (undefined) leaves config/file values and
     // the provider's own default untouched. 0 is a valid, deliberate value.
     if (typeof rt?.temperature === "number") overrides.temperature = rt.temperature;
+    if (typeof rt?.presencePenalty === "number") overrides.presencePenalty = rt.presencePenalty;
+    if (typeof rt?.frequencyPenalty === "number") overrides.frequencyPenalty = rt.frequencyPenalty;
     return overrides;
   }
 
@@ -711,6 +733,8 @@ export class ChatViewProvider implements WebviewViewProvider {
     contextWindow: number;
     outputTokens: number;
     temperature?: number;
+    presencePenalty?: number;
+    frequencyPenalty?: number;
     contextTokens?: number;
     cachedTokens?: number;
   }> {
@@ -760,6 +784,8 @@ export class ChatViewProvider implements WebviewViewProvider {
       // Only the session override, so the UI can show "Auto" (undefined) vs
       // an explicit value. Config-file defaults stay effective but hidden.
       temperature: this.activeRuntime()?.temperature,
+      presencePenalty: this.activeRuntime()?.presencePenalty,
+      frequencyPenalty: this.activeRuntime()?.frequencyPenalty,
       contextTokens: this.activeRuntime()?.contextTokens,
       cachedTokens: this.activeRuntime()?.cachedTokens,
     };

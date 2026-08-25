@@ -149,6 +149,25 @@ describe("SessionRegistry per-session model", () => {
     expect(rt.temperature).toBe(0.3);
   });
 
+  it("loads the persisted penalties onto the runtime when opening", () => {
+    const store = makeStore();
+    (store.load as ReturnType<typeof vi.fn>).mockReturnValue({
+      summary: { id: "s9", name: "S", createdAt: 1, updatedAt: 1, messageCount: 0, model: "deepseek-v4-flash", presencePenalty: 1.5, frequencyPenalty: 0.5 },
+      messages: [],
+    });
+    const sessions = new SessionManager(store);
+    const registry = new SessionRegistry({
+      sessions,
+      store,
+      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn() } as unknown as ChatController)),
+    });
+
+    const rt = registry.openOrCreate("s9");
+
+    expect(rt.presencePenalty).toBe(1.5);
+    expect(rt.frequencyPenalty).toBe(0.5);
+  });
+
   it("new sessions have no model selected", () => {
     const { registry } = build();
     const rt = registry.create();

@@ -188,6 +188,24 @@ describe("JsonlSessionStore context window", () => {
     expect("temperature" in loaded).toBe(false);
     expect(store.list()[0].temperature).toBeUndefined();
   });
+
+  it("persists the penalties, keeps 0 valid and clears with Auto", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    store.savePresencePenalty("s1", 0); // 0 is a valid, deliberate value
+    store.saveFrequencyPenalty("s1", 1.5);
+    expect(store.load("s1").summary.presencePenalty).toBe(0);
+    expect(store.load("s1").summary.frequencyPenalty).toBe(1.5);
+    // A later save must carry them over.
+    store.saveMessages("s1", [{ role: "user", content: "hi", timestamp: 1 }]);
+    const after = store.load("s1").summary;
+    expect(after.presencePenalty).toBe(0);
+    expect(after.frequencyPenalty).toBe(1.5);
+    // Auto (undefined) clears the stored values.
+    store.savePresencePenalty("s1", undefined);
+    expect("presencePenalty" in store.load("s1").summary).toBe(false);
+    expect(store.load("s1").summary.frequencyPenalty).toBe(1.5); // freq untouched
+  });
 });
 
 describe("JsonlSessionStore thinking level", () => {

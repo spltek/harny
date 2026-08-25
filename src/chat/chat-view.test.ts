@@ -63,6 +63,8 @@ function makeStore(): SessionStore {
     saveContextWindow: vi.fn((id, window) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(window ? { contextWindow: window } : {}) })),
     saveOutputTokens: vi.fn((id, tokens) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(tokens ? { outputTokens: tokens } : {}) })),
     saveTemperature: vi.fn((id, temp) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(temp !== undefined ? { temperature: temp } : {}) })),
+    savePresencePenalty: vi.fn((id, value) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(value !== undefined ? { presencePenalty: value } : {}) })),
+    saveFrequencyPenalty: vi.fn((id, value) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(value !== undefined ? { frequencyPenalty: value } : {}) })),
     saveContextTokens: vi.fn((id, tokens) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(tokens ? { contextTokens: tokens } : {}) })),
   } as unknown as SessionStore;
 }
@@ -435,6 +437,23 @@ describe("ChatViewProvider", () => {
       .map((c) => c[0] as any)
       .filter((m) => m.type === "config");
     expect(configPosts[configPosts.length - 1].config.outputTokens).toBe(16384);
+  });
+
+  it("setPresencePenalty/setFrequencyPenalty persist and push config", async () => {
+    const { store, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "gpt-4o", provider: undefined });
+    await handler({ type: "setPresencePenalty", value: 1.5 });
+    await handler({ type: "setFrequencyPenalty", value: 0.5 });
+    expect(store.savePresencePenalty).toHaveBeenCalledWith("s1", 1.5);
+    expect(store.saveFrequencyPenalty).toHaveBeenCalledWith("s1", 0.5);
+    const configPosts = view.webview.postMessage.mock.calls
+      .map((c) => c[0] as any)
+      .filter((m) => m.type === "config");
+    const cfg = configPosts[configPosts.length - 1].config;
+    expect(cfg.presencePenalty).toBe(1.5);
+    expect(cfg.frequencyPenalty).toBe(0.5);
   });
 
   it("setTemperature persists to the session, clears on Auto and applies the override", async () => {

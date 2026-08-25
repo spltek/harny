@@ -48,6 +48,26 @@ describe("OpenAIChatProvider", () => {
     expect(body.tools[0].function.parameters.properties.path.type).toBe("string");
   });
 
+  it("sends presence/frequency penalties only when explicitly set", async () => {
+    // Explicit values -> sent.
+    const http = new FakeHttpClient();
+    http.respondWith(sseResponse("data: [DONE]"));
+    const provider = new OpenAIChatProvider({ ...config, presencePenalty: 1.5, frequencyPenalty: 0.5 }, http, tools);
+    await collect(provider.stream([{ role: "user", content: "hi" }]));
+    const body = JSON.parse(http.requests[0].body);
+    expect(body.presence_penalty).toBe(1.5);
+    expect(body.frequency_penalty).toBe(0.5);
+
+    // Auto (unset) -> the fields are omitted entirely.
+    const http2 = new FakeHttpClient();
+    http2.respondWith(sseResponse("data: [DONE]"));
+    const provider2 = new OpenAIChatProvider(config, http2, tools);
+    await collect(provider2.stream([{ role: "user", content: "hi" }]));
+    const body2 = JSON.parse(http2.requests[0].body);
+    expect(body2.presence_penalty).toBeUndefined();
+    expect(body2.frequency_penalty).toBeUndefined();
+  });
+
   it("sends temperature only when explicitly set, and 0 stays valid", async () => {
     // Explicit 0.7 -> sent.
     const http = new FakeHttpClient();

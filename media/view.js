@@ -7052,6 +7052,14 @@
   var tempMinus = document.getElementById("temp-minus");
   var tempPlus = document.getElementById("temp-plus");
   var tempAuto = document.getElementById("temp-auto");
+  var presenceInput = document.getElementById("presence-input");
+  var presenceMinus = document.getElementById("presence-minus");
+  var presencePlus = document.getElementById("presence-plus");
+  var presenceAuto = document.getElementById("presence-auto");
+  var freqInput = document.getElementById("freq-input");
+  var freqMinus = document.getElementById("freq-minus");
+  var freqPlus = document.getElementById("freq-plus");
+  var freqAuto = document.getElementById("freq-auto");
   var metTokens = document.getElementById("met-tokens");
   var metCtx = document.getElementById("met-ctx");
   var metPct = document.getElementById("met-pct");
@@ -7569,6 +7577,14 @@
     tempMinus.disabled = active;
     tempPlus.disabled = active;
     tempAuto.disabled = active;
+    presenceInput.disabled = active;
+    presenceMinus.disabled = active;
+    presencePlus.disabled = active;
+    presenceAuto.disabled = active;
+    freqInput.disabled = active;
+    freqMinus.disabled = active;
+    freqPlus.disabled = active;
+    freqAuto.disabled = active;
     inputEl.disabled = active;
     for (const b of document.querySelectorAll(".branch-at")) {
       b.disabled = active;
@@ -7681,44 +7697,56 @@
     const v = clampOutputTokens(c.outputTokens ?? DEFAULT_OUTPUT_TOKENS);
     outInput.value = String(v);
   }
-  function sendTemperature(value) {
-    if (value === null) {
-      tempInput.value = "";
-      vscode.postMessage({ type: "setTemperature", value: null });
-      return;
-    }
-    const v = clampTemperature(value);
-    if (v === void 0) {
-      tempInput.value = "";
-      vscode.postMessage({ type: "setTemperature", value: null });
-      return;
-    }
-    tempInput.value = String(v);
-    vscode.postMessage({ type: "setTemperature", value: v });
+  function createFloatControl(refs, sendType) {
+    const input = document.getElementById(refs.input);
+    const minus = document.getElementById(refs.minus);
+    const plus = document.getElementById(refs.plus);
+    const auto = document.getElementById(refs.auto);
+    const send2 = (value) => {
+      if (value === null) {
+        input.value = "";
+        vscode.postMessage({ type: sendType, value: null });
+        return;
+      }
+      const v = clampTemperature(value);
+      if (v === void 0) {
+        input.value = "";
+        vscode.postMessage({ type: sendType, value: null });
+        return;
+      }
+      input.value = String(v);
+      vscode.postMessage({ type: sendType, value: v });
+    };
+    const current = () => {
+      const raw = input.value.trim();
+      if (raw === "") return 0;
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : 0;
+    };
+    const read = () => {
+      const raw = input.value.trim();
+      if (raw === "") {
+        send2(null);
+        return;
+      }
+      const n = Number(raw);
+      send2(Number.isNaN(n) ? null : n);
+    };
+    input.addEventListener("input", () => {
+      const v = sanitizeFloatInput(input.value);
+      if (v !== input.value) input.value = v;
+    });
+    input.addEventListener("change", read);
+    minus.addEventListener("click", () => send2(current() - TEMPERATURE_STEP));
+    plus.addEventListener("click", () => send2(current() + TEMPERATURE_STEP));
+    auto.addEventListener("click", () => send2(null));
+    return { input, render: (value) => {
+      input.value = typeof value === "number" && Number.isFinite(value) ? String(Math.round(value * 10) / 10) : "";
+    } };
   }
-  function renderTemperature(c) {
-    const v = c.temperature;
-    tempInput.value = typeof v === "number" && Number.isFinite(v) ? String(Math.round(v * 10) / 10) : "";
-  }
-  function readTemperatureInput() {
-    const raw = tempInput.value.trim();
-    if (raw === "") {
-      sendTemperature(null);
-      return;
-    }
-    const n = Number(raw);
-    if (Number.isNaN(n)) {
-      sendTemperature(null);
-      return;
-    }
-    sendTemperature(n);
-  }
-  function currentTemperature() {
-    const raw = tempInput.value.trim();
-    if (raw === "") return 0;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : 0;
-  }
+  var tempControl = createFloatControl({ input: "temp-input", minus: "temp-minus", plus: "temp-plus", auto: "temp-auto" }, "setTemperature");
+  var presenceControl = createFloatControl({ input: "presence-input", minus: "presence-minus", plus: "presence-plus", auto: "presence-auto" }, "setPresencePenalty");
+  var freqControl = createFloatControl({ input: "freq-input", minus: "freq-minus", plus: "freq-plus", auto: "freq-auto" }, "setFrequencyPenalty");
   function fmtTokens(n) {
     if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
     if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, "") + "k";
@@ -7757,14 +7785,6 @@
   outPlus.addEventListener("click", () => sendOutputTokens(clampOutputTokens(Number(outInput.value)) + OUTPUT_STEP));
   outInput.addEventListener("change", () => sendOutputTokens(clampOutputTokens(Number(outInput.value))));
   bindIntegerInput(outInput);
-  tempInput.addEventListener("change", readTemperatureInput);
-  tempInput.addEventListener("input", () => {
-    const v = sanitizeFloatInput(tempInput.value);
-    if (v !== tempInput.value) tempInput.value = v;
-  });
-  tempMinus.addEventListener("click", () => sendTemperature(currentTemperature() - TEMPERATURE_STEP));
-  tempPlus.addEventListener("click", () => sendTemperature(currentTemperature() + TEMPERATURE_STEP));
-  tempAuto.addEventListener("click", () => sendTemperature(null));
   window.addEventListener("message", (e) => {
     const msg = e.data;
     switch (msg.type) {
@@ -7928,7 +7948,9 @@
         renderThinkingSelect(msg.config || {});
         ctxInput.value = String(clampContextWindow(msg.config && msg.config.contextWindow || DEFAULT_CONTEXT_WINDOW));
         renderOutputTokens(msg.config || {});
-        renderTemperature(msg.config || {});
+        tempControl.render(msg.config && msg.config.temperature);
+        presenceControl.render(msg.config && msg.config.presencePenalty);
+        freqControl.render(msg.config && msg.config.frequencyPenalty);
         renderMetrics(msg.config || {});
         break;
     }
@@ -7944,7 +7966,9 @@
     renderThinkingSelect(state.config || {});
     ctxInput.value = String(clampContextWindow(state.config && state.config.contextWindow || DEFAULT_CONTEXT_WINDOW));
     renderOutputTokens(state.config || {});
-    renderTemperature(state.config || {});
+    tempControl.render(state.config && state.config.temperature);
+    presenceControl.render(state.config && state.config.presencePenalty);
+    freqControl.render(state.config && state.config.frequencyPenalty);
     renderMetrics(state.config || {});
     messagesEl.innerHTML = "";
     resetStreamState();

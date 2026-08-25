@@ -31,6 +31,14 @@ export class OpenAIChatProvider implements LLMProvider {
     if (typeof this.config.temperature === "number" && Number.isFinite(this.config.temperature)) {
       body.temperature = this.config.temperature;
     }
+    // Same "only when set" rule for the two penalties — strict providers are
+    // picky about extra sampling params.
+    if (typeof this.config.presencePenalty === "number" && Number.isFinite(this.config.presencePenalty)) {
+      body.presence_penalty = this.config.presencePenalty;
+    }
+    if (typeof this.config.frequencyPenalty === "number" && Number.isFinite(this.config.frequencyPenalty)) {
+      body.frequency_penalty = this.config.frequencyPenalty;
+    }
     // Send tool definitions ONLY when there are any: an empty `tools` array with
     // `tool_choice` is rejected by strict providers (opencode-go/Console Go).
     if (this.toolDefinitions.length > 0) {

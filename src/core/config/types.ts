@@ -28,6 +28,10 @@ export interface HarnyConfig {
   maxTokens: number;
   /** Sampler temperature; omitted (not sent) when unset. */
   temperature?: number;
+  /** Presence penalty (− encourages… Auto/0 = not sent); 0.0–2.0 in the UI. */
+  presencePenalty?: number;
+  /** Frequency penalty (positive reduces repetition; Auto/0 = not sent). */
+  frequencyPenalty?: number;
   contextFiles: boolean;
   autoApprove: boolean;
   /** Open the chat panel automatically when VS Code starts. */

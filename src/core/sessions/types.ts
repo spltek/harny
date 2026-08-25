@@ -21,6 +21,10 @@ export interface SessionSummary {
   outputTokens?: number;
   /** Sampling temperature for this session (persisted; undefined = Auto, not sent). */
   temperature?: number;
+  /** Presence penalty for this session (persisted; undefined = Auto, not sent). */
+  presencePenalty?: number;
+  /** Frequency penalty for this session (persisted; undefined = Auto, not sent). */
+  frequencyPenalty?: number;
 }
 
 /** A session file plus its loaded messages. */
@@ -51,4 +55,8 @@ export interface SessionStore {
   saveOutputTokens(id: string, tokens?: number): SessionSummary;
   /** Persist the session's sampling temperature (undefined = Auto, not sent). */
   saveTemperature(id: string, temp?: number): SessionSummary;
+  /** Persist the session's presence penalty (undefined = Auto, not sent). */
+  savePresencePenalty(id: string, value?: number): SessionSummary;
+  /** Persist the session's frequency penalty (undefined = Auto, not sent). */
+  saveFrequencyPenalty(id: string, value?: number): SessionSummary;
 }

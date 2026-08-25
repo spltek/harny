@@ -44,6 +44,8 @@ interface ConfigState {
   contextWindow?: number;
   outputTokens?: number;
   temperature?: number;
+  presencePenalty?: number;
+  frequencyPenalty?: number;
   contextTokens?: number;
   cachedTokens?: number;
 }
@@ -84,6 +86,14 @@ const tempInput = document.getElementById("temp-input") as HTMLInputElement;
 const tempMinus = document.getElementById("temp-minus") as HTMLButtonElement;
 const tempPlus = document.getElementById("temp-plus") as HTMLButtonElement;
 const tempAuto = document.getElementById("temp-auto") as HTMLButtonElement;
+const presenceInput = document.getElementById("presence-input") as HTMLInputElement;
+const presenceMinus = document.getElementById("presence-minus") as HTMLButtonElement;
+const presencePlus = document.getElementById("presence-plus") as HTMLButtonElement;
+const presenceAuto = document.getElementById("presence-auto") as HTMLButtonElement;
+const freqInput = document.getElementById("freq-input") as HTMLInputElement;
+const freqMinus = document.getElementById("freq-minus") as HTMLButtonElement;
+const freqPlus = document.getElementById("freq-plus") as HTMLButtonElement;
+const freqAuto = document.getElementById("freq-auto") as HTMLButtonElement;
 const metTokens = document.getElementById("met-tokens") as HTMLSpanElement;
 const metCtx = document.getElementById("met-ctx") as HTMLSpanElement;
 const metPct = document.getElementById("met-pct") as HTMLSpanElement;
@@ -743,6 +753,14 @@ function setStreaming(active: boolean): void {
   tempMinus.disabled = active;
   tempPlus.disabled = active;
   tempAuto.disabled = active;
+  presenceInput.disabled = active;
+  presenceMinus.disabled = active;
+  presencePlus.disabled = active;
+  presenceAuto.disabled = active;
+  freqInput.disabled = active;
+  freqMinus.disabled = active;
+  freqPlus.disabled = active;
+  freqAuto.disabled = active;
   inputEl.disabled = active;
   // Branch keys on assistant bubbles follow the same lock.
   for (const b of document.querySelectorAll<HTMLButtonElement>(".branch-at")) {
@@ -882,50 +900,69 @@ function renderOutputTokens(c: ConfigState): void {
   outInput.value = String(v);
 }
 
-// ── Temperature (0–2; empty = Auto, not sent) ──
-function sendTemperature(value: number | null): void {
-  if (value === null) {
-    tempInput.value = "";
-    vscode.postMessage({ type: "setTemperature", value: null });
-    return;
-  }
-  const v = clampTemperature(value);
-  if (v === undefined) {
-    tempInput.value = "";
-    vscode.postMessage({ type: "setTemperature", value: null });
-    return;
-  }
-  tempInput.value = String(v);
-  vscode.postMessage({ type: "setTemperature", value: v });
+// ── Sampling controls (Temperature, Presence/Frequency penalty) ──
+// Each is a 0.0→2.0 float stepper with an "Auto" reset: digits + ONE
+// decimal point, empty = Auto (not sent). One factory keeps them identical.
+interface FloatControl {
+  input: HTMLInputElement;
+  render(value: unknown): void;
 }
 
-function renderTemperature(c: ConfigState): void {
-  const v = c.temperature;
-  tempInput.value =
-    typeof v === "number" && Number.isFinite(v) ? String(Math.round(v * 10) / 10) : "";
+function createFloatControl(
+  refs: { input: string; minus: string; plus: string; auto: string },
+  sendType: "setTemperature" | "setPresencePenalty" | "setFrequencyPenalty",
+): FloatControl {
+  const input = document.getElementById(refs.input) as HTMLInputElement;
+  const minus = document.getElementById(refs.minus) as HTMLButtonElement;
+  const plus = document.getElementById(refs.plus) as HTMLButtonElement;
+  const auto = document.getElementById(refs.auto) as HTMLButtonElement;
+
+  const send = (value: number | null): void => {
+    if (value === null) {
+      input.value = "";
+      vscode.postMessage({ type: sendType, value: null });
+      return;
+    }
+    const v = clampTemperature(value);
+    if (v === undefined) {
+      input.value = "";
+      vscode.postMessage({ type: sendType, value: null });
+      return;
+    }
+    input.value = String(v);
+    vscode.postMessage({ type: sendType, value: v });
+  };
+  const current = (): number => {
+    const raw = input.value.trim();
+    if (raw === "") return 0;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const read = (): void => {
+    const raw = input.value.trim();
+    if (raw === "") {
+      send(null); // Auto
+      return;
+    }
+    const n = Number(raw);
+    send(Number.isNaN(n) ? null : n);
+  };
+
+  input.addEventListener("input", () => {
+    const v = sanitizeFloatInput(input.value);
+    if (v !== input.value) input.value = v;
+  });
+  input.addEventListener("change", read);
+  minus.addEventListener("click", () => send(current() - TEMPERATURE_STEP));
+  plus.addEventListener("click", () => send(current() + TEMPERATURE_STEP));
+  auto.addEventListener("click", () => send(null));
+  return { input, render: (value: unknown) => { input.value = typeof value === "number" && Number.isFinite(value) ? String(Math.round(value * 10) / 10) : ""; } };
 }
 
-function readTemperatureInput(): void {
-  const raw = tempInput.value.trim();
-  if (raw === "") {
-    sendTemperature(null); // Auto
-    return;
-  }
-  const n = Number(raw);
-  if (Number.isNaN(n)) {
-    sendTemperature(null);
-    return;
-  }
-  sendTemperature(n);
-}
+const tempControl = createFloatControl({ input: "temp-input", minus: "temp-minus", plus: "temp-plus", auto: "temp-auto" }, "setTemperature");
+const presenceControl = createFloatControl({ input: "presence-input", minus: "presence-minus", plus: "presence-plus", auto: "presence-auto" }, "setPresencePenalty");
+const freqControl = createFloatControl({ input: "freq-input", minus: "freq-minus", plus: "freq-plus", auto: "freq-auto" }, "setFrequencyPenalty");
 
-/** Current temperature for ± stepping; Auto (empty) counts as 0. */
-function currentTemperature(): number {
-  const raw = tempInput.value.trim();
-  if (raw === "") return 0;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : 0;
-}
 /** Compact token counts: 12345 -> "12.3k", 2000000 -> "2M". */
 function fmtTokens(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
@@ -973,15 +1010,8 @@ outMinus.addEventListener("click", () => sendOutputTokens(clampOutputTokens(Numb
 outPlus.addEventListener("click", () => sendOutputTokens(clampOutputTokens(Number(outInput.value)) + OUTPUT_STEP));
 outInput.addEventListener("change", () => sendOutputTokens(clampOutputTokens(Number(outInput.value))));
 bindIntegerInput(outInput);
-// Temperature: fire on change (blur/Enter); empty input = Auto.
-tempInput.addEventListener("change", readTemperatureInput);
-tempInput.addEventListener("input", () => {
-  const v = sanitizeFloatInput(tempInput.value);
-  if (v !== tempInput.value) tempInput.value = v;
-});
-tempMinus.addEventListener("click", () => sendTemperature(currentTemperature() - TEMPERATURE_STEP));
-tempPlus.addEventListener("click", () => sendTemperature(currentTemperature() + TEMPERATURE_STEP));
-tempAuto.addEventListener("click", () => sendTemperature(null));
+// The 3 sampling steppers (temp / presence / freq) are wired by
+// createFloatControl above (sanitize, change, ±, Auto).
 
 // ── Host messages ──
 window.addEventListener("message", (e) => {
@@ -1163,7 +1193,9 @@ window.addEventListener("message", (e) => {
       renderThinkingSelect(msg.config || {});
       ctxInput.value = String(clampContextWindow((msg.config && msg.config.contextWindow) || DEFAULT_CONTEXT_WINDOW));
       renderOutputTokens(msg.config || {});
-      renderTemperature(msg.config || {});
+      tempControl.render(msg.config && msg.config.temperature);
+      presenceControl.render(msg.config && msg.config.presencePenalty);
+      freqControl.render(msg.config && msg.config.frequencyPenalty);
       renderMetrics(msg.config || {});
       break;
   }
@@ -1188,7 +1220,9 @@ function renderViewState(state: {
   renderThinkingSelect(state.config || {});
   ctxInput.value = String(clampContextWindow((state.config && state.config.contextWindow) || DEFAULT_CONTEXT_WINDOW));
   renderOutputTokens(state.config || {});
-  renderTemperature(state.config || {});
+  tempControl.render(state.config && state.config.temperature);
+  presenceControl.render(state.config && state.config.presencePenalty);
+  freqControl.render(state.config && state.config.frequencyPenalty);
   renderMetrics(state.config || {});
   messagesEl.innerHTML = "";
   resetStreamState();

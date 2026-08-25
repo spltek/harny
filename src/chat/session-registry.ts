@@ -22,6 +22,10 @@ export interface SessionRuntime {
   outputTokens?: number;
   /** Sampling temperature; undefined = Auto (not sent). 0 is a valid value. */
   temperature?: number;
+  /** Presence penalty; undefined = Auto (not sent). 0 is a valid value. */
+  presencePenalty?: number;
+  /** Frequency penalty; undefined = Auto (not sent). 0 is a valid value. */
+  frequencyPenalty?: number;
   /** Current context tokens in use (fill metric). */
   contextTokens?: number;
   /** Input tokens served from the provider's prompt cache (informational). */
@@ -72,6 +76,8 @@ export class SessionRegistry {
     rt.contextWindow = loaded.summary.contextWindow;
     rt.outputTokens = loaded.summary.outputTokens;
     rt.temperature = loaded.summary.temperature;
+    rt.presencePenalty = loaded.summary.presencePenalty;
+    rt.frequencyPenalty = loaded.summary.frequencyPenalty;
     rt.contextTokens = loaded.summary.contextTokens;
     return rt;
   }

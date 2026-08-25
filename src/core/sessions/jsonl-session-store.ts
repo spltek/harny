@@ -18,6 +18,8 @@ interface SessionMeta {
   contextTokens?: number;
   outputTokens?: number;
   temperature?: number;
+  presencePenalty?: number;
+  frequencyPenalty?: number;
 }
 
 /**
@@ -86,8 +88,10 @@ export class JsonlSessionStore implements SessionStore {
       ...(existing?.contextWindow ? { contextWindow: existing.contextWindow } : {}),
       ...(existing?.contextTokens ? { contextTokens: existing.contextTokens } : {}),
       ...(existing?.outputTokens ? { outputTokens: existing.outputTokens } : {}),
-      // Temperature: 0 is a VALID value, so `!== undefined` (not truthiness).
+      // Temperature/penalties: 0 is a VALID value, so `!== undefined` (not truthiness).
       ...(existing?.temperature !== undefined ? { temperature: existing.temperature } : {}),
+      ...(existing?.presencePenalty !== undefined ? { presencePenalty: existing.presencePenalty } : {}),
+      ...(existing?.frequencyPenalty !== undefined ? { frequencyPenalty: existing.frequencyPenalty } : {}),
       ...extra,
     };
   }
@@ -153,6 +157,30 @@ export class JsonlSessionStore implements SessionStore {
     return summary;
   }
 
+  /** Presence penalty (Auto/undefined clears the stored value). */
+  savePresencePenalty(id: string, value?: number): SessionSummary {
+    const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
+    const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
+    const summary = this.carrySummary(id, existing, messages, {
+      ...(value === undefined ? { presencePenalty: undefined } : { presencePenalty: value }),
+    });
+    this.fs.mkdirRecursive(this.dir());
+    this.fs.writeText(this.path(id), this.serialize(summary, messages));
+    return summary;
+  }
+
+  /** Frequency penalty (Auto/undefined clears the stored value). */
+  saveFrequencyPenalty(id: string, value?: number): SessionSummary {
+    const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
+    const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
+    const summary = this.carrySummary(id, existing, messages, {
+      ...(value === undefined ? { frequencyPenalty: undefined } : { frequencyPenalty: value }),
+    });
+    this.fs.mkdirRecursive(this.dir());
+    this.fs.writeText(this.path(id), this.serialize(summary, messages));
+    return summary;
+  }
+
   saveContextTokens(id: string, tokens?: number): SessionSummary {
     const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
     const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
@@ -196,6 +224,8 @@ export class JsonlSessionStore implements SessionStore {
             ...(typeof rec.contextTokens === "number" ? { contextTokens: rec.contextTokens } : {}),
             ...(typeof rec.outputTokens === "number" ? { outputTokens: rec.outputTokens } : {}),
             ...(typeof rec.temperature === "number" ? { temperature: rec.temperature } : {}),
+            ...(typeof rec.presencePenalty === "number" ? { presencePenalty: rec.presencePenalty } : {}),
+            ...(typeof rec.frequencyPenalty === "number" ? { frequencyPenalty: rec.frequencyPenalty } : {}),
           };
         } else if (typeof rec.role === "string") {
           messages.push(rec as unknown as ChatMessage);
@@ -280,6 +310,8 @@ export class JsonlSessionStore implements SessionStore {
       ...(typeof rec.contextTokens === "number" ? { contextTokens: rec.contextTokens } : {}),
       ...(typeof rec.outputTokens === "number" ? { outputTokens: rec.outputTokens } : {}),
       ...(typeof rec.temperature === "number" ? { temperature: rec.temperature } : {}),
+      ...(typeof rec.presencePenalty === "number" ? { presencePenalty: rec.presencePenalty } : {}),
+      ...(typeof rec.frequencyPenalty === "number" ? { frequencyPenalty: rec.frequencyPenalty } : {}),
     };
   }
 
@@ -297,6 +329,8 @@ export class JsonlSessionStore implements SessionStore {
       ...(summary.contextTokens ? { contextTokens: summary.contextTokens } : {}),
       ...(summary.outputTokens ? { outputTokens: summary.outputTokens } : {}),
       ...(summary.temperature !== undefined ? { temperature: summary.temperature } : {}),
+      ...(summary.presencePenalty !== undefined ? { presencePenalty: summary.presencePenalty } : {}),
+      ...(summary.frequencyPenalty !== undefined ? { frequencyPenalty: summary.frequencyPenalty } : {}),
     };
     const lines = [JSON.stringify(header), ...messages.map((m) => JSON.stringify(m))];
     return lines.join("\n") + "\n";

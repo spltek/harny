@@ -158,13 +158,14 @@ controls the reasoning phase with `thinking`:
 
 With the multi-provider format the model dropdown shows **all** models from **all** declared providers (grouped by name), not just those of the active provider. Picking a local model (e.g. `llamacpp` or `ollama`) automatically switches base URL, API key and protocol: `provider` in the file only indicates the initial one.
 
-#### Context window, output tokens & temperature (per session)
+#### Window & sampling controls (per session)
 
-Below the model dropdown, three controls let you tune the session **per turn window**, the **per-response token budget** and the **sampling temperature** (all persisted with the session, like the model and the thinking level, and restored when you reopen it):
+Below the model dropdown, two cards let you tune the session. The **Window** card holds the **context window**, the **output tokens** and the **thinking** level; the **Sampling** card holds **temperature**, **presence penalty** and **frequency penalty** (0.0–2.0, `− / + / Auto` steps). All are persisted with the session and restored on reopen:
 
 - **Context window** (default `128000`): the compaction ceiling — lower it to trigger auto-compaction earlier and keep the model fresh (avoids context rot), or raise it up to the model's maximum.
 - **Output tokens** (default `8192`): `max_tokens` sent per request; raise it for long edits/answers, lower it for quick chats. The session value wins over the provider's declared default.
-- **Temperature** (Auto by default): `0–2`, step `0.1` with the same − / + spinner as the other controls. **Auto = not sent** (the provider's own default applies, and strict providers that reject the field keep working); as soon as you set a value it is sent per session. Press **Auto** (or clear the field) to go back. `0` is a valid, deliberate value (fully deterministic).
+- **Temperature** (Auto by default): `0.0–2.0`. **Auto = not sent** (provider default applies; strict providers that reject the field keep working). `0` is valid (fully deterministic).
+- **Presence / Frequency penalty** (Auto by default): `0.0–2.0`. Presence pushes toward new topics; frequency reduces repetition. Sent only when set (same strict-provider rule).
 
 #### Dynamic models from the host (`GET /v1/models`)
 

@@ -382,15 +382,15 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     #thinking-select:disabled { opacity: 0.45; cursor: default; }
     #status .model-label { color: #999; }
     /* The stepper fills its card field; the −/+ keys stay a tight unit inside. */
-    #ctx-window, #out-window, #temp-window { display: inline-flex; align-items: center; gap: 2px; width: 100%; }
-    #ctx-input, #out-input, #temp-input {
+    #ctx-window, #out-window, #temp-window, #presence-window, #freq-window { display: inline-flex; align-items: center; gap: 2px; width: 100%; }
+    #ctx-input, #out-input, #temp-input, #presence-input, #freq-input {
       flex: 1; min-width: 2.5rem; width: auto; height: 1.85rem; background: var(--input-bg); color: var(--fg);
       border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px;
       font-family: var(--font); font-size: 0.85rem; text-align: right;
     }
-    #ctx-input:focus, #out-input:focus, #temp-input:focus { border-color: var(--accent); outline: none; }
+    #ctx-input:focus, #out-input:focus, #temp-input:focus, #presence-input:focus, #freq-input:focus { border-color: var(--accent); outline: none; }
     /* Empty temperature input = Auto (not sent): neutral italic hint. */
-    #temp-input::placeholder { color: #777; font-style: italic; }
+    #temp-input::placeholder, #presence-input::placeholder, #freq-input::placeholder { color: #777; font-style: italic; }
     /* Metrics row: same font, label style and horizontal padding as the status
        row above, so "Tokens:" lines up with "AI Model:". */
     /* Usage footer: a full-width card matching the control cards above. */
@@ -491,7 +491,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
     }
     /* The Auto reset is a SEPARATE key, clearly detached from the + spinner. */
-    #temp-auto { margin-left: 6px; width: auto; padding: 0 0.5rem; }
+    #temp-auto, #presence-auto, #freq-auto { margin-left: 6px; width: auto; padding: 0 0.5rem; }
     /* Hide the browser's native number spinners; we use our own − / + buttons. */
     #ctx-input::-webkit-outer-spin-button,
     #ctx-input::-webkit-inner-spin-button,
@@ -610,9 +610,6 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
             <button id="out-plus" class="ctx-btn" title="Increase output tokens">+</button>
           </div>
         </div>
-      </div>
-      <div class="ctl-card">
-        <span class="card-title">Sampling</span>
         <div class="field">
           <label class="field-label" for="thinking-select">Thinking</label>
           <select id="thinking-select" title="Reasoning effort / thinking level (per session)">
@@ -622,6 +619,9 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
             <option value="high">High</option>
           </select>
         </div>
+      </div>
+      <div class="ctl-card">
+        <span class="card-title">Sampling</span>
         <div class="field">
           <label class="field-label" for="temp-input">Temperature (0.0 → 2.0)</label>
           <div id="temp-window">
@@ -629,6 +629,24 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
             <input id="temp-input" type="text" inputmode="decimal" autocomplete="off" placeholder="Auto" title="Sampling temperature 0.0–2.0; digits and one decimal point; empty = Auto (not sent, provider default)">
             <button id="temp-plus" class="ctx-btn" title="Increase temperature">+</button>
             <button id="temp-auto" class="ctx-btn" title="Reset to Auto (not sent)">Auto</button>
+          </div>
+        </div>
+        <div class="field">
+          <label class="field-label" for="presence-input">Presence penalty (0.0 → 2.0)</label>
+          <div id="presence-window">
+            <button id="presence-minus" class="ctx-btn" title="Decrease presence penalty">−</button>
+            <input id="presence-input" type="text" inputmode="decimal" autocomplete="off" placeholder="Auto" title="Presence penalty 0.0–2.0; pushes toward new topics; empty = Auto (not sent)">
+            <button id="presence-plus" class="ctx-btn" title="Increase presence penalty">+</button>
+            <button id="presence-auto" class="ctx-btn" title="Reset to Auto (not sent)">Auto</button>
+          </div>
+        </div>
+        <div class="field">
+          <label class="field-label" for="freq-input">Frequency penalty (0.0 → 2.0)</label>
+          <div id="freq-window">
+            <button id="freq-minus" class="ctx-btn" title="Decrease frequency penalty">−</button>
+            <input id="freq-input" type="text" inputmode="decimal" autocomplete="off" placeholder="Auto" title="Frequency penalty 0.0–2.0; reduces repetition; empty = Auto (not sent)">
+            <button id="freq-plus" class="ctx-btn" title="Increase frequency penalty">+</button>
+            <button id="freq-auto" class="ctx-btn" title="Reset to Auto (not sent)">Auto</button>
           </div>
         </div>
       </div>
