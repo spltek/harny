@@ -316,8 +316,12 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     .ctx-btn:hover:not(:disabled) { color: var(--accent); }
     /* Hide the browser's native number spinners; we use our own − / + buttons. */
     #ctx-input::-webkit-outer-spin-button,
-    #ctx-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-    #ctx-input { -moz-appearance: textfield; }
+    #ctx-input::-webkit-inner-spin-button,
+    #out-input::-webkit-outer-spin-button,
+    #out-input::-webkit-inner-spin-button,
+    #temp-input::-webkit-outer-spin-button,
+    #temp-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    #ctx-input, #out-input, #temp-input { -moz-appearance: textfield; }
 
     /* ── Session-name modal (in the Harny panel): full-area overlay, blurred ── */
     #name-modal {
@@ -386,8 +390,10 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       </div>
       <span class="model-label">Temp:</span>
       <div id="temp-window">
+        <button id="temp-minus" class="ctx-btn" title="Decrease temperature">−</button>
         <input id="temp-input" type="number" min="0" max="2" step="0.1" placeholder="Auto" title="Sampling temperature 0–2; empty = Auto (not sent, provider default)">
-        <button id="temp-auto" class="ctx-btn" title="Reset to Auto (not sent)">×</button>
+        <button id="temp-plus" class="ctx-btn" title="Increase temperature">+</button>
+        <button id="temp-auto" class="ctx-btn" title="Reset to Auto (not sent)">Auto</button>
       </div>
     </div>
   </div>

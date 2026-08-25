@@ -157,7 +157,7 @@ Below the model dropdown, three controls let you tune the session **per turn win
 
 - **Context window** (default `128000`): the compaction ceiling — lower it to trigger auto-compaction earlier and keep the model fresh (avoids context rot), or raise it up to the model's maximum.
 - **Output tokens** (default `8192`): `max_tokens` sent per request; raise it for long edits/answers, lower it for quick chats. The session value wins over the provider's declared default.
-- **Temperature** (Auto by default): `0–2`, step `0.1`. **Auto = not sent** (the provider's own default applies, and strict providers that reject the field keep working); as soon as you type a value it is sent per session. Clear it (or press ×) to go back to Auto. `0` is a valid, deliberate value (fully deterministic).
+- **Temperature** (Auto by default): `0–2`, step `0.1` with the same − / + spinner as the other controls. **Auto = not sent** (the provider's own default applies, and strict providers that reject the field keep working); as soon as you set a value it is sent per session. Press **Auto** (or clear the field) to go back. `0` is a valid, deliberate value (fully deterministic).
 
 #### Dynamic models from the host (`GET /v1/models`)
 

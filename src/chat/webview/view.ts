@@ -1,6 +1,6 @@
 import { renderMarkdown } from "./markdown";
 import { clampContextWindow, clampOutputTokens, CONTEXT_STEP, DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, OUTPUT_STEP } from "../context-window";
-import { clampTemperature } from "../temperature";
+import { clampTemperature, TEMPERATURE_STEP } from "../temperature";
 
 declare function acquireVsCodeApi(): {
   postMessage(message: unknown): void;
@@ -80,6 +80,8 @@ const outInput = document.getElementById("out-input") as HTMLInputElement;
 const outMinus = document.getElementById("out-minus") as HTMLButtonElement;
 const outPlus = document.getElementById("out-plus") as HTMLButtonElement;
 const tempInput = document.getElementById("temp-input") as HTMLInputElement;
+const tempMinus = document.getElementById("temp-minus") as HTMLButtonElement;
+const tempPlus = document.getElementById("temp-plus") as HTMLButtonElement;
 const tempAuto = document.getElementById("temp-auto") as HTMLButtonElement;
 const metTokens = document.getElementById("met-tokens") as HTMLSpanElement;
 const metCtx = document.getElementById("met-ctx") as HTMLSpanElement;
@@ -580,6 +582,8 @@ function setStreaming(active: boolean): void {
   outPlus.disabled = active;
   outInput.disabled = active;
   tempInput.disabled = active;
+  tempMinus.disabled = active;
+  tempPlus.disabled = active;
   tempAuto.disabled = active;
   inputEl.disabled = active;
 }
@@ -732,6 +736,14 @@ function readTemperatureInput(): void {
   }
   sendTemperature(n);
 }
+
+/** Current temperature for ± stepping; Auto (empty) counts as 0. */
+function currentTemperature(): number {
+  const raw = tempInput.value.trim();
+  if (raw === "") return 0;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 0;
+}
 function renderMetrics(c: ConfigState): void {
   const ctx = clampContextWindow(c.contextWindow || DEFAULT_CONTEXT_WINDOW);
   const used = c.contextTokens ?? 0;
@@ -764,6 +776,8 @@ outPlus.addEventListener("click", () => sendOutputTokens(clampOutputTokens(Numbe
 outInput.addEventListener("change", () => sendOutputTokens(clampOutputTokens(Number(outInput.value))));
 // Temperature: fire on change (blur/Enter); empty input = Auto.
 tempInput.addEventListener("change", readTemperatureInput);
+tempMinus.addEventListener("click", () => sendTemperature(currentTemperature() - TEMPERATURE_STEP));
+tempPlus.addEventListener("click", () => sendTemperature(currentTemperature() + TEMPERATURE_STEP));
 tempAuto.addEventListener("click", () => sendTemperature(null));
 
 // ── Host messages ──

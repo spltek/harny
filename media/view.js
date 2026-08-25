@@ -7022,6 +7022,7 @@
   // src/chat/temperature.ts
   var TEMPERATURE_MIN = 0;
   var TEMPERATURE_MAX = 2;
+  var TEMPERATURE_STEP = 0.1;
   function clampTemperature(v) {
     if (!Number.isFinite(v)) return void 0;
     const clamped = Math.min(TEMPERATURE_MAX, Math.max(TEMPERATURE_MIN, v));
@@ -7048,6 +7049,8 @@
   var outMinus = document.getElementById("out-minus");
   var outPlus = document.getElementById("out-plus");
   var tempInput = document.getElementById("temp-input");
+  var tempMinus = document.getElementById("temp-minus");
+  var tempPlus = document.getElementById("temp-plus");
   var tempAuto = document.getElementById("temp-auto");
   var metTokens = document.getElementById("met-tokens");
   var metCtx = document.getElementById("met-ctx");
@@ -7460,6 +7463,8 @@
     outPlus.disabled = active;
     outInput.disabled = active;
     tempInput.disabled = active;
+    tempMinus.disabled = active;
+    tempPlus.disabled = active;
     tempAuto.disabled = active;
     inputEl.disabled = active;
   }
@@ -7587,6 +7592,12 @@
     }
     sendTemperature(n);
   }
+  function currentTemperature() {
+    const raw = tempInput.value.trim();
+    if (raw === "") return 0;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : 0;
+  }
   function renderMetrics(c) {
     const ctx = clampContextWindow(c.contextWindow || DEFAULT_CONTEXT_WINDOW);
     const used = c.contextTokens ?? 0;
@@ -7614,6 +7625,8 @@
   outPlus.addEventListener("click", () => sendOutputTokens(clampOutputTokens(Number(outInput.value)) + OUTPUT_STEP));
   outInput.addEventListener("change", () => sendOutputTokens(clampOutputTokens(Number(outInput.value))));
   tempInput.addEventListener("change", readTemperatureInput);
+  tempMinus.addEventListener("click", () => sendTemperature(currentTemperature() - TEMPERATURE_STEP));
+  tempPlus.addEventListener("click", () => sendTemperature(currentTemperature() + TEMPERATURE_STEP));
   tempAuto.addEventListener("click", () => sendTemperature(null));
   window.addEventListener("message", (e) => {
     const msg = e.data;

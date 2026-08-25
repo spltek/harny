@@ -16,7 +16,7 @@ function setupDom(): void {
       <button id="send-btn">▶</button>
       <button id="abort-btn" disabled>⏹</button>
     </div>
-    <div id="status">AI Model: <select id="model-select"></select><button id="ctx-minus">−</button><input id="ctx-input" type="number" value="128000"><button id="ctx-plus">+</button><button id="out-minus">−</button><input id="out-input" type="number" value="8192"><button id="out-plus">+</button><input id="temp-input" type="number" placeholder="Auto"><button id="temp-auto">×</button></div>
+    <div id="status">AI Model: <select id="model-select"></select><button id="ctx-minus">−</button><input id="ctx-input" type="number" value="128000"><button id="ctx-plus">+</button><button id="out-minus">−</button><input id="out-input" type="number" value="8192"><button id="out-plus">+</button><button id="temp-minus">−</button><input id="temp-input" type="number" placeholder="Auto"><button id="temp-plus">+</button><button id="temp-auto">Auto</button></div>
     <div id="metrics"><select id="thinking-select"><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button></div>
     <div id="name-modal" class="hidden">
       <div class="name-modal-backdrop"></div>
@@ -161,6 +161,8 @@ describe("view webview client", () => {
     expect((document.getElementById("out-minus") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("out-plus") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("temp-input") as HTMLInputElement).disabled).toBe(true);
+    expect((document.getElementById("temp-minus") as HTMLButtonElement).disabled).toBe(true);
+    expect((document.getElementById("temp-plus") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("temp-auto") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("user-input") as HTMLTextAreaElement).disabled).toBe(true);
     hostMessage({ type: "status", active: false });
@@ -169,6 +171,8 @@ describe("view webview client", () => {
     expect((document.getElementById("ctx-input") as HTMLInputElement).disabled).toBe(false);
     expect((document.getElementById("out-input") as HTMLInputElement).disabled).toBe(false);
     expect((document.getElementById("temp-input") as HTMLInputElement).disabled).toBe(false);
+    expect((document.getElementById("temp-plus") as HTMLButtonElement).disabled).toBe(false);
+    expect((document.getElementById("temp-auto") as HTMLButtonElement).disabled).toBe(false);
     expect((document.getElementById("user-input") as HTMLTextAreaElement).disabled).toBe(false);
   });
 
@@ -789,7 +793,7 @@ describe("temperature control", () => {
     expect(posted).toContainEqual({ type: "setTemperature", value: 1.5 });
   });
 
-  it("clamps out-of-range values; empty input and the × button reset to Auto", async () => {
+  it("clamps out-of-range values; empty input and the Auto button reset to Auto", async () => {
     await loadView();
     const input = document.getElementById("temp-input") as HTMLInputElement;
     const auto = document.getElementById("temp-auto") as HTMLButtonElement;
@@ -809,6 +813,27 @@ describe("temperature control", () => {
     auto.click();
     expect(posted).toContainEqual({ type: "setTemperature", value: null });
     expect(input.value).toBe("");
+  });
+
+  it("steps the value with the − / + buttons and clamps at the edges", async () => {
+    await loadView();
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], temperature: 0.7 } });
+    const input = document.getElementById("temp-input") as HTMLInputElement;
+    const minus = document.getElementById("temp-minus") as HTMLButtonElement;
+    const plus = document.getElementById("temp-plus") as HTMLButtonElement;
+
+    plus.click();
+    expect(posted).toContainEqual({ type: "setTemperature", value: 0.8 });
+    expect(input.value).toBe("0.8");
+
+    minus.click();
+    expect(posted).toContainEqual({ type: "setTemperature", value: 0.7 });
+
+    // From Auto (empty) the minus clamps at 0 instead of going negative.
+    (document.getElementById("temp-auto") as HTMLButtonElement).click();
+    minus.click();
+    expect(posted).toContainEqual({ type: "setTemperature", value: 0 });
+    expect(input.value).toBe("0");
   });
 });
 
