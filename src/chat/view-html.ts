@@ -68,14 +68,18 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       --font: var(--vscode-font-family, 'SF Mono', Monaco, monospace);
     }
     :root {
-      /* Base font = the VS Code EDITOR font size, so Harny matches the editor
-         and scales together with it (all sizes below are rem = proportional). */
-      --font-size: var(--vscode-editor-font-size, var(--vscode-font-size, 13px));
+      /* Base font = the VS Code UI size, so Harny matches the shell at ANY
+         window zoom. IMPORTANT: it must be set on the ROOT (html), because
+         rem units resolve against the root font — a body-only font-size would
+         leave rem at the browser default (16px) and Harny would look bigger
+         than menus/editor. */
+      --font-size: var(--vscode-font-size, 13px);
+      font-size: var(--font-size);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: var(--font);
-      font-size: var(--font-size);
+      font-size: 1rem;
       background: var(--bg);
       color: var(--fg);
       height: 100vh;
@@ -280,7 +284,13 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     .thinking-body.collapsed { display: none; }
     .thinking { align-self: flex-start; color: #999; font-style: italic; font-size: 0.85rem; white-space: pre-wrap; }
 
-    #input-area { display: flex; gap: 6px; align-items: flex-end; padding: 6px; border-top: 1px solid var(--border); }
+    /* Input area: a full-width card matching the sessions/control cards. */
+    #input-area {
+      display: flex; gap: 8px; align-items: flex-end;
+      margin: 8px 10px 0;
+      border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0));
+    }
     #user-input {
       flex: 1; background: var(--input-bg); color: var(--fg);
       border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
