@@ -407,6 +407,29 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
     }
     #compact-btn:disabled { opacity: 0.4; }
+
+    /* Empty shell (no open session): hide the whole control stack and show a
+       hero that pushes the user to pick a session or create a new one. */
+    body.no-session #input-area,
+    body.no-session #status,
+    body.no-session #metrics { display: none; }
+    /* Point the eye up at the sessions list: the second path to act. */
+    body.no-session #session-head { color: var(--accent); }
+    .empty-hero {
+      flex: 1; display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 8px; padding: 24px; text-align: center;
+      color: #9a9a9a;
+    }
+    .empty-hero .empty-icon { font-size: 2.2rem; }
+    .empty-hero h2 { margin: 0; font-size: 1.1rem; color: var(--fg); font-weight: 600; }
+    .empty-hero p { margin: 0; font-size: 0.85rem; line-height: 1.5; }
+    .empty-hero .empty-hint { font-size: 0.8rem; }
+    .empty-hero .empty-cta { margin-top: 12px; padding: 6px 20px; font-size: 0.9rem; border-radius: 6px; }
+    @keyframes harny-empty-in {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: none; }
+    }
+    body.no-session .empty-hero { animation: harny-empty-in 0.25s ease-out; }
     .ctx-btn {
       width: 1.38rem; height: 1.38rem; padding: 0; font-size: 0.92rem; line-height: 1;
       background: linear-gradient(to bottom, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.03)),

@@ -4,7 +4,18 @@ import { vi } from "vitest";
 
 const posted: unknown[] = [];
 
-function setupDom(): void {
+function setupDom(initOverrides: Record<string, unknown> = {}): void {
+  const init = {
+    sessions: [
+      { id: "a", name: "Refactor", createdAt: 1, updatedAt: 2, messageCount: 3 },
+      { id: "b", name: "Debug", createdAt: 2, updatedAt: 1, messageCount: 1 },
+    ],
+    openIds: ["a", "b"],
+    activeId: "a",
+    messages: [{ role: "user", content: "hello", timestamp: 1 }],
+    config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 },
+    ...initOverrides,
+  };
   document.body.innerHTML = `
     <div id="session-head"><span class="toggle">▼</span><span>Sessions</span><span class="spacer"></span><button id="new-session">＋</button></div>
     <div id="sessions"></div>
@@ -29,16 +40,7 @@ function setupDom(): void {
         </div>
       </div>
     </div>
-    <script id="harny-view-init" type="application/json">${JSON.stringify({
-      sessions: [
-        { id: "a", name: "Refactor", createdAt: 1, updatedAt: 2, messageCount: 3 },
-        { id: "b", name: "Debug", createdAt: 2, updatedAt: 1, messageCount: 1 },
-      ],
-      openIds: ["a", "b"],
-      activeId: "a",
-      messages: [{ role: "user", content: "hello", timestamp: 1 }],
-      config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 },
-    })}</script>
+    <script id="harny-view-init" type="application/json">${JSON.stringify(init)}</script>
   `;
   (globalThis as Record<string, unknown>).acquireVsCodeApi = () => ({
     postMessage: (m: unknown) => posted.push(m),
@@ -838,6 +840,45 @@ describe("temperature control", () => {
     minus.click();
     expect(posted).toContainEqual({ type: "setTemperature", value: 0 });
     expect(input.value).toBe("0");
+  });
+});
+
+describe("empty shell (no open session)", () => {
+  beforeEach(() => { posted.length = 0; });
+
+  it("hides the control stack and shows the hero when no session is active", async () => {
+    setupDom({ sessions: [], openIds: [], activeId: undefined, messages: [] });
+    await loadView();
+    expect(document.body.classList.contains("no-session")).toBe(true);
+    expect((document.getElementById("input-area") as HTMLElement).style.display).toBe(""); // hidden via CSS class
+    expect(document.querySelector(".empty-hero")).not.toBeNull();
+    expect(document.querySelector(".empty-hero h2")?.textContent).toContain("Harny");
+  });
+
+  it("creates a new session from the hero CTA", async () => {
+    setupDom({ sessions: [], openIds: [], activeId: undefined, messages: [] });
+    await loadView();
+    (document.getElementById("empty-new-session") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "newSession" });
+  });
+
+  it("restores controls and chat when a session becomes active", async () => {
+    setupDom({ sessions: [], openIds: [], activeId: undefined, messages: [] });
+    await loadView();
+    expect(document.body.classList.contains("no-session")).toBe(true);
+
+    hostMessage({
+      type: "switchView",
+      sessions: [{ id: "a", name: "Refactor", createdAt: 1, updatedAt: 2, messageCount: 1 }],
+      openIds: ["a"],
+      activeId: "a",
+      messages: [{ role: "user", content: "hello", timestamp: 1 }],
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 },
+      workingIds: [],
+    });
+    expect(document.body.classList.contains("no-session")).toBe(false);
+    expect(document.querySelector(".empty-hero")).toBeNull();
+    expect(document.querySelector("#messages .msg.user")?.textContent).toBe("hello");
   });
 });
 

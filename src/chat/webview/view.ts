@@ -383,6 +383,32 @@ function addWelcome(): HTMLDivElement {
   return div;
 }
 
+/**
+ * Empty shell: NO open session. The control stack (input, status, metrics)
+ * is hidden via the `no-session` body class and a hero takes over the chat
+ * area, pushing the user to pick a session from the list or create a new one.
+ */
+function renderEmptyShell(): void {
+  document.body.classList.add("no-session");
+  messagesEl.innerHTML = "";
+  const hero = document.createElement("div");
+  hero.className = "empty-hero";
+  hero.innerHTML =
+    '<div class="empty-icon">✨</div>' +
+    "<h2>Harny</h2>" +
+    "<p>No session is open right now.</p>" +
+    '<p class="empty-hint">Pick one from the list above,<br>or start a brand new conversation.</p>' +
+    '<button id="empty-new-session" class="empty-cta" title="Create a new session">New session</button>';
+  messagesEl.appendChild(hero);
+  hero.querySelector("#empty-new-session")?.addEventListener("click", () => {
+    vscode.postMessage({ type: "newSession" });
+  });
+  // The sessions list is the second path to act: make sure it stays visible.
+  sessionsEl.classList.remove("hidden");
+  const toggle = sessionHead.querySelector(".toggle");
+  if (toggle) toggle.textContent = "▼";
+}
+
 function renderMessages(msgs: ChatMsg[]): boolean {
   const outputs = new Map<string, string>();
   for (const m of msgs) {
@@ -913,7 +939,11 @@ window.addEventListener("message", (e) => {
     case "refresh": {
       messagesEl.innerHTML = "";
       resetStreamState();
-      if (!renderMessages(msg.messages || [])) addWelcome();
+      if (!activeId) {
+        renderEmptyShell();
+      } else if (!renderMessages(msg.messages || [])) {
+        addWelcome();
+      }
       break;
     }
     case "renameSession": {
@@ -994,9 +1024,10 @@ function renderViewState(state: {
   messagesEl.innerHTML = "";
   resetStreamState();
   if (activeId) {
+    document.body.classList.remove("no-session");
     if (!renderMessages(state.messages || [])) addWelcome();
   } else {
-    addWelcome();
+    renderEmptyShell();
   }
   // Selecting/opening a session always pins the transcript to the bottom with
   // auto-scroll ON: the freshly shown (possibly still working) session starts

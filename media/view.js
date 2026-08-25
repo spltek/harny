@@ -7293,6 +7293,20 @@
     messagesEl.appendChild(div);
     return div;
   }
+  function renderEmptyShell() {
+    document.body.classList.add("no-session");
+    messagesEl.innerHTML = "";
+    const hero = document.createElement("div");
+    hero.className = "empty-hero";
+    hero.innerHTML = '<div class="empty-icon">\u2728</div><h2>Harny</h2><p>No session is open right now.</p><p class="empty-hint">Pick one from the list above,<br>or start a brand new conversation.</p><button id="empty-new-session" class="empty-cta" title="Create a new session">New session</button>';
+    messagesEl.appendChild(hero);
+    hero.querySelector("#empty-new-session")?.addEventListener("click", () => {
+      vscode.postMessage({ type: "newSession" });
+    });
+    sessionsEl.classList.remove("hidden");
+    const toggle = sessionHead.querySelector(".toggle");
+    if (toggle) toggle.textContent = "\u25BC";
+  }
   function renderMessages(msgs) {
     const outputs = /* @__PURE__ */ new Map();
     for (const m of msgs) {
@@ -7745,7 +7759,11 @@
       case "refresh": {
         messagesEl.innerHTML = "";
         resetStreamState();
-        if (!renderMessages(msg.messages || [])) addWelcome();
+        if (!activeId) {
+          renderEmptyShell();
+        } else if (!renderMessages(msg.messages || [])) {
+          addWelcome();
+        }
         break;
       }
       case "renameSession": {
@@ -7811,9 +7829,10 @@
     messagesEl.innerHTML = "";
     resetStreamState();
     if (activeId) {
+      document.body.classList.remove("no-session");
       if (!renderMessages(state.messages || [])) addWelcome();
     } else {
-      addWelcome();
+      renderEmptyShell();
     }
     autoScroll = true;
     messagesEl.scrollTop = messagesEl.scrollHeight;
