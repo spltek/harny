@@ -169,7 +169,20 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
        ghost blank lines produced by markdown's structural newlines. */
     .msg.user { align-self: flex-end; background: var(--user-msg); color: #fff; white-space: pre-wrap; }
     .msg.assistant, .msg.tool { width: 100%; max-width: 100%; }
-    .msg.assistant { align-self: flex-start; background: var(--assistant-msg); min-width: 0; }
+    .msg.assistant { align-self: flex-start; background: var(--assistant-msg); min-width: 0; position: relative; }
+    /* Branch-from-this-point: a small ⎇ key on assistant replies, revealed on
+       hover (top-right), mirroring the sessions-list branch action. */
+    .branch-at {
+      position: absolute; top: 4px; right: 6px; z-index: 3;
+      background: rgba(255, 255, 255, 0.06); border: 1px solid var(--border);
+      border-radius: 5px; color: #9a9a9a; font-size: 0.8rem; line-height: 1;
+      padding: 3px 6px; cursor: pointer;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.12s, color 0.12s, border-color 0.12s, background-color 0.12s;
+    }
+    .msg.assistant:hover .branch-at { opacity: 1; pointer-events: auto; }
+    .branch-at:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); background: rgba(255, 255, 255, 0.1); }
+    .branch-at:disabled { opacity: 0.3; cursor: default; }
     .msg.assistant.error { background: rgba(244, 71, 71, 0.15); border: 1px solid var(--error); }
     .msg.assistant p { margin: 4px 0; }
     .msg.assistant h1, .msg.assistant h2, .msg.assistant h3, .msg.assistant h4, .msg.assistant h5, .msg.assistant h6 { margin: 8px 0 4px; font-weight: 600; }

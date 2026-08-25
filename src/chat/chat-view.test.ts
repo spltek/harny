@@ -482,6 +482,51 @@ describe("ChatViewProvider", () => {
     expect(switchPosts[switchPosts.length - 1].activeId).toBe("s2");
   });
 
+  it("branchAt copies the transcript up to (and including) the given reply", async () => {
+    const { store, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1 (active)
+    const msgs = [
+      { role: "user", content: "q1", timestamp: 1 },
+      { role: "assistant", content: "a1", timestamp: 2 },
+      { role: "user", content: "q2", timestamp: 3 },
+      { role: "assistant", content: "a2", timestamp: 4 },
+    ];
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 4, model: "gpt-4o" },
+    ]);
+    (store.load as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
+      id === "s1"
+        ? { summary: { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 4, model: "gpt-4o" }, messages: msgs }
+        : { summary: { id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 0 }, messages: [] },
+    );
+    state.autoName = "Branch copy";
+    await handler({ type: "branchAt", index: 2 }); // up to q2 -> [q1, a1, q2]
+    expect(store.create).toHaveBeenCalledWith("Branch copy");
+    expect(store.saveMessages).toHaveBeenCalledWith("s2", [msgs[0], msgs[1], msgs[2]]);
+    const switchPosts = view.webview.postMessage.mock.calls
+      .map((c) => c[0] as any)
+      .filter((m) => m.type === "switchView");
+    expect(switchPosts[switchPosts.length - 1].activeId).toBe("s2");
+  });
+
+  it("branchAt ignores out-of-range or invalid indexes", async () => {
+    const { store, provider } = buildHarness();
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    (store.load as ReturnType<typeof vi.fn>).mockReturnValue({
+      summary: { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 2 },
+      messages: [{ role: "user", content: "q", timestamp: 1 }, { role: "assistant", content: "a", timestamp: 2 }],
+    });
+    state.autoName = "X";
+    await handler({ type: "branchAt", index: 99 }); // stale bubble
+    expect(store.create).toHaveBeenCalledTimes(1); // only the original
+    await handler({ type: "branchAt", index: -1 });
+    expect(store.create).toHaveBeenCalledTimes(1);
+    await handler({ type: "branchAt", index: "x" });
+    expect(store.create).toHaveBeenCalledTimes(1);
+  });
+
   it("refuses to branch with a name already in use", async () => {
     const { store, provider } = buildHarness();
     const { handler } = resolveWith(provider);

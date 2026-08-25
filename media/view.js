@@ -7320,7 +7320,8 @@
       if (m.role === "tool" && m.toolCallId && m.content) outputs.set(m.toolCallId, m.content);
     }
     let hasVisible = false;
-    for (const m of msgs) {
+    for (let i = 0; i < msgs.length; i++) {
+      const m = msgs[i];
       if (m.role === "system" || m.role === "tool") continue;
       hasVisible = true;
       if (m.role === "assistant") {
@@ -7341,11 +7342,23 @@
         if (content === "" || content.startsWith("\u{1F527} ")) continue;
         const el = addMessage("assistant", content);
         if (content.startsWith("\u274C")) el.classList.add("error");
+        attachBranchAt(el, i);
       } else {
         addMessage(m.role, m.content || "");
       }
     }
     return hasVisible;
+  }
+  function attachBranchAt(el, index) {
+    const b = document.createElement("button");
+    b.className = "branch-at";
+    b.title = "Branch session from this point (up to and including this reply)";
+    b.textContent = "\u2387";
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      vscode.postMessage({ type: "branchAt", index });
+    });
+    el.appendChild(b);
   }
   function finishStream() {
     hideWorking();
@@ -7510,6 +7523,9 @@
     tempPlus.disabled = active;
     tempAuto.disabled = active;
     inputEl.disabled = active;
+    for (const b of document.querySelectorAll(".branch-at")) {
+      b.disabled = active;
+    }
   }
   function renderModelSelect(c) {
     modelSelect.innerHTML = "";

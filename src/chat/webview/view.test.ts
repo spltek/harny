@@ -691,10 +691,49 @@ describe("view webview client", () => {
   });
 });
 
+describe("branch from assistant bubble", () => {
+  beforeEach(() => { posted.length = 0; setupDom(); });
+
+  it("adds a ⎇ key to every visible assistant bubble and posts branchAt with its index", async () => {
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "user", content: "q1", timestamp: 1 },
+        { role: "assistant", content: "a1", timestamp: 2 },
+        { role: "user", content: "q2", timestamp: 3 },
+        { role: "assistant", content: "a2", timestamp: 4 },
+        { role: "assistant", content: "", thinking: "thought", toolCalls: [], timestamp: 5 },
+      ],
+    });
+    const keys = document.querySelectorAll(".msg.assistant .branch-at");
+    // Two visible bubbles (a1 at index 1, a2 at index 3); the thinking-only
+    // bubble renders blocks but no answer bubble, so no key there.
+    expect(keys.length).toBe(2);
+    expect(keys[0].textContent).toBe("⎇");
+    (keys[0] as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "branchAt", index: 1 });
+    (keys[1] as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "branchAt", index: 3 });
+  });
+
+  it("disables the branch keys while the session is working", async () => {
+    await loadView();
+    hostMessage({ type: "refresh", messages: [{ role: "user", content: "q", timestamp: 1 }, { role: "assistant", content: "a", timestamp: 2 }] });
+    const key = document.querySelector(".msg.assistant .branch-at") as HTMLButtonElement;
+    expect(key.disabled).toBe(false);
+    hostMessage({ type: "status", active: true });
+    expect(key.disabled).toBe(true);
+    hostMessage({ type: "status", active: false });
+    expect(key.disabled).toBe(false);
+  });
+});
+
 function messagesElLastContent(): string {
   const els = document.querySelectorAll("#messages > *");
   const last = els[els.length - 1];
-  return last ? (last.textContent || "") : "";
+  // Strip the branch-from-this-point key (⎇) from the bubble text.
+  return last ? (last.textContent || "").replace(/⎇/g, "") : "";
 }
 
 function hostMessage(data: unknown): void {

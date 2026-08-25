@@ -117,14 +117,50 @@ export class ChatViewProvider implements WebviewViewProvider {
       return;
     }
     const loaded = this.sessions.load(id);
+    await this.createBranch(id, name, loaded.messages);
+  }
+
+  /**
+   * Branch from a specific reply: copies the transcript UP TO AND INCLUDING
+   * the message at `index` (the blue-bubble ⎇ action) into a new session.
+   */
+  private async branchAt(index: number): Promise<void> {
+    const { window } = await import("vscode");
+    const rt = this.activeRuntime();
+    if (!rt) return;
+    if (rt.agent.streaming) {
+      void window.showWarningMessage(
+        "Cannot branch while the session is working. Stop it first.",
+      );
+      return;
+    }
+    if (!Number.isInteger(index) || index < 0) return;
+    const loaded = this.sessions.load(rt.sessionId);
+    if (index >= loaded.messages.length) return; // stale bubble, treat as gone
+    const name = await this.askName("branch", rt.sessionId);
+    if (name === undefined) return;
+    if (this.sessionNameTaken(name)) {
+      await this.warnNameTaken(name);
+      return;
+    }
+    await this.createBranch(rt.sessionId, name, loaded.messages.slice(0, index + 1));
+  }
+
+  /** Shared branch core: new session + slicing done by the caller. */
+  private async createBranch(
+    sourceId: string,
+    name: string,
+    messages: import("../core/history/types").ChatMessage[],
+  ): Promise<void> {
+    const existing = this.sessions.list().find((s) => s.id === sourceId);
     const created = this.sessions.create(name);
-    if (loaded.messages.length > 0) this.sessions.saveMessages(created.id, loaded.messages);
+    if (messages.length > 0) this.sessions.saveMessages(created.id, messages);
     // Copy the per-session settings over to the branch.
-    if (existing.model) this.sessions.saveModel(created.id, existing.model, existing.modelProvider);
-    if (existing.thinkingLevel) this.sessions.saveThinkingLevel(created.id, existing.thinkingLevel);
-    if (existing.contextWindow) this.sessions.saveContextWindow(created.id, existing.contextWindow);
-    if (existing.outputTokens) this.sessions.saveOutputTokens(created.id, existing.outputTokens);
-    if (existing.temperature !== undefined) this.sessions.saveTemperature(created.id, existing.temperature);
+    if (existing?.model) this.sessions.saveModel(created.id, existing.model, existing.modelProvider);
+    if (existing?.thinkingLevel) this.sessions.saveThinkingLevel(created.id, existing.thinkingLevel);
+    if (existing?.contextWindow) this.sessions.saveContextWindow(created.id, existing.contextWindow);
+    if (existing?.outputTokens) this.sessions.saveOutputTokens(created.id, existing.outputTokens);
+    if (existing?.temperature !== undefined) this.sessions.saveTemperature(created.id, existing.temperature);
     await this.setActive(created.id);
   }
 
@@ -258,6 +294,9 @@ export class ChatViewProvider implements WebviewViewProvider {
         break;
       case "branchSession":
         if (typeof msg.id === "string") await this.branchSession(msg.id);
+        break;
+      case "branchAt":
+        await this.branchAt(Number(msg.index));
         break;
       case "deleteSession":
         if (typeof msg.id === "string") await this.deleteSession(msg.id);

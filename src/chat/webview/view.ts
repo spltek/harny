@@ -424,7 +424,8 @@ function renderMessages(msgs: ChatMsg[]): boolean {
     if (m.role === "tool" && m.toolCallId && m.content) outputs.set(m.toolCallId, m.content);
   }
   let hasVisible = false;
-  for (const m of msgs) {
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
     if (m.role === "system" || m.role === "tool") continue;
     hasVisible = true;
     if (m.role === "assistant") {
@@ -445,11 +446,29 @@ function renderMessages(msgs: ChatMsg[]): boolean {
       if (content === "" || content.startsWith("🔧 ")) continue;
       const el = addMessage("assistant", content);
       if (content.startsWith("❌")) el.classList.add("error");
+      attachBranchAt(el, i);
     } else {
       addMessage(m.role, m.content || "");
     }
   }
   return hasVisible;
+}
+
+/**
+ * Small ⎇ key on an assistant reply: branches the session UP TO AND
+ * INCLUDING this message (popup-modal naming, uniqueness enforced, mirror of
+ * the sessions-list branch). Revealed on hover; disabled while working.
+ */
+function attachBranchAt(el: HTMLElement, index: number): void {
+  const b = document.createElement("button");
+  b.className = "branch-at";
+  b.title = "Branch session from this point (up to and including this reply)";
+  b.textContent = "⎇";
+  b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    vscode.postMessage({ type: "branchAt", index });
+  });
+  el.appendChild(b);
 }
 
 function finishStream(): void {
@@ -659,6 +678,10 @@ function setStreaming(active: boolean): void {
   tempPlus.disabled = active;
   tempAuto.disabled = active;
   inputEl.disabled = active;
+  // Branch keys on assistant bubbles follow the same lock.
+  for (const b of document.querySelectorAll<HTMLButtonElement>(".branch-at")) {
+    b.disabled = active;
+  }
 }
 
 // ── Model dropdown (all providers, declared or detected from the host) ──
