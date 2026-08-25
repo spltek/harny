@@ -337,7 +337,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       justify-content: center;
     }
 
-    #status { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px 6px; font-size: 0.85rem; border-top: 1px solid var(--border); }
+    #status { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px 6px; font-size: 0.85rem; }
     #status .warn { color: var(--error); }
     .ctl-row { display: flex; align-items: center; gap: 6px; }
     /* Grouped cards: the grid collapses to a single column when the panel is
