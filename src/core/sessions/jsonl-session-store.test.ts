@@ -98,7 +98,7 @@ describe("JsonlSessionStore", () => {
     expect(loaded.messages[0].content).toBe("orphan");
   });
 
-  it("writes the version in the session header", () => {
+  it("writes a session header", () => {
     const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
     store.create();
     store.saveMessages("s1", [msg({ content: "a" })]);
@@ -106,7 +106,6 @@ describe("JsonlSessionStore", () => {
     const header = readFileSync(join(dir, "s1.jsonl"), "utf8").split("\n")[0];
     const meta = JSON.parse(header);
     expect(meta.type).toBe("session");
-    expect(meta.version).toBe(2);
   });
 });
 

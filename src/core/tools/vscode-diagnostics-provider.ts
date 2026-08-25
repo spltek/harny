@@ -1,4 +1,4 @@
-import { languages, type Uri, type Diagnostic as VscodeDiagnostic } from "vscode";
+import { languages } from "vscode";
 import type { DiagnosticFile, DiagnosticsProvider } from "./diagnostics-provider";
 
 /**

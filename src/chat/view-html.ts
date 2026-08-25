@@ -197,8 +197,9 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       transition: opacity 0.12s, color 0.12s, border-color 0.12s, background-color 0.12s;
     }
     .msg.assistant:hover .branch-at { opacity: 1; pointer-events: auto; }
+    /* Disabled (session working): fully inert — no hover reaction, hidden. */
+    .msg.assistant:hover .branch-at:disabled { opacity: 0; pointer-events: none; }
     .branch-at:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); background: rgba(255, 255, 255, 0.1); }
-    .branch-at:disabled { opacity: 0.3; cursor: default; }
     .msg.assistant.error { background: rgba(244, 71, 71, 0.15); border: 1px solid var(--error); }
     .msg.assistant p { margin: 4px 0; }
     .msg.assistant h1, .msg.assistant h2, .msg.assistant h3, .msg.assistant h4, .msg.assistant h5, .msg.assistant h6 { margin: 8px 0 4px; font-weight: 600; }
@@ -597,7 +598,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
           <label class="field-label" for="ctx-input">Context window</label>
           <div id="ctx-window">
             <button id="ctx-minus" class="ctx-btn" title="Decrease context">−</button>
-            <input id="ctx-input" type="number" min="32000" max="2000000" step="1" value="${DEFAULT_CONTEXT_WINDOW}" title="Context window (tokens)">
+            <input id="ctx-input" type="text" inputmode="numeric" autocomplete="off" value="${DEFAULT_CONTEXT_WINDOW}" title="Context window (tokens) — integers only">
             <button id="ctx-plus" class="ctx-btn" title="Increase context">+</button>
           </div>
         </div>
@@ -605,7 +606,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
           <label class="field-label" for="out-input">Output tokens</label>
           <div id="out-window">
             <button id="out-minus" class="ctx-btn" title="Decrease output tokens">−</button>
-            <input id="out-input" type="number" min="256" max="65536" step="512" value="${DEFAULT_OUTPUT_TOKENS}" title="Max output tokens per response">
+            <input id="out-input" type="text" inputmode="numeric" autocomplete="off" value="${DEFAULT_OUTPUT_TOKENS}" title="Max output tokens per response — integers only">
             <button id="out-plus" class="ctx-btn" title="Increase output tokens">+</button>
           </div>
         </div>
@@ -622,10 +623,10 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
           </select>
         </div>
         <div class="field">
-          <label class="field-label" for="temp-input">Temperature</label>
+          <label class="field-label" for="temp-input">Temperature (0.0 → 2.0)</label>
           <div id="temp-window">
             <button id="temp-minus" class="ctx-btn" title="Decrease temperature">−</button>
-            <input id="temp-input" type="number" min="0" max="2" step="0.1" placeholder="Auto" title="Sampling temperature 0–2; empty = Auto (not sent, provider default)">
+            <input id="temp-input" type="text" inputmode="decimal" autocomplete="off" placeholder="Auto" title="Sampling temperature 0.0–2.0; digits and one decimal point; empty = Auto (not sent, provider default)">
             <button id="temp-plus" class="ctx-btn" title="Increase temperature">+</button>
             <button id="temp-auto" class="ctx-btn" title="Reset to Auto (not sent)">Auto</button>
           </div>

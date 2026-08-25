@@ -7257,7 +7257,7 @@
     }
     return block2;
   }
-  function addToolCall(id, name, args, beforeEl) {
+  function addToolCall(name, args, beforeEl) {
     const div = document.createElement("div");
     div.className = "msg tool tool-call-pending";
     div.innerHTML = '<div class="tool-header"><span class="tool-toggle">\u25B6</span><span class="tool-name">\u{1F527} ' + escapeHtml2(name) + '</span></div><div class="tool-details collapsed"><div class="tool-input"><span class="tool-label">Input</span><pre class="tool-args">' + escapeHtml2(formatArgs(args)) + '</pre></div><div class="tool-output"><span class="tool-label">Output</span><pre class="tool-result">\u23F3 running\u2026</pre></div></div>';
@@ -7341,7 +7341,7 @@
         if (m.toolCalls && m.toolCalls.length > 0) {
           for (const tc of m.toolCalls) {
             const id = tc.id ?? tc.name;
-            const el2 = addToolCall(id, tc.name, tc.arguments);
+            const el2 = addToolCall(tc.name, tc.arguments);
             el2.classList.remove("tool-call-pending");
             const out = el2.querySelector(".tool-result");
             if (out) {
@@ -7536,7 +7536,6 @@
   });
   function submitName() {
     if (!namePrompt) return;
-    const p = namePrompt;
     if (nameOk.disabled) {
       nameInput.focus();
       return;
@@ -7653,6 +7652,21 @@
     if (!["off", "low", "medium", "high"].includes(level)) return;
     vscode.postMessage({ type: "setThinkingLevel", level });
   });
+  function sanitizeIntegerInput(raw) {
+    return raw.replace(/\D/g, "");
+  }
+  function sanitizeFloatInput(raw) {
+    const cleaned = raw.replace(",", ".").replace(/[^\d.]/g, "");
+    const firstDot = cleaned.indexOf(".");
+    if (firstDot < 0) return cleaned;
+    return cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, "");
+  }
+  function bindIntegerInput(el) {
+    el.addEventListener("input", () => {
+      const v = sanitizeIntegerInput(el.value);
+      if (v !== el.value) el.value = v;
+    });
+  }
   function sendContextWindow(value) {
     const v = clampContextWindow(value);
     ctxInput.value = String(v);
@@ -7738,10 +7752,16 @@
   ctxMinus.addEventListener("click", () => sendContextWindow(clampContextWindow(Number(ctxInput.value)) - CONTEXT_STEP));
   ctxPlus.addEventListener("click", () => sendContextWindow(clampContextWindow(Number(ctxInput.value)) + CONTEXT_STEP));
   ctxInput.addEventListener("change", () => sendContextWindow(clampContextWindow(Number(ctxInput.value))));
+  bindIntegerInput(ctxInput);
   outMinus.addEventListener("click", () => sendOutputTokens(clampOutputTokens(Number(outInput.value)) - OUTPUT_STEP));
   outPlus.addEventListener("click", () => sendOutputTokens(clampOutputTokens(Number(outInput.value)) + OUTPUT_STEP));
   outInput.addEventListener("change", () => sendOutputTokens(clampOutputTokens(Number(outInput.value))));
+  bindIntegerInput(outInput);
   tempInput.addEventListener("change", readTemperatureInput);
+  tempInput.addEventListener("input", () => {
+    const v = sanitizeFloatInput(tempInput.value);
+    if (v !== tempInput.value) tempInput.value = v;
+  });
   tempMinus.addEventListener("click", () => sendTemperature(currentTemperature() - TEMPERATURE_STEP));
   tempPlus.addEventListener("click", () => sendTemperature(currentTemperature() + TEMPERATURE_STEP));
   tempAuto.addEventListener("click", () => sendTemperature(null));
@@ -7775,7 +7795,7 @@
       }
       case "toolCall": {
         flushStreamingMd();
-        const toolEl = addToolCall(msg.id, msg.name, msg.arguments);
+        const toolEl = addToolCall(msg.name, msg.arguments);
         pendingToolCalls.set(msg.id, toolEl);
         if (workingEl) workingEl.textContent = "\u25CF Working... \u{1F527} " + msg.name;
         currentThinkingBlock = null;

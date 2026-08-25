@@ -86,7 +86,6 @@ export function planManualCompaction(messages: ChatMessage[], keepRecentFraction
 export function planCompaction(messages: ChatMessage[], settings: CompactionSettings): CompactionPlan {
   const recent: ChatMessage[] = [];
   let recentTokens = 0;
-  const kept: ChatMessage[] = [];
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.role === "system" || m.uiOnly) continue;

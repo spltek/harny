@@ -397,14 +397,11 @@ describe("ChatViewProvider", () => {
 
     expect(registry.isOpen("s1")).toBe(true);
     expect(store.remove).not.toHaveBeenCalled();
-    expect(view.webview.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "modal", kind: "alert", alertKind: "info", message: expect.stringContaining("while it is working") }),
-    );
   });
 
   it("refuses to rename a session that is still working", async () => {
     const { store, registry, provider } = buildHarness();
-    const { handler, view } = resolveWith(provider);
+    const { handler } = resolveWith(provider);
     await provider.createNew(); // s1
     const rt = registry.get("s1")!;
     (rt.agent as { streaming: boolean }).streaming = true;
@@ -412,9 +409,6 @@ describe("ChatViewProvider", () => {
     await handler({ type: "renameSession", id: "s1" });
 
     expect(store.rename).not.toHaveBeenCalled();
-    expect(view.webview.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "modal", kind: "alert", alertKind: "info", message: expect.stringContaining("while it is working") }),
-    );
   });
 
   it("setThinkingLevel persists the level, refreshes and pushes config", async () => {

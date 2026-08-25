@@ -114,14 +114,9 @@ export class ChatViewProvider implements WebviewViewProvider {
     const existing = this.sessions.list().find((s) => s.id === id);
     if (!existing) return;
     const rt = this.registry.get(id);
-    if (rt?.agent.streaming) {
-      await this.inPanelAlert({
-        kind: "info",
-        title: "Session is working",
-        message: `Cannot branch "${existing.name}" while it is working. Stop it first.`,
-      });
-      return;
-    }
+    // The ⎇ buttons are DISABLED while the session works: this is only a
+    // silent safety guard (no alert — the UI already reflects the state).
+    if (rt?.agent.streaming) return;
     const name = await this.askName("branch", id);
     if (name === undefined) return;
     if (this.sessionNameTaken(name)) {
@@ -139,14 +134,8 @@ export class ChatViewProvider implements WebviewViewProvider {
   private async branchAt(index: number): Promise<void> {
     const rt = this.activeRuntime();
     if (!rt) return;
-    if (rt.agent.streaming) {
-      await this.inPanelAlert({
-        kind: "info",
-        title: "Session is working",
-        message: "Cannot branch while the session is working. Stop it first.",
-      });
-      return;
-    }
+    // The bubble ⎇ keys are DISABLED while the session works (silent guard).
+    if (rt.agent.streaming) return;
     if (!Number.isInteger(index) || index < 0) return;
     const loaded = this.sessions.load(rt.sessionId);
     if (index >= loaded.messages.length) return; // stale bubble, treat as gone
@@ -613,16 +602,9 @@ export class ChatViewProvider implements WebviewViewProvider {
   }
 
   private async renameSession(id: string): Promise<void> {
-    const existing = this.sessions.list().find((s) => s.id === id);
     const rt = this.registry.get(id);
-    if (rt?.agent.streaming) {
-      await this.inPanelAlert({
-        kind: "info",
-        title: "Session is working",
-        message: `Cannot rename "${existing?.name ?? id}" while it is working. Stop it first.`,
-      });
-      return;
-    }
+    // The ✎ buttons are DISABLED while the session works (silent guard).
+    if (rt?.agent.streaming) return;
     const name = await this.askName("rename", id);
     if (name === undefined) return;
     // Same-name renames are allowed (self excluded); any OTHER collision is not.
@@ -636,14 +618,8 @@ export class ChatViewProvider implements WebviewViewProvider {
   private async deleteSession(id: string): Promise<void> {
     const existing = this.sessions.list().find((s) => s.id === id);
     const rt = this.registry.get(id);
-    if (rt?.agent.streaming) {
-      await this.inPanelAlert({
-        kind: "info",
-        title: "Session is working",
-        message: `Cannot delete "${existing?.name ?? id}" while it is working. Stop it first.`,
-      });
-      return;
-    }
+    // The 🗑 buttons are DISABLED while the session works (silent guard).
+    if (rt?.agent.streaming) return;
     const ok = await this.inPanelAlert({
       kind: "confirm",
       title: "Delete session",

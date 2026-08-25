@@ -7,7 +7,6 @@ import type { LoadedSession, SessionStore, SessionSummary } from "./types";
 
 interface SessionMeta {
   type: "session";
-  version: number;
   id: string;
   name: string;
   createdAt: number;
@@ -287,7 +286,6 @@ export class JsonlSessionStore implements SessionStore {
   private serialize(summary: SessionSummary, messages: ChatMessage[]): string {
     const header: SessionMeta = {
       type: "session",
-      version: 2,
       id: summary.id,
       name: summary.name,
       createdAt: summary.createdAt,

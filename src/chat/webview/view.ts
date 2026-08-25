@@ -335,7 +335,7 @@ function makeThinkingBlock(
   return block;
 }
 
-function addToolCall(id: string, name: string, args: unknown, beforeEl?: HTMLElement | null): HTMLDivElement {
+function addToolCall(name: string, args: unknown, beforeEl?: HTMLElement | null): HTMLDivElement {
   const div = document.createElement("div");
   div.className = "msg tool tool-call-pending";
   div.innerHTML =
@@ -459,7 +459,7 @@ function renderMessages(msgs: ChatMsg[]): boolean {
       if (m.toolCalls && m.toolCalls.length > 0) {
         for (const tc of m.toolCalls) {
           const id = tc.id ?? tc.name;
-          const el = addToolCall(id, tc.name, tc.arguments);
+          const el = addToolCall(tc.name, tc.arguments);
           el.classList.remove("tool-call-pending");
           const out = el.querySelector(".tool-result");
           if (out) {
@@ -703,7 +703,6 @@ window.addEventListener("keydown", (e) => {
 
 function submitName(): void {
   if (!namePrompt) return;
-  const p = namePrompt;
   // The OK key is disabled while invalid; Enter must not bypass the check.
   if (nameOk.disabled) {
     nameInput.focus();
@@ -844,7 +843,27 @@ thinkingSelect.addEventListener("change", () => {
   vscode.postMessage({ type: "setThinkingLevel", level });
 });
 
-// ── Context-window spinner ──
+// ── Input sanitizers: numbers are typed freely, but only VALID characters ──
+/** Context window / output tokens: digits only (integers). */
+function sanitizeIntegerInput(raw: string): string {
+  return raw.replace(/\D/g, "");
+}
+/** Temperature: digits + ONE decimal separator (" . ", comma converted). */
+function sanitizeFloatInput(raw: string): string {
+  const cleaned = raw.replace(",", ".").replace(/[^\d.]/g, "");
+  const firstDot = cleaned.indexOf(".");
+  if (firstDot < 0) return cleaned;
+  return cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, "");
+}
+
+function bindIntegerInput(el: HTMLInputElement): void {
+  el.addEventListener("input", () => {
+    const v = sanitizeIntegerInput(el.value);
+    if (v !== el.value) el.value = v;
+  });
+}
+
+// Context-window spinner ──
 function sendContextWindow(value: number): void {
   const v = clampContextWindow(value);
   ctxInput.value = String(v);
@@ -949,11 +968,17 @@ ctxMinus.addEventListener("click", () => sendContextWindow(clampContextWindow(Nu
 ctxPlus.addEventListener("click", () => sendContextWindow(clampContextWindow(Number(ctxInput.value)) + CONTEXT_STEP));
 // Fire on change (blur/Enter), not on every keystroke, so values can be typed freely.
 ctxInput.addEventListener("change", () => sendContextWindow(clampContextWindow(Number(ctxInput.value))));
+bindIntegerInput(ctxInput);
 outMinus.addEventListener("click", () => sendOutputTokens(clampOutputTokens(Number(outInput.value)) - OUTPUT_STEP));
 outPlus.addEventListener("click", () => sendOutputTokens(clampOutputTokens(Number(outInput.value)) + OUTPUT_STEP));
 outInput.addEventListener("change", () => sendOutputTokens(clampOutputTokens(Number(outInput.value))));
+bindIntegerInput(outInput);
 // Temperature: fire on change (blur/Enter); empty input = Auto.
 tempInput.addEventListener("change", readTemperatureInput);
+tempInput.addEventListener("input", () => {
+  const v = sanitizeFloatInput(tempInput.value);
+  if (v !== tempInput.value) tempInput.value = v;
+});
 tempMinus.addEventListener("click", () => sendTemperature(currentTemperature() - TEMPERATURE_STEP));
 tempPlus.addEventListener("click", () => sendTemperature(currentTemperature() + TEMPERATURE_STEP));
 tempAuto.addEventListener("click", () => sendTemperature(null));
@@ -994,7 +1019,7 @@ window.addEventListener("message", (e) => {
       // A tool phase ends the current answer segment: commit pending renders
       // and close the bubble — later text becomes a NEW blue bubble.
       flushStreamingMd();
-      const toolEl = addToolCall(msg.id, msg.name, msg.arguments);
+      const toolEl = addToolCall(msg.name, msg.arguments);
       pendingToolCalls.set(msg.id, toolEl);
       if (workingEl) workingEl.textContent = "● Working... 🔧 " + msg.name;
       currentThinkingBlock = null;

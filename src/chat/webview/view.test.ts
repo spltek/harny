@@ -27,7 +27,7 @@ function setupDom(initOverrides: Record<string, unknown> = {}): void {
       <button id="send-btn">▶</button>
       <button id="abort-btn" disabled>⏹</button>
     </div>
-    <div id="status">AI Model: <select id="model-select"></select><button id="ctx-minus">−</button><input id="ctx-input" type="number" value="128000"><button id="ctx-plus">+</button><button id="out-minus">−</button><input id="out-input" type="number" value="8192"><button id="out-plus">+</button><button id="temp-minus">−</button><input id="temp-input" type="number" placeholder="Auto"><button id="temp-plus">+</button><button id="temp-auto">Auto</button></div>
+    <div id="status">AI Model: <select id="model-select"></select><button id="ctx-minus">−</button><input id="ctx-input" type="text" value="128000"><button id="ctx-plus">+</button><button id="out-minus">−</button><input id="out-input" type="text" value="8192"><button id="out-plus">+</button><button id="temp-minus">−</button><input id="temp-input" type="text" placeholder="Auto"><button id="temp-plus">+</button><button id="temp-auto">Auto</button></div>
     <div id="metrics"><select id="thinking-select"><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button></div>
     <div id="name-modal" class="hidden">
       <div class="name-modal-backdrop"></div>
@@ -774,6 +774,29 @@ describe("in-panel alert modal", () => {
   });
 });
 
+it("temperature accepts digits and ONE decimal separator only", async () => {
+    await loadView();
+    const input = document.getElementById("temp-input") as HTMLInputElement;
+    input.value = "1,5.3";
+    input.dispatchEvent(new Event("input"));
+    expect(input.value).toBe("1.53"); // comma -> dot, extra dots stripped
+    input.value = "abc12.";
+    input.dispatchEvent(new Event("input"));
+    expect(input.value).toBe("12."); // letters stripped, a single trailing dot kept
+  });
+
+  it("context window and output tokens accept integers only", async () => {
+    await loadView();
+    const ctx = document.getElementById("ctx-input") as HTMLInputElement;
+    ctx.value = "12.5e3";
+    ctx.dispatchEvent(new Event("input"));
+    expect(ctx.value).toBe("1253");
+    const out = document.getElementById("out-input") as HTMLInputElement;
+    out.value = "8.5";
+    out.dispatchEvent(new Event("input"));
+    expect(out.value).toBe("85");
+  });
+
 function messagesElLastContent(): string {
   const els = document.querySelectorAll("#messages > *");
   const last = els[els.length - 1];
@@ -1030,9 +1053,3 @@ describe("session name modal (unique names)", () => {
     expect((document.getElementById("name-modal-title") as HTMLElement).textContent).toBe("Branch session");
   });
 });
-
-function messagesElLastUserContent(): string {
-  const els = document.querySelectorAll("#messages .msg.user");
-  const last = els[els.length - 1];
-  return last ? (last.textContent || "") : "";
-}
