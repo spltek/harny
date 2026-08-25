@@ -42,7 +42,6 @@ function setupDom(initOverrides: Record<string, unknown> = {}): void {
       </div>
     </div>
     <script id="harny-view-init" type="application/json">${JSON.stringify(init)}</script>
-    <div id="harny-tip" class="harny-tip"></div>
   `;
   (globalThis as Record<string, unknown>).acquireVsCodeApi = () => ({
     postMessage: (m: unknown) => posted.push(m),
@@ -930,21 +929,6 @@ describe("session name modal (unique names)", () => {
     expect(input.value).toBe("Refactor");
     expect((document.getElementById("name-ok") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("name-modal-title") as HTMLElement).textContent).toBe("Branch session");
-  });
-});
-
-describe("session row icons tooltip", () => {
-  beforeEach(() => { posted.length = 0; setupDom(); });
-
-  it("shows the function name on hover over the icons and hides on leave", async () => {
-    await loadView();
-    const btn = document.querySelector('.srow[data-id="a"] .branch') as HTMLButtonElement;
-    btn.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
-    const tip = document.getElementById("harny-tip") as HTMLDivElement;
-    expect(tip.textContent).toBe("Branch (copy) this session");
-    expect(tip.classList.contains("visible")).toBe(true);
-    btn.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
-    expect(tip.classList.contains("visible")).toBe(false);
   });
 });
 

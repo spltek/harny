@@ -118,18 +118,6 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     }
     .srow-actions button:hover:not(:disabled) { opacity: 1; color: var(--accent); background: rgba(255, 255, 255, 0.06); }
     .empty { padding: 12px; text-align: center; color: #888; font-size: 0.92rem; }
-    /* Custom hover tooltip (webviews can lag/drop the native title tooltip). */
-    .harny-tip {
-      position: fixed; z-index: 9999; pointer-events: none;
-      background: rgba(30, 30, 30, 0.97); color: #eaeaea;
-      font-size: 0.72rem; padding: 3px 8px; border-radius: 5px;
-      border: 1px solid rgba(255, 255, 255, 0.14);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-      opacity: 0; transform: translateY(2px);
-      transition: opacity 0.1s ease, transform 0.1s ease;
-      white-space: nowrap;
-    }
-    .harny-tip.visible { opacity: 1; transform: none; }
 
     /* Tabs: raised pill keys, consistent with the 3D button chrome. */
     #tabs {
@@ -593,7 +581,6 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     </div>
   </div>
   <script id="harny-view-init" type="application/json">${jsonInit(deps.state)}</script>
-  <div id="harny-tip" class="harny-tip"></div>
   <script src="${scriptUri}"></script>
 </body>
 </html>`;
