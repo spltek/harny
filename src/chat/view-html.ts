@@ -382,6 +382,15 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
         <input id="ctx-input" type="number" min="32000" max="2000000" step="1" value="${DEFAULT_CONTEXT_WINDOW}" title="Context window (tokens)">
         <button id="ctx-plus" class="ctx-btn" title="Increase context">+</button>
       </div>
+      <span class="model-label">Thinking:</span>
+      <select id="thinking-select" title="Reasoning effort / thinking level (per session)">
+        <option value="off">Off</option>
+        <option value="low">Low</option>
+        <option value="medium">Medium</option>
+        <option value="high">High</option>
+      </select>
+    </div>
+    <div class="ctl-row">
       <span class="model-label">Output tokens:</span>
       <div id="out-window">
         <button id="out-minus" class="ctx-btn" title="Decrease output tokens">−</button>
@@ -398,13 +407,6 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     </div>
   </div>
   <div id="metrics">
-    <span class="model-label">Thinking:</span>
-    <select id="thinking-select" title="Reasoning effort / thinking level (per session)">
-      <option value="off">Off</option>
-      <option value="low">Low</option>
-      <option value="medium">Medium</option>
-      <option value="high">High</option>
-    </select>
     <span class="model-label">Tokens:</span><span class="met" id="met-tokens">0</span>
     <span class="met">/</span><span class="met" id="met-ctx">${DEFAULT_CONTEXT_WINDOW}</span>
     <span class="met" id="met-pct">(0%)</span>
