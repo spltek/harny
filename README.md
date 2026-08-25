@@ -151,12 +151,13 @@ controls the reasoning phase with `thinking`:
 
 With the multi-provider format the model dropdown shows **all** models from **all** declared providers (grouped by name), not just those of the active provider. Picking a local model (e.g. `llamacpp` or `ollama`) automatically switches base URL, API key and protocol: `provider` in the file only indicates the initial one.
 
-#### Context window & output tokens (per session)
+#### Context window, output tokens & temperature (per session)
 
-Below the model dropdown, two spinners let you tune the session **per turn window** and the **per-response token budget** (both persisted with the session, like the model and the thinking level, and restored when you reopen it):
+Below the model dropdown, three controls let you tune the session **per turn window**, the **per-response token budget** and the **sampling temperature** (all persisted with the session, like the model and the thinking level, and restored when you reopen it):
 
 - **Context window** (default `128000`): the compaction ceiling — lower it to trigger auto-compaction earlier and keep the model fresh (avoids context rot), or raise it up to the model's maximum.
 - **Output tokens** (default `8192`): `max_tokens` sent per request; raise it for long edits/answers, lower it for quick chats. The session value wins over the provider's declared default.
+- **Temperature** (Auto by default): `0–2`, step `0.1`. **Auto = not sent** (the provider's own default applies, and strict providers that reject the field keep working); as soon as you type a value it is sent per session. Clear it (or press ×) to go back to Auto. `0` is a valid, deliberate value (fully deterministic).
 
 #### Dynamic models from the host (`GET /v1/models`)
 

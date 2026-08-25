@@ -51,6 +51,10 @@ export class SessionManager {
     return this.store.saveOutputTokens(id, tokens);
   }
 
+  saveTemperature(id: string, temp?: number): SessionSummary {
+    return this.store.saveTemperature(id, temp);
+  }
+
   saveContextTokens(id: string, tokens?: number): SessionSummary {
     return this.store.saveContextTokens(id, tokens);
   }

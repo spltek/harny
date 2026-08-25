@@ -161,6 +161,25 @@ describe("JsonlSessionStore context window", () => {
     store.rename("s1", "Renamed");
     expect(store.load("s1").summary.outputTokens).toBe(16384);
   });
+
+  it("persists the temperature, carries 0 as a valid value and clears with Auto", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    store.saveTemperature("s1", 0.2);
+    expect(store.load("s1").summary.temperature).toBe(0.2);
+    expect(store.list()[0].temperature).toBe(0.2);
+    // 0 is falsy but a VALID sampling temperature: it must survive saves.
+    store.saveTemperature("s1", 0);
+    expect(store.load("s1").summary.temperature).toBe(0);
+    // A later save must not drop it.
+    store.saveMessages("s1", [{ role: "user", content: "hi", timestamp: 1 }]);
+    expect(store.load("s1").summary.temperature).toBe(0);
+    // Auto (undefined) explicitly clears the stored value.
+    store.saveTemperature("s1", undefined);
+    const loaded = store.load("s1").summary;
+    expect("temperature" in loaded).toBe(false);
+    expect(store.list()[0].temperature).toBeUndefined();
+  });
 });
 
 describe("JsonlSessionStore thinking level", () => {

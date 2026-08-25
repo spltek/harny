@@ -19,6 +19,8 @@ export interface SessionSummary {
   contextTokens?: number;
   /** Max output tokens per response for this session (persisted; undefined = default). */
   outputTokens?: number;
+  /** Sampling temperature for this session (persisted; undefined = Auto, not sent). */
+  temperature?: number;
 }
 
 /** A session file plus its loaded messages. */
@@ -47,4 +49,6 @@ export interface SessionStore {
   saveContextTokens(id: string, tokens?: number): SessionSummary;
   /** Persist the session's max output tokens per response. */
   saveOutputTokens(id: string, tokens?: number): SessionSummary;
+  /** Persist the session's sampling temperature (undefined = Auto, not sent). */
+  saveTemperature(id: string, temp?: number): SessionSummary;
 }

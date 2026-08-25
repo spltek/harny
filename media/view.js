@@ -7019,6 +7019,15 @@
     return Math.min(MAX_OUTPUT_TOKENS, Math.max(MIN_OUTPUT_TOKENS, Math.round(v)));
   }
 
+  // src/chat/temperature.ts
+  var TEMPERATURE_MIN = 0;
+  var TEMPERATURE_MAX = 2;
+  function clampTemperature(v) {
+    if (!Number.isFinite(v)) return void 0;
+    const clamped = Math.min(TEMPERATURE_MAX, Math.max(TEMPERATURE_MIN, v));
+    return Math.round(clamped * 10) / 10;
+  }
+
   // src/chat/webview/view.ts
   var vscode = acquireVsCodeApi();
   var sessionsEl = document.getElementById("sessions");
@@ -7038,6 +7047,8 @@
   var outInput = document.getElementById("out-input");
   var outMinus = document.getElementById("out-minus");
   var outPlus = document.getElementById("out-plus");
+  var tempInput = document.getElementById("temp-input");
+  var tempAuto = document.getElementById("temp-auto");
   var metTokens = document.getElementById("met-tokens");
   var metCtx = document.getElementById("met-ctx");
   var metPct = document.getElementById("met-pct");
@@ -7448,6 +7459,8 @@
     outMinus.disabled = active;
     outPlus.disabled = active;
     outInput.disabled = active;
+    tempInput.disabled = active;
+    tempAuto.disabled = active;
     inputEl.disabled = active;
   }
   function renderModelSelect(c) {
@@ -7542,6 +7555,38 @@
     const v = clampOutputTokens(c.outputTokens ?? DEFAULT_OUTPUT_TOKENS);
     outInput.value = String(v);
   }
+  function sendTemperature(value) {
+    if (value === null) {
+      tempInput.value = "";
+      vscode.postMessage({ type: "setTemperature", value: null });
+      return;
+    }
+    const v = clampTemperature(value);
+    if (v === void 0) {
+      tempInput.value = "";
+      vscode.postMessage({ type: "setTemperature", value: null });
+      return;
+    }
+    tempInput.value = String(v);
+    vscode.postMessage({ type: "setTemperature", value: v });
+  }
+  function renderTemperature(c) {
+    const v = c.temperature;
+    tempInput.value = typeof v === "number" && Number.isFinite(v) ? String(Math.round(v * 10) / 10) : "";
+  }
+  function readTemperatureInput() {
+    const raw = tempInput.value.trim();
+    if (raw === "") {
+      sendTemperature(null);
+      return;
+    }
+    const n = Number(raw);
+    if (Number.isNaN(n)) {
+      sendTemperature(null);
+      return;
+    }
+    sendTemperature(n);
+  }
   function renderMetrics(c) {
     const ctx = clampContextWindow(c.contextWindow || DEFAULT_CONTEXT_WINDOW);
     const used = c.contextTokens ?? 0;
@@ -7568,6 +7613,8 @@
   outMinus.addEventListener("click", () => sendOutputTokens(clampOutputTokens(Number(outInput.value)) - OUTPUT_STEP));
   outPlus.addEventListener("click", () => sendOutputTokens(clampOutputTokens(Number(outInput.value)) + OUTPUT_STEP));
   outInput.addEventListener("change", () => sendOutputTokens(clampOutputTokens(Number(outInput.value))));
+  tempInput.addEventListener("change", readTemperatureInput);
+  tempAuto.addEventListener("click", () => sendTemperature(null));
   window.addEventListener("message", (e) => {
     const msg = e.data;
     switch (msg.type) {
@@ -7720,6 +7767,7 @@
         renderThinkingSelect(msg.config || {});
         ctxInput.value = String(clampContextWindow(msg.config && msg.config.contextWindow || DEFAULT_CONTEXT_WINDOW));
         renderOutputTokens(msg.config || {});
+        renderTemperature(msg.config || {});
         renderMetrics(msg.config || {});
         break;
     }
@@ -7735,6 +7783,7 @@
     renderThinkingSelect(state.config || {});
     ctxInput.value = String(clampContextWindow(state.config && state.config.contextWindow || DEFAULT_CONTEXT_WINDOW));
     renderOutputTokens(state.config || {});
+    renderTemperature(state.config || {});
     renderMetrics(state.config || {});
     messagesEl.innerHTML = "";
     resetStreamState();

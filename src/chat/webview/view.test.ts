@@ -16,7 +16,7 @@ function setupDom(): void {
       <button id="send-btn">▶</button>
       <button id="abort-btn" disabled>⏹</button>
     </div>
-    <div id="status">AI Model: <select id="model-select"></select><button id="ctx-minus">−</button><input id="ctx-input" type="number" value="128000"><button id="ctx-plus">+</button><button id="out-minus">−</button><input id="out-input" type="number" value="8192"><button id="out-plus">+</button></div>
+    <div id="status">AI Model: <select id="model-select"></select><button id="ctx-minus">−</button><input id="ctx-input" type="number" value="128000"><button id="ctx-plus">+</button><button id="out-minus">−</button><input id="out-input" type="number" value="8192"><button id="out-plus">+</button><input id="temp-input" type="number" placeholder="Auto"><button id="temp-auto">×</button></div>
     <div id="metrics"><select id="thinking-select"><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button></div>
     <div id="name-modal" class="hidden">
       <div class="name-modal-backdrop"></div>
@@ -160,12 +160,15 @@ describe("view webview client", () => {
     expect((document.getElementById("out-input") as HTMLInputElement).disabled).toBe(true);
     expect((document.getElementById("out-minus") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("out-plus") as HTMLButtonElement).disabled).toBe(true);
+    expect((document.getElementById("temp-input") as HTMLInputElement).disabled).toBe(true);
+    expect((document.getElementById("temp-auto") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("user-input") as HTMLTextAreaElement).disabled).toBe(true);
     hostMessage({ type: "status", active: false });
     expect((document.getElementById("compact-btn") as HTMLButtonElement).disabled).toBe(false);
     expect((document.getElementById("model-select") as HTMLSelectElement).disabled).toBe(false);
     expect((document.getElementById("ctx-input") as HTMLInputElement).disabled).toBe(false);
     expect((document.getElementById("out-input") as HTMLInputElement).disabled).toBe(false);
+    expect((document.getElementById("temp-input") as HTMLInputElement).disabled).toBe(false);
     expect((document.getElementById("user-input") as HTMLTextAreaElement).disabled).toBe(false);
   });
 
@@ -766,6 +769,46 @@ describe("output tokens spinner", () => {
     input.value = "100"; // below min -> clamp to 256
     input.dispatchEvent(new Event("change"));
     expect(posted).toContainEqual({ type: "setOutputTokens", value: 256 });
+  });
+});
+
+describe("temperature control", () => {
+  beforeEach(() => { posted.length = 0; setupDom(); });
+
+  it("renders the session value from config and posts changes on typing", async () => {
+    await loadView();
+    const input = document.getElementById("temp-input") as HTMLInputElement;
+    // No session value -> Auto (empty).
+    expect(input.value).toBe("");
+
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], temperature: 0.7 } });
+    expect(input.value).toBe("0.7");
+
+    input.value = "1.5";
+    input.dispatchEvent(new Event("change"));
+    expect(posted).toContainEqual({ type: "setTemperature", value: 1.5 });
+  });
+
+  it("clamps out-of-range values; empty input and the × button reset to Auto", async () => {
+    await loadView();
+    const input = document.getElementById("temp-input") as HTMLInputElement;
+    const auto = document.getElementById("temp-auto") as HTMLButtonElement;
+
+    input.value = "9"; // above max -> clamp to 2
+    input.dispatchEvent(new Event("change"));
+    expect(posted).toContainEqual({ type: "setTemperature", value: 2 });
+    expect(input.value).toBe("2");
+
+    // Empty input = Auto (not sent, clears the session value).
+    input.value = "";
+    input.dispatchEvent(new Event("change"));
+    expect(posted).toContainEqual({ type: "setTemperature", value: null });
+
+    input.value = "0.5";
+    input.dispatchEvent(new Event("change"));
+    auto.click();
+    expect(posted).toContainEqual({ type: "setTemperature", value: null });
+    expect(input.value).toBe("");
   });
 });
 

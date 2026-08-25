@@ -19,6 +19,7 @@ interface SessionMeta {
   contextWindow?: number;
   contextTokens?: number;
   outputTokens?: number;
+  temperature?: number;
 }
 
 /**
@@ -89,6 +90,8 @@ export class JsonlSessionStore implements SessionStore {
       ...(existing?.contextWindow ? { contextWindow: existing.contextWindow } : {}),
       ...(existing?.contextTokens ? { contextTokens: existing.contextTokens } : {}),
       ...(existing?.outputTokens ? { outputTokens: existing.outputTokens } : {}),
+      // Temperature: 0 is a VALID value, so `!== undefined` (not truthiness).
+      ...(existing?.temperature !== undefined ? { temperature: existing.temperature } : {}),
       ...extra,
     };
   }
@@ -138,6 +141,22 @@ export class JsonlSessionStore implements SessionStore {
     return summary;
   }
 
+  /**
+   * Persist the session's sampling temperature. `undefined` means "Auto":
+   * the stored value is explicitly cleared (JSON.stringify drops undefined
+   * keys), overriding any previously carried value.
+   */
+  saveTemperature(id: string, temp?: number): SessionSummary {
+    const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
+    const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
+    const summary = this.carrySummary(id, existing, messages, {
+      ...(temp === undefined ? { temperature: undefined } : { temperature: temp }),
+    });
+    this.fs.mkdirRecursive(this.dir());
+    this.fs.writeText(this.path(id), this.serialize(summary, messages));
+    return summary;
+  }
+
   saveContextTokens(id: string, tokens?: number): SessionSummary {
     const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
     const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
@@ -180,6 +199,7 @@ export class JsonlSessionStore implements SessionStore {
             ...(typeof rec.contextWindow === "number" ? { contextWindow: rec.contextWindow } : {}),
             ...(typeof rec.contextTokens === "number" ? { contextTokens: rec.contextTokens } : {}),
             ...(typeof rec.outputTokens === "number" ? { outputTokens: rec.outputTokens } : {}),
+            ...(typeof rec.temperature === "number" ? { temperature: rec.temperature } : {}),
           };
         } else if (typeof rec.role === "string") {
           messages.push(rec as unknown as ChatMessage);
@@ -216,6 +236,7 @@ export class JsonlSessionStore implements SessionStore {
       ...(existing?.contextWindow ? { contextWindow: existing.contextWindow } : {}),
       ...(existing?.contextTokens ? { contextTokens: existing.contextTokens } : {}),
       ...(existing?.outputTokens ? { outputTokens: existing.outputTokens } : {}),
+      ...(existing?.temperature !== undefined ? { temperature: existing.temperature } : {}),
     };
     const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
     this.fs.writeText(this.path(id), this.serialize(summary, messages));
@@ -262,6 +283,7 @@ export class JsonlSessionStore implements SessionStore {
       ...(typeof rec.contextWindow === "number" ? { contextWindow: rec.contextWindow } : {}),
       ...(typeof rec.contextTokens === "number" ? { contextTokens: rec.contextTokens } : {}),
       ...(typeof rec.outputTokens === "number" ? { outputTokens: rec.outputTokens } : {}),
+      ...(typeof rec.temperature === "number" ? { temperature: rec.temperature } : {}),
     };
   }
 
@@ -280,6 +302,7 @@ export class JsonlSessionStore implements SessionStore {
       ...(summary.contextWindow ? { contextWindow: summary.contextWindow } : {}),
       ...(summary.contextTokens ? { contextTokens: summary.contextTokens } : {}),
       ...(summary.outputTokens ? { outputTokens: summary.outputTokens } : {}),
+      ...(summary.temperature !== undefined ? { temperature: summary.temperature } : {}),
     };
     const lines = [JSON.stringify(header), ...messages.map((m) => JSON.stringify(m))];
     return lines.join("\n") + "\n";

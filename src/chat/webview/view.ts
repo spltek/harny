@@ -1,5 +1,6 @@
 import { renderMarkdown } from "./markdown";
 import { clampContextWindow, clampOutputTokens, CONTEXT_STEP, DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, OUTPUT_STEP } from "../context-window";
+import { clampTemperature } from "../temperature";
 
 declare function acquireVsCodeApi(): {
   postMessage(message: unknown): void;
@@ -41,6 +42,7 @@ interface ConfigState {
   thinkingLevel?: string;
   contextWindow?: number;
   outputTokens?: number;
+  temperature?: number;
   contextTokens?: number;
   cachedTokens?: number;
 }
@@ -77,6 +79,8 @@ const ctxPlus = document.getElementById("ctx-plus") as HTMLButtonElement;
 const outInput = document.getElementById("out-input") as HTMLInputElement;
 const outMinus = document.getElementById("out-minus") as HTMLButtonElement;
 const outPlus = document.getElementById("out-plus") as HTMLButtonElement;
+const tempInput = document.getElementById("temp-input") as HTMLInputElement;
+const tempAuto = document.getElementById("temp-auto") as HTMLButtonElement;
 const metTokens = document.getElementById("met-tokens") as HTMLSpanElement;
 const metCtx = document.getElementById("met-ctx") as HTMLSpanElement;
 const metPct = document.getElementById("met-pct") as HTMLSpanElement;
@@ -575,6 +579,8 @@ function setStreaming(active: boolean): void {
   outMinus.disabled = active;
   outPlus.disabled = active;
   outInput.disabled = active;
+  tempInput.disabled = active;
+  tempAuto.disabled = active;
   inputEl.disabled = active;
 }
 
@@ -689,6 +695,43 @@ function renderOutputTokens(c: ConfigState): void {
   const v = clampOutputTokens(c.outputTokens ?? DEFAULT_OUTPUT_TOKENS);
   outInput.value = String(v);
 }
+
+// ── Temperature (0–2; empty = Auto, not sent) ──
+function sendTemperature(value: number | null): void {
+  if (value === null) {
+    tempInput.value = "";
+    vscode.postMessage({ type: "setTemperature", value: null });
+    return;
+  }
+  const v = clampTemperature(value);
+  if (v === undefined) {
+    tempInput.value = "";
+    vscode.postMessage({ type: "setTemperature", value: null });
+    return;
+  }
+  tempInput.value = String(v);
+  vscode.postMessage({ type: "setTemperature", value: v });
+}
+
+function renderTemperature(c: ConfigState): void {
+  const v = c.temperature;
+  tempInput.value =
+    typeof v === "number" && Number.isFinite(v) ? String(Math.round(v * 10) / 10) : "";
+}
+
+function readTemperatureInput(): void {
+  const raw = tempInput.value.trim();
+  if (raw === "") {
+    sendTemperature(null); // Auto
+    return;
+  }
+  const n = Number(raw);
+  if (Number.isNaN(n)) {
+    sendTemperature(null);
+    return;
+  }
+  sendTemperature(n);
+}
 function renderMetrics(c: ConfigState): void {
   const ctx = clampContextWindow(c.contextWindow || DEFAULT_CONTEXT_WINDOW);
   const used = c.contextTokens ?? 0;
@@ -719,6 +762,9 @@ ctxInput.addEventListener("change", () => sendContextWindow(clampContextWindow(N
 outMinus.addEventListener("click", () => sendOutputTokens(clampOutputTokens(Number(outInput.value)) - OUTPUT_STEP));
 outPlus.addEventListener("click", () => sendOutputTokens(clampOutputTokens(Number(outInput.value)) + OUTPUT_STEP));
 outInput.addEventListener("change", () => sendOutputTokens(clampOutputTokens(Number(outInput.value))));
+// Temperature: fire on change (blur/Enter); empty input = Auto.
+tempInput.addEventListener("change", readTemperatureInput);
+tempAuto.addEventListener("click", () => sendTemperature(null));
 
 // ── Host messages ──
 window.addEventListener("message", (e) => {
@@ -889,6 +935,7 @@ window.addEventListener("message", (e) => {
       renderThinkingSelect(msg.config || {});
       ctxInput.value = String(clampContextWindow((msg.config && msg.config.contextWindow) || DEFAULT_CONTEXT_WINDOW));
       renderOutputTokens(msg.config || {});
+      renderTemperature(msg.config || {});
       renderMetrics(msg.config || {});
       break;
   }
@@ -913,6 +960,7 @@ function renderViewState(state: {
   renderThinkingSelect(state.config || {});
   ctxInput.value = String(clampContextWindow((state.config && state.config.contextWindow) || DEFAULT_CONTEXT_WINDOW));
   renderOutputTokens(state.config || {});
+  renderTemperature(state.config || {});
   renderMetrics(state.config || {});
   messagesEl.innerHTML = "";
   resetStreamState();

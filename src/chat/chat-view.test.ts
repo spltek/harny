@@ -56,6 +56,7 @@ function makeStore(): SessionStore {
     saveThinkingLevel: vi.fn((id, level) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, thinkingLevel: level })),
     saveContextWindow: vi.fn((id, window) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(window ? { contextWindow: window } : {}) })),
     saveOutputTokens: vi.fn((id, tokens) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(tokens ? { outputTokens: tokens } : {}) })),
+    saveTemperature: vi.fn((id, temp) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(temp !== undefined ? { temperature: temp } : {}) })),
     saveContextTokens: vi.fn((id, tokens) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(tokens ? { contextTokens: tokens } : {}) })),
   } as unknown as SessionStore;
 }
@@ -374,6 +375,32 @@ describe("ChatViewProvider", () => {
       .map((c) => c[0] as any)
       .filter((m) => m.type === "config");
     expect(configPosts[configPosts.length - 1].config.outputTokens).toBe(16384);
+  });
+
+  it("setTemperature persists to the session, clears on Auto and applies the override", async () => {
+    const { store, provider, modelSelector } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "gpt-4o", provider: undefined });
+    await handler({ type: "setTemperature", value: 0.7 });
+    expect(store.saveTemperature).toHaveBeenCalledWith("s1", 0.7);
+    // 0 is a valid temperature and must be applied, not skipped as falsy.
+    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ temperature: 0.7 }));
+    await handler({ type: "getConfig" });
+    const configPosts = view.webview.postMessage.mock.calls
+      .map((c) => c[0] as any)
+      .filter((m) => m.type === "config");
+    expect(configPosts[configPosts.length - 1].config.temperature).toBe(0.7);
+
+    // Auto (null) clears the session value and the override.
+    await handler({ type: "setTemperature", value: null });
+    expect(store.saveTemperature).toHaveBeenCalledWith("s1", undefined);
+    expect(modelSelector.set).toHaveBeenCalledWith(expect.not.objectContaining({ temperature: expect.any(Number) }));
+    await handler({ type: "getConfig" });
+    const posts = view.webview.postMessage.mock.calls
+      .map((c) => c[0] as any)
+      .filter((m) => m.type === "config");
+    expect(posts[posts.length - 1].config.temperature).toBeUndefined();
   });
 
   it("closeTab falls back to the last open tab when closing the active one", async () => {

@@ -20,6 +20,8 @@ export interface SessionRuntime {
   contextWindow?: number;
   /** Max output tokens per response; undefined = default (8192). */
   outputTokens?: number;
+  /** Sampling temperature; undefined = Auto (not sent). 0 is a valid value. */
+  temperature?: number;
   /** Current context tokens in use (fill metric). */
   contextTokens?: number;
   /** Input tokens served from the provider's prompt cache (informational). */
@@ -69,6 +71,7 @@ export class SessionRegistry {
     rt.thinkingLevel = loaded.summary.thinkingLevel;
     rt.contextWindow = loaded.summary.contextWindow;
     rt.outputTokens = loaded.summary.outputTokens;
+    rt.temperature = loaded.summary.temperature;
     rt.contextTokens = loaded.summary.contextTokens;
     return rt;
   }

@@ -13,6 +13,7 @@ import type { AttachmentService } from "./attachment-service";
 import type { AttachmentInfo } from "./attachment-types";
 import { debugLog } from "../logger";
 import { renderViewHtml } from "./view-html";
+import { toTemperature } from "./temperature";
 import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, toContextWindow, toOutputTokens } from "./context-window";
 import { Compactor, DEFAULT_COMPACTION, CompactionSettings, planCompaction, planManualCompaction, shouldCompact, estimateTokens } from "../core/sessions/compactor";
 
@@ -277,6 +278,18 @@ export class ChatViewProvider implements WebviewViewProvider {
         this.refresh();
         break;
       }
+      case "setTemperature": {
+        const rt = this.activeRuntime();
+        if (!rt) break;
+        // null / invalid -> Auto (not sent); the store clears the saved value.
+        const value = toTemperature(msg.value);
+        rt.temperature = value;
+        this.sessions.saveTemperature(rt.sessionId, value);
+        // Re-apply the active overrides so the runtime config carries temperature.
+        if (rt.model) this.modelSelector.set(this.computeOverrides(rt.model, rt.modelProvider));
+        this.refresh();
+        break;
+      }
       case "send":
         if (rt) await this.send(rt, msg);
         break;
@@ -406,6 +419,10 @@ export class ChatViewProvider implements WebviewViewProvider {
     }
     // The per-session output-token budget wins over the provider's default.
     if (typeof rt?.outputTokens === "number") overrides.maxTokens = rt.outputTokens;
+    // The per-session temperature wins over the provider/config default.
+    // Only when explicitly set: Auto (undefined) leaves config/file values and
+    // the provider's own default untouched. 0 is a valid, deliberate value.
+    if (typeof rt?.temperature === "number") overrides.temperature = rt.temperature;
     return overrides;
   }
 
@@ -533,6 +550,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     thinkingLevel?: "off" | "low" | "medium" | "high";
     contextWindow: number;
     outputTokens: number;
+    temperature?: number;
     contextTokens?: number;
     cachedTokens?: number;
   }> {
@@ -578,6 +596,9 @@ export class ChatViewProvider implements WebviewViewProvider {
       thinkingLevel: cfg.thinkingLevel,
       contextWindow: this.activeRuntime()?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
       outputTokens: this.activeRuntime()?.outputTokens ?? DEFAULT_OUTPUT_TOKENS,
+      // Only the session override, so the UI can show "Auto" (undefined) vs
+      // an explicit value. Config-file defaults stay effective but hidden.
+      temperature: this.activeRuntime()?.temperature,
       contextTokens: this.activeRuntime()?.contextTokens,
       cachedTokens: this.activeRuntime()?.cachedTokens,
     };

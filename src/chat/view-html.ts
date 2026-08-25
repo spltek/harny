@@ -13,6 +13,7 @@ export interface ViewConfigState {
   hostModelsError?: boolean;
   contextWindow: number;
   outputTokens: number;
+  temperature?: number;
   contextTokens?: number;
   cachedTokens?: number;
 }
@@ -281,13 +282,15 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     #thinking-select option { color: #1e1e1e; }
     #thinking-select:disabled { opacity: 0.45; cursor: default; }
     #status .model-label { color: #999; }
-    #ctx-window, #out-window { display: inline-flex; align-items: center; gap: 2px; }
-    #ctx-input, #out-input {
+    #ctx-window, #out-window, #temp-window { display: inline-flex; align-items: center; gap: 2px; }
+    #ctx-input, #out-input, #temp-input {
       width: 5.7rem; height: 1.85rem; background: var(--input-bg); color: var(--fg);
       border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px;
       font-family: var(--font); font-size: 0.85rem; text-align: right;
     }
-    #ctx-input:focus, #out-input:focus { border-color: var(--accent); outline: none; }
+    #ctx-input:focus, #out-input:focus, #temp-input:focus { border-color: var(--accent); outline: none; }
+    /* Empty temperature input = Auto (not sent): neutral italic hint. */
+    #temp-input::placeholder { color: #777; font-style: italic; }
     /* Metrics row: same font, label style and horizontal padding as the status
        row above, so "Tokens:" lines up with "AI Model:". */
     #metrics {
@@ -380,6 +383,11 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
         <button id="out-minus" class="ctx-btn" title="Decrease output tokens">−</button>
         <input id="out-input" type="number" min="256" max="65536" step="512" value="${DEFAULT_OUTPUT_TOKENS}" title="Max output tokens per response">
         <button id="out-plus" class="ctx-btn" title="Increase output tokens">+</button>
+      </div>
+      <span class="model-label">Temp:</span>
+      <div id="temp-window">
+        <input id="temp-input" type="number" min="0" max="2" step="0.1" placeholder="Auto" title="Sampling temperature 0–2; empty = Auto (not sent, provider default)">
+        <button id="temp-auto" class="ctx-btn" title="Reset to Auto (not sent)">×</button>
       </div>
     </div>
   </div>
