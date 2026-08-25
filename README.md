@@ -178,7 +178,7 @@ For providers that expose their model list (OpenAI, OpenRouter, opencode-go, lla
 | `harny.apiKey` | `""` | API key (falls back to `OPENAI_API_KEY` env var) |
 | `harny.baseUrl` | `https://api.openai.com` | Base URL (for compatible providers) |
 | `harny.model` | `gpt-4o` | Model for chat completions |
-| `harny.maxTokens` | `4096` | Max tokens per response |
+| `harny.maxTokens` | `8192` | Max tokens per response |
 | `harny.temperature` | not set | Sampling temperature (omitted when unset; required by strict models) |
 | `harny.contextFiles` | `true` | Auto-include project files as context |
 | `harny.autoApprove` | `false` | Auto-approve tool calls |

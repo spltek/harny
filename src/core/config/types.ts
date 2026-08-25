@@ -59,7 +59,7 @@ export const DEFAULT_CONFIG: HarnyConfig = {
   apiKey: "",
   baseUrl: "https://api.openai.com",
   model: "gpt-4o",
-  maxTokens: 4096,
+  maxTokens: 8192,
   contextFiles: true,
   autoApprove: false,
   autoOpen: false,
