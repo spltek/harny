@@ -241,6 +241,18 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
          size: flex centering + a font-proportional minimum hit area. */
       display: inline-flex; align-items: center; justify-content: center;
       min-height: 1.54rem; padding: 0 0.46rem;
+      /* Subtle 3D "key" chrome: beveled top highlight + bottom shade + small
+         drop shadow; pressing dips the key down and flattens it. */
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.22),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.22),
+        0 1px 2px rgba(0, 0, 0, 0.35);
+      transition: transform 0.08s, box-shadow 0.12s, filter 0.12s, color 0.12s;
+    }
+    button:not(:disabled):hover { filter: brightness(1.12); }
+    button:not(:disabled):active {
+      transform: translateY(1px);
+      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4);
     }
     button:disabled { opacity: 0.3; cursor: default; }
     button.secondary { background: transparent; border: 1px solid var(--border); color: var(--fg); }
@@ -304,16 +316,37 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     #ctx-bar { height: 100%; background: var(--accent); width: 0%; transition: width 0.3s; }
     #ctx-bar.warn { background: var(--error); }
     #compact-btn {
-      background: transparent; border: 1px solid var(--border); color: var(--fg);
+      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.02)), transparent;
+      border: 1px solid var(--border); color: var(--fg);
       border-radius: 4px; padding: 1px 6px; font-size: 0.77rem; cursor: pointer;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.18),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.18),
+        0 1px 2px rgba(0, 0, 0, 0.28);
     }
     #compact-btn:hover:not(:disabled) { color: var(--accent); }
+    #compact-btn:active:not(:disabled) {
+      transform: translateY(1px);
+      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+    }
     .ctx-btn {
       width: 1.38rem; height: 1.38rem; padding: 0; font-size: 0.92rem; line-height: 1;
-      background: transparent; border: 1px solid var(--border); color: var(--fg); border-radius: 3px;
+      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.03)),
+        var(--tool-bg, transparent);
+      border: 1px solid var(--border); color: var(--fg); border-radius: 3px;
       display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.2),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.2),
+        0 1px 2px rgba(0, 0, 0, 0.3);
     }
     .ctx-btn:hover:not(:disabled) { color: var(--accent); }
+    .ctx-btn:active:not(:disabled) {
+      transform: translateY(1px);
+      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+    }
+    /* The Auto reset is a SEPARATE key, clearly detached from the + spinner. */
+    #temp-auto { margin-left: 6px; width: auto; padding: 0 0.5rem; }
     /* Hide the browser's native number spinners; we use our own − / + buttons. */
     #ctx-input::-webkit-outer-spin-button,
     #ctx-input::-webkit-inner-spin-button,
