@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ConfigProvider, HarnyConfig, ProviderCatalog } from "../core/config/types";
-import type { MemoryOverrideConfigProvider } from "../core/config/memory-override-config-provider";
+import { MemoryOverrideConfigProvider } from "../core/config/memory-override-config-provider";
+import { CompositeConfigProvider } from "../core/config/composite-config-provider";
 import type { ModelListProvider } from "../core/llm/model-list";
 import type { AttachmentService } from "./attachment-service";
 import { SessionManager } from "../core/sessions/session-manager";
@@ -121,8 +122,14 @@ function buildHarness(opts: Record<string, unknown> = {}) {
     return agent as unknown as ChatController;
   });
   const registry = new SessionRegistry({ sessions, store, createAgent });
-  const config: ConfigProvider = { get: () => (opts.config as HarnyConfig | undefined) ?? CONFIG };
-  const modelSelector = { set: vi.fn(), clear: vi.fn() } as unknown as MemoryOverrideConfigProvider;
+  // Faithful config chain, like the composition root in extension.ts:
+  // base + a REAL memory-override provider wrapped in spies (keeps behaviour
+  // for the provider and lets tests assert on set/clear calls).
+  const base: ConfigProvider = { get: () => (opts.config as HarnyConfig | undefined) ?? CONFIG };
+  const modelSelector = new MemoryOverrideConfigProvider();
+  vi.spyOn(modelSelector, "set");
+  vi.spyOn(modelSelector, "clear");
+  const config = new CompositeConfigProvider(base, [modelSelector]);
   const attachments = { pick: vi.fn(async () => []), buildContext: vi.fn(async () => ({ text: "", images: [] })) } as unknown as AttachmentService;
   const providers = {
     getProvider: vi.fn(() => opts.providerEntry as import("../core/config/types").ResolvedNamedProvider | undefined),
