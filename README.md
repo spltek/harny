@@ -52,7 +52,7 @@ npm test          # run all unit tests (vitest)
 npm run coverage  # with coverage report
 ```
 
-259 unit tests cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (JSONL store, manager, registry), both LLM providers, host-model fetching, all 11 tools, the agent loop (fake LLM, abort, max turns, loop detection), markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code).
+393 unit tests cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (JSONL store, manager, registry), the OpenAI-compatible LLM provider, host-model fetching, all 11 tools, the agent loop (fake LLM, abort, max turns, loop detection), markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code).
 
 ## Features
 
