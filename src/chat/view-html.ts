@@ -368,17 +368,13 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       background: rgba(255, 255, 255, 0.05);
     }
     #met-pct.warn { color: var(--error); border-color: var(--error); background: rgba(244, 71, 71, 0.1); }
-    #met-cache {
-      padding: 1px 7px; border-radius: 10px; white-space: nowrap;
-      color: var(--accent); border: 1px solid var(--accent);
-      background: rgba(255, 255, 255, 0.05);
-    }
+    #met-cache { white-space: nowrap; color: var(--accent); }
     /* Placeholder state: provider does not report cached tokens. */
-    #met-cache.idle { color: #888; border-color: var(--border); }
-    #met-cache.hidden { display: none; }
-    /* The bar is the hero: taller, rounded, glossy track with inner depth. */
+    #met-cache.idle { color: #888; }
+    /* The bar is the hero: taller, rounded, glossy track with inner depth.
+       Full width (block level in the column card; no flex-grow here). */
     #ctx-bar-wrap {
-      flex: 1; min-width: 60px; height: 8px; border-radius: 4px;
+      width: 100%; height: 8px; border-radius: 4px;
       background: var(--tool-bg); border: 1px solid var(--border); overflow: hidden;
       box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
     }
