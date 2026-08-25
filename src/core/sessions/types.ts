@@ -17,6 +17,8 @@ export interface SessionSummary {
   contextWindow?: number;
   /** Current context tokens in use (latest input_tokens), for the fill %. */
   contextTokens?: number;
+  /** Max output tokens per response for this session (persisted; undefined = default). */
+  outputTokens?: number;
 }
 
 /** A session file plus its loaded messages. */
@@ -43,4 +45,6 @@ export interface SessionStore {
   /** Persist the session's context window (tokens). */
   saveContextWindow(id: string, window?: number): SessionSummary;
   saveContextTokens(id: string, tokens?: number): SessionSummary;
+  /** Persist the session's max output tokens per response. */
+  saveOutputTokens(id: string, tokens?: number): SessionSummary;
 }

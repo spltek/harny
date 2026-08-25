@@ -147,6 +147,20 @@ describe("JsonlSessionStore context window", () => {
     expect(store.load("s1").summary.contextWindow).toBe(200000);
     expect(store.list()[0].contextWindow).toBe(200000);
   });
+
+  it("persists the output tokens and carries it across later saves", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    store.saveOutputTokens("s1", 16384);
+    expect(store.load("s1").summary.outputTokens).toBe(16384);
+    expect(store.list()[0].outputTokens).toBe(16384);
+    // A later save (e.g. a new message) must NOT drop the per-session value.
+    store.saveMessages("s1", [{ role: "user", content: "hi", timestamp: 1 }]);
+    expect(store.load("s1").summary.outputTokens).toBe(16384);
+    // Same for rename.
+    store.rename("s1", "Renamed");
+    expect(store.load("s1").summary.outputTokens).toBe(16384);
+  });
 });
 
 describe("JsonlSessionStore thinking level", () => {

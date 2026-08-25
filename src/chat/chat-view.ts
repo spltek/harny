@@ -13,7 +13,7 @@ import type { AttachmentService } from "./attachment-service";
 import type { AttachmentInfo } from "./attachment-types";
 import { debugLog } from "../logger";
 import { renderViewHtml } from "./view-html";
-import { DEFAULT_CONTEXT_WINDOW, toContextWindow } from "./context-window";
+import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, toContextWindow, toOutputTokens } from "./context-window";
 import { Compactor, DEFAULT_COMPACTION, CompactionSettings, planCompaction, planManualCompaction, shouldCompact, estimateTokens } from "../core/sessions/compactor";
 
 /**
@@ -266,6 +266,17 @@ export class ChatViewProvider implements WebviewViewProvider {
         this.refresh();
         break;
       }
+      case "setOutputTokens": {
+        const rt = this.activeRuntime();
+        if (!rt) break;
+        const value = toOutputTokens(msg.value);
+        rt.outputTokens = value;
+        this.sessions.saveOutputTokens(rt.sessionId, value);
+        // Re-apply the active overrides so the runtime config carries maxTokens.
+        if (rt.model) this.modelSelector.set(this.computeOverrides(rt.model, rt.modelProvider));
+        this.refresh();
+        break;
+      }
       case "send":
         if (rt) await this.send(rt, msg);
         break;
@@ -393,6 +404,8 @@ export class ChatViewProvider implements WebviewViewProvider {
     } else if (rt?.thinkingLevel) {
       overrides.thinkingLevel = rt.thinkingLevel;
     }
+    // The per-session output-token budget wins over the provider's default.
+    if (typeof rt?.outputTokens === "number") overrides.maxTokens = rt.outputTokens;
     return overrides;
   }
 
@@ -519,6 +532,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     thinkingMode?: "bool" | "effort" | "none";
     thinkingLevel?: "off" | "low" | "medium" | "high";
     contextWindow: number;
+    outputTokens: number;
     contextTokens?: number;
     cachedTokens?: number;
   }> {
@@ -563,6 +577,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       thinkingMode: cfg.thinkingMode,
       thinkingLevel: cfg.thinkingLevel,
       contextWindow: this.activeRuntime()?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+      outputTokens: this.activeRuntime()?.outputTokens ?? DEFAULT_OUTPUT_TOKENS,
       contextTokens: this.activeRuntime()?.contextTokens,
       cachedTokens: this.activeRuntime()?.cachedTokens,
     };

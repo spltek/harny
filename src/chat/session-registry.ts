@@ -18,6 +18,8 @@ export interface SessionRuntime {
   thinkingLevel?: ThinkingLevel;
   /** Context window (tokens) for compaction; undefined = default. */
   contextWindow?: number;
+  /** Max output tokens per response; undefined = default (8192). */
+  outputTokens?: number;
   /** Current context tokens in use (fill metric). */
   contextTokens?: number;
   /** Input tokens served from the provider's prompt cache (informational). */
@@ -66,6 +68,7 @@ export class SessionRegistry {
     rt.modelProvider = loaded.summary.modelProvider;
     rt.thinkingLevel = loaded.summary.thinkingLevel;
     rt.contextWindow = loaded.summary.contextWindow;
+    rt.outputTokens = loaded.summary.outputTokens;
     rt.contextTokens = loaded.summary.contextTokens;
     return rt;
   }

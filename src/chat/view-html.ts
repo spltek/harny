@@ -1,6 +1,6 @@
 import type { ChatMessage } from "../core/history/types";
 import type { SessionSummary } from "../core/sessions/types";
-import { DEFAULT_CONTEXT_WINDOW } from "./context-window";
+import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS } from "./context-window";
 
 export interface ViewConfigState {
   provider: string;
@@ -12,6 +12,7 @@ export interface ViewConfigState {
   modelMissing?: boolean;
   hostModelsError?: boolean;
   contextWindow: number;
+  outputTokens: number;
   contextTokens?: number;
   cachedTokens?: number;
 }
@@ -259,8 +260,10 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       justify-content: center;
     }
 
-    #status { display: flex; align-items: center; gap: 6px; padding: 4px 10px; font-size: 0.85rem; border-top: 1px solid var(--border); }
+    #status { display: flex; flex-direction: column; gap: 4px; padding: 4px 10px; font-size: 0.85rem; border-top: 1px solid var(--border); }
     #status .warn { color: var(--error); }
+    /* Each control group is its own row; narrow panels wrap to a second line. */
+    .ctl-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
     /* Working state: the PLAY (send) button blinks in sync with the chat's
        "Working..." bubble — same harny-pulse 1.2s animation, applied in the
        same tick (send/compactStart), so the two pulse together. */
@@ -278,23 +281,23 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     #thinking-select option { color: #1e1e1e; }
     #thinking-select:disabled { opacity: 0.45; cursor: default; }
     #status .model-label { color: #999; }
-    #ctx-window { display: inline-flex; align-items: center; gap: 2px; }
-    #ctx-input {
+    #ctx-window, #out-window { display: inline-flex; align-items: center; gap: 2px; }
+    #ctx-input, #out-input {
       width: 5.7rem; height: 1.85rem; background: var(--input-bg); color: var(--fg);
       border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px;
       font-family: var(--font); font-size: 0.85rem; text-align: right;
     }
-    #ctx-input:focus { border-color: var(--accent); outline: none; }
+    #ctx-input:focus, #out-input:focus { border-color: var(--accent); outline: none; }
     /* Metrics row: same font, label style and horizontal padding as the status
        row above, so "Tokens:" lines up with "AI Model:". */
     #metrics {
       display: flex; align-items: center; gap: 8px; padding: 4px 10px; font-size: 0.85rem;
-      border-top: 1px solid var(--border); color: #9a9a9a;
+      border-top: 1px solid var(--border); color: #9a9a9a; flex-wrap: wrap;
     }
     #metrics .model-label { color: #999; }
     #metrics .met { white-space: nowrap; }
     #met-cache.hidden { display: none; }
-    #ctx-bar-wrap { flex: 1; height: 6px; background: var(--tool-bg); border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
+    #ctx-bar-wrap { flex: 1; min-width: 60px; height: 6px; background: var(--tool-bg); border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
     #ctx-bar { height: 100%; background: var(--accent); width: 0%; transition: width 0.3s; }
     #ctx-bar.warn { background: var(--error); }
     #compact-btn {
@@ -361,8 +364,26 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     <button id="abort-btn" class="secondary" disabled>⏹</button>
   </div>
   <div id="status">
-    <span class="model-label">AI Model:</span>
-    <select id="model-select" title="Switch model"></select>
+    <div class="ctl-row">
+      <span class="model-label">AI Model:</span>
+      <select id="model-select" title="Switch model"></select>
+    </div>
+    <div class="ctl-row">
+      <span class="model-label">Context window:</span>
+      <div id="ctx-window">
+        <button id="ctx-minus" class="ctx-btn" title="Decrease context">−</button>
+        <input id="ctx-input" type="number" min="32000" max="2000000" step="1" value="${DEFAULT_CONTEXT_WINDOW}" title="Context window (tokens)">
+        <button id="ctx-plus" class="ctx-btn" title="Increase context">+</button>
+      </div>
+      <span class="model-label">Output tokens:</span>
+      <div id="out-window">
+        <button id="out-minus" class="ctx-btn" title="Decrease output tokens">−</button>
+        <input id="out-input" type="number" min="256" max="65536" step="512" value="${DEFAULT_OUTPUT_TOKENS}" title="Max output tokens per response">
+        <button id="out-plus" class="ctx-btn" title="Increase output tokens">+</button>
+      </div>
+    </div>
+  </div>
+  <div id="metrics">
     <span class="model-label">Thinking:</span>
     <select id="thinking-select" title="Reasoning effort / thinking level (per session)">
       <option value="off">Off</option>
@@ -370,16 +391,8 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       <option value="medium">Medium</option>
       <option value="high">High</option>
     </select>
-    <span class="model-label">Context window:</span>
-    <div id="ctx-window">
-      <button id="ctx-minus" class="ctx-btn" title="Decrease context">−</button>
-      <input id="ctx-input" type="number" min="32000" max="2000000" step="1" value="128000" title="Context window (tokens)">
-      <button id="ctx-plus" class="ctx-btn" title="Increase context">+</button>
-    </div>
-  </div>
-  <div id="metrics">
     <span class="model-label">Tokens:</span><span class="met" id="met-tokens">0</span>
-    <span class="met">/</span><span class="met" id="met-ctx">128000</span>
+    <span class="met">/</span><span class="met" id="met-ctx">${DEFAULT_CONTEXT_WINDOW}</span>
     <span class="met" id="met-pct">(0%)</span>
     <span class="met" id="met-cache" title="Input tokens served from prompt cache"></span>
     <div id="ctx-bar-wrap"><div id="ctx-bar"></div></div>

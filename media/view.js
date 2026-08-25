@@ -7010,6 +7010,14 @@
     if (!Number.isFinite(v)) return DEFAULT_CONTEXT_WINDOW;
     return Math.min(MAX_CONTEXT_WINDOW, Math.max(MIN_CONTEXT_WINDOW, Math.round(v)));
   }
+  var DEFAULT_OUTPUT_TOKENS = 8192;
+  var MIN_OUTPUT_TOKENS = 256;
+  var MAX_OUTPUT_TOKENS = 65536;
+  var OUTPUT_STEP = 512;
+  function clampOutputTokens(v) {
+    if (!Number.isFinite(v)) return DEFAULT_OUTPUT_TOKENS;
+    return Math.min(MAX_OUTPUT_TOKENS, Math.max(MIN_OUTPUT_TOKENS, Math.round(v)));
+  }
 
   // src/chat/webview/view.ts
   var vscode = acquireVsCodeApi();
@@ -7027,6 +7035,9 @@
   var ctxInput = document.getElementById("ctx-input");
   var ctxMinus = document.getElementById("ctx-minus");
   var ctxPlus = document.getElementById("ctx-plus");
+  var outInput = document.getElementById("out-input");
+  var outMinus = document.getElementById("out-minus");
+  var outPlus = document.getElementById("out-plus");
   var metTokens = document.getElementById("met-tokens");
   var metCtx = document.getElementById("met-ctx");
   var metPct = document.getElementById("met-pct");
@@ -7434,6 +7445,9 @@
     ctxMinus.disabled = active;
     ctxPlus.disabled = active;
     ctxInput.disabled = active;
+    outMinus.disabled = active;
+    outPlus.disabled = active;
+    outInput.disabled = active;
     inputEl.disabled = active;
   }
   function renderModelSelect(c) {
@@ -7519,6 +7533,15 @@
     ctxInput.value = String(v);
     vscode.postMessage({ type: "setContextWindow", value: v });
   }
+  function sendOutputTokens(value) {
+    const v = clampOutputTokens(value);
+    outInput.value = String(v);
+    vscode.postMessage({ type: "setOutputTokens", value: v });
+  }
+  function renderOutputTokens(c) {
+    const v = clampOutputTokens(c.outputTokens ?? DEFAULT_OUTPUT_TOKENS);
+    outInput.value = String(v);
+  }
   function renderMetrics(c) {
     const ctx = clampContextWindow(c.contextWindow || DEFAULT_CONTEXT_WINDOW);
     const used = c.contextTokens ?? 0;
@@ -7542,6 +7565,9 @@
   ctxMinus.addEventListener("click", () => sendContextWindow(clampContextWindow(Number(ctxInput.value)) - CONTEXT_STEP));
   ctxPlus.addEventListener("click", () => sendContextWindow(clampContextWindow(Number(ctxInput.value)) + CONTEXT_STEP));
   ctxInput.addEventListener("change", () => sendContextWindow(clampContextWindow(Number(ctxInput.value))));
+  outMinus.addEventListener("click", () => sendOutputTokens(clampOutputTokens(Number(outInput.value)) - OUTPUT_STEP));
+  outPlus.addEventListener("click", () => sendOutputTokens(clampOutputTokens(Number(outInput.value)) + OUTPUT_STEP));
+  outInput.addEventListener("change", () => sendOutputTokens(clampOutputTokens(Number(outInput.value))));
   window.addEventListener("message", (e) => {
     const msg = e.data;
     switch (msg.type) {
@@ -7693,6 +7719,7 @@
         renderModelSelect(msg.config || {});
         renderThinkingSelect(msg.config || {});
         ctxInput.value = String(clampContextWindow(msg.config && msg.config.contextWindow || DEFAULT_CONTEXT_WINDOW));
+        renderOutputTokens(msg.config || {});
         renderMetrics(msg.config || {});
         break;
     }
@@ -7707,6 +7734,7 @@
     renderModelSelect(state.config || {});
     renderThinkingSelect(state.config || {});
     ctxInput.value = String(clampContextWindow(state.config && state.config.contextWindow || DEFAULT_CONTEXT_WINDOW));
+    renderOutputTokens(state.config || {});
     renderMetrics(state.config || {});
     messagesEl.innerHTML = "";
     resetStreamState();

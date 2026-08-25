@@ -18,6 +18,7 @@ interface SessionMeta {
   thinkingLevel?: string;
   contextWindow?: number;
   contextTokens?: number;
+  outputTokens?: number;
 }
 
 /**
@@ -64,19 +65,41 @@ export class JsonlSessionStore implements SessionStore {
     return summary;
   }
 
-  saveModel(id: string, model?: string, provider?: string): SessionSummary {
-    const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
-    const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
-    const summary: SessionSummary = {
+  /**
+   * Base summary for a mutation: the new file identity plus every persisted
+   * per-session field carried forward from the previous header. Carrying
+   * forward is what keeps model / provider / thinking / context window /
+   * output tokens alive across any subsequent save (message, model, rename…).
+   */
+  private carrySummary(
+    id: string,
+    existing: SessionSummary | undefined,
+    messages: ChatMessage[],
+    extra: Partial<SessionSummary> = {},
+  ): SessionSummary {
+    return {
       id,
       name: existing?.name ?? "New Session",
       createdAt: existing?.createdAt ?? Date.now(),
       updatedAt: Date.now(),
       messageCount: messages.length,
+      ...(existing?.model ? { model: existing.model } : {}),
+      ...(existing?.modelProvider ? { modelProvider: existing.modelProvider } : {}),
+      ...(existing?.thinkingLevel ? { thinkingLevel: existing.thinkingLevel } : {}),
+      ...(existing?.contextWindow ? { contextWindow: existing.contextWindow } : {}),
+      ...(existing?.contextTokens ? { contextTokens: existing.contextTokens } : {}),
+      ...(existing?.outputTokens ? { outputTokens: existing.outputTokens } : {}),
+      ...extra,
+    };
+  }
+
+  saveModel(id: string, model?: string, provider?: string): SessionSummary {
+    const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
+    const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
+    const summary = this.carrySummary(id, existing, messages, {
       ...(model ? { model } : {}),
       ...(provider ? { modelProvider: provider } : {}),
-      ...(existing?.thinkingLevel ? { thinkingLevel: existing.thinkingLevel } : {}),
-    };
+    });
     this.fs.mkdirRecursive(this.dir());
     this.fs.writeText(this.path(id), this.serialize(summary, messages));
     return summary;
@@ -85,16 +108,9 @@ export class JsonlSessionStore implements SessionStore {
   saveThinkingLevel(id: string, level?: ThinkingLevel): SessionSummary {
     const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
     const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
-    const summary: SessionSummary = {
-      id,
-      name: existing?.name ?? "New Session",
-      createdAt: existing?.createdAt ?? Date.now(),
-      updatedAt: Date.now(),
-      messageCount: messages.length,
-      ...(existing?.model ? { model: existing.model } : {}),
-      ...(existing?.modelProvider ? { modelProvider: existing.modelProvider } : {}),
+    const summary = this.carrySummary(id, existing, messages, {
       ...(isThinkingLevel(level) ? { thinkingLevel: level } : {}),
-    };
+    });
     this.fs.mkdirRecursive(this.dir());
     this.fs.writeText(this.path(id), this.serialize(summary, messages));
     return summary;
@@ -103,19 +119,20 @@ export class JsonlSessionStore implements SessionStore {
   saveContextWindow(id: string, window?: number): SessionSummary {
     const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
     const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
-    const summary: SessionSummary = {
-      id,
-      name: existing?.name ?? "New Session",
-      createdAt: existing?.createdAt ?? Date.now(),
-      updatedAt: Date.now(),
-      messageCount: messages.length,
-      ...(existing?.model ? { model: existing.model } : {}),
-      ...(existing?.modelProvider ? { modelProvider: existing.modelProvider } : {}),
-      ...(existing?.thinkingLevel ? { thinkingLevel: existing.thinkingLevel } : {}),
-      ...(existing?.contextWindow ? { contextWindow: existing.contextWindow } : {}),
-      ...(existing?.contextTokens ? { contextTokens: existing.contextTokens } : {}),
+    const summary = this.carrySummary(id, existing, messages, {
       ...(typeof window === "number" ? { contextWindow: window } : {}),
-    };
+    });
+    this.fs.mkdirRecursive(this.dir());
+    this.fs.writeText(this.path(id), this.serialize(summary, messages));
+    return summary;
+  }
+
+  saveOutputTokens(id: string, tokens?: number): SessionSummary {
+    const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
+    const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
+    const summary = this.carrySummary(id, existing, messages, {
+      ...(typeof tokens === "number" ? { outputTokens: tokens } : {}),
+    });
     this.fs.mkdirRecursive(this.dir());
     this.fs.writeText(this.path(id), this.serialize(summary, messages));
     return summary;
@@ -124,19 +141,9 @@ export class JsonlSessionStore implements SessionStore {
   saveContextTokens(id: string, tokens?: number): SessionSummary {
     const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
     const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
-    const summary: SessionSummary = {
-      id,
-      name: existing?.name ?? "New Session",
-      createdAt: existing?.createdAt ?? Date.now(),
-      updatedAt: Date.now(),
-      messageCount: messages.length,
-      ...(existing?.model ? { model: existing.model } : {}),
-      ...(existing?.modelProvider ? { modelProvider: existing.modelProvider } : {}),
-      ...(existing?.thinkingLevel ? { thinkingLevel: existing.thinkingLevel } : {}),
-      ...(existing?.contextWindow ? { contextWindow: existing.contextWindow } : {}),
-      ...(existing?.contextTokens ? { contextTokens: existing.contextTokens } : {}),
+    const summary = this.carrySummary(id, existing, messages, {
       ...(typeof tokens === "number" ? { contextTokens: tokens } : {}),
-    };
+    });
     this.fs.mkdirRecursive(this.dir());
     this.fs.writeText(this.path(id), this.serialize(summary, messages));
     return summary;
@@ -172,6 +179,7 @@ export class JsonlSessionStore implements SessionStore {
               : {}),
             ...(typeof rec.contextWindow === "number" ? { contextWindow: rec.contextWindow } : {}),
             ...(typeof rec.contextTokens === "number" ? { contextTokens: rec.contextTokens } : {}),
+            ...(typeof rec.outputTokens === "number" ? { outputTokens: rec.outputTokens } : {}),
           };
         } else if (typeof rec.role === "string") {
           messages.push(rec as unknown as ChatMessage);
@@ -187,19 +195,7 @@ export class JsonlSessionStore implements SessionStore {
 
   saveMessages(id: string, messages: ChatMessage[]): SessionSummary {
     const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
-    const now = Date.now();
-    const summary: SessionSummary = {
-      id,
-      name: existing?.name ?? "New Session",
-      createdAt: existing?.createdAt ?? now,
-      updatedAt: now,
-      messageCount: messages.length,
-      ...(existing?.model ? { model: existing.model } : {}),
-      ...(existing?.modelProvider ? { modelProvider: existing.modelProvider } : {}),
-      ...(existing?.thinkingLevel ? { thinkingLevel: existing.thinkingLevel } : {}),
-      ...(existing?.contextWindow ? { contextWindow: existing.contextWindow } : {}),
-      ...(existing?.contextTokens ? { contextTokens: existing.contextTokens } : {}),
-    };
+    const summary = this.carrySummary(id, existing, messages);
     this.fs.mkdirRecursive(this.dir());
     this.fs.writeText(this.path(id), this.serialize(summary, messages));
     return summary;
@@ -219,6 +215,7 @@ export class JsonlSessionStore implements SessionStore {
       ...(existing?.thinkingLevel ? { thinkingLevel: existing.thinkingLevel } : {}),
       ...(existing?.contextWindow ? { contextWindow: existing.contextWindow } : {}),
       ...(existing?.contextTokens ? { contextTokens: existing.contextTokens } : {}),
+      ...(existing?.outputTokens ? { outputTokens: existing.outputTokens } : {}),
     };
     const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
     this.fs.writeText(this.path(id), this.serialize(summary, messages));
@@ -264,6 +261,7 @@ export class JsonlSessionStore implements SessionStore {
         : {}),
       ...(typeof rec.contextWindow === "number" ? { contextWindow: rec.contextWindow } : {}),
       ...(typeof rec.contextTokens === "number" ? { contextTokens: rec.contextTokens } : {}),
+      ...(typeof rec.outputTokens === "number" ? { outputTokens: rec.outputTokens } : {}),
     };
   }
 
@@ -281,6 +279,7 @@ export class JsonlSessionStore implements SessionStore {
       ...(summary.thinkingLevel ? { thinkingLevel: summary.thinkingLevel } : {}),
       ...(summary.contextWindow ? { contextWindow: summary.contextWindow } : {}),
       ...(summary.contextTokens ? { contextTokens: summary.contextTokens } : {}),
+      ...(summary.outputTokens ? { outputTokens: summary.outputTokens } : {}),
     };
     const lines = [JSON.stringify(header), ...messages.map((m) => JSON.stringify(m))];
     return lines.join("\n") + "\n";

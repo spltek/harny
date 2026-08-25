@@ -1,5 +1,5 @@
 import { renderMarkdown } from "./markdown";
-import { clampContextWindow, CONTEXT_STEP, DEFAULT_CONTEXT_WINDOW } from "../context-window";
+import { clampContextWindow, clampOutputTokens, CONTEXT_STEP, DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, OUTPUT_STEP } from "../context-window";
 
 declare function acquireVsCodeApi(): {
   postMessage(message: unknown): void;
@@ -40,6 +40,7 @@ interface ConfigState {
   thinkingMode?: string;
   thinkingLevel?: string;
   contextWindow?: number;
+  outputTokens?: number;
   contextTokens?: number;
   cachedTokens?: number;
 }
@@ -73,6 +74,9 @@ const thinkingSelect = document.getElementById("thinking-select") as HTMLSelectE
 const ctxInput = document.getElementById("ctx-input") as HTMLInputElement;
 const ctxMinus = document.getElementById("ctx-minus") as HTMLButtonElement;
 const ctxPlus = document.getElementById("ctx-plus") as HTMLButtonElement;
+const outInput = document.getElementById("out-input") as HTMLInputElement;
+const outMinus = document.getElementById("out-minus") as HTMLButtonElement;
+const outPlus = document.getElementById("out-plus") as HTMLButtonElement;
 const metTokens = document.getElementById("met-tokens") as HTMLSpanElement;
 const metCtx = document.getElementById("met-ctx") as HTMLSpanElement;
 const metPct = document.getElementById("met-pct") as HTMLSpanElement;
@@ -568,6 +572,9 @@ function setStreaming(active: boolean): void {
   ctxMinus.disabled = active;
   ctxPlus.disabled = active;
   ctxInput.disabled = active;
+  outMinus.disabled = active;
+  outPlus.disabled = active;
+  outInput.disabled = active;
   inputEl.disabled = active;
 }
 
@@ -670,6 +677,18 @@ function sendContextWindow(value: number): void {
   ctxInput.value = String(v);
   vscode.postMessage({ type: "setContextWindow", value: v });
 }
+
+// ── Output-tokens spinner (max tokens per response) ──
+function sendOutputTokens(value: number): void {
+  const v = clampOutputTokens(value);
+  outInput.value = String(v);
+  vscode.postMessage({ type: "setOutputTokens", value: v });
+}
+
+function renderOutputTokens(c: ConfigState): void {
+  const v = clampOutputTokens(c.outputTokens ?? DEFAULT_OUTPUT_TOKENS);
+  outInput.value = String(v);
+}
 function renderMetrics(c: ConfigState): void {
   const ctx = clampContextWindow(c.contextWindow || DEFAULT_CONTEXT_WINDOW);
   const used = c.contextTokens ?? 0;
@@ -697,6 +716,9 @@ ctxMinus.addEventListener("click", () => sendContextWindow(clampContextWindow(Nu
 ctxPlus.addEventListener("click", () => sendContextWindow(clampContextWindow(Number(ctxInput.value)) + CONTEXT_STEP));
 // Fire on change (blur/Enter), not on every keystroke, so values can be typed freely.
 ctxInput.addEventListener("change", () => sendContextWindow(clampContextWindow(Number(ctxInput.value))));
+outMinus.addEventListener("click", () => sendOutputTokens(clampOutputTokens(Number(outInput.value)) - OUTPUT_STEP));
+outPlus.addEventListener("click", () => sendOutputTokens(clampOutputTokens(Number(outInput.value)) + OUTPUT_STEP));
+outInput.addEventListener("change", () => sendOutputTokens(clampOutputTokens(Number(outInput.value))));
 
 // ── Host messages ──
 window.addEventListener("message", (e) => {
@@ -866,6 +888,7 @@ window.addEventListener("message", (e) => {
       renderModelSelect(msg.config || {});
       renderThinkingSelect(msg.config || {});
       ctxInput.value = String(clampContextWindow((msg.config && msg.config.contextWindow) || DEFAULT_CONTEXT_WINDOW));
+      renderOutputTokens(msg.config || {});
       renderMetrics(msg.config || {});
       break;
   }
@@ -889,6 +912,7 @@ function renderViewState(state: {
   renderModelSelect(state.config || {});
   renderThinkingSelect(state.config || {});
   ctxInput.value = String(clampContextWindow((state.config && state.config.contextWindow) || DEFAULT_CONTEXT_WINDOW));
+  renderOutputTokens(state.config || {});
   renderMetrics(state.config || {});
   messagesEl.innerHTML = "";
   resetStreamState();

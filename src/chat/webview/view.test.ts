@@ -16,8 +16,8 @@ function setupDom(): void {
       <button id="send-btn">▶</button>
       <button id="abort-btn" disabled>⏹</button>
     </div>
-    <div id="status">AI Model: <select id="model-select"></select>Thinking: <select id="thinking-select"><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select><button id="ctx-minus">−</button><input id="ctx-input" type="number" value="128000"><button id="ctx-plus">+</button></div>
-    <div id="metrics"><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button></div>
+    <div id="status">AI Model: <select id="model-select"></select><button id="ctx-minus">−</button><input id="ctx-input" type="number" value="128000"><button id="ctx-plus">+</button><button id="out-minus">−</button><input id="out-input" type="number" value="8192"><button id="out-plus">+</button></div>
+    <div id="metrics"><select id="thinking-select"><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button></div>
     <div id="name-modal" class="hidden">
       <div class="name-modal-backdrop"></div>
       <div class="name-modal-card">
@@ -157,11 +157,15 @@ describe("view webview client", () => {
     expect((document.getElementById("ctx-input") as HTMLInputElement).disabled).toBe(true);
     expect((document.getElementById("ctx-minus") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("ctx-plus") as HTMLButtonElement).disabled).toBe(true);
+    expect((document.getElementById("out-input") as HTMLInputElement).disabled).toBe(true);
+    expect((document.getElementById("out-minus") as HTMLButtonElement).disabled).toBe(true);
+    expect((document.getElementById("out-plus") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("user-input") as HTMLTextAreaElement).disabled).toBe(true);
     hostMessage({ type: "status", active: false });
     expect((document.getElementById("compact-btn") as HTMLButtonElement).disabled).toBe(false);
     expect((document.getElementById("model-select") as HTMLSelectElement).disabled).toBe(false);
     expect((document.getElementById("ctx-input") as HTMLInputElement).disabled).toBe(false);
+    expect((document.getElementById("out-input") as HTMLInputElement).disabled).toBe(false);
     expect((document.getElementById("user-input") as HTMLTextAreaElement).disabled).toBe(false);
   });
 
@@ -734,6 +738,34 @@ describe("context window spinner", () => {
     input.value = "1000"; // below min -> clamp to 32000
     input.dispatchEvent(new Event("change"));
     expect(posted).toContainEqual({ type: "setContextWindow", value: 32000 });
+  });
+});
+
+describe("output tokens spinner", () => {
+  beforeEach(() => { posted.length = 0; setupDom(); });
+
+  it("renders the value from config (default 8192) and posts changes via + / -", async () => {
+    await loadView();
+    const input = document.getElementById("out-input") as HTMLInputElement;
+    expect(input.value).toBe("8192");
+
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], outputTokens: 16384 } });
+    expect(input.value).toBe("16384");
+
+    (document.getElementById("out-plus") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "setOutputTokens", value: 16896 });
+    expect(input.value).toBe("16896");
+
+    (document.getElementById("out-minus") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "setOutputTokens", value: 16384 });
+  });
+
+  it("clamps a manually typed value and posts it on change", async () => {
+    await loadView();
+    const input = document.getElementById("out-input") as HTMLInputElement;
+    input.value = "100"; // below min -> clamp to 256
+    input.dispatchEvent(new Event("change"));
+    expect(posted).toContainEqual({ type: "setOutputTokens", value: 256 });
   });
 });
 

@@ -47,6 +47,10 @@ export class SessionManager {
     return this.store.saveContextWindow(id, window);
   }
 
+  saveOutputTokens(id: string, tokens?: number): SessionSummary {
+    return this.store.saveOutputTokens(id, tokens);
+  }
+
   saveContextTokens(id: string, tokens?: number): SessionSummary {
     return this.store.saveContextTokens(id, tokens);
   }

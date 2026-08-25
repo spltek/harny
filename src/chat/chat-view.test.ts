@@ -55,6 +55,7 @@ function makeStore(): SessionStore {
     saveModel: vi.fn((id, model, provider) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(model ? { model } : {}), ...(provider ? { modelProvider: provider } : {}) })),
     saveThinkingLevel: vi.fn((id, level) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, thinkingLevel: level })),
     saveContextWindow: vi.fn((id, window) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(window ? { contextWindow: window } : {}) })),
+    saveOutputTokens: vi.fn((id, tokens) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(tokens ? { outputTokens: tokens } : {}) })),
     saveContextTokens: vi.fn((id, tokens) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(tokens ? { contextTokens: tokens } : {}) })),
   } as unknown as SessionStore;
 }
@@ -359,6 +360,20 @@ describe("ChatViewProvider", () => {
     await provider.createNew(); // s1
     await handler({ type: "setThinkingLevel", level: "high" });
     expect(store.saveThinkingLevel).toHaveBeenCalledWith("s1", "high");
+  });
+
+  it("setOutputTokens persists the value to the session and refreshes", async () => {
+    const { store, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "gpt-4o", provider: undefined }); // runtime needs a model
+    await handler({ type: "setOutputTokens", value: 16384 });
+    expect(store.saveOutputTokens).toHaveBeenCalledWith("s1", 16384);
+    await handler({ type: "getConfig" });
+    const configPosts = view.webview.postMessage.mock.calls
+      .map((c) => c[0] as any)
+      .filter((m) => m.type === "config");
+    expect(configPosts[configPosts.length - 1].config.outputTokens).toBe(16384);
   });
 
   it("closeTab falls back to the last open tab when closing the active one", async () => {
