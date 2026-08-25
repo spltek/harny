@@ -5,14 +5,12 @@
   "harny.provider": "openai",
   "harny.apiKey": "sk-your-key-here",
   "harny.model": "gpt-4o",
-  "harny.protocol": "chat",
 
   // ─── OLLAMA (locale) ───
   // "harny.provider": "openai-compatible",
   // "harny.baseUrl": "http://localhost:11434",
   // "harny.apiKey": "ollama",
   // "harny.model": "llama3.2",
-  // "harny.protocol": "chat",
 
   // ─── Thinking / reasoning level (per session, in the chat header) ───
   // "harny.thinkingMode": "bool",    // "bool" = llama.cpp chat_template_kwargs | "effort" = reasoning_effort
@@ -23,12 +21,10 @@
   // "harny.baseUrl": "http://localhost:1234",
   // "harny.apiKey": "not-needed",
   // "harny.model": "local-model",
-  // "harny.protocol": "chat",
 
   // ─── Anthropic (via proxy compatibile) ───
   // "harny.provider": "openai-compatible",
   // "harny.baseUrl": "https://api.anthropic.com",
   // "harny.apiKey": "sk-ant-...",
-  // "harny.model": "claude-sonnet-4-20250514",
-  // "harny.protocol": "chat"
+  // "harny.model": "claude-sonnet-4-20250514"
 }

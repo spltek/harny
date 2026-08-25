@@ -2,7 +2,7 @@
 
 > **AI coding harness for VS Code** — fast like pi, with a SOLID, fully-tested core.
 
-Harny brings a full AI coding agent directly into VS Code. It supports both **OpenAI Chat Completions** and **OpenAI Responses** protocols, with tool-calling (read, write, edit, bash, search) and real-time streaming.
+Harny brings a full AI coding agent directly into VS Code. It speaks the **OpenAI Chat Completions** protocol (including OpenAI-compatible providers such as Ollama, LM Studio and llama.cpp), with tool-calling (read, write, edit, bash, search) and real-time streaming.
 
 ## Architecture
 
@@ -16,7 +16,7 @@ harny/
 │   │   ├── config/               # ConfigProvider <- VscodeConfigProvider
 │   │   ├── events/               # EventBus <- InMemoryEventBus
 │   │   ├── history/              # ChatHistory <- PersistentChatHistory (bound to a session)
-│   │   ├── llm/                  # LLMProvider <- OpenAIChatProvider, OpenAIResponsesProvider
+│   │   ├── llm/                  # LLMProvider <- OpenAIChatProvider
 │   │   │                         #   HttpClient, SSE parser, factory, model-list fetcher
 │   │   ├── agent/                # Agent orchestrator (DI), ToolCallAccumulator, SystemPrompt
 │   │   ├── sessions/             # SessionStore <- JsonlSessionStore, SessionManager
@@ -178,7 +178,6 @@ For providers that expose their model list (OpenAI, OpenRouter, opencode-go, lla
 | `harny.apiKey` | `""` | API key (falls back to `OPENAI_API_KEY` env var) |
 | `harny.baseUrl` | `https://api.openai.com` | Base URL (for compatible providers) |
 | `harny.model` | `gpt-4o` | Model for chat completions |
-| `harny.protocol` | `chat` | Protocol: `chat` or `responses` |
 | `harny.maxTokens` | `4096` | Max tokens per response |
 | `harny.temperature` | not set | Sampling temperature (omitted when unset; required by strict models) |
 | `harny.contextFiles` | `true` | Auto-include project files as context |
@@ -209,21 +208,9 @@ For providers that expose their model list (OpenAI, OpenRouter, opencode-go, lla
   "harny.provider": "openai-compatible",
   "harny.baseUrl": "http://localhost:11434",
   "harny.apiKey": "ollama",
-  "harny.model": "llama3.2",
-  "harny.protocol": "chat"
+  "harny.model": "llama3.2"
 }
 ```
-
-## Protocol Comparison
-
-| Feature | Chat Completions | Responses |
-|---------|-----------------|-----------|
-| **Endpoint** | `POST /v1/chat/completions` | `POST /v1/responses` |
-| **Streaming** | SSE (`stream: true`) | SSE (`stream: true`) |
-| **Tools** | `tools` array | `tools` array |
-| **State** | Stateless (full history) | Stateful (`previous_response_id`) |
-| **Multimodal** | Vision via content parts | Native image/file support |
-| **Best for** | Standard chat, broad compat | Advanced orchestration, stateful workflows |
 
 ## Packaging
 

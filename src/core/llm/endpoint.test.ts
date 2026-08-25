@@ -21,8 +21,8 @@ describe("endpointUrl", () => {
   });
 
   it("accepts paths without a leading slash", () => {
-    expect(endpointUrl("https://api.openai.com", "responses")).toBe(
-      "https://api.openai.com/v1/responses",
+    expect(endpointUrl("https://api.openai.com", "chat/completions")).toBe(
+      "https://api.openai.com/v1/chat/completions",
     );
   });
 });
