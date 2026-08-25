@@ -11,6 +11,7 @@ export interface ViewConfigState {
   providerModels: { provider: string; model: string }[];
   modelMissing?: boolean;
   hostModelsError?: boolean;
+  workspaceReady?: boolean;
   contextWindow: number;
   outputTokens: number;
   temperature?: number;
@@ -83,10 +84,17 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       overflow: hidden;
     }
 
-    /* Sessions area */
+    /* Sessions area: a card matching the control cards below. */
+    .sessions-card {
+      border: 1px solid var(--border); border-radius: 8px;
+      margin: 8px 10px 0;
+      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0));
+      overflow: hidden; /* keep the scrolling list inside the rounded corners */
+      flex-shrink: 0;
+    }
     #session-head {
       display: flex; align-items: center; gap: 6px;
-      padding: 6px 10px; font-weight: 600; font-size: 0.85rem;
+      padding: 5px 10px; font-weight: 600; font-size: 0.85rem;
       border-bottom: 1px solid var(--border);
       cursor: pointer; user-select: none;
     }
@@ -95,12 +103,16 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     #session-head button {
       background: transparent; border: none; color: var(--accent);
       font-size: 1.08rem; cursor: pointer; padding: 0 4px;
+      border-radius: 4px; transition: background-color 0.12s;
     }
-    #sessions { overflow-y: auto; max-height: 40vh; border-bottom: 1px solid var(--border); }
+    #session-head button:hover { background: rgba(255, 255, 255, 0.08); }
+    #sessions { overflow-y: auto; max-height: 40vh; padding: 4px 0 6px; }
     #sessions.hidden { display: none; }
     .srow {
       display: flex; align-items: center; gap: 3px;
       padding: 4px 10px; font-size: 0.92rem; flex-wrap: wrap;
+      border-radius: 6px; margin: 1px 4px;
+      transition: background-color 0.1s;
     }
     .srow:hover { background: var(--tool-bg); }
     /* Creation + last-modified dates, on their own line BEFORE the name. */
@@ -427,6 +439,13 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     body.no-session #input-area,
     body.no-session #status,
     body.no-session #metrics { display: none; }
+    /* No (single) workspace: sessions/tabs/controls are all hidden; the foldes
+       hero asks the user to open one folder. Takes precedence over no-session. */
+    body.no-workspace #sessions-card,
+    body.no-workspace #tabs,
+    body.no-workspace #input-area,
+    body.no-workspace #status,
+    body.no-workspace #metrics { display: none; }
     /* Point the eye up at the sessions list: the second path to act. */
     body.no-session #session-head { color: var(--accent); }
     .empty-hero {
@@ -507,15 +526,47 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     }
     #name-input:focus { border-color: var(--accent); }
     #name-modal .name-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+    /* ── In-panel alert / confirm modal (same family as the name modal) ── */
+    #alert-modal {
+      position: fixed; inset: 0; z-index: 110;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #alert-modal.hidden { display: none; }
+    #alert-modal .alert-backdrop {
+      position: absolute; inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+    }
+    #alert-modal .alert-card {
+      position: relative;
+      width: min(85%, 340px);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    #alert-modal h3 { margin: 0; font-size: 0.92rem; font-weight: 600; }
+    #alert-modal .alert-message {
+      font-size: 0.85rem; color: #bbb; line-height: 1.5;
+      word-wrap: break-word; white-space: pre-wrap;
+    }
+    #alert-modal .alert-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    #alert-ok.danger { background: var(--error); }
   </style>
 </head>
 <body>
-  <div id="session-head">
-    <span class="toggle">▼</span><span>Sessions</span>
-    <span class="spacer"></span>
-    <button id="new-session" title="New session">＋</button>
+  <div id="sessions-card" class="sessions-card">
+    <div id="session-head">
+      <span class="toggle">▼</span><span>Sessions</span>
+      <span class="spacer"></span>
+      <button id="new-session" title="New session">＋</button>
+    </div>
+    <div id="sessions"></div>
   </div>
-  <div id="sessions"></div>
   <div id="tabs"></div>
   <div id="messages"></div>
   <div id="working-bar" class="hidden">● Working...</div>
@@ -593,6 +644,17 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       <div class="name-modal-actions">
         <button id="name-cancel" class="secondary">Cancel</button>
         <button id="name-ok">Create</button>
+      </div>
+    </div>
+  </div>
+  <div id="alert-modal" class="hidden">
+    <div class="alert-backdrop"></div>
+    <div class="alert-card">
+      <h3 id="alert-title"></h3>
+      <div id="alert-message" class="alert-message"></div>
+      <div class="alert-actions">
+        <button id="alert-cancel" class="secondary">Cancel</button>
+        <button id="alert-ok">OK</button>
       </div>
     </div>
   </div>

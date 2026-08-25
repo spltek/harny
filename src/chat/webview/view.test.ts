@@ -41,6 +41,17 @@ function setupDom(initOverrides: Record<string, unknown> = {}): void {
         </div>
       </div>
     </div>
+    <div id="alert-modal" class="hidden">
+      <div class="alert-backdrop"></div>
+      <div class="alert-card">
+        <h3 id="alert-title"></h3>
+        <div id="alert-message" class="alert-message"></div>
+        <div class="alert-actions">
+          <button id="alert-cancel" class="secondary">Cancel</button>
+          <button id="alert-ok">OK</button>
+        </div>
+      </div>
+    </div>
     <script id="harny-view-init" type="application/json">${JSON.stringify(init)}</script>
   `;
   (globalThis as Record<string, unknown>).acquireVsCodeApi = () => ({
@@ -309,23 +320,23 @@ describe("view webview client", () => {
     const input = document.getElementById("name-input") as HTMLInputElement;
     expect(modal.classList.contains("hidden")).toBe(true);
 
-    hostMessage({ type: "promptName", mode: "create" });
+    hostMessage({ type: "modal", modalId: 1, kind: "name", mode: "create", current: undefined });
     expect(modal.classList.contains("hidden")).toBe(false);
     expect(input.value).toBe("New Session");
     input.value = "Cool Project";
     (document.getElementById("name-ok") as HTMLButtonElement).click();
-    expect(posted).toContainEqual({ type: "sessionName", mode: "create", name: "Cool Project" });
+    expect(posted).toContainEqual({ type: "modalResponse", id: 1, value: "Cool Project" });
     expect(modal.classList.contains("hidden")).toBe(true);
   });
 
-  it("rename modal is prefilled and cancel posts cancelNamePrompt", async () => {
+  it("rename modal is prefilled and cancel responds undefined", async () => {
     await loadView();
     const modal = document.getElementById("name-modal") as HTMLElement;
     const input = document.getElementById("name-input") as HTMLInputElement;
-    hostMessage({ type: "promptName", mode: "rename", id: "a", current: "Old Name" });
+    hostMessage({ type: "modal", modalId: 2, kind: "name", mode: "rename", id: "a", current: "Old Name" });
     expect(input.value).toBe("Old Name");
     (document.getElementById("name-cancel") as HTMLButtonElement).click();
-    expect(posted).toContainEqual({ type: "cancelNamePrompt" });
+    expect(posted).toContainEqual({ type: "modalResponse", id: 2, value: undefined });
     expect(modal.classList.contains("hidden")).toBe(true);
   });
 
@@ -333,15 +344,15 @@ describe("view webview client", () => {
     await loadView();
     const input = document.getElementById("name-input") as HTMLInputElement;
     const modal = document.getElementById("name-modal") as HTMLElement;
-    hostMessage({ type: "promptName", mode: "rename", id: "a", current: "X" });
+    hostMessage({ type: "modal", modalId: 3, kind: "name", mode: "rename", id: "a", current: "X" });
     input.value = "Entered Name";
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    expect(posted).toContainEqual({ type: "sessionName", mode: "rename", id: "a", name: "Entered Name" });
+    expect(posted).toContainEqual({ type: "modalResponse", id: 3, value: "Entered Name" });
     expect(modal.classList.contains("hidden")).toBe(true);
 
-    hostMessage({ type: "promptName", mode: "create" });
+    hostMessage({ type: "modal", modalId: 4, kind: "name", mode: "create", current: undefined });
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    expect(posted).toContainEqual({ type: "cancelNamePrompt" });
+    expect(posted).toContainEqual({ type: "modalResponse", id: 4, value: undefined });
     expect(modal.classList.contains("hidden")).toBe(true);
   });
 
@@ -729,6 +740,40 @@ describe("branch from assistant bubble", () => {
   });
 });
 
+describe("in-panel alert modal", () => {
+  beforeEach(() => { posted.length = 0; setupDom(); });
+
+  it("shows the alert and OK responds true", async () => {
+    await loadView();
+    hostMessage({ type: "modal", modalId: 7, kind: "alert", alertKind: "info", title: "Name already in use", message: "A session named X already exists." });
+    const modal = document.getElementById("alert-modal") as HTMLDivElement;
+    expect(modal.classList.contains("hidden")).toBe(false);
+    expect(document.getElementById("alert-title")?.textContent).toBe("Name already in use");
+    expect(document.getElementById("alert-message")?.textContent).toContain("already exists");
+    (document.getElementById("alert-ok") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "modalResponse", id: 7, value: true });
+    expect(modal.classList.contains("hidden")).toBe(true);
+  });
+
+  it("confirm shows Cancel; cancel and Escape respond false", async () => {
+    await loadView();
+    hostMessage({ type: "modal", modalId: 3, kind: "alert", alertKind: "confirm", title: "Delete session", message: "Delete session X?", confirmText: "Delete" });
+    expect((document.getElementById("alert-ok") as HTMLButtonElement).textContent).toBe("Delete");
+    (document.getElementById("alert-cancel") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "modalResponse", id: 3, value: false });
+
+    hostMessage({ type: "modal", modalId: 4, kind: "alert", alertKind: "confirm", title: "T", message: "M", confirmText: "OK" });
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(posted).toContainEqual({ type: "modalResponse", id: 4, value: false });
+  });
+
+  it("single-button alerts hide the Cancel key", async () => {
+    await loadView();
+    hostMessage({ type: "modal", modalId: 1, kind: "alert", alertKind: "error", title: "E", message: "M" });
+    expect((document.getElementById("alert-cancel") as HTMLButtonElement).style.display).toBe("none");
+  });
+});
+
 function messagesElLastContent(): string {
   const els = document.querySelectorAll("#messages > *");
   const last = els[els.length - 1];
@@ -922,6 +967,21 @@ describe("empty shell (no open session)", () => {
     expect(document.querySelector(".empty-hero")).toBeNull();
     expect(document.querySelector("#messages .msg.user")?.textContent).toBe("hello");
   });
+
+  it("shows the folder hero when no single workspace is open", async () => {
+    setupDom({
+      sessions: [],
+      openIds: [],
+      activeId: undefined,
+      messages: [],
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000, workspaceReady: false },
+    });
+    await loadView();
+    expect(document.body.classList.contains("no-workspace")).toBe(true);
+    expect(document.body.classList.contains("no-session")).toBe(false);
+    expect(document.querySelector(".empty-hero")).not.toBeNull();
+    expect(document.querySelector(".empty-hero p")?.textContent).toContain("single open folder");
+  });
 });
 
 describe("session name modal (unique names)", () => {
@@ -929,7 +989,7 @@ describe("session name modal (unique names)", () => {
 
   it("blocks duplicate names for create and lets unique ones pass", async () => {
     await loadView();
-    hostMessage({ type: "promptName", mode: "create" });
+    hostMessage({ type: "modal", modalId: 10, kind: "name", mode: "create", current: undefined });
     const input = document.getElementById("name-input") as HTMLInputElement;
     const ok = document.getElementById("name-ok") as HTMLButtonElement;
     const err = document.getElementById("name-error") as HTMLDivElement;
@@ -943,12 +1003,12 @@ describe("session name modal (unique names)", () => {
     expect(ok.disabled).toBe(false);
     expect(err.textContent).toBe("");
     ok.click();
-    expect(posted).toContainEqual({ type: "sessionName", mode: "create", id: undefined, name: "Refactor 2" });
+    expect(posted).toContainEqual({ type: "modalResponse", id: 10, value: "Refactor 2" });
   });
 
   it("rename keeps its own name valid and Enter cannot bypass a duplicate", async () => {
     await loadView();
-    hostMessage({ type: "promptName", mode: "rename", id: "a", current: "Refactor" });
+    hostMessage({ type: "modal", modalId: 11, kind: "name", mode: "rename", id: "a", current: "Refactor" });
     const input = document.getElementById("name-input") as HTMLInputElement;
     const ok = document.getElementById("name-ok") as HTMLButtonElement;
     // Own current name stays valid (self excluded from the check).
@@ -958,12 +1018,12 @@ describe("session name modal (unique names)", () => {
     input.dispatchEvent(new Event("input"));
     expect(ok.disabled).toBe(true);
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    expect(posted.some((m: any) => m.type === "sessionName")).toBe(false);
+    expect(posted.some((m: any) => m.type === "modalResponse")).toBe(false);
   });
 
   it("defaults a branch to the original name and requires it to be unique", async () => {
     await loadView();
-    hostMessage({ type: "promptName", mode: "branch", id: "a", current: "Refactor" });
+    hostMessage({ type: "modal", modalId: 12, kind: "name", mode: "branch", id: "a", current: "Refactor" });
     const input = document.getElementById("name-input") as HTMLInputElement;
     expect(input.value).toBe("Refactor");
     expect((document.getElementById("name-ok") as HTMLButtonElement).disabled).toBe(true);

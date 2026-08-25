@@ -2,24 +2,17 @@ import { join } from "node:path";
 
 export const HARNY_HOME_ENV = "HARNY_HOME";
 
-/** pi-style workspace key: `/Users/x/proj` -> `--Users-x-proj--` (safe as a folder name). */
-export function sanitizeWorkspaceKey(cwd: string): string {
-  const clean = cwd.trim().replaceAll("/", "-").replace(/^[-]+|[-]+$/g, "");
-  return clean ? `--${clean}--` : "--global--";
-}
+/** Hidden folder, inside the workspace root, holding the per-folder sessions. */
+export const SESSIONS_DIR_NAME = ".harny-sessions";
 
 export interface ResolvedHome {
-  /** Base directory for all extension data (env override or VS Code globalStorage). */
+  /** Base directory for extension data (env override or VS Code globalStorage). */
   home: string;
-  /** Per-workspace sessions directory under `home`. */
-  sessionsDir: string;
 }
 
 export interface ResolveHomeOptions {
   /** Absolute path of the extension's VS Code globalStorage directory. */
   globalStorageFsPath: string;
-  /** Current workspace root (used to scope sessions per-project). */
-  workspaceCwd?: string;
   /** Process environment, used for the HARNY_HOME override. */
   env?: Record<string, string | undefined>;
 }
@@ -34,13 +27,22 @@ export interface ResolveHomeOptions {
  *   `~/.config/Code/User/globalStorage/spltek.harny` on Linux)
  * - override: `HARNY_HOME` env var (portable/backup setups)
  *
- * Sessions are stored per workspace in `home/sessions/<workspaceKey>/`,
- * mirroring pi and Cursor.
+ * This home hosts ONLY the dedicated `config.json` (+ any future global data).
+ * SESSIONS are per-workspace: they live in `<workspaceRoot>/.harny-sessions`
+ * (see sessionsDirFor), so they follow the folder — rename, move or delete a
+ * project and its sessions go with it (no global mapping, no dead entries).
  */
 export function resolveHome(opts: ResolveHomeOptions): ResolvedHome {
   const envOverride = opts.env?.[HARNY_HOME_ENV]?.trim();
   const home = envOverride || opts.globalStorageFsPath;
-  const workspaceCwd = opts.workspaceCwd?.trim();
-  const sessionsDir = join(home, "sessions", sanitizeWorkspaceKey(workspaceCwd || "global"));
-  return { home, sessionsDir };
+  return { home };
+}
+
+/**
+ * Sessions directory for a workspace root, or undefined when there is NO
+ * single folder to scope to (Harny requires exactly one open folder).
+ */
+export function sessionsDirFor(workspaceCwd: string | undefined): string | undefined {
+  const root = workspaceCwd?.trim();
+  return root ? join(root, SESSIONS_DIR_NAME) : undefined;
 }

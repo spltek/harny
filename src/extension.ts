@@ -28,8 +28,20 @@ import {
 import { ChatViewProvider } from "./chat/chat-view";
 import { SessionRegistry } from "./chat/session-registry";
 import { AttachmentService } from "./chat/attachment-service";
-import { resolveHome } from "./core/storage/home";
+import { resolveHome, sessionsDirFor, SESSIONS_DIR_NAME } from "./core/storage/home";
+import { ensureSessionGitignore } from "./core/storage/workspace-gitignore";
 import { debugLog, infoLog } from "./logger";
+
+/**
+ * Harny requires EXACTLY ONE open workspace folder: sessions live in
+ * `<root>/.harny-sessions` (they follow the folder). No folder, or a
+ * multi-root workspace => undefined (the panel shows the "open a folder"
+ * shell and session-creating commands are guarded).
+ */
+function singleWorkspaceRoot(): string | undefined {
+  const folders = workspace.workspaceFolders;
+  return folders?.length === 1 ? folders[0].uri.fsPath : undefined;
+}
 
 /**
  * Composition root. One agent = one session: the SessionRegistry keeps a
@@ -39,26 +51,42 @@ import { debugLog, infoLog } from "./logger";
 export function activate(context: ExtensionContext) {
   debugLog("activate called");
 
-  const cwd = () => workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
-  infoLog("activate: cwd=", cwd());
+  let root = singleWorkspaceRoot();
+  infoLog("activate: root=", root ?? "<none>");
 
   const resolved = resolveHome({
     globalStorageFsPath: context.globalStorageUri.fsPath,
-    workspaceCwd: cwd(),
     env: process.env,
   });
   try {
     mkdirSync(resolved.home, { recursive: true });
-    mkdirSync(resolved.sessionsDir, { recursive: true });
   } catch (e) {
-    debugLog("could not create storage dirs", e);
+    debugLog("could not create storage home", e);
   }
-  infoLog("storage home=", resolved.home, "| sessions=", resolved.sessionsDir);
+  infoLog("storage home=", resolved.home);
+
+  // Sessions follow the folder: `<root>/.harny-sessions` (created when a
+  // single root is open). Transcripts are kept out of git (auto-added to the
+  // workspace .gitignore when it exists).
+  const sessionsDir = (): string | undefined => (root ? sessionsDirFor(root) : undefined);
+  if (root) {
+    try {
+      mkdirSync(sessionsDirFor(root)!, { recursive: true });
+    } catch (e) {
+      debugLog("could not create sessions dir", e);
+    }
+    try {
+      if (ensureSessionGitignore(root, nodeFileSystem)) infoLog("added", SESSIONS_DIR_NAME, "to", join(root, ".gitignore"));
+    } catch (e) {
+      debugLog("could not update .gitignore", e);
+    }
+  }
 
   const runtimeOverrides = new MemoryOverrideConfigProvider();
   const fileConfig = new HarnyFileConfigProvider(() => resolved.home, nodeFileSystem);
   const config = new CompositeConfigProvider(new VscodeConfigProvider(), [fileConfig, runtimeOverrides]);
 
+  const cwd = () => root ?? process.cwd();
   const tools = new ToolRegistry(
     createDefaultTools({
       fs: nodeFileSystem,
@@ -72,7 +100,7 @@ export function activate(context: ExtensionContext) {
   const systemPrompt = new DefaultSystemPromptBuilder(() => tools.definitions(), cwd);
   const compactor = new Compactor(llmFactory, () => config.get());
 
-  const store = new JsonlSessionStore(() => resolved.sessionsDir, nodeFileSystem, { cwd: cwd() });
+  const store = new JsonlSessionStore(() => sessionsDir() ?? "", nodeFileSystem, { cwd: cwd() });
   const sessions = new SessionManager(store);
 
   const attachments = new AttachmentService(nodeFileSystem, async () => {
@@ -103,9 +131,24 @@ export function activate(context: ExtensionContext) {
     {
       compactor,
       compaction: DEFAULT_COMPACTION,
+      workspaceReady: () => !!root,
     },
   );
   viewProvider.setContext(context);
+
+  // The sessions live in `<root>/.harny-sessions`: when the open folder set
+  // changes, re-derive the single root and rebuild the view (store reads the
+  // dir through the closure, so subsequent saves land in the new root).
+  context.subscriptions.push(
+    workspace.onDidChangeWorkspaceFolders(() => {
+      const next = singleWorkspaceRoot();
+      if (next !== root) {
+        root = next;
+        infoLog("workspace folders changed: root=", root ?? "<none>");
+        viewProvider.refresh();
+      }
+    }),
+  );
 
   context.subscriptions.push(
     window.registerWebviewViewProvider("harny.chatView", viewProvider, { webviewOptions: { retainContextWhenHidden: true } }),
@@ -129,27 +172,7 @@ export function activate(context: ExtensionContext) {
     }),
   );
 
-  function selectedText(): string | undefined {
-    const editor = window.activeTextEditor;
-    if (!editor) return undefined;
-    const s = editor.selection;
-    const text = s.isEmpty ? editor.document.getText() : editor.document.getText(s);
-    return text.trim() ? text : undefined;
-  }
-
   context.subscriptions.push(
-    commands.registerCommand("harny.explainCode", () => {
-      const text = selectedText();
-      if (!text) return;
-      void revealViewInRight();
-      void viewProvider.createWithMessage(`Explain this code:\n\`\`\`\n${text}\n\`\`\``);
-    }),
-    commands.registerCommand("harny.editCode", () => {
-      const text = selectedText();
-      if (!text) return;
-      void revealViewInRight();
-      void viewProvider.createWithMessage(`Edit/improve this code:\n\`\`\`\n${text}\n\`\`\``);
-    }),
     commands.registerCommand("harny.reloadConfig", () => {
       debugLog("manual reload config command");
       viewProvider.refresh();

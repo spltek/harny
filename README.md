@@ -63,21 +63,24 @@ npm run coverage  # with coverage report
 - **Per-session controls**: context window, output tokens and temperature are editable in the panel, persisted **per session** (JSONL header) and restored on reopen; output tokens/temperature win over the provider defaults
 - **Empty shell**: with no open session the control stack is hidden and a hero invites you to pick a session from the list or create a new one
 - **Sessions**: Persistent per-workspace sessions (JSONL), one agent per session, right-side view with tabs
+- **Sessions follow the folder**: stored in `<workspaceRoot>/.harny-sessions` — rename/move/delete a project and its sessions go with it (no global mapping, no dead entries)
+- **Single-folder requirement**: Harny needs **exactly one open workspace folder**; without it (empty window or multi-root) the panel shows a "open a folder" hero and session commands are guarded
 - **Naming**: new sessions are named at creation via a prompt (default "New Session"); the session list shows creation and last-modified dates
 - **Model catalog**: Fetch the host model list (`GET /v1/models`) when the config only declares apiKey + baseUrl
-- **Cross-platform storage**: Data lives in `context.globalStorageUri` (per-OS), overridable with `HARNY_HOME`
+- **Cross-platform storage**: The dedicated `config.json` lives in `context.globalStorageUri` (per-OS), overridable with `HARNY_HOME`; sessions live per-folder and are auto-gitignored (`.harny-sessions/` appended to the workspace `.gitignore` when it exists)
 - **VS Code native**: Right-side Activity Bar view, context menu integration, keybindings
 - **Extensible**: Add a tool by implementing the `Tool` interface and registering it in the `ToolRegistry`
 
 ## Sessions: right-side view (Activity Bar icon)
 
-Harny keeps **persistent per-workspace sessions** (in `HARNY_HOME/sessions/<workspace>/`, JSONL) and manages them from a **single side view** opened with the Harny icon in the **Activity Bar** (right side):
+Harny keeps **persistent per-folder sessions** (in `<workspaceRoot>/.harny-sessions`, JSONL) and manages them from a **single side view** opened with the Harny icon in the **Activity Bar** (right side). It requires **exactly one open workspace folder**: sessions live inside that folder, so they follow it (rename/move/delete the project and the sessions follow), and the workspace `.gitignore` gets `.harny-sessions/` appended automatically (when a `.gitignore` exists) to keep transcripts out of git.
 
 - **Sessions area** (on top, **hideable** by clicking the header): list of the sessions of the current folder — each row shows the **creation/last-modified dates** above the name, with ✎ rename and 🗑 delete, and **+ New session**.
 - **Tab bar**: the names of all **open sessions** as tabs laid out **one after another**.
 - **Overlapped chats**: chats are **stacked**, not side by side — only **one chat is visible at a time**, the one of the selected tab. Switching tabs shows the corresponding chat.
 - **Branch**: each session row has a ⎇ button that **copies the session at its current state** (full transcript + per-session settings) into a new session and opens it. The dialog defaults to the original name. Hovering any **assistant reply** shows a ⎇ to branch the session **up to and including that reply** (same naming dialog, same uniqueness rules).
 - **Unique names**: two sessions of the same workspace **cannot share a name** — the naming dialog validates live (create, rename and branch) and blocks duplicates (case-insensitive).
+- **In-panel alerts**: all confirmations and notices (delete, compact, name conflicts, “session is working”) appear as in-panel modals inside the Harny area — same design family as the naming dialog, no native VS Code popups.
 
 **One agent = one session.** Each open session has its own `Agent` (dedicated history + event bus) in the registry. The side panel is a **single webview** that routes messages/events to the active session's runtime. Closing a tab **does not delete** the session (it stays persisted and reopenable). Sessions are organized by working folder (like pi/Cursor).
 

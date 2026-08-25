@@ -22,6 +22,9 @@ const state = vi.hoisted(() => ({
   // set noAutoName and reply manually via the handler).
   noAutoName: false,
   autoName: "New Session" as string | undefined,
+  // In-panel alert/confirm: auto-reply switch (default = confirm OK).
+  noAutoAlert: false,
+  alertOk: true as boolean | undefined,
 }));
 
 vi.mock("vscode", () => ({
@@ -71,10 +74,17 @@ function makeView() {
   });
   const postMessage = vi.fn((m: any) => {
     // In-panel name modal: auto-answer so `await createNew()` etc. resolve.
-    if (m.type === "promptName" && !state.noAutoName) {
-      queueMicrotask(() => {
-        handler?.({ type: "sessionName", mode: m.mode, id: m.id, name: state.autoName ?? "New Session" });
-      });
+    if (m.type === "modal") {
+      if (m.kind === "name" && !state.noAutoName) {
+        queueMicrotask(() => {
+          handler?.({ type: "modalResponse", id: m.modalId, value: state.autoName ?? "New Session" });
+        });
+      }
+      if (m.kind === "alert" && !state.noAutoAlert) {
+        queueMicrotask(() => {
+          handler?.({ type: "modalResponse", id: m.modalId, value: state.alertOk ?? true });
+        });
+      }
     }
   });
   const view: any = {
@@ -175,19 +185,32 @@ describe("ChatViewProvider", () => {
     const { handler, view } = resolveWith(provider);
     await provider.createNew();
     expect(view.webview.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "promptName", mode: "create", current: undefined }),
+      expect.objectContaining({ type: "modal", kind: "name", mode: "create", current: undefined }),
     );
     // the resolved session is named with the modal's answer (auto-replied)
     expect(state.showInputBox).not.toHaveBeenCalled(); // no native box: modal instead
   });
 
+  it("createNew without a single workspace asks for a folder and creates nothing", async () => {
+    const { store, provider } = buildHarness({ workspaceReady: () => false });
+    const { handler, view } = resolveWith(provider);
+    await handler({ type: "newSession" });
+    expect(store.create).not.toHaveBeenCalled();
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "modal", kind: "alert", message: expect.stringContaining("exactly one open folder") }),
+    );
+  });
+
   it("cancelling the in-panel name prompt creates nothing", async () => {
     const { provider, registry } = buildHarness();
-    const { handler } = resolveWith(provider);
+    const { handler, view } = resolveWith(provider);
     state.noAutoName = true;
     try {
       const pending = provider.createNew();
-      await handler({ type: "cancelNamePrompt" });
+      const modalPost = view.webview.postMessage.mock.calls
+        .map((c) => c[0] as any)
+        .find((m) => m.type === "modal");
+      await handler({ type: "modalResponse", id: modalPost.modalId, value: undefined });
       await pending;
       expect(registry.listOpenIds().length).toBe(0);
     } finally {
@@ -202,6 +225,33 @@ describe("ChatViewProvider", () => {
     await provider.createNew(); // s2
     await handler({ type: "switchTab", id: "s1" });
     expect(registry.isOpen("s1")).toBe(true);
+  });
+
+  it("queues modals FIFO: a second modal is only shown after the first resolves", async () => {
+    const { provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    state.noAutoName = true;
+    state.noAutoAlert = true;
+    try {
+      // Name dialog opens (queue head posted).
+      const create = provider.createNew();
+      // While it is open, a delete confirm arrives: it must QUEUE, not show.
+      const del = handler({ type: "deleteSession", id: "s1" });
+      const posts = () => view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "modal");
+      expect(posts().map((m) => m.kind)).toEqual(["name"]); // alert NOT shown yet
+
+      // Resolve the name modal -> the queued alert is now posted automatically.
+      await handler({ type: "modalResponse", id: posts()[0].modalId, value: "New Session" });
+      await create;
+      const alertPost = posts().find((m) => m.kind === "alert");
+      expect(alertPost).toBeTruthy();
+
+      await handler({ type: "modalResponse", id: alertPost.modalId, value: true });
+      await del;
+    } finally {
+      state.noAutoName = false;
+      state.noAutoAlert = false;
+    }
   });
 
   it("posts a switchView with the per-session working state when switching tabs", async () => {
@@ -318,7 +368,7 @@ describe("ChatViewProvider", () => {
       view.webview.postMessage.mockClear();
       await handler({ type: "renameSession", id: "s1" });
       expect(view.webview.postMessage).toHaveBeenCalledWith(
-        expect.objectContaining({ type: "promptName", mode: "rename", id: "s1" }),
+        expect.objectContaining({ type: "modal", kind: "name", mode: "rename", id: "s1" }),
       );
       expect(store.rename).toHaveBeenCalledWith("s1", "Refactor auth");
     } finally {
@@ -327,7 +377,6 @@ describe("ChatViewProvider", () => {
   });
 
   it("deleteSession closes the runtime and removes the persisted session", async () => {
-    state.showWarningMessage.mockResolvedValueOnce("Delete");
     const { store, sessions, registry, provider } = buildHarness();
     const { handler } = resolveWith(provider);
     await provider.createNew();
@@ -339,7 +388,7 @@ describe("ChatViewProvider", () => {
 
   it("refuses to delete a session that is still working", async () => {
     const { store, registry, provider } = buildHarness();
-    const { handler } = resolveWith(provider);
+    const { handler, view } = resolveWith(provider);
     await provider.createNew(); // s1
     const rt = registry.get("s1")!;
     (rt.agent as { streaming: boolean }).streaming = true;
@@ -348,12 +397,14 @@ describe("ChatViewProvider", () => {
 
     expect(registry.isOpen("s1")).toBe(true);
     expect(store.remove).not.toHaveBeenCalled();
-    expect(state.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("while it is working"));
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "modal", kind: "alert", alertKind: "info", message: expect.stringContaining("while it is working") }),
+    );
   });
 
   it("refuses to rename a session that is still working", async () => {
     const { store, registry, provider } = buildHarness();
-    const { handler } = resolveWith(provider);
+    const { handler, view } = resolveWith(provider);
     await provider.createNew(); // s1
     const rt = registry.get("s1")!;
     (rt.agent as { streaming: boolean }).streaming = true;
@@ -361,7 +412,9 @@ describe("ChatViewProvider", () => {
     await handler({ type: "renameSession", id: "s1" });
 
     expect(store.rename).not.toHaveBeenCalled();
-    expect(state.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("while it is working"));
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "modal", kind: "alert", alertKind: "info", message: expect.stringContaining("while it is working") }),
+    );
   });
 
   it("setThinkingLevel persists the level, refreshes and pushes config", async () => {
@@ -529,7 +582,7 @@ describe("ChatViewProvider", () => {
 
   it("refuses to branch with a name already in use", async () => {
     const { store, provider } = buildHarness();
-    const { handler } = resolveWith(provider);
+    const { handler, view } = resolveWith(provider);
     await provider.createNew(); // s1 named "New Session"
     (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
       { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0 },
@@ -541,7 +594,9 @@ describe("ChatViewProvider", () => {
     state.autoName = "New Session"; // duplicates the source name
     await handler({ type: "branchSession", id: "s1" });
     expect(store.create).toHaveBeenCalledTimes(1); // only the original creation
-    expect(state.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("already exists"));
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "modal", kind: "alert", alertKind: "error", message: expect.stringContaining("already exists") }),
+    );
   });
 
   it("createNew refuses a name already used in this workspace", async () => {
@@ -550,10 +605,12 @@ describe("ChatViewProvider", () => {
       { id: "x9", name: "New Session", createdAt: 1, updatedAt: 1, messageCount: 0 },
     ]);
     state.autoName = "New Session"; // collides with x9
-    const { handler } = resolveWith(provider);
+    const { handler, view } = resolveWith(provider);
     await handler({ type: "newSession" });
     expect(store.create).not.toHaveBeenCalled();
-    expect(state.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("already exists"));
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "modal", kind: "alert", alertKind: "error", message: expect.stringContaining("already exists") }),
+    );
   });
 
   it("renameSession refuses a name already used by another session", async () => {
@@ -565,17 +622,12 @@ describe("ChatViewProvider", () => {
       { id: "s2", name: "Debug", createdAt: 1, updatedAt: 2, messageCount: 0 },
     ]);
     state.autoName = "Debug"; // s2's name
-    const { handler } = resolveWith(provider);
+    const { handler, view } = resolveWith(provider);
     await handler({ type: "renameSession", id: "s1" });
     expect(store.rename).not.toHaveBeenCalled();
-    expect(state.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("already exists"));
-  });
-
-  it("createWithMessage seeds the agent and names the session", async () => {
-    state.showInputBox.mockResolvedValue("Explain");
-    const { provider, registry } = buildHarness();
-    await provider.createWithMessage("Explain this code");
-    expect((registry.get("s1")!.agent as any).addUserMessage).toHaveBeenCalledWith("Explain this code");
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "modal", kind: "alert", alertKind: "error", message: expect.stringContaining("already exists") }),
+    );
   });
 
   it("usage events update the session context tokens and persist them", async () => {
@@ -777,7 +829,6 @@ describe("ChatViewProvider compaction", () => {
   }
 
   it("compact (manual) re-summarizes context via the compactor", async () => {
-    state.showWarningMessage.mockResolvedValueOnce("Compact");
     const options = { compactor: new Compactor(compactorFactory(), () => CONFIG), compaction: DEFAULT_COMPACTION };
     const { store, registry, provider } = buildHarness(options);
     const { handler, view } = resolveWith(provider);

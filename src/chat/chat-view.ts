@@ -15,6 +15,7 @@ import { debugLog } from "../logger";
 import { renderViewHtml } from "./view-html";
 import { toTemperature } from "./temperature";
 import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, toContextWindow, toOutputTokens } from "./context-window";
+import { PanelModalQueue } from "./panel-modal-queue";
 import { Compactor, DEFAULT_COMPACTION, CompactionSettings, planCompaction, planManualCompaction, shouldCompact, estimateTokens } from "../core/sessions/compactor";
 
 /**
@@ -30,6 +31,8 @@ export class ChatViewProvider implements WebviewViewProvider {
   private hostCache = new Map<string, { at: number; models: string[] }>();
   private static readonly HOST_CACHE_TTL = 30_000;
   private compacting = false;
+  /** FIFO queue for in-panel modals (name dialog, alerts, confirms…). */
+  private modals: PanelModalQueue;
 
   constructor(
     private config: ConfigProvider,
@@ -39,8 +42,16 @@ export class ChatViewProvider implements WebviewViewProvider {
     private modelList: ModelListProvider,
     private sessions: SessionManager,
     private registry: SessionRegistry,
-    private options: { compactor?: Compactor; compaction?: CompactionSettings; manualKeepFraction?: number } = {},
-  ) {}
+    private options: {
+      compactor?: Compactor;
+      compaction?: CompactionSettings;
+      manualKeepFraction?: number;
+      /** True when exactly one workspace folder is open (sessions are stored per-folder). */
+      workspaceReady?: () => boolean;
+    } = {},
+  ) {
+    this.modals = new PanelModalQueue((msg) => this.view?.webview.postMessage(msg));
+  }
 
   setContext(context: ExtensionContext): void {
     this.context = context;
@@ -53,7 +64,16 @@ export class ChatViewProvider implements WebviewViewProvider {
   }
 
   /** Create a new session asking for its name (undefined = user cancelled). */
+  /** True when exactly one workspace folder is open (sessions are per-folder). */
+  private workspaceReady(): boolean {
+    return this.options.workspaceReady ? this.options.workspaceReady() : true;
+  }
+
   async createNew(): Promise<void> {
+    if (!this.workspaceReady()) {
+      await this.warnWorkspaceRequired();
+      return;
+    }
     const name = await this.askName("create");
     if (name === undefined) return;
     if (this.sessionNameTaken(name)) {
@@ -61,18 +81,6 @@ export class ChatViewProvider implements WebviewViewProvider {
       return;
     }
     const rt = this.registry.create(name);
-    await this.setActive(rt.sessionId);
-  }
-
-  /** Create a new session pre-seeded with a message (context-menu commands). */
-  async createWithMessage(content: string): Promise<void> {
-    const name = await this.askName("create");
-    if (name === undefined) return;
-    if (this.sessionNameTaken(name)) {
-      await this.warnNameTaken(name);
-      return;
-    }
-    const rt = this.registry.createWithMessage(content, name);
     await this.setActive(rt.sessionId);
   }
 
@@ -90,8 +98,11 @@ export class ChatViewProvider implements WebviewViewProvider {
   }
 
   private async warnNameTaken(name: string): Promise<void> {
-    const { window } = await import("vscode");
-    void window.showErrorMessage(`A session named "${name}" already exists in this workspace.`);
+    await this.inPanelAlert({
+      kind: "error",
+      title: "Name already in use",
+      message: `A session named "${name}" already exists in this workspace. Pick another name.`,
+    });
   }
 
   /**
@@ -100,14 +111,15 @@ export class ChatViewProvider implements WebviewViewProvider {
    * temperature). The dialog defaults to the original name (unique required).
    */
   private async branchSession(id: string): Promise<void> {
-    const { window } = await import("vscode");
     const existing = this.sessions.list().find((s) => s.id === id);
     if (!existing) return;
     const rt = this.registry.get(id);
     if (rt?.agent.streaming) {
-      void window.showWarningMessage(
-        `Cannot branch "${existing.name}" while it is working. Stop it first.`,
-      );
+      await this.inPanelAlert({
+        kind: "info",
+        title: "Session is working",
+        message: `Cannot branch "${existing.name}" while it is working. Stop it first.`,
+      });
       return;
     }
     const name = await this.askName("branch", id);
@@ -125,13 +137,14 @@ export class ChatViewProvider implements WebviewViewProvider {
    * the message at `index` (the blue-bubble ⎇ action) into a new session.
    */
   private async branchAt(index: number): Promise<void> {
-    const { window } = await import("vscode");
     const rt = this.activeRuntime();
     if (!rt) return;
     if (rt.agent.streaming) {
-      void window.showWarningMessage(
-        "Cannot branch while the session is working. Stop it first.",
-      );
+      await this.inPanelAlert({
+        kind: "info",
+        title: "Session is working",
+        message: "Cannot branch while the session is working. Stop it first.",
+      });
       return;
     }
     if (!Number.isInteger(index) || index < 0) return;
@@ -164,10 +177,60 @@ export class ChatViewProvider implements WebviewViewProvider {
     await this.setActive(created.id);
   }
 
-  /** In-flight name request, answered by the webview modal (see askName). */
-  private pendingNamePrompt:
-    | { resolve: (name: string | undefined) => void; mode: string; id?: string }
-    | undefined;
+  /**
+  /**
+   * FIFO queue for in-panel modals (see PanelModalQueue). Request and drain
+   * are thin delegates; the queue owns sequencing (one visible at a time).
+   */
+  private requestPanelModal(req: Record<string, unknown>): Promise<unknown> {
+    return this.modals.request(req);
+  }
+
+  /** Drains the queue entry and shows the next queued modal, if any. */
+  private onPanelModalResponse(id: number, value: unknown): void {
+    this.modals.respond(id, value);
+  }
+
+  /**
+   * In-panel alert / confirm (same design family as the name modal): shown in
+   * the Harny area instead of the native VS Code dialog. Falls back to the
+   * native message only when the webview is not resolved yet (e.g. command
+   * fired before the panel).
+   */
+  private async inPanelAlert(opts: {
+    kind: "info" | "error" | "confirm";
+    title: string;
+    message: string;
+    confirmText?: string;
+    danger?: boolean;
+  }): Promise<boolean> {
+    if (!this.view) {
+      const { window } = await import("vscode");
+      const okText = opts.confirmText ?? "OK";
+      const r =
+        opts.kind === "confirm"
+          ? await window.showWarningMessage(opts.message, { modal: true }, okText)
+          : await window.showWarningMessage(opts.message);
+      return r === okText;
+    }
+    const v = await this.requestPanelModal({
+      kind: "alert",
+      alertKind: opts.kind,
+      title: opts.title,
+      message: opts.message,
+      confirmText: opts.confirmText,
+      danger: opts.danger ?? false,
+    });
+    return v === true;
+  }
+
+  private async warnWorkspaceRequired(): Promise<void> {
+    await this.inPanelAlert({
+      kind: "info",
+      title: "No single folder open",
+      message: "Harny needs exactly one open folder (File → Open Folder) to store sessions and use this command.",
+    });
+  }
 
   /**
    * Ask for a session name through the IN-PANEL modal (blurred overlay), so the
@@ -193,10 +256,8 @@ export class ChatViewProvider implements WebviewViewProvider {
         },
       });
     }
-    return new Promise<string | undefined>((resolve) => {
-      this.pendingNamePrompt = { resolve, mode, id };
-      this.view?.webview.postMessage({ type: "promptName", mode, id, current });
-    });
+    const v = await this.requestPanelModal({ kind: "name", mode, id, current });
+    return typeof v === "string" ? v : undefined;
   }
 
   /**
@@ -301,17 +362,12 @@ export class ChatViewProvider implements WebviewViewProvider {
       case "deleteSession":
         if (typeof msg.id === "string") await this.deleteSession(msg.id);
         break;
-      case "sessionName": {
-        const p = this.pendingNamePrompt;
-        this.pendingNamePrompt = undefined;
-        if (!p) break;
-        p.resolve(typeof msg.name === "string" && msg.name.trim() ? msg.name.trim() : undefined);
+      case "modalResponse": {
+        if (typeof msg.id === "number") this.onPanelModalResponse(msg.id, msg.value);
         break;
       }
-      case "cancelNamePrompt": {
-        const p = this.pendingNamePrompt;
-        this.pendingNamePrompt = undefined;
-        if (p) p.resolve(undefined);
+      case "modalResponse": {
+        if (typeof msg.id === "number") this.onPanelModalResponse(msg.id, msg.value);
         break;
       }
       case "getConfig":
@@ -347,9 +403,13 @@ export class ChatViewProvider implements WebviewViewProvider {
       case "compact": {
         const r = this.activeRuntime();
         if (!r || this.compacting) break;
-        const { window } = await import("vscode");
-        const confirm = await window.showWarningMessage("Run context compaction now?", { modal: true }, "Compact");
-        if (confirm !== "Compact") break;
+        const ok = await this.inPanelAlert({
+          kind: "confirm",
+          title: "Compact context",
+          message: "Run context compaction now? The older messages are summarized into the session context.",
+          confirmText: "Compact",
+        });
+        if (!ok) break;
         this.compacting = true;
         // Animated in-chat bubble + working header while it runs.
         this.view?.webview.postMessage({ type: "compactStart" });
@@ -553,38 +613,45 @@ export class ChatViewProvider implements WebviewViewProvider {
   }
 
   private async renameSession(id: string): Promise<void> {
-    const { window } = await import("vscode");
     const existing = this.sessions.list().find((s) => s.id === id);
     const rt = this.registry.get(id);
     if (rt?.agent.streaming) {
-      void window.showWarningMessage(
-        `Cannot rename "${existing?.name ?? id}" while it is working. Stop it first.`,
-      );
+      await this.inPanelAlert({
+        kind: "info",
+        title: "Session is working",
+        message: `Cannot rename "${existing?.name ?? id}" while it is working. Stop it first.`,
+      });
       return;
     }
     const name = await this.askName("rename", id);
     if (name === undefined) return;
     // Same-name renames are allowed (self excluded); any OTHER collision is not.
     if (this.sessionNameTaken(name, id)) {
-      const { window: w } = await import("vscode");
-      void w.showErrorMessage(`A session named "${name}" already exists in this workspace.`);
+      await this.warnNameTaken(name);
       return;
     }
     this.updateSessionName(id, name);
   }
 
   private async deleteSession(id: string): Promise<void> {
-    const { window } = await import("vscode");
     const existing = this.sessions.list().find((s) => s.id === id);
     const rt = this.registry.get(id);
     if (rt?.agent.streaming) {
-      void window.showWarningMessage(
-        `Cannot delete "${existing?.name ?? id}" while it is working. Stop it first.`,
-      );
+      await this.inPanelAlert({
+        kind: "info",
+        title: "Session is working",
+        message: `Cannot delete "${existing?.name ?? id}" while it is working. Stop it first.`,
+      });
       return;
     }
-    const confirm = await window.showWarningMessage(`Delete session \"${existing?.name ?? id}\"?`, { modal: true }, "Delete");
-    if (confirm !== "Delete") return;
+    const ok = await this.inPanelAlert({
+      kind: "confirm",
+      title: "Delete session",
+      message: `Delete session "${existing?.name ?? id}"? This removes its transcript and settings.`,
+      confirmText: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
     this.registry.close(id);
     if (this.activeId === id) {
       this.activeId = undefined;
@@ -662,6 +729,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     providerModels: { provider: string; model: string }[];
     modelMissing: boolean;
     hostModelsError: boolean;
+    workspaceReady: boolean;
     thinkingMode?: "bool" | "effort" | "none";
     thinkingLevel?: "off" | "low" | "medium" | "high";
     contextWindow: number;
@@ -704,6 +772,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       activeProvider: sessionProvider,
       model: sessionModel,
       hasKey: !requiresApiKey(cfg),
+      workspaceReady: this.workspaceReady(),
       models: cfg.availableModels ?? [],
       providerModels,
       modelMissing,

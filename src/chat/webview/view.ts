@@ -38,6 +38,7 @@ interface ConfigState {
   providerModels?: { provider: string; model: string }[];
   modelMissing?: boolean;
   hostModelsError?: boolean;
+  workspaceReady?: boolean;
   thinkingMode?: string;
   thinkingLevel?: string;
   contextWindow?: number;
@@ -393,6 +394,31 @@ function addWelcome(): HTMLDivElement {
 }
 
 /**
+ * No single workspace folder: sessions live per-folder (`<root>/.harny-sessions`)
+ * so Harny requires exactly one open folder. The whole control stack and the
+ * sessions card are hidden; a folder hero takes over the chat area.
+ */
+function renderWorkspaceShell(): void {
+  document.body.classList.add("no-workspace");
+  document.body.classList.remove("no-session");
+  messagesEl.innerHTML = "";
+  const hero = document.createElement("div");
+  hero.className = "empty-hero";
+  hero.innerHTML =
+    '<div class="empty-icon">📁</div>' +
+    "<h2>Harny</h2>" +
+    "<p>Harny needs a single open folder.</p>" +
+    '<p class="empty-hint">Open one folder (File → Open Folder) to start sessions and chat.<br>' +
+    "Multi-root workspaces are not supported yet.</p>";
+  messagesEl.appendChild(hero);
+}
+
+/** Confirm a workspace folder is present before touching the transcript. */
+function workspaceLocked(config: { workspaceReady?: boolean }): boolean {
+  return config.workspaceReady === false;
+}
+
+/**
  * Empty shell: NO open session. The control stack (input, status, metrics)
  * is hidden via the `no-session` body class and a hero takes over the chat
  * area, pushing the user to pick a session from the list or create a new one.
@@ -589,6 +615,7 @@ const nameOk = document.getElementById("name-ok") as HTMLButtonElement;
 const nameCancel = document.getElementById("name-cancel") as HTMLButtonElement;
 const nameError = document.getElementById("name-error") as HTMLDivElement;
 let namePrompt: { mode: string; id?: string } | undefined;
+let nameModalId = -1;
 
 /**
  * Name conflict for the dialog: empty or a name already used by ANOTHER
@@ -614,8 +641,9 @@ function validateNameInput(): void {
   nameOk.disabled = !!conflict;
 }
 
-function openNameModal(p: { mode: string; id?: string; current?: string }): void {
+function openNameModal(p: { mode: string; id?: string; current?: string; modalId?: number }): void {
   namePrompt = { mode: p.mode, id: p.id };
+  nameModalId = typeof p.modalId === "number" ? p.modalId : -1;
   const branch = p.mode === "branch";
   nameTitle.textContent = branch
     ? "Branch session"
@@ -635,6 +663,44 @@ function closeNameModal(): void {
   nameModal.classList.add("hidden");
 }
 
+// ── In-panel alert / confirm modal (host replaces native VS Code dialogs) ──
+const alertModal = document.getElementById("alert-modal") as HTMLDivElement;
+const alertTitle = document.getElementById("alert-title") as HTMLElement;
+const alertMessage = document.getElementById("alert-message") as HTMLDivElement;
+const alertOk = document.getElementById("alert-ok") as HTMLButtonElement;
+const alertCancel = document.getElementById("alert-cancel") as HTMLButtonElement;
+let alertId = -1;
+
+function openAlert(a: { modalId?: number; id?: number; kind: string; alertKind?: string; title: string; message: string; confirmText?: string; danger?: boolean }): void {
+  alertId = typeof a.modalId === "number" ? a.modalId : typeof a.id === "number" ? a.id : -1;
+  alertTitle.textContent = a.title;
+  alertMessage.textContent = a.message;
+  const confirm = (a.alertKind ?? a.kind) === "confirm";
+  alertCancel.style.display = confirm ? "" : "none";
+  alertOk.textContent = a.confirmText ?? "OK";
+  alertOk.classList.toggle("danger", !!a.danger);
+  alertModal.classList.remove("hidden");
+  alertOk.focus();
+}
+
+function closeAlert(ok: boolean): void {
+  if (alertId < 0) return;
+  const id = alertId;
+  alertId = -1;
+  alertModal.classList.add("hidden");
+  vscode.postMessage({ type: "modalResponse", id, value: ok });
+}
+
+alertOk.addEventListener("click", () => closeAlert(true));
+alertCancel.addEventListener("click", () => closeAlert(false));
+alertModal.querySelector(".alert-backdrop")?.addEventListener("click", () => closeAlert(false));
+window.addEventListener("keydown", (e) => {
+  if (alertId >= 0 && e.key === "Escape") {
+    e.preventDefault();
+    closeAlert(false);
+  }
+});
+
 function submitName(): void {
   if (!namePrompt) return;
   const p = namePrompt;
@@ -648,8 +714,9 @@ function submitName(): void {
     nameInput.focus();
     return;
   }
+  const modalId = nameModalId;
   closeNameModal();
-  vscode.postMessage({ type: "sessionName", mode: p.mode, id: p.id, name });
+  vscode.postMessage({ type: "modalResponse", id: modalId, value: name });
 }
 
 // ── View lock (per active session) ──
@@ -1009,7 +1076,9 @@ window.addEventListener("message", (e) => {
     case "refresh": {
       messagesEl.innerHTML = "";
       resetStreamState();
-      if (!activeId) {
+      if (workspaceLocked({ workspaceReady: msg.workspaceReady })) {
+        renderWorkspaceShell();
+      } else if (!activeId) {
         renderEmptyShell();
       } else if (!renderMessages(msg.messages || [])) {
         addWelcome();
@@ -1035,9 +1104,14 @@ window.addEventListener("message", (e) => {
       }
       break;
     }
-    case "promptName":
-      openNameModal({ mode: msg.mode, id: msg.id, current: msg.current });
+    case "modal": {
+      if (msg.kind === "alert") {
+        openAlert(msg);
+      } else if (msg.kind === "name") {
+        openNameModal({ mode: msg.mode, id: msg.id, current: msg.current, modalId: msg.modalId });
+      }
       break;
+    }
     case "status":
       if (Array.isArray(msg.workingIds)) workingIds = new Set(msg.workingIds as string[]);
       renderSessions(currentSessions); // refresh the delete-button locks
@@ -1093,7 +1167,9 @@ function renderViewState(state: {
   renderMetrics(state.config || {});
   messagesEl.innerHTML = "";
   resetStreamState();
-  if (activeId) {
+  if (workspaceLocked(state.config || {})) {
+    renderWorkspaceShell();
+  } else if (activeId) {
     document.body.classList.remove("no-session");
     if (!renderMessages(state.messages || [])) addWelcome();
   } else {
@@ -1138,8 +1214,9 @@ function restoreLiveStream(state: { streaming?: boolean; liveThinking?: string; 
 // ── Session-name modal (in-panel name prompt) ──
 nameOk.addEventListener("click", submitName);
 nameCancel.addEventListener("click", () => {
+  const modalId = nameModalId;
   closeNameModal();
-  vscode.postMessage({ type: "cancelNamePrompt" });
+  vscode.postMessage({ type: "modalResponse", id: modalId, value: undefined });
 });
 nameInput.addEventListener("input", validateNameInput);
 nameInput.addEventListener("keydown", (e) => {
@@ -1148,8 +1225,9 @@ nameInput.addEventListener("keydown", (e) => {
     submitName();
   } else if (e.key === "Escape") {
     e.preventDefault();
+    const modalId = nameModalId;
     closeNameModal();
-    vscode.postMessage({ type: "cancelNamePrompt" });
+    vscode.postMessage({ type: "modalResponse", id: modalId, value: undefined });
   }
 });
 

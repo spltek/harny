@@ -58,14 +58,6 @@
       {
         "command": "harny.debugConfig",
         "title": "Harny: Debug Config"
-      },
-      {
-        "command": "harny.explainCode",
-        "title": "Harny: Explain This Code"
-      },
-      {
-        "command": "harny.editCode",
-        "title": "Harny: Edit with AI"
       }
     ],
     "keybindings": [
@@ -73,25 +65,8 @@
         "command": "harny.openChat",
         "key": "ctrl+shift+h",
         "mac": "cmd+shift+h"
-      },
-      {
-        "command": "harny.explainCode",
-        "key": "ctrl+shift+e",
-        "mac": "cmd+shift+e"
       }
     ],
-    "menus": {
-      "editor/context": [
-        {
-          "command": "harny.explainCode",
-          "group": "harny"
-        },
-        {
-          "command": "harny.editCode",
-          "group": "harny"
-        }
-      ]
-    },
     "configuration": {
       "title": "Harny",
       "properties": {

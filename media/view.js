@@ -7300,6 +7300,18 @@
     messagesEl.appendChild(div);
     return div;
   }
+  function renderWorkspaceShell() {
+    document.body.classList.add("no-workspace");
+    document.body.classList.remove("no-session");
+    messagesEl.innerHTML = "";
+    const hero = document.createElement("div");
+    hero.className = "empty-hero";
+    hero.innerHTML = '<div class="empty-icon">\u{1F4C1}</div><h2>Harny</h2><p>Harny needs a single open folder.</p><p class="empty-hint">Open one folder (File \u2192 Open Folder) to start sessions and chat.<br>Multi-root workspaces are not supported yet.</p>';
+    messagesEl.appendChild(hero);
+  }
+  function workspaceLocked(config2) {
+    return config2.workspaceReady === false;
+  }
   function renderEmptyShell() {
     document.body.classList.add("no-session");
     messagesEl.innerHTML = "";
@@ -7457,6 +7469,7 @@
   var nameCancel = document.getElementById("name-cancel");
   var nameError = document.getElementById("name-error");
   var namePrompt;
+  var nameModalId = -1;
   function nameConflict(excludedId) {
     const raw = nameInput.value.trim();
     if (!raw) return "Name cannot be empty";
@@ -7474,6 +7487,7 @@
   }
   function openNameModal(p) {
     namePrompt = { mode: p.mode, id: p.id };
+    nameModalId = typeof p.modalId === "number" ? p.modalId : -1;
     const branch = p.mode === "branch";
     nameTitle.textContent = branch ? "Branch session" : p.mode === "rename" ? "Rename session" : "Name the new session";
     nameOk.textContent = branch ? "Branch" : p.mode === "rename" ? "Rename" : "Create";
@@ -7487,6 +7501,39 @@
     namePrompt = void 0;
     nameModal.classList.add("hidden");
   }
+  var alertModal = document.getElementById("alert-modal");
+  var alertTitle = document.getElementById("alert-title");
+  var alertMessage = document.getElementById("alert-message");
+  var alertOk = document.getElementById("alert-ok");
+  var alertCancel = document.getElementById("alert-cancel");
+  var alertId = -1;
+  function openAlert(a) {
+    alertId = typeof a.modalId === "number" ? a.modalId : typeof a.id === "number" ? a.id : -1;
+    alertTitle.textContent = a.title;
+    alertMessage.textContent = a.message;
+    const confirm = (a.alertKind ?? a.kind) === "confirm";
+    alertCancel.style.display = confirm ? "" : "none";
+    alertOk.textContent = a.confirmText ?? "OK";
+    alertOk.classList.toggle("danger", !!a.danger);
+    alertModal.classList.remove("hidden");
+    alertOk.focus();
+  }
+  function closeAlert(ok) {
+    if (alertId < 0) return;
+    const id = alertId;
+    alertId = -1;
+    alertModal.classList.add("hidden");
+    vscode.postMessage({ type: "modalResponse", id, value: ok });
+  }
+  alertOk.addEventListener("click", () => closeAlert(true));
+  alertCancel.addEventListener("click", () => closeAlert(false));
+  alertModal.querySelector(".alert-backdrop")?.addEventListener("click", () => closeAlert(false));
+  window.addEventListener("keydown", (e) => {
+    if (alertId >= 0 && e.key === "Escape") {
+      e.preventDefault();
+      closeAlert(false);
+    }
+  });
   function submitName() {
     if (!namePrompt) return;
     const p = namePrompt;
@@ -7499,8 +7546,9 @@
       nameInput.focus();
       return;
     }
+    const modalId = nameModalId;
     closeNameModal();
-    vscode.postMessage({ type: "sessionName", mode: p.mode, id: p.id, name });
+    vscode.postMessage({ type: "modalResponse", id: modalId, value: name });
   }
   var streamingActive = false;
   var thinkingCapable = false;
@@ -7804,7 +7852,9 @@
       case "refresh": {
         messagesEl.innerHTML = "";
         resetStreamState();
-        if (!activeId) {
+        if (workspaceLocked({ workspaceReady: msg.workspaceReady })) {
+          renderWorkspaceShell();
+        } else if (!activeId) {
           renderEmptyShell();
         } else if (!renderMessages(msg.messages || [])) {
           addWelcome();
@@ -7827,9 +7877,14 @@
         }
         break;
       }
-      case "promptName":
-        openNameModal({ mode: msg.mode, id: msg.id, current: msg.current });
+      case "modal": {
+        if (msg.kind === "alert") {
+          openAlert(msg);
+        } else if (msg.kind === "name") {
+          openNameModal({ mode: msg.mode, id: msg.id, current: msg.current, modalId: msg.modalId });
+        }
         break;
+      }
       case "status":
         if (Array.isArray(msg.workingIds)) workingIds = new Set(msg.workingIds);
         renderSessions(currentSessions);
@@ -7873,7 +7928,9 @@
     renderMetrics(state.config || {});
     messagesEl.innerHTML = "";
     resetStreamState();
-    if (activeId) {
+    if (workspaceLocked(state.config || {})) {
+      renderWorkspaceShell();
+    } else if (activeId) {
       document.body.classList.remove("no-session");
       if (!renderMessages(state.messages || [])) addWelcome();
     } else {
@@ -7902,8 +7959,9 @@
   }
   nameOk.addEventListener("click", submitName);
   nameCancel.addEventListener("click", () => {
+    const modalId = nameModalId;
     closeNameModal();
-    vscode.postMessage({ type: "cancelNamePrompt" });
+    vscode.postMessage({ type: "modalResponse", id: modalId, value: void 0 });
   });
   nameInput.addEventListener("input", validateNameInput);
   nameInput.addEventListener("keydown", (e) => {
@@ -7912,8 +7970,9 @@
       submitName();
     } else if (e.key === "Escape") {
       e.preventDefault();
+      const modalId = nameModalId;
       closeNameModal();
-      vscode.postMessage({ type: "cancelNamePrompt" });
+      vscode.postMessage({ type: "modalResponse", id: modalId, value: void 0 });
     }
   });
   renderViewState({
