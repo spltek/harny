@@ -27,7 +27,7 @@ function setupDom(initOverrides: Record<string, unknown> = {}): void {
       <button id="send-btn">▶</button>
       <button id="abort-btn" disabled>⏹</button>
     </div>
-    <div id="status">AI Model: <select id="model-select"></select><button id="ctx-minus">−</button><input id="ctx-input" type="text" value="128000"><button id="ctx-plus">+</button><button id="out-minus">−</button><input id="out-input" type="text" value="8192"><button id="out-plus">+</button><button id="temp-minus">−</button><input id="temp-input" type="text" placeholder="Auto"><button id="temp-plus">+</button><button id="temp-auto">Auto</button><button id="presence-minus">−</button><input id="presence-input" type="text" placeholder="Auto"><button id="presence-plus">+</button><button id="presence-auto">Auto</button><button id="freq-minus">−</button><input id="freq-input" type="text" placeholder="Auto"><button id="freq-plus">+</button><button id="freq-auto">Auto</button></div>
+    <div id="status">AI Model: <select id="model-select"></select><button id="ctx-minus">−</button><input id="ctx-input" type="text" value="128000"><button id="ctx-plus">+</button><button id="out-minus">−</button><input id="out-input" type="text" value="8192"><button id="out-plus">+</button><input id="sampler-temp" type="radio" name="sampler" checked><input id="sampler-topp" type="radio" name="sampler"><button id="samp-minus">−</button><input id="samp-input" type="text" placeholder="Auto"><button id="samp-plus">+</button><button id="samp-auto">Auto</button><button id="presence-minus">−</button><input id="presence-input" type="text" placeholder="Auto"><button id="presence-plus">+</button><button id="presence-auto">Auto</button><button id="freq-minus">−</button><input id="freq-input" type="text" placeholder="Auto"><button id="freq-plus">+</button><button id="freq-auto">Auto</button></div>
     <div id="metrics"><select id="thinking-select"><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button></div>
     <div id="name-modal" class="hidden">
       <div class="name-modal-backdrop"></div>
@@ -174,10 +174,12 @@ describe("view webview client", () => {
     expect((document.getElementById("out-input") as HTMLInputElement).disabled).toBe(true);
     expect((document.getElementById("out-minus") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("out-plus") as HTMLButtonElement).disabled).toBe(true);
-    expect((document.getElementById("temp-input") as HTMLInputElement).disabled).toBe(true);
-    expect((document.getElementById("temp-minus") as HTMLButtonElement).disabled).toBe(true);
-    expect((document.getElementById("temp-plus") as HTMLButtonElement).disabled).toBe(true);
-    expect((document.getElementById("temp-auto") as HTMLButtonElement).disabled).toBe(true);
+    expect((document.getElementById("samp-input") as HTMLInputElement).disabled).toBe(true);
+    expect((document.getElementById("samp-minus") as HTMLButtonElement).disabled).toBe(true);
+    expect((document.getElementById("samp-plus") as HTMLButtonElement).disabled).toBe(true);
+    expect((document.getElementById("samp-auto") as HTMLButtonElement).disabled).toBe(true);
+    expect((document.getElementById("sampler-temp") as HTMLInputElement).disabled).toBe(true);
+    expect((document.getElementById("sampler-topp") as HTMLInputElement).disabled).toBe(true);
     expect((document.getElementById("presence-input") as HTMLInputElement).disabled).toBe(true);
     expect((document.getElementById("presence-auto") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("freq-input") as HTMLInputElement).disabled).toBe(true);
@@ -188,9 +190,10 @@ describe("view webview client", () => {
     expect((document.getElementById("model-select") as HTMLSelectElement).disabled).toBe(false);
     expect((document.getElementById("ctx-input") as HTMLInputElement).disabled).toBe(false);
     expect((document.getElementById("out-input") as HTMLInputElement).disabled).toBe(false);
-    expect((document.getElementById("temp-input") as HTMLInputElement).disabled).toBe(false);
-    expect((document.getElementById("temp-plus") as HTMLButtonElement).disabled).toBe(false);
-    expect((document.getElementById("temp-auto") as HTMLButtonElement).disabled).toBe(false);
+    expect((document.getElementById("samp-input") as HTMLInputElement).disabled).toBe(false);
+    expect((document.getElementById("samp-plus") as HTMLButtonElement).disabled).toBe(false);
+    expect((document.getElementById("samp-auto") as HTMLButtonElement).disabled).toBe(false);
+    expect((document.getElementById("sampler-topp") as HTMLInputElement).disabled).toBe(false);
     expect((document.getElementById("user-input") as HTMLTextAreaElement).disabled).toBe(false);
   });
 
@@ -778,9 +781,9 @@ describe("in-panel alert modal", () => {
   });
 });
 
-it("temperature accepts digits and ONE decimal separator only", async () => {
+it("the shared sampler input accepts digits and ONE decimal separator only", async () => {
     await loadView();
-    const input = document.getElementById("temp-input") as HTMLInputElement;
+    const input = document.getElementById("samp-input") as HTMLInputElement;
     input.value = "1,5.3";
     input.dispatchEvent(new Event("input"));
     expect(input.value).toBe("1.53"); // comma -> dot, extra dots stripped
@@ -910,64 +913,67 @@ describe("output tokens spinner", () => {
   });
 });
 
-describe("temperature control", () => {
+describe("sampler (radio + shared stepper)", () => {
   beforeEach(() => { posted.length = 0; setupDom(); });
 
-  it("renders the session value from config and posts changes on typing", async () => {
+  it("renders the ACTIVE sampler value and posts changes via the shared stepper", async () => {
     await loadView();
-    const input = document.getElementById("temp-input") as HTMLInputElement;
-    // No session value -> Auto (empty).
+    const input = document.getElementById("samp-input") as HTMLInputElement;
+    // Temperature by default, no value -> Auto (empty).
     expect(input.value).toBe("");
+    expect((document.getElementById("sampler-temp") as HTMLInputElement).checked).toBe(true);
 
     hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], temperature: 0.7 } });
     expect(input.value).toBe("0.7");
 
     input.value = "1.5";
     input.dispatchEvent(new Event("change"));
-    expect(posted).toContainEqual({ type: "setTemperature", value: 1.5 });
+    expect(posted).toContainEqual({ type: "setSamplerValue", value: 1.5 });
   });
 
-  it("clamps out-of-range values; empty input and the Auto button reset to Auto", async () => {
+  it("clamps to the ACTIVE scale (0–2 temperature, 0–1 top-p) and Auto resets", async () => {
     await loadView();
-    const input = document.getElementById("temp-input") as HTMLInputElement;
-    const auto = document.getElementById("temp-auto") as HTMLButtonElement;
+    const input = document.getElementById("samp-input") as HTMLInputElement;
+    const auto = document.getElementById("samp-auto") as HTMLButtonElement;
 
-    input.value = "9"; // above max -> clamp to 2
+    input.value = "9"; // temperature scale -> clamp to 2
     input.dispatchEvent(new Event("change"));
-    expect(posted).toContainEqual({ type: "setTemperature", value: 2 });
+    expect(posted).toContainEqual({ type: "setSamplerValue", value: 2 });
     expect(input.value).toBe("2");
 
-    // Empty input = Auto (not sent, clears the session value).
+    // Switch to Top-P: radio change posts the mode; the host resets value to Auto.
+    (document.getElementById("sampler-topp") as HTMLInputElement).click();
+    expect(posted).toContainEqual({ type: "setSamplerMode", mode: "topP" });
+
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], sampler: "topP", topP: 0.9 } });
+    expect(input.value).toBe("0.9");
+    expect((document.getElementById("sampler-topp") as HTMLInputElement).checked).toBe(true);
+
+    input.value = "5"; // top-p scale -> clamp to 1
+    input.dispatchEvent(new Event("change"));
+    expect(posted).toContainEqual({ type: "setSamplerValue", value: 1 });
+    expect(input.value).toBe("1");
+
+    // Empty input and Auto reset to Auto (null).
     input.value = "";
     input.dispatchEvent(new Event("change"));
-    expect(posted).toContainEqual({ type: "setTemperature", value: null });
-
+    expect(posted).toContainEqual({ type: "setSamplerValue", value: null });
     input.value = "0.5";
     input.dispatchEvent(new Event("change"));
     auto.click();
-    expect(posted).toContainEqual({ type: "setTemperature", value: null });
+    expect(posted).toContainEqual({ type: "setSamplerValue", value: null });
     expect(input.value).toBe("");
   });
 
-  it("steps the value with the − / + buttons and clamps at the edges", async () => {
+  it("steps with − / + using the active scale", async () => {
     await loadView();
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], temperature: 0.7 } });
-    const input = document.getElementById("temp-input") as HTMLInputElement;
-    const minus = document.getElementById("temp-minus") as HTMLButtonElement;
-    const plus = document.getElementById("temp-plus") as HTMLButtonElement;
-
-    plus.click();
-    expect(posted).toContainEqual({ type: "setTemperature", value: 0.8 });
-    expect(input.value).toBe("0.8");
-
-    minus.click();
-    expect(posted).toContainEqual({ type: "setTemperature", value: 0.7 });
-
-    // From Auto (empty) the minus clamps at 0 instead of going negative.
-    (document.getElementById("temp-auto") as HTMLButtonElement).click();
-    minus.click();
-    expect(posted).toContainEqual({ type: "setTemperature", value: 0 });
-    expect(input.value).toBe("0");
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], sampler: "topP", topP: 0.9 } });
+    const input = document.getElementById("samp-input") as HTMLInputElement;
+    (document.getElementById("samp-plus") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "setSamplerValue", value: 1 }); // 0.9+0.1 -> 1.0 (cap)
+    expect(input.value).toBe("1");
+    (document.getElementById("samp-minus") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "setSamplerValue", value: 0.9 });
   });
 });
 

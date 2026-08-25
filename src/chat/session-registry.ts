@@ -26,6 +26,10 @@ export interface SessionRuntime {
   presencePenalty?: number;
   /** Frequency penalty; undefined = Auto (not sent). 0 is a valid value. */
   frequencyPenalty?: number;
+  /** Nucleus threshold; undefined = Auto. */
+  topP?: number;
+  /** Active sampler: only its value is sent ("temperature" | "topP"). */
+  sampler?: "temperature" | "topP";
   /** Current context tokens in use (fill metric). */
   contextTokens?: number;
   /** Input tokens served from the provider's prompt cache (informational). */
@@ -78,6 +82,8 @@ export class SessionRegistry {
     rt.temperature = loaded.summary.temperature;
     rt.presencePenalty = loaded.summary.presencePenalty;
     rt.frequencyPenalty = loaded.summary.frequencyPenalty;
+    rt.topP = loaded.summary.topP;
+    rt.sampler = loaded.summary.sampler;
     rt.contextTokens = loaded.summary.contextTokens;
     return rt;
   }

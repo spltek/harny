@@ -206,6 +206,24 @@ describe("JsonlSessionStore context window", () => {
     expect("presencePenalty" in store.load("s1").summary).toBe(false);
     expect(store.load("s1").summary.frequencyPenalty).toBe(1.5); // freq untouched
   });
+
+  it("persists and clears top_p and the active sampler", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    store.saveTopP("s1", 0); // 0 is a valid threshold
+    store.saveSampler("s1", "topP");
+    let s = store.load("s1").summary;
+    expect(s.topP).toBe(0);
+    expect(s.sampler).toBe("topP");
+    store.saveMessages("s1", [{ role: "user", content: "hi", timestamp: 1 }]);
+    s = store.load("s1").summary;
+    expect(s.topP).toBe(0);
+    expect(s.sampler).toBe("topP"); // carried across saves
+    store.saveTopP("s1", undefined);
+    expect(store.load("s1").summary.topP).toBeUndefined();
+    store.saveSampler("s1", undefined);
+    expect(store.load("s1").summary.sampler).toBeUndefined();
+  });
 });
 
 describe("JsonlSessionStore thinking level", () => {

@@ -23,3 +23,16 @@ export function toTemperature(v: unknown): number | undefined {
   if (v === null || v === undefined) return undefined;
   return clampTemperature(typeof v === "number" ? v : Number(v));
 }
+
+/** top_p is a probability threshold: 0.0–1.0, one decimal, Auto = undefined. */
+export function clampTopP(v: number): number | undefined {
+  if (!Number.isFinite(v)) return undefined;
+  const clamped = Math.min(1, Math.max(0, v));
+  return Math.round(clamped * 10) / 10;
+}
+
+/** Coerce a JSON message value to a top_p (null/NaN -> Auto). */
+export function toTopP(v: unknown): number | undefined {
+  if (v === null || v === undefined) return undefined;
+  return clampTopP(typeof v === "number" ? v : Number(v));
+}

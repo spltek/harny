@@ -39,6 +39,11 @@ export class OpenAIChatProvider implements LLMProvider {
     if (typeof this.config.frequencyPenalty === "number" && Number.isFinite(this.config.frequencyPenalty)) {
       body.frequency_penalty = this.config.frequencyPenalty;
     }
+    // top_p follows the same "only when set" rule; the ACTIVE sampler is
+    // enforced host-side (only the active one keeps a value in the config).
+    if (typeof this.config.topP === "number" && Number.isFinite(this.config.topP)) {
+      body.top_p = this.config.topP;
+    }
     // Send tool definitions ONLY when there are any: an empty `tools` array with
     // `tool_choice` is rejected by strict providers (opencode-go/Console Go).
     if (this.toolDefinitions.length > 0) {

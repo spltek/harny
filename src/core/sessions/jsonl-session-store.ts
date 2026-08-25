@@ -20,6 +20,8 @@ interface SessionMeta {
   temperature?: number;
   presencePenalty?: number;
   frequencyPenalty?: number;
+  topP?: number;
+  sampler?: "temperature" | "topP";
 }
 
 /**
@@ -92,6 +94,9 @@ export class JsonlSessionStore implements SessionStore {
       ...(existing?.temperature !== undefined ? { temperature: existing.temperature } : {}),
       ...(existing?.presencePenalty !== undefined ? { presencePenalty: existing.presencePenalty } : {}),
       ...(existing?.frequencyPenalty !== undefined ? { frequencyPenalty: existing.frequencyPenalty } : {}),
+      // top_p/sampler >= 0 semantics: `!== undefined` (0 top_p is a valid value).
+      ...(existing?.topP !== undefined ? { topP: existing.topP } : {}),
+      ...(existing?.sampler ? { sampler: existing.sampler } : {}),
       ...extra,
     };
   }
@@ -181,6 +186,30 @@ export class JsonlSessionStore implements SessionStore {
     return summary;
   }
 
+  /** top_p (Auto/undefined clears the stored value). */
+  saveTopP(id: string, value?: number): SessionSummary {
+    const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
+    const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
+    const summary = this.carrySummary(id, existing, messages, {
+      ...(value === undefined ? { topP: undefined } : { topP: value }),
+    });
+    this.fs.mkdirRecursive(this.dir());
+    this.fs.writeText(this.path(id), this.serialize(summary, messages));
+    return summary;
+  }
+
+  /** Active sampler; undefined means the session default (temperature). */
+  saveSampler(id: string, sampler?: "temperature" | "topP"): SessionSummary {
+    const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
+    const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
+    const summary = this.carrySummary(id, existing, messages, {
+      ...(sampler ? { sampler } : { sampler: undefined }),
+    });
+    this.fs.mkdirRecursive(this.dir());
+    this.fs.writeText(this.path(id), this.serialize(summary, messages));
+    return summary;
+  }
+
   saveContextTokens(id: string, tokens?: number): SessionSummary {
     const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
     const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
@@ -226,6 +255,8 @@ export class JsonlSessionStore implements SessionStore {
             ...(typeof rec.temperature === "number" ? { temperature: rec.temperature } : {}),
             ...(typeof rec.presencePenalty === "number" ? { presencePenalty: rec.presencePenalty } : {}),
             ...(typeof rec.frequencyPenalty === "number" ? { frequencyPenalty: rec.frequencyPenalty } : {}),
+            ...(typeof rec.topP === "number" ? { topP: rec.topP } : {}),
+            ...(rec.sampler === "temperature" || rec.sampler === "topP" ? { sampler: rec.sampler } : {}),
           };
         } else if (typeof rec.role === "string") {
           messages.push(rec as unknown as ChatMessage);
@@ -263,6 +294,10 @@ export class JsonlSessionStore implements SessionStore {
       ...(existing?.contextTokens ? { contextTokens: existing.contextTokens } : {}),
       ...(existing?.outputTokens ? { outputTokens: existing.outputTokens } : {}),
       ...(existing?.temperature !== undefined ? { temperature: existing.temperature } : {}),
+      ...(existing?.presencePenalty !== undefined ? { presencePenalty: existing.presencePenalty } : {}),
+      ...(existing?.frequencyPenalty !== undefined ? { frequencyPenalty: existing.frequencyPenalty } : {}),
+      ...(existing?.topP !== undefined ? { topP: existing.topP } : {}),
+      ...(existing?.sampler ? { sampler: existing.sampler } : {}),
     };
     const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
     this.fs.writeText(this.path(id), this.serialize(summary, messages));
@@ -312,6 +347,8 @@ export class JsonlSessionStore implements SessionStore {
       ...(typeof rec.temperature === "number" ? { temperature: rec.temperature } : {}),
       ...(typeof rec.presencePenalty === "number" ? { presencePenalty: rec.presencePenalty } : {}),
       ...(typeof rec.frequencyPenalty === "number" ? { frequencyPenalty: rec.frequencyPenalty } : {}),
+      ...(typeof rec.topP === "number" ? { topP: rec.topP } : {}),
+      ...(rec.sampler === "temperature" || rec.sampler === "topP" ? { sampler: rec.sampler } : {}),
     };
   }
 
@@ -331,6 +368,8 @@ export class JsonlSessionStore implements SessionStore {
       ...(summary.temperature !== undefined ? { temperature: summary.temperature } : {}),
       ...(summary.presencePenalty !== undefined ? { presencePenalty: summary.presencePenalty } : {}),
       ...(summary.frequencyPenalty !== undefined ? { frequencyPenalty: summary.frequencyPenalty } : {}),
+      ...(summary.topP !== undefined ? { topP: summary.topP } : {}),
+      ...(summary.sampler ? { sampler: summary.sampler } : {}),
     };
     const lines = [JSON.stringify(header), ...messages.map((m) => JSON.stringify(m))];
     return lines.join("\n") + "\n";

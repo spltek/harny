@@ -13,7 +13,7 @@ import type { AttachmentService } from "./attachment-service";
 import type { AttachmentInfo } from "./attachment-types";
 import { debugLog } from "../logger";
 import { renderViewHtml } from "./view-html";
-import { toTemperature } from "./temperature";
+import { toTemperature, toTopP } from "./temperature";
 import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, toContextWindow, toOutputTokens } from "./context-window";
 import { PanelModalQueue } from "./panel-modal-queue";
 import { Compactor, DEFAULT_COMPACTION, CompactionSettings, planCompaction, planManualCompaction, shouldCompact, estimateTokens } from "../core/sessions/compactor";
@@ -437,14 +437,41 @@ export class ChatViewProvider implements WebviewViewProvider {
         void this.pushConfig();
         break;
       }
-      case "setTemperature": {
+      case "setSamplerMode": {
         const rt = this.activeRuntime();
         if (!rt) break;
-        // null / invalid -> Auto (not sent); the store clears the saved value.
-        const value = toTemperature(msg.value);
-        rt.temperature = value;
-        this.sessions.saveTemperature(rt.sessionId, value);
-        // Re-apply the active overrides so the runtime config carries temperature.
+        const mode = msg.mode === "topP" ? "topP" : "temperature";
+        rt.sampler = mode;
+        this.sessions.saveSampler(rt.sessionId, mode);
+        // Switching sampler ALWAYS resets the shared value to Auto (never a
+        // number interpreted on the wrong scale) — clear both stored values.
+        if (rt.temperature !== undefined) {
+          rt.temperature = undefined;
+          this.sessions.saveTemperature(rt.sessionId, undefined);
+        }
+        if (rt.topP !== undefined) {
+          rt.topP = undefined;
+          this.sessions.saveTopP(rt.sessionId, undefined);
+        }
+        if (rt.model) this.modelSelector.set(this.computeOverrides(rt.model, rt.modelProvider));
+        void this.pushConfig();
+        break;
+      }
+      case "setSamplerValue": {
+        const rt = this.activeRuntime();
+        if (!rt) break;
+        // The shared stepper value lands on the ACTIVE sampler's field; the
+        // clamp/scale follows the current radio selection.
+        const active = rt.sampler === "topP" ? "topP" : "temperature";
+        if (active === "topP") {
+          const value = toTopP(msg.value);
+          rt.topP = value;
+          this.sessions.saveTopP(rt.sessionId, value);
+        } else {
+          const value = toTemperature(msg.value);
+          rt.temperature = value;
+          this.sessions.saveTemperature(rt.sessionId, value);
+        }
         if (rt.model) this.modelSelector.set(this.computeOverrides(rt.model, rt.modelProvider));
         void this.pushConfig();
         break;
@@ -598,12 +625,13 @@ export class ChatViewProvider implements WebviewViewProvider {
     }
     // The per-session output-token budget wins over the provider's default.
     if (typeof rt?.outputTokens === "number") overrides.maxTokens = rt.outputTokens;
-    // The per-session temperature wins over the provider/config default.
-    // Only when explicitly set: Auto (undefined) leaves config/file values and
-    // the provider's own default untouched. 0 is a valid, deliberate value.
-    if (typeof rt?.temperature === "number") overrides.temperature = rt.temperature;
     if (typeof rt?.presencePenalty === "number") overrides.presencePenalty = rt.presencePenalty;
     if (typeof rt?.frequencyPenalty === "number") overrides.frequencyPenalty = rt.frequencyPenalty;
+    // Sampler pick: ONLY the ACTIVE sampler keeps a value; the other is
+    // explicitly cleared (undefined) so the request never carries both.
+    const sampler = rt?.sampler ?? "temperature";
+    overrides.temperature = sampler === "temperature" && typeof rt?.temperature === "number" ? rt.temperature : undefined;
+    overrides.topP = sampler === "topP" && typeof rt?.topP === "number" ? rt.topP : undefined;
     return overrides;
   }
 
@@ -735,6 +763,8 @@ export class ChatViewProvider implements WebviewViewProvider {
     temperature?: number;
     presencePenalty?: number;
     frequencyPenalty?: number;
+    topP?: number;
+    sampler?: "temperature" | "topP";
     contextTokens?: number;
     cachedTokens?: number;
   }> {
@@ -786,6 +816,8 @@ export class ChatViewProvider implements WebviewViewProvider {
       temperature: this.activeRuntime()?.temperature,
       presencePenalty: this.activeRuntime()?.presencePenalty,
       frequencyPenalty: this.activeRuntime()?.frequencyPenalty,
+      topP: this.activeRuntime()?.topP,
+      sampler: this.activeRuntime()?.sampler,
       contextTokens: this.activeRuntime()?.contextTokens,
       cachedTokens: this.activeRuntime()?.cachedTokens,
     };

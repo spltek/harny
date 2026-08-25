@@ -65,6 +65,8 @@ function makeStore(): SessionStore {
     saveTemperature: vi.fn((id, temp) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(temp !== undefined ? { temperature: temp } : {}) })),
     savePresencePenalty: vi.fn((id, value) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(value !== undefined ? { presencePenalty: value } : {}) })),
     saveFrequencyPenalty: vi.fn((id, value) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(value !== undefined ? { frequencyPenalty: value } : {}) })),
+    saveTopP: vi.fn((id, value) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(value !== undefined ? { topP: value } : {}) })),
+    saveSampler: vi.fn((id, mode) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(mode ? { sampler: mode } : {}) })),
     saveContextTokens: vi.fn((id, tokens) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(tokens ? { contextTokens: tokens } : {}) })),
   } as unknown as SessionStore;
 }
@@ -456,28 +458,33 @@ describe("ChatViewProvider", () => {
     expect(cfg.frequencyPenalty).toBe(0.5);
   });
 
-  it("setTemperature persists to the session, clears on Auto and applies the override", async () => {
+  it("sampler value persists on the active field and switching mode clears both to Auto", async () => {
     const { store, provider, modelSelector } = buildHarness();
     const { handler, view } = resolveWith(provider);
     await provider.createNew(); // s1
     await handler({ type: "setModel", model: "gpt-4o", provider: undefined });
-    await handler({ type: "setTemperature", value: 0.7 });
-    expect(store.saveTemperature).toHaveBeenCalledWith("s1", 0.7);
-    // 0 is a valid temperature and must be applied, not skipped as falsy.
-    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ temperature: 0.7 }));
+    // Temperature (default): the shared value lands on temperature, 0 is valid.
+    await handler({ type: "setSamplerValue", value: 0 });
+    expect(store.saveTemperature).toHaveBeenCalledWith("s1", 0);
+    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ temperature: 0 }));
+
+    // Switch to Top-P: mode persists AND both stored values reset to Auto.
+    await handler({ type: "setSamplerMode", mode: "topP" });
+    expect(store.saveSampler).toHaveBeenCalledWith("s1", "topP");
+    expect(store.saveTemperature).toHaveBeenCalledWith("s1", undefined);
+    // Only the active sampler carries a value: temperature cleared to none.
+    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ topP: undefined, temperature: undefined }));
+
+    // Now the shared value lands on topP (0.9 valid on the 0–1 scale).
+    await handler({ type: "setSamplerValue", value: 0.9 });
+    expect(store.saveTopP).toHaveBeenCalledWith("s1", 0.9);
     const configPosts = view.webview.postMessage.mock.calls
       .map((c) => c[0] as any)
       .filter((m) => m.type === "config");
-    expect(configPosts[configPosts.length - 1].config.temperature).toBe(0.7);
-
-    // Auto (null) clears the session value and the override.
-    await handler({ type: "setTemperature", value: null });
-    expect(store.saveTemperature).toHaveBeenCalledWith("s1", undefined);
-    expect(modelSelector.set).toHaveBeenCalledWith(expect.not.objectContaining({ temperature: expect.any(Number) }));
-    const posts = view.webview.postMessage.mock.calls
-      .map((c) => c[0] as any)
-      .filter((m) => m.type === "config");
-    expect(posts[posts.length - 1].config.temperature).toBeUndefined();
+    const cfg = configPosts[configPosts.length - 1].config;
+    expect(cfg.sampler).toBe("topP");
+    expect(cfg.topP).toBe(0.9);
+    expect(cfg.temperature).toBeUndefined(); // inactive sampler never sent
   });
 
   it("closeTab falls back to the last open tab when closing the active one", async () => {

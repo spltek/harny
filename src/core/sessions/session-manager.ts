@@ -63,6 +63,14 @@ export class SessionManager {
     return this.store.saveFrequencyPenalty(id, value);
   }
 
+  saveTopP(id: string, value?: number): SessionSummary {
+    return this.store.saveTopP(id, value);
+  }
+
+  saveSampler(id: string, sampler?: "temperature" | "topP"): SessionSummary {
+    return this.store.saveSampler(id, sampler);
+  }
+
   saveContextTokens(id: string, tokens?: number): SessionSummary {
     return this.store.saveContextTokens(id, tokens);
   }

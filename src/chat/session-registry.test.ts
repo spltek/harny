@@ -168,6 +168,25 @@ describe("SessionRegistry per-session model", () => {
     expect(rt.frequencyPenalty).toBe(0.5);
   });
 
+  it("loads the persisted top_p and sampler onto the runtime when opening", () => {
+    const store = makeStore();
+    (store.load as ReturnType<typeof vi.fn>).mockReturnValue({
+      summary: { id: "s9", name: "S", createdAt: 1, updatedAt: 1, messageCount: 0, model: "deepseek-v4-flash", topP: 0.8, sampler: "topP" },
+      messages: [],
+    });
+    const sessions = new SessionManager(store);
+    const registry = new SessionRegistry({
+      sessions,
+      store,
+      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn() } as unknown as ChatController)),
+    });
+
+    const rt = registry.openOrCreate("s9");
+
+    expect(rt.topP).toBe(0.8);
+    expect(rt.sampler).toBe("topP");
+  });
+
   it("new sessions have no model selected", () => {
     const { registry } = build();
     const rt = registry.create();

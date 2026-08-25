@@ -32,6 +32,10 @@ export interface HarnyConfig {
   presencePenalty?: number;
   /** Frequency penalty (positive reduces repetition; Auto/0 = not sent). */
   frequencyPenalty?: number;
+  /** Nucleus sampling threshold (0.0–1.0); sent only when the sampler is active. */
+  topP?: number;
+  /** Which sampler is ACTIVE per session: only its value is sent. */
+  sampler?: "temperature" | "topP";
   contextFiles: boolean;
   autoApprove: boolean;
   /** Open the chat panel automatically when VS Code starts. */

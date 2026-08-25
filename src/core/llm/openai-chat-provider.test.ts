@@ -68,6 +68,20 @@ describe("OpenAIChatProvider", () => {
     expect(body2.frequency_penalty).toBeUndefined();
   });
 
+  it("sends top_p only when explicitly set (probability threshold 0-1)", async () => {
+    const http = new FakeHttpClient();
+    http.respondWith(sseResponse("data: [DONE]"));
+    const provider = new OpenAIChatProvider({ ...config, topP: 0.9 }, http, tools);
+    await collect(provider.stream([{ role: "user", content: "hi" }]));
+    expect(JSON.parse(http.requests[0].body).top_p).toBe(0.9);
+
+    const http2 = new FakeHttpClient();
+    http2.respondWith(sseResponse("data: [DONE]"));
+    const provider2 = new OpenAIChatProvider(config, http2, tools);
+    await collect(provider2.stream([{ role: "user", content: "hi" }]));
+    expect(JSON.parse(http2.requests[0].body).top_p).toBeUndefined();
+  });
+
   it("sends temperature only when explicitly set, and 0 stays valid", async () => {
     // Explicit 0.7 -> sent.
     const http = new FakeHttpClient();

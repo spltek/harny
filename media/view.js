@@ -7028,6 +7028,11 @@
     const clamped = Math.min(TEMPERATURE_MAX, Math.max(TEMPERATURE_MIN, v));
     return Math.round(clamped * 10) / 10;
   }
+  function clampTopP(v) {
+    if (!Number.isFinite(v)) return void 0;
+    const clamped = Math.min(1, Math.max(0, v));
+    return Math.round(clamped * 10) / 10;
+  }
 
   // src/chat/webview/view.ts
   var vscode = acquireVsCodeApi();
@@ -7048,10 +7053,12 @@
   var outInput = document.getElementById("out-input");
   var outMinus = document.getElementById("out-minus");
   var outPlus = document.getElementById("out-plus");
-  var tempInput = document.getElementById("temp-input");
-  var tempMinus = document.getElementById("temp-minus");
-  var tempPlus = document.getElementById("temp-plus");
-  var tempAuto = document.getElementById("temp-auto");
+  var sampInput = document.getElementById("samp-input");
+  var sampMinus = document.getElementById("samp-minus");
+  var sampPlus = document.getElementById("samp-plus");
+  var sampAuto = document.getElementById("samp-auto");
+  var samplerTemp = document.getElementById("sampler-temp");
+  var samplerTopp = document.getElementById("sampler-topp");
   var presenceInput = document.getElementById("presence-input");
   var presenceMinus = document.getElementById("presence-minus");
   var presencePlus = document.getElementById("presence-plus");
@@ -7573,10 +7580,12 @@
     outMinus.disabled = active;
     outPlus.disabled = active;
     outInput.disabled = active;
-    tempInput.disabled = active;
-    tempMinus.disabled = active;
-    tempPlus.disabled = active;
-    tempAuto.disabled = active;
+    sampInput.disabled = active;
+    sampMinus.disabled = active;
+    sampPlus.disabled = active;
+    sampAuto.disabled = active;
+    samplerTemp.disabled = active;
+    samplerTopp.disabled = active;
     presenceInput.disabled = active;
     presenceMinus.disabled = active;
     presencePlus.disabled = active;
@@ -7697,7 +7706,7 @@
     const v = clampOutputTokens(c.outputTokens ?? DEFAULT_OUTPUT_TOKENS);
     outInput.value = String(v);
   }
-  function createFloatControl(refs, sendType) {
+  function createFloatControl(refs, sendType, clamp = clampTemperature) {
     const input = document.getElementById(refs.input);
     const minus = document.getElementById(refs.minus);
     const plus = document.getElementById(refs.plus);
@@ -7708,7 +7717,7 @@
         vscode.postMessage({ type: sendType, value: null });
         return;
       }
-      const v = clampTemperature(value);
+      const v = clamp(value);
       if (v === void 0) {
         input.value = "";
         vscode.postMessage({ type: sendType, value: null });
@@ -7744,7 +7753,20 @@
       input.value = typeof value === "number" && Number.isFinite(value) ? String(Math.round(value * 10) / 10) : "";
     } };
   }
-  var tempControl = createFloatControl({ input: "temp-input", minus: "temp-minus", plus: "temp-plus", auto: "temp-auto" }, "setTemperature");
+  var samplerClamp = (v) => samplerTopp.checked ? clampTopP(v) : clampTemperature(v);
+  var samplerControl = createFloatControl(
+    { input: "samp-input", minus: "samp-minus", plus: "samp-plus", auto: "samp-auto" },
+    "setSamplerValue",
+    samplerClamp
+  );
+  function renderSamplerControl(c) {
+    const active = c.sampler === "topP" ? "topP" : "temperature";
+    samplerTemp.checked = active === "temperature";
+    samplerTopp.checked = active === "topP";
+    samplerControl.render(active === "topP" ? c.topP : c.temperature);
+  }
+  samplerTemp.addEventListener("change", () => vscode.postMessage({ type: "setSamplerMode", mode: "temperature" }));
+  samplerTopp.addEventListener("change", () => vscode.postMessage({ type: "setSamplerMode", mode: "topP" }));
   var presenceControl = createFloatControl({ input: "presence-input", minus: "presence-minus", plus: "presence-plus", auto: "presence-auto" }, "setPresencePenalty");
   var freqControl = createFloatControl({ input: "freq-input", minus: "freq-minus", plus: "freq-plus", auto: "freq-auto" }, "setFrequencyPenalty");
   function fmtTokens(n) {
@@ -7948,7 +7970,7 @@
         renderThinkingSelect(msg.config || {});
         ctxInput.value = String(clampContextWindow(msg.config && msg.config.contextWindow || DEFAULT_CONTEXT_WINDOW));
         renderOutputTokens(msg.config || {});
-        tempControl.render(msg.config && msg.config.temperature);
+        renderSamplerControl(msg.config || {});
         presenceControl.render(msg.config && msg.config.presencePenalty);
         freqControl.render(msg.config && msg.config.frequencyPenalty);
         renderMetrics(msg.config || {});
@@ -7966,7 +7988,7 @@
     renderThinkingSelect(state.config || {});
     ctxInput.value = String(clampContextWindow(state.config && state.config.contextWindow || DEFAULT_CONTEXT_WINDOW));
     renderOutputTokens(state.config || {});
-    tempControl.render(state.config && state.config.temperature);
+    renderSamplerControl(state.config || {});
     presenceControl.render(state.config && state.config.presencePenalty);
     freqControl.render(state.config && state.config.frequencyPenalty);
     renderMetrics(state.config || {});

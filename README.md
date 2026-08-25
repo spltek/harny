@@ -164,7 +164,7 @@ Below the model dropdown, two cards let you tune the session. The **Window** car
 
 - **Context window** (default `128000`): the compaction ceiling — lower it to trigger auto-compaction earlier and keep the model fresh (avoids context rot), or raise it up to the model's maximum.
 - **Output tokens** (default `8192`): `max_tokens` sent per request; raise it for long edits/answers, lower it for quick chats. The session value wins over the provider's declared default.
-- **Temperature** (Auto by default): `0.0–2.0`. **Auto = not sent** (provider default applies; strict providers that reject the field keep working). `0` is valid (fully deterministic).
+- **Temperature / Top-P** (Auto by default): a compact **segmented toggle** (Temperature | Top-P) chooses which sampler is active — temperature `0.0–2.0` or top-p `0.0–1.0` — and a **single shared stepper** below whose scale follows the toggle. Only the active sampler is sent; **switching the toggle resets the shared value to Auto** (never a number on the wrong scale). The toggle choice AND the value (when ≠ Auto) are persisted per session.
 - **Presence / Frequency penalty** (Auto by default): `0.0–2.0`. Presence pushes toward new topics; frequency reduces repetition. Sent only when set (same strict-provider rule).
 
 #### Dynamic models from the host (`GET /v1/models`)

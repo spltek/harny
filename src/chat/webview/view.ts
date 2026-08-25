@@ -1,6 +1,6 @@
 import { renderMarkdown } from "./markdown";
 import { clampContextWindow, clampOutputTokens, CONTEXT_STEP, DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, OUTPUT_STEP } from "../context-window";
-import { clampTemperature, TEMPERATURE_STEP } from "../temperature";
+import { clampTemperature, clampTopP, TEMPERATURE_STEP } from "../temperature";
 
 declare function acquireVsCodeApi(): {
   postMessage(message: unknown): void;
@@ -46,6 +46,8 @@ interface ConfigState {
   temperature?: number;
   presencePenalty?: number;
   frequencyPenalty?: number;
+  topP?: number;
+  sampler?: "temperature" | "topP";
   contextTokens?: number;
   cachedTokens?: number;
 }
@@ -82,10 +84,12 @@ const ctxPlus = document.getElementById("ctx-plus") as HTMLButtonElement;
 const outInput = document.getElementById("out-input") as HTMLInputElement;
 const outMinus = document.getElementById("out-minus") as HTMLButtonElement;
 const outPlus = document.getElementById("out-plus") as HTMLButtonElement;
-const tempInput = document.getElementById("temp-input") as HTMLInputElement;
-const tempMinus = document.getElementById("temp-minus") as HTMLButtonElement;
-const tempPlus = document.getElementById("temp-plus") as HTMLButtonElement;
-const tempAuto = document.getElementById("temp-auto") as HTMLButtonElement;
+const sampInput = document.getElementById("samp-input") as HTMLInputElement;
+const sampMinus = document.getElementById("samp-minus") as HTMLButtonElement;
+const sampPlus = document.getElementById("samp-plus") as HTMLButtonElement;
+const sampAuto = document.getElementById("samp-auto") as HTMLButtonElement;
+const samplerTemp = document.getElementById("sampler-temp") as HTMLInputElement;
+const samplerTopp = document.getElementById("sampler-topp") as HTMLInputElement;
 const presenceInput = document.getElementById("presence-input") as HTMLInputElement;
 const presenceMinus = document.getElementById("presence-minus") as HTMLButtonElement;
 const presencePlus = document.getElementById("presence-plus") as HTMLButtonElement;
@@ -749,10 +753,12 @@ function setStreaming(active: boolean): void {
   outMinus.disabled = active;
   outPlus.disabled = active;
   outInput.disabled = active;
-  tempInput.disabled = active;
-  tempMinus.disabled = active;
-  tempPlus.disabled = active;
-  tempAuto.disabled = active;
+  sampInput.disabled = active;
+  sampMinus.disabled = active;
+  sampPlus.disabled = active;
+  sampAuto.disabled = active;
+  samplerTemp.disabled = active;
+  samplerTopp.disabled = active;
   presenceInput.disabled = active;
   presenceMinus.disabled = active;
   presencePlus.disabled = active;
@@ -910,7 +916,8 @@ interface FloatControl {
 
 function createFloatControl(
   refs: { input: string; minus: string; plus: string; auto: string },
-  sendType: "setTemperature" | "setPresencePenalty" | "setFrequencyPenalty",
+  sendType: "setSamplerValue" | "setPresencePenalty" | "setFrequencyPenalty",
+  clamp: (v: number) => number | undefined = clampTemperature,
 ): FloatControl {
   const input = document.getElementById(refs.input) as HTMLInputElement;
   const minus = document.getElementById(refs.minus) as HTMLButtonElement;
@@ -923,7 +930,7 @@ function createFloatControl(
       vscode.postMessage({ type: sendType, value: null });
       return;
     }
-    const v = clampTemperature(value);
+    const v = clamp(value);
     if (v === undefined) {
       input.value = "";
       vscode.postMessage({ type: sendType, value: null });
@@ -959,7 +966,26 @@ function createFloatControl(
   return { input, render: (value: unknown) => { input.value = typeof value === "number" && Number.isFinite(value) ? String(Math.round(value * 10) / 10) : ""; } };
 }
 
-const tempControl = createFloatControl({ input: "temp-input", minus: "temp-minus", plus: "temp-plus", auto: "temp-auto" }, "setTemperature");
+// Shared sampler stepper: the scale follows the selected radio (0.0–2.0 when
+// Temperature, 0.0–1.0 when Top-P); switching mode resets the value to Auto.
+const samplerClamp = (v: number): number | undefined => (samplerTopp.checked ? clampTopP(v) : clampTemperature(v));
+const samplerControl = createFloatControl(
+  { input: "samp-input", minus: "samp-minus", plus: "samp-plus", auto: "samp-auto" },
+  "setSamplerValue",
+  samplerClamp,
+);
+
+/** Sampler radios: brand the active option; show its value in the shared stepper. */
+function renderSamplerControl(c: ConfigState): void {
+  const active = c.sampler === "topP" ? "topP" : "temperature"; // default = temperature
+  samplerTemp.checked = active === "temperature";
+  samplerTopp.checked = active === "topP";
+  samplerControl.render(active === "topP" ? c.topP : c.temperature);
+}
+
+samplerTemp.addEventListener("change", () => vscode.postMessage({ type: "setSamplerMode", mode: "temperature" }));
+samplerTopp.addEventListener("change", () => vscode.postMessage({ type: "setSamplerMode", mode: "topP" }));
+
 const presenceControl = createFloatControl({ input: "presence-input", minus: "presence-minus", plus: "presence-plus", auto: "presence-auto" }, "setPresencePenalty");
 const freqControl = createFloatControl({ input: "freq-input", minus: "freq-minus", plus: "freq-plus", auto: "freq-auto" }, "setFrequencyPenalty");
 
@@ -1193,7 +1219,7 @@ window.addEventListener("message", (e) => {
       renderThinkingSelect(msg.config || {});
       ctxInput.value = String(clampContextWindow((msg.config && msg.config.contextWindow) || DEFAULT_CONTEXT_WINDOW));
       renderOutputTokens(msg.config || {});
-      tempControl.render(msg.config && msg.config.temperature);
+      renderSamplerControl(msg.config || {});
       presenceControl.render(msg.config && msg.config.presencePenalty);
       freqControl.render(msg.config && msg.config.frequencyPenalty);
       renderMetrics(msg.config || {});
@@ -1220,7 +1246,7 @@ function renderViewState(state: {
   renderThinkingSelect(state.config || {});
   ctxInput.value = String(clampContextWindow((state.config && state.config.contextWindow) || DEFAULT_CONTEXT_WINDOW));
   renderOutputTokens(state.config || {});
-  tempControl.render(state.config && state.config.temperature);
+  renderSamplerControl(state.config || {});
   presenceControl.render(state.config && state.config.presencePenalty);
   freqControl.render(state.config && state.config.frequencyPenalty);
   renderMetrics(state.config || {});

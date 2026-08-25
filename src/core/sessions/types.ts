@@ -25,6 +25,10 @@ export interface SessionSummary {
   presencePenalty?: number;
   /** Frequency penalty for this session (persisted; undefined = Auto, not sent). */
   frequencyPenalty?: number;
+  /** Nucleus threshold for this session (persisted; undefined = Auto). */
+  topP?: number;
+  /** Active sampler ("temperature" | "topP"); only its value is sent. */
+  sampler?: "temperature" | "topP";
 }
 
 /** A session file plus its loaded messages. */
@@ -59,4 +63,8 @@ export interface SessionStore {
   savePresencePenalty(id: string, value?: number): SessionSummary;
   /** Persist the session's frequency penalty (undefined = Auto, not sent). */
   saveFrequencyPenalty(id: string, value?: number): SessionSummary;
+  /** Persist the session's top_p threshold (undefined = Auto). */
+  saveTopP(id: string, value?: number): SessionSummary;
+  /** Persist the ACTIVE sampler (temperature | topP). */
+  saveSampler(id: string, sampler?: "temperature" | "topP"): SessionSummary;
 }
