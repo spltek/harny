@@ -1,0 +1,191 @@
+{
+  "name": "harny",
+  "displayName": "Harny - AI Coding Harness",
+  "description": "AI coding harness for VS Code — fast like pi, with a SOLID core. OpenAI chat completions, tool-calling and streaming.",
+  "version": "0.1.0",
+  "publisher": "spltek",
+  "license": "MIT",
+  "repository": "https://github.com/spltek/harny",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Chat",
+    "Machine Learning",
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:harny.chatView"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "harny",
+          "title": "Harny",
+          "icon": "media/icon.svg",
+          "side": "right"
+        }
+      ]
+    },
+    "views": {
+      "harny": [
+        {
+          "type": "webview",
+          "id": "harny.chatView",
+          "name": "Harny Chat",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "harny.openChat",
+        "title": "Harny: Open Chat"
+      },
+      {
+        "command": "harny.newSession",
+        "title": "Harny: New Session"
+      },
+      {
+        "command": "harny.reloadConfig",
+        "title": "Harny: Reload Config"
+      },
+      {
+        "command": "harny.debugConfig",
+        "title": "Harny: Debug Config"
+      },
+      {
+        "command": "harny.explainCode",
+        "title": "Harny: Explain This Code"
+      },
+      {
+        "command": "harny.editCode",
+        "title": "Harny: Edit with AI"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "harny.openChat",
+        "key": "ctrl+shift+h",
+        "mac": "cmd+shift+h"
+      },
+      {
+        "command": "harny.explainCode",
+        "key": "ctrl+shift+e",
+        "mac": "cmd+shift+e"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "harny.explainCode",
+          "group": "harny"
+        },
+        {
+          "command": "harny.editCode",
+          "group": "harny"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Harny",
+      "properties": {
+        "harny.provider": {
+          "type": "string",
+          "default": "openai",
+          "enum": [
+            "openai",
+            "openai-compatible",
+            "anthropic"
+          ],
+          "description": "API provider to use"
+        },
+        "harny.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key (or set OPENAI_API_KEY env var)"
+        },
+        "harny.baseUrl": {
+          "type": "string",
+          "default": "https://api.openai.com",
+          "description": "Base URL for OpenAI-compatible APIs"
+        },
+        "harny.model": {
+          "type": "string",
+          "default": "gpt-4o",
+          "description": "Model to use for chat completions"
+        },
+        "harny.maxTokens": {
+          "type": "number",
+          "default": 4096,
+          "description": "Maximum tokens per response"
+        },
+        "harny.temperature": {
+          "type": "number",
+          "description": "Sampling temperature"
+        },
+        "harny.thinkingMode": {
+          "type": "string",
+          "enum": ["bool", "effort", "none"],
+          "description": "How the provider exposes the reasoning/thinking phase: \"bool\" (llama.cpp chat_template_kwargs.enable_thinking), \"effort\" (OpenAI-style reasoning_effort), \"none\" (nothing sent)"
+        },
+        "harny.thinkingLevel": {
+          "type": "string",
+          "enum": ["off", "low", "medium", "high"],
+          "default": "medium",
+          "description": "Thinking / reasoning effort level (per session, overridable from the chat header dropdown)"
+        },
+        "harny.autoOpen": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically open the chat panel when VS Code starts"
+        },
+        "harny.contextFiles": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto-include relevant project files as context"
+        },
+        "harny.autoApprove": {
+          "type": "boolean",
+          "default": false,
+          "description": "Auto-approve tool calls without confirmation"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "bun run build",
+    "build": "npx tsc -p tsconfig.json && node scripts/build-webview.mjs",
+    "typecheck": "npx tsc --noEmit && npx tsc -p tsconfig.webview.json",
+    "watch": "npx tsc -p tsconfig.json --watch",
+    "dev": "bun run watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage",
+    "package": "vsce package",
+    "format": "prettier --write 'src/**/*.ts'"
+  },
+  "devDependencies": {
+    "@types/diff": "^7.0.2",
+    "@types/node": "^26.2.0",
+    "@types/vscode": "^1.85.0",
+    "@vitest/coverage-v8": "^4.1.10",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.28.2",
+    "jsdom": "^29.1.1",
+    "prettier": "^3.2.0",
+    "typescript": "^5.4.0",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "diff": "^7.0.0",
+    "dompurify": "^3.4.13",
+    "markdown-it": "^15.0.0",
+    "markdown-it-task-lists": "^2.1.1"
+  }
+}

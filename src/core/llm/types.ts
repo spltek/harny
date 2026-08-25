@@ -1,0 +1,38 @@
+import type { ToolCall } from "../tools/tool";
+
+export interface LLMMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  toolCalls?: ToolCall[];
+  toolCallId?: string;
+  /** Data-URI images for multimodal user messages. */
+  images?: string[];
+  /** Reasoning/thinking text (must be passed back for reasoning models). */
+  thinking?: string;
+
+}
+
+/** Token usage reported by a model call (provider-specific). */
+export interface Usage {
+  input: number;
+  output: number;
+  total: number;
+  /** Input tokens served from the provider's prompt cache (0 = cache cold/unreported). */
+  cached?: number;
+}
+
+export type StreamChunk =
+  | { type: "text"; content: string }
+  | { type: "thinking"; content: string }
+  | { type: "tool_call_start"; index: number; id?: string; name?: string }
+  | { type: "tool_call_delta"; index: number; delta: string }
+  | { type: "tool_call_end"; index: number; id?: string; name?: string }
+  | { type: "usage"; usage: Usage };
+
+export interface LLMProvider {
+  stream(messages: LLMMessage[], signal?: AbortSignal): AsyncGenerator<StreamChunk>;
+}
+
+export interface LLMProviderFactory {
+  create(config: import("../config/types").HarnyConfig): LLMProvider;
+}

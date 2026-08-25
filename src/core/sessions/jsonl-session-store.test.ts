@@ -1,0 +1,184 @@
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { JsonlSessionStore } from "./jsonl-session-store";
+import { nodeFileSystem } from "../tools/file-system";
+import type { ChatMessage } from "../history/types";
+
+function msg(partial: Partial<ChatMessage>): ChatMessage {
+  return { role: "user", content: "", timestamp: 1, ...partial };
+}
+
+describe("JsonlSessionStore", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "harny-sessions-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("creates a session and lists it", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    const created = store.create("My session");
+
+    expect(created.id).toBe("s1");
+    expect(created.name).toBe("My session");
+    expect(created.messageCount).toBe(0);
+    expect(store.list()).toEqual([expect.objectContaining({ id: "s1", name: "My session" })]);
+  });
+
+  it("persists and loads messages in order", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    const messages = [
+      msg({ role: "user", content: "hello", images: ["data:image/png;base64,AAAA"] }),
+      msg({ role: "assistant", content: "ehi", toolCalls: [{ id: "c1", name: "Read", arguments: { path: "/x" } }] }),
+    ];
+    store.saveMessages("s1", messages);
+
+    const loaded = store.load("s1");
+    expect(loaded.summary.messageCount).toBe(2);
+    expect(loaded.messages).toHaveLength(2);
+    expect(loaded.messages[0].content).toBe("hello");
+    expect(loaded.messages[0].images).toEqual(["data:image/png;base64,AAAA"]);
+    expect(loaded.messages[1].toolCalls).toEqual([{ id: "c1", name: "Read", arguments: { path: "/x" } }]);
+  });
+
+  it("renames a session preserving its messages", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create("Old");
+    store.saveMessages("s1", [msg({ content: "keep me" })]);
+
+    store.rename("s1", "New name");
+
+    const loaded = store.load("s1");
+    expect(loaded.summary.name).toBe("New name");
+    expect(loaded.messages).toHaveLength(1);
+    expect(loaded.messages[0].content).toBe("keep me");
+  });
+
+  it("removes a session and returns false for a missing one", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+
+    expect(store.remove("s1")).toBe(true);
+    expect(store.list()).toEqual([]);
+    expect(store.remove("s1")).toBe(false);
+  });
+
+  it("ignores non-jsonl files when listing", () => {
+    writeFileSync(join(dir, "notes.txt"), "x");
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+
+    expect(store.list().map((s) => s.id)).toEqual(["s1"]);
+  });
+
+  it("loads a session with a missing header by synthesizing one", () => {
+    writeFileSync(join(dir, "s1.jsonl"), JSON.stringify(msg({ content: "orphan" })) + "\n");
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem);
+
+    const loaded = store.load("s1");
+    expect(loaded.summary.id).toBe("s1");
+    expect(loaded.messages).toHaveLength(1);
+    expect(loaded.messages[0].content).toBe("orphan");
+  });
+
+  it("writes version and cwd in the session header", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1", cwd: "/Users/x/proj" });
+    store.create();
+    store.saveMessages("s1", [msg({ content: "a" })]);
+
+    const header = readFileSync(join(dir, "s1.jsonl"), "utf8").split("\n")[0];
+    const meta = JSON.parse(header);
+    expect(meta.type).toBe("session");
+    expect(meta.version).toBe(2);
+    expect(meta.cwd).toBe("/Users/x/proj");
+  });
+});
+
+describe("JsonlSessionStore model persistence", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "harny-sessions-model-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("persists the last selected model and provider in the header", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+
+    store.saveModel("s1", "deepseek-v4-flash", "opencode-go");
+    const loaded = store.load("s1");
+
+    expect(loaded.summary.model).toBe("deepseek-v4-flash");
+    expect(loaded.summary.modelProvider).toBe("opencode-go");
+    expect(store.list()[0].model).toBe("deepseek-v4-flash");
+  });
+
+  it("keeps the model when saving messages", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    store.saveModel("s1", "gemma.gguf", "llamacpp");
+
+    store.saveMessages("s1", [{ role: "user", content: "x", timestamp: 1 }]);
+
+    expect(store.load("s1").summary.model).toBe("gemma.gguf");
+  });
+});
+
+describe("JsonlSessionStore context window", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "harny-sessions-ctx-")); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  it("persists and loads the context window", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    store.saveContextWindow("s1", 200000);
+    expect(store.load("s1").summary.contextWindow).toBe(200000);
+    expect(store.list()[0].contextWindow).toBe(200000);
+  });
+});
+
+describe("JsonlSessionStore thinking level", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "harny-sessions-think-")); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  it("persists and loads the session thinking level", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    store.saveModel("s1", "qwen.gguf", "llamacpp");
+    store.saveThinkingLevel("s1", "high");
+    const loaded = store.load("s1").summary;
+    expect(loaded.thinkingLevel).toBe("high");
+    expect(store.list()[0].thinkingLevel).toBe("high");
+    // model/provider survive the thinking update
+    expect(loaded.model).toBe("qwen.gguf");
+    expect(loaded.modelProvider).toBe("llamacpp");
+  });
+
+  it("ignores invalid thinking levels", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    store.saveThinkingLevel("s1", "insane" as never);
+    expect(store.load("s1").summary.thinkingLevel).toBeUndefined();
+  });
+
+  it("keeps the thinking level when saving models or messages", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    store.saveThinkingLevel("s1", "low");
+    store.saveModel("s1", "gemma.gguf", "llamacpp");
+    expect(store.load("s1").summary.thinkingLevel).toBe("low");
+  });
+});

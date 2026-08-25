@@ -1,0 +1,58 @@
+{
+  // ============================================================
+  // FORMAT 1 — Flat (simple)
+  // ============================================================
+  // "apiKey": "sk-...",
+  // "provider": "openai",                 // "openai" | "openai-compatible" | "anthropic"
+  // "baseUrl": "https://api.openai.com",
+  // "model": "gpt-4o",
+  // "maxTokens": 4096,
+  // "temperature": 0.1,
+  // "autoOpen": false
+
+  // ============================================================
+  // FORMAT 2 — Multiple providers (map)
+  // "provider" selects which entry to use; "model" which model.
+  // ============================================================
+  "provider": "llamacpp",
+  "model": "Qwen3.6-35B-A3B-UD-Q6_K.gguf",
+  "providers": {
+    "llamacpp": {
+      "baseUrl": "http://localhost:8090/v1",
+      "api": "openai-completions",
+      "apiKey": "lamacpp",
+      "thinking": "bool", // "bool" (llama.cpp chat_template_kwargs: enable_thinking + reasoning_effort) | "effort" (reasoning_effort) | "none"
+      "thinkingLevel": "medium", // provider default: "off" | "low" | "medium" | "high" (overridable per session from the chat UI)
+      "models": [
+        { "id": "gemma-4-26B-A4B-it-UD-Q8_K_XL.gguf", "input": ["text", "image"] },
+        { "id": "Qwen3.6-35B-A3B-UD-Q6_K.gguf", "input": ["text", "image"] },
+        { "id": "Qwen3.6-27B-Q6_K.gguf", "input": ["text", "image"] }
+      ]
+    },
+    // Hosted provider with a dynamic model list: just apiKey + baseUrl.
+    // The list is fetched from the host (GET /v1/models) and shown in the
+    // dropdown. The chosen model is saved into the "model" field below.
+    "opencode-go": {
+      "baseUrl": "https://opencode.ai/zen/go/v1",
+      "api": "openai-completions",
+      "apiKey": "sk-...",
+      "thinking": "effort", // OpenAI-style reasoning_effort: low/medium/high
+      "thinkingLevel": "high"
+      // no "models": the list comes from the host
+    },
+    // OpenRouter is OpenAI-compatible. Declared WITHOUT "models" so the
+    // dropdown auto-fills from GET /v1/models (hundreds of hosted models).
+    "openrouter": {
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "api": "openai-completions",
+      "apiKey": "sk-or-...",
+      "thinking": "effort"
+    },
+    // Local provider without apiKey: works the same, dynamic list.
+    // "ollama": {
+    //   "baseUrl": "http://localhost:11434/v1",
+    //   "api": "openai-completions",
+    //   "apiKey": "ollama"
+    // }
+  }
+}
