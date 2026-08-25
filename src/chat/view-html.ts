@@ -318,6 +318,9 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
       background: linear-gradient(to bottom, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0));
     }
+    /* The AI Model card keeps the ORIGINAL proportions: one full-width row
+       with the label inline and the select stretching (card chrome only). */
+    .ctl-card-model { flex-direction: row; align-items: center; gap: 8px; }
     .card-title {
       font-size: 0.64rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
       color: #8a8a8a; user-select: none;
@@ -329,10 +332,8 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
        same tick (send/compactStart), so the two pulse together. */
     #send-btn.blinking { animation: harny-pulse 1.2s ease-in-out infinite; }
     #model-select {
-      width: 100%;
-      background: transparent; color: inherit; border: 1px solid var(--border);
-      border-radius: 4px; outline: none; font-family: var(--font); font-size: 0.85rem;
-      cursor: pointer; padding: 0 4px; height: 1.85rem;
+      flex: 1; min-width: 0; background: transparent; color: inherit; border: none; outline: none;
+      font-family: var(--font); font-size: 0.85rem; cursor: pointer; height: 1.85rem;
     }
     #model-select option, #model-select optgroup { color: #1e1e1e; }
     #thinking-select {
@@ -513,10 +514,8 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
   <div id="status">
     <div class="ctl-cards">
       <div class="ctl-card ctl-card-model">
-        <div class="field">
-          <label class="field-label" for="model-select">AI Model</label>
-          <select id="model-select" title="Switch model"></select>
-        </div>
+        <span class="model-label">AI Model:</span>
+        <select id="model-select" title="Switch model"></select>
       </div>
       <div class="ctl-card">
         <span class="card-title">Window</span>
