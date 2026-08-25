@@ -12,7 +12,6 @@ interface SessionMeta {
   name: string;
   createdAt: number;
   updatedAt: number;
-  cwd?: string;
   model?: string;
   modelProvider?: string;
   thinkingLevel?: string;
@@ -29,15 +28,13 @@ interface SessionMeta {
  */
 export class JsonlSessionStore implements SessionStore {
   private readonly idGen: () => string;
-  private readonly cwd?: string;
 
   constructor(
     private dir: () => string,
     private fs: FileSystem,
-    options: { idGen?: () => string; cwd?: string } = {},
+    options: { idGen?: () => string } = {},
   ) {
     this.idGen = options.idGen ?? (() => randomUUID());
-    this.cwd = options.cwd;
   }
 
   list(): SessionSummary[] {
@@ -295,7 +292,6 @@ export class JsonlSessionStore implements SessionStore {
       name: summary.name,
       createdAt: summary.createdAt,
       updatedAt: summary.updatedAt,
-      ...(this.cwd ? { cwd: this.cwd } : {}),
       ...(summary.model ? { model: summary.model } : {}),
       ...(summary.modelProvider ? { modelProvider: summary.modelProvider } : {}),
       ...(summary.thinkingLevel ? { thinkingLevel: summary.thinkingLevel } : {}),

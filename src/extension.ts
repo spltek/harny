@@ -65,16 +65,12 @@ export function activate(context: ExtensionContext) {
   }
   infoLog("storage home=", resolved.home);
 
-  // Sessions follow the folder: `<root>/.harny-sessions` (created when a
-  // single root is open). Transcripts are kept out of git (auto-added to the
-  // workspace .gitignore when it exists).
+  // The sessions folder is created LAZILY by the store on the FIRST session
+  // creation (`<root>/.harny-sessions`); opening Harny never writes to the
+  // workspace. Only the .gitignore entry is ensured up-front (a text append,
+  // harmless before the folder exists — keeps transcripts out of git).
   const sessionsDir = (): string | undefined => (root ? sessionsDirFor(root) : undefined);
   if (root) {
-    try {
-      mkdirSync(sessionsDirFor(root)!, { recursive: true });
-    } catch (e) {
-      debugLog("could not create sessions dir", e);
-    }
     try {
       if (ensureSessionGitignore(root, nodeFileSystem)) infoLog("added", SESSIONS_DIR_NAME, "to", join(root, ".gitignore"));
     } catch (e) {
@@ -100,7 +96,7 @@ export function activate(context: ExtensionContext) {
   const systemPrompt = new DefaultSystemPromptBuilder(() => tools.definitions(), cwd);
   const compactor = new Compactor(llmFactory, () => config.get());
 
-  const store = new JsonlSessionStore(() => sessionsDir() ?? "", nodeFileSystem, { cwd: cwd() });
+  const store = new JsonlSessionStore(() => sessionsDir() ?? "", nodeFileSystem);
   const sessions = new SessionManager(store);
 
   const attachments = new AttachmentService(nodeFileSystem, async () => {

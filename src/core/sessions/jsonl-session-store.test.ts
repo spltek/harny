@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { JsonlSessionStore } from "./jsonl-session-store";
@@ -19,6 +19,16 @@ describe("JsonlSessionStore", () => {
 
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("lazily creates the sessions dir on the FIRST creation (never before)", () => {
+    const missing = join(dir, "nested", "does-not-exist");
+    const store = new JsonlSessionStore(() => missing, nodeFileSystem, { idGen: () => "s1" });
+    expect(existsSync(missing)).toBe(false); // listing alone writes nothing
+    expect(store.list()).toEqual([]);
+    expect(existsSync(missing)).toBe(false);
+    store.create();
+    expect(existsSync(missing)).toBe(true); // the FIRST session materialises it
   });
 
   it("creates a session and lists it", () => {
@@ -88,8 +98,8 @@ describe("JsonlSessionStore", () => {
     expect(loaded.messages[0].content).toBe("orphan");
   });
 
-  it("writes version and cwd in the session header", () => {
-    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1", cwd: "/Users/x/proj" });
+  it("writes the version in the session header", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
     store.create();
     store.saveMessages("s1", [msg({ content: "a" })]);
 
@@ -97,7 +107,6 @@ describe("JsonlSessionStore", () => {
     const meta = JSON.parse(header);
     expect(meta.type).toBe("session");
     expect(meta.version).toBe(2);
-    expect(meta.cwd).toBe("/Users/x/proj");
   });
 });
 
