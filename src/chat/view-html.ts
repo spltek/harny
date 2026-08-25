@@ -117,20 +117,47 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     .srow-actions button:hover:not(:disabled) { opacity: 1; color: var(--accent); }
     .empty { padding: 12px; text-align: center; color: #888; font-size: 0.92rem; }
 
-    /* Tabs */
+    /* Tabs: raised pill keys, consistent with the 3D button chrome. */
     #tabs {
-      display: flex; gap: 2px; padding: 4px 6px;
+      display: flex; gap: 3px; padding: 5px 8px 0;
       border-bottom: 1px solid var(--border); overflow-x: auto; flex-shrink: 0;
+      scrollbar-width: none;
     }
+    #tabs::-webkit-scrollbar { display: none; }
     .tab {
-      display: inline-flex; align-items: center; gap: 4px;
-      padding: 3px 8px; border-radius: 5px 5px 0 0; cursor: pointer;
-      font-size: 0.85rem; white-space: nowrap; color: #999;
+      position: relative;
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 4px 10px; border-radius: 6px 6px 0 0; cursor: pointer;
+      font-size: 0.85rem; white-space: nowrap; color: #9a9a9a;
       border: 1px solid transparent; border-bottom: none;
+      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0));
+      box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.1);
+      transition: color 0.12s, background-color 0.12s, box-shadow 0.12s;
+      max-width: 12rem; min-width: 0; flex-shrink: 1;
+      /* sits flush on the strip's border (active covers it with its face) */
+      margin-bottom: -1px;
     }
-    .tab.active { background: var(--assistant-msg); color: var(--fg); border-color: var(--border); }
-    .tab .close { font-size: 0.77rem; padding: 0 2px; color: #888; }
-    .tab .close:hover { color: var(--error); }
+    .tab > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+    .tab:hover:not(.active) {
+      color: var(--fg);
+      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02));
+    }
+    .tab.active {
+      color: var(--fg);
+      border-color: var(--border);
+      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.03)),
+        var(--assistant-msg);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.18),
+        0 -1px 3px rgba(0, 0, 0, 0.12);
+    }
+    .tab.active .close { color: #bbb; }
+    .tab .close {
+      font-size: 0.8rem; line-height: 1; padding: 1px 3px; margin-right: -2px;
+      border-radius: 4px; color: #999; flex-shrink: 0;
+      transition: color 0.12s, background-color 0.12s;
+    }
+    .tab .close:hover { color: var(--error); background: rgba(244, 71, 71, 0.14); }
 
     /* Chat */
     #messages { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
