@@ -361,6 +361,7 @@ describe("ChatViewProvider", () => {
     const { store, provider } = buildHarness();
     const { handler, view } = resolveWith(provider);
     await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "gpt-4o", provider: undefined });
     await handler({ type: "setThinkingLevel", level: "high" });
     expect(store.saveThinkingLevel).toHaveBeenCalledWith("s1", "high");
     const configPosts = view.webview.postMessage.mock.calls
