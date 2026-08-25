@@ -7151,7 +7151,7 @@
       name.addEventListener("click", () => vscode.postMessage({ type: "openSession", id: s.id }));
       const actions = document.createElement("span");
       actions.className = "srow-actions";
-      actions.innerHTML = '<button class="branch" title="Branch (copy) this session">\u2387</button><button class="rename" title="Rename">\u270E</button><button class="del" title="Delete">\u{1F5D1}</button>';
+      actions.innerHTML = '<button class="branch" data-tip="Branch (copy) this session">\u2387</button><button class="rename" data-tip="Rename">\u270E</button><button class="del" data-tip="Delete">\u{1F5D1}</button>';
       const branchBtn = actions.querySelector(".branch");
       actions.querySelector(".rename").addEventListener("click", (e) => {
         e.stopPropagation();
@@ -7161,11 +7161,11 @@
       const renameBtn = actions.querySelector(".rename");
       if (workingIds.has(s.id)) {
         del.disabled = true;
-        del.title = "Session is working \u2014 stop it before deleting";
+        del.dataset.tip = "Session is working \u2014 stop it before deleting";
         renameBtn.disabled = true;
-        renameBtn.title = "Session is working \u2014 stop it before renaming";
+        renameBtn.dataset.tip = "Session is working \u2014 stop it before renaming";
         branchBtn.disabled = true;
-        branchBtn.title = "Session is working \u2014 stop it before branching";
+        branchBtn.dataset.tip = "Session is working \u2014 stop it before branching";
       }
       branchBtn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -7417,6 +7417,29 @@
     vscode.postMessage({ type: "send", text: text3 });
     setStreaming(true);
   }
+  var tipEl = document.getElementById("harny-tip");
+  function showTip(text3, anchor) {
+    if (!tipEl) return;
+    tipEl.textContent = text3;
+    const r = anchor.getBoundingClientRect();
+    const w = tipEl.offsetWidth;
+    const left = Math.max(4, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 4));
+    const top = r.top - 6 >= 4 ? r.top - 6 : r.bottom + 6;
+    tipEl.style.left = left + "px";
+    tipEl.style.top = top + "px";
+    tipEl.classList.add("visible");
+  }
+  function hideTip() {
+    if (tipEl) tipEl.classList.remove("visible");
+  }
+  document.addEventListener("mouseover", (e) => {
+    const target = e.target.closest?.("[data-tip]");
+    if (target) showTip(target.dataset.tip || "", target);
+  });
+  document.addEventListener("mouseout", (e) => {
+    if (e.target.closest?.("[data-tip]")) hideTip();
+  });
+  window.addEventListener("scroll", hideTip, true);
   sendBtn.addEventListener("click", send);
   inputEl.addEventListener("input", resizeInput);
   if (typeof ResizeObserver !== "undefined") {

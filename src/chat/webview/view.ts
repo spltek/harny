@@ -203,8 +203,8 @@ function renderSessions(sessions: SessionInfo[]): void {
     const actions = document.createElement("span");
     actions.className = "srow-actions";
     actions.innerHTML =
-      '<button class="branch" title="Branch (copy) this session">⎇</button>' +
-      '<button class="rename" title="Rename">✎</button><button class="del" title="Delete">🗑</button>';
+      '<button class="branch" data-tip="Branch (copy) this session">⎇</button>' +
+      '<button class="rename" data-tip="Rename">✎</button><button class="del" data-tip="Delete">🗑</button>';
     const branchBtn = actions.querySelector(".branch") as HTMLButtonElement;
     (actions.querySelector(".rename") as HTMLButtonElement).addEventListener("click", (e) => {
       e.stopPropagation();
@@ -215,11 +215,11 @@ function renderSessions(sessions: SessionInfo[]): void {
     // A working session cannot be branched/deleted/renamed: enrich the buttons.
     if (workingIds.has(s.id)) {
       del.disabled = true;
-      del.title = "Session is working — stop it before deleting";
+      del.dataset.tip = "Session is working — stop it before deleting";
       renameBtn.disabled = true;
-      renameBtn.title = "Session is working — stop it before renaming";
+      renameBtn.dataset.tip = "Session is working — stop it before renaming";
       branchBtn.disabled = true;
-      branchBtn.title = "Session is working — stop it before branching";
+      branchBtn.dataset.tip = "Session is working — stop it before branching";
     }
     branchBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -535,6 +535,35 @@ function send(): void {
   vscode.postMessage({ type: "send", text });
   setStreaming(true);
 }
+
+// ── Custom hover tooltip (data-tip) with viewport clamping ──
+const tipEl = document.getElementById("harny-tip") as HTMLDivElement | null;
+
+function showTip(text: string, anchor: HTMLElement): void {
+  if (!tipEl) return;
+  tipEl.textContent = text;
+  const r = anchor.getBoundingClientRect();
+  const w = tipEl.offsetWidth;
+  // Center above the anchor; fall back below when it would clip the top.
+  const left = Math.max(4, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 4));
+  const top = r.top - 6 >= 4 ? r.top - 6 : r.bottom + 6;
+  tipEl.style.left = left + "px";
+  tipEl.style.top = top + "px";
+  tipEl.classList.add("visible");
+}
+function hideTip(): void {
+  if (tipEl) tipEl.classList.remove("visible");
+}
+
+document.addEventListener("mouseover", (e) => {
+  const target = (e.target as HTMLElement).closest?.("[data-tip]") as HTMLElement | null;
+  if (target) showTip(target.dataset.tip || "", target);
+});
+document.addEventListener("mouseout", (e) => {
+  if ((e.target as HTMLElement).closest?.("[data-tip]")) hideTip();
+});
+// Hide while scrolling (scroll doesn't fire mouseout), so the tip never floats stale.
+window.addEventListener("scroll", hideTip, true);
 
 sendBtn.addEventListener("click", send);
 inputEl.addEventListener("input", resizeInput);
