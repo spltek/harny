@@ -52,7 +52,7 @@ npm test          # run all unit tests (vitest)
 npm run coverage  # with coverage report
 ```
 
-393 unit tests cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (JSONL store, manager, registry), the OpenAI-compatible LLM provider, host-model fetching, all 11 tools, the agent loop (fake LLM, abort, max turns, loop detection), markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code).
+413 unit tests cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (JSONL store, manager, registry), the OpenAI-compatible LLM provider, host-model fetching, all 11 tools, the agent loop (fake LLM, abort, max turns, loop detection), markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code).
 
 ## Features
 
@@ -60,6 +60,8 @@ npm run coverage  # with coverage report
 - **Streaming**: Real-time SSE streaming for responsive UX
 - **11 tools**: Read, Write, StrReplace, Delete, Shell, Grep, Glob, TodoWrite, WebSearch, WebFetch, ReadLints
 - **Agent loop**: Automatic tool execution, multi-turn continuation, loop detection (max turns)
+- **Per-session controls**: context window, output tokens and temperature are editable in the panel, persisted **per session** (JSONL header) and restored on reopen; output tokens/temperature win over the provider defaults
+- **Empty shell**: with no open session the control stack is hidden and a hero invites you to pick a session from the list or create a new one
 - **Sessions**: Persistent per-workspace sessions (JSONL), one agent per session, right-side view with tabs
 - **Naming**: new sessions are named at creation via a prompt (default "New Session"); the session list shows creation and last-modified dates
 - **Model catalog**: Fetch the host model list (`GET /v1/models`) when the config only declares apiKey + baseUrl
