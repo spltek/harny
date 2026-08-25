@@ -300,10 +300,28 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       justify-content: center;
     }
 
-    #status { display: flex; flex-direction: column; gap: 4px; padding: 4px 10px; font-size: 0.85rem; border-top: 1px solid var(--border); }
+    #status { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px 6px; font-size: 0.85rem; border-top: 1px solid var(--border); }
     #status .warn { color: var(--error); }
-    /* Each control group is its own row; narrow panels wrap to a second line. */
-    .ctl-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .ctl-row { display: flex; align-items: center; gap: 6px; }
+    /* Grouped cards: the grid collapses to a single column when the panel is
+       narrow, so fields are never squeezed or split mid-pair. minmax is font-
+       relative: on zoom-in the columns stack gracefully (responsive to both
+       panel width and font size). */
+    .ctl-cards {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+      gap: 8px;
+    }
+    .ctl-card {
+      display: flex; flex-direction: column; gap: 8px;
+      border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0));
+    }
+    .card-title {
+      font-size: 0.64rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+      color: #8a8a8a; user-select: none;
+    }
+    .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .field-label { font-size: 0.72rem; color: #9a9a9a; }
     /* Working state: the PLAY (send) button blinks in sync with the chat's
        "Working..." bubble — same harny-pulse 1.2s animation, applied in the
        same tick (send/compactStart), so the two pulse together. */
@@ -314,6 +332,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     }
     #model-select option, #model-select optgroup { color: #1e1e1e; }
     #thinking-select {
+      width: 100%;
       background: transparent; color: inherit; border: 1px solid var(--border);
       border-radius: 4px; outline: none; font-family: var(--font); font-size: 0.85rem;
       cursor: pointer; padding: 0 2px; height: 1.85rem;
@@ -321,9 +340,10 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     #thinking-select option { color: #1e1e1e; }
     #thinking-select:disabled { opacity: 0.45; cursor: default; }
     #status .model-label { color: #999; }
-    #ctx-window, #out-window, #temp-window { display: inline-flex; align-items: center; gap: 2px; }
+    /* The stepper fills its card field; the −/+ keys stay a tight unit inside. */
+    #ctx-window, #out-window, #temp-window { display: inline-flex; align-items: center; gap: 2px; width: 100%; }
     #ctx-input, #out-input, #temp-input {
-      width: 5.7rem; height: 1.85rem; background: var(--input-bg); color: var(--fg);
+      flex: 1; min-width: 2.5rem; width: auto; height: 1.85rem; background: var(--input-bg); color: var(--fg);
       border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px;
       font-family: var(--font); font-size: 0.85rem; text-align: right;
     }
@@ -333,7 +353,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     /* Metrics row: same font, label style and horizontal padding as the status
        row above, so "Tokens:" lines up with "AI Model:". */
     #metrics {
-      display: flex; align-items: center; gap: 8px; padding: 4px 10px; font-size: 0.85rem;
+      display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 0.85rem;
       border-top: 1px solid var(--border); color: #9a9a9a; flex-wrap: wrap;
     }
     #metrics .model-label { color: #999; }
@@ -435,34 +455,46 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       <span class="model-label">AI Model:</span>
       <select id="model-select" title="Switch model"></select>
     </div>
-    <div class="ctl-row">
-      <span class="model-label">Context window:</span>
-      <div id="ctx-window">
-        <button id="ctx-minus" class="ctx-btn" title="Decrease context">−</button>
-        <input id="ctx-input" type="number" min="32000" max="2000000" step="1" value="${DEFAULT_CONTEXT_WINDOW}" title="Context window (tokens)">
-        <button id="ctx-plus" class="ctx-btn" title="Increase context">+</button>
+    <div class="ctl-cards">
+      <div class="ctl-card">
+        <span class="card-title">Window</span>
+        <div class="field">
+          <label class="field-label" for="ctx-input">Context window</label>
+          <div id="ctx-window">
+            <button id="ctx-minus" class="ctx-btn" title="Decrease context">−</button>
+            <input id="ctx-input" type="number" min="32000" max="2000000" step="1" value="${DEFAULT_CONTEXT_WINDOW}" title="Context window (tokens)">
+            <button id="ctx-plus" class="ctx-btn" title="Increase context">+</button>
+          </div>
+        </div>
+        <div class="field">
+          <label class="field-label" for="out-input">Output tokens</label>
+          <div id="out-window">
+            <button id="out-minus" class="ctx-btn" title="Decrease output tokens">−</button>
+            <input id="out-input" type="number" min="256" max="65536" step="512" value="${DEFAULT_OUTPUT_TOKENS}" title="Max output tokens per response">
+            <button id="out-plus" class="ctx-btn" title="Increase output tokens">+</button>
+          </div>
+        </div>
       </div>
-      <span class="model-label">Thinking:</span>
-      <select id="thinking-select" title="Reasoning effort / thinking level (per session)">
-        <option value="off">Off</option>
-        <option value="low">Low</option>
-        <option value="medium">Medium</option>
-        <option value="high">High</option>
-      </select>
-    </div>
-    <div class="ctl-row">
-      <span class="model-label">Output tokens:</span>
-      <div id="out-window">
-        <button id="out-minus" class="ctx-btn" title="Decrease output tokens">−</button>
-        <input id="out-input" type="number" min="256" max="65536" step="512" value="${DEFAULT_OUTPUT_TOKENS}" title="Max output tokens per response">
-        <button id="out-plus" class="ctx-btn" title="Increase output tokens">+</button>
-      </div>
-      <span class="model-label">Temp:</span>
-      <div id="temp-window">
-        <button id="temp-minus" class="ctx-btn" title="Decrease temperature">−</button>
-        <input id="temp-input" type="number" min="0" max="2" step="0.1" placeholder="Auto" title="Sampling temperature 0–2; empty = Auto (not sent, provider default)">
-        <button id="temp-plus" class="ctx-btn" title="Increase temperature">+</button>
-        <button id="temp-auto" class="ctx-btn" title="Reset to Auto (not sent)">Auto</button>
+      <div class="ctl-card">
+        <span class="card-title">Sampling</span>
+        <div class="field">
+          <label class="field-label" for="thinking-select">Thinking</label>
+          <select id="thinking-select" title="Reasoning effort / thinking level (per session)">
+            <option value="off">Off</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+        </div>
+        <div class="field">
+          <label class="field-label" for="temp-input">Temperature</label>
+          <div id="temp-window">
+            <button id="temp-minus" class="ctx-btn" title="Decrease temperature">−</button>
+            <input id="temp-input" type="number" min="0" max="2" step="0.1" placeholder="Auto" title="Sampling temperature 0–2; empty = Auto (not sent, provider default)">
+            <button id="temp-plus" class="ctx-btn" title="Increase temperature">+</button>
+            <button id="temp-auto" class="ctx-btn" title="Reset to Auto (not sent)">Auto</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
