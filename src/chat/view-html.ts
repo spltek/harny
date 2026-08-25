@@ -512,11 +512,11 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     <button id="abort-btn" class="secondary" disabled>⏹</button>
   </div>
   <div id="status">
+    <div class="ctl-card ctl-card-model">
+      <span class="model-label">AI Model:</span>
+      <select id="model-select" title="Switch model"></select>
+    </div>
     <div class="ctl-cards">
-      <div class="ctl-card ctl-card-model">
-        <span class="model-label">AI Model:</span>
-        <select id="model-select" title="Switch model"></select>
-      </div>
       <div class="ctl-card">
         <span class="card-title">Window</span>
         <div class="field">
