@@ -357,12 +357,16 @@ describe("ChatViewProvider", () => {
     expect(state.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("while it is working"));
   });
 
-  it("setThinkingLevel persists the level and refreshes", async () => {
+  it("setThinkingLevel persists the level, refreshes and pushes config", async () => {
     const { store, provider } = buildHarness();
-    const { handler } = resolveWith(provider);
+    const { handler, view } = resolveWith(provider);
     await provider.createNew(); // s1
     await handler({ type: "setThinkingLevel", level: "high" });
     expect(store.saveThinkingLevel).toHaveBeenCalledWith("s1", "high");
+    const configPosts = view.webview.postMessage.mock.calls
+      .map((c) => c[0] as any)
+      .filter((m) => m.type === "config");
+    expect(configPosts[configPosts.length - 1].config.thinkingLevel).toBe("high");
   });
 
   it("setOutputTokens persists the value to the session and refreshes", async () => {
@@ -372,7 +376,6 @@ describe("ChatViewProvider", () => {
     await handler({ type: "setModel", model: "gpt-4o", provider: undefined }); // runtime needs a model
     await handler({ type: "setOutputTokens", value: 16384 });
     expect(store.saveOutputTokens).toHaveBeenCalledWith("s1", 16384);
-    await handler({ type: "getConfig" });
     const configPosts = view.webview.postMessage.mock.calls
       .map((c) => c[0] as any)
       .filter((m) => m.type === "config");
@@ -388,7 +391,6 @@ describe("ChatViewProvider", () => {
     expect(store.saveTemperature).toHaveBeenCalledWith("s1", 0.7);
     // 0 is a valid temperature and must be applied, not skipped as falsy.
     expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ temperature: 0.7 }));
-    await handler({ type: "getConfig" });
     const configPosts = view.webview.postMessage.mock.calls
       .map((c) => c[0] as any)
       .filter((m) => m.type === "config");
@@ -398,7 +400,6 @@ describe("ChatViewProvider", () => {
     await handler({ type: "setTemperature", value: null });
     expect(store.saveTemperature).toHaveBeenCalledWith("s1", undefined);
     expect(modelSelector.set).toHaveBeenCalledWith(expect.not.objectContaining({ temperature: expect.any(Number) }));
-    await handler({ type: "getConfig" });
     const posts = view.webview.postMessage.mock.calls
       .map((c) => c[0] as any)
       .filter((m) => m.type === "config");

@@ -288,8 +288,9 @@ export class ChatViewProvider implements WebviewViewProvider {
         rt.modelProvider = provider;
         this.sessions.saveModel(rt.sessionId, model, provider);
         this.modelSelector.set(this.computeOverrides(model, provider));
+        // Lightweight config push (no full HTML rebuild: the typed prompt,
+        // scroll and streaming state are preserved).
         void this.pushConfig();
-        this.refresh();
         break;
       }
 
@@ -301,7 +302,6 @@ export class ChatViewProvider implements WebviewViewProvider {
         // Re-apply the active overrides so the runtime config carries the level.
         if (rt.model) this.modelSelector.set(this.computeOverrides(rt.model, rt.modelProvider));
         void this.pushConfig();
-        this.refresh();
         break;
       }
 
@@ -335,7 +335,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         const value = toContextWindow(msg.value);
         rt.contextWindow = value;
         this.sessions.saveContextWindow(rt.sessionId, value);
-        this.refresh();
+        void this.pushConfig();
         break;
       }
       case "setOutputTokens": {
@@ -346,7 +346,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         this.sessions.saveOutputTokens(rt.sessionId, value);
         // Re-apply the active overrides so the runtime config carries maxTokens.
         if (rt.model) this.modelSelector.set(this.computeOverrides(rt.model, rt.modelProvider));
-        this.refresh();
+        void this.pushConfig();
         break;
       }
       case "setTemperature": {
@@ -358,7 +358,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         this.sessions.saveTemperature(rt.sessionId, value);
         // Re-apply the active overrides so the runtime config carries temperature.
         if (rt.model) this.modelSelector.set(this.computeOverrides(rt.model, rt.modelProvider));
-        this.refresh();
+        void this.pushConfig();
         break;
       }
       case "send":
