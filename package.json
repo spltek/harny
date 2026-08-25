@@ -103,7 +103,7 @@
             "openai-compatible",
             "anthropic"
           ],
-          "description": "API provider to use"
+          "description": "Provider preset — all use the single OpenAI Chat Completions protocol (/v1/chat/completions): openai (api.openai.com), openai-compatible (Ollama, LM Studio, llama.cpp...), anthropic (Anthropic's OpenAI-compatible endpoint)"
         },
         "harny.apiKey": {
           "type": "string",

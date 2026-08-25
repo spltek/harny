@@ -174,7 +174,7 @@ For providers that expose their model list (OpenAI, OpenRouter, opencode-go, lla
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `harny.provider` | `openai` | API provider (`openai`, `openai-compatible`, `anthropic`) |
+| `harny.provider` | `openai` | Provider preset — always the OpenAI Chat Completions protocol (`openai`, `openai-compatible`, `anthropic`) |
 | `harny.apiKey` | `""` | API key (falls back to `OPENAI_API_KEY` env var) |
 | `harny.baseUrl` | `https://api.openai.com` | Base URL (for compatible providers) |
 | `harny.model` | `gpt-4o` | Model for chat completions |
