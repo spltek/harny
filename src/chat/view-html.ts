@@ -373,8 +373,9 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       color: var(--accent); border: 1px solid var(--accent);
       background: rgba(255, 255, 255, 0.05);
     }
+    /* Placeholder state: provider does not report cached tokens. */
+    #met-cache.idle { color: #888; border-color: var(--border); }
     #met-cache.hidden { display: none; }
-    .metrics-bar { display: flex; align-items: center; gap: 8px; }
     /* The bar is the hero: taller, rounded, glossy track with inner depth. */
     #ctx-bar-wrap {
       flex: 1; min-width: 60px; height: 8px; border-radius: 4px;
@@ -387,20 +388,25 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       background-image: linear-gradient(to bottom, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0) 55%);
     }
     #ctx-bar.warn { background-color: var(--error); }
+    /* Compact: a full-width action key that belongs to the card. */
     #compact-btn {
-      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.02)), transparent;
+      width: 100%;
+      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.02)),
+        var(--tool-bg, transparent);
       border: 1px solid var(--border); color: var(--fg);
-      border-radius: 4px; padding: 1px 6px; font-size: 0.77rem; cursor: pointer;
+      border-radius: 6px; padding: 4px 8px; font-size: 0.8rem; cursor: pointer;
       box-shadow:
         inset 0 1px 0 rgba(255, 255, 255, 0.18),
         inset 0 -1px 0 rgba(0, 0, 0, 0.18),
         0 1px 2px rgba(0, 0, 0, 0.28);
+      transition: color 0.12s, border-color 0.12s, box-shadow 0.12s, transform 0.08s;
     }
-    #compact-btn:hover:not(:disabled) { color: var(--accent); }
+    #compact-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
     #compact-btn:active:not(:disabled) {
       transform: translateY(1px);
       box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
     }
+    #compact-btn:disabled { opacity: 0.4; }
     .ctx-btn {
       width: 1.38rem; height: 1.38rem; padding: 0; font-size: 0.92rem; line-height: 1;
       background: linear-gradient(to bottom, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.03)),
@@ -532,10 +538,8 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       <span class="met pct" id="met-pct">(0%)</span>
       <span class="met" id="met-cache" title="Input tokens served from prompt cache"></span>
     </div>
-    <div class="metrics-bar">
-      <div id="ctx-bar-wrap"><div id="ctx-bar"></div></div>
-      <button id="compact-btn" title="Compact context">Compact</button>
-    </div>
+    <div id="ctx-bar-wrap"><div id="ctx-bar"></div></div>
+    <button id="compact-btn" title="Compact the conversation context">Compact</button>
   </div>
   <div id="name-modal" class="hidden">
     <div class="name-modal-backdrop"></div>

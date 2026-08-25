@@ -764,7 +764,8 @@ function renderMetrics(c: ConfigState): void {
   metPct.classList.toggle("warn", pct >= 90);
   ctxBar.style.width = pct + "%";
   ctxBar.classList.toggle("warn", pct >= 90);
-  // Prompt-cache badge: shown when the provider reports cached tokens.
+  // Prompt-cache badge: always occupies its slot so the layout is stable and
+  // the feature is discoverable even when the provider doesn't report hits.
   const cached = c.cachedTokens;
   if (cached !== undefined && cached > 0 && used > 0) {
     // Clamp to 100%: cached can momentarily exceed the rough context estimate
@@ -772,10 +773,11 @@ function renderMetrics(c: ConfigState): void {
     const saved = Math.min(100, Math.round((cached / used) * 100));
     metCache.textContent = "⚡ cache " + fmtTokens(cached) + " (" + saved + "%)";
     metCache.title = "Input tokens served from prompt cache: " + cached + " / " + saved + "%";
-    metCache.classList.remove("hidden");
+    metCache.classList.remove("idle");
   } else {
-    metCache.textContent = "";
-    metCache.classList.add("hidden");
+    metCache.textContent = "⚡ cache –";
+    metCache.title = "Cached input tokens not reported by this provider";
+    metCache.classList.add("idle");
   }
 }
 

@@ -7620,10 +7620,11 @@
       const saved = Math.min(100, Math.round(cached / used * 100));
       metCache.textContent = "\u26A1 cache " + fmtTokens(cached) + " (" + saved + "%)";
       metCache.title = "Input tokens served from prompt cache: " + cached + " / " + saved + "%";
-      metCache.classList.remove("hidden");
+      metCache.classList.remove("idle");
     } else {
-      metCache.textContent = "";
-      metCache.classList.add("hidden");
+      metCache.textContent = "\u26A1 cache \u2013";
+      metCache.title = "Cached input tokens not reported by this provider";
+      metCache.classList.add("idle");
     }
   }
   compactBtn.addEventListener("click", () => vscode.postMessage({ type: "compact" }));

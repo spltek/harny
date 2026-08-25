@@ -706,6 +706,10 @@ describe("context metrics line", () => {
     expect(document.getElementById("met-ctx")?.textContent).toBe("200k");
     expect(document.getElementById("met-pct")?.textContent).toBe("(50%)");
     expect((document.getElementById("ctx-bar") as HTMLDivElement).style.width).toBe("50%");
+    // The cache badge always occupies its slot (idle when not reported).
+    const cache = document.getElementById("met-cache") as HTMLSpanElement;
+    expect(cache.textContent).toContain("cache");
+    expect(cache.classList.contains("idle")).toBe(true);
 
     (document.getElementById("compact-btn") as HTMLButtonElement).click();
     expect(posted).toContainEqual({ type: "compact" });
