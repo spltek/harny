@@ -476,6 +476,12 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       display: flex; flex-direction: column; gap: 10px;
     }
     #name-modal h3 { margin: 0; font-size: 0.92rem; font-weight: 600; }
+    #name-modal #name-input { width: 100%; margin-top: 8px; box-sizing: border-box; }
+    #name-modal #name-error {
+      margin-top: 6px; min-height: 1em; font-size: 0.78rem;
+      color: var(--error); word-wrap: break-word;
+    }
+    #name-modal #name-error:empty { display: none; }
     #name-input {
       width: 100%; background: var(--input-bg); color: var(--fg);
       border: 1px solid var(--border); border-radius: 5px; padding: 6px 8px;
@@ -565,6 +571,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     <div class="name-modal-card">
       <h3 id="name-modal-title">Name the new session</h3>
       <input id="name-input" type="text" spellcheck="false" />
+      <div id="name-error"></div>
       <div class="name-modal-actions">
         <button id="name-cancel" class="secondary">Cancel</button>
         <button id="name-ok">Create</button>

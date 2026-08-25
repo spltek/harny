@@ -202,20 +202,29 @@ function renderSessions(sessions: SessionInfo[]): void {
     name.addEventListener("click", () => vscode.postMessage({ type: "openSession", id: s.id }));
     const actions = document.createElement("span");
     actions.className = "srow-actions";
-    actions.innerHTML = '<button class="rename" title="Rename">✎</button><button class="del" title="Delete">🗑</button>';
+    actions.innerHTML =
+      '<button class="branch" title="Branch (copy) this session">⎇</button>' +
+      '<button class="rename" title="Rename">✎</button><button class="del" title="Delete">🗑</button>';
+    const branchBtn = actions.querySelector(".branch") as HTMLButtonElement;
     (actions.querySelector(".rename") as HTMLButtonElement).addEventListener("click", (e) => {
       e.stopPropagation();
       vscode.postMessage({ type: "renameSession", id: s.id });
     });
     const del = actions.querySelector(".del") as HTMLButtonElement;
     const renameBtn = actions.querySelector(".rename") as HTMLButtonElement;
-    // A working session cannot be deleted nor renamed: enrich the buttons.
+    // A working session cannot be branched/deleted/renamed: enrich the buttons.
     if (workingIds.has(s.id)) {
       del.disabled = true;
       del.title = "Session is working — stop it before deleting";
       renameBtn.disabled = true;
       renameBtn.title = "Session is working — stop it before renaming";
+      branchBtn.disabled = true;
+      branchBtn.title = "Session is working — stop it before branching";
     }
+    branchBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      vscode.postMessage({ type: "branchSession", id: s.id });
+    });
     del.addEventListener("click", (e) => {
       e.stopPropagation();
       vscode.postMessage({ type: "deleteSession", id: s.id });
@@ -557,16 +566,47 @@ const nameTitle = document.getElementById("name-modal-title") as HTMLElement;
 const nameInput = document.getElementById("name-input") as HTMLInputElement;
 const nameOk = document.getElementById("name-ok") as HTMLButtonElement;
 const nameCancel = document.getElementById("name-cancel") as HTMLButtonElement;
+const nameError = document.getElementById("name-error") as HTMLDivElement;
 let namePrompt: { mode: string; id?: string } | undefined;
+
+/**
+ * Name conflict for the dialog: empty or a name already used by ANOTHER
+ * session of this workspace (the renamed session itself is excluded).
+ * Case-insensitive, trimmed.
+ */
+function nameConflict(excludedId?: string): string | undefined {
+  const raw = nameInput.value.trim();
+  if (!raw) return "Name cannot be empty";
+  const lower = raw.toLowerCase();
+  const taken = currentSessions.some(
+    (s) => s.id !== excludedId && (s.name || "").trim().toLowerCase() === lower,
+  );
+  return taken
+    ? "A session with this name already exists in this workspace — pick another name."
+    : undefined;
+}
+
+function validateNameInput(): void {
+  const excluded = namePrompt?.mode === "rename" ? namePrompt.id : undefined;
+  const conflict = nameConflict(excluded);
+  nameError.textContent = conflict ?? "";
+  nameOk.disabled = !!conflict;
+}
 
 function openNameModal(p: { mode: string; id?: string; current?: string }): void {
   namePrompt = { mode: p.mode, id: p.id };
-  nameTitle.textContent = p.mode === "rename" ? "Rename session" : "Name the new session";
-  nameOk.textContent = p.mode === "rename" ? "Rename" : "Create";
+  const branch = p.mode === "branch";
+  nameTitle.textContent = branch
+    ? "Branch session"
+    : p.mode === "rename"
+      ? "Rename session"
+      : "Name the new session";
+  nameOk.textContent = branch ? "Branch" : p.mode === "rename" ? "Rename" : "Create";
   nameInput.value = p.current ?? "New Session";
   nameModal.classList.remove("hidden");
   nameInput.focus();
   nameInput.select();
+  validateNameInput();
 }
 
 function closeNameModal(): void {
@@ -577,6 +617,11 @@ function closeNameModal(): void {
 function submitName(): void {
   if (!namePrompt) return;
   const p = namePrompt;
+  // The OK key is disabled while invalid; Enter must not bypass the check.
+  if (nameOk.disabled) {
+    nameInput.focus();
+    return;
+  }
   const name = nameInput.value.trim();
   if (!name) {
     nameInput.focus();
@@ -1071,6 +1116,7 @@ nameCancel.addEventListener("click", () => {
   closeNameModal();
   vscode.postMessage({ type: "cancelNamePrompt" });
 });
+nameInput.addEventListener("input", validateNameInput);
 nameInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     e.preventDefault();

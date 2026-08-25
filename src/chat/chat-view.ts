@@ -56,6 +56,10 @@ export class ChatViewProvider implements WebviewViewProvider {
   async createNew(): Promise<void> {
     const name = await this.askName("create");
     if (name === undefined) return;
+    if (this.sessionNameTaken(name)) {
+      await this.warnNameTaken(name);
+      return;
+    }
     const rt = this.registry.create(name);
     await this.setActive(rt.sessionId);
   }
@@ -64,8 +68,64 @@ export class ChatViewProvider implements WebviewViewProvider {
   async createWithMessage(content: string): Promise<void> {
     const name = await this.askName("create");
     if (name === undefined) return;
+    if (this.sessionNameTaken(name)) {
+      await this.warnNameTaken(name);
+      return;
+    }
     const rt = this.registry.createWithMessage(content, name);
     await this.setActive(rt.sessionId);
+  }
+
+  /**
+   * True when another session of this workspace already uses the name
+   * (excludes `excludeId` — the session being renamed keeps its own name).
+   * Case-insensitive, trimmed. Names are unique PER workspace root because
+   * the session store is per-workspace folder.
+   */
+  private sessionNameTaken(name: string, excludeId?: string): boolean {
+    const n = name.trim().toLowerCase();
+    return this.sessions
+      .list()
+      .some((s) => s.id !== excludeId && (s.name || "").trim().toLowerCase() === n);
+  }
+
+  private async warnNameTaken(name: string): Promise<void> {
+    const { window } = await import("vscode");
+    void window.showErrorMessage(`A session named "${name}" already exists in this workspace.`);
+  }
+
+  /**
+   * Branch (copy) a session at its current state into a new session: messages
+   * + all per-session settings (model, provider, thinking, window, tokens,
+   * temperature). The dialog defaults to the original name (unique required).
+   */
+  private async branchSession(id: string): Promise<void> {
+    const { window } = await import("vscode");
+    const existing = this.sessions.list().find((s) => s.id === id);
+    if (!existing) return;
+    const rt = this.registry.get(id);
+    if (rt?.agent.streaming) {
+      void window.showWarningMessage(
+        `Cannot branch "${existing.name}" while it is working. Stop it first.`,
+      );
+      return;
+    }
+    const name = await this.askName("branch", id);
+    if (name === undefined) return;
+    if (this.sessionNameTaken(name)) {
+      await this.warnNameTaken(name);
+      return;
+    }
+    const loaded = this.sessions.load(id);
+    const created = this.sessions.create(name);
+    if (loaded.messages.length > 0) this.sessions.saveMessages(created.id, loaded.messages);
+    // Copy the per-session settings over to the branch.
+    if (existing.model) this.sessions.saveModel(created.id, existing.model, existing.modelProvider);
+    if (existing.thinkingLevel) this.sessions.saveThinkingLevel(created.id, existing.thinkingLevel);
+    if (existing.contextWindow) this.sessions.saveContextWindow(created.id, existing.contextWindow);
+    if (existing.outputTokens) this.sessions.saveOutputTokens(created.id, existing.outputTokens);
+    if (existing.temperature !== undefined) this.sessions.saveTemperature(created.id, existing.temperature);
+    await this.setActive(created.id);
   }
 
   /** In-flight name request, answered by the webview modal (see askName). */
@@ -78,15 +138,23 @@ export class ChatViewProvider implements WebviewViewProvider {
    * prompt stays in the Harny area. Falls back to the native input box only
    * when the webview is not resolved yet (e.g. command fired before the panel).
    */
-  private async askName(mode: "create" | "rename", id?: string): Promise<string | undefined> {
+  private async askName(mode: "create" | "rename" | "branch", id?: string): Promise<string | undefined> {
     const current = id ? this.sessions.list().find((s) => s.id === id)?.name : undefined;
     if (!this.view) {
       const { window } = await import("vscode");
       return window.showInputBox({
-        prompt: mode === "rename" ? "Rename session" : "Name for the new session",
+        prompt: mode === "rename" ? "Rename session" : mode === "branch" ? "Branch session" : "Name for the new session",
         value: current ?? "New Session",
         placeHolder: "Session name",
-        validateInput: (v) => (v.trim() ? undefined : "Name cannot be empty"),
+        validateInput: (v) => {
+          const name = v.trim();
+          if (!name) return "Name cannot be empty";
+          // For rename the session itself is excluded (keeping its own name);
+          // for create/branch the new name must differ from EVERY session.
+          return this.sessionNameTaken(name, id)
+            ? "A session with this name already exists in this workspace — pick another name."
+            : undefined;
+        },
       });
     }
     return new Promise<string | undefined>((resolve) => {
@@ -187,6 +255,9 @@ export class ChatViewProvider implements WebviewViewProvider {
         break;
       case "renameSession":
         if (typeof msg.id === "string") await this.renameSession(msg.id);
+        break;
+      case "branchSession":
+        if (typeof msg.id === "string") await this.branchSession(msg.id);
         break;
       case "deleteSession":
         if (typeof msg.id === "string") await this.deleteSession(msg.id);
@@ -454,6 +525,12 @@ export class ChatViewProvider implements WebviewViewProvider {
     }
     const name = await this.askName("rename", id);
     if (name === undefined) return;
+    // Same-name renames are allowed (self excluded); any OTHER collision is not.
+    if (this.sessionNameTaken(name, id)) {
+      const { window: w } = await import("vscode");
+      void w.showErrorMessage(`A session named "${name}" already exists in this workspace.`);
+      return;
+    }
     this.updateSessionName(id, name);
   }
 

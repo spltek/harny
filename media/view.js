@@ -7151,7 +7151,8 @@
       name.addEventListener("click", () => vscode.postMessage({ type: "openSession", id: s.id }));
       const actions = document.createElement("span");
       actions.className = "srow-actions";
-      actions.innerHTML = '<button class="rename" title="Rename">\u270E</button><button class="del" title="Delete">\u{1F5D1}</button>';
+      actions.innerHTML = '<button class="branch" title="Branch (copy) this session">\u2387</button><button class="rename" title="Rename">\u270E</button><button class="del" title="Delete">\u{1F5D1}</button>';
+      const branchBtn = actions.querySelector(".branch");
       actions.querySelector(".rename").addEventListener("click", (e) => {
         e.stopPropagation();
         vscode.postMessage({ type: "renameSession", id: s.id });
@@ -7163,7 +7164,13 @@
         del.title = "Session is working \u2014 stop it before deleting";
         renameBtn.disabled = true;
         renameBtn.title = "Session is working \u2014 stop it before renaming";
+        branchBtn.disabled = true;
+        branchBtn.title = "Session is working \u2014 stop it before branching";
       }
+      branchBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        vscode.postMessage({ type: "branchSession", id: s.id });
+      });
       del.addEventListener("click", (e) => {
         e.stopPropagation();
         vscode.postMessage({ type: "deleteSession", id: s.id });
@@ -7435,15 +7442,33 @@
   var nameInput = document.getElementById("name-input");
   var nameOk = document.getElementById("name-ok");
   var nameCancel = document.getElementById("name-cancel");
+  var nameError = document.getElementById("name-error");
   var namePrompt;
+  function nameConflict(excludedId) {
+    const raw = nameInput.value.trim();
+    if (!raw) return "Name cannot be empty";
+    const lower = raw.toLowerCase();
+    const taken = currentSessions.some(
+      (s) => s.id !== excludedId && (s.name || "").trim().toLowerCase() === lower
+    );
+    return taken ? "A session with this name already exists in this workspace \u2014 pick another name." : void 0;
+  }
+  function validateNameInput() {
+    const excluded = namePrompt?.mode === "rename" ? namePrompt.id : void 0;
+    const conflict = nameConflict(excluded);
+    nameError.textContent = conflict ?? "";
+    nameOk.disabled = !!conflict;
+  }
   function openNameModal(p) {
     namePrompt = { mode: p.mode, id: p.id };
-    nameTitle.textContent = p.mode === "rename" ? "Rename session" : "Name the new session";
-    nameOk.textContent = p.mode === "rename" ? "Rename" : "Create";
+    const branch = p.mode === "branch";
+    nameTitle.textContent = branch ? "Branch session" : p.mode === "rename" ? "Rename session" : "Name the new session";
+    nameOk.textContent = branch ? "Branch" : p.mode === "rename" ? "Rename" : "Create";
     nameInput.value = p.current ?? "New Session";
     nameModal.classList.remove("hidden");
     nameInput.focus();
     nameInput.select();
+    validateNameInput();
   }
   function closeNameModal() {
     namePrompt = void 0;
@@ -7452,6 +7477,10 @@
   function submitName() {
     if (!namePrompt) return;
     const p = namePrompt;
+    if (nameOk.disabled) {
+      nameInput.focus();
+      return;
+    }
     const name = nameInput.value.trim();
     if (!name) {
       nameInput.focus();
@@ -7860,6 +7889,7 @@
     closeNameModal();
     vscode.postMessage({ type: "cancelNamePrompt" });
   });
+  nameInput.addEventListener("input", validateNameInput);
   nameInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();

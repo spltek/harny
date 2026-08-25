@@ -34,6 +34,7 @@ function setupDom(initOverrides: Record<string, unknown> = {}): void {
       <div class="name-modal-card">
         <h3 id="name-modal-title">Name the new session</h3>
         <input id="name-input" type="text" />
+        <div id="name-error"></div>
         <div class="name-modal-actions">
           <button id="name-cancel" class="secondary">Cancel</button>
           <button id="name-ok">Create</button>
@@ -677,8 +678,10 @@ describe("view webview client", () => {
     expect(posted).toContainEqual({ type: "openSession", id: "a" });
     const btns = rows[0].querySelectorAll("button");
     (btns[0] as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "branchSession", id: "a" });
     (btns[1] as HTMLButtonElement).click();
     expect(posted).toContainEqual({ type: "renameSession", id: "a" });
+    (btns[2] as HTMLButtonElement).click();
     expect(posted).toContainEqual({ type: "deleteSession", id: "a" });
 
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
@@ -879,6 +882,53 @@ describe("empty shell (no open session)", () => {
     expect(document.body.classList.contains("no-session")).toBe(false);
     expect(document.querySelector(".empty-hero")).toBeNull();
     expect(document.querySelector("#messages .msg.user")?.textContent).toBe("hello");
+  });
+});
+
+describe("session name modal (unique names)", () => {
+  beforeEach(() => { posted.length = 0; setupDom(); });
+
+  it("blocks duplicate names for create and lets unique ones pass", async () => {
+    await loadView();
+    hostMessage({ type: "promptName", mode: "create" });
+    const input = document.getElementById("name-input") as HTMLInputElement;
+    const ok = document.getElementById("name-ok") as HTMLButtonElement;
+    const err = document.getElementById("name-error") as HTMLDivElement;
+    // Fixture sessions: a = Refactor, b = Debug.
+    input.value = "Refactor"; // duplicates session a
+    input.dispatchEvent(new Event("input"));
+    expect(ok.disabled).toBe(true);
+    expect(err.textContent).toContain("already exists");
+    input.value = "Refactor 2";
+    input.dispatchEvent(new Event("input"));
+    expect(ok.disabled).toBe(false);
+    expect(err.textContent).toBe("");
+    ok.click();
+    expect(posted).toContainEqual({ type: "sessionName", mode: "create", id: undefined, name: "Refactor 2" });
+  });
+
+  it("rename keeps its own name valid and Enter cannot bypass a duplicate", async () => {
+    await loadView();
+    hostMessage({ type: "promptName", mode: "rename", id: "a", current: "Refactor" });
+    const input = document.getElementById("name-input") as HTMLInputElement;
+    const ok = document.getElementById("name-ok") as HTMLButtonElement;
+    // Own current name stays valid (self excluded from the check).
+    expect(ok.disabled).toBe(false);
+    // Renaming to the OTHER session's name is blocked.
+    input.value = "Debug";
+    input.dispatchEvent(new Event("input"));
+    expect(ok.disabled).toBe(true);
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(posted.some((m: any) => m.type === "sessionName")).toBe(false);
+  });
+
+  it("defaults a branch to the original name and requires it to be unique", async () => {
+    await loadView();
+    hostMessage({ type: "promptName", mode: "branch", id: "a", current: "Refactor" });
+    const input = document.getElementById("name-input") as HTMLInputElement;
+    expect(input.value).toBe("Refactor");
+    expect((document.getElementById("name-ok") as HTMLButtonElement).disabled).toBe(true);
+    expect((document.getElementById("name-modal-title") as HTMLElement).textContent).toBe("Branch session");
   });
 });
 

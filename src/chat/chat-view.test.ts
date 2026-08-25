@@ -15,6 +15,7 @@ import type { LLMProviderFactory } from "../core/llm/types";
 const state = vi.hoisted(() => ({
   showInputBox: vi.fn(),
   showWarningMessage: vi.fn(),
+  showErrorMessage: vi.fn(),
   showInformationMessage: vi.fn(),
   // In-panel name modal: auto-reply switch (tests that focus on the prompt
   // set noAutoName and reply manually via the handler).
@@ -26,6 +27,7 @@ vi.mock("vscode", () => ({
   window: {
     showInputBox: state.showInputBox,
     showWarningMessage: state.showWarningMessage,
+    showErrorMessage: state.showErrorMessage,
     showInformationMessage: state.showInformationMessage,
   },
   Uri: { joinPath: () => ({}) },
@@ -432,6 +434,87 @@ describe("ChatViewProvider", () => {
     await provider.createNew(); // s2 (active)
     await handler({ type: "openSession", id: "s1" });
     expect(registry.isOpen("s1")).toBe(true);
+  });
+
+  it("branchSession copies messages + settings and activates the branch", async () => {
+    const { store, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "gpt-4o", provider: undefined });
+    await handler({ type: "setOutputTokens", value: 16384 });
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 2, model: "gpt-4o", outputTokens: 16384 },
+    ]);
+    (store.load as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
+      id === "s1"
+        ? {
+            summary: { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 2, model: "gpt-4o", outputTokens: 16384 },
+            messages: [
+              { role: "user", content: "hi", timestamp: 1 },
+              { role: "assistant", content: "hello", timestamp: 2 },
+            ],
+          }
+        : { summary: { id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 0 }, messages: [] },
+    );
+    state.autoName = "Branch copy"; // must differ from the source name
+    await handler({ type: "branchSession", id: "s1" });
+
+    // create() returned s1 on the original session, so the branch is s2.
+    expect(store.create).toHaveBeenCalledWith("Branch copy");
+    expect(store.saveMessages).toHaveBeenCalledWith("s2", [
+      { role: "user", content: "hi", timestamp: 1 },
+      { role: "assistant", content: "hello", timestamp: 2 },
+    ]);
+    expect(store.saveModel).toHaveBeenCalledWith("s2", "gpt-4o", undefined);
+    expect(store.saveOutputTokens).toHaveBeenCalledWith("s2", 16384);
+    const switchPosts = view.webview.postMessage.mock.calls
+      .map((c) => c[0] as any)
+      .filter((m) => m.type === "switchView");
+    expect(switchPosts[switchPosts.length - 1].activeId).toBe("s2");
+  });
+
+  it("refuses to branch with a name already in use", async () => {
+    const { store, provider } = buildHarness();
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1 named "New Session"
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0 },
+    ]);
+    (store.load as ReturnType<typeof vi.fn>).mockReturnValue({
+      summary: { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0 },
+      messages: [],
+    });
+    state.autoName = "New Session"; // duplicates the source name
+    await handler({ type: "branchSession", id: "s1" });
+    expect(store.create).toHaveBeenCalledTimes(1); // only the original creation
+    expect(state.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("already exists"));
+  });
+
+  it("createNew refuses a name already used in this workspace", async () => {
+    const { store, provider } = buildHarness();
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "x9", name: "New Session", createdAt: 1, updatedAt: 1, messageCount: 0 },
+    ]);
+    state.autoName = "New Session"; // collides with x9
+    const { handler } = resolveWith(provider);
+    await handler({ type: "newSession" });
+    expect(store.create).not.toHaveBeenCalled();
+    expect(state.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("already exists"));
+  });
+
+  it("renameSession refuses a name already used by another session", async () => {
+    const { store, provider } = buildHarness();
+    await provider.createNew(); // s1
+    await provider.createNew(); // s2
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "s1", name: "Refactor", createdAt: 1, updatedAt: 2, messageCount: 0 },
+      { id: "s2", name: "Debug", createdAt: 1, updatedAt: 2, messageCount: 0 },
+    ]);
+    state.autoName = "Debug"; // s2's name
+    const { handler } = resolveWith(provider);
+    await handler({ type: "renameSession", id: "s1" });
+    expect(store.rename).not.toHaveBeenCalled();
+    expect(state.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("already exists"));
   });
 
   it("createWithMessage seeds the agent and names the session", async () => {
