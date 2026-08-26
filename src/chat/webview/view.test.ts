@@ -72,12 +72,12 @@ describe("view webview client", () => {
     setupDom();
   });
 
-  it("renders the thinking level dropdown per provider capability", async () => {
+  it("renders the thinking level dropdown always enabled, default medium", async () => {
     await loadView();
     const sel = document.getElementById("thinking-select") as HTMLSelectElement;
-    // No thinkingMode declared → disabled, value falls back to Off.
-    expect(sel.disabled).toBe(true);
-    expect(sel.value).toBe("off");
+    // No mode/level declared -> always enabled, our default = medium.
+    expect(sel.disabled).toBe(false);
+    expect(sel.value).toBe("medium");
 
     hostMessage({
       type: "config",
@@ -90,7 +90,7 @@ describe("view webview client", () => {
     sel.dispatchEvent(new Event("change"));
     expect(posted).toContainEqual({ type: "setThinkingLevel", level: "low" });
 
-    // effort-style providers also enable the dropdown
+    // effort-style providers also keep it enabled
     hostMessage({
       type: "config",
       config: { provider: "openai", model: "gpt-5", hasKey: true, thinkingMode: "effort", thinkingLevel: "medium", models: [], providerModels: [], contextWindow: 128000 },

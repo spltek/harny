@@ -389,7 +389,7 @@ describe("HarnyFileConfigProvider multi-provider format", () => {
     expect(config.thinkingLevel).toBe("medium");
   });
 
-  it("maps legacy enableThinking:false to thinking off", () => {
+  it("maps legacy enableThinking:false to thinking low (no off anymore)", () => {
     writeFileSync(
       join(dir, "config.json"),
       JSON.stringify({
@@ -403,7 +403,7 @@ describe("HarnyFileConfigProvider multi-provider format", () => {
 
     const config = provider.read();
     expect(config.thinkingMode).toBe("bool");
-    expect(config.thinkingLevel).toBe("off");
+    expect(config.thinkingLevel).toBe("low");
   });
 
   it("supports explicit thinking mode and level per provider entry", () => {

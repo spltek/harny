@@ -7565,7 +7565,6 @@
     vscode.postMessage({ type: "modalResponse", id: modalId, value: name });
   }
   var streamingActive = false;
-  var thinkingCapable = false;
   function setStreaming(active) {
     streamingActive = active;
     sendBtn.classList.toggle("blinking", active);
@@ -7573,7 +7572,7 @@
     abortBtn.disabled = !active;
     compactBtn.disabled = active;
     modelSelect.disabled = active;
-    thinkingSelect.disabled = active || !thinkingCapable;
+    thinkingSelect.disabled = active;
     ctxMinus.disabled = active;
     ctxPlus.disabled = active;
     ctxInput.disabled = active;
@@ -7663,18 +7662,15 @@
     vscode.postMessage(message);
   });
   function renderThinkingSelect(c) {
-    const mode = c.thinkingMode;
-    const enabled = mode === "bool" || mode === "effort";
-    thinkingCapable = enabled;
-    thinkingSelect.disabled = streamingActive || !enabled;
-    const level = c.thinkingLevel && ["off", "low", "medium", "high"].includes(c.thinkingLevel) ? c.thinkingLevel : "off";
+    thinkingSelect.disabled = streamingActive;
+    const level = c.thinkingLevel && ["low", "medium", "high"].includes(c.thinkingLevel) ? c.thinkingLevel : "medium";
     thinkingSelect.value = level;
-    thinkingSelect.title = enabled ? "Thinking level / reasoning effort (per session)" : 'This provider/model does not declare thinking control (add "thinking": "bool" or "effort" to its config entry)';
+    thinkingSelect.title = "Thinking level / reasoning effort (per session) \u2014 always sent; models without a reasoning phase ignore it";
   }
   thinkingSelect.addEventListener("change", () => {
     if (thinkingSelect.disabled) return;
     const level = thinkingSelect.value;
-    if (!["off", "low", "medium", "high"].includes(level)) return;
+    if (!["low", "medium", "high"].includes(level)) return;
     vscode.postMessage({ type: "setThinkingLevel", level });
   });
   function sanitizeIntegerInput(raw) {

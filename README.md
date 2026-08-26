@@ -134,27 +134,25 @@ The `api` field is `openai-completions` (chat, the only supported protocol).
 
 #### Thinking / reasoning level (per session)
 
-A **Thinking** dropdown sits in the chat header (Off / Low / Medium / High) and
-is **generalized across providers**. Each provider entry declares how it
-controls the reasoning phase with `thinking`:
+A **Thinking** dropdown sits in the chat header (**Low / Medium / High**, default **Medium**) — **always enabled and always sent**: we send our level (`reasoning_effort`) every time; a model without a reasoning phase simply ignores the field (there is no “off” to send). Each provider entry can fine-tune how the reasoning phase is expressed with `thinking`:
 
 | `thinking` | What Harny sends | Typical providers |
 |------------|------------------|-------------------|
 | `"bool"` | `chat_template_kwargs.enable_thinking` + `reasoning_effort` (standard OpenAI field, read by the model's Jinja template) | llama.cpp (Qwen3.8, Gemma-4 Thinking, …) |
-| `"effort"` | `reasoning_effort: low/medium/high` (top-level) | OpenAI, OpenRouter, opencode-go |
-| absent / `"none"` | nothing (provider default) | providers without thinking control |
+| `"effort"` *(default)* | `reasoning_effort: low/medium/high` (top-level) | OpenAI, OpenRouter, opencode-go |
+| `"none"` | nothing (provider default) | explicit escape hatch for hosts you don't want to touch |
 
 - The level uses the **standard OpenAI field name** `reasoning_effort`
   (`low`/`medium`/`high`) in both modes; `enable_thinking` is only the
   llama.cpp on/off toggle.
 
 - `thinkingLevel` on a provider entry sets its **default**; the dropdown lets you
-  override it **per session** (the choice is persisted with the session).
-- `Off` disables the phase where the provider allows it (`enable_thinking: false`
-  for llama.cpp; `reasoning_effort` is omitted for OpenAI-style APIs, falling
-  back to the model's default).
-- The legacy boolean `enableThinking: true/false` is still honored and maps to
-  `thinking: "bool"` with a `medium`/`off` level.
+  override it **per session** (the choice is persisted with the session). The
+  global default is `medium` — always sent.
+- There is **no `Off`**: the level is always sent (`low` is the minimum). On
+  reasoning models `low` reduces the chain-of-thought; on non-reasoning models
+  the field is ignored. Legacy `enableThinking: true/false` maps to `bool` with
+  `medium`/`low`.
 
 With the multi-provider format the model dropdown shows **all** models from **all** declared providers (grouped by name), not just those of the active provider. Picking a local model (e.g. `llamacpp` or `ollama`) automatically switches base URL, API key and protocol: `provider` in the file only indicates the initial one.
 

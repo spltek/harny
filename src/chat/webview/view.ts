@@ -737,7 +737,6 @@ function submitName(): void {
 // below the transcript is disabled except Stop; the sessions list / tabs stay
 // usable so you can open or switch to another session and work in parallel.
 let streamingActive = false;
-let thinkingCapable = false; // provider declares thinking control (bool/effort)
 
 function setStreaming(active: boolean): void {
   streamingActive = active;
@@ -746,7 +745,7 @@ function setStreaming(active: boolean): void {
   abortBtn.disabled = !active;
   compactBtn.disabled = active;
   modelSelect.disabled = active;
-  thinkingSelect.disabled = active || !thinkingCapable;
+  thinkingSelect.disabled = active;
   ctxMinus.disabled = active;
   ctxPlus.disabled = active;
   ctxInput.disabled = active;
@@ -847,23 +846,17 @@ modelSelect.addEventListener("change", () => {
 
 // ── Thinking level (reasoning effort, generalized across providers) ──
 function renderThinkingSelect(c: ConfigState): void {
-  const mode = c.thinkingMode;
-  const enabled = mode === "bool" || mode === "effort";
-  thinkingCapable = enabled;
-  thinkingSelect.disabled = streamingActive || !enabled;
-  const level =
-    c.thinkingLevel && ["off", "low", "medium", "high"].includes(c.thinkingLevel)
-      ? c.thinkingLevel
-      : "off";
+  // Always unlocked: we always send our default (medium).
+  thinkingSelect.disabled = streamingActive;
+  const level = c.thinkingLevel && ["low", "medium", "high"].includes(c.thinkingLevel) ? c.thinkingLevel : "medium";
   thinkingSelect.value = level;
-  thinkingSelect.title = enabled
-    ? "Thinking level / reasoning effort (per session)"
-    : "This provider/model does not declare thinking control (add \"thinking\": \"bool\" or \"effort\" to its config entry)";
+  thinkingSelect.title =
+    "Thinking level / reasoning effort (per session) — always sent; models without a reasoning phase ignore it";
 }
 thinkingSelect.addEventListener("change", () => {
   if (thinkingSelect.disabled) return;
   const level = thinkingSelect.value;
-  if (!["off", "low", "medium", "high"].includes(level)) return;
+  if (!["low", "medium", "high"].includes(level)) return;
   vscode.postMessage({ type: "setThinkingLevel", level });
 });
 

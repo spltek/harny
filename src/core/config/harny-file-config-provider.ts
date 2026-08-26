@@ -183,7 +183,7 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
     if (typeof data.enableThinking === "boolean" && !isThinkingMode(data.thinkingMode)) {
       out.thinkingMode = "bool";
       if (!isThinkingLevel(data.thinkingLevel)) {
-        out.thinkingLevel = data.enableThinking ? "medium" : "off";
+        out.thinkingLevel = data.enableThinking ? "medium" : "low";
       }
     }
     return out;
@@ -207,7 +207,7 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
       : typeof entry.enableThinking === "boolean"
         ? entry.enableThinking
           ? "medium"
-          : "off"
+          : "low" // legacy false: minimal reasoning, still sent
         : undefined;
   }
 
