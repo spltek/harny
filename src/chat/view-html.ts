@@ -405,7 +405,6 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     }
     .sampler-opt:hover { color: var(--fg); }
     .sampler-opt:has(input:checked) { color: var(--accent); font-weight: 600; }
-    .sampler-range { color: #777; font-size: 0.62rem; font-weight: 400; }
     /* Metrics row: same font, label style and horizontal padding as the status
        row above, so "Tokens:" lines up with "AI Model:". */
     /* Usage footer: a full-width card matching the control cards above. */
@@ -626,6 +625,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
         <div class="field">
           <label class="field-label" for="thinking-select">Thinking</label>
           <select id="thinking-select" title="Reasoning effort / thinking level (per session)">
+            <option value="off">Off</option>
             <option value="low">Low</option>
             <option value="medium">Medium</option>
             <option value="high">High</option>
@@ -636,8 +636,8 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
         <span class="card-title">Sampling</span>
         <div class="field">
           <div class="sampler-toggle" id="sampler-toggle">
-            <label class="sampler-opt"><input type="radio" name="sampler" id="sampler-temp" value="temperature" checked />Temperature <span class="sampler-range">(0.0 → 2.0)</span></label>
-            <label class="sampler-opt"><input type="radio" name="sampler" id="sampler-topp" value="topP" />Top-P <span class="sampler-range">(0.0 → 1.0)</span></label>
+            <label class="sampler-opt"><input type="radio" name="sampler" id="sampler-temp" value="temperature" checked />Temperature</label>
+            <label class="sampler-opt"><input type="radio" name="sampler" id="sampler-topp" value="topP" />Top-P</label>
           </div>
           <div id="samp-window">
             <button id="samp-minus" class="ctx-btn" title="Decrease sampler value">−</button>

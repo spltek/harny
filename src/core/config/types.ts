@@ -9,12 +9,11 @@ export type ProviderName = "openai" | "openai-compatible" | "anthropic";
  */
 export type ThinkingMode = "bool" | "effort" | "none";
 
-/** Per-session thinking level — always sent (we never disable; models without
- * a reasoning phase simply ignore the field). */
-export type ThinkingLevel = "low" | "medium" | "high";
+/** Per-session thinking level, generalized across providers. */
+export type ThinkingLevel = "off" | "low" | "medium" | "high";
 
 export function isThinkingLevel(v: unknown): v is ThinkingLevel {
-  return v === "low" || v === "medium" || v === "high";
+  return v === "off" || v === "low" || v === "medium" || v === "high";
 }
 
 export function isThinkingMode(v: unknown): v is ThinkingMode {
@@ -72,8 +71,6 @@ export const DEFAULT_CONFIG: HarnyConfig = {
   contextFiles: true,
   autoApprove: false,
   autoOpen: false,
-  // Our default thinking level: always sent (unless the user picks Off).
-  thinkingLevel: "medium",
 };
 
 export interface ConfigProvider {

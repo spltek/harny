@@ -220,7 +220,7 @@ describe("OpenAIChatProvider reasoning support", () => {
     expect(body.chat_template_kwargs).toEqual({ enable_thinking: false });
   });
 
-  it("defaults to reasoning_effort medium when no mode/level is declared", async () => {
+  it("omits chat_template_kwargs when enableThinking is undefined", async () => {
     const http = new FakeHttpClient();
     http.respondWith(sseResponse("data: [DONE]"));
 
@@ -228,22 +228,8 @@ describe("OpenAIChatProvider reasoning support", () => {
     await collect(provider.stream([{ role: "user", content: "x" }]));
 
     const body = JSON.parse(http.requests[0].body);
-    expect(body.reasoning_effort).toBe("medium");
     expect(body.chat_template_kwargs).toBeUndefined();
-  });
-
-  it("sends reasoning_effort per level (always — no off)", async () => {
-    const http = new FakeHttpClient();
-    http.respondWith(sseResponse("data: [DONE]"));
-    const provider = new OpenAIChatProvider({ ...config, thinkingMode: "effort", thinkingLevel: "high" }, http, tools);
-    await collect(provider.stream([{ role: "user", content: "x" }]));
-    expect(JSON.parse(http.requests[0].body).reasoning_effort).toBe("high");
-
-    const http2 = new FakeHttpClient();
-    http2.respondWith(sseResponse("data: [DONE]"));
-    const provider2 = new OpenAIChatProvider({ ...config, thinkingMode: "effort", thinkingLevel: "low" }, http2, tools);
-    await collect(provider2.stream([{ role: "user", content: "x" }]));
-    expect(JSON.parse(http2.requests[0].body).reasoning_effort).toBe("low");
+    expect(body.reasoning_effort).toBeUndefined();
   });
 
   it("maps thinkingLevel to enable_thinking + reasoning_effort in bool mode", async () => {
@@ -261,23 +247,25 @@ describe("OpenAIChatProvider reasoning support", () => {
     expect(body.chat_template_kwargs).toEqual({ enable_thinking: true, reasoning_effort: "high" });
   });
 
-  it("always enables thinking in bool mode and sends the level", async () => {
+  it("turns thinking off in bool mode", async () => {
     const http = new FakeHttpClient();
     http.respondWith(sseResponse("data: [DONE]"));
 
     const provider = new OpenAIChatProvider(
-      { ...config, thinkingMode: "bool", thinkingLevel: "low" },
+      { ...config, thinkingMode: "bool", thinkingLevel: "off" },
       http,
       tools,
     );
     await collect(provider.stream([{ role: "user", content: "x" }]));
 
     const body = JSON.parse(http.requests[0].body);
-    expect(body.chat_template_kwargs).toEqual({ enable_thinking: true, reasoning_effort: "low" });
+    expect(body.chat_template_kwargs).toEqual({ enable_thinking: false });
+    expect(body.chat_template_kwargs.reasoning_effort).toBeUndefined();
   });
 
-  it("sends reasoning_effort in effort mode (no off semantics)", async () => {
+  it("sends reasoning_effort in effort mode and omits it when off", async () => {
     const http = new FakeHttpClient();
+    http.respondWith(sseResponse("data: [DONE]"));
     http.respondWith(sseResponse("data: [DONE]"));
 
     const on = new OpenAIChatProvider(
@@ -286,9 +274,18 @@ describe("OpenAIChatProvider reasoning support", () => {
       tools,
     );
     await collect(on.stream([{ role: "user", content: "x" }]));
-    const body = JSON.parse(http.requests[0].body);
+    let body = JSON.parse(http.requests[0].body);
     expect(body.reasoning_effort).toBe("medium");
     expect(body.chat_template_kwargs).toBeUndefined();
+
+    const off = new OpenAIChatProvider(
+      { ...config, thinkingMode: "effort", thinkingLevel: "off" },
+      http,
+      tools,
+    );
+    await collect(off.stream([{ role: "user", content: "x" }]));
+    body = JSON.parse(http.requests[1].body);
+    expect(body.reasoning_effort).toBeUndefined();
   });
 
   it("sends nothing when thinkingMode is none", async () => {

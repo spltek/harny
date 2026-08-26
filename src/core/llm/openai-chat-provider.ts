@@ -51,22 +51,31 @@ export class OpenAIChatProvider implements LLMProvider {
       body.tool_choice = "auto";
     }
     // Reasoning/thinking phase, generalized across providers.
-    // "bool"   → llama.cpp-style chat_template_kwargs.enable_thinking + the
-    //            STANDARD reasoning_effort inside kwargs (Jinja template).
-    // "effort" → OpenAI-style top-level reasoning_effort (low/medium/high).
-    // We ALWAYS send our level (default "medium"): a model without a reasoning
-    // phase simply ignores the field — there is no "off" to send.
-    const mode = this.config.thinkingMode ?? (this.config.enableThinking !== undefined ? "bool" : "effort");
-    const level = this.config.thinkingLevel ?? "medium";
+    // "bool"   → llama.cpp-style chat_template_kwargs.enable_thinking (on/off)
+    //            + the STANDARD OpenAI field reasoning_effort for the level,
+    //            passed inside chat_template_kwargs for the model's Jinja template.
+    // "effort" → OpenAI-style top-level reasoning_effort (low/medium/high)
+    // "none"   → nothing is sent (provider default behavior)
+    const mode = this.config.thinkingMode ?? (this.config.enableThinking !== undefined ? "bool" : "none");
     if (mode === "bool") {
-      if (this.config.enableThinking !== undefined && this.config.thinkingLevel === undefined) {
+      if (this.config.thinkingLevel !== undefined) {
+        // Level-based control (UI dropdown). `enable_thinking` is the llama.cpp
+        // template toggle; the level uses the protocol name `reasoning_effort`
+        // (low/medium/high) — templates that don't read it simply ignore it.
+        const level = this.config.thinkingLevel;
+        const kwargs: Record<string, unknown> = { enable_thinking: level !== "off" };
+        if (level !== "off") kwargs.reasoning_effort = level;
+        body.chat_template_kwargs = kwargs;
+      } else if (this.config.enableThinking !== undefined) {
         // Legacy flag: pure boolean control (exactly as before).
         body.chat_template_kwargs = { enable_thinking: this.config.enableThinking };
       } else {
-        body.chat_template_kwargs = { enable_thinking: true, reasoning_effort: level };
+        body.chat_template_kwargs = { enable_thinking: true };
       }
     } else if (mode === "effort") {
-      body.reasoning_effort = level;
+      const level = this.config.thinkingLevel;
+      // "off" omits the field: the model falls back to its provider default.
+      if (level && level !== "off") body.reasoning_effort = level;
     }
 
     const headers: Record<string, string> = {

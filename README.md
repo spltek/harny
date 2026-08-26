@@ -52,7 +52,7 @@ npm test          # run all unit tests (vitest)
 npm run coverage  # with coverage report
 ```
 
-444 unit tests cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (JSONL store, manager, registry), the OpenAI-compatible LLM provider, host-model fetching, all 12 tools, the agent loop (fake LLM, abort, max turns, loop detection), markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code).
+443 unit tests cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (JSONL store, manager, registry), the OpenAI-compatible LLM provider, host-model fetching, all 12 tools, the agent loop (fake LLM, abort, max turns, loop detection), markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code).
 
 ## Features
 
@@ -125,6 +125,60 @@ You can move it anywhere with the `HARNY_HOME` env var. The file is re-read live
 
 The `api` field is `openai-completions` (chat, the only supported protocol).
 
+#### Provider entry examples — `thinking` per provider
+
+The `thinking` field declares how the reasoning phase is expressed in the
+request; combine it with `thinkingLevel` (the dropdown default, overridable
+per session — `off`/`low`/`medium`/`high`).
+
+**1. Local llama.cpp / MLX with a Jinja template** — `thinking: "bool"` sends
+`chat_template_kwargs.enable_thinking` + `reasoning_effort` (Qwen3, Gemma-4
+Thinking, …):
+
+```jsonc
+"llamacpp": {
+  "baseUrl": "http://127.0.0.1:8090/v1",
+  "api": "openai-completions",
+  "apiKey": "lamacpp",
+  "thinking": "bool",
+  "thinkingLevel": "medium",          // dropdown default for this provider
+  "models": [
+    { "id": "Qwen3.8-27B-Q6_K.gguf", "input": ["text"] }
+  ]
+}
+```
+
+**2. OpenAI-style host (OpenAI, OpenRouter, opencode-go)** — `thinking: "effort"`
+sends top-level `reasoning_effort`; with no `models` the dropdown auto-fills
+from `GET /v1/models`:
+
+```jsonc
+"openrouter": {
+  "baseUrl": "https://openrouter.ai/api/v1",
+  "api": "openai-completions",
+  "apiKey": "sk-or-...",
+  "thinking": "effort",
+  "thinkingLevel": "medium"
+}
+```
+
+**3. Host you don't want to touch** — omit `thinking` (or set `"none"`): Harny
+sends nothing and the Thinking dropdown stays disabled:
+
+```jsonc
+"ollama": {
+  "baseUrl": "http://localhost:11434/v1",
+  "api": "openai-completions",
+  "apiKey": "ollama"
+  // no "thinking": nothing sent, dropdown disabled — provider default only
+}
+```
+
+> `maxTokens` per entry is optional: it acts as the provider's default cap
+> until the per-session **Output tokens** control is set, which then wins and
+> is persisted (see *Window & sampling controls*). Leave it out to always use
+> the session default (8192).
+
 > **Tip — use `127.0.0.1` instead of `localhost`** for local servers. The
 > extension also rewrites `localhost` → `127.0.0.1` automatically before
 > fetching, but configuring it directly avoids the (rare) case where the DNS
@@ -134,25 +188,30 @@ The `api` field is `openai-completions` (chat, the only supported protocol).
 
 #### Thinking / reasoning level (per session)
 
-A **Thinking** dropdown sits in the chat header (**Low / Medium / High**, default **Medium**) — **always enabled and always sent**: we send our level (`reasoning_effort`) every time; a model without a reasoning phase simply ignores the field (there is no “off” to send). Each provider entry can fine-tune how the reasoning phase is expressed with `thinking`:
+A **Thinking** dropdown sits in the chat header (Off / Low / Medium / High) and
+is **generalized across providers**. Each provider entry declares how it
+controls the reasoning phase with `thinking`:
 
 | `thinking` | What Harny sends | Typical providers |
 |------------|------------------|-------------------|
 | `"bool"` | `chat_template_kwargs.enable_thinking` + `reasoning_effort` (standard OpenAI field, read by the model's Jinja template) | llama.cpp (Qwen3.8, Gemma-4 Thinking, …) |
-| `"effort"` *(default)* | `reasoning_effort: low/medium/high` (top-level) | OpenAI, OpenRouter, opencode-go |
-| `"none"` | nothing (provider default) | explicit escape hatch for hosts you don't want to touch |
+| `"effort"` | `reasoning_effort: low/medium/high` (top-level) | OpenAI, OpenRouter, opencode-go |
+| absent / `"none"` | nothing (provider default) | providers without thinking control |
 
 - The level uses the **standard OpenAI field name** `reasoning_effort`
   (`low`/`medium`/`high`) in both modes; `enable_thinking` is only the
   llama.cpp on/off toggle.
 
 - `thinkingLevel` on a provider entry sets its **default**; the dropdown lets you
-  override it **per session** (the choice is persisted with the session). The
-  global default is `medium` — always sent.
-- There is **no `Off`**: the level is always sent (`low` is the minimum). On
-  reasoning models `low` reduces the chain-of-thought; on non-reasoning models
-  the field is ignored. Legacy `enableThinking: true/false` maps to `bool` with
-  `medium`/`low`.
+  override it **per session** (the choice is persisted with the session).
+- The dropdown is **enabled only for providers that declare** `thinking: "bool"`
+  or `"effort"` (see the config example) — otherwise it stays disabled at the
+  provider default and Harny sends nothing.
+- `Off` disables the phase where the provider allows it (`enable_thinking: false`
+  for llama.cpp; `reasoning_effort` is omitted for OpenAI-style APIs, falling
+  back to the model's default).
+- The legacy boolean `enableThinking: true/false` is still honored and maps to
+  `thinking: "bool"` with a `medium`/`off` level.
 
 With the multi-provider format the model dropdown shows **all** models from **all** declared providers (grouped by name), not just those of the active provider. Picking a local model (e.g. `llamacpp` or `ollama`) automatically switches base URL, API key and protocol: `provider` in the file only indicates the initial one.
 
@@ -194,8 +253,8 @@ For providers that expose their model list (OpenAI, OpenRouter, opencode-go, lla
 | `harny.model` | `gpt-4o` | Model for chat completions |
 | `harny.maxTokens` | `8192` | Max tokens per response |
 | `harny.temperature` | not set | Sampling temperature (omitted when unset; required by strict models) |
-| `harny.thinkingMode` | not set | How the reasoning phase is expressed (`bool`, `effort`, `none`) — see the Thinking section |
-| `harny.thinkingLevel` | `medium` | Per-session default thinking level (`low`/`medium`/`high`) |
+| `harny.thinkingMode` | not set | How the reasoning phase is expressed (`bool`, `effort`, `none`); the provider's `thinking` field and the per-session dropdown override it — see the Thinking section |
+| `harny.thinkingLevel` | `medium` | Default thinking level (`off`/`low`/`medium`/`high`); per provider entry you can also set `thinkingLevel` — the dropdown only unlocks for providers that declare `thinking` |
 | `harny.contextFiles` | `true` | Auto-include project files as context |
 | `harny.autoApprove` | `false` | Auto-approve tool calls |
 | `harny.autoOpen` | `false` | Open the chat panel on startup |
