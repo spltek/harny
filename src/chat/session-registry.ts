@@ -34,6 +34,8 @@ export interface SessionRuntime {
   contextTokens?: number;
   /** Input tokens served from the provider's prompt cache (informational). */
   cachedTokens?: number;
+  /** Tokens written into the provider's prompt cache (informational). */
+  cachedWriteTokens?: number;
 }
 
 export interface SessionRegistryDeps {

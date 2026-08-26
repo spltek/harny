@@ -7811,10 +7811,16 @@
     ctxBar.style.width = pct + "%";
     ctxBar.classList.toggle("warn", pct >= 90);
     const cached = c.cachedTokens;
+    const write = c.cachedWrite;
     if (cached !== void 0 && cached > 0 && used > 0) {
       const saved = Math.min(100, Math.round(cached / used * 100));
-      metCache.textContent = "\u26A1 cache " + fmtTokens(cached) + " (" + saved + "%)";
-      metCache.title = "Input tokens served from prompt cache: " + cached + " / " + saved + "%";
+      const writeTxt = write && write > 0 ? " \xB7 write " + fmtTokens(write) : "";
+      metCache.textContent = "\u26A1 cache " + fmtTokens(cached) + " (" + saved + "%)" + writeTxt;
+      metCache.title = "Input tokens served from prompt cache: " + cached + " / " + saved + "%" + (write && write > 0 ? " \xB7 written to cache: " + write : "");
+      metCache.classList.remove("idle");
+    } else if (write && write > 0) {
+      metCache.textContent = "\u26A1 write " + fmtTokens(write);
+      metCache.title = "Tokens written into the prompt cache: " + write;
       metCache.classList.remove("idle");
     } else {
       metCache.textContent = "\u26A1 cache \u2013";

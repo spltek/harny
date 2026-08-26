@@ -724,6 +724,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     // for the new layout. Reset so the cache indicator hides until the next
     // real chat turn reports fresh usage (avoids stale ratios > 100%).
     rt.cachedTokens = 0;
+    rt.cachedWriteTokens = 0;
   }
 
   /**
@@ -740,6 +741,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       rt.contextTokens = usage.input;
       this.sessions.saveContextTokens(sessionId, usage.input);
       if (typeof usage.cached === "number") rt.cachedTokens = usage.cached;
+      if (typeof usage.cachedWrite === "number") rt.cachedWriteTokens = usage.cachedWrite;
       void this.pushConfig();
     },
   });
@@ -775,6 +777,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     sampler?: "temperature" | "topP";
     contextTokens?: number;
     cachedTokens?: number;
+    cachedWrite?: number;
   }> {
     const cfg = this.config.get();
     const hostProviders = cfg.hostModelProviders ?? [];
@@ -834,6 +837,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       sampler: this.activeRuntime()?.sampler,
       contextTokens: this.activeRuntime()?.contextTokens,
       cachedTokens: this.activeRuntime()?.cachedTokens,
+      cachedWrite: this.activeRuntime()?.cachedWriteTokens,
     };
   }
 

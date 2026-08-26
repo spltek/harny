@@ -358,7 +358,7 @@ describe("OpenAIChatProvider usage", () => {
     for await (const c of provider.stream([{ role: "user", content: "x" }])) chunks.push(c);
 
     const usage = chunks.find((c) => c.type === "usage");
-    expect(usage).toEqual({ type: "usage", usage: { input: 100, output: 20, total: 120, cached: 0 } });
+    expect(usage).toEqual({ type: "usage", usage: { input: 100, output: 20, total: 120, cached: 0, cachedWrite: 0 } });
   });
 
   it("reports cached tokens without changing input", async () => {
@@ -372,7 +372,21 @@ describe("OpenAIChatProvider usage", () => {
     const chunks: StreamChunk[] = [];
     for await (const c of provider.stream([{ role: "user", content: "x" }])) chunks.push(c);
     const usage = chunks.find((c) => c.type === "usage");
-    expect(usage).toEqual({ type: "usage", usage: { input: 100, output: 20, total: 120, cached: 70 } });
+    expect(usage).toEqual({ type: "usage", usage: { input: 100, output: 20, total: 120, cached: 70, cachedWrite: 0 } });
+  });
+
+  it("reports the cache WRITE side (OpenRouter / llama.cpp extension)", async () => {
+    const http = new FakeHttpClient();
+    http.respondWith(
+      sseResponse(
+        'data: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":10,"cache_write_tokens":55}}}',
+      ),
+    );
+    const provider = new OpenAIChatProvider(config, http, tools);
+    const chunks: StreamChunk[] = [];
+    for await (const c of provider.stream([{ role: "user", content: "x" }])) chunks.push(c);
+    const usage = chunks.find((c) => c.type === "usage");
+    expect(usage).toEqual({ type: "usage", usage: { input: 100, output: 20, total: 120, cached: 10, cachedWrite: 55 } });
   });
 });
 

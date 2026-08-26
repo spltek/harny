@@ -284,11 +284,11 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     .working { align-self: flex-start; color: #999; font-size: 0.85rem; font-style: italic; animation: harny-pulse 1.2s ease-in-out infinite; }
     /* The working bar is a REAL footer glued below the transcript (NOT a bubble
        in the flow): always visible in realtime while it exists. It lives
-       outside #messages, so sections are never inserted below it. */
+       outside #messages, so sections are never inserted below it. The text
+       pulses with the same 1.2s cadence as the play button (harny-pulse). */
     #working-bar {
       flex-shrink: 0;
       padding: 4px 10px;
-      border-top: 1px solid var(--border);
       background: var(--bg);
       color: #999; font-size: 0.85rem; font-style: italic;
       animation: harny-pulse 1.2s ease-in-out infinite;

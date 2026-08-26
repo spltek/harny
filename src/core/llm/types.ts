@@ -19,6 +19,8 @@ export interface Usage {
   total: number;
   /** Input tokens served from the provider's prompt cache (0 = cache cold/unreported). */
   cached?: number;
+  /** Tokens written INTO the prompt cache (OpenRouter cache_write_tokens, llama.cpp/vLLM cache_creation_input_tokens). */
+  cachedWrite?: number;
 }
 
 export type StreamChunk =

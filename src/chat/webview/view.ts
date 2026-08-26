@@ -52,6 +52,7 @@ interface ConfigState {
   sampler?: "temperature" | "topP";
   contextTokens?: number;
   cachedTokens?: number;
+  cachedWrite?: number;
 }
 interface InitState {
   sessions: SessionInfo[];
@@ -1053,12 +1054,21 @@ function renderMetrics(c: ConfigState): void {
   // Prompt-cache badge: always occupies its slot so the layout is stable and
   // the feature is discoverable even when the provider doesn't report hits.
   const cached = c.cachedTokens;
+  const write = c.cachedWrite;
   if (cached !== undefined && cached > 0 && used > 0) {
     // Clamp to 100%: cached can momentarily exceed the rough context estimate
     // (e.g. right after compaction the estimate differs from real usage).
     const saved = Math.min(100, Math.round((cached / used) * 100));
-    metCache.textContent = "⚡ cache " + fmtTokens(cached) + " (" + saved + "%)";
-    metCache.title = "Input tokens served from prompt cache: " + cached + " / " + saved + "%";
+    const writeTxt = write && write > 0 ? " · write " + fmtTokens(write) : "";
+    metCache.textContent = "⚡ cache " + fmtTokens(cached) + " (" + saved + "%)" + writeTxt;
+    metCache.title =
+      "Input tokens served from prompt cache: " + cached + " / " + saved + "%" +
+      (write && write > 0 ? " · written to cache: " + write : "");
+    metCache.classList.remove("idle");
+  } else if (write && write > 0) {
+    // Cache cold but this turn wrote into it: tell that truth instead of "–".
+    metCache.textContent = "⚡ write " + fmtTokens(write);
+    metCache.title = "Tokens written into the prompt cache: " + write;
     metCache.classList.remove("idle");
   } else {
     metCache.textContent = "⚡ cache –";

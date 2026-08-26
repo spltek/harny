@@ -127,6 +127,14 @@ export class OpenAIChatProvider implements LLMProvider {
                 u.cache_read_input_tokens ??
                 0,
             ),
+            // The WRITE side (tokens stored into the cache) is a provider
+            // extension of the OpenAI protocol: OpenRouter reports
+            // cache_write_tokens, llama.cpp/vLLM cache_creation_input_tokens.
+            cachedWrite: Number(
+              u.prompt_tokens_details?.cache_write_tokens ??
+                u.cache_creation_input_tokens ??
+                0,
+            ),
           },
         };
       }
