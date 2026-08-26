@@ -76,6 +76,7 @@ const messagesEl = document.getElementById("messages") as HTMLDivElement;
 // a bubble in the flow), shown/hidden instead of being appended/removed.
 const workingBar = document.getElementById("working-bar") as HTMLDivElement;
 const inputEl = document.getElementById("user-input") as HTMLTextAreaElement;
+const ctlToggle = document.getElementById("ctl-toggle") as HTMLDivElement;
 const sendBtn = document.getElementById("send-btn") as HTMLButtonElement;
 const abortBtn = document.getElementById("abort-btn") as HTMLButtonElement;
 const modelSelect = document.getElementById("model-select") as HTMLSelectElement;
@@ -620,6 +621,11 @@ inputEl.addEventListener("keydown", (e) => {
   if (e.key === "Escape") vscode.postMessage({ type: "abort" });
 });
 abortBtn.addEventListener("click", () => vscode.postMessage({ type: "abort" }));
+// Collapse/expand the control stack (model, window, sampling, metrics).
+ctlToggle.addEventListener("click", () => {
+  const collapsed = document.body.classList.toggle("controls-collapsed");
+  ctlToggle.setAttribute("aria-expanded", String(!collapsed));
+});
 newSessionBtn.addEventListener("click", () => vscode.postMessage({ type: "newSession" }));
 sessionHead.addEventListener("click", () => {
   sessionsEl.classList.toggle("hidden");

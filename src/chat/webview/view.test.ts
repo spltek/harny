@@ -30,6 +30,7 @@ function setupDom(initOverrides: Record<string, unknown> = {}): void {
     <div id="status">AI Model: <select id="model-select"></select><button id="ctx-minus">−</button><input id="ctx-input" type="text" value="128000"><button id="ctx-plus">+</button><button id="out-minus">−</button><input id="out-input" type="text" value="8192"><button id="out-plus">+</button><input id="sampler-temp" type="radio" name="sampler" checked><input id="sampler-topp" type="radio" name="sampler"><button id="samp-minus">−</button><input id="samp-input" type="text" placeholder="Auto"><button id="samp-plus">+</button><button id="samp-auto">Auto</button><button id="presence-minus">−</button><input id="presence-input" type="text" placeholder="Auto"><button id="presence-plus">+</button><button id="presence-auto">Auto</button><button id="freq-minus">−</button><input id="freq-input" type="text" placeholder="Auto"><button id="freq-plus">+</button><button id="freq-auto">Auto</button></div>
     <div id="metrics"><select id="thinking-select"><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button></div>
     <div id="model-warn"></div>
+    <div id="ctl-toggle"><button id="ctl-toggle-btn"></button></div>
     <div id="name-modal" class="hidden">
       <div class="name-modal-backdrop"></div>
       <div class="name-modal-card">
@@ -100,6 +101,20 @@ describe("view webview client", () => {
     });
     expect(warn.hidden).toBe(false);
     expect(warn.textContent).toContain("host model lists are unavailable");
+  });
+
+  it("collapses and expands the control stack via the toggle", async () => {
+    await loadView();
+    const strip = document.getElementById("ctl-toggle") as HTMLDivElement;
+    expect(document.body.classList.contains("controls-collapsed")).toBe(false);
+
+    strip.click();
+    expect(document.body.classList.contains("controls-collapsed")).toBe(true);
+    expect(strip.getAttribute("aria-expanded")).toBe("false");
+
+    strip.click();
+    expect(document.body.classList.contains("controls-collapsed")).toBe(false);
+    expect(strip.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("renders the thinking level dropdown per provider capability", async () => {

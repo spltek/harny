@@ -7043,6 +7043,7 @@
   var messagesEl = document.getElementById("messages");
   var workingBar = document.getElementById("working-bar");
   var inputEl = document.getElementById("user-input");
+  var ctlToggle = document.getElementById("ctl-toggle");
   var sendBtn = document.getElementById("send-btn");
   var abortBtn = document.getElementById("abort-btn");
   var modelSelect = document.getElementById("model-select");
@@ -7476,6 +7477,10 @@
     if (e.key === "Escape") vscode.postMessage({ type: "abort" });
   });
   abortBtn.addEventListener("click", () => vscode.postMessage({ type: "abort" }));
+  ctlToggle.addEventListener("click", () => {
+    const collapsed = document.body.classList.toggle("controls-collapsed");
+    ctlToggle.setAttribute("aria-expanded", String(!collapsed));
+  });
   newSessionBtn.addEventListener("click", () => vscode.postMessage({ type: "newSession" }));
   sessionHead.addEventListener("click", () => {
     sessionsEl.classList.toggle("hidden");

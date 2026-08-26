@@ -198,7 +198,16 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     .tab .close:hover { color: var(--error); background: rgba(244, 71, 71, 0.14); }
 
     /* Chat */
-    #messages { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+    /* scrollbar-gutter: stable reserves the scrollbar slot even when no
+       scrollbar is shown — the bubble column width stays IDENTICAL whether or
+       not the scrollbar appears. padding-right:0 lets the 10px gutter play the
+       role of the right margin, so the chat column matches the controls below
+       (same width, symmetric 10px gaps: paddings left 10 / gutter 10 right). */
+    #messages {
+      flex: 1; overflow-y: auto; scrollbar-gutter: stable;
+      padding: 10px 0 10px 10px;
+      display: flex; flex-direction: column; gap: 6px;
+    }
     .msg { padding: 8px 10px; border-radius: 8px; max-width: 92%; word-wrap: break-word; word-break: break-word; overflow-wrap: break-word; line-height: 1.4; font-size: 0.92rem; }
     /* pre-wrap only for plain-text bubbles (user messages); markdown bubbles
        (assistant/tool) use breaks:true and white-space normal to avoid the
@@ -390,6 +399,34 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       align-items: center;
       justify-content: center;
     }
+
+    /* Control-stack toggle (above the ask card): a centered hover-hot chevron.
+       On hover it appears; clicking collapses/expands the controls below. */
+    #ctl-toggle {
+      display: flex; align-items: center; justify-content: center;
+      height: 14px; margin: 0 10px;
+      cursor: pointer; user-select: none;
+    }
+    #ctl-toggle-btn {
+      visibility: hidden; opacity: 0;
+      background: transparent; border: none; color: var(--muted);
+      padding: 3px 8px; cursor: pointer; display: inline-flex; align-items: center;
+      transition: opacity 0.12s, color 0.12s, visibility 0.12s;
+      box-shadow: none; filter: none; line-height: 0;
+    }
+    #ctl-toggle:hover #ctl-toggle-btn,
+    #ctl-toggle:focus-within #ctl-toggle-btn { visibility: visible; opacity: 1; color: var(--accent); }
+    #ctl-toggle-btn svg { transition: transform 0.15s; }
+    body.controls-collapsed #ctl-toggle-btn svg { transform: rotate(180deg); }
+    body.controls-collapsed #status,
+    body.controls-collapsed #metrics { display: none; }
+    /* Collapsed: Ask Harny becomes the last element — give it the SAME gap
+       from the panel edge that the tokens/metrics card has when visible
+       (#metrics bottom margin = 8px). */
+    body.controls-collapsed #input-area { margin-bottom: 8px; }
+    /* No stack to toggle -> the strip disappears too. */
+    body.no-session #ctl-toggle,
+    body.no-workspace #ctl-toggle { display: none; }
 
     #status { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px 6px; font-size: 0.85rem; }
     #status .warn { color: var(--error); }
@@ -666,6 +703,15 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
   <div id="model-warn" hidden></div>
   <div id="messages"></div>
   <div id="working-bar" class="hidden">● Working...</div>
+  <!-- Control stack toggle: a slim hover-hot strip just above the ask card.
+       On hover a chevron appears; clicking collapses/expands the controls
+       below (#status + #metrics). The tiny label at the right shows the state
+       (Hide/Show controls) — same level as the Working... bar. -->
+  <div id="ctl-toggle" title="Toggle the controls below" aria-expanded="true">
+    <button id="ctl-toggle-btn" aria-label="Toggle controls">
+      <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+    </button>
+  </div>
   <div id="input-area">
     <textarea id="user-input" rows="1" placeholder="Ask Harny... (Enter to send, Esc to abort)"></textarea>
     <button id="send-btn" aria-label="Send"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg></button>
