@@ -22,7 +22,7 @@ harny/
 │   │   ├── sessions/             # SessionStore <- JsonlSessionStore, SessionManager
 │   │   │                         #   + one runtime (dedicated Agent) per open session
 │   │   ├── storage/              # Cross-platform path resolution (context.globalStorageUri)
-│   │   └── tools/                # Tool interface + ToolRegistry + 11 tools (one file each)
+│   │   └── tools/                # Tool interface + ToolRegistry + 12 tools (one file each)
 │   │                             #   FileSystem / CommandRunner / HttpClient abstractions
 │   ├── chat/
 │   │   ├── chat-view.ts          # Host WebviewViewProvider (single right-side view)
@@ -52,14 +52,14 @@ npm test          # run all unit tests (vitest)
 npm run coverage  # with coverage report
 ```
 
-413 unit tests cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (JSONL store, manager, registry), the OpenAI-compatible LLM provider, host-model fetching, all 11 tools, the agent loop (fake LLM, abort, max turns, loop detection), markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code).
+444 unit tests cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (JSONL store, manager, registry), the OpenAI-compatible LLM provider, host-model fetching, all 12 tools, the agent loop (fake LLM, abort, max turns, loop detection), markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code).
 
 ## Features
 
 - **Chat Completions protocol** (`/v1/chat/completions`)
 - **Streaming**: Real-time SSE streaming for responsive UX
-- **11 tools**: Read, Write, StrReplace, Delete, Shell, Grep, Glob, TodoWrite, WebSearch, WebFetch, ReadLints
-- **Agent loop**: Automatic tool execution, multi-turn continuation, loop detection (max turns)
+- **12 tools**: Read, Write, StrReplace, Edit, Delete, Shell, Grep, Glob, TodoWrite, WebSearch, WebFetch, ReadLints
+- **Agent loop**: Automatic tool execution, multi-turn continuation, loop detection (repeated failing/succeeding tool calls), no bounded turn count (Stop button only) — a `maxTurns` cap exists behind the scenes for tests/future config
 - **Per-session controls**: context window, output tokens and temperature are editable in the panel, persisted **per session** (JSONL header) and restored on reopen; output tokens/temperature win over the provider defaults
 - **Empty shell**: with no open session the control stack is hidden and a hero invites you to pick a session from the list or create a new one
 - **Sessions**: Persistent per-workspace sessions (JSONL), one agent per session, right-side view with tabs
@@ -194,6 +194,8 @@ For providers that expose their model list (OpenAI, OpenRouter, opencode-go, lla
 | `harny.model` | `gpt-4o` | Model for chat completions |
 | `harny.maxTokens` | `8192` | Max tokens per response |
 | `harny.temperature` | not set | Sampling temperature (omitted when unset; required by strict models) |
+| `harny.thinkingMode` | not set | How the reasoning phase is expressed (`bool`, `effort`, `none`) — see the Thinking section |
+| `harny.thinkingLevel` | `medium` | Per-session default thinking level (`low`/`medium`/`high`) |
 | `harny.contextFiles` | `true` | Auto-include project files as context |
 | `harny.autoApprove` | `false` | Auto-approve tool calls |
 | `harny.autoOpen` | `false` | Open the chat panel on startup |
@@ -204,8 +206,6 @@ For providers that expose their model list (OpenAI, OpenRouter, opencode-go, lla
 |---------|----------|-------------|
 | `Harny: Open Chat` | `Cmd+Shift+H` | Open the Sessions view (right side) + a new chat |
 | `Harny: New Session` | — | Create and open a new session (new tab) |
-| `Harny: Explain This Code` | `Cmd+Shift+E` | Explain selection or whole file in a new session |
-| `Harny: Edit with AI` | — | Ask AI to edit selected code in a new session |
 | `Harny: Reload Config` | — | Reload the config file |
 | `Harny: Debug Config` | — | Show the resolved config summary |
 
