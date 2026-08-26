@@ -7577,7 +7577,12 @@
   var streamingActive = false;
   var thinkingCapable = false;
   function setStreaming(active) {
+    const rising = active && !streamingActive;
     streamingActive = active;
+    if (rising) {
+      autoScroll = true;
+      scrollDown();
+    }
     sendBtn.classList.toggle("blinking", active);
     sendBtn.disabled = !activeId || active;
     abortBtn.disabled = !active;

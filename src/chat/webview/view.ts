@@ -757,7 +757,15 @@ let streamingActive = false;
 let thinkingCapable = false; // provider declares thinking control (bool/effort)
 
 function setStreaming(active: boolean): void {
+  const rising = active && !streamingActive;
   streamingActive = active;
+  if (rising) {
+    // Entering working always pins the transcript at the bottom with
+    // auto-scroll ON: the reply is arriving below, even if the user had
+    // scrolled up to re-read older content.
+    autoScroll = true;
+    scrollDown();
+  }
   sendBtn.classList.toggle("blinking", active);
   sendBtn.disabled = !activeId || active;
   abortBtn.disabled = !active;
