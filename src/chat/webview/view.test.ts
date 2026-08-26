@@ -758,7 +758,8 @@ describe("branch from assistant bubble", () => {
     // Two visible bubbles (a1 at index 1, a2 at index 3); the thinking-only
     // bubble renders blocks but no answer bubble, so no key there.
     expect(keys.length).toBe(2);
-    expect(keys[0].textContent).toBe("⎇");
+    // Inline SVG icon (not a text glyph).
+    expect(keys[0].querySelector("svg path")).toBeTruthy();
     (keys[0] as HTMLButtonElement).click();
     expect(posted).toContainEqual({ type: "branchAt", index: 1 });
     (keys[1] as HTMLButtonElement).click();

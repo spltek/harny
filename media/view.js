@@ -7167,7 +7167,7 @@
       name.addEventListener("click", () => vscode.postMessage({ type: "openSession", id: s.id }));
       const actions = document.createElement("span");
       actions.className = "srow-actions";
-      actions.innerHTML = '<button class="branch" title="Branch (copy) this session">\u2387</button><button class="rename" title="Rename">\u270E</button><button class="del" title="Delete">\u{1F5D1}</button>';
+      actions.innerHTML = '<button class="branch" title="Branch (copy) this session">' + icon("i-branch", 13) + '</button><button class="rename" title="Rename">' + icon("i-pencil", 13) + '</button><button class="del" title="Delete">' + icon("i-trash", 13) + "</button>";
       const branchBtn = actions.querySelector(".branch");
       actions.querySelector(".rename").addEventListener("click", (e) => {
         e.stopPropagation();
@@ -7215,7 +7215,7 @@
       label.textContent = s?.name || "Session";
       const close = document.createElement("span");
       close.className = "close";
-      close.textContent = "\xD7";
+      close.innerHTML = icon("i-x", 11);
       close.addEventListener("click", (e) => {
         e.stopPropagation();
         vscode.postMessage({ type: "closeTab", id });
@@ -7377,11 +7377,15 @@
     }
     return hasVisible;
   }
+  function icon(id, size = 14) {
+    return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true">${ICON_GLYPHS[id]}</svg>`;
+  }
+  var ICON_GLYPHS = { "i-play": '<path d="M8 5v14l11-7z" fill="currentColor"/>', "i-stop": '<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/>', "i-plus": '<path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>', "i-minus": '<path d="M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>', "i-x": '<path d="M18 6 6 18M6 6l12 12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>', "i-pencil": '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" fill="none"/>', "i-trash": '<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>', "i-branch": '<path d="M6 3v12" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/><circle cx="18" cy="6" r="3" fill="currentColor"/><circle cx="6" cy="18" r="3" fill="currentColor"/><path d="M18 9a9 9 0 0 1-9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>' };
   function attachBranchAt(el, index) {
     const b = document.createElement("button");
     b.className = "branch-at";
     b.title = "Branch session from this point (up to and including this reply)";
-    b.textContent = "\u2387";
+    b.innerHTML = icon("i-branch", 12);
     b.addEventListener("click", (e) => {
       e.stopPropagation();
       vscode.postMessage({ type: "branchAt", index });

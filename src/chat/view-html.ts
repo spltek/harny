@@ -358,6 +358,9 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4);
     }
     button:disabled { opacity: 0.3; cursor: default; }
+    /* Icon buttons: SVG glyphs are block-level inside the flex, so the
+       baseline gap of inline svg never shifts the shape off-center. */
+    button svg { display: block; }
     button.secondary { background: transparent; border: 1px solid var(--border); color: var(--fg); }
     /* Stop (abort) is ENABLED only while working: a red hover signals the
        danger action in exactly that state (disabled elsewhere). */
@@ -378,18 +381,6 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-    }
-    #send-btn, #abort-btn { font-size: 0; }
-    #send-btn::before {
-      content: "";
-      border-left: 0.52rem solid #fff;
-      border-top: 0.33rem solid transparent;
-      border-bottom: 0.33rem solid transparent;
-    }
-    #abort-btn::before {
-      content: "";
-      width: 0.40rem; height: 0.40rem;
-      background: currentColor; /* gray idle; turns red on hover while enabled */
     }
 
     #status { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px 6px; font-size: 0.85rem; }
@@ -659,7 +650,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     <div id="session-head">
       <span class="toggle">▼</span><span>Sessions</span>
       <span class="spacer"></span>
-      <button id="new-session" title="New session">＋</button>
+      <button id="new-session" title="New session"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
     </div>
     <div id="sessions"></div>
   </div>
@@ -669,8 +660,8 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
   <div id="working-bar" class="hidden">● Working...</div>
   <div id="input-area">
     <textarea id="user-input" rows="1" placeholder="Ask Harny... (Enter to send, Esc to abort)"></textarea>
-    <button id="send-btn" aria-label="Send">▶</button>
-    <button id="abort-btn" class="secondary" disabled aria-label="Abort">⏹</button>
+    <button id="send-btn" aria-label="Send"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg></button>
+    <button id="abort-btn" class="secondary" disabled aria-label="Abort"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg></button>
   </div>
   <div id="status">
     <div class="ctl-card ctl-card-model">
@@ -683,17 +674,17 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
         <div class="field">
           <label class="field-label" for="ctx-input">Context window</label>
           <div id="ctx-window">
-            <button id="ctx-minus" class="ctx-btn" title="Decrease context">−</button>
+            <button id="ctx-minus" class="ctx-btn" title="Decrease context"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
             <input id="ctx-input" type="text" inputmode="numeric" autocomplete="off" value="${DEFAULT_CONTEXT_WINDOW}" title="Context window (tokens) — integers only">
-            <button id="ctx-plus" class="ctx-btn" title="Increase context">+</button>
+            <button id="ctx-plus" class="ctx-btn" title="Increase context"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
           </div>
         </div>
         <div class="field">
           <label class="field-label" for="out-input">Output tokens</label>
           <div id="out-window">
-            <button id="out-minus" class="ctx-btn" title="Decrease output tokens">−</button>
+            <button id="out-minus" class="ctx-btn" title="Decrease output tokens"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
             <input id="out-input" type="text" inputmode="numeric" autocomplete="off" value="${DEFAULT_OUTPUT_TOKENS}" title="Max output tokens per response — integers only">
-            <button id="out-plus" class="ctx-btn" title="Increase output tokens">+</button>
+            <button id="out-plus" class="ctx-btn" title="Increase output tokens"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
           </div>
         </div>
         <div class="field">
@@ -714,27 +705,27 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
             <label class="sampler-opt"><input type="radio" name="sampler" id="sampler-topp" value="topP" />Top-P</label>
           </div>
           <div id="samp-window">
-            <button id="samp-minus" class="ctx-btn" title="Decrease sampler value">−</button>
+            <button id="samp-minus" class="ctx-btn" title="Decrease sampler value"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
             <input id="samp-input" type="text" inputmode="decimal" autocomplete="off" placeholder="Auto" title="Active sampler value — scale follows the toggle (0.0–2.0 temperature, 0.0–1.0 top-p); empty = Auto (not sent)">
-            <button id="samp-plus" class="ctx-btn" title="Increase sampler value">+</button>
+            <button id="samp-plus" class="ctx-btn" title="Increase sampler value"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
             <button id="samp-auto" class="ctx-btn" title="Reset to Auto (not sent)">Auto</button>
           </div>
         </div>
         <div class="field">
           <label class="field-label" for="presence-input">Presence penalty (0.0 → 2.0)</label>
           <div id="presence-window">
-            <button id="presence-minus" class="ctx-btn" title="Decrease presence penalty">−</button>
+            <button id="presence-minus" class="ctx-btn" title="Decrease presence penalty"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
             <input id="presence-input" type="text" inputmode="decimal" autocomplete="off" placeholder="Auto" title="Presence penalty 0.0–2.0; pushes toward new topics; empty = Auto (not sent)">
-            <button id="presence-plus" class="ctx-btn" title="Increase presence penalty">+</button>
+            <button id="presence-plus" class="ctx-btn" title="Increase presence penalty"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
             <button id="presence-auto" class="ctx-btn" title="Reset to Auto (not sent)">Auto</button>
           </div>
         </div>
         <div class="field">
           <label class="field-label" for="freq-input">Frequency penalty (0.0 → 2.0)</label>
           <div id="freq-window">
-            <button id="freq-minus" class="ctx-btn" title="Decrease frequency penalty">−</button>
+            <button id="freq-minus" class="ctx-btn" title="Decrease frequency penalty"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
             <input id="freq-input" type="text" inputmode="decimal" autocomplete="off" placeholder="Auto" title="Frequency penalty 0.0–2.0; reduces repetition; empty = Auto (not sent)">
-            <button id="freq-plus" class="ctx-btn" title="Increase frequency penalty">+</button>
+            <button id="freq-plus" class="ctx-btn" title="Increase frequency penalty"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
             <button id="freq-auto" class="ctx-btn" title="Reset to Auto (not sent)">Auto</button>
           </div>
         </div>
