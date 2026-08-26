@@ -7647,7 +7647,8 @@
       for (const provider of order) {
         const g = document.createElement("optgroup");
         g.label = provider;
-        for (const m of groups.get(provider)) {
+        const sorted = [...groups.get(provider) || []].sort();
+        for (const m of sorted) {
           const opt = document.createElement("option");
           opt.value = m;
           opt.textContent = m;
@@ -7658,7 +7659,7 @@
         modelSelect.appendChild(g);
       }
     } else {
-      const models = c.models && c.models.length > 0 ? c.models : [c.model];
+      const models = (c.models && c.models.length > 0 ? [...c.models] : c.model ? [c.model] : []).sort();
       for (const m of models) {
         const opt = document.createElement("option");
         opt.value = m;
