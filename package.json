@@ -144,7 +144,7 @@
   },
   "scripts": {
     "vscode:prepublish": "bun run build",
-    "build": "npx tsc -p tsconfig.json && node scripts/build-webview.mjs",
+    "build": "node scripts/build-extension.mjs && node scripts/build-webview.mjs",
     "typecheck": "npx tsc --noEmit && npx tsc -p tsconfig.webview.json",
     "watch": "npx tsc -p tsconfig.json --watch",
     "dev": "bun run watch",
