@@ -119,7 +119,10 @@ function buildHarness(opts: Record<string, unknown> = {}) {
       reset: vi.fn(),
       load: vi.fn(),
       addUserMessage: vi.fn(),
-      send: vi.fn(async () => {}),
+      send: vi.fn(async () => {
+        // Mirrors the real Agent: streaming flips synchronously on send start.
+        agent.streaming = true;
+      }),
       abort: vi.fn(),
       onEvent: vi.fn((fn: (e: any) => void) => {
         handlers.push(fn);
@@ -707,13 +710,20 @@ describe("ChatViewProvider", () => {
 
   it("send routes to the active runtime agent", async () => {
     const { registry, provider } = buildHarness();
-    const { handler } = resolveWith(provider);
+    const { handler, view } = resolveWith(provider);
     await provider.createNew();
     // New sessions start with no model: pick one before sending.
     await handler({ type: "setModel", model: "deepseek-v4-flash", provider: "opencode-go" });
     await handler({ type: "send", text: "hello" });
     const rt = registry.get("s1")!;
     expect(rt.agent.send).toHaveBeenCalledWith("hello", undefined);
+    // The status posted when the stream starts must ALREADY carry the session
+    // id in workingIds — otherwise the row never locks (regression guard for
+    // the postStatus-after-send timing).
+    const statusPosts = view.webview.postMessage.mock.calls.map((c) => c[0]);
+    expect(statusPosts).toContainEqual(
+      expect.objectContaining({ type: "status", workingIds: ["s1"] }),
+    );
   });
 
   it("abort while streaming posts an interrupted notice and persists it", async () => {

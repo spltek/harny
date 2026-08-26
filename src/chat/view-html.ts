@@ -145,6 +145,14 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       border-radius: 4px; transition: opacity 0.12s, color 0.12s, background-color 0.12s;
     }
     .srow-actions button:hover:not(:disabled) { opacity: 1; color: var(--accent); background: rgba(255, 255, 255, 0.06); }
+    /* A working session is fully hover-inert: the row stops highlighting and
+       its action keys (branch/rename/delete) become dead — no cursor, no
+       hover reaction, no tooltip (pointer-events none). Mirrors the ⎇ policy
+       on assistant replies. */
+    .srow.is-working:hover { background: transparent; }
+    .srow-actions button:disabled {
+      opacity: 0.28; cursor: default; pointer-events: none;
+    }
     .empty { padding: 12px; text-align: center; color: #888; font-size: 0.92rem; }
 
     /* Tabs: raised pill keys, consistent with the 3D button chrome. */

@@ -7155,7 +7155,7 @@
     const openSet = new Set(openIds);
     for (const s of sessions) {
       const row = document.createElement("div");
-      row.className = "srow" + (openSet.has(s.id) ? " open" : "");
+      row.className = "srow" + (openSet.has(s.id) ? " open" : "") + (workingIds.has(s.id) ? " is-working" : "");
       row.dataset.id = s.id;
       const meta = document.createElement("span");
       meta.className = "smeta";
@@ -7968,7 +7968,11 @@
       }
       case "status":
         if (Array.isArray(msg.workingIds)) workingIds = new Set(msg.workingIds);
-        renderSessions(currentSessions);
+        for (const row of document.querySelectorAll(".srow")) {
+          const w = workingIds.has(row.dataset.id ?? "");
+          row.classList.toggle("is-working", w);
+          for (const b of row.querySelectorAll("button")) b.disabled = w;
+        }
         setStreaming(!!msg.active);
         break;
       case "switchView": {

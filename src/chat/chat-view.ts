@@ -567,13 +567,17 @@ export class ChatViewProvider implements WebviewViewProvider {
       }
     }
     this.streamTee.clear(rt.sessionId);
+    // send() sets _streaming synchronously on invocation: start it first, THEN
+    // push the status — otherwise workingIds() is still empty and the session
+    // row never locks (branch/rename/delete stay hoverable during the work).
+    const sending = rt.agent.send(text, images);
     this.postStatus(true);
     let hadError = false;
     const unsub = rt.agent.onEvent((e) => {
       if (e.type === "error") hadError = true;
     });
     try {
-      await rt.agent.send(text, images);
+      await sending;
     } finally {
       unsub();
       // Only touch the view when this session is still the active tab: the

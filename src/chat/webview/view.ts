@@ -205,7 +205,7 @@ function renderSessions(sessions: SessionInfo[]): void {
   const openSet = new Set(openIds);
   for (const s of sessions) {
     const row = document.createElement("div");
-    row.className = "srow" + (openSet.has(s.id) ? " open" : "");
+    row.className = "srow" + (openSet.has(s.id) ? " open" : "") + (workingIds.has(s.id) ? " is-working" : "");
     row.dataset.id = s.id;
     // Creation + last-modified dates, shown before the name.
     const meta = document.createElement("span");
@@ -1230,7 +1230,14 @@ window.addEventListener("message", (e) => {
     }
     case "status":
       if (Array.isArray(msg.workingIds)) workingIds = new Set(msg.workingIds as string[]);
-      renderSessions(currentSessions); // refresh the delete-button locks
+      // Patch the row locks IN PLACE (no full list rebuild): rebuilding the
+      // rows re-creates the action buttons and they visibly flash on every
+      // status message while a session works.
+      for (const row of document.querySelectorAll<HTMLElement>(".srow")) {
+        const w = workingIds.has(row.dataset.id ?? "");
+        row.classList.toggle("is-working", w);
+        for (const b of row.querySelectorAll("button")) b.disabled = w;
+      }
       setStreaming(!!msg.active);
       break;
     case "switchView": {
