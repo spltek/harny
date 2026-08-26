@@ -29,6 +29,7 @@ function setupDom(initOverrides: Record<string, unknown> = {}): void {
     </div>
     <div id="status">AI Model: <select id="model-select"></select><button id="ctx-minus">−</button><input id="ctx-input" type="text" value="128000"><button id="ctx-plus">+</button><button id="out-minus">−</button><input id="out-input" type="text" value="8192"><button id="out-plus">+</button><input id="sampler-temp" type="radio" name="sampler" checked><input id="sampler-topp" type="radio" name="sampler"><button id="samp-minus">−</button><input id="samp-input" type="text" placeholder="Auto"><button id="samp-plus">+</button><button id="samp-auto">Auto</button><button id="presence-minus">−</button><input id="presence-input" type="text" placeholder="Auto"><button id="presence-plus">+</button><button id="presence-auto">Auto</button><button id="freq-minus">−</button><input id="freq-input" type="text" placeholder="Auto"><button id="freq-plus">+</button><button id="freq-auto">Auto</button></div>
     <div id="metrics"><select id="thinking-select"><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button></div>
+    <div id="model-warn"></div>
     <div id="name-modal" class="hidden">
       <div class="name-modal-backdrop"></div>
       <div class="name-modal-card">
@@ -70,6 +71,35 @@ describe("view webview client", () => {
   beforeEach(() => {
     posted.length = 0;
     setupDom();
+  });
+
+  it("shows an explicit in-panel warning when no models are configured", async () => {
+    await loadView();
+    const warn = document.getElementById("model-warn") as HTMLDivElement;
+
+    // No models at all: the banner is visible and points at the config file.
+    hostMessage({
+      type: "config",
+      config: { provider: "openai", model: "", hasKey: true, noModels: true, configHome: "/tmp/harny-home", models: [], providerModels: [], contextWindow: 128000 },
+    });
+    expect(warn.hidden).toBe(false);
+    expect(warn.textContent).toContain("No models configured");
+    expect(warn.textContent).toContain("/tmp/harny-home/config.json");
+
+    // Models available: the banner disappears.
+    hostMessage({
+      type: "config",
+      config: { provider: "openai-compatible", model: "qwen.gguf", hasKey: true, models: [], providerModels: [{ provider: "llamacpp", model: "qwen.gguf" }], contextWindow: 128000 },
+    });
+    expect(warn.hidden).toBe(true);
+
+    // Host fetch failures with models present: softer warning instead.
+    hostMessage({
+      type: "config",
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, hostModelsError: true, models: ["gpt-4o"], providerModels: [], contextWindow: 128000 },
+    });
+    expect(warn.hidden).toBe(false);
+    expect(warn.textContent).toContain("host model lists are unavailable");
   });
 
   it("renders the thinking level dropdown per provider capability", async () => {

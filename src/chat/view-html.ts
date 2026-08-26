@@ -11,6 +11,8 @@ export interface ViewConfigState {
   providerModels: { provider: string; model: string }[];
   modelMissing?: boolean;
   hostModelsError?: boolean;
+  noModels?: boolean;
+  configHome?: string;
   workspaceReady?: boolean;
   contextWindow: number;
   outputTokens: number;
@@ -56,16 +58,22 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
   <title>Harny</title>
   <style>
     :root {
-      --bg: var(--vscode-sideBar-background, #252526);
-      --fg: var(--vscode-sideBar-foreground, #cccccc);
-      --border: var(--vscode-panel-border, #3c3c3c);
-      --input-bg: var(--vscode-input-background, #3c3c3c);
-      --user-msg: var(--vscode-button-background, #0e639c);
-      --assistant-msg: var(--vscode-editor-inactiveSelectionBackground, #3a3d41);
-      --tool-bg: var(--vscode-textCodeBlock-background, #1e1e1e);
+      /* Fixed dark-terracotta palette (independent of the active VS Code theme) */
+      --bg: #111111;               /* main background: anthracite, near-black */
+      --fg: #e0e0e0;               /* primary text: bright light gray */
+      --fg-strong: #ffffff;        /* titles / emphasis: pure white */
+      --border: rgba(255, 255, 255, 0.08); /* hairline only; separation is tone-on-tone */
+      --input-bg: #1e1e1e;         /* containers, fields, cards */
+      --surface-2: #222222;        /* raised surfaces / hover */
+      --user-msg: #d95f27;         /* burnt-orange / terracotta accent */
+      --accent: #d95f27;
+      --accent-strong: #c8501c;
+      --assistant-msg: #1e1e1e;
+      --tool-bg: #1a1a1a;
+      --muted: #888888;            /* secondary text, placeholders, disabled */
       --error: #f44747;
-      --accent: var(--vscode-focusBorder, #007fd4);
-      --font: var(--vscode-font-family, 'SF Mono', Monaco, monospace);
+      --font: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, 'Helvetica Neue', Arial, sans-serif;
+      --mono: ui-monospace, 'SF Mono', Monaco, Consolas, 'Liberation Mono', monospace;
     }
     :root {
       /* Base font = the VS Code UI size, so Harny matches the shell at ANY
@@ -77,6 +85,8 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       font-size: var(--font-size);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    /* UI: sans-serif (per spec); code stays monospace. */
+    pre, code, .code-lang { font-family: var(--mono); }
     body {
       font-family: var(--font);
       font-size: 1rem;
@@ -88,17 +98,19 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       overflow: hidden;
     }
 
-    /* Sessions area: a card matching the control cards below. */
+    /* Sessions area: a card matching the control cards below. Borderless:
+       separation comes from the tone-on-tone surface, not outline lines. */
     .sessions-card {
-      border: 1px solid var(--border); border-radius: 8px;
+      border-radius: 8px;
       margin: 8px 10px 0;
-      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0));
+      background: var(--input-bg);
       overflow: hidden; /* keep the scrolling list inside the rounded corners */
       flex-shrink: 0;
     }
     #session-head {
       display: flex; align-items: center; gap: 6px;
-      padding: 5px 10px; font-weight: 600; font-size: 0.85rem;
+      padding: 5px 10px; font-weight: 700; font-size: 0.85rem;
+      color: var(--fg-strong);
       border-bottom: 1px solid var(--border);
       cursor: pointer; user-select: none;
     }
@@ -179,7 +191,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
 
     /* Chat */
     #messages { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
-    .msg { padding: 8px 10px; border-radius: 10px; max-width: 92%; word-wrap: break-word; word-break: break-word; overflow-wrap: break-word; line-height: 1.4; font-size: 0.92rem; }
+    .msg { padding: 8px 10px; border-radius: 8px; max-width: 92%; word-wrap: break-word; word-break: break-word; overflow-wrap: break-word; line-height: 1.4; font-size: 0.92rem; }
     /* pre-wrap only for plain-text bubbles (user messages); markdown bubbles
        (assistant/tool) use breaks:true and white-space normal to avoid the
        ghost blank lines produced by markdown's structural newlines. */
@@ -202,7 +214,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     .branch-at:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); background: rgba(255, 255, 255, 0.1); }
     .msg.assistant.error { background: rgba(244, 71, 71, 0.15); border: 1px solid var(--error); }
     .msg.assistant p { margin: 4px 0; }
-    .msg.assistant h1, .msg.assistant h2, .msg.assistant h3, .msg.assistant h4, .msg.assistant h5, .msg.assistant h6 { margin: 8px 0 4px; font-weight: 600; }
+    .msg.assistant h1, .msg.assistant h2, .msg.assistant h3, .msg.assistant h4, .msg.assistant h5, .msg.assistant h6 { margin: 8px 0 4px; font-weight: 700; color: var(--fg-strong); }
     .msg.assistant h1 { font-size: 1.08rem; } .msg.assistant h2 { font-size: 1rem; } .msg.assistant h3 { font-size: 0.92rem; }
     .msg.assistant ul, .msg.assistant ol { margin: 4px 0; padding-left: 1.4em; }
     .msg.assistant ol { list-style: decimal; }
@@ -215,12 +227,38 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     .msg.assistant strong { font-weight: 600; }
     .msg.assistant em { font-style: italic; }
     .msg.assistant blockquote { border-left: 2px solid var(--border); padding-left: 8px; margin: 6px 0; color: #999; }
-    .msg.assistant table { border-collapse: collapse; margin: 6px 0; font-size: 0.85rem; }
+    .msg.assistant table { border-collapse: separate; border-spacing: 0; font-size: 0.85rem; }
     .msg.assistant th, .msg.assistant td { border: 1px solid var(--border); padding: 3px 6px; text-align: left; }
     .msg.assistant th { background: var(--tool-bg); }
     .msg.assistant img { max-width: 100%; border-radius: 4px; }
-    .table-scroll { overflow-x: auto; max-width: 100%; }
-    .table-scroll table { min-width: max-content; }
+    /* The wrapper OWNS the whole rounded frame and shrink-wraps the table
+       (inline-block): no full-width line when the table is narrower, and the
+       right corners follow the same radius. Cells only draw INTERIOR grid
+       lines (outer edges suppressed — the frame belongs to the wrapper). */
+    .table-scroll {
+      display: inline-block;
+      max-width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: auto;
+      margin: 6px 0;
+    }
+    .table-scroll table { min-width: max-content; border-collapse: separate; border-spacing: 0; }
+    .msg.assistant .table-scroll th, .msg.assistant .table-scroll td,
+    .thinking-body .table-scroll th, .thinking-body .table-scroll td {
+      border: none;
+      border-right: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    /* Right column & bottom row: the line comes from the wrapper's frame. */
+    .msg.assistant .table-scroll th:last-child, .msg.assistant .table-scroll td:last-child,
+    .thinking-body .table-scroll th:last-child, .thinking-body .table-scroll td:last-child {
+      border-right: none;
+    }
+    .msg.assistant .table-scroll tr:last-child th, .msg.assistant .table-scroll tr:last-child td,
+    .thinking-body .table-scroll tr:last-child th, .thinking-body .table-scroll tr:last-child td {
+      border-bottom: none;
+    }
     .code-block { overflow-x: auto; }
     .code-lang { font-size: 0.69rem; text-transform: uppercase; letter-spacing: 0.4px; color: #888; background: rgba(0,0,0,0.2); padding: 1px 8px; border-bottom: 1px solid var(--border); }
     .msg.tool { align-self: flex-start; background: var(--tool-bg); border: 1px solid var(--border); font-size: 0.85rem; }
@@ -264,7 +302,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
        body uses normal whitespace + breaks:true like the assistant bubbles. */
     .thinking-body { padding: 0 8px 6px; color: #999; line-height: 1.45; }
     .thinking-body p { margin: 4px 0; }
-    .thinking-body h1, .thinking-body h2, .thinking-body h3, .thinking-body h4, .thinking-body h5, .thinking-body h6 { margin: 8px 0 4px; font-weight: 600; }
+    .thinking-body h1, .thinking-body h2, .thinking-body h3, .thinking-body h4, .thinking-body h5, .thinking-body h6 { margin: 8px 0 4px; font-weight: 700; color: var(--fg-strong); }
     .thinking-body ul, .thinking-body ol { margin: 4px 0; padding-left: 1.4em; }
     .thinking-body ol { list-style: decimal; }
     .thinking-body ul { list-style: disc; }
@@ -276,7 +314,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     .thinking-body pre { background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; overflow-x: auto; margin: 4px 0; }
     .thinking-body pre code { background: transparent; padding: 0; }
     .thinking-body blockquote { border-left: 2px solid var(--border); padding-left: 8px; margin: 4px 0; }
-    .thinking-body table { border-collapse: collapse; margin: 6px 0; }
+    .thinking-body table { border-collapse: separate; border-spacing: 0; }
     .thinking-body th, .thinking-body td { border: 1px solid var(--border); padding: 3px 6px; text-align: left; }
     .thinking-body th { background: rgba(0,0,0,0.25); }
     .thinking-body img { max-width: 100%; border-radius: 4px; }
@@ -289,18 +327,18 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     #input-area {
       display: flex; gap: 8px; align-items: flex-end;
       margin: 8px 10px 0;
-      border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
-      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0));
+      border-radius: 8px; padding: 8px 10px;
+      background: var(--input-bg);
     }
     #user-input {
-      flex: 1; background: var(--input-bg); color: var(--fg);
+      flex: 1; background: var(--surface-2); color: var(--fg);
       border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
       font-family: var(--font); font-size: 0.92rem; line-height: 1.4; resize: none;
       min-height: 2.31rem; max-height: 18.5rem; outline: none;
     }
     #user-input:focus { border-color: var(--accent); }
     button {
-      background: var(--accent); color: #fff; border: none; border-radius: 5px;
+      background: var(--accent); color: #fff; border: none; border-radius: 6px;
       cursor: pointer; font-size: 0.92rem; line-height: 1;
       /* All button glyphs (▶ ⏹ ✎ 🗑 − + ＋ Compact) stay centered at any font
          size: flex centering + a font-proportional minimum hit area. */
@@ -328,7 +366,11 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       border-color: var(--error);
       background: rgba(244, 71, 71, 0.12);
     }
-    /* Align the send/stop buttons with the single-line textarea (30px tall). */
+    /* Play/Stop keys: CSS-drawn shapes (::before) replace the ▶/⏹ font glyphs,
+       whose metric box varies per font and drifts off-center at larger sizes.
+       rem units = scale with the UI font; triangle and square have ≈ equal
+       visual mass, so the two keys look identical and centered at ANY size.
+       font-size:0 keeps the text glyph as an invisible DOM fallback. */
     #input-area button {
       height: 2.31rem;
       min-width: 2.77rem;
@@ -337,10 +379,41 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       align-items: center;
       justify-content: center;
     }
+    #send-btn, #abort-btn { font-size: 0; }
+    #send-btn::before {
+      content: "";
+      border-left: 0.52rem solid #fff;
+      border-top: 0.33rem solid transparent;
+      border-bottom: 0.33rem solid transparent;
+    }
+    #abort-btn::before {
+      content: "";
+      width: 0.40rem; height: 0.40rem;
+      background: currentColor; /* gray idle; turns red on hover while enabled */
+    }
 
     #status { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px 6px; font-size: 0.85rem; }
     #status .warn { color: var(--error); }
     .ctl-row { display: flex; align-items: center; gap: 6px; }
+    /* Explicit in-panel warning: no models at all / host list failures. The
+       banner lives OUTSIDE #status so it also shows with no session open
+       (body.no-session hides #status). Borderless: tone-on-tone red tint. */
+    #model-warn {
+      margin: 6px 10px 0;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      line-height: 1.45;
+      color: var(--error);
+      background: rgba(244, 71, 71, 0.12);
+    }
+    #model-warn code { font-family: var(--mono); font-size: 0.76rem; }
+    #model-warn .warn-path {
+      color: var(--muted); font-family: var(--mono); font-size: 0.72rem;
+      word-break: break-all;
+    }
+    #model-warn strong { color: var(--fg-strong); }
+
     /* Grouped cards: the grid collapses to a single column when the panel is
        narrow, so fields are never squeezed or split mid-pair. minmax is font-
        relative: on zoom-in the columns stack gracefully (responsive to both
@@ -351,8 +424,8 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     }
     .ctl-card {
       display: flex; flex-direction: column; gap: 8px;
-      border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
-      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0));
+      border-radius: 8px; padding: 8px 10px;
+      background: var(--input-bg);
     }
     /* The AI Model card keeps the ORIGINAL proportions: one full-width row
        with the label inline and the select stretching (card chrome only). */
@@ -374,9 +447,9 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     #model-select option, #model-select optgroup { color: #1e1e1e; }
     #thinking-select {
       width: 100%;
-      background: transparent; color: inherit; border: 1px solid var(--border);
-      border-radius: 4px; outline: none; font-family: var(--font); font-size: 0.85rem;
-      cursor: pointer; padding: 0 2px; height: 1.85rem;
+      background: var(--input-bg); color: var(--fg); border: 1px solid var(--border);
+      border-radius: 6px; outline: none; font-family: var(--font); font-size: 0.85rem;
+      cursor: pointer; padding: 0 6px; height: 1.85rem;
     }
     #thinking-select option { color: #1e1e1e; }
     #thinking-select:disabled { opacity: 0.45; cursor: default; }
@@ -385,7 +458,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     #ctx-window, #out-window, #samp-window, #presence-window, #freq-window { display: inline-flex; align-items: center; gap: 2px; width: 100%; }
     #ctx-input, #out-input, #samp-input, #presence-input, #freq-input {
       flex: 1; min-width: 2.5rem; width: auto; height: 1.85rem; background: var(--input-bg); color: var(--fg);
-      border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px;
+      border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px;
       font-family: var(--font); font-size: 0.85rem; text-align: right;
     }
     #ctx-input:focus, #out-input:focus, #samp-input:focus, #presence-input:focus, #freq-input:focus { border-color: var(--accent); outline: none; }
@@ -410,9 +483,9 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     /* Usage footer: a full-width card matching the control cards above. */
     #metrics {
       display: flex; flex-direction: column; gap: 6px;
-      border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+      border-radius: 8px; padding: 8px 10px;
       margin: 0 10px 8px; color: #9a9a9a;
-      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0));
+      background: var(--input-bg);
     }
     .metrics-stats { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 0.8rem; }
     .metrics-stats .model-label { color: #999; }
@@ -479,7 +552,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       color: #9a9a9a;
     }
     .empty-hero .empty-icon { font-size: 2.2rem; }
-    .empty-hero h2 { margin: 0; font-size: 1.1rem; color: var(--fg); font-weight: 600; }
+    .empty-hero h2 { margin: 0; font-size: 1.1rem; color: var(--fg-strong); font-weight: 700; }
     .empty-hero p { margin: 0; font-size: 0.85rem; line-height: 1.5; }
     .empty-hero .empty-hint { font-size: 0.8rem; }
     .empty-hero .empty-cta { margin-top: 12px; padding: 6px 20px; font-size: 0.9rem; border-radius: 6px; }
@@ -492,7 +565,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       width: 1.38rem; height: 1.38rem; padding: 0; font-size: 0.92rem; line-height: 1;
       background: linear-gradient(to bottom, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.03)),
         var(--tool-bg, transparent);
-      border: 1px solid var(--border); color: var(--fg); border-radius: 3px;
+      border: 1px solid var(--border); color: var(--fg); border-radius: 4px;
       display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
       box-shadow:
         inset 0 1px 0 rgba(255, 255, 255, 0.2),
@@ -535,7 +608,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       box-shadow: 0 8px 30px rgba(0,0,0,0.35);
       display: flex; flex-direction: column; gap: 10px;
     }
-    #name-modal h3 { margin: 0; font-size: 0.92rem; font-weight: 600; }
+    #name-modal h3 { margin: 0; font-size: 0.92rem; font-weight: 700; color: var(--fg-strong); }
     #name-modal #name-input { width: 100%; margin-top: 8px; box-sizing: border-box; }
     #name-modal #name-error {
       margin-top: 6px; min-height: 1em; font-size: 0.78rem;
@@ -544,7 +617,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     #name-modal #name-error:empty { display: none; }
     #name-input {
       width: 100%; background: var(--input-bg); color: var(--fg);
-      border: 1px solid var(--border); border-radius: 5px; padding: 6px 8px;
+      border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
       font-family: var(--font); font-size: 0.92rem; outline: none; box-sizing: border-box;
     }
     #name-input:focus { border-color: var(--accent); }
@@ -572,7 +645,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
       display: flex; flex-direction: column; gap: 10px;
     }
-    #alert-modal h3 { margin: 0; font-size: 0.92rem; font-weight: 600; }
+    #alert-modal h3 { margin: 0; font-size: 0.92rem; font-weight: 700; color: var(--fg-strong); }
     #alert-modal .alert-message {
       font-size: 0.85rem; color: #bbb; line-height: 1.5;
       word-wrap: break-word; white-space: pre-wrap;
@@ -591,12 +664,13 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     <div id="sessions"></div>
   </div>
   <div id="tabs"></div>
+  <div id="model-warn" hidden></div>
   <div id="messages"></div>
   <div id="working-bar" class="hidden">● Working...</div>
   <div id="input-area">
     <textarea id="user-input" rows="1" placeholder="Ask Harny... (Enter to send, Esc to abort)"></textarea>
-    <button id="send-btn">▶</button>
-    <button id="abort-btn" class="secondary" disabled>⏹</button>
+    <button id="send-btn" aria-label="Send">▶</button>
+    <button id="abort-btn" class="secondary" disabled aria-label="Abort">⏹</button>
   </div>
   <div id="status">
     <div class="ctl-card ctl-card-model">

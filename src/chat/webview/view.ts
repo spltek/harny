@@ -38,6 +38,8 @@ interface ConfigState {
   providerModels?: { provider: string; model: string }[];
   modelMissing?: boolean;
   hostModelsError?: boolean;
+  noModels?: boolean;
+  configHome?: string;
   workspaceReady?: boolean;
   thinkingMode?: string;
   thinkingLevel?: string;
@@ -77,6 +79,7 @@ const inputEl = document.getElementById("user-input") as HTMLTextAreaElement;
 const sendBtn = document.getElementById("send-btn") as HTMLButtonElement;
 const abortBtn = document.getElementById("abort-btn") as HTMLButtonElement;
 const modelSelect = document.getElementById("model-select") as HTMLSelectElement;
+const modelWarn = document.getElementById("model-warn") as HTMLDivElement;
 const thinkingSelect = document.getElementById("thinking-select") as HTMLSelectElement;
 const ctxInput = document.getElementById("ctx-input") as HTMLInputElement;
 const ctxMinus = document.getElementById("ctx-minus") as HTMLButtonElement;
@@ -775,6 +778,29 @@ function setStreaming(active: boolean): void {
 }
 
 // ── Model dropdown (all providers, declared or detected from the host) ──
+/* Explicit in-panel warning instead of a silently empty model dropdown: shows
+   when NO model is configured at all (missing/empty config.json or every host
+   unreachable), or when some host model lists failed to fetch. */
+function renderModelWarnings(c: ConfigState): void {
+  if (c.noModels) {
+    const home = c.configHome ? `${c.configHome}/config.json` : "your extension data folder";
+    modelWarn.hidden = false;
+    modelWarn.innerHTML =
+      '⚠️ <strong>No models configured.</strong> Create <span class="warn-path">' +
+      home +
+      '</span> from <code>config.example.jsonc</code>, or set <code>harny.model</code>/<code>harny.apiKey</code> ' +
+      "in settings — then reload.";
+    modelWarn.title =
+      "The model dropdown is empty: the panel needs at least one model (declared in config.json or fetched from a host).";
+  } else if (c.hostModelsError) {
+    modelWarn.hidden = false;
+    modelWarn.textContent =
+      "⚠️ Some host model lists are unavailable (GET /v1/models failed) — the dropdown may be incomplete. Check the hosts.";
+  } else {
+    modelWarn.hidden = true;
+  }
+}
+
 function renderModelSelect(c: ConfigState): void {
   modelSelect.innerHTML = "";
   // New sessions start with no model: show a placeholder so the browser does
@@ -1217,6 +1243,7 @@ window.addEventListener("message", (e) => {
     case "config":
       renderModelSelect(msg.config || {});
       renderThinkingSelect(msg.config || {});
+      renderModelWarnings(msg.config || {});
       ctxInput.value = String(clampContextWindow((msg.config && msg.config.contextWindow) || DEFAULT_CONTEXT_WINDOW));
       renderOutputTokens(msg.config || {});
       renderSamplerControl(msg.config || {});
@@ -1244,6 +1271,7 @@ function renderViewState(state: {
   renderTabs(currentSessions);
   renderModelSelect(state.config || {});
   renderThinkingSelect(state.config || {});
+  renderModelWarnings(state.config || {});
   ctxInput.value = String(clampContextWindow((state.config && state.config.contextWindow) || DEFAULT_CONTEXT_WINDOW));
   renderOutputTokens(state.config || {});
   renderSamplerControl(state.config || {});

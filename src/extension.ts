@@ -128,6 +128,7 @@ export function activate(context: ExtensionContext) {
       compactor,
       compaction: DEFAULT_COMPACTION,
       workspaceReady: () => !!root,
+      configHome: resolved.home,
     },
   );
   viewProvider.setContext(context);

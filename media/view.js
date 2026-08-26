@@ -7046,6 +7046,7 @@
   var sendBtn = document.getElementById("send-btn");
   var abortBtn = document.getElementById("abort-btn");
   var modelSelect = document.getElementById("model-select");
+  var modelWarn = document.getElementById("model-warn");
   var thinkingSelect = document.getElementById("thinking-select");
   var ctxInput = document.getElementById("ctx-input");
   var ctxMinus = document.getElementById("ctx-minus");
@@ -7599,6 +7600,19 @@
       b.disabled = active;
     }
   }
+  function renderModelWarnings(c) {
+    if (c.noModels) {
+      const home = c.configHome ? `${c.configHome}/config.json` : "your extension data folder";
+      modelWarn.hidden = false;
+      modelWarn.innerHTML = '\u26A0\uFE0F <strong>No models configured.</strong> Create <span class="warn-path">' + home + "</span> from <code>config.example.jsonc</code>, or set <code>harny.model</code>/<code>harny.apiKey</code> in settings \u2014 then reload.";
+      modelWarn.title = "The model dropdown is empty: the panel needs at least one model (declared in config.json or fetched from a host).";
+    } else if (c.hostModelsError) {
+      modelWarn.hidden = false;
+      modelWarn.textContent = "\u26A0\uFE0F Some host model lists are unavailable (GET /v1/models failed) \u2014 the dropdown may be incomplete. Check the hosts.";
+    } else {
+      modelWarn.hidden = true;
+    }
+  }
   function renderModelSelect(c) {
     modelSelect.innerHTML = "";
     if (!c.model) {
@@ -7968,6 +7982,7 @@
       case "config":
         renderModelSelect(msg.config || {});
         renderThinkingSelect(msg.config || {});
+        renderModelWarnings(msg.config || {});
         ctxInput.value = String(clampContextWindow(msg.config && msg.config.contextWindow || DEFAULT_CONTEXT_WINDOW));
         renderOutputTokens(msg.config || {});
         renderSamplerControl(msg.config || {});
@@ -7986,6 +8001,7 @@
     renderTabs(currentSessions);
     renderModelSelect(state.config || {});
     renderThinkingSelect(state.config || {});
+    renderModelWarnings(state.config || {});
     ctxInput.value = String(clampContextWindow(state.config && state.config.contextWindow || DEFAULT_CONTEXT_WINDOW));
     renderOutputTokens(state.config || {});
     renderSamplerControl(state.config || {});

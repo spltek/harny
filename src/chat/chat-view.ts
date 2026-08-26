@@ -48,6 +48,8 @@ export class ChatViewProvider implements WebviewViewProvider {
       manualKeepFraction?: number;
       /** True when exactly one workspace folder is open (sessions are stored per-folder). */
       workspaceReady?: () => boolean;
+      /** Extension data folder (home), for error hints pointing at config.json. */
+      configHome?: string;
     } = {},
   ) {
     this.modals = new PanelModalQueue((msg) => this.view?.webview.postMessage(msg));
@@ -755,6 +757,8 @@ export class ChatViewProvider implements WebviewViewProvider {
     providerModels: { provider: string; model: string }[];
     modelMissing: boolean;
     hostModelsError: boolean;
+    noModels: boolean;
+    configHome: string;
     workspaceReady: boolean;
     thinkingMode?: "bool" | "effort" | "none";
     thinkingLevel?: "off" | "low" | "medium" | "high";
@@ -797,6 +801,10 @@ export class ChatViewProvider implements WebviewViewProvider {
     ];
     if (sessionModel && activeList.length > 0 && !activeList.includes(sessionModel)) modelMissing = true;
 
+    // Explicit in-panel warning: NO model at all (no config file, empty config,
+    // or every host unreachable) -> the dropdown would be silently empty.
+    const noModels = providerModels.length === 0 && (cfg.availableModels ?? []).length === 0;
+
     return {
       provider: cfg.provider,
       activeProvider: sessionProvider,
@@ -807,6 +815,8 @@ export class ChatViewProvider implements WebviewViewProvider {
       providerModels,
       modelMissing,
       hostModelsError,
+      noModels,
+      configHome: this.options.configHome ?? "",
       thinkingMode: cfg.thinkingMode,
       thinkingLevel: cfg.thinkingLevel,
       contextWindow: this.activeRuntime()?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
