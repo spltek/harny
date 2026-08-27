@@ -52,7 +52,10 @@ export class ReadTool implements Tool {
 
     try {
       const content = this.fs.readText(filePath);
-      const lines = content.split("\n");
+      // A file ending with "\n" would split() into a phantom empty line that
+      // shifts NEGATIVE offsets by one (-1 would hit the empty element and
+      // return nothing). Drop it so -1 = the real last line, as documented.
+      const lines = content.endsWith("\n") ? content.slice(0, -1).split("\n") : content.split("\n");
       const offset = args.offset as number | undefined;
       const limit = args.limit as number | undefined;
 

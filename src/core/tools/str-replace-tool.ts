@@ -2,12 +2,16 @@ import type { FileSystem } from "./file-system";
 import { resolvePath } from "./path-utils";
 import type { Tool, ToolDefinition, ToolResult } from "./tool";
 import { buildDiff, fencedDiffBlock } from "./diff-text";
+import { fuzzyUniqueReplace } from "./edit-engine";
 
 export class StrReplaceTool implements Tool {
   readonly name = "StrReplace";
   readonly definition: ToolDefinition = {
     name: "StrReplace",
-    description: "Performs exact string replacements in files.",
+    description:
+      "Performs string replacements in files. Exact match first; trailing whitespace and " +
+      "Unicode noise (smart quotes/dashes, NFKC) are tolerated, same as Edit. " +
+      "Without replace_all the old_string must be UNIQUE, otherwise the tool fails explicitly.",
     parameters: {
       type: "object",
       properties: {
@@ -62,10 +66,30 @@ export class StrReplaceTool implements Tool {
       } else {
         const idx = original.indexOf(oldStr);
         if (idx === -1) {
-          return this.notFoundError(oldStr);
+          // Exact miss: same Unicode/whitespace tolerance as Edit (trailing
+          // whitespace, smart quotes/dashes, NFKC) before giving up.
+          const fuzzy = fuzzyUniqueReplace(original, oldStr, newStr);
+          if (fuzzy === undefined) return this.notFoundError(oldStr);
+          if (fuzzy === "duplicate") {
+            return {
+              content: `StrReplace failed: multiple lines match old_string (after normalization) in ${filePath}. Add more context to make it unique (or set "replace_all": true).`,
+              isError: true,
+            };
+          }
+          nextContent = fuzzy.content;
+          headline = `Successfully replaced old_string (Unicode/whitespace-tolerant match) in ${filePath}`;
+        } else {
+          // Never replace the FIRST occurrence silently when more exist:
+          // reject like Edit does, unless replace_all is explicit.
+          if (original.indexOf(oldStr, idx + oldStr.length) !== -1) {
+            return {
+              content: `StrReplace failed: old_string occurs more than once in ${filePath}. Add more context or set "replace_all": true.`,
+              isError: true,
+            };
+          }
+          nextContent = original.slice(0, idx) + newStr + original.slice(idx + oldStr.length);
+          headline = `Successfully replaced old_string in ${filePath}`;
         }
-        nextContent = original.slice(0, idx) + newStr + original.slice(idx + oldStr.length);
-        headline = `Successfully replaced old_string in ${filePath}`;
       }
 
       // Change preview for the dedicated diff bubble (mixed +/−), like the

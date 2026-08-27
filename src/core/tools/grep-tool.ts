@@ -1,4 +1,5 @@
 import type { CommandRunner } from "./command-runner";
+import type { FileSystem } from "./file-system";
 import { resolvePath } from "./path-utils";
 import type { Tool, ToolDefinition, ToolResult } from "./tool";
 
@@ -34,6 +35,7 @@ export class GrepTool implements Tool {
 
   constructor(
     private runner: CommandRunner,
+    private fs: FileSystem,
     private cwd: () => string,
   ) {}
 
@@ -47,6 +49,11 @@ export class GrepTool implements Tool {
     }
 
     const searchPath = args.path ? resolvePath(args.path as string, this.cwd()) : this.cwd();
+    // Distinguish "no matches" from "the target does not exist": a silent
+    // 'No matches found' on a wrong path makes the model conclude wrongly.
+    if (args.path && !this.fs.exists(searchPath)) {
+      return { content: `Path not found: ${searchPath}`, isError: true };
+    }
     const outputMode = (args.output_mode as string) || "content";
 
     const flags: string[] = [];
@@ -64,9 +71,14 @@ export class GrepTool implements Tool {
     const cmd = `rg ${flags.join(" ")} "${pattern.replace(/"/g, '\\"')}" "${searchPath}" 2>&1`;
     const result = this.runner.run(cmd, { cwd: this.cwd(), timeoutMs: 15000, maxBuffer: 10 * 1024 * 1024 });
 
-    // rg returns exit code 1 for "no matches" — not an error
-    if (result.code !== 0 && !result.stderr.trim()) {
+    // rg exit codes: 0 = matches, 1 = no matches, >=2 = real error (bad regex,
+    // missing binary, ...). With `2>&1` error text lands in stdout, so never
+    // report a real rg failure as a clean "No matches found".
+    if (result.code === 1) {
       return { content: "No matches found", isError: false };
+    }
+    if (result.code !== 0) {
+      return { content: result.stdout.trim() || `rg failed with exit code ${result.code}`, isError: true };
     }
 
     const lines = result.stdout.trim().split("\n").filter(Boolean);

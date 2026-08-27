@@ -33,7 +33,7 @@ export function createDefaultTools(deps: DefaultToolsDeps): Tool[] {
     new EditTool(deps.fs, deps.cwd),
     new DeleteTool(deps.fs, deps.cwd),
     new ShellTool(deps.runner, deps.cwd),
-    new GrepTool(deps.runner, deps.cwd),
+    new GrepTool(deps.runner, deps.fs, deps.cwd),
     new GlobTool(deps.runner, deps.fs, deps.cwd),
     new TodoTool(),
     new WebSearchTool(deps.http),

@@ -52,6 +52,17 @@ describe("file tools", () => {
       expect(result.content).toBe("4\n5");
     });
 
+    it("negative offsets are not shifted when the file ends with a newline", () => {
+      // split() on a trailing-newline file yields a phantom empty line that
+      // used to make -1 return nothing and -2 return the last line.
+      const p = join(dir, "nl.txt");
+      writeFileSync(p, "1\n2\n3\n4\n5\n");
+      const tool = new ReadTool(nodeFileSystem, cwd);
+
+      expect(tool.execute({ path: p, offset: -1 }).content).toBe("5");
+      expect(tool.execute({ path: p, offset: -2 }).content).toBe("4\n5");
+    });
+
     it("notes when output is truncated", () => {
       const p = join(dir, "a.txt");
       writeFileSync(p, "1\n2\n3\n4\n5");
@@ -142,15 +153,15 @@ describe("file tools", () => {
   });
 
   describe("StrReplaceTool", () => {
-    it("replaces the first occurrence by default", () => {
+    it("replaces a UNIQUE old_string (ambiguous ones are rejected)", () => {
       const p = join(dir, "a.txt");
       writeFileSync(p, "aaa bbb aaa");
       const tool = new StrReplaceTool(nodeFileSystem, cwd);
 
-      const result = tool.execute({ path: p, old_string: "aaa", new_string: "XXX" });
+      const result = tool.execute({ path: p, old_string: "bbb", new_string: "XXX" });
 
       expect(result.isError).toBe(false);
-      expect(nodeFileSystem.readText(p)).toBe("XXX bbb aaa");
+      expect(nodeFileSystem.readText(p)).toBe("aaa XXX aaa");
     });
 
     it("replaces all occurrences with replace_all", () => {
@@ -174,6 +185,29 @@ describe("file tools", () => {
       expect(result.content).toContain("```diff");
       expect(result.content).toContain("-aaa bbb aaa");
       expect(result.content).toContain("+aaa XXX aaa");
+    });
+
+    it("fails when old_string is not unique without replace_all (no silent partial replace)", () => {
+      const p = join(dir, "dup.txt");
+      writeFileSync(p, "aaa\nbbb\naaa\n");
+      const tool = new StrReplaceTool(nodeFileSystem, cwd);
+
+      const result = tool.execute({ path: p, old_string: "aaa", new_string: "AAA" });
+
+      expect(result.isError).toBe(true);
+      expect(result.content).toContain("more than once");
+      expect(nodeFileSystem.readText(p)).toBe("aaa\nbbb\naaa\n"); // file untouched
+    });
+
+    it("tolerates trailing whitespace in old_string (Unicode/whitespace-tolerant match)", () => {
+      const p = join(dir, "tol.txt");
+      writeFileSync(p, "linea 2\n");
+      const tool = new StrReplaceTool(nodeFileSystem, cwd);
+
+      const result = tool.execute({ path: p, old_string: "linea 2 ", new_string: "linea DUE" });
+
+      expect(result.isError).toBe(false);
+      expect(nodeFileSystem.readText(p)).toBe("linea DUE\n");
     });
 
     it("errors when old_string is not found", () => {

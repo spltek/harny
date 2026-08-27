@@ -114,7 +114,7 @@ function replaceText(content: string, oldText: string, newText: string): OneResu
   }
 
   // 2) fuzzy: line-run match in normalized space (trailing whitespace, unicode noise)
-  const fuzzy = replaceLinesNormalized(content, oldText, newText);
+  const fuzzy = fuzzyUniqueReplace(content, oldText, newText);
   if (fuzzy !== undefined && fuzzy !== "duplicate") return { ok: true, content: fuzzy.content, mode: "fuzzy", reason: "ok" };
   if (fuzzy === "duplicate") {
     return {
@@ -156,7 +156,13 @@ function normalizeLine(line: string): string {
     .replace(/[\u00A0\u2000-\u200A\u202F]/g, " ");
 }
 
-function replaceLinesNormalized(
+/**
+ * Unicode/whitespace-tolerant line-run matcher, shared between Edit and
+ * StrReplace: exact match first; this is the "trailing whitespace / smart
+ * quotes-dashes / NFKC" fallback. Returns the replacement result, `"duplicate"`
+ * when more than one line group matches, or `undefined` when nothing matches.
+ */
+export function fuzzyUniqueReplace(
   content: string,
   oldText: string,
   newText: string,

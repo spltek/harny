@@ -73,9 +73,12 @@ describe("ShellTool", () => {
 });
 
 describe("GrepTool", () => {
+  // fs that reports the search path as existing (the tool pre-checks it now)
+  const existingFs = { ...fakeFs(), exists: () => true };
+
   it("builds an rg command and returns matches", () => {
     const runner = fakeRunner([{ stdout: "/w/a.ts:3:foo\n/w/b.ts:1:foo", stderr: "", code: 0, timedOut: false }]);
-    const tool = new GrepTool(runner, cwd);
+    const tool = new GrepTool(runner, existingFs, cwd);
 
     const result = tool.execute({ pattern: "foo", path: "/w", output_mode: "content" });
 
@@ -84,9 +87,9 @@ describe("GrepTool", () => {
     expect(runner.calls[0].command).toContain("rg -n \"foo\" \"/w\"");
   });
 
-  it("treats exit code 1 with no stderr as 'no matches'", () => {
+  it("treats exit code 1 as 'no matches'", () => {
     const runner = fakeRunner([{ stdout: "", stderr: "", code: 1, timedOut: false }]);
-    const tool = new GrepTool(runner, cwd);
+    const tool = new GrepTool(runner, fakeFs(), cwd);
 
     const result = tool.execute({ pattern: "zzz" });
 
@@ -94,9 +97,29 @@ describe("GrepTool", () => {
     expect(result.content).toBe("No matches found");
   });
 
+  it("errors explicitly when the target path does not exist", () => {
+    const fs: FileSystem = { ...fakeFs(), exists: () => false };
+    const tool = new GrepTool(fakeRunner([]), fs, cwd);
+
+    const result = tool.execute({ pattern: "foo", path: "/nope/missing" });
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("Path not found");
+  });
+
+  it("surfaces real rg errors (exit code 2) instead of 'no matches'", () => {
+    const runner = fakeRunner([{ stdout: "rg: error parsing regex: unexpected '('", stderr: "", code: 2, timedOut: false }]);
+    const tool = new GrepTool(runner, existingFs, cwd);
+
+    const result = tool.execute({ pattern: "(", path: "/w" });
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("error parsing regex");
+  });
+
   it("applies head_limit and offset", () => {
     const runner = fakeRunner([{ stdout: "1\n2\n3\n4", stderr: "", code: 0, timedOut: false }]);
-    const tool = new GrepTool(runner, cwd);
+    const tool = new GrepTool(runner, fakeFs(), cwd);
 
     const result = tool.execute({ pattern: "x", offset: 1, head_limit: 2 });
 
@@ -104,7 +127,7 @@ describe("GrepTool", () => {
   });
 
   it("errors when the pattern is missing", () => {
-    const tool = new GrepTool(fakeRunner([]), cwd);
+    const tool = new GrepTool(fakeRunner([]), fakeFs(), cwd);
     expect(tool.execute({}).isError).toBe(true);
   });
 });
