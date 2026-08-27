@@ -7,6 +7,15 @@ export interface ModelListOptions {
 }
 
 /**
+ * Ceiling for the host-model fetch. The panel is painted via buildConfig()
+ * which AWAITS every host provider's `GET /models`; without a timeout an
+ * unreachable host (dropped packets, slow DNS, dead proxy) stalls the first
+ * view for the OS-level connect timeout. A live local host answers in ms, so
+ * this only bounds the pathological cases.
+ */
+export const HOST_MODEL_TIMEOUT_MS = 5000;
+
+/**
  * Fetches the list of models served by an OpenAI-compatible `/models`
  * endpoint (OpenAI, OpenRouter, llama.cpp, Ollama, opencode-go, ...).
  * Some hosts require no explicit list in the config — only apiKey + baseUrl.
@@ -30,7 +39,15 @@ export class HttpModelListProvider implements ModelListProvider {
     const url = endpointUrl(opts.baseUrl, "/models");
     const headers: Record<string, string> = {};
     if (opts.apiKey) headers.Authorization = `Bearer ${opts.apiKey}`;
-    const res = await this.http.get(url, headers);
+    // Bounded fetch: the panel waits on this before first paint.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), HOST_MODEL_TIMEOUT_MS);
+    let res: import("./http-client").HttpResponse;
+    try {
+      res = await this.http.get(url, headers, controller.signal);
+    } finally {
+      clearTimeout(timer);
+    }
     if (!res.ok) throw new Error(`GET /models → HTTP ${res.status}`);
     const body = await res.json();
 

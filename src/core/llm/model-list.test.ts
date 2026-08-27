@@ -28,6 +28,7 @@ describe("HttpModelListProvider", () => {
     expect(get).toHaveBeenCalledWith(
       "https://api.example.com/v1/models",
       { Authorization: "Bearer sk-1" },
+      expect.any(AbortSignal),
     );
     expect(models).toEqual(["a", "b"]);
   });
@@ -38,7 +39,11 @@ describe("HttpModelListProvider", () => {
 
     await provider.fetchModels({ baseUrl: "http://localhost:8090/v1", apiKey: "k" });
 
-    expect(get).toHaveBeenCalledWith("http://localhost:8090/v1/models", { Authorization: "Bearer k" });
+    expect(get).toHaveBeenCalledWith(
+      "http://localhost:8090/v1/models",
+      { Authorization: "Bearer k" },
+      expect.any(AbortSignal),
+    );
   });
 
   it("accepts a bare models array", async () => {
@@ -77,5 +82,25 @@ describe("HttpModelListProvider", () => {
   it("throws on a non-2xx response", async () => {
     const provider = new HttpModelListProvider(fakeHttp(jsonResponse(401, { error: "nope" })));
     await expect(provider.fetchModels({ baseUrl: "http://h", apiKey: "k" })).rejects.toThrow("HTTP 401");
+  });
+
+  it("aborts a hanging host model fetch after HOST_MODEL_TIMEOUT_MS (panel never blocks forever)", async () => {
+    vi.useFakeTimers();
+    try {
+      // get() never resolves on its own; it only rejects when the signal aborts.
+      const get = vi.fn((_url: string, _h: Record<string, string>, signal?: AbortSignal) =>
+        new Promise((_res, rej) => {
+          signal?.addEventListener("abort", () => rej(new Error("aborted")));
+        }),
+      );
+      const provider = new HttpModelListProvider({ post: vi.fn(), get });
+      const p = provider.fetchModels({ baseUrl: "http://dead-host", apiKey: "k" });
+      // attach the rejection handler synchronously so the abort rejects cleanly
+      const assertion = expect(p).rejects.toThrow("aborted");
+      await vi.advanceTimersByTimeAsync(5000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
