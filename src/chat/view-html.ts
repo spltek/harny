@@ -296,8 +296,8 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     #working-bar.hidden { display: none; }
     @keyframes harny-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
-    .tool-header { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; font-weight: 600; color: var(--fg); }
-    .tool-header:hover { color: var(--accent); }
+    .tool-header { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; font-weight: 600; color: var(--accent); }
+    .tool-header:hover { color: var(--fg); }
     .tool-toggle { font-size: 0.77rem; width: 12px; color: #888; flex-shrink: 0; }
     .tool-name { white-space: nowrap; }
     .tool-details { margin-top: 2px; font-size: 0.85rem; }
