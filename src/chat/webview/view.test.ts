@@ -532,7 +532,7 @@ describe("view webview client", () => {
     expect(bubbles[bubbles.length - 1].textContent).toContain("partial answer more");
   });
 
-  it("keeps diff colors after a refresh re-render of tool results", async () => {
+  it("renders a dedicated diff bubble after a refresh re-render of tool results", async () => {
     await loadView();
     hostMessage({
       type: "refresh",
@@ -548,10 +548,10 @@ describe("view webview client", () => {
         { role: "assistant", content: "done", timestamp: 4 },
       ],
     });
-    const add = document.querySelector(".msg.tool .tool-result .diff-add");
-    const del = document.querySelector(".msg.tool .tool-result .diff-del");
-    expect(add?.textContent).toBe("+new");
-    expect(del?.textContent).toBe("-old");
+    const bubble = document.querySelector(".msg.file-diff");
+    expect(bubble).not.toBeNull();
+    expect(bubble?.querySelector(".fd-add")?.textContent).toBe("+new");
+    expect(bubble?.querySelector(".fd-del")?.textContent).toBe("-old");
   });
 
   it("creates a NEW blue bubble per emission segment, in chronological order (never moves)", async () => {
@@ -626,26 +626,70 @@ describe("view webview client", () => {
     expect(msgs.scrollTop).toBe(msgs.scrollHeight); // forced to bottom
   });
 
-  it("colorizes a diff tool result (edit preview) with remove/add classes", async () => {
+  it("shows a separate diff bubble (green +/red −) right after a file-editing tool", async () => {
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
     input.value = "go";
     (document.getElementById("send-btn") as HTMLButtonElement).click();
-    hostMessage({ type: "toolCall", id: "d1", name: "Edit", arguments: { path: "/x" } });
+    hostMessage({ type: "toolCall", id: "d1", name: "Edit", arguments: { path: "/workspace/src/a.js" } });
     hostMessage({
       type: "toolResult",
       toolCallId: "d1",
-      output: "Diff (+1/-1):\n```diff\n@@ -1,2 +1,2 @@\n-old\n+new\n```",
+      output: "Applied edit a.js.\n\nDiff (+1/-1):\n```diff\n@@ -1,2 +1,2 @@\n-old\n+new\n```",
+      isError: false,
+    });
+    // The OUTPUT pre keeps the plain feedback text, with the diff fence removed.
+    const result = document.querySelector(".msg.tool .tool-result") as HTMLElement;
+    expect(result?.textContent).toContain("Applied edit a.js.");
+    expect(result?.textContent).not.toContain("```diff");
+    // The diff bubble sits right after the tool bubble with header + colored lines.
+    const bubble = document.querySelector(".msg.file-diff");
+    expect(bubble).not.toBeNull();
+    expect(bubble?.querySelector(".fd-title")?.textContent).toBe("📄 a.js");
+    expect(bubble?.querySelector(".fd-stat")?.textContent).toBe("+1/-1");
+    expect(bubble?.querySelector(".fd-add")?.textContent).toBe("+new");
+    expect(bubble?.querySelector(".fd-del")?.textContent).toBe("-old");
+    expect(bubble?.querySelector(".fd-hunk")?.textContent).toContain("@@");
+    // Positioned immediately after the tool bubble (not inside it).
+    const toolEl = document.querySelector(".msg.tool");
+    expect(toolEl?.nextElementSibling).toBe(bubble);
+  });
+
+  it("does NOT colorize a plain output that merely starts with '-' and adds no bubble", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    hostMessage({ type: "toolCall", id: "l1", name: "Shell", arguments: { command: "ls -la" } });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "l1",
+      output: "-rw-r--r-- 1 user staff 123 file.txt\n-rw-r--r-- 1 user staff 456 other.ts",
       isError: false,
     });
     const result = document.querySelector(".msg.tool .tool-result") as HTMLElement;
-    expect(result).not.toBeNull();
-    const add = result.querySelector(".diff-add");
-    const del = result.querySelector(".diff-del");
-    const hunk = result.querySelector(".diff-hunk");
-    expect(add?.textContent).toBe("+new");
-    expect(del?.textContent).toBe("-old");
-    expect(hunk?.textContent).toContain("@@");
+    expect(result?.textContent).toContain("-rw-r--r--");
+    expect(document.querySelector(".msg.file-diff")).toBeNull();
+  });
+
+  it("renders a Write preview as an all-additions diff bubble", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    hostMessage({ type: "toolCall", id: "w1", name: "Write", arguments: { path: "/w/style.css" } });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "w1",
+      output:
+        "Successfully wrote 12 bytes to /w/style.css\n\nDiff (+3/-0):\n```diff\n@@ -0,0 +1,3 @@\n+.a {}\n+.b {}\n+.c {}\n```",
+      isError: false,
+    });
+    const bubble = document.querySelector(".msg.file-diff");
+    expect(bubble).not.toBeNull();
+    expect(bubble?.querySelector(".fd-title")?.textContent).toBe("📄 style.css");
+    expect(bubble?.querySelectorAll(".fd-add").length).toBe(3);
+    expect(bubble?.querySelectorAll(".fd-del").length).toBe(0);
   });
 
   it("keeps thinking collapsed and renders the tool name with collapsed details", async () => {

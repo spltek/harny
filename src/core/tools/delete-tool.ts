@@ -1,6 +1,7 @@
 import type { FileSystem } from "./file-system";
 import { resolvePath } from "./path-utils";
 import type { Tool, ToolDefinition, ToolResult } from "./tool";
+import { buildDiff, fencedDiffBlock } from "./diff-text";
 
 export class DeleteTool implements Tool {
   readonly name = "Delete";
@@ -36,8 +37,14 @@ export class DeleteTool implements Tool {
       return { content: `File not found: ${filePath}`, isError: true };
     }
     try {
+      // Deletion preview for the dedicated diff bubble: the whole file becomes
+      // a removal (every line a "−"). Capped like every other preview.
+      const content = this.fs.readText(filePath);
       this.fs.delete(filePath);
-      return { content: `Successfully deleted ${filePath}`, isError: false };
+      return {
+        content: `Successfully deleted ${filePath}${fencedDiffBlock(buildDiff(content, ""))}`,
+        isError: false,
+      };
     } catch (err: any) {
       return { content: `Error deleting file: ${err.message}`, isError: true };
     }

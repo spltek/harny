@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { applyEdits, checkStructuralBalance, closestContext, diffStat } from "./edit-engine";
+import { applyEdits, checkStructuralBalance, closestContext } from "./edit-engine";
+import { diffStat } from "./diff-text";
 
 describe("edit-engine.applyEdits", () => {
   it("applies multiple exact edits sequentially", () => {

@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applyEdits, checkStructuralBalance, closestContext, diffStat } from "./edit-engine";
+import { applyEdits, checkStructuralBalance, closestContext } from "./edit-engine";
+import { diffStat } from "./diff-text";
 import { EditTool } from "./edit-tool";
 import { nodeFileSystem } from "./file-system";
 

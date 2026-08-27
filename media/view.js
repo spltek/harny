@@ -7001,6 +7001,28 @@
     });
   }
 
+  // src/chat/webview/diff-fence.ts
+  function splitDiffFence(text3) {
+    const match = text3.match(/```diff\s*\n([\s\S]*?)```/);
+    if (!match || match.index === void 0) return void 0;
+    const before = text3.slice(0, match.index);
+    const after = text3.slice(match.index + match[0].length);
+    const statMatch = before.match(/Diff\s*\(([+-]\d+\/-\d+)\):\s*$/);
+    const head = (statMatch ? before.slice(0, statMatch.index) : before).replace(/\s+$/, "");
+    const tail = after.replace(/^\s+/u, "").replace(/\s+$/u, "");
+    const rest = head ? tail ? head + "\n" + tail : head : tail;
+    return { body: match[1].replace(/\s+$/, ""), stat: statMatch?.[1], rest };
+  }
+  function countDiff(body) {
+    let add = 0;
+    let del = 0;
+    for (const l of body.split("\n")) {
+      if (l.startsWith("+") && !l.startsWith("+++")) add++;
+      else if (l.startsWith("-") && !l.startsWith("---")) del++;
+    }
+    return `+${add}/\u2212${del}`;
+  }
+
   // src/chat/context-window.ts
   var DEFAULT_CONTEXT_WINDOW = 128e3;
   var MIN_CONTEXT_WINDOW = 32e3;
@@ -7363,7 +7385,7 @@
             const out = el2.querySelector(".tool-result");
             if (out) {
               const text3 = outputs.get(id);
-              renderToolOutput(out, text3 !== void 0 ? text3.slice(0, 5e3) : "");
+              renderToolOutput(out, text3 !== void 0 ? text3.slice(0, 12e3) : "");
             }
           }
         }
@@ -7422,20 +7444,62 @@
       return String(args);
     }
   }
+  function extractPath(pre) {
+    const argsEl = pre.closest(".msg.tool")?.querySelector(".tool-args");
+    if (!argsEl?.textContent) return void 0;
+    try {
+      const args = JSON.parse(argsEl.textContent);
+      if (typeof args.path !== "string" || !args.path) return void 0;
+      return args.path.split("/").pop() || args.path;
+    } catch {
+      return void 0;
+    }
+  }
+  function addFileDiffBubble(pre, body, stat) {
+    const toolEl = pre.closest(".msg.tool");
+    if (!toolEl) return;
+    const bubble = document.createElement("div");
+    bubble.className = "msg file-diff";
+    const header = document.createElement("div");
+    header.className = "fd-header";
+    const title = extractPath(pre);
+    header.innerHTML = '<span class="fd-toggle">\u25BC</span><span class="fd-title">' + (title ? "\u{1F4C4} " + escapeHtml2(title) : "Diff") + '</span><span class="fd-stat">' + escapeHtml2(stat ?? countDiff(body)) + "</span>";
+    const list2 = document.createElement("div");
+    list2.className = "fd-body";
+    list2.style.display = "block";
+    for (const raw of body.split("\n")) {
+      const line = document.createElement("div");
+      line.style.display = "block";
+      if (raw.startsWith("@@")) line.className = "fd-hunk";
+      else if (raw.startsWith("+") && !raw.startsWith("+++")) line.className = "fd-add";
+      else if (raw.startsWith("-") && !raw.startsWith("---")) line.className = "fd-del";
+      else line.className = "fd-ctx";
+      line.textContent = raw;
+      list2.appendChild(line);
+    }
+    bubble.appendChild(header);
+    bubble.appendChild(list2);
+    header.addEventListener("click", () => {
+      const collapsed = list2.style.display === "none";
+      list2.style.display = collapsed ? "block" : "none";
+      const tog = header.querySelector(".fd-toggle");
+      if (tog) tog.textContent = collapsed ? "\u25BC" : "\u25B6";
+    });
+    toolEl.after(bubble);
+    scrollDown();
+  }
   function renderToolOutput(el, text3) {
     el.textContent = "";
-    if (!/^[+-]|^@@/m.test(text3) && !text3.includes("```diff")) {
+    const found = splitDiffFence(text3);
+    if (found) {
+      if (!found.body.trim()) {
+        el.textContent = text3;
+        return;
+      }
+      el.textContent = found.rest;
+      addFileDiffBubble(el, found.body, found.stat);
+    } else {
       el.textContent = text3;
-      return;
-    }
-    for (const raw of text3.split("\n")) {
-      const line = document.createElement("div");
-      if (raw.startsWith("@@")) line.className = "diff-hunk";
-      else if (raw.startsWith("+")) line.className = "diff-add";
-      else if (raw.startsWith("-")) line.className = "diff-del";
-      else line.className = "diff-ctx";
-      line.textContent = raw;
-      el.appendChild(line);
     }
   }
   var MAX_INPUT_HEIGHT = 240;
@@ -7887,7 +7951,7 @@
           el.classList.remove("tool-call-pending");
           const resultEl = el.querySelector(".tool-result");
           if (resultEl) {
-            renderToolOutput(resultEl, String(msg.output).slice(0, 5e3));
+            renderToolOutput(resultEl, String(msg.output).slice(0, 12e3));
             resultEl.classList.toggle("tool-result-error", !!msg.isError);
           }
           pendingToolCalls.delete(msg.toolCallId);

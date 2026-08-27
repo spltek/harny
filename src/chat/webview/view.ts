@@ -1,4 +1,5 @@
 import { renderMarkdown } from "./markdown";
+import { splitDiffFence, countDiff } from "./diff-fence";
 import { clampContextWindow, clampOutputTokens, CONTEXT_STEP, DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, OUTPUT_STEP } from "../context-window";
 import { clampTemperature, clampTopP, TEMPERATURE_STEP } from "../temperature";
 
@@ -484,7 +485,7 @@ function renderMessages(msgs: ChatMsg[]): boolean {
           const out = el.querySelector(".tool-result");
           if (out) {
             const text = outputs.get(id);
-            renderToolOutput(out as HTMLPreElement, text !== undefined ? text.slice(0, 5000) : "");
+            renderToolOutput(out as HTMLPreElement, text !== undefined ? text.slice(0, 12000) : "");
           }
         }
       }
@@ -557,24 +558,93 @@ function formatArgs(args: unknown): string {
   }
 }
 
+/** Basename of the file the tool touched, read from the tool-call args JSON. */
+function extractPath(pre: HTMLElement): string | undefined {
+  const argsEl = pre.closest(".msg.tool")?.querySelector(".tool-args");
+  if (!argsEl?.textContent) return undefined;
+  try {
+    const args = JSON.parse(argsEl.textContent) as Record<string, unknown>;
+    if (typeof args.path !== "string" || !args.path) return undefined;
+    return args.path.split("/").pop() || args.path;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * Fills a tool-result <pre>: plain text, or a colorized diff when the output
- * contains unified-diff markers (@@ / leading + and -) — the Edit preview.
+ * Creates the DEDICATED diff bubble for a file-touching tool (Edit/Write/
+ * Delete) and inserts it into the message flow right after the tool bubble.
+ * Diff graphics: + lines green, − lines red, @@ hunks accent, context gray.
+ * The bubble is collapsible; its header shows the file basename and +N/−M.
+ */
+function addFileDiffBubble(pre: HTMLElement, body: string, stat: string | undefined): void {
+  const toolEl = pre.closest(".msg.tool");
+  if (!toolEl) return;
+  const bubble = document.createElement("div");
+  bubble.className = "msg file-diff";
+
+  const header = document.createElement("div");
+  header.className = "fd-header";
+  const title = extractPath(pre);
+  header.innerHTML =
+    '<span class="fd-toggle">▼</span>' +
+    '<span class="fd-title">' +
+    (title ? "📄 " + escapeHtml(title) : "Diff") +
+    "</span>" +
+    '<span class="fd-stat">' +
+    escapeHtml(stat ?? countDiff(body)) +
+    "</span>";
+
+  const list = document.createElement("div");
+  list.className = "fd-body";
+  // Critical layout is INLINE (not in the stylesheet): the body can never
+  // collapse to a single row even if the injected CSS is stale/missing.
+  list.style.display = "block";
+  for (const raw of body.split("\n")) {
+    const line = document.createElement("div");
+    line.style.display = "block";
+    if (raw.startsWith("@@")) line.className = "fd-hunk";
+    else if (raw.startsWith("+") && !raw.startsWith("+++")) line.className = "fd-add";
+    else if (raw.startsWith("-") && !raw.startsWith("---")) line.className = "fd-del";
+    else line.className = "fd-ctx";
+    line.textContent = raw;
+    list.appendChild(line);
+  }
+  bubble.appendChild(header);
+  bubble.appendChild(list);
+  header.addEventListener("click", () => {
+    const collapsed = list.style.display === "none";
+    list.style.display = collapsed ? "block" : "none";
+    const tog = header.querySelector(".fd-toggle");
+    if (tog) tog.textContent = collapsed ? "▼" : "▶";
+  });
+
+  toolEl.after(bubble);
+  scrollDown();
+}
+
+/**
+ * Fills a tool-result <pre> — PLAIN TEXT, exactly like before: the tool bubble
+ * keeps its Input/Output structure and no line-prefix heuristics are applied
+ * (a `ls -la` listing is never colored as a diff). The only exception: an
+ * explicit ```diff fence is the signal for a file change — it is REMOVED from
+ * the output and rendered instead as a dedicated diff bubble right after the
+ * tool bubble (green + / red −).
  */
 function renderToolOutput(el: HTMLElement, text: string): void {
   el.textContent = "";
-  if (!/^[+-]|^@@/m.test(text) && !text.includes("```diff")) {
+  const found = splitDiffFence(text);
+  if (found) {
+    // Defensive: a degenerate fence with no body must NOT create a phantom
+    // one-row bubble — show the raw text instead.
+    if (!found.body.trim()) {
+      el.textContent = text;
+      return;
+    }
+    el.textContent = found.rest;
+    addFileDiffBubble(el, found.body, found.stat);
+  } else {
     el.textContent = text;
-    return;
-  }
-  for (const raw of text.split("\n")) {
-    const line = document.createElement("div");
-    if (raw.startsWith("@@")) line.className = "diff-hunk";
-    else if (raw.startsWith("+")) line.className = "diff-add";
-    else if (raw.startsWith("-")) line.className = "diff-del";
-    else line.className = "diff-ctx";
-    line.textContent = raw;
-    el.appendChild(line);
   }
 }
 
@@ -1149,7 +1219,7 @@ window.addEventListener("message", (e) => {
         el.classList.remove("tool-call-pending");
         const resultEl = el.querySelector(".tool-result");
         if (resultEl) {
-          renderToolOutput(resultEl as HTMLPreElement, String(msg.output).slice(0, 5000));
+          renderToolOutput(resultEl as HTMLPreElement, String(msg.output).slice(0, 12000));
           resultEl.classList.toggle("tool-result-error", !!msg.isError);
         }
         pendingToolCalls.delete(msg.toolCallId);

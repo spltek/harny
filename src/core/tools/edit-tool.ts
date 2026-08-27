@@ -1,7 +1,8 @@
 import type { FileSystem } from "./file-system";
 import { resolvePath } from "./path-utils";
 import type { Tool, ToolDefinition, ToolResult } from "./tool";
-import { applyEdits, checkStructuralBalance, closestContext, diffStat, type EditOp } from "./edit-engine";
+import { applyEdits, checkStructuralBalance, closestContext, type EditOp } from "./edit-engine";
+import { diffStat, fencedDiffBlock } from "./diff-text";
 
 /**
  * Surgical multi-edit file tool with a predictable contract (like pi): each
@@ -110,11 +111,10 @@ export class EditTool implements Tool {
 
       this.fs.writeText(filePath, result.content);
       const stat = result.diff ? diffStat(result.diff) : "+0/-0";
-      const diffBlock = result.diff ? `\n\nDiff (${stat}):\n\`\`\`diff\n${result.diff}\n\`\`\`` : "";
       return {
         content:
           `Applied ${result.applied} edit(s) (${result.modes.join(", ")}) to ${filePath} — ${stat}.` +
-          diffBlock,
+          fencedDiffBlock(result.diff),
         isError: false,
       };
     } catch (err: any) {

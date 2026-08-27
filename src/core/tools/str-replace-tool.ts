@@ -1,6 +1,7 @@
 import type { FileSystem } from "./file-system";
 import { resolvePath } from "./path-utils";
 import type { Tool, ToolDefinition, ToolResult } from "./tool";
+import { buildDiff, fencedDiffBlock } from "./diff-text";
 
 export class StrReplaceTool implements Tool {
   readonly name = "StrReplace";
@@ -47,28 +48,30 @@ export class StrReplaceTool implements Tool {
     }
 
     try {
-      let content = this.fs.readText(filePath);
+      const original = this.fs.readText(filePath);
+      let nextContent: string;
+      let headline: string;
 
       if (replaceAll) {
-        if (!content.includes(oldStr)) {
+        if (!original.includes(oldStr)) {
           return this.notFoundError(oldStr);
         }
-        const count = content.split(oldStr).length - 1;
-        content = content.split(oldStr).join(newStr);
-        this.fs.writeText(filePath, content);
-        return {
-          content: `Successfully replaced ${count} occurrence(s) of old_string in ${filePath}`,
-          isError: false,
-        };
+        const count = original.split(oldStr).length - 1;
+        nextContent = original.split(oldStr).join(newStr);
+        headline = `Successfully replaced ${count} occurrence(s) of old_string in ${filePath}`;
+      } else {
+        const idx = original.indexOf(oldStr);
+        if (idx === -1) {
+          return this.notFoundError(oldStr);
+        }
+        nextContent = original.slice(0, idx) + newStr + original.slice(idx + oldStr.length);
+        headline = `Successfully replaced old_string in ${filePath}`;
       }
 
-      const idx = content.indexOf(oldStr);
-      if (idx === -1) {
-        return this.notFoundError(oldStr);
-      }
-      content = content.slice(0, idx) + newStr + content.slice(idx + oldStr.length);
-      this.fs.writeText(filePath, content);
-      return { content: `Successfully replaced old_string in ${filePath}`, isError: false };
+      // Change preview for the dedicated diff bubble (mixed +/−), like the
+      // other file tools — one shared fenced format.
+      this.fs.writeText(filePath, nextContent);
+      return { content: headline + fencedDiffBlock(buildDiff(original, nextContent)), isError: false };
     } catch (err: any) {
       return { content: `Error replacing in file: ${err.message}`, isError: true };
     }

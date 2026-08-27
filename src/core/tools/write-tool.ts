@@ -2,6 +2,7 @@ import { dirname } from "node:path";
 import type { FileSystem } from "./file-system";
 import { resolvePath } from "./path-utils";
 import type { Tool, ToolDefinition, ToolResult } from "./tool";
+import { buildDiff, fencedDiffBlock } from "./diff-text";
 
 export class WriteTool implements Tool {
   readonly name = "Write";
@@ -75,8 +76,14 @@ export class WriteTool implements Tool {
     const filePath = resolvePath(pathArg, this.cwd());
     try {
       this.fs.mkdirRecursive(dirname(filePath));
+      // Change preview for the dedicated diff bubble: a NEW file diffs against
+      // an empty base (every line is an addition), an overwrite diffs old → new.
+      const oldContent = this.fs.exists(filePath) ? this.fs.readText(filePath) : "";
       this.fs.writeText(filePath, contents);
-      return { content: `Successfully wrote ${contents.length} bytes to ${filePath}`, isError: false };
+      return {
+        content: `Successfully wrote ${contents.length} bytes to ${filePath}${fencedDiffBlock(buildDiff(oldContent, contents))}`,
+        isError: false,
+      };
     } catch (err: any) {
       return { content: `Error writing file: ${err.message}`, isError: true };
     }

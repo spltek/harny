@@ -115,6 +115,30 @@ describe("file tools", () => {
       const neither = tool.execute({});
       expect(neither.content).toContain("missing BOTH");
     });
+
+    it("emits an all-additions diff preview for a NEW file (view diff bubble)", () => {
+      const tool = new WriteTool(nodeFileSystem, cwd);
+      const result = tool.execute({ path: join(dir, "new.ts"), contents: "a\nb\nc" });
+
+      expect(result.isError).toBe(false);
+      expect(result.content).toContain("```diff");
+      expect(result.content).toContain("@@ -0,0 +1,3 @@");
+      expect(result.content).toContain("+a");
+      expect(result.content).toContain("+b");
+      expect(result.content).toContain("+c");
+      expect(result.content).not.toContain("-a");
+    });
+
+    it("emits a mixed diff preview when overwriting an existing file", () => {
+      writeFileSync(join(dir, "upd.txt"), "aaa\nbbb\nccc");
+      const tool = new WriteTool(nodeFileSystem, cwd);
+      const result = tool.execute({ path: join(dir, "upd.txt"), contents: "aaa\nxxx\nccc" });
+
+      expect(result.isError).toBe(false);
+      expect(result.content).toContain("```diff");
+      expect(result.content).toContain("-bbb");
+      expect(result.content).toContain("+xxx");
+    });
   });
 
   describe("StrReplaceTool", () => {
@@ -137,6 +161,19 @@ describe("file tools", () => {
       tool.execute({ path: p, old_string: "aaa", new_string: "XXX", replace_all: true });
 
       expect(nodeFileSystem.readText(p)).toBe("XXX bbb XXX");
+    });
+
+    it("emits a mixed diff preview (view diff bubble)", () => {
+      const p = join(dir, "a.txt");
+      writeFileSync(p, "aaa bbb aaa");
+      const tool = new StrReplaceTool(nodeFileSystem, cwd);
+
+      const result = tool.execute({ path: p, old_string: "bbb", new_string: "XXX" });
+
+      expect(result.isError).toBe(false);
+      expect(result.content).toContain("```diff");
+      expect(result.content).toContain("-aaa bbb aaa");
+      expect(result.content).toContain("+aaa XXX aaa");
     });
 
     it("errors when old_string is not found", () => {
@@ -167,6 +204,21 @@ describe("file tools", () => {
 
       expect(result.isError).toBe(false);
       expect(nodeFileSystem.exists(p)).toBe(false);
+    });
+
+    it("emits an all-removals diff preview (view diff bubble)", () => {
+      const p = join(dir, "gone.ts");
+      writeFileSync(p, "x\ny");
+      const tool = new DeleteTool(nodeFileSystem, cwd);
+
+      const result = tool.execute({ path: p });
+
+      expect(result.isError).toBe(false);
+      expect(result.content).toContain("```diff");
+      expect(result.content).toContain("@@ -1,2 +0,0 @@");
+      expect(result.content).toContain("-x");
+      expect(result.content).toContain("-y");
+      expect(result.content).not.toContain("+x");
     });
 
     it("errors when the file does not exist", () => {

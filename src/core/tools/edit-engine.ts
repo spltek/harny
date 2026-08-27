@@ -1,4 +1,4 @@
-import * as Diff from "diff";
+import { buildDiff } from "./diff-text";
 
 /** A single edit operation — predictable surgical contract (like pi). */
 export interface EditOp {
@@ -179,27 +179,7 @@ function replaceLinesNormalized(
   return { content: [...lines.slice(0, i), ...repl, ...lines.slice(i + needle.length)].join("\n") };
 }
 
-/** Unified file-level diff of the whole applied change (feedback for the model). */
-function buildDiff(oldContent: string, newContent: string): string {
-  return Diff.createTwoFilesPatch("file", "file", oldContent, newContent, "", "", {
-    context: 3,
-  })
-    .split("\n")
-    .slice(4) // drop "--- file" / "+++ file" (paths are meaningless here)
-    .join("\n")
-    .trim();
-}
-
-/** Sum of changed lines (+/-) in a diff, for a compact preview label. */
-export function diffStat(diff: string): string {
-  const lines = diff.split("\n");
-  const add = lines.filter((l) => l.startsWith("+") && !l.startsWith("+++")).length;
-  const del = lines.filter((l) => l.startsWith("-") && !l.startsWith("---")).length;
-  return `+${add}/-${del}`;
-}
-
-/**
- * Structural sanity check: '([{' tracked OUTSIDE strings/comments. A file is
+/** Structural sanity check: '([{' tracked OUTSIDE strings/comments. A file is
  * balanced when the stack ends empty and never mismatches. Safety net: never
  * write an edit that would unbalance a previously balanced file.
  */
