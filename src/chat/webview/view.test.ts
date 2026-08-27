@@ -656,6 +656,8 @@ describe("view webview client", () => {
     // Positioned immediately after the tool bubble (not inside it).
     const toolEl = document.querySelector(".msg.tool");
     expect(toolEl?.nextElementSibling).toBe(bubble);
+    // the tool header shows the target file path in white after the tool name
+    expect(toolEl?.querySelector(".tool-path")?.textContent).toBe("/workspace/src/a.js");
   });
 
   it("does NOT colorize a plain output that merely starts with '-' and adds no bubble", async () => {
@@ -673,6 +675,8 @@ describe("view webview client", () => {
     const result = document.querySelector(".msg.tool .tool-result") as HTMLElement;
     expect(result?.textContent).toContain("-rw-r--r--");
     expect(document.querySelector(".msg.file-diff")).toBeNull();
+    // a Shell call has no target file: no path chip in the header
+    expect(document.querySelector(".msg.tool .tool-path")).toBeNull();
   });
 
   it("renders a Write preview as an all-additions diff bubble", async () => {

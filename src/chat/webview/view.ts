@@ -358,13 +358,22 @@ function makeThinkingBlock(
   return block;
 }
 
+/** Target file of a tool call (args.path), if any. */
+function toolPathArg(args: unknown): string | undefined {
+  if (!args || typeof args !== "object") return undefined;
+  const p = (args as Record<string, unknown>).path;
+  return typeof p === "string" && p ? p : undefined;
+}
+
 function addToolCall(name: string, args: unknown, beforeEl?: HTMLElement | null): HTMLDivElement {
   const div = document.createElement("div");
   div.className = "msg tool tool-call-pending";
+  const target = toolPathArg(args);
   div.innerHTML =
     '<div class="tool-header">' +
     '<span class="tool-toggle">▶</span>' +
     '<span class="tool-name">🔧 ' + escapeHtml(name) + "</span>" +
+    (target ? '<span class="tool-path" title="' + escapeHtml(target) + '">' + escapeHtml(target) + "</span>" : "") +
     "</div>" +
     '<div class="tool-details collapsed">' +
     '<div class="tool-input"><span class="tool-label">Input</span><pre class="tool-args">' + escapeHtml(formatArgs(args)) + "</pre></div>" +

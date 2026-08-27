@@ -296,10 +296,13 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     #working-bar.hidden { display: none; }
     @keyframes harny-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
-    .tool-header { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; font-weight: 600; color: var(--accent); }
+    .tool-header { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; font-weight: 600; color: var(--accent); min-width: 0; }
     .tool-header:hover { color: var(--fg); }
     .tool-toggle { font-size: 0.77rem; width: 12px; color: #888; flex-shrink: 0; }
     .tool-name { white-space: nowrap; }
+    /* Target file path shown after the tool name (white, ellipsized, truncated
+       softly when the bubble is narrow — full path on hover via title). */
+    .tool-path { color: var(--fg-strong); font-weight: 400; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.9; }
     .tool-details { margin-top: 2px; font-size: 0.85rem; }
     .tool-details.collapsed { display: none; }
     .tool-label { display: block; color: #888; font-size: 0.69rem; text-transform: uppercase; letter-spacing: 0.4px; margin: 6px 0 2px; }
