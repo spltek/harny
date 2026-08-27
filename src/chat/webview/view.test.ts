@@ -532,7 +532,7 @@ describe("view webview client", () => {
     expect(bubbles[bubbles.length - 1].textContent).toContain("partial answer more");
   });
 
-  it("renders a dedicated diff bubble after a refresh re-render of tool results", async () => {
+  it("renders the Diff section after a refresh re-render of tool results", async () => {
     await loadView();
     hostMessage({
       type: "refresh",
@@ -548,10 +548,11 @@ describe("view webview client", () => {
         { role: "assistant", content: "done", timestamp: 4 },
       ],
     });
-    const bubble = document.querySelector(".msg.file-diff");
-    expect(bubble).not.toBeNull();
-    expect(bubble?.querySelector(".fd-add")?.textContent).toBe("+new");
-    expect(bubble?.querySelector(".fd-del")?.textContent).toBe("-old");
+    // the diff becomes a third section INSIDE the tool bubble (Input/Output/Diff)
+    const diff = document.querySelector(".msg.tool .tool-diff");
+    expect(diff).not.toBeNull();
+    expect(diff?.querySelector(".fd-add")?.textContent).toBe("+new");
+    expect(diff?.querySelector(".fd-del")?.textContent).toBe("-old");
   });
 
   it("creates a NEW blue bubble per emission segment, in chronological order (never moves)", async () => {
@@ -626,7 +627,7 @@ describe("view webview client", () => {
     expect(msgs.scrollTop).toBe(msgs.scrollHeight); // forced to bottom
   });
 
-  it("shows a separate diff bubble (green +/red −) right after a file-editing tool", async () => {
+  it("renders the diff as a third section (Diff) inside the tool bubble", async () => {
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
     input.value = "go";
@@ -642,22 +643,22 @@ describe("view webview client", () => {
     const result = document.querySelector(".msg.tool .tool-result") as HTMLElement;
     expect(result?.textContent).toContain("Applied edit a.js.");
     expect(result?.textContent).not.toContain("```diff");
-    // The diff bubble sits right after the tool bubble with header + colored lines.
-    const bubble = document.querySelector(".msg.file-diff");
-    expect(bubble).not.toBeNull();
-    // header shows the FULL path (ellipsized in CSS); the diff region starts collapsed
-    expect(bubble?.querySelector(".fd-title")?.textContent).toBe("📄 /workspace/src/a.js");
-    expect(bubble?.querySelector(".fd-toggle")?.textContent).toBe("▶");
-    expect((bubble?.querySelector(".fd-body") as HTMLElement | null)?.style.display).toBe("none");
-    expect(bubble?.querySelector(".fd-stat")?.textContent).toBe("+1/-1");
-    expect(bubble?.querySelector(".fd-add")?.textContent).toBe("+new");
-    expect(bubble?.querySelector(".fd-del")?.textContent).toBe("-old");
-    expect(bubble?.querySelector(".fd-hunk")?.textContent).toContain("@@");
-    // Positioned immediately after the tool bubble (not inside it).
+    // The Diff section sits INSIDE the tool bubble, in the collapsed details.
+    const details = document.querySelector(".msg.tool .tool-details");
+    const diff = details?.querySelector(".tool-diff");
+    expect(diff).not.toBeNull();
+    expect(diff?.querySelector(".fd-stat")?.textContent).toBe("+1/-1");
+    expect(diff?.querySelector(".fd-add")?.textContent).toBe("+new");
+    expect(diff?.querySelector(".fd-del")?.textContent).toBe("-old");
+    expect(diff?.querySelector(".fd-hunk")?.textContent).toContain("@@");
+    // Ordering inside the bubble: Input → Output → Diff.
+    const sections = [...(details?.querySelectorAll(".tool-label") ?? [])].map((l) => l.textContent);
+    expect(sections).toEqual(["Input", "Output", "Diff"]);
+    // the tool header shows the target file path after the tool name
     const toolEl = document.querySelector(".msg.tool");
-    expect(toolEl?.nextElementSibling).toBe(bubble);
-    // the tool header shows the target file path in white after the tool name
     expect(toolEl?.querySelector(".tool-path")?.textContent).toBe("/workspace/src/a.js");
+    // NO separate diff bubble anymore
+    expect(document.querySelector(".msg.file-diff")).toBeNull();
   });
 
   it("does NOT colorize a plain output that merely starts with '-' and adds no bubble", async () => {
@@ -674,7 +675,7 @@ describe("view webview client", () => {
     });
     const result = document.querySelector(".msg.tool .tool-result") as HTMLElement;
     expect(result?.textContent).toContain("-rw-r--r--");
-    expect(document.querySelector(".msg.file-diff")).toBeNull();
+    expect(document.querySelector(".tool-diff")).toBeNull();
     // a Shell call has no target file: no path chip in the header
     expect(document.querySelector(".msg.tool .tool-path")).toBeNull();
   });
@@ -692,11 +693,12 @@ describe("view webview client", () => {
         "Successfully wrote 12 bytes to /w/style.css\n\nDiff (+3/-0):\n```diff\n@@ -0,0 +1,3 @@\n+.a {}\n+.b {}\n+.c {}\n```",
       isError: false,
     });
-    const bubble = document.querySelector(".msg.file-diff");
-    expect(bubble).not.toBeNull();
-    expect(bubble?.querySelector(".fd-title")?.textContent).toBe("📄 /w/style.css");
-    expect(bubble?.querySelectorAll(".fd-add").length).toBe(3);
-    expect(bubble?.querySelectorAll(".fd-del").length).toBe(0);
+    const diff = document.querySelector(".msg.tool .tool-diff");
+    expect(diff).not.toBeNull();
+    expect(diff?.querySelectorAll(".fd-add").length).toBe(3);
+    expect(diff?.querySelectorAll(".fd-del").length).toBe(0);
+    // the target path appears in the tool header path chip (not in a bubble header)
+    expect(document.querySelector(".msg.tool .tool-path")?.textContent).toBe("/w/style.css");
   });
 
   it("applies syntax highlighting to code lines for a known language (.ts)", async () => {
@@ -711,7 +713,7 @@ describe("view webview client", () => {
       output: "Diff (+1/-1):\n```diff\n@@ -1,1 +1,1 @@\n-const old: number = 1;\n+const fresh: number = 2;\n```",
       isError: false,
     });
-    const add = document.querySelector(".msg.file-diff .fd-add");
+    const add = document.querySelector(".msg.tool .tool-diff .fd-add");
     expect(add).not.toBeNull();
     // the diff prefix stays plain text, the code is tokenized by Prism
     expect(add?.textContent).toContain("+const");
@@ -731,7 +733,7 @@ describe("view webview client", () => {
       output: "Diff (+1/-1):\n```diff\n@@ -1,1 +1,1 @@\n-hello\n+world\n```",
       isError: false,
     });
-    const add = document.querySelector(".msg.file-diff .fd-add") as HTMLElement;
+    const add = document.querySelector(".msg.tool .tool-diff .fd-add") as HTMLElement;
     expect(add?.textContent).toBe("+world");
     expect(add?.querySelector(".token")).toBeNull();
   });

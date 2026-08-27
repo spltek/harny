@@ -582,35 +582,33 @@ function extractPath(pre: HTMLElement): string | undefined {
 }
 
 /**
- * Creates the DEDICATED diff bubble for a file-touching tool (Edit/Write/
- * Delete) and inserts it into the message flow right after the tool bubble.
- * Diff graphics: + lines green, − lines red, @@ hunks accent, context gray.
- * The bubble is collapsible; its header shows the file basename and +N/−M.
+ * Renders the diff as the THIRD section of the tool bubble (Input / Output /
+ * Diff) for file-touching tools. Diff graphics: + lines green, − lines red,
+ * @@ hunks accent, context gray. Code lines get editor-style syntax tokens
+ * when the file has a known language; unknown languages fall back to plain
+ * diff coloring. The section lives inside the collapsed `.tool-details` like
+ * Input and Output, so it expands with the tool bubble.
  */
-function addFileDiffBubble(pre: HTMLElement, body: string, stat: string | undefined): void {
-  const toolEl = pre.closest(".msg.tool");
-  if (!toolEl) return;
-  const bubble = document.createElement("div");
-  bubble.className = "msg file-diff";
-
-  const header = document.createElement("div");
-  header.className = "fd-header";
-  const title = extractPath(pre);
-  // Syntax highlighting when the touched file has a known language: the diff
-  // prefix (+/−/context) keeps its diff color, the code gets editor-style
-  // tokens. Unknown languages fall back to plain diff coloring.
-  const langId = title ? langIdForPath(title) : undefined;
+function populateToolDiff(pre: HTMLElement, body: string, stat: string | undefined): void {
+  const details = pre.closest(".tool-details");
+  if (!details) return;
+  // Defensive: a re-render into the same bubble must not stack diff sections.
+  details.querySelector(".tool-diff")?.remove();
+  const langId = extractPath(pre) ? langIdForPath(extractPath(pre)!) : undefined;
   const grammar = langId ? Prism.languages[langId] : undefined;
-  header.innerHTML =
-    '<span class="fd-toggle">▶</span>' +
-    '<span class="fd-title">' +
-    (title ? "📄 " + escapeHtml(title) : "Diff") +
-    "</span>" +
-    '<span class="fd-stat">' +
-    escapeHtml(stat ?? countDiff(body)) +
-    "</span>";
-  // The full path as a native tooltip when the ellipsized title truncates it.
-  if (title) header.title = title;
+
+  const wrap = document.createElement("div");
+  wrap.className = "tool-diff";
+  const head = document.createElement("div");
+  head.className = "tool-diff-head";
+  const label = document.createElement("span");
+  label.className = "tool-label";
+  label.textContent = "Diff";
+  head.appendChild(label);
+  const counts = document.createElement("span");
+  counts.className = "fd-stat";
+  counts.textContent = stat ?? countDiff(body);
+  head.appendChild(counts);
 
   const list = document.createElement("div");
   list.className = "fd-body";
@@ -639,19 +637,12 @@ function addFileDiffBubble(pre: HTMLElement, body: string, stat: string | undefi
     }
     list.appendChild(line);
   }
-  bubble.appendChild(header);
-  bubble.appendChild(list);
-  // The diff region starts COLLAPSED (header row only); click to expand.
-  list.style.display = "none";
-  header.addEventListener("click", () => {
-    const collapsed = list.style.display === "none";
-    list.style.display = collapsed ? "block" : "none";
-    const tog = header.querySelector(".fd-toggle");
-    if (tog) tog.textContent = collapsed ? "▼" : "▶";
-  });
+  wrap.appendChild(head);
+  wrap.appendChild(list);
 
-  toolEl.after(bubble);
-  scrollDown();
+  const output = pre.closest(".tool-output");
+  if (output && output.nextSibling) output.after(wrap);
+  else details.appendChild(wrap);
 }
 
 /**
@@ -659,21 +650,21 @@ function addFileDiffBubble(pre: HTMLElement, body: string, stat: string | undefi
  * keeps its Input/Output structure and no line-prefix heuristics are applied
  * (a `ls -la` listing is never colored as a diff). The only exception: an
  * explicit ```diff fence is the signal for a file change — it is REMOVED from
- * the output and rendered instead as a dedicated diff bubble right after the
- * tool bubble (green + / red −).
+ * the output and rendered instead as the Diff section of the tool bubble
+ * (green + / red −).
  */
 function renderToolOutput(el: HTMLElement, text: string): void {
   el.textContent = "";
   const found = splitDiffFence(text);
   if (found) {
-    // Defensive: a degenerate fence with no body must NOT create a phantom
-    // one-row bubble — show the raw text instead.
+    // Defensive: a degenerate fence with no body must NOT create an empty
+    // Diff section — show the raw text instead.
     if (!found.body.trim()) {
       el.textContent = text;
       return;
     }
     el.textContent = found.rest;
-    addFileDiffBubble(el, found.body, found.stat);
+    populateToolDiff(el, found.body, found.stat);
   } else {
     el.textContent = text;
   }

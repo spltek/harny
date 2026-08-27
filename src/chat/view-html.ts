@@ -308,22 +308,15 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     .tool-label { display: block; color: #888; font-size: 0.69rem; text-transform: uppercase; letter-spacing: 0.4px; margin: 6px 0 2px; }
     .tool-details pre { background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 4px; padding: 5px 7px; white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow-y: auto; font-size: 0.77rem; line-height: 1.4; }
     .tool-result-error { color: var(--error); }
-    /* Dedicated file-change diff bubble (Edit/Write/StrReplace/Delete previews),
-       inserted in the message flow right after the tool bubble. Full width like
-       the other chat bubbles, and the body grows to fit its content (no hard
-       cap). CRITICAL: no overflow:hidden here — in the flex column of #messages
-       an overflow:hidden item loses its automatic minimum size (min-height:auto
-       becomes 0), so when the list is full flex-shrink can collapse it to a
-       2px strip. flex-shrink:0 makes the bubble unsquashable like every other
-       message bubble. */
-    .msg.file-diff { align-self: flex-start; flex-shrink: 0; width: 100%; max-width: 100%; box-sizing: border-box; padding: 0; border: 1px solid var(--border); border-radius: 8px; background: rgba(0,0,0,0.18); }
-    .fd-header { display: flex; align-items: center; gap: 6px; padding: 5px 9px; cursor: pointer; user-select: none; font-size: 0.78rem; font-weight: 600; border-bottom: 1px solid var(--border); border-radius: 8px 8px 0 0; }
-    .fd-header:hover { background: rgba(255, 255, 255, 0.04); }
-    .fd-toggle { font-size: 0.66rem; width: 12px; color: #888; flex-shrink: 0; }
-    .fd-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-strong, #e8e8e8); }
-    .fd-stat { opacity: 0.7; font-weight: 500; font-family: var(--mono); }
-    .fd-body { padding: 4px 0; font-family: var(--mono); font-size: 0.75rem; line-height: 1.5; }
-    .fd-body.collapsed { display: none; }
+    /* Diff section INSIDE the tool bubble (third section: Input / Output /
+       Diff). Replaces the previous separate .msg.file-diff bubble: the diff
+       lives in the collapsed .tool-details together with Input and Output, so
+       it expands with the tool bubble — no flex-shrink hazard, no 2px strip. */
+    .tool-diff { margin-top: 2px; }
+    .tool-diff-head { display: flex; align-items: baseline; gap: 6px; }
+    .tool-diff-head .tool-label { margin: 6px 0 2px; }
+    .fd-stat { opacity: 0.7; font-weight: 500; font-family: var(--mono); font-size: 0.69rem; }
+    .fd-body { padding: 0 0 4px; font-family: var(--mono); font-size: 0.75rem; line-height: 1.5; }
     .fd-body div { padding: 0 10px; white-space: pre-wrap; word-break: break-all; }
     .fd-add { color: #98c379; background: rgba(152, 195, 121, 0.10); }
     .fd-del { color: #e06c75; background: rgba(224, 108, 117, 0.10); }
