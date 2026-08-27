@@ -68,6 +68,8 @@ describe("edit-engine.applyEdits", () => {
     const r = applyEdits("a\nb\n", [{ beforeText: "b" }]);
     expect(r.applied).toBe(0);
     expect(r.failed[0].reason).toContain("insertion needs newText");
+    // P7: the error teaches recovery with a minimal valid example.
+    expect(r.failed[0].detail).toContain('{"beforeText": "<anchor line>", "newText": "<text to insert>"}');
     expect(r.content).toBe("a\nb\n");
   });
 

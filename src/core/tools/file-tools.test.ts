@@ -80,6 +80,19 @@ describe("file tools", () => {
       expect(result.content).toContain("File not found");
     });
 
+    it("flags binary files instead of showing raw garbage", () => {
+      const p = join(dir, "bin.dat");
+      writeFileSync(p, "abc\u0000\u0001\u0002def");
+      const tool = new ReadTool(nodeFileSystem, cwd);
+
+      const result = tool.execute({ path: p });
+
+      expect(result.isError).toBe(false);
+      expect(result.content).toContain("Binary file");
+      expect(result.content).toContain("content not displayed");
+      expect(result.content).not.toContain("\u0000");
+    });
+
     it("resolves relative paths against the workspace root", () => {
       writeFileSync(join(dir, "rel.txt"), "hello");
       const tool = new ReadTool(nodeFileSystem, cwd);
@@ -125,6 +138,16 @@ describe("file tools", () => {
 
       const neither = tool.execute({});
       expect(neither.content).toContain("missing BOTH");
+    });
+
+    it("reports both char and byte counts (UTF-8)", () => {
+      const p = join(dir, "uni.txt");
+      const tool = new WriteTool(nodeFileSystem, cwd);
+
+      const result = tool.execute({ path: p, contents: "café ☕" });
+
+      expect(result.isError).toBe(false);
+      expect(result.content).toContain("6 chars (9 bytes)");
     });
 
     it("emits an all-additions diff preview for a NEW file (view diff bubble)", () => {
@@ -231,6 +254,30 @@ describe("file tools", () => {
       expect(result.isError).toBe(true);
       expect(result.content).toContain("not found");
       expect(nodeFileSystem.readText(p)).toBe("Ciao \u201Cmondo\u201D carino\n"); // untouched
+    });
+
+    it("preserves a matched line's trailing whitespace on tolerant matches", () => {
+      const p = join(dir, "ws.txt");
+      writeFileSync(p, "ｍｏｎｄｏ   \n"); // full-width NFKC→mondo + 3 trailing spaces
+      const tool = new StrReplaceTool(nodeFileSystem, cwd);
+
+      const result = tool.execute({ path: p, old_string: "mondo", new_string: "X" });
+
+      expect(result.isError).toBe(false);
+      expect(nodeFileSystem.readText(p)).toBe("X   \n");
+    });
+
+    it("warns (never blocks) about mid-word replacements with replace_all", () => {
+      const p = join(dir, "mw.txt");
+      writeFileSync(p, "catalog of cats");
+      const tool = new StrReplaceTool(nodeFileSystem, cwd);
+
+      const result = tool.execute({ path: p, old_string: "cat", new_string: "gatto", replace_all: true });
+
+      expect(result.isError).toBe(false);
+      expect(nodeFileSystem.readText(p)).toBe("gattoalog of gattos");
+      expect(result.content).toContain("⚠️ 2 of 2 replacements were mid-word");
+      expect(result.content).toContain('"catalog → gattoalog"');
     });
 
     it("errors when old_string is not found", () => {

@@ -61,7 +61,7 @@ export class GlobTool implements Tool {
   readonly definition: ToolDefinition = {
     name: "Glob",
     description:
-      "Tool to search for files matching a glob pattern.\n\n- Returns matching file paths sorted by modification time",
+      "Tool to search for files matching a glob pattern.\n\n- Returns matching file paths sorted by modification time, NEWEST FIRST.",
     parameters: {
       type: "object",
       properties: {

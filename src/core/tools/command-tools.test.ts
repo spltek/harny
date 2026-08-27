@@ -61,6 +61,18 @@ describe("ShellTool", () => {
     expect(result.content).toContain("npm warn deprecated x");
   });
 
+  it("collapses runs of identical lines BEFORE the output cap", () => {
+    const runner = fakeRunner([{ stdout: "riga di output\n".repeat(100), stderr: "", code: 0, timedOut: false }]);
+    const tool = new ShellTool(runner, cwd);
+
+    const result = tool.execute({ command: 'yes "riga di output" | head -c 200000' });
+
+    expect(result.isError).toBe(false);
+    expect(result.content).toContain("riga di output");
+    expect(result.content).toContain("… [99 identical lines collapsed]");
+    expect(result.content.length).toBeLessThan(200); // not 50KB of copies
+  });
+
   it("ignores legacy permission arguments (no sandbox or permission gate)", () => {
     const runner = fakeRunner([{ stdout: "ok", stderr: "", code: 0, timedOut: false }]);
     const tool = new ShellTool(runner, cwd);
@@ -116,6 +128,16 @@ describe("GrepTool", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content).toContain("Path not found");
+  });
+
+  it("skips a single binary file explicitly (no fake 'No matches')", () => {
+    const fs: FileSystem = { ...fakeFs(), exists: () => true, readText: () => "abc\u0000\u0001\u0002def" };
+    const tool = new GrepTool(fakeRunner([]), fs, cwd);
+
+    const result = tool.execute({ pattern: "x", path: "/w/bin" });
+
+    expect(result.isError).toBe(false);
+    expect(result.content).toContain("skipped binary file");
   });
 
   it("surfaces real rg errors (exit code 2) instead of 'no matches'", () => {

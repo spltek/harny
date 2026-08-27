@@ -1,5 +1,6 @@
 import type { FileSystem } from "./file-system";
 import { formatSize, isImagePath, resolvePath } from "./path-utils";
+import { isBinaryText } from "./binary";
 import type { Tool, ToolDefinition, ToolResult } from "./tool";
 
 export class ReadTool implements Tool {
@@ -52,6 +53,13 @@ export class ReadTool implements Tool {
 
     try {
       const content = this.fs.readText(filePath);
+      // Binary files read as garbage: never feed raw bytes to the model.
+      if (isBinaryText(content)) {
+        return {
+          content: `⚠️ Binary file (${formatSize(this.fs.size(filePath))}) — content not displayed.`,
+          isError: false,
+        };
+      }
       // A file ending with "\n" would split() into a phantom empty line that
       // shifts NEGATIVE offsets by one (-1 would hit the empty element and
       // return nothing). Drop it so -1 = the real last line, as documented.

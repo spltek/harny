@@ -71,13 +71,15 @@ function applyOne(content: string, op: EditOp): OneResult {
     const newText = op.newText ?? "";
     // A no-op insertion MUST NOT report success: the model would believe the
     // text was written when nothing changed (phantom edit). Reject explicitly
-    // instead of silently returning the same content.
+    // with a teach-recovery example.
     if (!newText) {
       return {
         ok: false,
         mode: "invalid",
         reason: "insertion needs newText",
-        detail: 'A beforeText/afterText insertion requires "newText" (the text to insert). Use oldText+newText for replacements.',
+        detail:
+          'Edit has beforeText/afterText but no newText. Insertions use: {"beforeText": "<anchor line>", "newText": "<text to insert>"} ' +
+          "(afterText is only a disambiguation hint, not the content). For replacements use oldText+newText.",
       };
     }
     const pos = content.indexOf(anchor);
@@ -91,7 +93,14 @@ function applyOne(content: string, op: EditOp): OneResult {
     return { ok: true, content: before + lead + newText + trail + after, mode: "insert", reason: "ok" };
   }
 
-  return { ok: false, mode: "invalid", reason: "invalid edit: need oldText+newText or before/afterText." };
+  return {
+    ok: false,
+    mode: "invalid",
+    reason: "invalid edit: need oldText+newText or before/afterText.",
+    detail:
+      'Each edit needs either oldText+newText (replacement) or beforeText/afterText + newText (insertion). ' +
+      'Example: {"edits": [{"oldText": "old line", "newText": "new line"}]}.',
+  };
 }
 
 /**
@@ -192,6 +201,15 @@ export function fuzzyUniqueReplace(
   if (matches.length > 1) return "duplicate";
   const i = matches[0];
   const repl = newText.split("\n");
+  // The tolerant match IGNORES the line's trailing whitespace — the
+  // replacement must not silently drop it: pad the last replacement line with
+  // the original line's trailing whitespace (unless it already ends with some).
+  if (repl.length > 0) {
+    const ws = lines[i + needle.length - 1].match(/\s+$/)?.[0] ?? "";
+    if (ws && !/\s$/.test(repl[repl.length - 1])) {
+      repl[repl.length - 1] = repl[repl.length - 1] + ws;
+    }
+  }
   return { content: [...lines.slice(0, i), ...repl, ...lines.slice(i + needle.length)].join("\n") };
 }
 

@@ -1,6 +1,7 @@
 import type { CommandRunner } from "./command-runner";
 import type { FileSystem } from "./file-system";
 import { resolvePath } from "./path-utils";
+import { isBinaryText } from "./binary";
 import type { Tool, ToolDefinition, ToolResult } from "./tool";
 
 export class GrepTool implements Tool {
@@ -53,6 +54,21 @@ export class GrepTool implements Tool {
     // 'No matches found' on a wrong path makes the model conclude wrongly.
     if (args.path && !this.fs.exists(searchPath)) {
       return { content: `Path not found: ${searchPath}`, isError: true };
+    }
+    // A single-file target that is BINARY gets skipped explicitly (rg would
+    // say "No matches" for it, indistinguishable from a clean miss). Directory
+    // searches keep rg's own binary handling.
+    if (args.path) {
+      try {
+        if (isBinaryText(this.fs.readText(searchPath))) {
+          return {
+            content: `skipped binary file: ${searchPath}`,
+            isError: false,
+          };
+        }
+      } catch {
+        /* directory or unreadable: let rg decide */
+      }
     }
     const outputMode = (args.output_mode as string) || "content";
 

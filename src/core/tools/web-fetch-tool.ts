@@ -40,6 +40,13 @@ export class WebFetchTool implements Tool {
       );
 
       const contentType = resp.headers.get("content-type") || "";
+      // fetch follows redirects transparently: surface WHERE the content came
+      // from so a 302 hop is not mistaken for the requested URL.
+      const finalUrl = resp.url || url;
+      const head =
+        finalUrl !== url
+          ? `## Fetched: ${finalUrl} (redirected from ${url})`
+          : `## Fetched: ${finalUrl}`;
       let content: string;
 
       if (contentType.includes("application/json")) {
@@ -57,11 +64,11 @@ export class WebFetchTool implements Tool {
       }
 
       return {
-        content: `## Fetched: ${url}\nStatus: ${resp.status}\nType: ${contentType}\n\n${content}`,
+        content: `${head}\nStatus: ${resp.status}\nType: ${contentType}\n\n${content}`,
         isError: false,
       };
     } catch (err: unknown) {
-      return { content: `WebFetch error: ${describeFetchError(err)}`, isError: true };
+      return { content: `WebFetch error: ${describeFetchError(err, url)}`, isError: true };
     }
   }
 }

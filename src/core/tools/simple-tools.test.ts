@@ -133,6 +133,21 @@ describe("WebFetchTool", () => {
     expect(result.content).toContain("```json");
     expect(result.content).toContain('"a": 1');
   });
+
+  it("reports redirects: final URL when it differs from the requested one", async () => {
+    const http: HttpClient = {
+      get: async () => ({ ...httpResponse("<html><body>landed</body></html>", { "content-type": "text/html" }), url: "https://final.example/page2" }),
+      post: async () => {
+        throw new Error("no post");
+      },
+    };
+    const tool = new WebFetchTool(http);
+
+    const result = await tool.execute({ url: "https://api.example.com/page1" });
+
+    expect(result.isError).toBe(false);
+    expect(result.content).toContain("## Fetched: https://final.example/page2 (redirected from https://api.example.com/page1)");
+  });
 });
 
 describe("ReadLintsTool", () => {

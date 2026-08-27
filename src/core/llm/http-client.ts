@@ -9,6 +9,8 @@ export interface HttpResponse {
   text(): Promise<string>;
   json(): Promise<unknown>;
   body: ReadableStream<Uint8Array> | null;
+  /** Final URL after redirects (fetch follows redirects; undefined on mocks). */
+  url?: string;
 }
 
 export interface HttpClient {

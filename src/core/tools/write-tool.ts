@@ -9,7 +9,8 @@ export class WriteTool implements Tool {
   readonly definition: ToolDefinition = {
     name: "Write",
     description:
-      "Writes a file to the local filesystem. Both arguments are REQUIRED and must never be omitted. " +
+      "Writes a file to the local filesystem and reports the character and UTF-8 byte counts written " +
+      "(verifiable UTF-8 integrity). Both arguments are REQUIRED and must never be omitted. " +
       "Path may be absolute or relative to the working directory (e.g. \"style.css\"). " +
       "Put the full file content in \"contents\". Example call: " +
       JSON.stringify({ path: "style.css", contents: "<full file content>" }),
@@ -80,8 +81,12 @@ export class WriteTool implements Tool {
       // an empty base (every line is an addition), an overwrite diffs old → new.
       const oldContent = this.fs.exists(filePath) ? this.fs.readText(filePath) : "";
       this.fs.writeText(filePath, contents);
+      // chars (UTF-16 code points) AND bytes (UTF-8): byte length is the
+      // truthful size (contents.length is code units, not bytes).
+      const chars = [...contents].length;
+      const bytes = Buffer.byteLength(contents, "utf8");
       return {
-        content: `Successfully wrote ${contents.length} bytes to ${filePath}${fencedDiffBlock(buildDiff(oldContent, contents))}`,
+        content: `Successfully wrote ${chars} chars (${bytes} bytes) to ${filePath}${fencedDiffBlock(buildDiff(oldContent, contents))}`,
         isError: false,
       };
     } catch (err: any) {

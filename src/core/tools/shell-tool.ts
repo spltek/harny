@@ -4,6 +4,27 @@ import type { Tool, ToolDefinition, ToolResult } from "./tool";
 
 const MAX_OUTPUT = 50000;
 
+/**
+ * Collapse runs of consecutive identical lines (e.g. `yes … | head` floods)
+ * into the first occurrence + a marker, so the output cap budget is spent on
+ * UNIQUE content instead of thousands of copies.
+ */
+function collapseIdenticalRuns(text: string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    let j = i + 1;
+    while (j < lines.length && lines[j] === line) j++;
+    const run = j - i;
+    if (run > 1) out.push(line, `… [${run - 1} identical lines collapsed]`);
+    else out.push(line);
+    i = j;
+  }
+  return out.join("\n");
+}
+
 export class ShellTool implements Tool {
   readonly name = "Shell";
   readonly definition: ToolDefinition = {
@@ -69,11 +90,13 @@ export class ShellTool implements Tool {
     }
     // Success path: stderr is NOT dropped — CLI tools emit warnings there
     // with exit code 0 (npm deprecations, git behind, compiler warnings) and
-    // the model must see them.
+    // the model must see them. stdout runs of identical lines are collapsed
+    // BEFORE the cap so a flood cannot eat the whole budget.
+    const collapsedStdout = collapseIdenticalRuns(result.stdout);
     const out =
-      result.stdout.length > MAX_OUTPUT
-        ? result.stdout.slice(0, MAX_OUTPUT) + "\n\n[Output truncated at 50KB]"
-        : result.stdout;
+      collapsedStdout.length > MAX_OUTPUT
+        ? collapsedStdout.slice(0, MAX_OUTPUT) + "\n\n[Output truncated at 50KB]"
+        : collapsedStdout;
     const err = result.stderr.trim();
     const content = err ? (out ? `${out}\n\nSTDERR:\n${err.slice(0, MAX_OUTPUT)}` : err) : out;
     return { content, isError: false };

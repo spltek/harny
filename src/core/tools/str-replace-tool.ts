@@ -4,15 +4,47 @@ import type { Tool, ToolDefinition, ToolResult } from "./tool";
 import { buildDiff, fencedDiffBlock } from "./diff-text";
 import { fuzzyUniqueReplace } from "./edit-engine";
 
+/**
+ * How many of the (non-overlapping) matches of `oldStr` sit INSIDE a larger
+ * word, with up to 3 deduplicated "word → replacedWord" examples.
+ */
+function midWordStats(original: string, oldStr: string, newStr: string): { count: number; examples: string[] } {
+  const isWord = (c: string) => /[A-Za-z0-9_]/.test(c);
+  let count = 0;
+  const examples: string[] = [];
+  let from = 0;
+  for (;;) {
+    const pos = original.indexOf(oldStr, from);
+    if (pos === -1) break;
+    from = pos + oldStr.length;
+    const before = pos > 0 && isWord(original[pos - 1]);
+    const after = pos + oldStr.length < original.length && isWord(original[pos + oldStr.length]);
+    if (!before && !after) continue;
+    count++;
+    if (examples.length < 3) {
+      let w0 = pos;
+      while (w0 > 0 && isWord(original[w0 - 1])) w0--;
+      let w1 = pos + oldStr.length;
+      while (w1 < original.length && isWord(original[w1])) w1++;
+      const word = original.slice(w0, w1);
+      const replaced = word.slice(0, pos - w0) + newStr + word.slice(pos - w0 + oldStr.length);
+      const ex = `${word} → ${replaced}`;
+      if (!examples.includes(ex)) examples.push(ex);
+    }
+  }
+  return { count, examples };
+}
+
 export class StrReplaceTool implements Tool {
   readonly name = "StrReplace";
   readonly definition: ToolDefinition = {
     name: "StrReplace",
     description:
-      "Performs string replacements in files (exact match; a Unicode/whitespace-tolerant " +
-      "fallback — trailing whitespace, smart quotes/dashes, NFKC — applies when the text " +
-      "aligns with whole lines). Without replace_all the old_string must be UNIQUE and " +
-      "found, otherwise the tool fails explicitly.",
+      "Performs string replacements in files (SUBSTRING-based: prefer full-line old_strings). " +
+      "Exact match; a Unicode/whitespace-tolerant fallback (trailing whitespace, smart " +
+      "quotes/dashes, NFKC) applies when the text aligns with whole lines, preserving the " +
+      "matched line's trailing whitespace. Without replace_all the old_string must be UNIQUE " +
+      "and found, otherwise the tool fails explicitly. Mid-word replacements are warned about.",
     parameters: {
       type: "object",
       properties: {
@@ -64,6 +96,13 @@ export class StrReplaceTool implements Tool {
         const count = original.split(oldStr).length - 1;
         nextContent = original.split(oldStr).join(newStr);
         headline = `Successfully replaced ${count} occurrence(s) of old_string in ${filePath}`;
+        // warn (never block) when some matches land INSIDE a larger word —
+        // substring semantics can corrupt "catalog" into "gattoalog" silently.
+        const mid = midWordStats(original, oldStr, newStr);
+        if (mid.count > 0) {
+          const examples = mid.examples.length > 0 ? ` (e.g. ${mid.examples.map((e) => `"${e}"`).join(", ")})` : "";
+          headline += `\n⚠️ ${mid.count} of ${count} replacements were mid-word${examples}. StrReplace is substring-based — prefer full-line old_strings.`;
+        }
       } else {
         const idx = original.indexOf(oldStr);
         if (idx === -1) {
