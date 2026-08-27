@@ -645,7 +645,10 @@ describe("view webview client", () => {
     // The diff bubble sits right after the tool bubble with header + colored lines.
     const bubble = document.querySelector(".msg.file-diff");
     expect(bubble).not.toBeNull();
-    expect(bubble?.querySelector(".fd-title")?.textContent).toBe("📄 a.js");
+    // header shows the FULL path (ellipsized in CSS); the diff region starts collapsed
+    expect(bubble?.querySelector(".fd-title")?.textContent).toBe("📄 /workspace/src/a.js");
+    expect(bubble?.querySelector(".fd-toggle")?.textContent).toBe("▶");
+    expect((bubble?.querySelector(".fd-body") as HTMLElement | null)?.style.display).toBe("none");
     expect(bubble?.querySelector(".fd-stat")?.textContent).toBe("+1/-1");
     expect(bubble?.querySelector(".fd-add")?.textContent).toBe("+new");
     expect(bubble?.querySelector(".fd-del")?.textContent).toBe("-old");
@@ -687,7 +690,7 @@ describe("view webview client", () => {
     });
     const bubble = document.querySelector(".msg.file-diff");
     expect(bubble).not.toBeNull();
-    expect(bubble?.querySelector(".fd-title")?.textContent).toBe("📄 style.css");
+    expect(bubble?.querySelector(".fd-title")?.textContent).toBe("📄 /w/style.css");
     expect(bubble?.querySelectorAll(".fd-add").length).toBe(3);
     expect(bubble?.querySelectorAll(".fd-del").length).toBe(0);
   });

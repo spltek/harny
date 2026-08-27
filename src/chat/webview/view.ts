@@ -560,14 +560,13 @@ function formatArgs(args: unknown): string {
   }
 }
 
-/** Basename of the file the tool touched, read from the tool-call args JSON. */
+/** Path of the file the tool touched, read from the tool-call args JSON. */
 function extractPath(pre: HTMLElement): string | undefined {
   const argsEl = pre.closest(".msg.tool")?.querySelector(".tool-args");
   if (!argsEl?.textContent) return undefined;
   try {
     const args = JSON.parse(argsEl.textContent) as Record<string, unknown>;
-    if (typeof args.path !== "string" || !args.path) return undefined;
-    return args.path.split("/").pop() || args.path;
+    return typeof args.path === "string" && args.path ? args.path : undefined;
   } catch {
     return undefined;
   }
@@ -594,13 +593,15 @@ function addFileDiffBubble(pre: HTMLElement, body: string, stat: string | undefi
   const langId = title ? langIdForPath(title) : undefined;
   const grammar = langId ? Prism.languages[langId] : undefined;
   header.innerHTML =
-    '<span class="fd-toggle">▼</span>' +
+    '<span class="fd-toggle">▶</span>' +
     '<span class="fd-title">' +
     (title ? "📄 " + escapeHtml(title) : "Diff") +
     "</span>" +
     '<span class="fd-stat">' +
     escapeHtml(stat ?? countDiff(body)) +
     "</span>";
+  // The full path as a native tooltip when the ellipsized title truncates it.
+  if (title) header.title = title;
 
   const list = document.createElement("div");
   list.className = "fd-body";
@@ -631,6 +632,8 @@ function addFileDiffBubble(pre: HTMLElement, body: string, stat: string | undefi
   }
   bubble.appendChild(header);
   bubble.appendChild(list);
+  // The diff region starts COLLAPSED (header row only); click to expand.
+  list.style.display = "none";
   header.addEventListener("click", () => {
     const collapsed = list.style.display === "none";
     list.style.display = collapsed ? "block" : "none";
