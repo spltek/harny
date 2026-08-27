@@ -46,7 +46,16 @@ export class ReadLintsTool implements Tool {
 
     const withIssues = entries.filter(({ diagnostics: ds }) => ds.length > 0);
     if (entries.length === 0 || withIssues.length === 0) {
-      return { content: "No linter errors found.", isError: false };
+      // "No errors" on files that no language server ever checked is a false
+      // assurance: files without an active linter (unopened, plain-text, no LS)
+      // contribute NO diagnostics even when broken. Say it explicitly.
+      return {
+        content:
+          "No linter errors found (VS Code reports no diagnostics for the given paths). " +
+          "Files without an active language server are not checked — if the file should be syntax-valid, " +
+          "verify with Read or the editor before trusting this.",
+        isError: false,
+      };
     }
 
     const lines: string[] = [];

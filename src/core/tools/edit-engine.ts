@@ -69,7 +69,17 @@ function applyOne(content: string, op: EditOp): OneResult {
   const anchor = op.beforeText ?? op.afterText;
   if (anchor !== undefined && anchor.length > 0) {
     const newText = op.newText ?? "";
-    if (!newText) return { ok: true, content, mode: "insert", reason: "no-op" };
+    // A no-op insertion MUST NOT report success: the model would believe the
+    // text was written when nothing changed (phantom edit). Reject explicitly
+    // instead of silently returning the same content.
+    if (!newText) {
+      return {
+        ok: false,
+        mode: "invalid",
+        reason: "insertion needs newText",
+        detail: 'A beforeText/afterText insertion requires "newText" (the text to insert). Use oldText+newText for replacements.',
+      };
+    }
     const pos = content.indexOf(anchor);
     if (pos === -1) {
       return { ok: false, mode: "invalid", reason: `anchor not found: "${anchor}".`, detail: `Re-check the file; the anchor "${anchor}" is not present.` };

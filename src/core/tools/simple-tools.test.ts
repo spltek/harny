@@ -178,7 +178,10 @@ describe("ReadLintsTool", () => {
 
     const result = await tool.execute({});
 
-    expect(result.content).toBe("No linter errors found.");
+    expect(result.content).toContain("No linter errors found");
+    // honest: files without an active language server produce no diagnostics,
+    // so a zero may be absence of checking, not absence of errors.
+    expect(result.content).toContain("active language server");
     expect(result.isError).toBe(false);
   });
 });

@@ -210,6 +210,29 @@ describe("file tools", () => {
       expect(nodeFileSystem.readText(p)).toBe("linea DUE\n");
     });
 
+    it("tolerates smart quotes when the old_string is a whole line", () => {
+      const p = join(dir, "q.txt");
+      writeFileSync(p, "\u201Cmondo\u201D\n"); // smart quotes around a word, own line
+      const tool = new StrReplaceTool(nodeFileSystem, cwd);
+
+      const result = tool.execute({ path: p, old_string: '"mondo"', new_string: "[mondo]" });
+
+      expect(result.isError).toBe(false);
+      expect(nodeFileSystem.readText(p)).toBe("[mondo]\n");
+    });
+
+    it("fails EXPLICITLY for partial-line smart-quote differences (never corrupts silently)", () => {
+      const p = join(dir, "q2.txt");
+      writeFileSync(p, "Ciao \u201Cmondo\u201D carino\n");
+      const tool = new StrReplaceTool(nodeFileSystem, cwd);
+
+      const result = tool.execute({ path: p, old_string: '"mondo"', new_string: "[mondo]" });
+
+      expect(result.isError).toBe(true);
+      expect(result.content).toContain("not found");
+      expect(nodeFileSystem.readText(p)).toBe("Ciao \u201Cmondo\u201D carino\n"); // untouched
+    });
+
     it("errors when old_string is not found", () => {
       const p = join(dir, "a.txt");
       writeFileSync(p, "hello");

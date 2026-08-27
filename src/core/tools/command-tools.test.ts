@@ -50,6 +50,17 @@ describe("ShellTool", () => {
     expect(result.content).toContain("timed out");
   });
 
+  it("keeps stderr on SUCCESS (exit 0) — warnings must not vanish", () => {
+    const runner = fakeRunner([{ stdout: "done", stderr: "npm warn deprecated x", code: 0, timedOut: false }]);
+    const tool = new ShellTool(runner, cwd);
+
+    const result = tool.execute({ command: "npm install" });
+
+    expect(result.isError).toBe(false);
+    expect(result.content).toContain("done");
+    expect(result.content).toContain("npm warn deprecated x");
+  });
+
   it("ignores legacy permission arguments (no sandbox or permission gate)", () => {
     const runner = fakeRunner([{ stdout: "ok", stderr: "", code: 0, timedOut: false }]);
     const tool = new ShellTool(runner, cwd);
@@ -115,6 +126,15 @@ describe("GrepTool", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content).toContain("error parsing regex");
+  });
+
+  it("quotes the glob filter (no shell word-splitting/expansion)", () => {
+    const runner = fakeRunner([{ stdout: "a.txt:1:riga", stderr: "", code: 0, timedOut: false }]);
+    const tool = new GrepTool(runner, existingFs, cwd);
+
+    tool.execute({ pattern: "riga", path: "/w", glob: "*.txt" });
+
+    expect(runner.calls[0].command).toContain('--glob="*.txt"');
   });
 
   it("applies head_limit and offset", () => {
@@ -207,6 +227,14 @@ describe("GlobTool", () => {
       // [1] is literal: matches the file literally named "f[1].txt"
       expect(re("v1.0/**/f[1].txt").test("v1.0/f[1].txt")).toBe(true);
       expect(re("v1.0/**/f[1].txt").test("v1.0/f1.txt")).toBe(false);
+    });
+
+    it("expands brace alternation {a,b}", () => {
+      expect(re("**/*.{js,txt}").test("a/f.js")).toBe(true);
+      expect(re("**/*.{js,txt}").test("a/f.txt")).toBe(true);
+      expect(re("**/*.{js,txt}").test("a/f.py")).toBe(false);
+      expect(re("v1.{0,1}/x").test("v1.1/x")).toBe(true);
+      expect(re("v1.{0,1}/x").test("v1.2/x")).toBe(false);
     });
   });
 });

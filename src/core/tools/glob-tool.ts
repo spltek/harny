@@ -11,9 +11,8 @@ import type { Tool, ToolDefinition, ToolResult } from "./tool";
  * gives `**` its standard meaning: zero or more directory levels.
  *
  * Handles `**` followed by a slash (zero or more levels), a trailing `**`,
- * single `*` (no slash crossing) and `?`; everything else is treated as a
- * literal (regex specials escaped). Char classes like `[ab]` are NOT
- * expanded — kept literal.
+ * single `*` (no slash crossing), `?` and brace alternation `{a,b}`; char
+ * classes like `[ab]` are NOT expanded — kept literal.
  */
 const REGEX_SPECIALS = ".*+?^${}()|[]\\";
 
@@ -35,6 +34,17 @@ export function globstarToRegex(glob: string): string {
     } else if (c === "?") {
       out += "[^/]";
       i++;
+    } else if (c === "{") {
+      // Brace alternation {a,b} (the tool doc's example): expand to (?:a|b).
+      const end = glob.indexOf("}", i + 1);
+      if (end !== -1) {
+        const alts = glob.slice(i + 1, end).split(",");
+        out += "(?:" + alts.map((a) => globstarToRegex(a)).join("|") + ")";
+        i = end + 1;
+      } else {
+        out += "\\{";
+        i++;
+      }
     } else if (REGEX_SPECIALS.includes(c)) {
       out += "\\" + c;
       i++;

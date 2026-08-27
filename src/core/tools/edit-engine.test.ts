@@ -64,9 +64,10 @@ describe("edit-engine.applyEdits", () => {
     expect(r.content).toBe("a\nb\nmid\nc");
   });
 
-  it("empty newText insertion is a clean no-op", () => {
-    const r = applyEdits("a\nb\n", [{ beforeText: "b", newText: "" }]);
-    expect(r.failed).toEqual([]);
+  it("rejects an insertion WITHOUT newText (no phantom 'Applied' with unchanged file)", () => {
+    const r = applyEdits("a\nb\n", [{ beforeText: "b" }]);
+    expect(r.applied).toBe(0);
+    expect(r.failed[0].reason).toContain("insertion needs newText");
     expect(r.content).toBe("a\nb\n");
   });
 

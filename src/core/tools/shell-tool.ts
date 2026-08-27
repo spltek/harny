@@ -67,10 +67,15 @@ export class ShellTool implements Tool {
         isError: true,
       };
     }
-    const truncated =
+    // Success path: stderr is NOT dropped — CLI tools emit warnings there
+    // with exit code 0 (npm deprecations, git behind, compiler warnings) and
+    // the model must see them.
+    const out =
       result.stdout.length > MAX_OUTPUT
         ? result.stdout.slice(0, MAX_OUTPUT) + "\n\n[Output truncated at 50KB]"
         : result.stdout;
-    return { content: truncated, isError: false };
+    const err = result.stderr.trim();
+    const content = err ? (out ? `${out}\n\nSTDERR:\n${err.slice(0, MAX_OUTPUT)}` : err) : out;
+    return { content, isError: false };
   }
 }

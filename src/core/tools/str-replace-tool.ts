@@ -9,9 +9,10 @@ export class StrReplaceTool implements Tool {
   readonly definition: ToolDefinition = {
     name: "StrReplace",
     description:
-      "Performs string replacements in files. Exact match first; trailing whitespace and " +
-      "Unicode noise (smart quotes/dashes, NFKC) are tolerated, same as Edit. " +
-      "Without replace_all the old_string must be UNIQUE, otherwise the tool fails explicitly.",
+      "Performs string replacements in files (exact match; a Unicode/whitespace-tolerant " +
+      "fallback — trailing whitespace, smart quotes/dashes, NFKC — applies when the text " +
+      "aligns with whole lines). Without replace_all the old_string must be UNIQUE and " +
+      "found, otherwise the tool fails explicitly.",
     parameters: {
       type: "object",
       properties: {

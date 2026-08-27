@@ -65,7 +65,7 @@ export class GrepTool implements Tool {
     if (outputMode === "files_with_matches") flags.push("-l");
     else if (outputMode === "count") flags.push("-c");
     else flags.push("-n");
-    if (args.glob) flags.push(`--glob=${args.glob}`);
+    if (args.glob) flags.push(`--glob="${args.glob}"`);
     if (args.type) flags.push(`--type=${args.type}`);
 
     const cmd = `rg ${flags.join(" ")} "${pattern.replace(/"/g, '\\"')}" "${searchPath}" 2>&1`;
