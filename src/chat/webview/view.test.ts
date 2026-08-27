@@ -692,6 +692,43 @@ describe("view webview client", () => {
     expect(bubble?.querySelectorAll(".fd-del").length).toBe(0);
   });
 
+  it("applies syntax highlighting to code lines for a known language (.ts)", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    hostMessage({ type: "toolCall", id: "h1", name: "Edit", arguments: { path: "/w/component.ts" } });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "h1",
+      output: "Diff (+1/-1):\n```diff\n@@ -1,1 +1,1 @@\n-const old: number = 1;\n+const fresh: number = 2;\n```",
+      isError: false,
+    });
+    const add = document.querySelector(".msg.file-diff .fd-add");
+    expect(add).not.toBeNull();
+    // the diff prefix stays plain text, the code is tokenized by Prism
+    expect(add?.textContent).toContain("+const");
+    expect(add?.querySelector(".token.keyword")?.textContent).toBe("const");
+    expect(add?.querySelectorAll(".token").length ?? 0).toBeGreaterThan(1);
+  });
+
+  it("keeps plain text (no token spans) for unknown languages", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    hostMessage({ type: "toolCall", id: "t1", name: "Edit", arguments: { path: "/w/notes.txt" } });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "t1",
+      output: "Diff (+1/-1):\n```diff\n@@ -1,1 +1,1 @@\n-hello\n+world\n```",
+      isError: false,
+    });
+    const add = document.querySelector(".msg.file-diff .fd-add") as HTMLElement;
+    expect(add?.textContent).toBe("+world");
+    expect(add?.querySelector(".token")).toBeNull();
+  });
+
   it("keeps thinking collapsed and renders the tool name with collapsed details", async () => {
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;

@@ -15,7 +15,12 @@ await build({
   platform: "browser",
   target: ["chrome110"],
   outfile: join(root, "media/view.js"),
-  minify: false,
+  minify: true,
   sourcemap: false,
   logLevel: "info",
+  // Prism grammar components reference the bare global `Prism`; rewire that
+  // identifier to the bundled instance so no window global is needed (see
+  // src/chat/webview/prism.ts / prism-inject.ts).
+  inject: [join(root, "src/chat/webview/prism-inject.ts")],
+  define: { Prism: "__webview_prism" },
 });

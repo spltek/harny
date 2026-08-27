@@ -326,6 +326,18 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     .fd-del { color: #e06c75; background: rgba(224, 108, 117, 0.10); }
     .fd-hunk { color: var(--accent); background: rgba(255, 255, 255, 0.03); }
     .fd-ctx { color: inherit; opacity: 0.8; }
+    /* Editor-style syntax tokens inside the diff lines (Prism classes, one-dark palette). */
+    .fd-body .token { color: inherit; opacity: 1; }
+    .fd-body .token.comment, .fd-body .token.prolog, .fd-body .token.cdata { color: #7f848e; font-style: italic; }
+    .fd-body .token.keyword, .fd-body .token.selector, .fd-body .token.atrule, .fd-body .token.important { color: #c678dd; }
+    .fd-body .token.string, .fd-body .token.attr-value, .fd-body .token.char, .fd-body .token.regex { color: #98c379; }
+    .fd-body .token.number, .fd-body .token.boolean, .fd-body .token.constant { color: #d19a66; }
+    .fd-body .token.function, .fd-body .token.function-variable { color: #61afef; }
+    .fd-body .token.class-name, .fd-body .token.maybe-class-name { color: #e5c07b; }
+    .fd-body .token.builtin { color: #56b6c2; }
+    .fd-body .token.operator, .fd-body .token.punctuation { color: #abb2bf; }
+    .fd-body .token.property, .fd-body .token.attr-name, .fd-body .token.variable { color: #e06c75; }
+    .fd-body .token.doctype, .fd-body .token.entity { color: #e06c75; }
     .tool-call-pending { opacity: 0.65; }
 
     .thinking-block { width: 100%; border: 1px dashed var(--border); border-radius: 6px; margin: 4px 0; padding: 0; font-size: 0.85rem; }

@@ -1,5 +1,7 @@
 import { renderMarkdown } from "./markdown";
 import { splitDiffFence, countDiff } from "./diff-fence";
+import Prism from "./prism";
+import { langIdForPath } from "./lang-map";
 import { clampContextWindow, clampOutputTokens, CONTEXT_STEP, DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, OUTPUT_STEP } from "../context-window";
 import { clampTemperature, clampTopP, TEMPERATURE_STEP } from "../temperature";
 
@@ -586,6 +588,11 @@ function addFileDiffBubble(pre: HTMLElement, body: string, stat: string | undefi
   const header = document.createElement("div");
   header.className = "fd-header";
   const title = extractPath(pre);
+  // Syntax highlighting when the touched file has a known language: the diff
+  // prefix (+/−/context) keeps its diff color, the code gets editor-style
+  // tokens. Unknown languages fall back to plain diff coloring.
+  const langId = title ? langIdForPath(title) : undefined;
+  const grammar = langId ? Prism.languages[langId] : undefined;
   header.innerHTML =
     '<span class="fd-toggle">▼</span>' +
     '<span class="fd-title">' +
@@ -607,7 +614,19 @@ function addFileDiffBubble(pre: HTMLElement, body: string, stat: string | undefi
     else if (raw.startsWith("+") && !raw.startsWith("+++")) line.className = "fd-add";
     else if (raw.startsWith("-") && !raw.startsWith("---")) line.className = "fd-del";
     else line.className = "fd-ctx";
-    line.textContent = raw;
+    if (grammar && !raw.startsWith("@@")) {
+      // Keep the diff prefix out of the tokenizer (Prism would mangle +/-),
+      // escape it, and let Prism.highlight produce escaped token HTML.
+      const prefix = raw.charAt(0);
+      const code = raw.slice(1);
+      if (code.trim()) {
+        line.innerHTML = escapeHtml(prefix) + Prism.highlight(code, grammar, langId!);
+      } else {
+        line.textContent = raw;
+      }
+    } else {
+      line.textContent = raw;
+    }
     list.appendChild(line);
   }
   bubble.appendChild(header);

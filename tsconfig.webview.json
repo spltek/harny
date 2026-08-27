@@ -11,5 +11,5 @@
     "noEmit": true,
     "types": []
   },
-  "include": ["src/chat/webview/**/*.ts"]
+  "include": ["src/chat/webview/**/*.ts", "src/chat/webview/**/*.d.ts"]
 }
