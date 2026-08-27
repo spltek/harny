@@ -1,5 +1,5 @@
 import type { ChatMessage } from "../history/types";
-import type { LoadedSession, SessionStore, SessionSummary } from "./types";
+import type { LoadedSession, SessionSettingsPatch, SessionStore, SessionSummary } from "./types";
 
 /**
  * Per-workspace session coordinator. This is a thin facade over a SessionStore
@@ -35,43 +35,13 @@ export class SessionManager {
     return this.store.saveMessages(id, messages);
   }
 
-  saveModel(id: string, model?: string, provider?: string): SessionSummary {
-    return this.store.saveModel(id, model, provider);
-  }
-
-  saveThinkingLevel(id: string, level?: import("../config/types").ThinkingLevel): SessionSummary {
-    return this.store.saveThinkingLevel(id, level);
-  }
-
-  saveContextWindow(id: string, window?: number): SessionSummary {
-    return this.store.saveContextWindow(id, window);
-  }
-
-  saveOutputTokens(id: string, tokens?: number): SessionSummary {
-    return this.store.saveOutputTokens(id, tokens);
-  }
-
-  saveTemperature(id: string, temp?: number): SessionSummary {
-    return this.store.saveTemperature(id, temp);
-  }
-
-  savePresencePenalty(id: string, value?: number): SessionSummary {
-    return this.store.savePresencePenalty(id, value);
-  }
-
-  saveFrequencyPenalty(id: string, value?: number): SessionSummary {
-    return this.store.saveFrequencyPenalty(id, value);
-  }
-
-  saveTopP(id: string, value?: number): SessionSummary {
-    return this.store.saveTopP(id, value);
-  }
-
-  saveSampler(id: string, sampler?: "temperature" | "topP"): SessionSummary {
-    return this.store.saveSampler(id, sampler);
-  }
-
-  saveContextTokens(id: string, tokens?: number): SessionSummary {
-    return this.store.saveContextTokens(id, tokens);
+  /**
+   * Atomically persist any subset of the per-session settings in a SINGLE
+   * store write. The webview uses this for every setting change (model,
+   * thinking level, sampling, limits…) — adding a future setting only needs
+   * a field in the patch type, never a new method here or in the store.
+   */
+  saveSettings(id: string, patch: SessionSettingsPatch): SessionSummary {
+    return this.store.saveSettings(id, patch);
   }
 }

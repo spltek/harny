@@ -7,6 +7,7 @@ import type { MemoryOverrideConfigProvider } from "../core/config/memory-overrid
 import { requiresApiKey } from "../core/config/requires-api-key";
 import type { ModelListProvider } from "../core/llm/model-list";
 import type { SessionManager } from "../core/sessions/session-manager";
+import type { SessionSettingsPatch } from "../core/sessions/types";
 import type { SessionRegistry, SessionRuntime } from "./session-registry";
 import { StreamTee } from "./stream-tee";
 import type { AttachmentService } from "./attachment-service";
@@ -159,16 +160,19 @@ export class ChatViewProvider implements WebviewViewProvider {
     const existing = this.sessions.list().find((s) => s.id === sourceId);
     const created = this.sessions.create(name);
     if (messages.length > 0) this.sessions.saveMessages(created.id, messages);
-    // Copy the per-session settings over to the branch.
-    if (existing?.model) this.sessions.saveModel(created.id, existing.model, existing.modelProvider);
-    if (existing?.thinkingLevel) this.sessions.saveThinkingLevel(created.id, existing.thinkingLevel);
-    if (existing?.contextWindow) this.sessions.saveContextWindow(created.id, existing.contextWindow);
-    if (existing?.outputTokens) this.sessions.saveOutputTokens(created.id, existing.outputTokens);
-    if (existing?.temperature !== undefined) this.sessions.saveTemperature(created.id, existing.temperature);
+    // Copy the per-session settings over to the branch in one atomic write.
+    const settings: SessionSettingsPatch = {
+      ...(existing?.model ? { model: existing.model } : {}),
+      ...(existing?.modelProvider ? { modelProvider: existing.modelProvider } : {}),
+      ...(existing?.thinkingLevel ? { thinkingLevel: existing.thinkingLevel } : {}),
+      ...(existing?.contextWindow ? { contextWindow: existing.contextWindow } : {}),
+      ...(existing?.outputTokens ? { outputTokens: existing.outputTokens } : {}),
+      ...(existing?.temperature !== undefined ? { temperature: existing.temperature } : {}),
+    };
+    if (Object.keys(settings).length > 0) this.sessions.saveSettings(created.id, settings);
     await this.setActive(created.id);
   }
 
-  /**
   /**
    * FIFO queue for in-panel modals (see PanelModalQueue). Request and drain
    * are thin delegates; the queue owns sequencing (one visible at a time).
@@ -357,10 +361,6 @@ export class ChatViewProvider implements WebviewViewProvider {
         if (typeof msg.id === "number") this.onPanelModalResponse(msg.id, msg.value);
         break;
       }
-      case "modalResponse": {
-        if (typeof msg.id === "number") this.onPanelModalResponse(msg.id, msg.value);
-        break;
-      }
       case "getConfig":
         await this.pushConfig();
         break;
@@ -372,7 +372,7 @@ export class ChatViewProvider implements WebviewViewProvider {
           typeof msg.provider === "string" && msg.provider.trim() ? msg.provider.trim() : undefined;
         rt.model = model;
         rt.modelProvider = provider;
-        this.sessions.saveModel(rt.sessionId, model, provider);
+        this.sessions.saveSettings(rt.sessionId, { model, ...(provider ? { modelProvider: provider } : {}) });
         this.modelSelector.set(this.computeOverrides(model, provider));
         // Lightweight config push (no full HTML rebuild: the typed prompt,
         // scroll and streaming state are preserved).
@@ -384,10 +384,9 @@ export class ChatViewProvider implements WebviewViewProvider {
         const rt = this.activeRuntime();
         if (!rt || !isThinkingLevel(msg.level)) break;
         rt.thinkingLevel = msg.level as ThinkingLevel;
-        this.sessions.saveThinkingLevel(rt.sessionId, msg.level as ThinkingLevel);
-        // Re-apply the active overrides so the runtime config carries the level.
-        if (rt.model) this.modelSelector.set(this.computeOverrides(rt.model, rt.modelProvider));
-        void this.pushConfig();
+        this.commitSetting(rt, () =>
+          this.sessions.saveSettings(rt.sessionId, { thinkingLevel: msg.level as ThinkingLevel }),
+        );
         break;
       }
 
@@ -424,8 +423,8 @@ export class ChatViewProvider implements WebviewViewProvider {
         if (!rt) break;
         const value = toContextWindow(msg.value);
         rt.contextWindow = value;
-        this.sessions.saveContextWindow(rt.sessionId, value);
-        void this.pushConfig();
+        // Context window does not affect the per-model overrides: skip recompute.
+        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { contextWindow: value }), false);
         break;
       }
       case "setOutputTokens": {
@@ -433,10 +432,8 @@ export class ChatViewProvider implements WebviewViewProvider {
         if (!rt) break;
         const value = toOutputTokens(msg.value);
         rt.outputTokens = value;
-        this.sessions.saveOutputTokens(rt.sessionId, value);
         // Re-apply the active overrides so the runtime config carries maxTokens.
-        if (rt.model) this.modelSelector.set(this.computeOverrides(rt.model, rt.modelProvider));
-        void this.pushConfig();
+        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { outputTokens: value }));
         break;
       }
       case "setSamplerMode": {
@@ -444,19 +441,20 @@ export class ChatViewProvider implements WebviewViewProvider {
         if (!rt) break;
         const mode = msg.mode === "topP" ? "topP" : "temperature";
         rt.sampler = mode;
-        this.sessions.saveSampler(rt.sessionId, mode);
         // Switching sampler ALWAYS resets the shared value to Auto (never a
-        // number interpreted on the wrong scale) — clear both stored values.
-        if (rt.temperature !== undefined) {
-          rt.temperature = undefined;
-          this.sessions.saveTemperature(rt.sessionId, undefined);
-        }
-        if (rt.topP !== undefined) {
-          rt.topP = undefined;
-          this.sessions.saveTopP(rt.sessionId, undefined);
-        }
-        if (rt.model) this.modelSelector.set(this.computeOverrides(rt.model, rt.modelProvider));
-        void this.pushConfig();
+        // number interpreted on the wrong scale) — clear both stored values
+        // and runtime fields, all in a single atomic write.
+        const resetTemperature = rt.temperature !== undefined;
+        const resetTopP = rt.topP !== undefined;
+        if (resetTemperature) rt.temperature = undefined;
+        if (resetTopP) rt.topP = undefined;
+        this.commitSetting(rt, () =>
+          this.sessions.saveSettings(rt.sessionId, {
+            sampler: mode,
+            ...(resetTemperature ? { temperature: undefined } : {}),
+            ...(resetTopP ? { topP: undefined } : {}),
+          }),
+        );
         break;
       }
       case "setSamplerValue": {
@@ -468,14 +466,12 @@ export class ChatViewProvider implements WebviewViewProvider {
         if (active === "topP") {
           const value = toTopP(msg.value);
           rt.topP = value;
-          this.sessions.saveTopP(rt.sessionId, value);
+          this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { topP: value }));
         } else {
           const value = toTemperature(msg.value);
           rt.temperature = value;
-          this.sessions.saveTemperature(rt.sessionId, value);
+          this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { temperature: value }));
         }
-        if (rt.model) this.modelSelector.set(this.computeOverrides(rt.model, rt.modelProvider));
-        void this.pushConfig();
         break;
       }
       case "setPresencePenalty": {
@@ -483,9 +479,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         if (!rt) break;
         const value = toTemperature(msg.value); // same 0–2, one-decimal clamp
         rt.presencePenalty = value;
-        this.sessions.savePresencePenalty(rt.sessionId, value);
-        if (rt.model) this.modelSelector.set(this.computeOverrides(rt.model, rt.modelProvider));
-        void this.pushConfig();
+        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { presencePenalty: value }));
         break;
       }
       case "setFrequencyPenalty": {
@@ -493,9 +487,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         if (!rt) break;
         const value = toTemperature(msg.value); // same 0–2, one-decimal clamp
         rt.frequencyPenalty = value;
-        this.sessions.saveFrequencyPenalty(rt.sessionId, value);
-        if (rt.model) this.modelSelector.set(this.computeOverrides(rt.model, rt.modelProvider));
-        void this.pushConfig();
+        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { frequencyPenalty: value }));
         break;
       }
       case "send":
@@ -528,6 +520,21 @@ export class ChatViewProvider implements WebviewViewProvider {
 
   private activeRuntime(): SessionRuntime | undefined {
     return this.activeId ? this.registry.get(this.activeId) : undefined;
+  }
+
+  /**
+   * Persist settings, then refresh the view's config. `persist` may write
+   * several fields at once (single saveSettings call). When `recomputeOverrides`
+   * is true (the default) the per-model overrides are re-applied so the active
+   * runtime config reflects the new settings; context-window changes skip it
+   * because they do not affect the model overrides.
+   */
+  private commitSetting(rt: SessionRuntime, persist: () => void, recomputeOverrides = true): void {
+    persist();
+    if (recomputeOverrides && rt.model) {
+      this.modelSelector.set(this.computeOverrides(rt.model, rt.modelProvider));
+    }
+    void this.pushConfig();
   }
 
   private async send(rt: SessionRuntime, msg: any): Promise<void> {
@@ -719,7 +726,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       estimateTokens(summary) +
       plan.kept.reduce((acc, m) => acc + estimateTokens(m.content), 0);
     rt.contextTokens = next;
-    this.sessions.saveContextTokens(rt.sessionId, next);
+    this.sessions.saveSettings(rt.sessionId, { contextTokens: next });
     // The context was rebuilt: any previously reported cache hit is meaningless
     // for the new layout. Reset so the cache indicator hides until the next
     // real chat turn reports fresh usage (avoids stale ratios > 100%).
@@ -739,7 +746,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       const rt = this.registry.get(sessionId);
       if (!rt) return;
       rt.contextTokens = usage.input;
-      this.sessions.saveContextTokens(sessionId, usage.input);
+      this.sessions.saveSettings(sessionId, { contextTokens: usage.input });
       if (typeof usage.cached === "number") rt.cachedTokens = usage.cached;
       if (typeof usage.cachedWrite === "number") rt.cachedWriteTokens = usage.cachedWrite;
       void this.pushConfig();

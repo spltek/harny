@@ -9,6 +9,7 @@ import type { Tool, ToolCall, ToolRegistry, ToolResult } from "../tools";
 import type { ChatController } from "./chat-controller";
 import type { SystemPromptBuilder } from "./system-prompt";
 import { ToolCallAccumulator } from "./tool-call-accumulator";
+import { ThinkingTagParser } from "./thinking-parser";
 import type { AgentEvent } from "./types";
 
 export interface AgentDeps {
@@ -175,7 +176,7 @@ export class Agent implements ChatController {
     }
 
     // Track consecutive tool failures to detect loops
-    const toolResults: { name: string; isError: boolean }[] = [];
+    const toolResults: { name: string; args: Record<string, unknown>; isError: boolean }[] = [];
 
     for (const tc of toolCalls) {
       const result = await this.executeToolSafely(tc);
@@ -184,11 +185,13 @@ export class Agent implements ChatController {
         toolResult: { toolCallId: tc.id, output: result.content, isError: result.isError },
       });
       this.deps.history.add({ role: "tool", content: result.content, toolCallId: tc.id, timestamp: Date.now() });
-      toolResults.push({ name: tc.name, isError: result.isError });
+      toolResults.push({ name: tc.name, args: tc.arguments, isError: result.isError });
     }
 
     // ── Loop detection ────────────────────────────────────────────────
-    // A) The same tools failed identically for 2 consecutive turns.
+    // A) The same tool calls (name AND arguments) failed for 2 consecutive
+    //    turns. Two DIFFERENT failing calls of the same tool (e.g. Read a.ts
+    //    then Read b.ts) do NOT match: they are distinct work, not a loop.
     // B) 3 consecutive turns where every tool call failed (even different tools).
     // C) The same tool call (name+args) repeated for 3 consecutive turns,
     //    even when it succeeds (e.g. reading the same file forever).
@@ -204,7 +207,12 @@ export class Agent implements ChatController {
         const prevTools = prevAssistant[0].toolCalls!;
         const sameAsPrevious =
           toolResults.length === prevTools.length &&
-          toolResults.every((r, i) => i < prevTools.length && prevTools[i].name === r.name);
+          toolResults.every(
+            (r, i) =>
+              i < prevTools.length &&
+              prevTools[i].name === r.name &&
+              JSON.stringify(prevTools[i].arguments) === JSON.stringify(r.args),
+          );
         if (sameAsPrevious) {
           // Local reasoning models can fail tool-call JSON once (often a
           // truncated trace), then recover if prompted again. Give it one
@@ -290,73 +298,29 @@ export class Agent implements ChatController {
 
     const accumulator = new ToolCallAccumulator();
     let content = "";
+    let thinking = "";
     const toolCalls: ToolCall[] = [];
 
     // Thinking tag parser: some models (Qwen, local LLMs) emit reasoning
     // inside <think>...</think> or <reason>...</reason> embedded in text.
-    // We parse these out and emit them as thinking events instead.
-    var thinkingBuffer = "";
-    var inThinking = false;
-    var thinking = "";
+    // We parse these out and emit them as thinking events instead. The parser
+    // is stateful across chunks (a block may span several chunks).
+    const thinkingParser = new ThinkingTagParser();
 
     for await (const chunk of provider.stream(messages, this.abortController!.signal)) {
       if (chunk.type === "text") {
         // Emit raw chunk for stream log
         this.deps.events.emit({ type: "raw_chunk", chunk: chunk.content, kind: "text" });
 
-        // Process the text for embedded thinking tags
-        var remaining = chunk.content;
-        while (remaining.length > 0) {
-          if (inThinking) {
-            // Look for close tag
-            var closeIdx = remaining.indexOf("</think>");
-            var closeReasonIdx = remaining.indexOf("</reason>");
-            var closeTag = -1;
-            if (closeIdx >= 0 && (closeReasonIdx < 0 || closeIdx < closeReasonIdx)) closeTag = closeIdx;
-            else closeTag = closeReasonIdx;
-
-            if (closeTag >= 0) {
-              thinkingBuffer += remaining.slice(0, closeTag);
-              if (thinkingBuffer.trim()) {
-                thinking += thinkingBuffer;
-                this.deps.events.emit({ type: "thinking_delta", content: thinkingBuffer });
-              }
-              thinkingBuffer = "";
-              inThinking = false;
-              content += ""; // invisible marker to show thinking happened
-              remaining = remaining.slice(closeTag + (closeIdx >= 0 ? 8 : 9)); //  response or </reason>
-            } else {
-              thinkingBuffer += remaining;
-              remaining = "";
-            }
+        // Stream the text, splitting <think>/<reason> blocks into thinking
+        // deltas and the rest into visible text deltas, in order.
+        for (const ev of thinkingParser.feed(chunk.content)) {
+          if (ev.kind === "thinking") {
+            thinking += ev.content;
+            this.deps.events.emit({ type: "thinking_delta", content: ev.content });
           } else {
-            // Look for open tag
-            var openIdx = remaining.indexOf("<think>");
-            var openReasonIdx = remaining.indexOf("<reason>");
-            var openTag = -1;
-            var useReason = false;
-            if (openIdx >= 0 && (openReasonIdx < 0 || openIdx < openReasonIdx)) {
-              openTag = openIdx;
-            } else if (openReasonIdx >= 0) {
-              openTag = openReasonIdx;
-              useReason = true;
-            }
-
-            if (openTag >= 0) {
-              // Emit text before the tag
-              var before = remaining.slice(0, openTag);
-              if (before) {
-                content += before;
-                this.deps.events.emit({ type: "text_delta", content: before });
-              }
-              inThinking = true;
-              thinkingBuffer = "";
-              remaining = remaining.slice(openTag + (useReason ? 8 : 7)); // <think> or <reason>
-            } else {
-              content += remaining;
-              this.deps.events.emit({ type: "text_delta", content: remaining });
-              remaining = "";
-            }
+            content += ev.content;
+            this.deps.events.emit({ type: "text_delta", content: ev.content });
           }
         }
       } else if (chunk.type === "thinking") {

@@ -259,3 +259,48 @@ describe("JsonlSessionStore thinking level", () => {
     expect(store.load("s1").summary.thinkingLevel).toBe("low");
   });
 });
+
+describe("JsonlSessionStore saveSettings", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "harny-sessions-patch-")); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  it("persists several fields in a single atomic write and carries others forward", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    store.saveModel("s1", "gpt-4o", "opencode-go");
+
+    const summary = store.saveSettings("s1", {
+      model: "deepseek-v4-flash",
+      temperature: 0.2,
+      outputTokens: 16384,
+    });
+    const loaded = store.load("s1").summary;
+
+    expect(summary.model).toBe("deepseek-v4-flash");
+    expect(loaded.model).toBe("deepseek-v4-flash");
+    expect(loaded.temperature).toBe(0.2);
+    expect(loaded.outputTokens).toBe(16384);
+    // modelProvider (not in the patch) is carried forward unchanged
+    expect(loaded.modelProvider).toBe("opencode-go");
+  });
+
+  it("clears a field back to Auto when the patch key is undefined", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    store.saveTemperature("s1", 0.7);
+    expect(store.load("s1").summary.temperature).toBe(0.7);
+
+    store.saveSettings("s1", { temperature: undefined });
+    expect(store.load("s1").summary.temperature).toBeUndefined();
+  });
+
+  it("drops invalid thinking levels from the patch", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    store.saveSettings("s1", { thinkingLevel: "bogus" as never, model: "m1" });
+    const loaded = store.load("s1").summary;
+    expect(loaded.thinkingLevel).toBeUndefined();
+    expect(loaded.model).toBe("m1");
+  });
+});

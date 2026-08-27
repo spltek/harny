@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { FileSystem } from "../tools/file-system";
 import type { ChatMessage } from "../history/types";
 import { isThinkingLevel, type ThinkingLevel } from "../config/types";
-import type { LoadedSession, SessionStore, SessionSummary } from "./types";
+import type { LoadedSession, SessionSettingsPatch, SessionStore, SessionSummary } from "./types";
 
 interface SessionMeta {
   type: "session";
@@ -101,49 +101,66 @@ export class JsonlSessionStore implements SessionStore {
     };
   }
 
-  saveModel(id: string, model?: string, provider?: string): SessionSummary {
+  /**
+   * Atomically persist any subset of the per-session settings in a SINGLE
+   * file write (the per-field save* methods below all delegate here). The
+   * patch is normalized with the same semantics as the old per-field methods:
+   * a key present in the patch (even `undefined`) sets or clears that field.
+   */
+  saveSettings(id: string, patch: SessionSettingsPatch): SessionSummary {
     const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
     const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
-    const summary = this.carrySummary(id, existing, messages, {
+    const summary = this.carrySummary(id, existing, messages, this.normalizePatch(patch));
+    this.fs.mkdirRecursive(this.dir());
+    this.fs.writeText(this.path(id), this.serialize(summary, messages));
+    return summary;
+  }
+
+  /**
+   * Validate/clear semantics for a settings patch, mirroring the per-field
+   * methods:
+   * - model/modelProvider/thinkingLevel: stored only when valid (never
+   *   cleared via patch — pass an empty patch instead of undefined keys).
+   * - numeric limits (contextWindow/contextTokens/outputTokens): stored only
+   *   when a number.
+   * - temperature/presencePenalty/frequencyPenalty/topP/sampler: presence in
+   *   the patch (even with `undefined`) SETS or CLEARS the stored value.
+   */
+  private normalizePatch(patch: SessionSettingsPatch): Partial<SessionSummary> {
+    const out: Partial<SessionSummary> = {};
+    if (patch.model) out.model = patch.model;
+    if (patch.modelProvider) out.modelProvider = patch.modelProvider;
+    if (patch.thinkingLevel !== undefined && isThinkingLevel(patch.thinkingLevel)) {
+      out.thinkingLevel = patch.thinkingLevel;
+    }
+    if (typeof patch.contextWindow === "number") out.contextWindow = patch.contextWindow;
+    if (typeof patch.contextTokens === "number") out.contextTokens = patch.contextTokens;
+    if (typeof patch.outputTokens === "number") out.outputTokens = patch.outputTokens;
+    if ("temperature" in patch) out.temperature = patch.temperature;
+    if ("presencePenalty" in patch) out.presencePenalty = patch.presencePenalty;
+    if ("frequencyPenalty" in patch) out.frequencyPenalty = patch.frequencyPenalty;
+    if ("topP" in patch) out.topP = patch.topP;
+    if ("sampler" in patch) out.sampler = patch.sampler;
+    return out;
+  }
+
+  saveModel(id: string, model?: string, provider?: string): SessionSummary {
+    return this.saveSettings(id, {
       ...(model ? { model } : {}),
       ...(provider ? { modelProvider: provider } : {}),
     });
-    this.fs.mkdirRecursive(this.dir());
-    this.fs.writeText(this.path(id), this.serialize(summary, messages));
-    return summary;
   }
 
   saveThinkingLevel(id: string, level?: ThinkingLevel): SessionSummary {
-    const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
-    const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
-    const summary = this.carrySummary(id, existing, messages, {
-      ...(isThinkingLevel(level) ? { thinkingLevel: level } : {}),
-    });
-    this.fs.mkdirRecursive(this.dir());
-    this.fs.writeText(this.path(id), this.serialize(summary, messages));
-    return summary;
+    return this.saveSettings(id, { ...(isThinkingLevel(level) ? { thinkingLevel: level } : {}) });
   }
 
   saveContextWindow(id: string, window?: number): SessionSummary {
-    const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
-    const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
-    const summary = this.carrySummary(id, existing, messages, {
-      ...(typeof window === "number" ? { contextWindow: window } : {}),
-    });
-    this.fs.mkdirRecursive(this.dir());
-    this.fs.writeText(this.path(id), this.serialize(summary, messages));
-    return summary;
+    return this.saveSettings(id, { ...(typeof window === "number" ? { contextWindow: window } : {}) });
   }
 
   saveOutputTokens(id: string, tokens?: number): SessionSummary {
-    const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
-    const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
-    const summary = this.carrySummary(id, existing, messages, {
-      ...(typeof tokens === "number" ? { outputTokens: tokens } : {}),
-    });
-    this.fs.mkdirRecursive(this.dir());
-    this.fs.writeText(this.path(id), this.serialize(summary, messages));
-    return summary;
+    return this.saveSettings(id, { ...(typeof tokens === "number" ? { outputTokens: tokens } : {}) });
   }
 
   /**
@@ -152,73 +169,31 @@ export class JsonlSessionStore implements SessionStore {
    * keys), overriding any previously carried value.
    */
   saveTemperature(id: string, temp?: number): SessionSummary {
-    const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
-    const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
-    const summary = this.carrySummary(id, existing, messages, {
-      ...(temp === undefined ? { temperature: undefined } : { temperature: temp }),
-    });
-    this.fs.mkdirRecursive(this.dir());
-    this.fs.writeText(this.path(id), this.serialize(summary, messages));
-    return summary;
+    return this.saveSettings(id, { temperature: temp });
   }
 
   /** Presence penalty (Auto/undefined clears the stored value). */
   savePresencePenalty(id: string, value?: number): SessionSummary {
-    const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
-    const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
-    const summary = this.carrySummary(id, existing, messages, {
-      ...(value === undefined ? { presencePenalty: undefined } : { presencePenalty: value }),
-    });
-    this.fs.mkdirRecursive(this.dir());
-    this.fs.writeText(this.path(id), this.serialize(summary, messages));
-    return summary;
+    return this.saveSettings(id, { presencePenalty: value });
   }
 
   /** Frequency penalty (Auto/undefined clears the stored value). */
   saveFrequencyPenalty(id: string, value?: number): SessionSummary {
-    const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
-    const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
-    const summary = this.carrySummary(id, existing, messages, {
-      ...(value === undefined ? { frequencyPenalty: undefined } : { frequencyPenalty: value }),
-    });
-    this.fs.mkdirRecursive(this.dir());
-    this.fs.writeText(this.path(id), this.serialize(summary, messages));
-    return summary;
+    return this.saveSettings(id, { frequencyPenalty: value });
   }
 
   /** top_p (Auto/undefined clears the stored value). */
   saveTopP(id: string, value?: number): SessionSummary {
-    const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
-    const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
-    const summary = this.carrySummary(id, existing, messages, {
-      ...(value === undefined ? { topP: undefined } : { topP: value }),
-    });
-    this.fs.mkdirRecursive(this.dir());
-    this.fs.writeText(this.path(id), this.serialize(summary, messages));
-    return summary;
+    return this.saveSettings(id, { topP: value });
   }
 
   /** Active sampler; undefined means the session default (temperature). */
   saveSampler(id: string, sampler?: "temperature" | "topP"): SessionSummary {
-    const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
-    const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
-    const summary = this.carrySummary(id, existing, messages, {
-      ...(sampler ? { sampler } : { sampler: undefined }),
-    });
-    this.fs.mkdirRecursive(this.dir());
-    this.fs.writeText(this.path(id), this.serialize(summary, messages));
-    return summary;
+    return this.saveSettings(id, { sampler });
   }
 
   saveContextTokens(id: string, tokens?: number): SessionSummary {
-    const existing = this.fs.exists(this.path(id)) ? this.readHeader(this.path(id)) : undefined;
-    const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
-    const summary = this.carrySummary(id, existing, messages, {
-      ...(typeof tokens === "number" ? { contextTokens: tokens } : {}),
-    });
-    this.fs.mkdirRecursive(this.dir());
-    this.fs.writeText(this.path(id), this.serialize(summary, messages));
-    return summary;
+    return this.saveSettings(id, { ...(typeof tokens === "number" ? { contextTokens: tokens } : {}) });
   }
 
   load(id: string): LoadedSession {

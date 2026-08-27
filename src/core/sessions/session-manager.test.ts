@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { SessionManager } from "./session-manager";
-import type { LoadedSession, SessionStore, SessionSummary } from "./types";
+import type { LoadedSession, SessionSettingsPatch, SessionStore, SessionSummary } from "./types";
 
 function makeStore(): SessionStore {
   let idc = 0;
@@ -12,6 +12,7 @@ function makeStore(): SessionStore {
     }),
     load: vi.fn((id: string): LoadedSession => ({ summary: { id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 1 }, messages: [{ role: "user", content: "x", timestamp: 1 }] })),
     saveMessages: vi.fn((id: string, messages: { role: string; content: string; timestamp: number }[]): SessionSummary => ({ id, name: "S", createdAt: 1, updatedAt: 2, messageCount: messages.length })),
+    saveSettings: vi.fn((id: string, patch: SessionSettingsPatch): SessionSummary => ({ id, name: "S", createdAt: 1, updatedAt: 2, messageCount: 0, ...patch })),
     rename: vi.fn((id: string, name: string): SessionSummary => ({ id, name, createdAt: 1, updatedAt: 2, messageCount: 0 })),
     remove: vi.fn((): boolean => true),
   };
@@ -57,5 +58,15 @@ describe("SessionManager", () => {
 
     expect(store.saveMessages).toHaveBeenCalledWith("s1", [{ role: "user", content: "a", timestamp: 1 }]);
     expect(summary.messageCount).toBe(1);
+  });
+
+  it("saveSettings delegates a patch atomically to the store", () => {
+    const store = makeStore();
+    const manager = new SessionManager(store);
+
+    const summary = manager.saveSettings("s1", { model: "gpt-4o", temperature: 0.2 });
+
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { model: "gpt-4o", temperature: 0.2 });
+    expect(summary).toEqual(expect.objectContaining({ model: "gpt-4o", temperature: 0.2 }));
   });
 });

@@ -50,14 +50,16 @@ describe("ShellTool", () => {
     expect(result.content).toContain("timed out");
   });
 
-  it("rejects the 'all' permission", () => {
-    const runner = fakeRunner([]);
+  it("ignores legacy permission arguments (no sandbox or permission gate)", () => {
+    const runner = fakeRunner([{ stdout: "ok", stderr: "", code: 0, timedOut: false }]);
     const tool = new ShellTool(runner, cwd);
 
-    const result = tool.execute({ command: "rm -rf /", required_permissions: ["all"] });
+    const result = tool.execute({ command: "echo ok", required_permissions: ["all"] });
 
-    expect(result.isError).toBe(true);
-    expect(runner.calls).toHaveLength(0);
+    // harny has no sandbox: the command runs as-is and the permission request
+    // is inert (it is not part of the schema the model sees).
+    expect(result.isError).toBe(false);
+    expect(runner.calls).toHaveLength(1);
   });
 
   it("passes working_directory and timeout to the runner", () => {

@@ -471,6 +471,43 @@ describe("Agent", () => {
     expect(error && error.type === "error" ? error.error : "").toContain("consecutive turns of tool errors");
   });
 
+  it("does not fire the corrective prompt when the same tool fails with different args", async () => {
+    const failingTool = makeTool("Read", { content: "boom", isError: true });
+    const { agent, factory, events, history } = buildHarness({
+      tools: [failingTool],
+      chunks: [
+        [
+          { type: "tool_call_start", index: 0, id: "c1", name: "Read" },
+          { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts"}' },
+          { type: "tool_call_end", index: 0 },
+        ],
+        [
+          { type: "tool_call_start", index: 0, id: "c2", name: "Read" },
+          { type: "tool_call_delta", index: 0, delta: '{"path":"b.ts"}' },
+          { type: "tool_call_end", index: 0 },
+        ],
+        [
+          { type: "tool_call_start", index: 0, id: "c3", name: "Read" },
+          { type: "tool_call_delta", index: 0, delta: '{"path":"c.ts"}' },
+          { type: "tool_call_end", index: 0 },
+        ],
+      ],
+      maxTurns: 6,
+    });
+
+    await agent.send("x");
+
+    // Different arguments each turn: detector A must NOT treat them as the
+    // same failing call, so no corrective user prompt is injected. Detector B
+    // (3 consecutive all-error turns) is what stops the loop.
+    expect(factory.calls).toBe(3);
+    expect(
+      history.all().some((m) => m.role === "user" && /[Rr]e-emit the tool call/.test(m.content)),
+    ).toBe(false);
+    const error = events.find((e) => e.type === "error");
+    expect(error && error.type === "error" ? error.error : "").toContain("consecutive turns of tool errors");
+  });
+
   it("stops when the same successful tool call is repeated 3 times in a row", async () => {
     const { agent, factory, events } = buildHarness({
       chunks: [

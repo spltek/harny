@@ -56,6 +56,7 @@ function makeStore(): SessionStore {
     create: vi.fn((name?: string) => ({ id: `s${++c}`, name: name?.trim() || "New Session", createdAt: 1, updatedAt: 1, messageCount: 0 })),
     load: vi.fn((id: string) => ({ summary: { id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 0 }, messages: [] })),
     saveMessages: vi.fn((id: string, messages) => ({ id, name: "S", createdAt: 1, updatedAt: 2, messageCount: messages.length })),
+    saveSettings: vi.fn((id, patch) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...patch })),
     rename: vi.fn((id, name) => ({ id, name, createdAt: 1, updatedAt: 2, messageCount: 0 })),
     remove: vi.fn(() => true),
     saveModel: vi.fn((id, model, provider) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(model ? { model } : {}), ...(provider ? { modelProvider: provider } : {}) })),
@@ -424,7 +425,7 @@ describe("ChatViewProvider", () => {
     await provider.createNew(); // s1
     await handler({ type: "setModel", model: "gpt-4o", provider: undefined });
     await handler({ type: "setThinkingLevel", level: "high" });
-    expect(store.saveThinkingLevel).toHaveBeenCalledWith("s1", "high");
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { thinkingLevel: "high" });
     const configPosts = view.webview.postMessage.mock.calls
       .map((c) => c[0] as any)
       .filter((m) => m.type === "config");
@@ -437,7 +438,7 @@ describe("ChatViewProvider", () => {
     await provider.createNew(); // s1
     await handler({ type: "setModel", model: "gpt-4o", provider: undefined }); // runtime needs a model
     await handler({ type: "setOutputTokens", value: 16384 });
-    expect(store.saveOutputTokens).toHaveBeenCalledWith("s1", 16384);
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { outputTokens: 16384 });
     const configPosts = view.webview.postMessage.mock.calls
       .map((c) => c[0] as any)
       .filter((m) => m.type === "config");
@@ -451,8 +452,8 @@ describe("ChatViewProvider", () => {
     await handler({ type: "setModel", model: "gpt-4o", provider: undefined });
     await handler({ type: "setPresencePenalty", value: 1.5 });
     await handler({ type: "setFrequencyPenalty", value: 0.5 });
-    expect(store.savePresencePenalty).toHaveBeenCalledWith("s1", 1.5);
-    expect(store.saveFrequencyPenalty).toHaveBeenCalledWith("s1", 0.5);
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { presencePenalty: 1.5 });
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { frequencyPenalty: 0.5 });
     const configPosts = view.webview.postMessage.mock.calls
       .map((c) => c[0] as any)
       .filter((m) => m.type === "config");
@@ -468,19 +469,19 @@ describe("ChatViewProvider", () => {
     await handler({ type: "setModel", model: "gpt-4o", provider: undefined });
     // Temperature (default): the shared value lands on temperature, 0 is valid.
     await handler({ type: "setSamplerValue", value: 0 });
-    expect(store.saveTemperature).toHaveBeenCalledWith("s1", 0);
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { temperature: 0 });
     expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ temperature: 0 }));
 
     // Switch to Top-P: mode persists AND both stored values reset to Auto.
     await handler({ type: "setSamplerMode", mode: "topP" });
-    expect(store.saveSampler).toHaveBeenCalledWith("s1", "topP");
-    expect(store.saveTemperature).toHaveBeenCalledWith("s1", undefined);
+    // temperature was set (0), so it is cleared to Auto in the same patch.
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { sampler: "topP", temperature: undefined });
     // Only the active sampler carries a value: temperature cleared to none.
     expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ topP: undefined, temperature: undefined }));
 
     // Now the shared value lands on topP (0.9 valid on the 0–1 scale).
     await handler({ type: "setSamplerValue", value: 0.9 });
-    expect(store.saveTopP).toHaveBeenCalledWith("s1", 0.9);
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { topP: 0.9 });
     const configPosts = view.webview.postMessage.mock.calls
       .map((c) => c[0] as any)
       .filter((m) => m.type === "config");
@@ -550,8 +551,7 @@ describe("ChatViewProvider", () => {
       { role: "user", content: "hi", timestamp: 1 },
       { role: "assistant", content: "hello", timestamp: 2 },
     ]);
-    expect(store.saveModel).toHaveBeenCalledWith("s2", "gpt-4o", undefined);
-    expect(store.saveOutputTokens).toHaveBeenCalledWith("s2", 16384);
+    expect(store.saveSettings).toHaveBeenCalledWith("s2", { model: "gpt-4o", outputTokens: 16384 });
     const switchPosts = view.webview.postMessage.mock.calls
       .map((c) => c[0] as any)
       .filter((m) => m.type === "switchView");
@@ -660,7 +660,7 @@ describe("ChatViewProvider", () => {
     const rt = registry.get("s1")!;
     (rt.agent as any).emit({ type: "usage", usage: { input: 50, output: 4, total: 54 } });
     expect(rt.contextTokens).toBe(50);
-    expect(store.saveContextTokens).toHaveBeenCalledWith("s1", 50);
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { contextTokens: 50 });
   });
 
   it("setModel with a named provider applies its overrides", async () => {
@@ -775,7 +775,7 @@ describe("ChatViewProvider per-session model", () => {
     const rt = registry.get("s1")!;
     expect(rt.model).toBe("gemma.gguf");
     expect(rt.modelProvider).toBe("llamacpp");
-    expect(store.saveModel).toHaveBeenCalledWith("s1", "gemma.gguf", "llamacpp");
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { model: "gemma.gguf", modelProvider: "llamacpp" });
   });
 
   it("applies the session model when switching to it and clears it for new sessions", async () => {
@@ -804,7 +804,7 @@ describe("ChatViewProvider context window", () => {
     await provider.createNew(); // s1
     await handler({ type: "setContextWindow", value: 200000 });
     expect(registry.get("s1")!.contextWindow).toBe(200000);
-    expect(store.saveContextWindow).toHaveBeenCalledWith("s1", 200000);
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { contextWindow: 200000 });
   });
 });
 
@@ -878,7 +878,7 @@ describe("ChatViewProvider compaction", () => {
     const conv = registry.get("s1")!.history.conversation();
     expect(conv[0].role).toBe("system"); // the summary was injected
     expect(String(conv[0].content)).toContain("## Goal");
-    expect((store.saveContextTokens as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
+    expect((store.saveSettings as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
     // stale cache hits from the pre-compaction turn are reset (no >100% ratio)
     expect(rt.cachedTokens).toBe(0);
     // final bubble posted (the UI shows completion, no toast needed)
