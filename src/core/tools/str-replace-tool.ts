@@ -9,11 +9,18 @@ import { fuzzyUniqueReplace } from "./edit-engine";
  * word, with up to 3 deduplicated "word → replacedWord" examples.
  */
 function midWordStats(original: string, oldStr: string, newStr: string): { count: number; examples: string[] } {
+  // Defense in depth: an empty pattern matches every boundary and indexOf
+  // never advances — the caller already rejects it, but never let this pass
+  // run unbounded (hard bound = one slot per possible non-empty match).
+  if (oldStr.length === 0) return { count: 0, examples: [] };
   const isWord = (c: string) => /[A-Za-z0-9_]/.test(c);
   let count = 0;
   const examples: string[] = [];
   let from = 0;
+  let iterations = 0;
+  const maxIterations = original.length + 1;
   for (;;) {
+    if (++iterations > maxIterations) break; // pathological guard
     const pos = original.indexOf(oldStr, from);
     if (pos === -1) break;
     from = pos + oldStr.length;
@@ -76,6 +83,18 @@ export class StrReplaceTool implements Tool {
           '- "old_string": exact text to find (string)\n' +
           '- "new_string": replacement text (string, different from old_string)\n' +
           'Call StrReplace again with valid JSON: {"path": "/abs/path/file.txt", "old_string": "...", "new_string": "..."}',
+        isError: true,
+      };
+    }
+    // Empty / whitespace-only old_string is rejected UP FRONT (before any
+    // occurrence analysis, BOTH replace_all paths): the empty pattern matches
+    // at every character boundary and would make the analysis run unbounded
+    // (previously: hang).
+    if (!oldStr.trim()) {
+      return {
+        content:
+          "StrReplace failed: old_string cannot be empty. Provide the exact text to replace, " +
+          "or use Edit (beforeText/afterText + newText) when you need to insert a line.",
         isError: true,
       };
     }

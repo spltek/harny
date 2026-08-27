@@ -280,6 +280,44 @@ describe("file tools", () => {
       expect(result.content).toContain('"catalog → gattoalog"');
     });
 
+    it("rejects an EMPTY old_string instantly on the replace_all path (never hangs)", () => {
+      const p = join(dir, "empty.txt");
+      writeFileSync(p, "abc");
+      const tool = new StrReplaceTool(nodeFileSystem, cwd);
+
+      const start = Date.now();
+      const result = tool.execute({ path: p, old_string: "", new_string: "X", replace_all: true });
+
+      expect(Date.now() - start).toBeLessThan(2000); // returns instantly, no hang
+      expect(result.isError).toBe(true);
+      expect(result.content).toContain("old_string cannot be empty");
+      expect(result.content).toContain("Edit"); // teaches the alternative
+      expect(nodeFileSystem.readText(p)).toBe("abc"); // byte-for-byte unchanged
+    });
+
+    it("rejects an EMPTY old_string on the single-replace path with the same didactic error", () => {
+      const p = join(dir, "empty2.txt");
+      writeFileSync(p, "abc");
+      const tool = new StrReplaceTool(nodeFileSystem, cwd);
+
+      const result = tool.execute({ path: p, old_string: "", new_string: "X" });
+
+      expect(result.isError).toBe(true);
+      expect(result.content).toContain("old_string cannot be empty");
+      expect(nodeFileSystem.readText(p)).toBe("abc");
+    });
+
+    it("rejects a whitespace-only old_string too", () => {
+      const p = join(dir, "ws-empty.txt");
+      writeFileSync(p, "abc");
+      const tool = new StrReplaceTool(nodeFileSystem, cwd);
+
+      const result = tool.execute({ path: p, old_string: "   ", new_string: "X", replace_all: true });
+
+      expect(result.isError).toBe(true);
+      expect(result.content).toContain("old_string cannot be empty");
+    });
+
     it("errors when old_string is not found", () => {
       const p = join(dir, "a.txt");
       writeFileSync(p, "hello");
