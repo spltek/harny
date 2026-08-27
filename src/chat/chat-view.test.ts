@@ -367,6 +367,25 @@ describe("ChatViewProvider", () => {
     expect(registry.listOpenIds().length).toBe(1);
   });
 
+  it("send without a model keeps user message + warning in history (follow-up keeps context)", async () => {
+    const { registry, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+
+    expect(registry.get("s1")!.model).toBeUndefined(); // new session: no model yet
+    await handler({ type: "send", text: "primo messaggio" });
+
+    // both entries persist: refresh/switch re-renders from history, and the
+    // next "now do it" (after picking a model) still sees this message.
+    const msgs = registry.get("s1")!.agent.getMessages();
+    expect(msgs.map((m) => m.role)).toEqual(["user", "assistant"]);
+    expect(msgs[0].content).toBe("primo messaggio");
+    expect(msgs[1].content).toContain("Select a model");
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "error", error: expect.stringContaining("Select a model") }),
+    );
+  });
+
   it("renameSession renames via the in-panel modal", async () => {
     const { store, provider } = buildHarness();
     const { handler, view } = resolveWith(provider);

@@ -539,16 +539,19 @@ export class ChatViewProvider implements WebviewViewProvider {
 
   private async send(rt: SessionRuntime, msg: any): Promise<void> {
     if (rt.agent.streaming) return;
-    // New sessions start with no model: the user must pick one first.
-    if (!rt.model) {
-      this.view?.webview.postMessage({
-        type: "error",
-        error: "Select a model for this session first (dropdown in the header).",
-      });
-      return;
-    }
     const rawText = msg.text as string;
     if (!rawText?.trim()) return;
+    // New sessions start with no model: the user must pick one first. Keep BOTH
+    // the user message and an explanatory error IN the history — otherwise the
+    // transcript rebuild (refresh/switch) drops them and the follow-up "now do
+    // it" reaches the agent with an EMPTY history.
+    if (!rt.model) {
+      rt.history.add({ role: "user", content: rawText, timestamp: Date.now() });
+      const errorMsg = "Select a model for this session first (dropdown in the header).";
+      rt.history.add({ role: "assistant", content: `❌ ${errorMsg}`, timestamp: Date.now() });
+      this.view?.webview.postMessage({ type: "error", error: errorMsg });
+      return;
+    }
     const attached = (msg.attachments as AttachmentInfo[] | undefined) ?? [];
     let text = rawText;
     let images: string[] | undefined;
