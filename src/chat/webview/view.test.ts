@@ -680,6 +680,21 @@ describe("view webview client", () => {
     expect(document.querySelector(".msg.tool .tool-path")).toBeNull();
   });
 
+  it("shows the glob pattern after the tool name for Glob", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    hostMessage({ type: "toolCall", id: "g1", name: "Glob", arguments: { glob_pattern: "**/*.ts" } });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "g1",
+      output: "/w/a.ts\n/w/b.ts",
+      isError: false,
+    });
+    expect(document.querySelector(".msg.tool .tool-path")?.textContent).toBe("**/*.ts");
+  });
+
   it("renders a Write preview as an all-additions diff bubble", async () => {
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;

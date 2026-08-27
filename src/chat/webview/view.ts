@@ -358,17 +358,20 @@ function makeThinkingBlock(
   return block;
 }
 
-/** Target file of a tool call (args.path), if any. */
-function toolPathArg(args: unknown): string | undefined {
+/** Target of a tool call shown in the header after the tool name: the file
+ *  path for file tools, or the glob pattern for Glob. */
+function toolTargetArg(args: unknown): string | undefined {
   if (!args || typeof args !== "object") return undefined;
-  const p = (args as Record<string, unknown>).path;
+  const rec = args as Record<string, unknown>;
+  if (typeof rec.glob_pattern === "string" && rec.glob_pattern) return rec.glob_pattern;
+  const p = rec.path;
   return typeof p === "string" && p ? p : undefined;
 }
 
 function addToolCall(name: string, args: unknown, beforeEl?: HTMLElement | null): HTMLDivElement {
   const div = document.createElement("div");
   div.className = "msg tool tool-call-pending";
-  const target = toolPathArg(args);
+  const target = toolTargetArg(args);
   div.innerHTML =
     '<div class="tool-header">' +
     '<span class="tool-toggle">▶</span>' +
