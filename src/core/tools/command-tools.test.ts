@@ -241,6 +241,17 @@ describe("GlobTool", () => {
     expect(result.content).toBe("No files found");
   });
 
+  it("refuses a target_directory outside the workspace root", () => {
+    const runner = fakeRunner([]);
+    const tool = new GlobTool(runner, fakeFs(), cwd);
+
+    const result = tool.execute({ glob_pattern: "*.ts", target_directory: "../outside" });
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("falls outside the workspace root");
+    expect(runner.calls).toHaveLength(0); // no shell command for an escape
+  });
+
   describe("globstarToRegex", () => {
     // mirrors the tool's usage: relative patterns get a leading .*, anchored at $
     const re = (g: string) => new RegExp(".*" + globstarToRegex(g) + "$");

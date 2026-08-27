@@ -12,7 +12,9 @@ export class GrepTool implements Tool {
       "A search tool built on ripgrep. Results are capped to several thousand output lines for responsiveness; " +
       "when truncation occurs, the results report \"at least\" counts, but are otherwise accurate.\n\n" +
       "DIRECTORY searches skip hidden (dot-)files by default — pass hidden: true to include them, or target " +
-      "the file path directly. Binary files are not displayed (a single binary target is flagged explicitly).",
+      "the file path directly. Binary files are not displayed (a single binary target is flagged explicitly).\n" +
+      "Pointing Grep at a symlink's PATH follows the link to its real target, while Glob does NOT list " +
+      "symlinks — target the real path, don't assume a link is \"missing\".",
     parameters: {
       type: "object",
       properties: {

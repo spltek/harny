@@ -1,6 +1,6 @@
 import type { CommandRunner } from "./command-runner";
 import type { FileSystem } from "./file-system";
-import { resolvePath } from "./path-utils";
+import { pathSafetyError, resolvePath } from "./path-utils";
 import type { Tool, ToolDefinition, ToolResult } from "./tool";
 
 /**
@@ -61,7 +61,9 @@ export class GlobTool implements Tool {
   readonly definition: ToolDefinition = {
     name: "Glob",
     description:
-      "Tool to search for files matching a glob pattern.\n\n- Returns matching file paths sorted by modification time, NEWEST FIRST.",
+      "Tool to search for files matching a glob pattern.\n\n- Returns matching file paths sorted by modification time, NEWEST FIRST.\n" +
+        "- Symlinked files are NOT listed in results — if the real file behind a link matters, point target_directory at its real path.\n" +
+        "- Directory searches are confined to the workspace root.",
     parameters: {
       type: "object",
       properties: {
@@ -95,6 +97,11 @@ export class GlobTool implements Tool {
     }
 
     const dir = args.target_directory ? resolvePath(args.target_directory as string, this.cwd()) : this.cwd();
+    // Boundary guard: directory searches must stay inside the workspace root.
+    if (args.target_directory) {
+      const unsafe = pathSafetyError(dir, this.cwd());
+      if (unsafe) return { content: unsafe, isError: true };
+    }
 
     let pattern = globPattern;
     if (!pattern.startsWith("**/") && !pattern.startsWith("/")) {

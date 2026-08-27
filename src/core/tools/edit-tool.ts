@@ -1,5 +1,5 @@
 import type { FileSystem } from "./file-system";
-import { resolvePath } from "./path-utils";
+import { pathSafetyError, resolvePath } from "./path-utils";
 import type { Tool, ToolDefinition, ToolResult } from "./tool";
 import { applyEdits, checkStructuralBalance, closestContext, type EditOp } from "./edit-engine";
 import { diffStat, fencedDiffBlock } from "./diff-text";
@@ -60,6 +60,8 @@ export class EditTool implements Tool {
       };
     }
     const filePath = resolvePath(pathArg, this.cwd());
+    const unsafe = pathSafetyError(filePath, this.cwd());
+    if (unsafe) return { content: unsafe, isError: true };
     if (!this.fs.exists(filePath)) {
       return { content: `File not found: ${filePath}`, isError: true };
     }

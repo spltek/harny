@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatSize, isImagePath, resolvePath } from "./path-utils";
+import { formatSize, isImagePath, pathSafetyError, resolvePath } from "./path-utils";
 
 describe("resolvePath", () => {
   it("returns the cwd for empty input", () => {
@@ -13,6 +13,26 @@ describe("resolvePath", () => {
 
   it("resolves relative paths against the cwd", () => {
     expect(resolvePath("src/main.ts", "/workspace")).toBe("/workspace/src/main.ts");
+  });
+});
+
+describe("pathSafetyError", () => {
+  const root = "/workspace";
+  it("allows paths inside the root (and the root itself)", () => {
+    expect(pathSafetyError("/workspace", root)).toBeUndefined();
+    expect(pathSafetyError("/workspace/src/a.ts", root)).toBeUndefined();
+    // ".." that is normalized back INSIDE the root is fine
+    expect(pathSafetyError("/workspace/sub/../a.ts", root)).toBeUndefined();
+  });
+  it("rejects traversal outside the root with a teaching message", () => {
+    const err = pathSafetyError("/etc/passwd", root);
+    expect(err).toContain("falls outside the workspace root /workspace");
+    expect(err).toContain("Refusing to operate outside the sandbox");
+    const parent = pathSafetyError("/workspace/../other", root);
+    expect(parent).toContain("falls outside");
+  });
+  it("rejects a sibling path at the same level", () => {
+    expect(pathSafetyError("/workspace-x/a", root)).toContain("falls outside");
   });
 });
 
