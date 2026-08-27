@@ -676,8 +676,8 @@ describe("view webview client", () => {
     const result = document.querySelector(".msg.tool .tool-result") as HTMLElement;
     expect(result?.textContent).toContain("-rw-r--r--");
     expect(document.querySelector(".tool-diff")).toBeNull();
-    // a Shell call has no target file: no path chip in the header
-    expect(document.querySelector(".msg.tool .tool-path")).toBeNull();
+    // a Shell call shows its command in the header chip
+    expect(document.querySelector(".msg.tool .tool-path")?.textContent).toBe("ls -la");
   });
 
   it("shows the glob pattern after the tool name for Glob", async () => {

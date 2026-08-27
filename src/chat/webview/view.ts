@@ -359,13 +359,15 @@ function makeThinkingBlock(
 }
 
 /** Target of a tool call shown in the header after the tool name: the file
- *  path for file tools, or the glob pattern for Glob. */
+ *  path for file tools, the glob pattern for Glob, the command for Shell. */
 function toolTargetArg(args: unknown): string | undefined {
   if (!args || typeof args !== "object") return undefined;
   const rec = args as Record<string, unknown>;
   if (typeof rec.glob_pattern === "string" && rec.glob_pattern) return rec.glob_pattern;
   const p = rec.path;
-  return typeof p === "string" && p ? p : undefined;
+  if (typeof p === "string" && p) return p;
+  const cmd = rec.command;
+  return typeof cmd === "string" && cmd ? cmd : undefined;
 }
 
 function addToolCall(name: string, args: unknown, beforeEl?: HTMLElement | null): HTMLDivElement {
