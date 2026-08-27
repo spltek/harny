@@ -120,6 +120,37 @@ describe("GrepTool", () => {
     expect(result.content).toBe("No matches found");
   });
 
+  it("hints when hidden entries were skipped by a zero-match DIRECTORY search", () => {
+    const fs: FileSystem = { ...fakeFs(), exists: () => true, list: () => ["file.txt", ".hidden", ".config"] };
+    const runner = fakeRunner([{ stdout: "", stderr: "", code: 1, timedOut: false }]);
+    const tool = new GrepTool(runner, fs, cwd);
+
+    const result = tool.execute({ pattern: "hidden", path: "/w" });
+
+    expect(result.content).toContain("No matches found");
+    expect(result.content).toContain("2 hidden entries");
+    expect(result.content).toContain('"hidden": true');
+  });
+
+  it("stays clean ('No matches found') when a directory has NO hidden entries", () => {
+    const fs: FileSystem = { ...fakeFs(), exists: () => true, list: () => ["file.txt", "src"] };
+    const runner = fakeRunner([{ stdout: "", stderr: "", code: 1, timedOut: false }]);
+    const tool = new GrepTool(runner, fs, cwd);
+
+    const result = tool.execute({ pattern: "hidden", path: "/w" });
+
+    expect(result.content).toBe("No matches found");
+  });
+
+  it("passes --hidden when hidden: true is requested", () => {
+    const runner = fakeRunner([{ stdout: "", stderr: "", code: 0, timedOut: false }]);
+    const tool = new GrepTool(runner, existingFs, cwd);
+
+    tool.execute({ pattern: "x", path: "/w", hidden: true });
+
+    expect(runner.calls[0].command).toContain("--hidden");
+  });
+
   it("errors explicitly when the target path does not exist", () => {
     const fs: FileSystem = { ...fakeFs(), exists: () => false };
     const tool = new GrepTool(fakeRunner([]), fs, cwd);

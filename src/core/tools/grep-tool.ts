@@ -9,7 +9,10 @@ export class GrepTool implements Tool {
   readonly definition: ToolDefinition = {
     name: "Grep",
     description:
-      "A search tool built on ripgrep. Results are capped to several thousand output lines for responsiveness; when truncation occurs, the results report \"at least\" counts, but are otherwise accurate.",
+      "A search tool built on ripgrep. Results are capped to several thousand output lines for responsiveness; " +
+      "when truncation occurs, the results report \"at least\" counts, but are otherwise accurate.\n\n" +
+      "DIRECTORY searches skip hidden (dot-)files by default — pass hidden: true to include them, or target " +
+      "the file path directly. Binary files are not displayed (a single binary target is flagged explicitly).",
     parameters: {
       type: "object",
       properties: {
@@ -28,6 +31,7 @@ export class GrepTool implements Tool {
         type: { type: "string", description: "File type to search (rg --type)." },
         head_limit: { type: "number", minimum: 0, description: "Limit output size." },
         offset: { type: "number", minimum: 0, description: "Skip first N entries." },
+        hidden: { type: "boolean", description: "Include hidden (dot-)files when searching a directory (rg --hidden). Default false." },
         multiline: { type: "boolean", description: "Enable multiline mode (rg -U --multiline-dotall)." },
       },
       required: ["pattern"],
@@ -74,6 +78,7 @@ export class GrepTool implements Tool {
 
     const flags: string[] = [];
     if (args["-i"]) flags.push("-i");
+    if (args.hidden) flags.push("--hidden");
     if (args.multiline) flags.push("-U", "--multiline-dotall");
     if (args["-A"]) flags.push(`-A${args["-A"]}`);
     if (args["-B"]) flags.push(`-B${args["-B"]}`);
@@ -91,7 +96,25 @@ export class GrepTool implements Tool {
     // missing binary, ...). With `2>&1` error text lands in stdout, so never
     // report a real rg failure as a clean "No matches found".
     if (result.code === 1) {
-      return { content: "No matches found", isError: false };
+      // "No matches" on a DIRECTORY search is only about non-hidden files: if
+      // hidden entries are present and hidden:true is off, say so explicitly
+      // instead of letting the agent conclude "absent from the project".
+      let hint = "";
+      if (!args.hidden && args.path) {
+        try {
+          const entries = this.fs.list(searchPath);
+          if (Array.isArray(entries)) {
+            const hidden = entries.filter((e) => e.startsWith(".") && e !== "." && e !== "..").length;
+            if (hidden > 0) {
+              hint = `\n${hidden} hidden entr${hidden === 1 ? "y" : "ies"} in the searched folder were skipped by default. ` +
+                'Re-run with "hidden": true, or target the file path directly, to include dot-files.';
+            }
+          }
+        } catch {
+          /* not a directory or list unsupported: no hint */
+        }
+      }
+      return { content: "No matches found" + hint, isError: false };
     }
     if (result.code !== 0) {
       return { content: result.stdout.trim() || `rg failed with exit code ${result.code}`, isError: true };
