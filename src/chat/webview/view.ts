@@ -358,16 +358,31 @@ function makeThinkingBlock(
   return block;
 }
 
-/** Target of a tool call shown in the header after the tool name: the file
- *  path for file tools, the glob pattern for Glob, the command for Shell. */
+/**
+ * Target of a tool call shown in the header after the tool name: the file
+ * path (file tools), the glob pattern (Glob), the command (Shell), the
+ * search term (WebSearch), the url (WebFetch), the paths (ReadLints) or the
+ * list summary (TodoWrite).
+ */
 function toolTargetArg(args: unknown): string | undefined {
   if (!args || typeof args !== "object") return undefined;
   const rec = args as Record<string, unknown>;
   if (typeof rec.glob_pattern === "string" && rec.glob_pattern) return rec.glob_pattern;
-  const p = rec.path;
-  if (typeof p === "string" && p) return p;
-  const cmd = rec.command;
-  return typeof cmd === "string" && cmd ? cmd : undefined;
+  if (typeof rec.path === "string" && rec.path) return rec.path;
+  if (typeof rec.command === "string" && rec.command) return rec.command;
+  if (typeof rec.search_term === "string" && rec.search_term) return rec.search_term;
+  if (typeof rec.url === "string" && rec.url) return rec.url;
+  if (Array.isArray(rec.paths)) {
+    const list = rec.paths.filter((p): p is string => typeof p === "string");
+    if (list.length > 0) return list.join(", ");
+  }
+  if (Array.isArray(rec.todos)) {
+    const items = rec.todos
+      .filter((t): t is Record<string, unknown> => !!t && typeof t === "object")
+      .map((t) => `${String(t.id ?? "?")} - ${String(t.content ?? "")} - ${String(t.status ?? "?")}`);
+    if (items.length > 0) return items.join(" · ");
+  }
+  return undefined;
 }
 
 function addToolCall(name: string, args: unknown, beforeEl?: HTMLElement | null): HTMLDivElement {

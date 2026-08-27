@@ -695,6 +695,24 @@ describe("view webview client", () => {
     expect(document.querySelector(".msg.tool .tool-path")?.textContent).toBe("**/*.ts");
   });
 
+  it("shows chips for TodoWrite / WebSearch / WebFetch / ReadLints", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    hostMessage({ type: "toolCall", id: "tdo", name: "TodoWrite", arguments: { todos: [{ id: "1", content: "fix parser", status: "pending" }], merge: false } });
+    hostMessage({ type: "toolResult", toolCallId: "tdo", output: "## Task List", isError: false });
+    hostMessage({ type: "toolCall", id: "ws", name: "WebSearch", arguments: { search_term: "harny vs code" } });
+    hostMessage({ type: "toolResult", toolCallId: "ws", output: "results", isError: false });
+    hostMessage({ type: "toolCall", id: "wf", name: "WebFetch", arguments: { url: "https://example.com" } });
+    hostMessage({ type: "toolResult", toolCallId: "wf", output: "<html>", isError: false });
+    hostMessage({ type: "toolCall", id: "rl", name: "ReadLints", arguments: { paths: ["a.ts", "b.ts"] } });
+    hostMessage({ type: "toolResult", toolCallId: "rl", output: "No linter errors found.", isError: false });
+
+    const chips = [...document.querySelectorAll(".msg.tool .tool-path")].map((c) => c.textContent);
+    expect(chips).toEqual(["1 - fix parser - pending", "harny vs code", "https://example.com", "a.ts, b.ts"]);
+  });
+
   it("renders a Write preview as an all-additions diff bubble", async () => {
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
