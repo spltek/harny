@@ -3,6 +3,49 @@ import type { FileSystem } from "./file-system";
 import { resolvePath } from "./path-utils";
 import type { Tool, ToolDefinition, ToolResult } from "./tool";
 
+/**
+ * Translate a glob (with globstar) into an ERE for the find/grep fallback.
+ * `find -path` has NO globstar: it treats `**` as two adjacent `*` (which
+ * cross slashes), so a pattern like "a / star-star / b" wrongly requires at
+ * least one directory between `a` and `b` and skips `a/b`. This translator
+ * gives `**` its standard meaning: zero or more directory levels.
+ *
+ * Handles `**` followed by a slash (zero or more levels), a trailing `**`,
+ * single `*` (no slash crossing) and `?`; everything else is treated as a
+ * literal (regex specials escaped). Char classes like `[ab]` are NOT
+ * expanded — kept literal.
+ */
+const REGEX_SPECIALS = ".*+?^${}()|[]\\";
+
+export function globstarToRegex(glob: string): string {
+  let out = "";
+  for (let i = 0; i < glob.length; ) {
+    const c = glob[i];
+    if (c === "*" && glob[i + 1] === "*") {
+      if (glob[i + 2] === "/") {
+        out += "(?:[^/]+/)*"; // zero or more directory levels
+        i += 3;
+      } else {
+        out += ".*"; // trailing ** : zero or more levels (files directly in the dir)
+        i += 2;
+      }
+    } else if (c === "*") {
+      out += "[^/]*";
+      i++;
+    } else if (c === "?") {
+      out += "[^/]";
+      i++;
+    } else if (REGEX_SPECIALS.includes(c)) {
+      out += "\\" + c;
+      i++;
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return out;
+}
+
 export class GlobTool implements Tool {
   readonly name = "Glob";
   readonly definition: ToolDefinition = {
@@ -48,7 +91,17 @@ export class GlobTool implements Tool {
       pattern = `**/${pattern}`;
     }
 
-    const cmd = `fd --type f --max-results=100 --glob "${pattern}" . "${dir}" 2>/dev/null || find "${dir}" -path "*/${pattern}" -type f -maxdepth 8 2>/dev/null | head -100 || echo "No files found"`;
+    // fd is the primary engine: --full-path makes it match the RELATIVE path
+    // (not the basename), which is what makes directory globs + globstar `**`
+    // work — `a/**/b` matches `a/b`, `a/x/b`, ... (verified with fd 10.x).
+    const fdCmd = `fd --type f --max-results=100 --glob --full-path "${pattern}" "${dir}" 2>/dev/null`;
+    // find/grep fallback when fd is absent. find -path cannot express
+    // globstar, so translate the glob to an ERE with the correct zero-or-more
+    // directory semantics and filter the find listing with grep. The `$`
+    // anchor keeps it a FULL-path match (no substring false positives).
+    const ere = (pattern.startsWith("/") ? "^" : ".*") + globstarToRegex(pattern) + "$";
+    const fallback = `find "${dir}" -type f -maxdepth 8 2>/dev/null | grep -E "${ere}" | head -100`;
+    const cmd = `${fdCmd} || ${fallback} || echo "No files found"`;
     const result = this.runner.run(cmd, { cwd: dir, timeoutMs: 10000, maxBuffer: 5 * 1024 * 1024 });
 
     const files = result.stdout.trim().split("\n").filter(Boolean);

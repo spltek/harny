@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { CommandResult, CommandRunner } from "./command-runner";
 import { ShellTool } from "./shell-tool";
 import { GrepTool } from "./grep-tool";
-import { GlobTool } from "./glob-tool";
+import { GlobTool, globstarToRegex } from "./glob-tool";
 import type { FileSystem } from "./file-system";
 
 function fakeRunner(results: CommandResult[]): CommandRunner {
@@ -110,13 +110,15 @@ describe("GrepTool", () => {
 });
 
 describe("GlobTool", () => {
-  it("auto-prepends **/ to non-glob patterns", () => {
+  it("auto-prepends **/ to non-glob patterns and matches full paths", () => {
     const runner = fakeRunner([{ stdout: "", stderr: "", code: 0, timedOut: false }]);
     const tool = new GlobTool(runner, fakeFs(), cwd);
 
     tool.execute({ glob_pattern: "*.ts" });
 
-    expect(runner.calls[0].command).toContain('--glob "**/*.ts"');
+    expect(runner.calls[0].command).toContain('--glob --full-path "**/*.ts"');
+    // find fallback must not rely on find -path (no globstar)
+    expect(runner.calls[0].command).toContain("grep -E");
   });
 
   it("sorts results by modification time", () => {
@@ -141,6 +143,48 @@ describe("GlobTool", () => {
 
     expect(result.isError).toBe(false);
     expect(result.content).toBe("No files found");
+  });
+
+  describe("globstarToRegex", () => {
+    // mirrors the tool's usage: relative patterns get a leading .*, anchored at $
+    const re = (g: string) => new RegExp(".*" + globstarToRegex(g) + "$");
+
+    it("a/**/b matches a/b (zero dirs) and deeper paths", () => {
+      expect(re("a/**/b").test("a/b")).toBe(true);
+      expect(re("a/**/b").test("a/x/b")).toBe(true);
+      expect(re("a/**/b").test("a/x/y/b")).toBe(true);
+      expect(re("a/**/b").test("b")).toBe(false);
+      expect(re("a/**/b").test("a/bx")).toBe(false);
+    });
+
+    it("a/**/*.ts matches files directly in a/ and in subdirs", () => {
+      expect(re("a/**/*.ts").test("a/f.ts")).toBe(true);
+      expect(re("a/**/*.ts").test("a/x/f.ts")).toBe(true);
+      expect(re("a/**/*.ts").test("root.ts")).toBe(false);
+    });
+
+    it("single * stays inside one path component", () => {
+      expect(re("a/*.ts").test("a/f.ts")).toBe(true);
+      expect(re("a/*.ts").test("a/x/f.ts")).toBe(false);
+    });
+
+    it("trailing ** matches zero or more levels", () => {
+      expect(re("src/**").test("src/a.ts")).toBe(true);
+      expect(re("src/**").test("src/x/a.ts")).toBe(true);
+      expect(re("src/**").test("other/a.ts")).toBe(false);
+    });
+
+    it("anchors to the end of the path (no substring false positives)", () => {
+      expect(re("a/**/b").test("a/bx")).toBe(false);
+      expect(re("a/**/b").test("x/a/b")).toBe(true);
+      expect(re("*.ts").test("a/foo.ts.bak")).toBe(false);
+    });
+
+    it("escapes regex specials in literals (no char-class expansion)", () => {
+      // [1] is literal: matches the file literally named "f[1].txt"
+      expect(re("v1.0/**/f[1].txt").test("v1.0/f[1].txt")).toBe(true);
+      expect(re("v1.0/**/f[1].txt").test("v1.0/f1.txt")).toBe(false);
+    });
   });
 });
 
