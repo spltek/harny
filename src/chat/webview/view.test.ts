@@ -555,6 +555,27 @@ describe("view webview client", () => {
     expect(diff?.querySelector(".fd-del")?.textContent).toBe("-old");
   });
 
+  it("returns focus to the prompt when the agent finishes (done)", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).not.toBe(input);
+
+    hostMessage({ type: "done" });
+
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("also returns focus after an in-run error", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    hostMessage({ type: "error", error: "boom" });
+
+    expect(document.activeElement).toBe(input);
+  });
+
   it("creates a NEW blue bubble per emission segment, in chronological order (never moves)", async () => {
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;

@@ -868,6 +868,11 @@ function submitName(): void {
 let streamingActive = false;
 let thinkingCapable = false; // provider declares thinking control (bool/effort)
 
+/** Return keyboard focus to the prompt after the agent finishes working. */
+function focusPrompt(): void {
+  inputEl.focus();
+}
+
 function setStreaming(active: boolean): void {
   const rising = active && !streamingActive;
   streamingActive = active;
@@ -1279,6 +1284,7 @@ window.addEventListener("message", (e) => {
       const stopEl = addMessage("assistant", "❌ ⏹ Processing interrupted.");
       stopEl.classList.add("error");
       scrollDown();
+      focusPrompt();
       break;
     }
     case "compactStart": {
@@ -1309,6 +1315,7 @@ window.addEventListener("message", (e) => {
       flushStreamingMd();
       finishStream();
       setStreaming(false);
+      focusPrompt();
       break;
     case "error": {
       flushStreamingMd();
@@ -1323,6 +1330,7 @@ window.addEventListener("message", (e) => {
         errEl.classList.add("error");
       }
       resetStreamState();
+      focusPrompt();
       break;
     }
     case "refresh": {
