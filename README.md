@@ -65,17 +65,17 @@ npm run coverage  # with coverage report
 - **Per-session controls**: context window, output tokens and temperature are editable in the panel, persisted **per session** (JSONL header) and restored on reopen; output tokens/temperature win over the provider defaults
 - **Empty shell**: with no open session the control stack is hidden and a hero invites you to pick a session from the list or create a new one
 - **Sessions**: Persistent per-workspace sessions (JSONL), one agent per session, right-side view with tabs
-- **Sessions follow the folder**: stored in `<workspaceRoot>/.harny-sessions` — rename/move/delete a project and its sessions go with it (no global mapping, no dead entries)
+- **Sessions in a central home** (pi/Cursor style): stored in `<home>/sessions/<workspace-key>/` (JSONL) — out of the project folder, so the agent tools can never read or modify transcripts, and cleaning the repo never deletes chat history. Grouped per workspace; the panel shows only the current folder's sessions
 - **Single-folder requirement**: Harny needs **exactly one open workspace folder**; without it (empty window or multi-root) the panel shows a "open a folder" hero and session commands are guarded
 - **Naming**: new sessions are named at creation via a prompt (default "New Session"); the session list shows creation and last-modified dates
 - **Model catalog**: Fetch the host model list (`GET /v1/models`) when the config only declares apiKey + baseUrl
-- **Cross-platform storage**: The dedicated `config.json` lives in `context.globalStorageUri` (per-OS), overridable with `HARNY_HOME`; sessions live per-folder and are auto-gitignored (`.harny-sessions/` appended to the workspace `.gitignore` when it exists)
+- **Cross-platform storage**: config and sessions live in `context.globalStorageUri` (per-OS, macOS `~/Library/…/globalStorage/spltek.harny`), overridable with `HARNY_HOME`; nothing is written inside the workspace
 - **VS Code native**: Right-side Activity Bar view, context menu integration, keybindings
 - **Extensible**: Add a tool by implementing the `Tool` interface and registering it in the `ToolRegistry`
 
 ## Sessions: right-side view (Activity Bar icon)
 
-Harny keeps **persistent per-folder sessions** (in `<workspaceRoot>/.harny-sessions`, JSONL) and manages them from a **single side view** opened with the Harny icon in the **Activity Bar** (right side). It requires **exactly one open workspace folder**: sessions live inside that folder, so they follow it (rename/move/delete the project and the sessions follow), and the workspace `.gitignore` gets `.harny-sessions/` appended automatically (when a `.gitignore` exists) to keep transcripts out of git.
+Harny keeps **persistent sessions** in a **central home bucket** (`<home>/sessions/<workspace-key>/`, JSONL — pi/Cursor style) and manages them from a **single side view** opened with the Harny icon in the **Activity Bar** (right side). It requires **exactly one open workspace folder**: sessions are grouped per folder (key = sanitized path), the panel shows only the current folder's sessions, and living OUTSIDE the project means the agent tools (Read/Write/Edit/Grep…) can never touch transcripts and `rm -rf node_modules`-style cleanups never delete chat history.
 
 - **Sessions area** (on top, **hideable** by clicking the header): list of the sessions of the current folder — each row shows the **creation/last-modified dates** above the name, with ✎ rename and 🗑 delete, and **+ New session**.
 - **Tab bar**: the names of all **open sessions** as tabs laid out **one after another**.

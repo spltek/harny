@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveHome, sessionsDirFor, SESSIONS_DIR_NAME, HARNY_HOME_ENV } from "./home";
+import { HARNY_HOME_ENV, resolveHome, sanitizeWorkspaceKey, sessionsDirFor } from "./home";
 
 describe("resolveHome (config home only)", () => {
   let globalStorage: string;
@@ -26,13 +26,20 @@ describe("resolveHome (config home only)", () => {
   });
 });
 
-describe("sessionsDirFor (per-folder storage)", () => {
-  it("points sessions INTO the workspace root as a hidden folder", () => {
-    expect(sessionsDirFor("/Users/test/MyProject")).toBe(join("/Users/test/MyProject", SESSIONS_DIR_NAME));
+describe("sanitizeWorkspaceKey", () => {
+  it("turns a path into a safe pi-style key", () => {
+    expect(sanitizeWorkspaceKey("/Users/test/MyProject")).toBe("--Users-test-MyProject--");
+    expect(sanitizeWorkspaceKey("/")).toBe("--global--");
+    expect(sanitizeWorkspaceKey("  ")).toBe("--global--");
+  });
+});
+
+describe("sessionsDirFor (central storage)", () => {
+  it("points sessions into the central home bucket per workspace (pi/Cursor style)", () => {
+    expect(sessionsDirFor("/Users/test/MyProject", "/home")).toBe(join("/home", "sessions", "--Users-test-MyProject--"));
   });
 
-  it("returns undefined when there is no single workspace root", () => {
-    expect(sessionsDirFor(undefined)).toBeUndefined();
-    expect(sessionsDirFor("   ")).toBeUndefined();
+  it("uses the --global-- bucket when there is no single workspace root", () => {
+    expect(sessionsDirFor(undefined, "/home")).toBe(join("/home", "sessions", "--global--"));
   });
 });

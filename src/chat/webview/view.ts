@@ -446,7 +446,7 @@ function addWelcome(): HTMLDivElement {
 }
 
 /**
- * No single workspace folder: sessions live per-folder (`<root>/.harny-sessions`)
+ * No single workspace folder: sessions are bucketed centrally per workspace,
  * so Harny requires exactly one open folder. The whole control stack and the
  * sessions card are hidden; a folder hero takes over the chat area.
  */

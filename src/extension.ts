@@ -1,7 +1,6 @@
 import { window, workspace, commands } from "vscode";
 import type { ExtensionContext } from "vscode";
 import { mkdirSync, watch } from "node:fs";
-import { join } from "node:path";
 import { Agent } from "./core/agent/agent";
 import { DefaultSystemPromptBuilder } from "./core/agent/system-prompt";
 import type { ChatController } from "./core/agent/chat-controller";
@@ -28,14 +27,13 @@ import {
 import { ChatViewProvider } from "./chat/chat-view";
 import { SessionRegistry } from "./chat/session-registry";
 import { AttachmentService } from "./chat/attachment-service";
-import { resolveHome, sessionsDirFor, SESSIONS_DIR_NAME } from "./core/storage/home";
-import { ensureSessionGitignore } from "./core/storage/workspace-gitignore";
+import { resolveHome, sessionsDirFor } from "./core/storage/home";
 import { debugLog, infoLog } from "./logger";
 
 /**
- * Harny requires EXACTLY ONE open workspace folder: sessions live in
- * `<root>/.harny-sessions` (they follow the folder). No folder, or a
- * multi-root workspace => undefined (the panel shows the "open a folder"
+ * Harny requires EXACTLY ONE open workspace folder: sessions are grouped in
+ * the central home bucket keyed by this root (pi/Cursor style). No folder, or
+ * a multi-root workspace => undefined (the panel shows the "open a folder"
  * shell and session-creating commands are guarded).
  */
 function singleWorkspaceRoot(): string | undefined {
@@ -65,18 +63,9 @@ export function activate(context: ExtensionContext) {
   }
   infoLog("storage home=", resolved.home);
 
-  // The sessions folder is created LAZILY by the store on the FIRST session
-  // creation (`<root>/.harny-sessions`); opening Harny never writes to the
-  // workspace. Only the .gitignore entry is ensured up-front (a text append,
-  // harmless before the folder exists — keeps transcripts out of git).
-  const sessionsDir = (): string | undefined => (root ? sessionsDirFor(root) : undefined);
-  if (root) {
-    try {
-      if (ensureSessionGitignore(root, nodeFileSystem)) infoLog("added", SESSIONS_DIR_NAME, "to", join(root, ".gitignore"));
-    } catch (e) {
-      debugLog("could not update .gitignore", e);
-    }
-  }
+  // Sessions live in the CENTRAL home bucket per workspace (pi/Cursor style);
+  // dev note: previous workspace-local sessions were dropped, no migration.
+  const sessionsDir = () => sessionsDirFor(root, resolved.home);
 
   const runtimeOverrides = new MemoryOverrideConfigProvider();
   const fileConfig = new HarnyFileConfigProvider(() => resolved.home, nodeFileSystem);
@@ -96,7 +85,7 @@ export function activate(context: ExtensionContext) {
   const systemPrompt = new DefaultSystemPromptBuilder(() => tools.definitions(), cwd);
   const compactor = new Compactor(llmFactory, () => config.get());
 
-  const store = new JsonlSessionStore(() => sessionsDir() ?? "", nodeFileSystem);
+  const store = new JsonlSessionStore(() => sessionsDir(), nodeFileSystem);
   const sessions = new SessionManager(store);
 
   const attachments = new AttachmentService(nodeFileSystem, async () => {
@@ -133,9 +122,10 @@ export function activate(context: ExtensionContext) {
   );
   viewProvider.setContext(context);
 
-  // The sessions live in `<root>/.harny-sessions`: when the open folder set
-  // changes, re-derive the single root and rebuild the view (store reads the
-  // dir through the closure, so subsequent saves land in the new root).
+  // The sessions live in the CENTRAL home bucket keyed by the root: when the
+  // open folder set changes, re-derive the single root and rebuild the view
+  // (store reads the dir through the closure, so subsequent saves land in the
+  // bucket of the new root).
   context.subscriptions.push(
     workspace.onDidChangeWorkspaceFolders(() => {
       const next = singleWorkspaceRoot();

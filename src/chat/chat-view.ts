@@ -47,7 +47,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       compactor?: Compactor;
       compaction?: CompactionSettings;
       manualKeepFraction?: number;
-      /** True when exactly one workspace folder is open (sessions are stored per-folder). */
+      /** True when exactly one workspace folder is open (sessions are bucketed centrally per workspace). */
       workspaceReady?: () => boolean;
       /** Extension data folder (home), for error hints pointing at config.json. */
       configHome?: string;
@@ -67,7 +67,7 @@ export class ChatViewProvider implements WebviewViewProvider {
   }
 
   /** Create a new session asking for its name (undefined = user cancelled). */
-  /** True when exactly one workspace folder is open (sessions are per-folder). */
+  /** True when exactly one workspace folder is open (sessions are bucketed centrally). */
   private workspaceReady(): boolean {
     return this.options.workspaceReady ? this.options.workspaceReady() : true;
   }
