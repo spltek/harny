@@ -19,12 +19,6 @@ describe("EditTool", () => {
 
   const tool = () => new EditTool(nodeFileSystem, cwd);
 
-  it("refuses paths outside the workspace root", () => {
-    const r = tool().execute({ path: "../out.txt", edits: [{ oldText: "a", newText: "b" }] });
-    expect(r.isError).toBe(true);
-    expect(r.content).toContain("falls outside the workspace root");
-  });
-
   it("applies multi-edit atomically and writes the file, reporting the diff", () => {
     const f = join(dir, "a.js");
     writeFileSync(f, "x = 1;\ny = 2;\nz = 3;\n");

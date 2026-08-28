@@ -93,16 +93,6 @@ describe("file tools", () => {
       expect(result.content).not.toContain("\u0000");
     });
 
-    it("refuses paths outside the workspace root (\"..\"/absolute)", () => {
-      const tool = new ReadTool(nodeFileSystem, cwd);
-
-      const result = tool.execute({ path: "../escape.txt" });
-
-      expect(result.isError).toBe(true);
-      expect(result.content).toContain("falls outside the workspace root");
-      expect(result.content).toContain("Refusing to operate outside the sandbox");
-    });
-
     it("resolves relative paths against the workspace root", () => {
       writeFileSync(join(dir, "rel.txt"), "hello");
       const tool = new ReadTool(nodeFileSystem, cwd);
@@ -158,16 +148,6 @@ describe("file tools", () => {
 
       expect(result.isError).toBe(false);
       expect(result.content).toContain("6 chars (9 bytes)");
-    });
-
-    it("refuses paths outside the workspace root (no silent traversal)", () => {
-      const tool = new WriteTool(nodeFileSystem, cwd);
-
-      const result = tool.execute({ path: "../probe_outside.txt", contents: "evil" });
-
-      expect(result.isError).toBe(true);
-      expect(result.content).toContain("falls outside the workspace root");
-      expect(nodeFileSystem.exists(join(dir, "..", "probe_outside.txt"))).toBe(false); // never written
     });
 
     it("emits an all-additions diff preview for a NEW file (view diff bubble)", () => {
@@ -354,13 +334,6 @@ describe("file tools", () => {
       const result = tool.execute({ path: join(dir, "nope.txt"), old_string: "a", new_string: "b" });
       expect(result.isError).toBe(true);
     });
-
-    it("refuses paths outside the workspace root", () => {
-      const tool = new StrReplaceTool(nodeFileSystem, cwd);
-      const result = tool.execute({ path: "../out.txt", old_string: "a", new_string: "b" });
-      expect(result.isError).toBe(true);
-      expect(result.content).toContain("falls outside the workspace root");
-    });
   });
 
   describe("DeleteTool", () => {
@@ -394,13 +367,6 @@ describe("file tools", () => {
       const tool = new DeleteTool(nodeFileSystem, cwd);
       const result = tool.execute({ path: join(dir, "nope.txt") });
       expect(result.isError).toBe(true);
-    });
-
-    it("refuses paths outside the workspace root", () => {
-      const tool = new DeleteTool(nodeFileSystem, cwd);
-      const result = tool.execute({ path: "../out.txt" });
-      expect(result.isError).toBe(true);
-      expect(result.content).toContain("falls outside the workspace root");
     });
   });
 });

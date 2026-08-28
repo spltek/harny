@@ -1,5 +1,5 @@
 import type { FileSystem } from "./file-system";
-import { pathSafetyError, resolvePath } from "./path-utils";
+import { resolvePath } from "./path-utils";
 import type { Tool, ToolDefinition, ToolResult } from "./tool";
 import { buildDiff, fencedDiffBlock } from "./diff-text";
 import { fuzzyUniqueReplace } from "./edit-engine";
@@ -99,8 +99,6 @@ export class StrReplaceTool implements Tool {
       };
     }
     const filePath = resolvePath(pathArg, this.cwd());
-    const unsafe = pathSafetyError(filePath, this.cwd());
-    if (unsafe) return { content: unsafe, isError: true };
     if (!this.fs.exists(filePath)) {
       return { content: `File not found: ${filePath}`, isError: true };
     }

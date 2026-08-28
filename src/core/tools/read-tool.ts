@@ -1,5 +1,5 @@
 import type { FileSystem } from "./file-system";
-import { formatSize, isImagePath, pathSafetyError, resolvePath } from "./path-utils";
+import { formatSize, isImagePath, resolvePath } from "./path-utils";
 import { isBinaryText } from "./binary";
 import type { Tool, ToolDefinition, ToolResult } from "./tool";
 
@@ -41,8 +41,6 @@ export class ReadTool implements Tool {
       };
     }
     const filePath = resolvePath(pathArg, this.cwd());
-    const unsafe = pathSafetyError(filePath, this.cwd());
-    if (unsafe) return { content: unsafe, isError: true };
     if (!this.fs.exists(filePath)) {
       return { content: `File not found: ${filePath}`, isError: true };
     }

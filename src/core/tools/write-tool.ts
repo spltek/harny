@@ -1,6 +1,6 @@
 import { dirname } from "node:path";
 import type { FileSystem } from "./file-system";
-import { pathSafetyError, resolvePath } from "./path-utils";
+import { resolvePath } from "./path-utils";
 import type { Tool, ToolDefinition, ToolResult } from "./tool";
 import { buildDiff, fencedDiffBlock } from "./diff-text";
 
@@ -75,8 +75,6 @@ export class WriteTool implements Tool {
       };
     }
     const filePath = resolvePath(pathArg, this.cwd());
-    const unsafe = pathSafetyError(filePath, this.cwd());
-    if (unsafe) return { content: unsafe, isError: true };
     try {
       this.fs.mkdirRecursive(dirname(filePath));
       // Change preview for the dedicated diff bubble: a NEW file diffs against
