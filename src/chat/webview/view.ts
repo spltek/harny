@@ -40,7 +40,7 @@ interface ConfigState {
   models?: string[];
   providerModels?: { provider: string; model: string }[];
   modelMissing?: boolean;
-  hostModelsError?: boolean;
+  hostModelErrors?: { provider: string; error: string }[];
   noModels?: boolean;
   configHome?: string;
   workspaceReady?: boolean;
@@ -84,7 +84,6 @@ const ctlToggle = document.getElementById("ctl-toggle") as HTMLDivElement;
 const sendBtn = document.getElementById("send-btn") as HTMLButtonElement;
 const abortBtn = document.getElementById("abort-btn") as HTMLButtonElement;
 const modelSelect = document.getElementById("model-select") as HTMLSelectElement;
-const modelWarn = document.getElementById("model-warn") as HTMLDivElement;
 const thinkingSelect = document.getElementById("thinking-select") as HTMLSelectElement;
 const ctxInput = document.getElementById("ctx-input") as HTMLInputElement;
 const ctxMinus = document.getElementById("ctx-minus") as HTMLButtonElement;
@@ -917,54 +916,23 @@ function setStreaming(active: boolean): void {
 }
 
 // ── Model dropdown (all providers, declared or detected from the host) ──
-/* Explicit in-panel warning instead of a silently empty model dropdown: shows
-   when NO model is configured at all (missing/empty config.json or every host
-   unreachable), or when some host model lists failed to fetch. */
-function renderModelWarnings(c: ConfigState): void {
-  if (c.noModels) {
-    const home = c.configHome ? `${c.configHome}/config.json` : "your extension data folder";
-    modelWarn.hidden = false;
-    modelWarn.innerHTML =
-      '⚠️ <strong>No models configured.</strong> Create <span class="warn-path">' +
-      home +
-      '</span> from <code>config.example.jsonc</code>, or set <code>harny.model</code>/<code>harny.apiKey</code> ' +
-      "in settings — then reload.";
-    modelWarn.title =
-      "The model dropdown is empty: the panel needs at least one model (declared in config.json or fetched from a host).";
-  } else if (c.hostModelsError) {
-    modelWarn.hidden = false;
-    modelWarn.textContent =
-      "⚠️ Some host model lists are unavailable (GET /v1/models failed) — the dropdown may be incomplete. Check the hosts.";
-  } else {
-    modelWarn.hidden = true;
-  }
-}
-
 function renderModelSelect(c: ConfigState): void {
   modelSelect.innerHTML = "";
-  // New sessions start with no model: show a placeholder so the browser does
-  // not auto-select the first entry, forcing an explicit choice.
-  if (!c.model) {
+  const providerModels = c.providerModels && c.providerModels.length > 0 ? c.providerModels : null;
+  const activeProvider = c.activeProvider;
+  // The saved model that is no longer served (fetch failed, removed from
+  // host) falls back to the same "pick one" placeholder as a brand-new
+  // session, so the combo never auto-selects an unrelated model.
+  const list = providerModels
+    ? new Set(providerModels.map((p) => p.model))
+    : new Set(c.models || []);
+  if (!c.model || (c.model && !list.has(c.model))) {
     const ph = document.createElement("option");
     ph.value = "";
     ph.textContent = "— Select a model —";
     ph.disabled = true;
     ph.selected = true;
     modelSelect.appendChild(ph);
-  }
-  const providerModels = c.providerModels && c.providerModels.length > 0 ? c.providerModels : null;
-  const activeProvider = c.activeProvider;
-  // If the saved model is no longer served, show a disabled placeholder.
-  const list = providerModels
-    ? new Set(providerModels.map((p) => p.model))
-    : new Set(c.models || []);
-  if (c.modelMissing && c.model && !list.has(c.model)) {
-    const opt = document.createElement("option");
-    opt.value = c.model;
-    opt.textContent = "⚠️ " + c.model + " (removed from host)";
-    opt.disabled = true;
-    opt.selected = true;
-    modelSelect.appendChild(opt);
   }
 
   if (providerModels) {
@@ -977,7 +945,10 @@ function renderModelSelect(c: ConfigState): void {
       }
       groups.get(pm.provider)!.push(pm.model);
     }
-    for (const provider of order) {
+    // One combined list of groups (normal + failed), appended together in
+    // alphabetical order so a red provider stays in its proper position.
+    const allGroups: HTMLOptGroupElement[] = [];
+    for (const provider of [...groups.keys()].sort((a, b) => a.localeCompare(b))) {
       const g = document.createElement("optgroup");
       g.label = provider;
       // Alphabetical within each provider group.
@@ -990,8 +961,45 @@ function renderModelSelect(c: ConfigState): void {
         if (m === c.model && (provider === activeProvider || !activeProvider)) opt.selected = true;
         g.appendChild(opt);
       }
-      modelSelect.appendChild(g);
+      allGroups.push(g);
     }
+    // Failed host fetches: the provider name still APPEARS (red, own group)
+    // with the error, instead of silently disappearing from the combo.
+    const errors = c.hostModelErrors ?? [];
+    const pendingErrors: { label: string; g: HTMLOptGroupElement }[] = [];
+    for (const err of errors) {
+      // A group that also served models gets the error marker instead of a dup.
+      const existingGroup = allGroups.find((gr) => gr.label === err.provider);
+      if (existingGroup) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.className = "option-error";
+        opt.textContent =
+          "⚠️ " + (err.error ? err.error : "GET /v1/models failed") + " — host unreachable";
+        opt.disabled = true;
+        existingGroup.appendChild(opt);
+        existingGroup.className = "optgroup-failed";
+        continue;
+      }
+      const g = document.createElement("optgroup");
+      g.label = err.provider;
+      g.className = "optgroup-failed";
+      g.title = "GET /v1/models failed — is the host reachable?";
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.className = "option-error";
+      opt.textContent = "⚠️ " + (err.error ? err.error : "GET /v1/models failed") + " — host unreachable";
+      opt.disabled = true;
+      g.appendChild(opt);
+      pendingErrors.push({ label: err.provider, g });
+    }
+    // Merge the failed-only groups into the alphabetical position.
+    for (const { label, g } of pendingErrors.sort((a, b) => a.label.localeCompare(b.label))) {
+      const insertAt = allGroups.findIndex((gr) => gr.label.localeCompare(label) > 0);
+      if (insertAt === -1) allGroups.push(g);
+      else allGroups.splice(insertAt, 0, g);
+    }
+    for (const g of allGroups) modelSelect.appendChild(g);
   } else {
     const models = (c.models && c.models.length > 0 ? [...c.models] : c.model ? [c.model] : []).sort();
     for (const m of models) {
@@ -1011,6 +1019,15 @@ modelSelect.addEventListener("change", () => {
   if (opt.dataset.provider) message.provider = opt.dataset.provider;
   vscode.postMessage(message);
 });
+// Refresh the provider list every time the dropdown is opened, so a host that
+// came up after the panel loaded (e.g. llama.cpp started later) shows up.
+// The host-side cache (HOST_CACHE_TTL) keeps this from hammering the servers.
+function requestModelRefresh(): void {
+  if (modelSelect.disabled) return;
+  vscode.postMessage({ type: "getConfig" });
+}
+modelSelect.addEventListener("mousedown", requestModelRefresh);
+modelSelect.addEventListener("focus", requestModelRefresh);
 
 // ── Thinking level (reasoning effort, generalized across providers) ──
 function renderThinkingSelect(c: ConfigState): void {
@@ -1403,7 +1420,6 @@ window.addEventListener("message", (e) => {
     case "config":
       renderModelSelect(msg.config || {});
       renderThinkingSelect(msg.config || {});
-      renderModelWarnings(msg.config || {});
       ctxInput.value = String(clampContextWindow((msg.config && msg.config.contextWindow) || DEFAULT_CONTEXT_WINDOW));
       renderOutputTokens(msg.config || {});
       renderSamplerControl(msg.config || {});
@@ -1431,7 +1447,6 @@ function renderViewState(state: {
   renderTabs(currentSessions);
   renderModelSelect(state.config || {});
   renderThinkingSelect(state.config || {});
-  renderModelWarnings(state.config || {});
   ctxInput.value = String(clampContextWindow((state.config && state.config.contextWindow) || DEFAULT_CONTEXT_WINDOW));
   renderOutputTokens(state.config || {});
   renderSamplerControl(state.config || {});

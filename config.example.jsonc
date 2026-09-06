@@ -15,23 +15,21 @@
   // "provider" selects which entry to use; "model" which model.
   // ============================================================
   "provider": "llamacpp",
-  "model": "Qwen3.6-35B-A3B-UD-Q6_K.gguf",
+  // "model" is written automatically by Harny when you pick one from the
+  // dropdown. The model list is ALWAYS fetched from the host (GET /v1/models).
+  // "model": "LLM/Qwen3.8-27B-UD-Q6_K.gguf",
   "providers": {
     "llamacpp": {
       "baseUrl": "http://localhost:8090/v1",
       "api": "openai-completions",
       "apiKey": "lamacpp",
       "thinking": "bool", // "bool" (llama.cpp chat_template_kwargs: enable_thinking + reasoning_effort) | "effort" (reasoning_effort) | "none"
-      "thinkingLevel": "medium", // provider default: "off" | "low" | "medium" | "high" (overridable per session from the chat UI)
-      "models": [
-        { "id": "gemma-4-26B-A4B-it-UD-Q8_K_XL.gguf", "input": ["text", "image"] },
-        { "id": "Qwen3.6-35B-A3B-UD-Q6_K.gguf", "input": ["text", "image"] },
-        { "id": "Qwen3.6-27B-Q6_K.gguf", "input": ["text", "image"] }
-      ]
+      // No "models": the dropdown shows the GGUF currently loaded in the server.
+      // llama.cpp loads ONE model at a time, so the list is always that one.
     },
     // Hosted provider with a dynamic model list: just apiKey + baseUrl.
     // The list is fetched from the host (GET /v1/models) and shown in the
-    // dropdown. The chosen model is saved into the "model" field below.
+    // dropdown (same as every other provider).
     "opencode-go": {
       "baseUrl": "https://opencode.ai/zen/go/v1",
       "api": "openai-completions",

@@ -10,7 +10,7 @@ export interface ViewConfigState {
   models: string[];
   providerModels: { provider: string; model: string }[];
   modelMissing?: boolean;
-  hostModelsError?: boolean;
+  hostModelErrors?: { provider: string; error: string }[];
   noModels?: boolean;
   configHome?: string;
   workspaceReady?: boolean;
@@ -456,25 +456,14 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     #status { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px 6px; font-size: 0.85rem; }
     #status .warn { color: var(--error); }
     .ctl-row { display: flex; align-items: center; gap: 6px; }
-    /* Explicit in-panel warning: no models at all / host list failures. The
-       banner lives OUTSIDE #status so it also shows with no session open
-       (body.no-session hides #status). Borderless: tone-on-tone red tint. */
-    #model-warn {
-      margin: 6px 10px 0;
-      padding: 6px 10px;
-      border-radius: 6px;
-      font-size: 0.8rem;
-      line-height: 1.45;
+    /* Provider whose host model list failed to fetch: still VISIBLE in the
+       dropdown (red) with the error, instead of silently disappearing. */
+    #model-select optgroup.optgroup-failed {
       color: var(--error);
-      background: rgba(244, 71, 71, 0.12);
     }
-    #model-warn code { font-family: var(--mono); font-size: 0.76rem; }
-    #model-warn .warn-path {
-      color: var(--muted); font-family: var(--mono); font-size: 0.72rem;
-      word-break: break-all;
+    #model-select .option-error {
+      color: var(--error);
     }
-    #model-warn strong { color: var(--fg-strong); }
-
     /* Grouped cards: the grid collapses to a single column when the panel is
        narrow, so fields are never squeezed or split mid-pair. minmax is font-
        relative: on zoom-in the columns stack gracefully (responsive to both
@@ -725,7 +714,6 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     <div id="sessions"></div>
   </div>
   <div id="tabs"></div>
-  <div id="model-warn" hidden></div>
   <div id="messages"></div>
   <div id="working-bar" class="hidden">● Working...</div>
   <!-- Control stack toggle: a slim hover-hot strip just above the ask card.

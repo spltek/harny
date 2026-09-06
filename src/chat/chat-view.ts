@@ -30,7 +30,11 @@ export class ChatViewProvider implements WebviewViewProvider {
   private context: ExtensionContext | undefined;
   private activeId: string | undefined;
   private hostCache = new Map<string, { at: number; models: string[] }>();
-  private static readonly HOST_CACHE_TTL = 30_000;
+  // Short host-model cache: the dropdown re-fetches on open (view sends
+  // getConfig on mousedown/focus), so a host that comes up later (e.g. llama.cpp
+  // started after the panel) shows up on the next open. Kept short because the
+  // fetch itself is bounded by HOST_MODEL_TIMEOUT_MS anyway.
+  private static readonly HOST_CACHE_TTL = 5_000;
   private compacting = false;
   /** FIFO queue for in-panel modals (name dialog, alerts, confirms…). */
   private modals: PanelModalQueue;
@@ -772,7 +776,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     models: string[];
     providerModels: { provider: string; model: string }[];
     modelMissing: boolean;
-    hostModelsError: boolean;
+    hostModelErrors: { provider: string; error: string }[];
     noModels: boolean;
     configHome: string;
     workspaceReady: boolean;
@@ -790,19 +794,31 @@ export class ChatViewProvider implements WebviewViewProvider {
     cachedWrite?: number;
   }> {
     const cfg = this.config.get();
+    // EVERY provider gets a fetch (declared models or host-only alike): the
+    // dropdown shows only the LIVE lists from each host. A provider whose
+    // fetch fails shows up red with the error instead of its stale config list.
+    const declared = cfg.providerModels ?? [];
     const hostProviders = cfg.hostModelProviders ?? [];
+    const allNames = [...new Set([...hostProviders, ...declared.map((p) => p.provider)])];
     const fetched = new Map<string, string[]>();
-    let hostModelsError = false;
-    if (hostProviders.length > 0) {
-      const results = await Promise.allSettled(hostProviders.map((name) => this.fetchHostModels(name)));
-      hostProviders.forEach((name, i) => {
+    const hostModelErrors: { provider: string; error: string }[] = [];
+    if (allNames.length > 0) {
+      const results = await Promise.allSettled(allNames.map((name) => this.fetchHostModels(name)));
+      allNames.forEach((name, i) => {
         const r = results[i];
         if (r.status === "fulfilled") fetched.set(name, r.value);
-        else hostModelsError = true;
+        else {
+          hostModelErrors.push({
+            provider: name,
+            error: r.reason instanceof Error ? r.reason.message : String(r.reason),
+          });
+        }
       });
     }
 
-    const providerModels = [...(cfg.providerModels ?? [])];
+    // Dropdown lists come from the fetched hosts ONLY (no stale declared
+    // model lists mixed in).
+    const providerModels: { provider: string; model: string }[] = [];
     for (const [name, models] of fetched) {
       for (const m of models) providerModels.push({ provider: name, model: m });
     }
@@ -812,10 +828,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     const sessionModel = rt?.model ?? "";
     const sessionProvider = rt?.modelProvider ?? cfg.activeProvider;
     const activeName = sessionProvider;
-    const activeList = [
-      ...(cfg.providerModels ?? []).filter((p) => p.provider === activeName).map((p) => p.model),
-      ...(activeName ? (fetched.get(activeName) ?? []) : []),
-    ];
+    const activeList = activeName ? (fetched.get(activeName) ?? []) : [];
     if (sessionModel && activeList.length > 0 && !activeList.includes(sessionModel)) modelMissing = true;
 
     // Explicit in-panel warning: NO model at all (no config file, empty config,
@@ -831,7 +844,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       models: cfg.availableModels ?? [],
       providerModels,
       modelMissing,
-      hostModelsError,
+      hostModelErrors,
       noModels,
       configHome: this.options.configHome ?? "",
       thinkingMode: cfg.thinkingMode,
@@ -853,7 +866,7 @@ export class ChatViewProvider implements WebviewViewProvider {
 
   private async fetchHostModels(name: string): Promise<string[]> {
     const entry = this.providers.getProvider(name);
-    if (!entry?.baseUrl) return [];
+    if (!entry?.baseUrl) throw new Error("no baseUrl configured");
     const key = `${name}|${entry.baseUrl}|${entry.apiKey ?? ""}`;
     const cached = this.hostCache.get(key);
     if (cached && Date.now() - cached.at < ChatViewProvider.HOST_CACHE_TTL) return cached.models;

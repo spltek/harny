@@ -727,6 +727,51 @@ describe("ChatViewProvider", () => {
     expect(fetchModels).toHaveBeenCalledTimes(1); // cached (HOST_CACHE_TTL)
   });
 
+  it("buildConfig fetches EVERY provider (declared models included) and shows only live lists", async () => {
+    const fetchModels = vi.fn(async () => ["d1", "d2"]);
+    const { provider } = buildHarness({
+      // "opencode-go" declares a model in the config; "host-only" does not.
+      // getProvider is mocked to the SAME entry for any name, so both must
+      // be fetched (2 calls) and the stale declared list must NOT show.
+      config: {
+        ...CONFIG,
+        providerModels: [{ provider: "opencode-go", model: "stale-declared" }],
+        hostModelProviders: ["host-only"],
+      },
+      providerEntry: { name: "opencode-go", baseUrl: "https://declared/v1", apiKey: "k", models: [{ id: "stale-declared" }] },
+      fetchModels,
+    });
+    const { handler, view } = resolveWith(provider);
+    await handler({ type: "getConfig" });
+    const configPosts = view.webview.postMessage.mock.calls
+      .map((c) => c[0] as any)
+      .filter((m) => m.type === "config");
+    const cfg = configPosts[configPosts.length - 1].config;
+    // The stale declared list is NOT shown: only the fetched live lists are.
+    expect(cfg.providerModels).not.toContainEqual({ provider: "opencode-go", model: "stale-declared" });
+    expect(cfg.providerModels).toContainEqual({ provider: "opencode-go", model: "d1" });
+    // The DECLARED provider got fetched like any other (before the fix it was
+    // never fetched: only hostModelProviders were).
+    expect(fetchModels).toHaveBeenCalledWith(
+      expect.objectContaining({ baseUrl: "https://declared/v1" }),
+    );
+  });
+
+  it("buildConfig reports a red error for a provider without baseUrl", async () => {
+    const { provider } = buildHarness({
+      config: { ...CONFIG, hostModelProviders: ["no-base"] },
+      providerEntry: undefined, // getProvider returns nothing
+      fetchModels: vi.fn(async () => []),
+    });
+    const { handler, view } = resolveWith(provider);
+    await handler({ type: "getConfig" });
+    const configPosts = view.webview.postMessage.mock.calls
+      .map((c) => c[0] as any)
+      .filter((m) => m.type === "config");
+    const cfg = configPosts[configPosts.length - 1].config;
+    expect(cfg.hostModelErrors).toContainEqual({ provider: "no-base", error: "no baseUrl configured" });
+  });
+
   it("send routes to the active runtime agent", async () => {
     const { registry, provider } = buildHarness();
     const { handler, view } = resolveWith(provider);

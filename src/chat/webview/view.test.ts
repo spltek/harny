@@ -74,33 +74,36 @@ describe("view webview client", () => {
     setupDom();
   });
 
-  it("shows an explicit in-panel warning when no models are configured", async () => {
+  it("keeps failed providers visible in the model dropdown, and falls back to 'pick one' when the saved model is gone", async () => {
     await loadView();
-    const warn = document.getElementById("model-warn") as HTMLDivElement;
+    const select = document.getElementById("model-select") as HTMLSelectElement;
 
-    // No models at all: the banner is visible and points at the config file.
+    // Host fetch failures: the provider STILL appears (red group + error), and
+    // the saved model that is no longer served shows the splash placeholder.
     hostMessage({
       type: "config",
-      config: { provider: "openai", model: "", hasKey: true, noModels: true, configHome: "/tmp/harny-home", models: [], providerModels: [], contextWindow: 128000 },
+      config: { provider: "openai", model: "old-model", hasKey: true, hostModelErrors: [{ provider: "llamacpp", error: "HTTP 500" }], models: [], providerModels: [{ provider: "openai", model: "gpt-4o" }], contextWindow: 128000 },
     });
-    expect(warn.hidden).toBe(false);
-    expect(warn.textContent).toContain("No models configured");
-    expect(warn.textContent).toContain("/tmp/harny-home/config.json");
 
-    // Models available: the banner disappears.
+    // The failed provider's own optgroup exists with the error message.
+    const failedGroup = [...select.querySelectorAll<HTMLOptGroupElement>("optgroup")].find(
+      (g) => g.label === "llamacpp",
+    );
+    expect(failedGroup).toBeTruthy();
+    expect(failedGroup!.textContent).toContain("HTTP 500");
+
+    // The saved model is gone from the list: pick-one placeholder is shown.
+    const placeholder = select.querySelector<HTMLOptionElement>('option[value=""]');
+    expect(placeholder).toBeTruthy();
+    expect(placeholder!.textContent).toContain("Select a model");
+
+    // Models available and reachable: no placeholder, real model selected.
     hostMessage({
       type: "config",
       config: { provider: "openai-compatible", model: "qwen.gguf", hasKey: true, models: [], providerModels: [{ provider: "llamacpp", model: "qwen.gguf" }], contextWindow: 128000 },
     });
-    expect(warn.hidden).toBe(true);
-
-    // Host fetch failures with models present: softer warning instead.
-    hostMessage({
-      type: "config",
-      config: { provider: "openai", model: "gpt-4o", hasKey: true, hostModelsError: true, models: ["gpt-4o"], providerModels: [], contextWindow: 128000 },
-    });
-    expect(warn.hidden).toBe(false);
-    expect(warn.textContent).toContain("host model lists are unavailable");
+    expect(select.querySelector('option[value=""]')).toBeFalsy();
+    expect(select.value).toBe("qwen.gguf");
   });
 
   it("collapses and expands the control stack via the toggle", async () => {
@@ -845,6 +848,69 @@ describe("view webview client", () => {
     select.value = local.value;
     select.dispatchEvent(new Event("change"));
     expect(posted).toContainEqual({ type: "setModel", model: "LLM/gemma.gguf", provider: "llamacpp" });
+  });
+
+  it("orders provider groups alphabetically and merges failed providers into their sorted position", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai-compatible",
+        activeProvider: "openrouter",
+        model: "deepseek/deepseek-chat-v3",
+        hasKey: true,
+        models: [],
+        providerModels: [
+          // Deliberately NOT in alphabetical order in the payload.
+          { provider: "openrouter", model: "deepseek/deepseek-chat-v3" },
+          { provider: "llamacpp", model: "LLM/gemma.gguf" },
+          { provider: "opencode-go", model: "deepseek-v4-flash" },
+        ],
+        // llamacpp failed its fetch: it must still sit BEFORE opencode-go /
+        // openrouter (l < o) instead of being appended at the end.
+        hostModelErrors: [{ provider: "llamacpp", error: "HTTP 500" }],
+      },
+    });
+    const select = document.getElementById("model-select") as HTMLSelectElement;
+    const labels = [...select.querySelectorAll<HTMLOptGroupElement>("optgroup")].map((g) => g.label);
+    expect(labels).toEqual(["llamacpp", "opencode-go", "openrouter"]);
+  });
+
+  it("marks a failed provider red with the error message inside its group", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai-compatible",
+        activeProvider: "llamacpp",
+        model: "",
+        hasKey: true,
+        models: [],
+        providerModels: [{ provider: "opencode-go", model: "deepseek-v4-flash" }],
+        hostModelErrors: [{ provider: "llamacpp", error: "GET /v1/models → HTTP 500" }],
+      },
+    });
+    const select = document.getElementById("model-select") as HTMLSelectElement;
+    const failed = select.querySelector<HTMLOptGroupElement>("optgroup[label='llamacpp']");
+    expect(failed).toBeTruthy();
+    expect(failed!.className).toContain("optgroup-failed");
+    const err = [...failed!.querySelectorAll<HTMLOptionElement>("option")].find((o) => o.className.includes("option-error"));
+    expect(err).toBeTruthy();
+    expect(err!.textContent).toContain("HTTP 500");
+    expect(err!.textContent).toContain("host unreachable");
+    expect(err!.disabled).toBe(true);
+  });
+
+  it("refreshes the provider list when the model dropdown is opened", async () => {
+    await loadView();
+    posted.length = 0;
+    const select = document.getElementById("model-select") as HTMLSelectElement;
+    select.dispatchEvent(new MouseEvent("mousedown"));
+    expect(posted).toContainEqual({ type: "getConfig" });
+
+    posted.length = 0;
+    select.dispatchEvent(new FocusEvent("focus"));
+    expect(posted).toContainEqual({ type: "getConfig" });
   });
 
   it("shows a placeholder and selects nothing when the active session has no model", async () => {
