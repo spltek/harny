@@ -860,6 +860,196 @@ function submitName(): void {
   vscode.postMessage({ type: "modalResponse", id: modalId, value: name });
 }
 
+// ── Providers & Models editor (gear button) ──
+const providersModal = document.getElementById("providers-modal") as HTMLDivElement;
+const providerSelect = document.getElementById("provider-select") as HTMLSelectElement;
+const peName = document.getElementById("pe-name") as HTMLInputElement;
+const peBaseUrl = document.getElementById("pe-baseurl") as HTMLInputElement;
+const peApiKey = document.getElementById("pe-apikey") as HTMLInputElement;
+const peThinking = document.getElementById("pe-thinking") as HTMLSelectElement;
+const providerTestBtn = document.getElementById("provider-test") as HTMLButtonElement;
+const providerDeleteBtn = document.getElementById("provider-delete") as HTMLButtonElement;
+const providerAddBtn = document.getElementById("provider-add") as HTMLButtonElement;
+const providerTestResult = document.getElementById("provider-test-result") as HTMLDivElement;
+const providersSaveBtn = document.getElementById("providers-save") as HTMLButtonElement;
+const providersCancelBtn = document.getElementById("providers-cancel") as HTMLButtonElement;
+const gearBtn = document.getElementById("gear-btn") as HTMLButtonElement;
+
+let providerEditorData: { providers: Record<string, { baseUrl?: string; apiKey?: string; thinking?: string }> } = {
+  providers: {},
+};
+let providerEditorSelected = "";
+let providerDeleteArmed = false;
+let providerDeleteTimer: number | undefined;
+
+/** Normalize a user-typed base URL: protocol + trailing /v1 defaults. */
+function normalizeBaseUrl(raw: string): string {
+  let u = raw.trim();
+  if (!u) return u;
+  if (!/^https?:\/\//i.test(u)) u = "http://" + u;
+  if (!/\/v1\/?$/i.test(u)) u = u.replace(/\/?$/, "/v1");
+  return u;
+}
+
+function refreshProviderList(): void {
+  providerSelect.innerHTML = "";
+  const names = Object.keys(providerEditorData.providers).sort((a, b) => a.localeCompare(b));
+  if (names.length === 0) {
+    const ph = document.createElement("option");
+    ph.value = "";
+    ph.textContent = "— No providers yet —";
+    ph.disabled = true;
+    providerSelect.appendChild(ph);
+  }
+  for (const name of names) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    if (name === providerEditorSelected) opt.selected = true;
+    providerSelect.appendChild(opt);
+  }
+}
+
+function loadProviderIntoForm(name: string): void {
+  const entry = providerEditorData.providers[name];
+  providerEditorSelected = name;
+  peName.value = name;
+  peBaseUrl.value = entry?.baseUrl ?? "";
+  peApiKey.value = entry?.apiKey ?? "";
+  peThinking.value = entry?.thinking ?? "none";
+  providerTestResult.classList.add("hidden");
+  providerTestBtn.disabled = false;
+  providerDeleteBtn.disabled = false;
+  providersSaveBtn.disabled = false;
+  refreshProviderList();
+}
+
+function openProvidersEditor(data: { providers: Record<string, { baseUrl?: string; apiKey?: string; thinking?: string }> }): void {
+  providerEditorData = { providers: JSON.parse(JSON.stringify(data.providers ?? {})) };
+  const names = Object.keys(providerEditorData.providers);
+  providerEditorSelected = names.length > 0 ? names[0] : "";
+  refreshProviderList();
+  if (providerEditorSelected) {
+    loadProviderIntoForm(providerEditorSelected);
+  } else {
+    peName.value = "";
+    peBaseUrl.value = "";
+    peApiKey.value = "";
+    peThinking.value = "effort";
+    providerTestBtn.disabled = true;
+    providerDeleteBtn.disabled = true;
+    providersSaveBtn.disabled = true;
+    // Fresh install hint: the form is unusable until + New creates one.
+    peName.placeholder = "Add one with + New";
+  }
+  providerDeleteArmed = false;
+  providerDeleteBtn.textContent = "Delete";
+  providersModal.classList.remove("hidden");
+}
+
+function closeProvidersEditor(): void {
+  providerEditorData = { providers: {} };
+  providerEditorSelected = "";
+  providersModal.classList.add("hidden");
+}
+
+gearBtn.addEventListener("click", () => {
+  vscode.postMessage({ type: "getProvidersEditor" });
+});
+
+providerSelect.addEventListener("change", () => {
+  const name = providerSelect.value;
+  if (name && providerEditorData.providers[name]) loadProviderIntoForm(name);
+});
+
+providerAddBtn.addEventListener("click", () => {
+  const base = "new-provider";
+  let name = base;
+  let i = 1;
+  while (providerEditorData.providers[name]) name = `${base}-${++i}`;
+  providerEditorData.providers[name] = {};
+  loadProviderIntoForm(name);
+  peName.focus();
+  peName.select();
+});
+
+providerTestBtn.addEventListener("click", () => {
+  const name = peName.value.trim();
+  if (!name) return;
+  const baseUrl = normalizeBaseUrl(peBaseUrl.value);
+  if (!baseUrl) {
+    providerTestResult.textContent = "Enter a base URL first (e.g. http://localhost:8090/v1)";
+    providerTestResult.className = "err";
+    return;
+  }
+  providerTestResult.textContent = "Testing…";
+  providerTestResult.className = "";
+  providerTestResult.classList.remove("hidden");
+  vscode.postMessage({ type: "testProvider", data: { baseUrl, apiKey: peApiKey.value.trim() || undefined } });
+});
+
+providerDeleteBtn.addEventListener("click", () => {
+  if (!providerDeleteArmed) {
+    providerDeleteArmed = true;
+    providerDeleteBtn.textContent = "Really delete?";
+    providerDeleteBtn.classList.add("danger");
+    window.clearTimeout(providerDeleteTimer);
+    providerDeleteTimer = window.setTimeout(() => {
+      providerDeleteArmed = false;
+      providerDeleteBtn.textContent = "Delete";
+    }, 3000);
+    return;
+  }
+  providerDeleteArmed = false;
+  providerDeleteBtn.textContent = "Delete";
+  const name = providerEditorSelected;
+  if (!name || !providerEditorData.providers[name]) return;
+  delete providerEditorData.providers[name];
+  const names = Object.keys(providerEditorData.providers);
+  if (names.length === 0) {
+    providerEditorSelected = "";
+    refreshProviderList();
+    peName.value = "";
+    peBaseUrl.value = "";
+    peApiKey.value = "";
+    peThinking.value = "effort";
+    providerTestBtn.disabled = true;
+    providerDeleteBtn.disabled = true;
+  } else {
+    loadProviderIntoForm(names[0]);
+  }
+});
+
+providersSaveBtn.addEventListener("click", () => {
+  // Commit the currently edited provider (auto-rename if the name changed).
+  const oldName = providerEditorSelected;
+  const newName = peName.value.trim();
+  if (!oldName) return;
+  const entry = providerEditorData.providers[oldName];
+  if (!entry) return;
+  const given = newName || oldName;
+  if (given !== oldName) {
+    delete providerEditorData.providers[oldName];
+  }
+  providerEditorData.providers[given] = {
+    baseUrl: normalizeBaseUrl(peBaseUrl.value) || undefined,
+    apiKey: peApiKey.value.trim() || undefined,
+    thinking: peThinking.value === "none" ? undefined : peThinking.value,
+  };
+  vscode.postMessage({ type: "saveProviders", data: providerEditorData });
+  providersSaveBtn.disabled = true;
+});
+
+providersCancelBtn.addEventListener("click", closeProvidersEditor);
+providersModal.querySelector(".providers-backdrop")?.addEventListener("click", closeProvidersEditor);
+window.addEventListener("keydown", (e) => {
+  if (!providersModal.classList.contains("hidden") && e.key === "Escape") {
+    e.preventDefault();
+    closeProvidersEditor();
+  }
+});
+
+
 // ── View lock (per active session) ──
 // While the active session's LLM works (streaming OR compaction) everything
 // below the transcript is disabled except Stop; the sessions list / tabs stay
@@ -1426,6 +1616,32 @@ window.addEventListener("message", (e) => {
       presenceControl.render(msg.config && msg.config.presencePenalty);
       freqControl.render(msg.config && msg.config.frequencyPenalty);
       renderMetrics(msg.config || {});
+      break;
+    case "providersEditor":
+      openProvidersEditor((msg.data || {}) as never);
+      break;
+    case "providersTested":
+      providerTestResult.classList.remove("hidden");
+      if (msg.ok) {
+        const models = Array.isArray(msg.models) ? (msg.models as string[]) : [];
+        providerTestResult.textContent = models.length > 0
+          ? `✅ Connection OK — ${models.length} model${models.length === 1 ? "" : "s"} found: ${models.slice(0, 6).join(", ")}${models.length > 6 ? "…" : ""}`
+          : "✅ Connection OK — the host returned no models (is the model loaded?)";
+        providerTestResult.className = "ok";
+      } else {
+        providerTestResult.textContent = "❌ Connection failed: " + (typeof msg.error === "string" ? msg.error : "GET /v1/models failed");
+        providerTestResult.className = "err";
+      }
+      break;
+    case "providersSaved":
+      providersSaveBtn.disabled = false;
+      if (msg.ok) {
+        closeProvidersEditor();
+      } else {
+        providerTestResult.classList.remove("hidden");
+        providerTestResult.textContent = "❌ Could not write the config file.";
+        providerTestResult.className = "err";
+      }
       break;
   }
 });

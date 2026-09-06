@@ -94,10 +94,30 @@ export interface NamedProvidersSource {
   getProvider(name: string): ResolvedNamedProvider | undefined;
 }
 
+/** Raw view of the config's named providers, for the gear editor UI. */
+export interface ProviderEditorEntry {
+  baseUrl?: string;
+  apiKey?: string;
+  thinking?: ThinkingMode;
+  thinkingLevel?: ThinkingLevel;
+  maxTokens?: number;
+}
+
+export interface ProviderEditorData {
+  activeProvider?: string;
+  /** All named providers from the config file, keyed by name. */
+  providers: Record<string, ProviderEditorEntry>;
+}
+
 /** Persists the model selection (and optionally the active named provider) into the config file. */
 export interface ModelSelectionSaver {
   saveModelSelection(model: string, provider?: string): boolean;
 }
 
 /** A named-provider source that can also persist selections (the file config provider). */
-export interface ProviderCatalog extends NamedProvidersSource, ModelSelectionSaver {}
+export interface ProviderCatalog extends NamedProvidersSource, ModelSelectionSaver {
+  /** Full raw provider map for the gear editor (no config-side model lists). */
+  readProvidersEditor(): ProviderEditorData;
+  /** Replace the config's provider map + active provider, preserving other keys. */
+  saveProvidersEditor(data: ProviderEditorData): boolean;
+}

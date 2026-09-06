@@ -627,6 +627,63 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       transform: translateY(1px);
       box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
     }
+    /* Gear button next to the model dropdown. */
+    .icon-btn {
+      flex: none;
+      width: 1.5rem; height: 1.5rem; padding: 0;
+      background: transparent; border: 1px solid var(--border);
+      border-radius: 4px; color: var(--muted, #999);
+      display: inline-flex; align-items: center; justify-content: center;
+      cursor: pointer;
+    }
+    .icon-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+    /* Providers & Models modal (gear editor). */
+    #providers-modal { position: fixed; inset: 0; z-index: 50; }
+    #providers-modal.hidden { display: none; }
+    #providers-modal .providers-backdrop {
+      position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5);
+    }
+    #providers-modal .providers-card {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      width: min(700px, calc(100% - 20px)); max-height: 92%;
+      background: var(--bg, #1e1e1e); border: 1px solid var(--border);
+      border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column;
+      gap: 12px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+      font-size: 0.95rem;
+    }
+    #providers-modal h3 { margin: 0; font-size: 1.1rem; font-weight: 700; color: var(--fg-strong); }
+    .providers-head { display: flex; flex-direction: column; gap: 4px; }
+    .providers-hint { font-size: 0.8rem; color: var(--muted, #999); }
+    .providers-body {
+      display: grid; grid-template-columns: 190px 1fr; gap: 16px; min-height: 0;
+      flex: 1;
+    }
+    .provider-list-col { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+    .provider-list-head { display: flex; align-items: center; justify-content: space-between; font-size: 0.78rem; color: #9a9a9a; }
+    #provider-select {
+      width: 100%; flex: 1; min-height: 160px; background: var(--input-bg, #252526);
+      border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font-size: 0.9rem;
+      padding: 2px;
+    }
+    #provider-select option { padding: 3px 6px; }
+    #provider-select option:checked { background: var(--accent, #3794ff); color: #fff; }
+    .provider-form-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; overflow-y: auto; }
+    .provider-form-col .field-label { font-size: 0.82rem; }
+    .provider-form-col input, .provider-form-col select {
+      font-size: 0.95rem; padding: 5px 8px; border-radius: 5px;
+      background: var(--input-bg, #252526); border: 1px solid var(--border); color: var(--fg);
+    }
+    .provider-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .provider-actions .danger { color: var(--error, #f05555); }
+    .providers-actions { display: flex; justify-content: flex-end; gap: 10px; }
+    .providers-actions button { font-size: 0.95rem; padding: 6px 14px; border-radius: 6px; }
+    #provider-test-result {
+      font-size: 0.84rem; line-height: 1.5; border-radius: 6px; padding: 8px 10px;
+      background: rgba(255, 255, 255, 0.05); word-break: break-all;
+    }
+    #provider-test-result.ok { color: #4ec9b0; }
+    #provider-test-result.err { color: var(--error, #f05555); }
+
     /* The Auto reset is a SEPARATE key, clearly detached from the + spinner. */
     #samp-auto, #presence-auto, #freq-auto { margin-left: 6px; width: auto; padding: 0 0.5rem; }
     /* Hide the browser's native number spinners; we use our own − / + buttons. */
@@ -734,6 +791,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     <div class="ctl-card ctl-card-model">
       <span class="model-label">AI Model:</span>
       <select id="model-select" title="Switch model"></select>
+      <button id="gear-btn" class="icon-btn" title="Configure providers & models"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
     </div>
     <div class="ctl-cards">
       <div class="ctl-card">
@@ -831,6 +889,55 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       <div class="alert-actions">
         <button id="alert-cancel" class="secondary">Cancel</button>
         <button id="alert-ok">OK</button>
+      </div>
+    </div>
+  </div>
+  <div id="providers-modal" class="hidden">
+    <div class="providers-backdrop"></div>
+    <div class="providers-card">
+      <div class="providers-head">
+        <h3>Providers &amp; Models</h3>
+        <span class="providers-hint">Every provider is active: pick a model from the chat's model dropdown. Lists are fetched live from each host.</span>
+      </div>
+      <div class="providers-body">
+        <div class="provider-list-col">
+          <div class="provider-list-head">
+            <span>Providers</span>
+            <button id="provider-add" class="secondary">+ New</button>
+          </div>
+          <select id="provider-select" size="8"></select>
+        </div>
+        <div class="provider-form-col">
+          <div class="field">
+            <label class="field-label" for="pe-name">Name</label>
+            <input id="pe-name" type="text" spellcheck="false" placeholder="e.g. llamacpp" />
+          </div>
+          <div class="field">
+            <label class="field-label" for="pe-baseurl">Base URL</label>
+            <input id="pe-baseurl" type="text" spellcheck="false" placeholder="http://localhost:8090/v1" />
+          </div>
+          <div class="field">
+            <label class="field-label" for="pe-apikey">API Key (optional — leave empty for local hosts)</label>
+            <input id="pe-apikey" type="text" spellcheck="false" placeholder="sk-..." />
+          </div>
+          <div class="field">
+            <label class="field-label" for="pe-thinking">Reasoning</label>
+            <select id="pe-thinking">
+              <option value="effort">Effort (OpenAI / OpenRouter)</option>
+              <option value="bool">Bool (llama.cpp)</option>
+              <option value="none">None</option>
+            </select>
+          </div>
+          <div class="provider-actions">
+            <button id="provider-test" class="secondary">Test connection</button>
+            <button id="provider-delete" class="secondary danger" title="Remove this provider">Delete</button>
+          </div>
+          <div id="provider-test-result" class="hidden"></div>
+        </div>
+      </div>
+      <div class="providers-actions">
+        <button id="providers-cancel" class="secondary">Cancel</button>
+        <button id="providers-save">Save</button>
       </div>
     </div>
   </div>

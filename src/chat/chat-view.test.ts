@@ -149,9 +149,11 @@ function buildHarness(opts: Record<string, unknown> = {}) {
   vi.spyOn(modelSelector, "clear");
   const config = new CompositeConfigProvider(base, [modelSelector]);
   const attachments = { pick: vi.fn(async () => []), buildContext: vi.fn(async () => ({ text: "", images: [] })) } as unknown as AttachmentService;
-  const providers = {
+  const providers = (opts.providers as ProviderCatalog | undefined) ?? {
     getProvider: vi.fn(() => opts.providerEntry as import("../core/config/types").ResolvedNamedProvider | undefined),
     saveModelSelection: vi.fn(),
+    readProvidersEditor: vi.fn(() => ({ providers: {} })),
+    saveProvidersEditor: vi.fn(() => true),
   } as unknown as ProviderCatalog;
   const modelList = { fetchModels: vi.fn(opts.fetchModels ?? (async () => [])) } as unknown as ModelListProvider;
 
@@ -770,6 +772,79 @@ describe("ChatViewProvider", () => {
       .filter((m) => m.type === "config");
     const cfg = configPosts[configPosts.length - 1].config;
     expect(cfg.hostModelErrors).toContainEqual({ provider: "no-base", error: "no baseUrl configured" });
+  });
+
+  it("getProvidersEditor posts the raw provider map from the config file", async () => {
+    const { provider } = buildHarness({
+      providers: {
+        getProvider: vi.fn(),
+        saveModelSelection: vi.fn(),
+        readProvidersEditor: vi.fn(() => ({
+          activeProvider: "llamacpp",
+          providers: { llamacpp: { baseUrl: "http://localhost:8090/v1" } },
+        })),
+        saveProvidersEditor: vi.fn(() => true),
+      } as unknown as ProviderCatalog,
+    });
+    const { handler, view } = resolveWith(provider);
+    await handler({ type: "getProvidersEditor" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "providersEditor",
+        data: expect.objectContaining({ activeProvider: "llamacpp" }),
+      }),
+    );
+  });
+
+  it("saveProviders persists the editor data and refreshes the config", async () => {
+    const saveProvidersEditor = vi.fn(() => true);
+    const { provider } = buildHarness({
+      providers: {
+        getProvider: vi.fn(),
+        saveModelSelection: vi.fn(),
+        readProvidersEditor: vi.fn(() => ({ providers: {} })),
+        saveProvidersEditor,
+      } as unknown as ProviderCatalog,
+    });
+    const { handler, view } = resolveWith(provider);
+    await handler({ type: "saveProviders", data: { activeProvider: "x", providers: { x: { baseUrl: "http://x/v1" } } } });
+    expect(saveProvidersEditor).toHaveBeenCalledWith({
+      activeProvider: "x",
+      providers: { x: { baseUrl: "http://x/v1" } },
+    });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "providersSaved", ok: true }));
+  });
+
+  it("saveProviders failure replies providersSaved ok:false", async () => {
+    const { provider } = buildHarness({
+      providers: {
+        getProvider: vi.fn(),
+        saveModelSelection: vi.fn(),
+        readProvidersEditor: vi.fn(() => ({ providers: {} })),
+        saveProvidersEditor: vi.fn(() => false),
+      } as unknown as ProviderCatalog,
+    });
+    const { handler, view } = resolveWith(provider);
+    await handler({ type: "saveProviders", data: { providers: {} } });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "providersSaved", ok: false }));
+  });
+
+  it("testProvider fetches live models and posts the outcome", async () => {
+    const fetchModels = vi.fn(async () => ["m1", "m2"]);
+    const { provider } = buildHarness({ fetchModels });
+    const { handler, view } = resolveWith(provider);
+    await handler({ type: "testProvider", data: { baseUrl: "http://localhost:8090/v1", apiKey: "k" } });
+    expect(fetchModels).toHaveBeenCalledWith({ baseUrl: "http://localhost:8090/v1", apiKey: "k" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "providersTested", ok: true, models: ["m1", "m2"] }));
+  });
+
+  it("testProvider failure posts the error", async () => {
+    const { provider } = buildHarness({ fetchModels: vi.fn(async () => {
+      throw new Error("HTTP 500");
+    }) });
+    const { handler, view } = resolveWith(provider);
+    await handler({ type: "testProvider", data: { baseUrl: "http://x/v1" } });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "providersTested", ok: false, error: "HTTP 500" }));
   });
 
   it("send routes to the active runtime agent", async () => {

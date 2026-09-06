@@ -6,6 +6,8 @@ import { isThinkingLevel, isThinkingMode } from "./types";
 import type {
   HarnyConfig,
   ProviderCatalog,
+  ProviderEditorData,
+  ProviderEditorEntry,
   ResolvedNamedProvider,
 } from "./types";
 
@@ -126,6 +128,76 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
       models: this.rawModels(entry),
     };
   }
+
+  /** Full raw provider map for the gear editor (config-side only, no fetch). */
+  readProvidersEditor(): ProviderEditorData {
+    const data = this.parseFile();
+    const providers: Record<string, ProviderEditorEntry> = {};
+    const map = data ? this.asProviderMap(data) : undefined;
+    if (map) {
+      for (const [name, entry] of Object.entries(map)) {
+        const out: ProviderEditorEntry = {};
+        if (typeof entry.baseUrl === "string") out.baseUrl = entry.baseUrl;
+        if (typeof entry.apiKey === "string") out.apiKey = entry.apiKey;
+        const mode = this.thinkingMode(entry);
+        if (mode) out.thinking = mode;
+        const lvl = this.thinkingLevel(entry);
+        if (lvl) out.thinkingLevel = lvl;
+        if (typeof entry.maxTokens === "number") out.maxTokens = entry.maxTokens;
+        providers[name] = out;
+      }
+    }
+    return {
+      activeProvider: data ? this.activeProviderName(data, map ?? {}) : undefined,
+      providers,
+    };
+  }
+
+  /** Replace the config's provider map + active provider, preserving other keys. */
+  saveProvidersEditor(data: ProviderEditorData): boolean {
+    try {
+      const base = this.dir();
+      if (!base) return false;
+      const jsonPath = join(base, "config.json");
+      const jsoncPath = join(base, "config.jsonc");
+      // Fresh install (no file yet): create config.json. Otherwise keep the
+      // extension the user already uses (json vs jsonc).
+      const jsonExists = this.fs.exists(jsonPath);
+      const jsoncExists = this.fs.exists(jsoncPath);
+      const path = jsonExists ? jsonPath : jsoncExists ? jsoncPath : jsonPath;
+      let parsed: Record<string, unknown> = {};
+      if (jsonExists || jsoncExists) {
+        const before = this.parseFile();
+        if (before) parsed = before;
+      }
+
+      const providers: Record<string, Record<string, unknown>> = {};
+      for (const [name, entry] of Object.entries(data.providers)) {
+        const p: Record<string, unknown> = { api: "openai-completions" };
+        if (entry.baseUrl) p.baseUrl = entry.baseUrl;
+        if (entry.apiKey) p.apiKey = entry.apiKey;
+        if (entry.thinking && isThinkingMode(entry.thinking)) p.thinking = entry.thinking;
+        if (entry.thinkingLevel && isThinkingLevel(entry.thinkingLevel)) p.thinkingLevel = entry.thinkingLevel;
+        if (typeof entry.maxTokens === "number") p.maxTokens = entry.maxTokens;
+        providers[name] = p;
+      }
+      parsed.providers = providers;
+      if (data.activeProvider && providers[data.activeProvider]) {
+        parsed.provider = data.activeProvider;
+      } else if (data.activeProvider === undefined) {
+        // No change requested for the active provider.
+      }
+
+      // Preserve the file extension the user already uses (json vs jsonc);
+      // fresh installs get config.json.
+      this.fs.mkdirRecursive(base);
+      this.fs.writeText(path, JSON.stringify(parsed, null, 2) + "\n");
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
 
   private parseFile(): Record<string, unknown> | undefined {
     const base = this.dir();

@@ -1,7 +1,7 @@
 import type { ExtensionContext, WebviewView, WebviewViewProvider, WebviewViewResolveContext } from "vscode";
 import { Uri } from "vscode";
 import * as fs from "fs";
-import type { ConfigProvider, HarnyConfig, ProviderCatalog, ThinkingLevel } from "../core/config/types";
+import type { ConfigProvider, HarnyConfig, ProviderCatalog, ProviderEditorData, ThinkingLevel } from "../core/config/types";
 import { isThinkingLevel } from "../core/config/types";
 import type { MemoryOverrideConfigProvider } from "../core/config/memory-override-config-provider";
 import { requiresApiKey } from "../core/config/requires-api-key";
@@ -368,6 +368,40 @@ export class ChatViewProvider implements WebviewViewProvider {
       case "getConfig":
         await this.pushConfig();
         break;
+      case "getProvidersEditor":
+        this.view?.webview.postMessage({
+          type: "providersEditor",
+          data: this.providers.readProvidersEditor(),
+        });
+        break;
+      case "saveProviders": {
+        const data = msg.data;
+        if (!data || typeof data !== "object") break;
+        const ok = this.providers.saveProvidersEditor(data as ProviderEditorData);
+        if (ok) {
+          // Refresh the dropdown/thinking state from the new config immediately.
+          void this.pushConfig();
+        }
+        this.view?.webview.postMessage({ type: "providersSaved", ok });
+        break;
+      }
+      case "testProvider": {
+        const data = msg.data ?? {};
+        const baseUrl = typeof data.baseUrl === "string" ? data.baseUrl.trim() : "";
+        if (!baseUrl) break;
+        const apiKey = typeof data.apiKey === "string" ? data.apiKey : undefined;
+        try {
+          const models = await this.modelList.fetchModels({ baseUrl, apiKey });
+          this.view?.webview.postMessage({ type: "providersTested", ok: true, models });
+        } catch (e) {
+          this.view?.webview.postMessage({
+            type: "providersTested",
+            ok: false,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+        break;
+      }
       case "setModel": {
         const rt = this.activeRuntime();
         if (!rt || typeof msg.model !== "string" || !msg.model.trim()) break;

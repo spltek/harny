@@ -27,9 +27,26 @@ function setupDom(initOverrides: Record<string, unknown> = {}): void {
       <button id="send-btn">▶</button>
       <button id="abort-btn" disabled>⏹</button>
     </div>
-    <div id="status">AI Model: <select id="model-select"></select><button id="ctx-minus">−</button><input id="ctx-input" type="text" value="128000"><button id="ctx-plus">+</button><button id="out-minus">−</button><input id="out-input" type="text" value="8192"><button id="out-plus">+</button><input id="sampler-temp" type="radio" name="sampler" checked><input id="sampler-topp" type="radio" name="sampler"><button id="samp-minus">−</button><input id="samp-input" type="text" placeholder="Auto"><button id="samp-plus">+</button><button id="samp-auto">Auto</button><button id="presence-minus">−</button><input id="presence-input" type="text" placeholder="Auto"><button id="presence-plus">+</button><button id="presence-auto">Auto</button><button id="freq-minus">−</button><input id="freq-input" type="text" placeholder="Auto"><button id="freq-plus">+</button><button id="freq-auto">Auto</button></div>
+    <div id="status">AI Model: <select id="model-select"></select><button id="gear-btn">⚙</button><button id="ctx-minus">−</button><input id="ctx-input" type="text" value="128000"><button id="ctx-plus">+</button><button id="out-minus">−</button><input id="out-input" type="text" value="8192"><button id="out-plus">+</button><input id="sampler-temp" type="radio" name="sampler" checked><input id="sampler-topp" type="radio" name="sampler"><button id="samp-minus">−</button><input id="samp-input" type="text" placeholder="Auto"><button id="samp-plus">+</button><button id="samp-auto">Auto</button><button id="presence-minus">−</button><input id="presence-input" type="text" placeholder="Auto"><button id="presence-plus">+</button><button id="presence-auto">Auto</button><button id="freq-minus">−</button><input id="freq-input" type="text" placeholder="Auto"><button id="freq-plus">+</button><button id="freq-auto">Auto</button></div>
     <div id="metrics"><select id="thinking-select"><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button></div>
     <div id="model-warn"></div>
+    <div id="providers-modal" class="hidden">
+      <div class="providers-backdrop"></div>
+      <div class="providers-card">
+        <h3>Providers</h3>
+        <select id="provider-select"></select>
+        <input id="pe-name" type="text" />
+        <input id="pe-baseurl" type="text" />
+        <input id="pe-apikey" type="text" />
+        <select id="pe-thinking"><option value="effort">Effort</option><option value="bool">Bool</option><option value="none">None</option></select>
+        <button id="provider-test" class="secondary">Test</button>
+        <button id="provider-delete" class="secondary">Delete</button>
+        <button id="provider-add" class="secondary">+ New</button>
+        <div id="provider-test-result" class="hidden"></div>
+        <button id="providers-save">Save</button>
+        <button id="providers-cancel" class="secondary">Cancel</button>
+      </div>
+    </div>
     <div id="ctl-toggle"><button id="ctl-toggle-btn"></button></div>
     <div id="name-modal" class="hidden">
       <div class="name-modal-backdrop"></div>
@@ -911,6 +928,208 @@ describe("view webview client", () => {
     posted.length = 0;
     select.dispatchEvent(new FocusEvent("focus"));
     expect(posted).toContainEqual({ type: "getConfig" });
+  });
+
+  it("gear button opens the providers editor and save posts normalized providers", async () => {
+    await loadView();
+    const gear = document.getElementById("gear-btn") as HTMLButtonElement;
+    gear.click();
+    expect(posted).toContainEqual({ type: "getProvidersEditor" });
+
+    hostMessage({
+      type: "providersEditor",
+      data: {
+        activeProvider: "llamacpp",
+        providers: {
+          llamacpp: { baseUrl: "http://localhost:8090/v1", apiKey: "local", thinking: "bool" },
+          openrouter: { baseUrl: "https://openrouter.ai/api/v1", apiKey: "sk-or", thinking: "effort" },
+        },
+      },
+    });
+    const providersModal = document.getElementById("providers-modal") as HTMLDivElement;
+    expect(providersModal.classList.contains("hidden")).toBe(false);
+    const select = document.getElementById("provider-select") as HTMLSelectElement;
+    expect(select.options.length).toBe(2);
+    expect(select.options[0].textContent).toContain("llamacpp");
+
+    // Edit the first provider (llamacpp): shorten baseUrl, expect normalization.
+    const baseUrlInput = document.getElementById("pe-baseurl") as HTMLInputElement;
+    baseUrlInput.value = "localhost:8090";
+    const nameInput = document.getElementById("pe-name") as HTMLInputElement;
+    nameInput.value = "llamacpp";
+    const save = document.getElementById("providers-save") as HTMLButtonElement;
+    save.click();
+    const saveMsg = posted.find((m) => (m as { type?: string }).type === "saveProviders") as Record<string, unknown>;
+    expect(saveMsg).toBeTruthy();
+    // Every provider is active: the editor must NOT send an activeProvider.
+    expect((saveMsg.data as { activeProvider?: string }).activeProvider).toBeUndefined();
+    const data = (saveMsg.data as { providers: Record<string, { baseUrl?: string }> }).providers;
+    expect(data.llamacpp!.baseUrl).toBe("http://localhost:8090/v1");
+    expect(data.openrouter!.baseUrl).toBe("https://openrouter.ai/api/v1");
+  });
+
+  it("test connection posts testProvider and renders the result", async () => {
+    await loadView();
+    hostMessage({
+      type: "providersEditor",
+      data: { activeProvider: "llamacpp", providers: { llamacpp: { baseUrl: "http://localhost:8090/v1" } } },
+    });
+    posted.length = 0;
+    const test = document.getElementById("provider-test") as HTMLButtonElement;
+    test.click();
+    expect(posted).toContainEqual({
+      type: "testProvider",
+      data: { baseUrl: "http://localhost:8090/v1", apiKey: undefined },
+    });
+
+    hostMessage({ type: "providersTested", ok: true, models: ["LLM/qwen.gguf"] });
+    const result = document.getElementById("provider-test-result") as HTMLDivElement;
+    expect(result.classList.contains("hidden")).toBe(false);
+    expect(result.textContent).toContain("Connection OK");
+    expect(result.textContent).toContain("LLM/qwen.gguf");
+
+    hostMessage({ type: "providersTested", ok: false, error: "HTTP 500" });
+    expect(result.textContent).toContain("HTTP 500");
+    expect(result.className).toContain("err");
+  });
+
+  it("adds a new provider with + New and keeps a complete URL untouched", async () => {
+    await loadView();
+    hostMessage({
+      type: "providersEditor",
+      data: { providers: { openrouter: { baseUrl: "https://openrouter.ai/api/v1" } } },
+    });
+    const add = document.getElementById("provider-add") as HTMLButtonElement;
+    add.click();
+    const select = document.getElementById("provider-select") as HTMLSelectElement;
+    expect(select.options.length).toBe(2);
+    const nameInput = document.getElementById("pe-name") as HTMLInputElement;
+    expect(nameInput.value).toBe("new-provider");
+
+    // Complete URL: normalization leaves it as-is.
+    const baseUrlInput = document.getElementById("pe-baseurl") as HTMLInputElement;
+    baseUrlInput.value = "https://openrouter.ai/api/v1";
+    posted.length = 0;
+    const save = document.getElementById("providers-save") as HTMLButtonElement;
+    save.click();
+    const saveMsg = posted.find((m) => (m as { type?: string }).type === "saveProviders") as Record<string, unknown>;
+    const data = (saveMsg.data as { providers: Record<string, { baseUrl?: string }> }).providers;
+    expect(data["new-provider"]!.baseUrl).toBe("https://openrouter.ai/api/v1");
+  });
+
+  it("renames a provider on save and maps thinking none to undefined", async () => {
+    await loadView();
+    hostMessage({
+      type: "providersEditor",
+      data: { providers: { llamacpp: { baseUrl: "http://localhost:8090/v1", thinking: "bool" } } },
+    });
+    const nameInput = document.getElementById("pe-name") as HTMLInputElement;
+    nameInput.value = "llamacpp-2";
+    const thinking = document.getElementById("pe-thinking") as HTMLSelectElement;
+    thinking.value = "none";
+    posted.length = 0;
+    const save = document.getElementById("providers-save") as HTMLButtonElement;
+    save.click();
+    const saveMsg = posted.find((m) => (m as { type?: string }).type === "saveProviders") as Record<string, unknown>;
+    const data = (saveMsg.data as { providers: Record<string, { thinking?: string }> }).providers;
+    expect(data["llamacpp-2"]).toBeTruthy();
+    expect(data.llamacpp).toBeUndefined();
+    expect(data["llamacpp-2"]!.thinking).toBeUndefined(); // "none" → omitted
+  });
+
+  it("deletes a provider after the two-step confirmation", async () => {
+    await loadView();
+    hostMessage({
+      type: "providersEditor",
+      data: { providers: { a: { baseUrl: "http://a/v1" }, b: { baseUrl: "http://b/v1" } } },
+    });
+    const select = document.getElementById("provider-select") as HTMLSelectElement;
+    const del = document.getElementById("provider-delete") as HTMLButtonElement;
+    // First click arms the delete; second click actually removes it.
+    del.click();
+    expect(del.textContent).toBe("Really delete?");
+    del.click();
+    expect(select.options.length).toBe(1);
+    const nameInput = document.getElementById("pe-name") as HTMLInputElement;
+    expect(nameInput.value).toBe("b"); // selection moved to the remaining one
+
+    posted.length = 0;
+    const save = document.getElementById("providers-save") as HTMLButtonElement;
+    save.click();
+    const saveMsg = posted.find((m) => (m as { type?: string }).type === "saveProviders") as Record<string, unknown>;
+    const data = (saveMsg.data as { providers: Record<string, unknown> }).providers;
+    expect(data.a).toBeUndefined();
+    expect(data.b).toBeTruthy();
+  });
+
+  it("keeps the modal open and reports an error when saving fails", async () => {
+    await loadView();
+    hostMessage({
+      type: "providersEditor",
+      data: { providers: { a: { baseUrl: "http://a/v1" } } },
+    });
+    const providersModal = document.getElementById("providers-modal") as HTMLDivElement;
+    const save = document.getElementById("providers-save") as HTMLButtonElement;
+    save.click();
+    hostMessage({ type: "providersSaved", ok: false });
+    expect(providersModal.classList.contains("hidden")).toBe(false);
+    const result = document.getElementById("provider-test-result") as HTMLDivElement;
+    expect(result.textContent).toContain("Could not write the config file");
+    expect(result.className).toContain("err");
+  });
+
+  it("closes the providers editor on Cancel and on Escape", async () => {
+    await loadView();
+    hostMessage({
+      type: "providersEditor",
+      data: { providers: { a: { baseUrl: "http://a/v1" } } },
+    });
+    const providersModal = document.getElementById("providers-modal") as HTMLDivElement;
+    const cancel = document.getElementById("providers-cancel") as HTMLButtonElement;
+    cancel.click();
+    expect(providersModal.classList.contains("hidden")).toBe(true);
+
+    hostMessage({
+      type: "providersEditor",
+      data: { providers: { a: { baseUrl: "http://a/v1" } } },
+    });
+    expect(providersModal.classList.contains("hidden")).toBe(false);
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(providersModal.classList.contains("hidden")).toBe(true);
+  });
+
+  it("fresh install (no providers): shows placeholder, disables actions, + New enables saving", async () => {
+    await loadView();
+    // Host has NO config file yet: empty provider map.
+    hostMessage({ type: "providersEditor", data: { providers: {} } });
+    const providersModal = document.getElementById("providers-modal") as HTMLDivElement;
+    expect(providersModal.classList.contains("hidden")).toBe(false);
+    const select = document.getElementById("provider-select") as HTMLSelectElement;
+    expect(select.options.length).toBe(1);
+    expect(select.options[0].textContent).toContain("No providers yet");
+
+    const save = document.getElementById("providers-save") as HTMLButtonElement;
+    const test = document.getElementById("provider-test") as HTMLButtonElement;
+    const del = document.getElementById("provider-delete") as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    expect(test.disabled).toBe(true);
+    expect(del.disabled).toBe(true);
+
+    // + New creates the first provider and enables editing/saving.
+    const add = document.getElementById("provider-add") as HTMLButtonElement;
+    add.click();
+    expect(select.options.length).toBe(1);
+    expect(select.options[0].value).toBe("new-provider");
+    const nameInput = document.getElementById("pe-name") as HTMLInputElement;
+    nameInput.value = "llamacpp";
+    const baseUrlInput = document.getElementById("pe-baseurl") as HTMLInputElement;
+    baseUrlInput.value = "http://localhost:8090/v1";
+    expect(save.disabled).toBe(false);
+    posted.length = 0;
+    save.click();
+    const saveMsg = posted.find((m) => (m as { type?: string }).type === "saveProviders") as Record<string, unknown>;
+    const data = (saveMsg.data as { providers: Record<string, { baseUrl?: string }> }).providers;
+    expect(data.llamacpp!.baseUrl).toBe("http://localhost:8090/v1");
   });
 
   it("shows a placeholder and selects nothing when the active session has no model", async () => {

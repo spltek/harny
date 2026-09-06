@@ -451,4 +451,101 @@ describe("HarnyFileConfigProvider multi-provider format", () => {
     expect(config.thinkingMode).toBe("effort");
     expect(config.thinkingLevel).toBe("low");
   });
+
+  it("readProvidersEditor returns the raw provider map incl. the active one", () => {
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        provider: "llamacpp",
+        model: "qwen",
+        providers: {
+          llamacpp: { baseUrl: "http://localhost:8090/v1", api: "openai-completions", apiKey: "local", thinking: "bool", thinkingLevel: "medium" },
+          openrouter: { baseUrl: "https://openrouter.ai/api/v1", api: "openai-completions", apiKey: "sk-or", thinking: "effort" },
+        },
+      }),
+    );
+    const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+    const editor = provider.readProvidersEditor();
+    expect(editor.activeProvider).toBe("llamacpp");
+    expect(Object.keys(editor.providers).sort()).toEqual(["llamacpp", "openrouter"]);
+    expect(editor.providers.llamacpp).toEqual({
+      baseUrl: "http://localhost:8090/v1",
+      apiKey: "local",
+      thinking: "bool",
+      thinkingLevel: "medium",
+    });
+    expect(editor.providers.openrouter).toEqual({
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: "sk-or",
+      thinking: "effort",
+    });
+  });
+
+  it("saveProvidersEditor replaces the provider map, preserves other keys, and creates the file when missing", () => {
+    const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+    const ok = provider.saveProvidersEditor({
+      activeProvider: "llamacpp",
+      providers: {
+        llamacpp: { baseUrl: "http://localhost:8090/v1", apiKey: "local", thinking: "bool" },
+      },
+    });
+    expect(ok).toBe(true);
+    // Fresh install: a config.json (not config.jsonc) is created.
+    const { existsSync, readFileSync } = require("node:fs") as typeof import("node:fs");
+    expect(existsSync(join(dir, "config.json"))).toBe(true);
+    expect(existsSync(join(dir, "config.jsonc"))).toBe(false);
+    expect(JSON.parse(readFileSync(join(dir, "config.json"), "utf8"))).toEqual({
+      providers: { llamacpp: { api: "openai-completions", baseUrl: "http://localhost:8090/v1", apiKey: "local", thinking: "bool" } },
+      provider: "llamacpp",
+    });
+    const data = provider.read();
+    expect(data.activeProvider).toBe("llamacpp");
+    expect(data.baseUrl).toBe("http://localhost:8090/v1");
+    expect(data.apiKey).toBe("local");
+    expect(data.thinkingMode).toBe("bool");
+    expect(provider.readProvidersEditor().providers.llamacpp).toEqual({
+      baseUrl: "http://localhost:8090/v1",
+      apiKey: "local",
+      thinking: "bool",
+    });
+  });
+
+  it("saveProvidersEditor on a fresh install without activeProvider has no top-level provider", () => {
+    const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+    const ok = provider.saveProvidersEditor({
+      providers: { llamacpp: { baseUrl: "http://localhost:8090/v1" } },
+    });
+    expect(ok).toBe(true);
+    const { existsSync, readFileSync } = require("node:fs") as typeof import("node:fs");
+    expect(existsSync(join(dir, "config.json"))).toBe(true);
+    const raw = JSON.parse(readFileSync(join(dir, "config.json"), "utf8")) as Record<string, unknown>;
+    expect(raw.provider).toBeUndefined(); // no active provider forced
+    // reads still resolve the first provider as the effective active one
+    expect(provider.read().activeProvider).toBe("llamacpp");
+  });
+
+  it("saveProvidersEditor keeps existing top-level keys (model, temp) and writes config.json", () => {
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({ provider: "old", model: "kept-model", temperature: 0.5, providers: { old: { baseUrl: "http://x/v1", api: "openai-completions" } } }),
+    );
+    const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+    provider.saveProvidersEditor({ providers: { newp: { baseUrl: "http://y/v1" } } });
+    const raw = JSON.parse(require("node:fs").readFileSync(join(dir, "config.json"), "utf8")) as Record<string, unknown>;
+    expect(raw.model).toBe("kept-model");
+    expect(raw.temperature).toBe(0.5);
+    expect((raw.providers as Record<string, unknown>).newp).toEqual({ api: "openai-completions", baseUrl: "http://y/v1" });
+    expect((raw.providers as Record<string, unknown>).old).toBeUndefined();
+  });
+
+  it("saveProvidersEditor with an activeProvider sets the active top-level provider", () => {
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({ provider: "a", providers: { a: { baseUrl: "http://a/v1", api: "openai-completions" } } }),
+    );
+    const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+    provider.saveProvidersEditor({ activeProvider: "b", providers: { b: { baseUrl: "http://b/v1" } } });
+    const raw = JSON.parse(require("node:fs").readFileSync(join(dir, "config.json"), "utf8")) as Record<string, unknown>;
+    expect(raw.provider).toBe("b");
+  });
 });
