@@ -59,6 +59,20 @@ export interface HarnyConfig {
   thinkingMode?: ThinkingMode;
   /** Thinking level for the current session; ignored when thinkingMode is "none". */
   thinkingLevel?: ThinkingLevel;
+  /**
+   * Extra static request headers from the active named provider (e.g. a
+   * custom User-Agent or an origin tag). Applied to chat-completions
+   * requests only.
+   */
+  extraHeaders?: Record<string, string>;
+  /**
+   * Name of the header carrying a per-conversation session id (e.g. OpenCode
+   * Go's `x-opencode-session`). When set, the provider sends
+   * `<sessionHeader>: <sessionId>` so the host can optimize routing/caching.
+   */
+  sessionHeader?: string;
+  /** Stable id of the harny session building the request (from the registry). */
+  sessionId?: string;
 
 }
 
@@ -86,6 +100,10 @@ export interface ResolvedNamedProvider {
   thinkingMode?: ThinkingMode;
   thinkingLevel?: ThinkingLevel;
   maxTokens?: number;
+  /** Static extra request headers declared for this provider. */
+  extraHeaders?: Record<string, string>;
+  /** Header name for the per-conversation session id (e.g. x-opencode-session). */
+  sessionHeader?: string;
   models: { id: string; input?: string[] }[];
 }
 
@@ -101,6 +119,10 @@ export interface ProviderEditorEntry {
   thinking?: ThinkingMode;
   thinkingLevel?: ThinkingLevel;
   maxTokens?: number;
+  /** Static extra headers (carried through the editor untouched). */
+  headers?: Record<string, string>;
+  /** Header name for the per-conversation session id (e.g. x-opencode-session). */
+  sessionHeader?: string;
 }
 
 export interface ProviderEditorData {

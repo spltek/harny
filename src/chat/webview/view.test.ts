@@ -17,7 +17,7 @@ function setupDom(initOverrides: Record<string, unknown> = {}): void {
     ...initOverrides,
   };
   document.body.innerHTML = `
-    <div id="session-head"><span class="toggle">▼</span><span>Sessions</span><span class="spacer"></span><button id="new-session">＋</button></div>
+    <div id="session-head"><span class="toggle">▼</span><span>Sessions</span><span class="spacer"></span><button id="new-session">＋</button><button id="sessions-gear-btn">⚙</button></div>
     <div id="sessions"></div>
     <div id="tabs"></div>
     <div id="messages"></div>
@@ -39,6 +39,7 @@ function setupDom(initOverrides: Record<string, unknown> = {}): void {
         <input id="pe-baseurl" type="text" />
         <input id="pe-apikey" type="text" />
         <select id="pe-thinking"><option value="effort">Effort</option><option value="bool">Bool</option><option value="none">None</option></select>
+        <input id="pe-session-header" type="text" />
         <button id="provider-test" class="secondary">Test</button>
         <button id="provider-delete" class="secondary">Delete</button>
         <button id="provider-add" class="secondary">+ New</button>
@@ -68,6 +69,31 @@ function setupDom(initOverrides: Record<string, unknown> = {}): void {
         <div class="alert-actions">
           <button id="alert-cancel" class="secondary">Cancel</button>
           <button id="alert-ok">OK</button>
+        </div>
+      </div>
+    </div>
+    <div id="openwhere-modal" class="hidden">
+      <div class="ow-backdrop"></div>
+      <div class="ow-card">
+        <h3 id="ow-title"></h3>
+        <div id="ow-message" class="ow-message"></div>
+        <div class="ow-actions">
+          <button id="ow-cancel" class="secondary">Cancel</button>
+          <button id="ow-here" class="secondary">Here</button>
+          <button id="ow-new">New window</button>
+        </div>
+      </div>
+    </div>
+    <div id="sessions-modal" class="hidden">
+      <div class="sm-backdrop"></div>
+      <div class="sm-card">
+        <div class="sm-head">
+          <h3>All sessions</h3>
+          <span class="sm-hint">hint</span>
+        </div>
+        <div id="sessions-manager-list"></div>
+        <div class="sm-footer">
+          <button id="sessions-close" class="secondary">Close</button>
         </div>
       </div>
     </div>
@@ -1551,4 +1577,110 @@ describe("session name modal (unique names)", () => {
     expect((document.getElementById("name-ok") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("name-modal-title") as HTMLElement).textContent).toBe("Branch session");
   });
+});
+
+describe("all-sessions manager (gear)", () => {
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
+
+  it("the gear button asks the host for every session", async () => {
+    await loadView();
+    (document.getElementById("sessions-gear-btn") as HTMLButtonElement).click();
+    expect(posted.some((m: any) => m.type === "getAllSessions")).toBe(true);
+  });
+
+  it("renders rows with folder + actions (change folder / delete only — no Open)", async () => {
+    await loadView();
+    hostMessage({
+      type: "sessionsManager",
+      currentFolder: "/home/me/a",
+      sessions: [
+        { id: "x", name: "Local", createdAt: 1, updatedAt: 9, messageCount: 2, folder: "/home/me/a", folderMissing: false },
+        { id: "b", name: "Foreign", createdAt: 1, updatedAt: 5, messageCount: 1, folder: "/home/me/b", folderMissing: true },
+        { id: "c", name: "NoFolder", createdAt: 1, updatedAt: 3, messageCount: 0, folder: undefined, folderMissing: false },
+      ],
+    });
+    const rows = document.querySelectorAll("#sessions-manager-list .sm-row");
+    expect(rows.length).toBe(3);
+    // NO Open button anywhere: opening other folders happens in VS Code.
+    expect(document.querySelectorAll("#sessions-manager-list button.open-btn").length).toBe(0);
+    // Current-folder row carries the "this folder" tag.
+    expect(rows[0].textContent).toContain("this folder");
+    // KNOWN but missing folder: red row with "— missing".
+    expect(rows[1].textContent).toContain("missing");
+    // UNKNOWN folder: neutral "folder not set", NOT red.
+    const unknownFolder = rows[2].querySelector(".sm-folder") as HTMLElement;
+    expect(unknownFolder.classList.contains("unset")).toBe(true);
+    expect(unknownFolder.classList.contains("missing")).toBe(false);
+    expect(unknownFolder.textContent).toContain("folder not set");
+    // Per-row actions post the right messages.
+    (rows[1].querySelector("button.folder-btn") as HTMLButtonElement).click(); // Change folder…
+    expect(posted.some((m: any) => m.type === "sessionsManagerChangeFolder" && m.id === "b")).toBe(true);
+    (rows[1].querySelector("button.del-btn") as HTMLButtonElement).click(); // delete
+    expect(posted.some((m: any) => m.type === "deleteSession" && m.id === "b")).toBe(true);
+  });
+
+  it("disables ONLY the two setup gears while any session is working", async () => {
+    // Init already has a working session: both gears start locked.
+    setupDom({ workingIds: ["a"] });
+    await loadView();
+    const sessGear = document.getElementById("sessions-gear-btn") as HTMLButtonElement;
+    const provGear = document.getElementById("gear-btn") as HTMLButtonElement;
+    expect(sessGear.disabled).toBe(true);
+    expect(provGear.disabled).toBe(true);
+    expect(provGear.title).toContain("Stop the current work");
+    // All work finished: both gears unlock.
+    hostMessage({ type: "status", active: false, workingIds: [] });
+    expect(sessGear.disabled).toBe(false);
+    expect(provGear.disabled).toBe(false);
+    expect(sessGear.title).toContain("Manage all sessions");
+    // A new working session locks them again.
+    hostMessage({ type: "status", active: true, workingIds: ["b"] });
+    expect(sessGear.disabled).toBe(true);
+    expect(provGear.disabled).toBe(true);
+    // Row buttons in the manage form stay ENABLED regardless (only the gears lock).
+    hostMessage({
+      type: "sessionsManager",
+      currentFolder: "/home/me/a",
+      sessions: [
+        { id: "a", name: "Local", createdAt: 1, updatedAt: 5, messageCount: 0, folder: "/home/me/a", folderMissing: false },
+      ],
+    });
+    const row = document.querySelector<HTMLElement>(".sm-row");
+    expect(row!.querySelector<HTMLButtonElement>("button.folder-btn")!.disabled).toBe(false);
+    expect(row!.querySelector<HTMLButtonElement>("button.del-btn")!.disabled).toBe(false);
+  });
+
+  it("an empty form shows the empty hint and Close hides it", async () => {
+    await loadView();
+    hostMessage({ type: "sessionsManager", show: true, sessions: [] });
+    const modal = document.getElementById("sessions-modal") as HTMLDivElement;
+    expect(modal.classList.contains("hidden")).toBe(false);
+    expect(document.querySelector("#sessions-manager-list .sm-empty")?.textContent).toContain(
+      "No sessions yet",
+    );
+    (document.getElementById("sessions-close") as HTMLButtonElement).click();
+    expect(modal.classList.contains("hidden")).toBe(true);
+  });
+
+  it("a silent sessionsManager refresh never opens the form — only show:true does", async () => {
+    await loadView();
+    const modal = document.getElementById("sessions-modal") as HTMLDivElement;
+    const data = { type: "sessionsManager", currentFolder: "/home/me/a", sessions: [
+      { id: "x", name: "Local", createdAt: 1, updatedAt: 5, messageCount: 0, folder: "/home/me/a", folderMissing: false },
+    ] };
+    // Silent refresh (open/close/delete paths): rows are rendered, modal stays closed.
+    hostMessage(data);
+    expect(modal.classList.contains("hidden")).toBe(true);
+    expect(document.querySelectorAll(".sm-row").length).toBe(1);
+    // Gear click path (show:true): the modal opens with the fresh data.
+    hostMessage({ ...data, show: true });
+    expect(modal.classList.contains("hidden")).toBe(false);
+    expect(document.querySelectorAll(".sm-row").length).toBe(1);
+  });
+
+
+
 });

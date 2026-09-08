@@ -190,6 +190,43 @@ describe("OpenAIChatProvider", () => {
     expect(req.headers.Authorization).toBeUndefined();
   });
 
+  it("identifies itself, sends static extra headers and the per-conversation session header", async () => {
+    const http = new FakeHttpClient();
+    http.respondWith(sseResponse("data: [DONE]"));
+    // OpenCode Go-style configuration: a stable per-conversation id routed
+    // through x-opencode-session + a declared static header.
+    const provider = new OpenAIChatProvider(
+      {
+        ...config,
+        sessionId: "harny-session-42",
+        sessionHeader: "x-opencode-session",
+        extraHeaders: { "X-Origin": "harny" },
+      },
+      http,
+      tools,
+    );
+    await collect(provider.stream([{ role: "user", content: "x" }]));
+    const headers = http.requests[0].headers;
+    expect(headers["User-Agent"]).toContain("Harny");
+    expect(headers["x-opencode-session"]).toBe("harny-session-42");
+    expect(headers["X-Origin"]).toBe("harny");
+  });
+
+  it("never sends the session header without a declared header name or session id", async () => {
+    const http = new FakeHttpClient();
+    http.respondWith(sseResponse("data: [DONE]"), sseResponse("data: [DONE]"));
+    // sessionHeader declared but no id (session not wired up yet).
+    const a = new OpenAIChatProvider({ ...config, sessionHeader: "x-opencode-session" }, http, tools);
+    await collect(a.stream([{ role: "user", content: "x" }]));
+    expect(http.requests[0].headers["x-opencode-session"]).toBeUndefined();
+    // id present but no header declared.
+    const b = new OpenAIChatProvider({ ...config, sessionId: "s1" }, http, tools);
+    await collect(b.stream([{ role: "user", content: "x" }]));
+    expect(Object.keys(http.requests[1].headers).some((k) => k.toLowerCase().includes("session"))).toBe(
+      false,
+    );
+  });
+
   it("throws a descriptive error on non-OK responses", async () => {
     const http = new FakeHttpClient();
     http.respondWith({

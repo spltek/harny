@@ -122,6 +122,14 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       border-radius: 4px; transition: background-color 0.12s;
     }
     #session-head button:hover { background: rgba(255, 255, 255, 0.08); }
+    /* Manage-all-sessions gear: default (muted) color like the other gear, so
+       it does not compete with the accent-colored +; accent only on hover.
+       Specificity: must beat the header's accent-colored button rule, hence
+       the doubled ID. */
+    #session-head #sessions-gear-btn { color: var(--muted); }
+    /* Hover touches ONLY the icon: neutralise the header buttons' tinted
+       background pill (it reads as a button border lighting up). */
+    #session-head #sessions-gear-btn:hover:not(:disabled) { color: var(--accent); background: transparent; }
     #sessions { overflow-y: auto; max-height: 40vh; padding: 4px 0 6px; }
     #sessions.hidden { display: none; }
     .srow {
@@ -575,7 +583,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
         0 1px 2px rgba(0, 0, 0, 0.28);
       transition: color 0.12s, border-color 0.12s, box-shadow 0.12s, transform 0.08s;
     }
-    #compact-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+    #compact-btn:hover:not(:disabled) { color: var(--accent); }
     #compact-btn:active:not(:disabled) {
       transform: translateY(1px);
       box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
@@ -636,7 +644,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       display: inline-flex; align-items: center; justify-content: center;
       cursor: pointer;
     }
-    .icon-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+    .icon-btn:hover:not(:disabled) { color: var(--accent); }
     /* Providers & Models modal (gear editor). */
     #providers-modal { position: fixed; inset: 0; z-index: 50; }
     #providers-modal.hidden { display: none; }
@@ -759,6 +767,64 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     }
     #alert-modal .alert-actions { display: flex; justify-content: flex-end; gap: 8px; }
     #alert-ok.danger { background: var(--error); }
+
+    /* ── All-sessions manager (gear next to New session ──
+       Lists sessions of EVERY folder, most recent first. Red rows = the
+       session's folder is no longer available (open disabled until a valid
+       folder is picked). */
+    #sessions-modal { position: fixed; inset: 0; z-index: 60; }
+    #sessions-modal.hidden { display: none; }
+    #sessions-modal .sm-backdrop {
+      position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5);
+    }
+    #sessions-modal .sm-card {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      width: min(680px, calc(100% - 20px)); max-height: 92%;
+      background: var(--bg, #1e1e1e); border: 1px solid var(--border);
+      border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column;
+      gap: 12px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5); font-size: 0.95rem;
+    }
+    #sessions-modal h3 { margin: 0; font-size: 1.1rem; font-weight: 700; color: var(--fg-strong); }
+    #sessions-modal .sm-hint { font-size: 0.8rem; color: var(--muted, #999); }
+    #sessions-manager-list {
+      display: flex; flex-direction: column; gap: 6px;
+      overflow-y: auto; min-height: 140px; flex: 1;
+    }
+    .sm-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px; border-radius: 8px; background: var(--input-bg);
+      border: 1px solid var(--border);
+    }
+    .sm-row .sm-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .sm-row .sm-name {
+      display: flex; align-items: center; gap: 6px; font-weight: 600;
+      font-size: 0.95rem; color: var(--fg-strong); min-width: 0;
+    }
+    .sm-row .sm-name > span:first-child {
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .sm-row .sm-tag {
+      flex: none; font-size: 0.66rem; color: var(--accent);
+      border: 1px solid var(--border); border-radius: 8px; padding: 1px 6px;
+    }
+    .sm-row .sm-meta { font-size: 0.72rem; color: #888; }
+    .sm-row .sm-folder {
+      font-size: 0.72rem; font-family: var(--mono); color: #777;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+      cursor: default;
+    }
+    .sm-row .sm-folder.missing { color: var(--error); }
+    /* Unknown (not set) folder is NEUTRAL, not red: only a KNOWN path that is
+       no longer available is a problem (red). */
+    .sm-row .sm-folder.unset { color: #999; font-style: italic; }
+    .sm-actions { display: inline-flex; gap: 6px; flex-shrink: 0; }
+    .sm-actions button { min-height: 1.54rem; font-size: 0.85rem; }
+    .sm-actions button.secondary-ghost {
+      background: transparent; border: 1px solid var(--border); color: var(--fg);
+    }
+    .sm-actions button:disabled { opacity: 0.3; cursor: default; }
+    #sessions-modal .sm-footer { display: flex; justify-content: flex-end; }
+    .sm-empty { padding: 18px; text-align: center; color: #888; font-size: 0.9rem; }
   </style>
 </head>
 <body>
@@ -767,6 +833,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       <span class="toggle">▼</span><span>Sessions</span>
       <span class="spacer"></span>
       <button id="new-session" title="New session"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
+      <button id="sessions-gear-btn" title="Manage all sessions (every folder)"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
     </div>
     <div id="sessions"></div>
   </div>
@@ -892,6 +959,19 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       </div>
     </div>
   </div>
+  <div id="sessions-modal" class="hidden">
+    <div class="sm-backdrop"></div>
+    <div class="sm-card">
+      <div class="sm-head">
+        <h3>All sessions</h3>
+        <span class="sm-hint">Every folder, most recent first. Red = folder no longer available — set a new folder first. To use a session of another folder, open that folder in VS Code.</span>
+      </div>
+      <div id="sessions-manager-list"></div>
+      <div class="sm-footer">
+        <button id="sessions-close" class="secondary">Close</button>
+      </div>
+    </div>
+  </div>
   <div id="providers-modal" class="hidden">
     <div class="providers-backdrop"></div>
     <div class="providers-card">
@@ -927,6 +1007,10 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
               <option value="bool">Bool (llama.cpp)</option>
               <option value="none">None</option>
             </select>
+          </div>
+          <div class="field">
+            <label class="field-label" for="pe-session-header">Session header (optional)</label>
+            <input id="pe-session-header" type="text" spellcheck="false" placeholder="e.g. x-opencode-session" title="Header carrying this conversation's stable session id (routing + prompt cache, e.g. OpenCode Go)" />
           </div>
           <div class="provider-actions">
             <button id="provider-test" class="secondary">Test connection</button>

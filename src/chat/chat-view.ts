@@ -7,7 +7,7 @@ import type { MemoryOverrideConfigProvider } from "../core/config/memory-overrid
 import { requiresApiKey } from "../core/config/requires-api-key";
 import type { ModelListProvider } from "../core/llm/model-list";
 import type { SessionManager } from "../core/sessions/session-manager";
-import type { SessionSettingsPatch } from "../core/sessions/types";
+import type { SessionSettingsPatch, SessionSummary } from "../core/sessions/types";
 import type { SessionRegistry, SessionRuntime } from "./session-registry";
 import { StreamTee } from "./stream-tee";
 import type { AttachmentService } from "./attachment-service";
@@ -53,6 +53,8 @@ export class ChatViewProvider implements WebviewViewProvider {
       manualKeepFraction?: number;
       /** True when exactly one workspace folder is open (sessions are bucketed centrally per workspace). */
       workspaceReady?: () => boolean;
+      /** Absolute path of the current workspace root (filters the main sessions list; undefined = none). */
+      currentFolder?: () => string | undefined;
       /** Extension data folder (home), for error hints pointing at config.json. */
       configHome?: string;
     } = {},
@@ -64,13 +66,73 @@ export class ChatViewProvider implements WebviewViewProvider {
     this.context = context;
   }
 
-  /** Open a session as the active tab (creates a runtime if needed). */
+  /**
+   * Open a session as the active tab (creates a runtime if needed). Sessions
+   * of OTHER folders are not opened here: the user opens the folder in VS
+   * Code and harny re-derives its root from the workspace. Only blocked when
+   * the session's folder is known but no longer available.
+   */
   openSession(id: string): void {
-    this.registry.openOrCreate(id);
-    void this.setActive(id);
+    void this.openSessionId(id);
   }
 
-  /** Create a new session asking for its name (undefined = user cancelled). */
+  private async openSessionId(id: string): Promise<void> {
+    const s = this.sessions.list().find((x) => x.id === id);
+    if (s?.folderMissing) return;
+    this.registry.openOrCreate(id);
+    await this.setActive(id);
+    // Silent refresh of the manage form (if open) — no-op for the main list.
+    this.pushSessionsManager();
+  }
+
+  /** The single workspace root the MAIN sessions list is anchored to. */
+  private currentFolder(): string | undefined {
+    return this.options.currentFolder ? this.options.currentFolder() : undefined;
+  }
+
+  /** Sessions OF the current workspace folder (the main list, not the form). */
+  private currentFolderSessions(): SessionSummary[] {
+    const folder = this.currentFolder();
+    return this.sessions.list().filter((s) => !folder || s.folder === folder);
+  }
+
+  /** Live data for the manage-sessions form (ALL folders, sorted by the manager). */
+  private pushSessionsManager(): void {
+    // show:false — a silent refresh: re-renders the rows IF the form is open,
+    // never OPENS it (a session opened from the main list must not pop the
+    // form).
+    this.view?.webview.postMessage(this.sessionsManagerPayload(false));
+  }
+
+  /** Payload for the manage form; `show` controls whether the modal opens. */
+  private sessionsManagerPayload(show: boolean): Record<string, unknown> {
+    return {
+      type: "sessionsManager",
+      sessions: this.sessions.list(),
+      currentFolder: this.currentFolder(),
+      workingIds: this.workingIds(),
+      show,
+    };
+  }
+
+  /** Change the folder a session points to (pointer-only; the file stays put). */
+  private async changeSessionFolder(id: string): Promise<void> {
+    const { window } = await import("vscode");
+    const uris = await window.showOpenDialog({
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      title: "Choose the folder for this session",
+      openLabel: "Select folder",
+    });
+    if (!uris || uris.length === 0) return;
+    const folder = uris[0].fsPath;
+    this.sessions.saveSettings(id, { folder });
+    // Refresh both the form and the main list.
+    this.pushSessionsManager();
+    void this.postSwitchView();
+  }
+
   /** True when exactly one workspace folder is open (sessions are bucketed centrally). */
   private workspaceReady(): boolean {
     return this.options.workspaceReady ? this.options.workspaceReady() : true;
@@ -99,8 +161,9 @@ export class ChatViewProvider implements WebviewViewProvider {
    */
   private sessionNameTaken(name: string, excludeId?: string): boolean {
     const n = name.trim().toLowerCase();
-    return this.sessions
-      .list()
+    // Uniqueness is scoped to the CURRENT workspace folder (the list the user
+    // sees and renames in); sessions of other folders may share names.
+    return this.currentFolderSessions()
       .some((s) => s.id !== excludeId && (s.name || "").trim().toLowerCase() === n);
   }
 
@@ -283,6 +346,8 @@ export class ChatViewProvider implements WebviewViewProvider {
     }
     this.resubscribe();
     await this.postSwitchView();
+    // A closed tab re-enables the row's Open in the manage form (if open).
+    this.pushSessionsManager();
   }
 
   /** Session ids whose agent is currently streaming (blocks delete, drives the lock). */
@@ -300,7 +365,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       type: "switchView",
       activeId: this.activeId,
       openIds: this.registry.listOpenIds(),
-      sessions: this.sessions.list(),
+      sessions: this.currentFolderSessions(),
       messages: active ? active.agent.getMessages() : [],
       config,
       workingIds: this.workingIds(),
@@ -360,6 +425,13 @@ export class ChatViewProvider implements WebviewViewProvider {
         break;
       case "deleteSession":
         if (typeof msg.id === "string") await this.deleteSession(msg.id);
+        break;
+      case "getAllSessions":
+        // show:true — the user clicked the gear: the form opens with this data.
+        this.view?.webview.postMessage(this.sessionsManagerPayload(true));
+        break;
+      case "sessionsManagerChangeFolder":
+        if (typeof msg.id === "string") await this.changeSessionFolder(msg.id);
         break;
       case "modalResponse": {
         if (typeof msg.id === "number") this.onPanelModalResponse(msg.id, msg.value);
@@ -655,6 +727,9 @@ export class ChatViewProvider implements WebviewViewProvider {
   private computeOverrides(model: string, providerName?: string): Partial<HarnyConfig> {
     const overrides: Partial<HarnyConfig> = { model };
     const rt = this.activeRuntime();
+    // Stable per-conversation id, used for routing/session headers (e.g.
+    // OpenCode Go's x-opencode-session) and diagnostic logs.
+    if (rt) overrides.sessionId = rt.sessionId;
     if (providerName) {
       const entry = this.providers.getProvider(providerName);
       if (entry) {
@@ -666,6 +741,9 @@ export class ChatViewProvider implements WebviewViewProvider {
         // Explicit undefined clears a stale value from a previously active provider.
         overrides.thinkingMode = entry.thinkingMode;
         if (typeof entry.maxTokens === "number") overrides.maxTokens = entry.maxTokens;
+        // Declared extra headers + the per-conversation session header name.
+        if (entry.extraHeaders) overrides.extraHeaders = entry.extraHeaders;
+        overrides.sessionHeader = entry.sessionHeader;
         const ids = entry.models.map((m) => m.id);
         if (ids.length > 0) overrides.availableModels = ids;
         const modalities: Record<string, string[]> = {};
@@ -743,6 +821,8 @@ export class ChatViewProvider implements WebviewViewProvider {
     this.streamTee.detach(id);
     this.resubscribe();
     await this.postSwitchView();
+    // The manage-sessions form (if open) must drop the deleted row too.
+    this.pushSessionsManager();
   }
 
   private async performCompaction(rt: SessionRuntime, mode: "auto" | "manual" = "auto"): Promise<void> {
@@ -934,7 +1014,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       cspSource: this.view!.webview.cspSource,
       scriptUri: viewUri.with({ query: "v=" + version }).toString(),
       state: {
-        sessions: this.sessions.list(),
+        sessions: this.currentFolderSessions(),
         openIds: this.registry.listOpenIds(),
         activeId: this.activeId,
         messages,

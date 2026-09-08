@@ -1,6 +1,7 @@
 import { window, workspace, commands } from "vscode";
 import type { ExtensionContext } from "vscode";
 import { mkdirSync, watch } from "node:fs";
+import { join } from "node:path";
 import { Agent } from "./core/agent/agent";
 import { DefaultSystemPromptBuilder } from "./core/agent/system-prompt";
 import type { ChatController } from "./core/agent/chat-controller";
@@ -12,6 +13,7 @@ import { MemoryOverrideConfigProvider } from "./core/config/memory-override-conf
 import { VscodeConfigProvider } from "./core/config/vscode-config-provider";
 import { InMemoryEventBus } from "./core/events/in-memory-event-bus";
 import { JsonlSessionStore } from "./core/sessions/jsonl-session-store";
+import { AllFoldersSessionStore } from "./core/sessions/all-folders-session-store";
 import { SessionManager } from "./core/sessions/session-manager";
 import { Compactor, DEFAULT_COMPACTION } from "./core/sessions/compactor";
 import { DefaultLlmProviderFactory } from "./core/llm/llm-provider-factory";
@@ -63,8 +65,11 @@ export function activate(context: ExtensionContext) {
   }
   infoLog("storage home=", resolved.home);
 
-  // Sessions live in the CENTRAL home bucket per workspace (pi/Cursor style);
-  // dev note: previous workspace-local sessions were dropped, no migration.
+  // Sessions live in the CENTRAL home buckets per workspace (pi/Cursor style).
+  // The AllFoldersSessionStore traverses EVERY bucket under home/sessions, so
+  // the manage-sessions form can list sessions of other folders; per-session
+  // `folder` is persisted in the JSONL header (changed via saveSettings).
+  const bucketsRoot = () => join(resolved.home, "sessions");
   const sessionsDir = () => sessionsDirFor(root, resolved.home);
 
   const runtimeOverrides = new MemoryOverrideConfigProvider();
@@ -85,7 +90,13 @@ export function activate(context: ExtensionContext) {
   const systemPrompt = new DefaultSystemPromptBuilder(() => tools.definitions(), cwd);
   const compactor = new Compactor(llmFactory, () => config.get());
 
-  const store = new JsonlSessionStore(() => sessionsDir(), nodeFileSystem);
+  const store = new AllFoldersSessionStore({
+    bucketsRoot,
+    currentBucket: sessionsDir,
+    currentFolder: () => root,
+    fs: nodeFileSystem,
+    bucketStore: (dir) => new JsonlSessionStore(() => dir, nodeFileSystem),
+  });
   const sessions = new SessionManager(store);
 
   const attachments = new AttachmentService(nodeFileSystem, async () => {
@@ -117,6 +128,7 @@ export function activate(context: ExtensionContext) {
       compactor,
       compaction: DEFAULT_COMPACTION,
       workspaceReady: () => !!root,
+      currentFolder: () => root,
       configHome: resolved.home,
     },
   );

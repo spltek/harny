@@ -303,4 +303,27 @@ describe("JsonlSessionStore saveSettings", () => {
     expect(loaded.thinkingLevel).toBeUndefined();
     expect(loaded.model).toBe("m1");
   });
+
+  it("persists the session folder in the header and carries it across saves/renames", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    store.saveSettings("s1", { folder: "/home/me/proj" });
+    expect(store.load("s1").summary.folder).toBe("/home/me/proj");
+    expect(store.list()[0].folder).toBe("/home/me/proj");
+
+    // A later write (messages, rename) must NOT drop the folder.
+    store.saveMessages("s1", [msg({ content: "x" })]);
+    expect(store.load("s1").summary.folder).toBe("/home/me/proj");
+    store.rename("s1", "Renamed");
+    const reloaded = store.load("s1");
+    expect(reloaded.summary.name).toBe("Renamed");
+    expect(reloaded.summary.folder).toBe("/home/me/proj");
+  });
+
+  it("ignores folder values that are blank in the patch (set-only semantics)", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    store.saveSettings("s1", { folder: "   " });
+    expect(store.load("s1").summary.folder).toBeUndefined();
+  });
 });

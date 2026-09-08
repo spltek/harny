@@ -22,6 +22,10 @@ interface NamedProviderEntry {
   /** Default thinking level for this provider: "off" | "low" | "medium" | "high" */
   thinkingLevel?: string;
   maxTokens?: number;
+  /** Static extra request headers (string values only are honoured). */
+  headers?: Record<string, unknown>;
+  /** Header name for the per-conversation session id (e.g. x-opencode-session). */
+  sessionHeader?: string;
 }
 
 /**
@@ -125,8 +129,22 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
       thinkingMode: this.thinkingMode(entry),
       thinkingLevel: this.thinkingLevel(entry),
       maxTokens: entry.maxTokens,
+      extraHeaders: this.headers(entry),
+      sessionHeader: typeof entry.sessionHeader === "string" && entry.sessionHeader.trim()
+        ? entry.sessionHeader.trim()
+        : undefined,
       models: this.rawModels(entry),
     };
+  }
+
+  /** Normalize a provider's extra headers: only non-empty string values count. */
+  private headers(entry: NamedProviderEntry): Record<string, string> | undefined {
+    if (!entry.headers || typeof entry.headers !== "object") return undefined;
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(entry.headers)) {
+      if (typeof v === "string" && v.trim()) out[k] = v;
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
   }
 
   /** Full raw provider map for the gear editor (config-side only, no fetch). */
@@ -144,6 +162,11 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
         const lvl = this.thinkingLevel(entry);
         if (lvl) out.thinkingLevel = lvl;
         if (typeof entry.maxTokens === "number") out.maxTokens = entry.maxTokens;
+        const hdrs = this.headers(entry);
+        if (hdrs) out.headers = hdrs;
+        if (typeof entry.sessionHeader === "string" && entry.sessionHeader.trim()) {
+          out.sessionHeader = entry.sessionHeader.trim();
+        }
         providers[name] = out;
       }
     }
@@ -179,6 +202,8 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
         if (entry.thinking && isThinkingMode(entry.thinking)) p.thinking = entry.thinking;
         if (entry.thinkingLevel && isThinkingLevel(entry.thinkingLevel)) p.thinkingLevel = entry.thinkingLevel;
         if (typeof entry.maxTokens === "number") p.maxTokens = entry.maxTokens;
+        if (entry.headers && Object.keys(entry.headers).length > 0) p.headers = entry.headers;
+        if (entry.sessionHeader && entry.sessionHeader.trim()) p.sessionHeader = entry.sessionHeader.trim();
         providers[name] = p;
       }
       parsed.providers = providers;
@@ -301,6 +326,13 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
     const lvl = this.thinkingLevel(entry);
     if (lvl) out.thinkingLevel = lvl;
     if (typeof entry.maxTokens === "number") out.maxTokens = entry.maxTokens;
+    // Static extra headers + the per-conversation session header, flattened
+    // into the runtime config so the chat provider sends them.
+    const hdrs = this.headers(entry);
+    if (hdrs) out.extraHeaders = hdrs;
+    if (typeof entry.sessionHeader === "string" && entry.sessionHeader.trim()) {
+      out.sessionHeader = entry.sessionHeader.trim();
+    }
 
     const modelIds = this.modelIds(entry);
     if (modelIds.length > 0) out.availableModels = modelIds;

@@ -549,3 +549,89 @@ describe("HarnyFileConfigProvider multi-provider format", () => {
     expect(raw.provider).toBe("b");
   });
 });
+
+describe("HarnyFileConfigProvider opencode session header fields", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "harny-config-sh-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("flattens sessionHeader + static headers into the runtime config and getProvider", () => {
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        provider: "opencode-go",
+        model: "deepseek-v4-pro",
+        providers: {
+          "opencode-go": {
+            baseUrl: "https://opencode.ai/go/v1",
+            api: "openai-completions",
+            apiKey: "go-key",
+            sessionHeader: "x-opencode-session",
+            headers: { "X-Origin": "harny", "User-Agent": "harny-agent" },
+            models: [{ id: "deepseek-v4-pro" }],
+          },
+        },
+      }),
+    );
+    const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+    const data = provider.read();
+    expect(data.sessionHeader).toBe("x-opencode-session");
+    expect(data.extraHeaders).toEqual({ "X-Origin": "harny", "User-Agent": "harny-agent" });
+    const resolved = provider.getProvider("opencode-go");
+    expect(resolved?.sessionHeader).toBe("x-opencode-session");
+    expect(resolved?.extraHeaders).toEqual({ "X-Origin": "harny", "User-Agent": "harny-agent" });
+  });
+
+  it("drops non-string / empty values from declared headers and ignores stray sessionHeader types", () => {
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        provider: "p",
+        providers: {
+          p: {
+            baseUrl: "http://p/v1",
+            sessionHeader: 42,
+            headers: { Keep: "yes", Drop: 3, Empty: "" },
+          },
+        },
+      }),
+    );
+    const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+    const resolved = provider.getProvider("p");
+    expect(resolved?.sessionHeader).toBeUndefined();
+    expect(resolved?.extraHeaders).toEqual({ Keep: "yes" });
+  });
+
+  it("editor round-trips sessionHeader and headers (save does not drop them)", () => {
+    const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+    provider.saveProvidersEditor({
+      providers: {
+        "opencode-go": {
+          baseUrl: "https://opencode.ai/go/v1",
+          apiKey: "go-key",
+          sessionHeader: "x-opencode-session",
+          headers: { "X-Origin": "harny" },
+        },
+      },
+    });
+    const raw = JSON.parse(require("node:fs").readFileSync(join(dir, "config.json"), "utf8")) as Record<string, unknown>;
+    expect((raw.providers as Record<string, unknown>)["opencode-go"]).toEqual({
+      api: "openai-completions",
+      baseUrl: "https://opencode.ai/go/v1",
+      apiKey: "go-key",
+      sessionHeader: "x-opencode-session",
+      headers: { "X-Origin": "harny" },
+    });
+    const editor = provider.readProvidersEditor();
+    expect(editor.providers["opencode-go"].sessionHeader).toBe("x-opencode-session");
+    expect(editor.providers["opencode-go"].headers).toEqual({ "X-Origin": "harny" });
+    // Flattened into the runtime config too.
+    expect(provider.read().sessionHeader).toBe("x-opencode-session");
+  });
+});

@@ -80,9 +80,24 @@ export class OpenAIChatProvider implements LLMProvider {
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
+      // Identify ourselves (recommended by providers like OpenCode Go, which
+      // reject generic SDK/library UAs as potential abuse).
+      "User-Agent": "Harny/0.1 (VS Code AI Coding Harness)",
     };
     if (this.config.apiKey) {
       headers.Authorization = `Bearer ${this.config.apiKey}`;
+    }
+    // Static extra headers declared by the active named provider (a UA tag, an
+    // origin marker, or a fixed session value). Non-empty strings only.
+    for (const [k, v] of Object.entries(this.config.extraHeaders ?? {})) {
+      if (v) headers[k] = v;
+    }
+    // Per-conversation routing header (OpenCode Go's `x-opencode-session` and
+    // similar): a STABLE id per harny conversation lets the provider optimize
+    // routing and prompt caching. Sent only when the active provider declares
+    // the header name AND the session carries an id.
+    if (this.config.sessionHeader && this.config.sessionId) {
+      headers[this.config.sessionHeader] = this.config.sessionId;
     }
 
     const response = await this.http.post(url, JSON.stringify(body), headers, signal);

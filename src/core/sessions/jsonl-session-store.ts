@@ -11,6 +11,7 @@ interface SessionMeta {
   name: string;
   createdAt: number;
   updatedAt: number;
+  folder?: string;
   model?: string;
   modelProvider?: string;
   thinkingLevel?: string;
@@ -84,6 +85,7 @@ export class JsonlSessionStore implements SessionStore {
       createdAt: existing?.createdAt ?? Date.now(),
       updatedAt: Date.now(),
       messageCount: messages.length,
+      ...(existing?.folder ? { folder: existing.folder } : {}),
       ...(existing?.model ? { model: existing.model } : {}),
       ...(existing?.modelProvider ? { modelProvider: existing.modelProvider } : {}),
       ...(existing?.thinkingLevel ? { thinkingLevel: existing.thinkingLevel } : {}),
@@ -128,6 +130,10 @@ export class JsonlSessionStore implements SessionStore {
    */
   private normalizePatch(patch: SessionSettingsPatch): Partial<SessionSummary> {
     const out: Partial<SessionSummary> = {};
+    // folder: stored only when a non-empty absolute path is provided (set-only
+    // semantics, like model); a missing key is left untouched.
+    const folder = patch.folder?.trim();
+    if (folder) out.folder = folder;
     if (patch.model) out.model = patch.model;
     if (patch.modelProvider) out.modelProvider = patch.modelProvider;
     if (patch.thinkingLevel !== undefined && isThinkingLevel(patch.thinkingLevel)) {
@@ -219,6 +225,7 @@ export class JsonlSessionStore implements SessionStore {
             createdAt: Number(rec.createdAt ?? 0),
             updatedAt: Number(rec.updatedAt ?? 0),
             messageCount: 0,
+            ...(typeof rec.folder === "string" && rec.folder.trim() ? { folder: rec.folder } : {}),
             ...(typeof rec.model === "string" ? { model: rec.model } : {}),
             ...(typeof rec.modelProvider === "string" ? { modelProvider: rec.modelProvider } : {}),
             ...(typeof rec.thinkingLevel === "string" && isThinkingLevel(rec.thinkingLevel)
@@ -262,6 +269,7 @@ export class JsonlSessionStore implements SessionStore {
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
       messageCount: existing?.messageCount ?? 0,
+      ...(existing?.folder ? { folder: existing.folder } : {}),
       ...(existing?.model ? { model: existing.model } : {}),
       ...(existing?.modelProvider ? { modelProvider: existing.modelProvider } : {}),
       ...(existing?.thinkingLevel ? { thinkingLevel: existing.thinkingLevel } : {}),
@@ -311,6 +319,7 @@ export class JsonlSessionStore implements SessionStore {
       createdAt: Number(rec.createdAt ?? 0),
       updatedAt: Number(rec.updatedAt ?? 0),
       messageCount: Math.max(0, total - 1),
+      ...(typeof rec.folder === "string" && rec.folder.trim() ? { folder: rec.folder } : {}),
       ...(typeof rec.model === "string" ? { model: rec.model } : {}),
       ...(typeof rec.modelProvider === "string" ? { modelProvider: rec.modelProvider } : {}),
       ...(typeof rec.thinkingLevel === "string" && isThinkingLevel(rec.thinkingLevel)
@@ -334,6 +343,7 @@ export class JsonlSessionStore implements SessionStore {
       name: summary.name,
       createdAt: summary.createdAt,
       updatedAt: summary.updatedAt,
+      ...(summary.folder ? { folder: summary.folder } : {}),
       ...(summary.model ? { model: summary.model } : {}),
       ...(summary.modelProvider ? { modelProvider: summary.modelProvider } : {}),
       ...(summary.thinkingLevel ? { thinkingLevel: summary.thinkingLevel } : {}),

@@ -25,6 +25,8 @@ const state = vi.hoisted(() => ({
   // In-panel alert/confirm: auto-reply switch (default = confirm OK).
   noAutoAlert: false,
   alertOk: true as boolean | undefined,
+  // VS Code dialogs exercised by the manage-sessions form.
+  showOpenDialog: vi.fn(),
 }));
 
 vi.mock("vscode", () => ({
@@ -33,6 +35,7 @@ vi.mock("vscode", () => ({
     showWarningMessage: state.showWarningMessage,
     showErrorMessage: state.showErrorMessage,
     showInformationMessage: state.showInformationMessage,
+    showOpenDialog: state.showOpenDialog,
   },
   Uri: { joinPath: () => ({}) },
 }));
@@ -518,9 +521,11 @@ describe("ChatViewProvider", () => {
     await provider.createNew(); // s1
     await provider.createNew(); // s2 (active)
     await handler({ type: "closeTab", id: "s2" });
-    const last = view.webview.postMessage.mock.calls[view.webview.postMessage.mock.calls.length - 1][0] as any;
-    expect(last.type).toBe("switchView");
-    expect(last.activeId).toBe("s1");
+    // The switchView (with the new active tab) is still posted — the later
+    // sessionsManager refresh only re-renders the manage form.
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "switchView", activeId: "s1" }),
+    );
   });
 
   it("closeTab on an inactive session leaves the active one untouched", async () => {
@@ -529,9 +534,9 @@ describe("ChatViewProvider", () => {
     await provider.createNew(); // s1
     await provider.createNew(); // s2 (active)
     await handler({ type: "closeTab", id: "s1" });
-    const last = view.webview.postMessage.mock.calls[view.webview.postMessage.mock.calls.length - 1][0] as any;
-    expect(last.type).toBe("switchView");
-    expect(last.activeId).toBe("s2");
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "switchView", activeId: "s2" }),
+    );
   });
 
   it("openSession opens an existing session", async () => {
@@ -917,6 +922,29 @@ describe("ChatViewProvider per-session model", () => {
     expect(store.saveSettings).toHaveBeenCalledWith("s1", { model: "gemma.gguf", modelProvider: "llamacpp" });
   });
 
+  it("setModel carries the stable session id + the provider's declared session/static headers into the runtime config", async () => {
+    const { provider, modelSelector } = buildHarness({
+      providerEntry: {
+        baseUrl: "https://opencode.ai/go/v1",
+        apiKey: "go-key",
+        maxTokens: 16384,
+        sessionHeader: "x-opencode-session",
+        extraHeaders: { "X-Origin": "harny" },
+        models: [{ id: "deepseek-v4-pro" }],
+      } as any,
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1 (active runtime with a session id)
+    await handler({ type: "setModel", model: "deepseek-v4-pro", provider: "opencode-go" });
+    expect(modelSelector.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: expect.any(String),
+        sessionHeader: "x-opencode-session",
+        extraHeaders: { "X-Origin": "harny" },
+      }),
+    );
+  });
+
   it("applies the session model when switching to it and clears it for new sessions", async () => {
     const { store, registry, provider, modelSelector } = buildHarness();
     const { handler } = resolveWith(provider);
@@ -982,6 +1010,85 @@ describe("ChatViewProvider temperature reload", () => {
       .map((c) => c[0] as any)
       .filter((m) => m.type === "config");
     expect(configPosts[configPosts.length - 1].config.temperature).toBe(0.3);
+  });
+});
+
+describe("ChatViewProvider all-sessions manager", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("cannot open a session whose folder is missing (nothing runs, no runtime)", async () => {
+    const { store, registry, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "gone", name: "Gone", createdAt: 1, updatedAt: 2, messageCount: 1, folder: "/gone", folderMissing: true },
+    ]);
+    const { handler } = resolveWith(provider);
+    await handler({ type: "openSession", id: "gone" });
+    expect(registry.listOpenIds()).toHaveLength(0);
+  });
+
+  it("opens a session of the CURRENT folder in place (no window switching)", async () => {
+    const { store, registry, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "x", name: "Local", createdAt: 1, updatedAt: 2, messageCount: 0, folder: "/home/me/a", folderMissing: false },
+    ]);
+    const { handler, view } = resolveWith(provider);
+    await handler({ type: "openSession", id: "x" });
+    await new Promise((r) => setTimeout(r, 0)); // let the async open + refresh settle
+    expect(registry.listOpenIds()).toContain("x");
+    // Silent refresh of the manage form (if open).
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "sessionsManager", currentFolder: "/home/me/a" }),
+    );
+  });
+
+  it("getAllSessions replies with EVERY session plus the current folder", async () => {
+    const { store, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
+    const all = [
+      { id: "a", name: "A", createdAt: 1, updatedAt: 3, messageCount: 0, folder: "/home/me/a", folderMissing: false },
+      { id: "b", name: "B", createdAt: 1, updatedAt: 2, messageCount: 0, folder: "/home/me/b", folderMissing: true },
+    ];
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue(all);
+    const { handler, view } = resolveWith(provider);
+    await handler({ type: "getAllSessions" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "sessionsManager", sessions: all, currentFolder: "/home/me/a" }),
+    );
+  });
+
+  it("changeSessionFolder picks a folder, persists it and refreshes the form", async () => {
+    const { store, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
+    state.showOpenDialog.mockResolvedValue([{ fsPath: "/home/me/new" }]);
+    const { handler, view } = resolveWith(provider);
+    await handler({ type: "sessionsManagerChangeFolder", id: "x" });
+    expect(store.saveSettings).toHaveBeenCalledWith("x", { folder: "/home/me/new" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "sessionsManager", currentFolder: "/home/me/a" }),
+    );
+  });
+
+  it("changeSessionFolder with a cancelled dialog changes nothing", async () => {
+    const { store, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
+    state.showOpenDialog.mockResolvedValue(undefined); // user closed the picker
+    const { handler, view } = resolveWith(provider);
+    await handler({ type: "sessionsManagerChangeFolder", id: "x" });
+    expect(store.saveSettings).not.toHaveBeenCalled();
+    expect(view.webview.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "sessionsManager" }),
+    );
+  });
+
+  it("the MAIN sessions list shows only the current folder's sessions", async () => {
+    const { store, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "a", name: "Local", createdAt: 1, updatedAt: 3, messageCount: 0, folder: "/home/me/a", folderMissing: false },
+      { id: "b", name: "Foreign", createdAt: 1, updatedAt: 2, messageCount: 0, folder: "/home/me/b", folderMissing: false },
+    ]);
+    const { view } = resolveWith(provider);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(view.webview.html).toContain('"name":"Local"');
+    expect(view.webview.html).not.toContain('"name":"Foreign"');
   });
 });
 

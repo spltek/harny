@@ -7,6 +7,17 @@ export interface SessionSummary {
   createdAt: number;
   updatedAt: number;
   messageCount: number;
+  /**
+   * Absolute path of the folder (workspace) this session points to, persisted
+   * in the session file. Absent in legacy sessions; the listing layer falls
+   * back to the bucket's folder when it can be inferred.
+   */
+  folder?: string;
+  /**
+   * Whether the session's folder is not available (missing path). Computed at
+   * list time, NOT persisted: drives the red rows + disabled open.
+   */
+  folderMissing?: boolean;
   /** Last model selected in this session (persisted; undefined = default). */
   model?: string;
   /** Named provider of the last selected model (for switching back). */
@@ -51,6 +62,7 @@ export type SessionSettings = Pick<
   | "frequencyPenalty"
   | "topP"
   | "sampler"
+  | "folder"
 >;
 
 /**

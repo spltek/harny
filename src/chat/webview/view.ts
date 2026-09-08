@@ -31,6 +31,10 @@ interface SessionInfo {
   createdAt: number;
   updatedAt: number;
   messageCount: number;
+  /** Absolute path of the folder (workspace) this session points to. */
+  folder?: string;
+  /** Whether that folder is not available (missing path -> red row). */
+  folderMissing?: boolean;
 }
 interface ConfigState {
   provider: string;
@@ -73,6 +77,7 @@ interface InitState {
 
 const sessionsEl = document.getElementById("sessions") as HTMLDivElement;
 const sessionHead = document.getElementById("session-head") as HTMLDivElement;
+const sessionsGearBtn = document.getElementById("sessions-gear-btn") as HTMLButtonElement;
 const newSessionBtn = document.getElementById("new-session") as HTMLButtonElement;
 const tabsEl = document.getElementById("tabs") as HTMLDivElement;
 const messagesEl = document.getElementById("messages") as HTMLDivElement;
@@ -843,6 +848,105 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
+// ── All-sessions manager (gear next to New session) ──
+const sessionsModal = document.getElementById("sessions-modal") as HTMLDivElement;
+const sessionsManagerList = document.getElementById("sessions-manager-list") as HTMLDivElement;
+const sessionsCloseBtn = document.getElementById("sessions-close") as HTMLButtonElement;
+
+/** Renders the manage-form rows (keeps the modal's current shown/hidden state). */
+function renderSessionsManagerData(data: { sessions: SessionInfo[]; currentFolder?: string }): void {
+  renderSessionsManager(data.sessions || [], data.currentFolder);
+}
+
+function closeSessionsManager(): void {
+  sessionsModal.classList.add("hidden");
+  sessionsManagerList.innerHTML = "";
+}
+
+/**
+ * Rows for the manage form: every session of every folder, most recent first
+ * (the host sorts). Red rows = folder unavailable; per-row actions:
+ * change folder / delete. Opening a session of another folder is NOT offered
+ * here: the user opens the workspace folder in VS Code directly.
+ */
+function renderSessionsManager(sessions: SessionInfo[], currentFolder?: string): void {
+  sessionsManagerList.innerHTML = "";
+  if (!sessions || sessions.length === 0) {
+    const p = document.createElement("div");
+    p.className = "sm-empty";
+    p.textContent = "No sessions yet.";
+    sessionsManagerList.appendChild(p);
+    return;
+  }
+  for (const s of sessions) {
+    const row = document.createElement("div");
+    row.className = "sm-row";
+    row.dataset.id = s.id;
+
+    const main = document.createElement("div");
+    main.className = "sm-main";
+    const nameLine = document.createElement("div");
+    nameLine.className = "sm-name";
+    const nameSpan = document.createElement("span");
+    nameSpan.textContent = s.name || "Session";
+    nameLine.appendChild(nameSpan);
+    if (s.folder && s.folder === currentFolder) {
+      const tag = document.createElement("span");
+      tag.className = "sm-tag";
+      tag.textContent = "this folder";
+      nameLine.appendChild(tag);
+    }
+    const meta = document.createElement("div");
+    meta.className = "sm-meta";
+    meta.textContent =
+      "created " + fmtDate(s.createdAt) + " · updated " + fmtDate(s.updatedAt) + " · " + s.messageCount + " msg";
+    const folder = document.createElement("div");
+    const folderKnown = !!s.folder;
+    folder.className =
+      "sm-folder" + (folderKnown && s.folderMissing ? " missing" : folderKnown ? "" : " unset");
+    folder.textContent = folderKnown
+      ? s.folder + (s.folderMissing ? " — missing" : "")
+      : "(folder not set)";
+    folder.title = s.folderMissing && s.folder ? s.folder + " is no longer available" : s.folder || "";
+    main.appendChild(nameLine);
+    main.appendChild(meta);
+    main.appendChild(folder);
+
+    const actions = document.createElement("span");
+    actions.className = "sm-actions";
+    const folderBtn = document.createElement("button");
+    folderBtn.className = "secondary-ghost folder-btn";
+    folderBtn.textContent = "Change folder…";
+    folderBtn.title = "Pick the workspace folder this session points to";
+    folderBtn.addEventListener("click", () =>
+      vscode.postMessage({ type: "sessionsManagerChangeFolder", id: s.id }),
+    );
+    const del = document.createElement("button");
+    del.className = "secondary-ghost del-btn";
+    del.title = "Delete this session";
+    del.innerHTML = icon("i-trash", 13);
+    del.addEventListener("click", () => vscode.postMessage({ type: "deleteSession", id: s.id }));
+    actions.appendChild(folderBtn);
+    actions.appendChild(del);
+
+    row.appendChild(main);
+    row.appendChild(actions);
+    sessionsManagerList.appendChild(row);
+  }
+}
+
+sessionsGearBtn.addEventListener("click", () => {
+  vscode.postMessage({ type: "getAllSessions" });
+});
+sessionsCloseBtn.addEventListener("click", closeSessionsManager);
+sessionsModal.querySelector(".sm-backdrop")?.addEventListener("click", closeSessionsManager);
+window.addEventListener("keydown", (e) => {
+  if (!sessionsModal.classList.contains("hidden") && e.key === "Escape") {
+    e.preventDefault();
+    closeSessionsManager();
+  }
+});
+
 function submitName(): void {
   if (!namePrompt) return;
   // The OK key is disabled while invalid; Enter must not bypass the check.
@@ -867,6 +971,7 @@ const peName = document.getElementById("pe-name") as HTMLInputElement;
 const peBaseUrl = document.getElementById("pe-baseurl") as HTMLInputElement;
 const peApiKey = document.getElementById("pe-apikey") as HTMLInputElement;
 const peThinking = document.getElementById("pe-thinking") as HTMLSelectElement;
+const peSessionHeader = document.getElementById("pe-session-header") as HTMLInputElement;
 const providerTestBtn = document.getElementById("provider-test") as HTMLButtonElement;
 const providerDeleteBtn = document.getElementById("provider-delete") as HTMLButtonElement;
 const providerAddBtn = document.getElementById("provider-add") as HTMLButtonElement;
@@ -875,7 +980,7 @@ const providersSaveBtn = document.getElementById("providers-save") as HTMLButton
 const providersCancelBtn = document.getElementById("providers-cancel") as HTMLButtonElement;
 const gearBtn = document.getElementById("gear-btn") as HTMLButtonElement;
 
-let providerEditorData: { providers: Record<string, { baseUrl?: string; apiKey?: string; thinking?: string }> } = {
+let providerEditorData: { providers: Record<string, { baseUrl?: string; apiKey?: string; thinking?: string; sessionHeader?: string; headers?: Record<string, string>; maxTokens?: number }> } = {
   providers: {},
 };
 let providerEditorSelected = "";
@@ -917,6 +1022,7 @@ function loadProviderIntoForm(name: string): void {
   peBaseUrl.value = entry?.baseUrl ?? "";
   peApiKey.value = entry?.apiKey ?? "";
   peThinking.value = entry?.thinking ?? "none";
+  peSessionHeader.value = entry?.sessionHeader ?? "";
   providerTestResult.classList.add("hidden");
   providerTestBtn.disabled = false;
   providerDeleteBtn.disabled = false;
@@ -936,6 +1042,7 @@ function openProvidersEditor(data: { providers: Record<string, { baseUrl?: strin
     peBaseUrl.value = "";
     peApiKey.value = "";
     peThinking.value = "effort";
+    peSessionHeader.value = "";
     providerTestBtn.disabled = true;
     providerDeleteBtn.disabled = true;
     providersSaveBtn.disabled = true;
@@ -1013,6 +1120,7 @@ providerDeleteBtn.addEventListener("click", () => {
     peBaseUrl.value = "";
     peApiKey.value = "";
     peThinking.value = "effort";
+    peSessionHeader.value = "";
     providerTestBtn.disabled = true;
     providerDeleteBtn.disabled = true;
   } else {
@@ -1032,9 +1140,14 @@ providersSaveBtn.addEventListener("click", () => {
     delete providerEditorData.providers[oldName];
   }
   providerEditorData.providers[given] = {
+    // Fields not managed by the form are CARRIED OVER untouched (headers,
+    // maxTokens): editing one field must never drop the others.
+    ...(entry.headers ? { headers: entry.headers } : {}),
+    ...(typeof entry.maxTokens === "number" ? { maxTokens: entry.maxTokens } : {}),
     baseUrl: normalizeBaseUrl(peBaseUrl.value) || undefined,
     apiKey: peApiKey.value.trim() || undefined,
     thinking: peThinking.value === "none" ? undefined : peThinking.value,
+    ...(peSessionHeader.value.trim() ? { sessionHeader: peSessionHeader.value.trim() } : {}),
   };
   vscode.postMessage({ type: "saveProviders", data: providerEditorData });
   providersSaveBtn.disabled = true;
@@ -1579,6 +1692,12 @@ window.addEventListener("message", (e) => {
       }
       break;
     }
+    case "sessionsManager":
+      // Re-render the rows. The modal only OPENS when the host says so (gear
+      // click); silent refreshes after open/close/delete never pop the form.
+      renderSessionsManagerData({ sessions: msg.sessions || [], currentFolder: msg.currentFolder });
+      if (msg.show) sessionsModal.classList.remove("hidden");
+      break;
     case "status":
       if (Array.isArray(msg.workingIds)) workingIds = new Set(msg.workingIds as string[]);
       // Patch the row locks IN PLACE (no full list rebuild): rebuilding the
@@ -1589,6 +1708,9 @@ window.addEventListener("message", (e) => {
         row.classList.toggle("is-working", w);
         for (const b of row.querySelectorAll("button")) b.disabled = w;
       }
+      // While ANY session works, the two setup gears go inert (manage
+      // sessions / configure providers): no modal mid-stream.
+      applyWorkingLock();
       setStreaming(!!msg.active);
       break;
     case "switchView": {
@@ -1646,7 +1768,22 @@ window.addEventListener("message", (e) => {
   }
 });
 
-// ── Full in-place view state (init + switchView: no page reload) ──
+/** Full in-place view state (init + switchView: no page reload) ──
+ * Lock the two setup gears while ANY session works: opening the manage form
+ * or the providers editor mid-stream is disabled (they get re-enabled the
+ * moment the last working session finishes). Mirrors the per-row locks. */
+function applyWorkingLock(): void {
+  const busy = workingIds.size > 0;
+  sessionsGearBtn.disabled = busy;
+  gearBtn.disabled = busy;
+  sessionsGearBtn.title = busy
+    ? "Stop the current work before managing sessions"
+    : "Manage all sessions (every folder)";
+  gearBtn.title = busy
+    ? "Stop the current work before configuring providers & models"
+    : "Configure providers & models";
+}
+
 function renderViewState(state: {
   sessions: SessionInfo[];
   openIds: string[];
@@ -1684,6 +1821,7 @@ function renderViewState(state: {
   // from its END, so the live streaming is visible without manual scrolling.
   autoScroll = true;
   messagesEl.scrollTop = messagesEl.scrollHeight;
+  applyWorkingLock();
 }
 
 /**
