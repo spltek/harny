@@ -1,3 +1,4 @@
+import { FONTS, FAMILIES, PALETTE, ROOT_FONT_SIZE } from "./view-config";
 import type { ChatMessage } from "../core/history/types";
 import type { SessionSummary } from "../core/sessions/types";
 import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS } from "./context-window";
@@ -42,6 +43,26 @@ export interface ViewHtmlDeps {
   state: ViewState;
 }
 
+function renderViewConfig(): string {
+  const palette = Object.entries(PALETTE)
+    .map(([name, value]) => `      --${name}: ${value};`)
+    .join("\n");
+  const fonts = Object.entries(FONTS)
+    .map(([name, stack]) => `      --font-${name}: ${stack};`)
+    .join("\n");
+  const sizes = Object.entries(FAMILIES)
+    .map(([name, fam]) => `      --fs-${name}: ${fam.size};`)
+    .join("\n");
+  return `    :root {
+      /* Palette, fonts and size families — defined in src/chat/view-config.ts */
+${palette}
+${fonts}
+      --font-size: ${ROOT_FONT_SIZE};
+      font-size: var(--font-size);
+${sizes}
+    }`;
+}
+
 function jsonInit(state: ViewState): string {
   return JSON.stringify(state).replace(/</g, "\\u003c");
 }
@@ -57,38 +78,15 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${cspSource} data: https:; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline'; font-src ${cspSource};">
   <title>Harny</title>
   <style>
-    :root {
-      /* Fixed dark-terracotta palette (independent of the active VS Code theme) */
-      --bg: #111111;               /* main background: anthracite, near-black */
-      --fg: #e0e0e0;               /* primary text: bright light gray */
-      --fg-strong: #ffffff;        /* titles / emphasis: pure white */
-      --border: rgba(255, 255, 255, 0.08); /* hairline only; separation is tone-on-tone */
-      --input-bg: #1e1e1e;         /* containers, fields, cards */
-      --surface-2: #222222;        /* raised surfaces / hover */
-      --user-msg: #d95f27;         /* burnt-orange / terracotta accent */
-      --accent: #d95f27;
-      --accent-strong: #c8501c;
-      --assistant-msg: #1e1e1e;
-      --tool-bg: #1a1a1a;
-      --muted: #888888;            /* secondary text, placeholders, disabled */
-      --error: #f44747;
-      --font: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, 'Helvetica Neue', Arial, sans-serif;
-      --mono: ui-monospace, 'SF Mono', Monaco, Consolas, 'Liberation Mono', monospace;
-    }
-    :root {
-      /* Base font = the VS Code UI size, so Harny matches the shell at ANY
-         window zoom. IMPORTANT: it must be set on the ROOT (html), because
-         rem units resolve against the root font — a body-only font-size would
-         leave rem at the browser default (16px) and Harny would look bigger
-         than menus/editor. */
-      --font-size: var(--vscode-font-size, 13px);
-      font-size: var(--font-size);
-    }
+${renderViewConfig()}
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    /* UI: sans-serif (per spec); code stays monospace. */
-    pre, code, .code-lang { font-family: var(--mono); }
+    /* UI: one sans family everywhere (inherited); only real code/diff
+       content switches to the single mono family. Grouped selectors so every
+       element — including form controls, which do NOT inherit by default —
+       takes its family from these two central rules. */
+    body, button, input, select, textarea { font-family: var(--font-ui); }
+    pre, code, .code-lang, .fd-stat, .fd-body, .sm-folder { font-family: var(--font-mono); }
     body {
-      font-family: var(--font);
       font-size: 1rem;
       background: var(--bg);
       color: var(--fg);
@@ -109,16 +107,16 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     }
     #session-head {
       display: flex; align-items: center; gap: 6px;
-      padding: 5px 10px; font-weight: 700; font-size: 0.85rem;
+      padding: 5px 10px; font-weight: 700; font-size: var(--fs-md);
       color: var(--fg-strong);
       border-bottom: 1px solid var(--border);
       cursor: pointer; user-select: none;
     }
-    #session-head .toggle { font-size: 0.69rem; width: 12px; color: #888; }
+    #session-head .toggle { font-size: var(--fs-xs); width: 12px; color: #888; }
     #session-head .spacer { flex: 1; }
     #session-head button {
       background: transparent; border: none; color: var(--accent);
-      font-size: 1.08rem; cursor: pointer; padding: 0 4px;
+      font-size: var(--fs-xl); cursor: pointer; padding: 0 4px;
       border-radius: 4px; transition: background-color 0.12s;
     }
     #session-head button:hover { background: rgba(255, 255, 255, 0.08); }
@@ -134,14 +132,14 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     #sessions.hidden { display: none; }
     .srow {
       display: flex; align-items: center; gap: 3px;
-      padding: 4px 10px; font-size: 0.92rem; flex-wrap: wrap;
+      padding: 4px 10px; font-size: var(--fs-lg); flex-wrap: wrap;
       border-radius: 6px; margin: 1px 4px;
       transition: background-color 0.1s;
     }
     .srow:hover { background: var(--tool-bg); }
     /* Creation + last-modified dates, on their own line BEFORE the name. */
     .srow .smeta {
-      flex: 1 1 100%; color: #888; font-size: 0.69rem;
+      flex: 1 1 100%; color: #888; font-size: var(--fs-xs);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .srow .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
@@ -149,7 +147,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     .srow-actions { display: inline-flex; align-items: center; gap: 8px; }
     .srow-actions button {
       background: transparent; border: none; color: var(--fg);
-      font-size: 0.92rem; cursor: pointer; opacity: 0.65; padding: 2px 4px;
+      font-size: var(--fs-lg); cursor: pointer; opacity: 0.65; padding: 2px 4px;
       border-radius: 4px; transition: opacity 0.12s, color 0.12s, background-color 0.12s;
     }
     .srow-actions button:hover:not(:disabled) { opacity: 1; color: var(--accent); background: rgba(255, 255, 255, 0.06); }
@@ -161,7 +159,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     .srow-actions button:disabled {
       opacity: 0.28; cursor: default; pointer-events: none;
     }
-    .empty { padding: 12px; text-align: center; color: #888; font-size: 0.92rem; }
+    .empty { padding: 12px; text-align: center; color: #888; font-size: var(--fs-lg); }
 
     /* Tabs: raised pill keys, consistent with the 3D button chrome. */
     #tabs {
@@ -174,7 +172,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       position: relative;
       display: inline-flex; align-items: center; gap: 5px;
       padding: 4px 10px; border-radius: 6px 6px 0 0; cursor: pointer;
-      font-size: 0.85rem; white-space: nowrap; color: #9a9a9a;
+      font-size: var(--fs-md); white-space: nowrap; color: #9a9a9a;
       border: 1px solid transparent; border-bottom: none;
       background: linear-gradient(to bottom, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0));
       box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.1);
@@ -199,7 +197,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     }
     .tab.active .close { color: #bbb; }
     .tab .close {
-      font-size: 0.8rem; line-height: 1; padding: 1px 3px; margin-right: -2px;
+      font-size: var(--fs-sm); line-height: 1; padding: 1px 3px; margin-right: -2px;
       border-radius: 4px; color: #999; flex-shrink: 0;
       transition: color 0.12s, background-color 0.12s;
     }
@@ -216,19 +214,19 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       padding: 10px 0 10px 10px;
       display: flex; flex-direction: column; gap: 6px;
     }
-    .msg { padding: 8px 10px; border-radius: 8px; max-width: 92%; word-wrap: break-word; word-break: break-word; overflow-wrap: break-word; line-height: 1.4; font-size: 0.92rem; }
+    .msg { padding: 8px 10px; border-radius: 8px; max-width: 92%; word-wrap: break-word; word-break: break-word; overflow-wrap: break-word; line-height: 1.4; font-size: var(--fs-lg); }
     /* pre-wrap only for plain-text bubbles (user messages); markdown bubbles
        (assistant/tool) use breaks:true and white-space normal to avoid the
        ghost blank lines produced by markdown's structural newlines. */
     .msg.user { align-self: flex-end; background: var(--user-msg); color: #fff; white-space: pre-wrap; }
     .msg.assistant, .msg.tool { width: 100%; max-width: 100%; }
-    .msg.assistant { align-self: flex-start; background: var(--assistant-msg); min-width: 0; position: relative; }
+    .msg.assistant { align-self: flex-start; background: var(--assistant-msg); min-width: 0; position: relative; font-size: var(--fs-lg); }
     /* Branch-from-this-point: a small ⎇ key on assistant replies, revealed on
        hover (top-right), mirroring the sessions-list branch action. */
     .branch-at {
       position: absolute; top: 4px; right: 6px; z-index: 3;
       background: rgba(255, 255, 255, 0.06); border: 1px solid var(--border);
-      border-radius: 5px; color: #9a9a9a; font-size: 0.8rem; line-height: 1;
+      border-radius: 5px; color: #9a9a9a; font-size: var(--fs-sm); line-height: 1;
       padding: 3px 6px; cursor: pointer;
       opacity: 0; pointer-events: none;
       transition: opacity 0.12s, color 0.12s, border-color 0.12s, background-color 0.12s;
@@ -240,19 +238,19 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     .msg.assistant.error { background: rgba(244, 71, 71, 0.15); border: 1px solid var(--error); }
     .msg.assistant p { margin: 4px 0; }
     .msg.assistant h1, .msg.assistant h2, .msg.assistant h3, .msg.assistant h4, .msg.assistant h5, .msg.assistant h6 { margin: 8px 0 4px; font-weight: 700; color: var(--fg-strong); }
-    .msg.assistant h1 { font-size: 1.08rem; } .msg.assistant h2 { font-size: 1rem; } .msg.assistant h3 { font-size: 0.92rem; }
+    .msg.assistant h1 { font-size: 1.15em; } .msg.assistant h2 { font-size: 1.05em; } .msg.assistant h3 { font-size: 1em; }
     .msg.assistant ul, .msg.assistant ol { margin: 4px 0; padding-left: 1.4em; }
     .msg.assistant ol { list-style: decimal; }
     .msg.assistant ul { list-style: disc; }
     .msg.assistant li { margin: 2px 0; }
-    .msg.assistant code { background: var(--tool-bg); border-radius: 3px; padding: 0 3px; font-size: 0.85rem; }
+    .msg.assistant code { background: var(--tool-bg); border-radius: 3px; padding: 0 3px; font-size: var(--fs-md); }
     .msg.assistant pre { background: var(--tool-bg); border: 1px solid var(--border); border-radius: 5px; padding: 6px 8px; overflow-x: auto; margin: 6px 0; }
     .msg.assistant pre code { background: transparent; padding: 0; }
     .msg.assistant a { color: var(--accent); }
     .msg.assistant strong { font-weight: 600; }
     .msg.assistant em { font-style: italic; }
     .msg.assistant blockquote { border-left: 2px solid var(--border); padding-left: 8px; margin: 6px 0; color: #999; }
-    .msg.assistant table { border-collapse: separate; border-spacing: 0; font-size: 0.85rem; }
+    .msg.assistant table { border-collapse: separate; border-spacing: 0; font-size: var(--fs-md); }
     .msg.assistant th, .msg.assistant td { border: 1px solid var(--border); padding: 3px 6px; text-align: left; }
     .msg.assistant th { background: var(--tool-bg); }
     .msg.assistant img { max-width: 100%; border-radius: 4px; }
@@ -285,11 +283,11 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       border-bottom: none;
     }
     .code-block { overflow-x: auto; }
-    .code-lang { font-size: 0.69rem; text-transform: uppercase; letter-spacing: 0.4px; color: #888; background: rgba(0,0,0,0.2); padding: 1px 8px; border-bottom: 1px solid var(--border); }
-    .msg.tool { align-self: flex-start; background: var(--tool-bg); border: 1px solid var(--border); font-size: 0.85rem; }
+    .code-lang { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.4px; color: #888; background: rgba(0,0,0,0.2); padding: 1px 8px; border-bottom: 1px solid var(--border); }
+    .msg.tool { align-self: flex-start; background: var(--tool-bg); border: 1px solid var(--border); font-size: var(--fs-md); }
     .msg.system { display: none; }
     .msg.welcome { align-self: center; background: transparent; border: 1px dashed var(--border); color: #888; text-align: center; max-width: 100%; }
-    .working { align-self: flex-start; color: #999; font-size: 0.85rem; font-style: italic; animation: harny-pulse 1.2s ease-in-out infinite; }
+    .working { align-self: flex-start; color: #999; font-size: var(--fs-md); font-style: italic; animation: harny-pulse 1.2s ease-in-out infinite; }
     /* The working bar is a REAL footer glued below the transcript (NOT a bubble
        in the flow): always visible in realtime while it exists. It lives
        outside #messages, so sections are never inserted below it. The text
@@ -298,7 +296,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       flex-shrink: 0;
       padding: 4px 10px;
       background: var(--bg);
-      color: #999; font-size: 0.85rem; font-style: italic;
+      color: #999; font-size: var(--fs-md); font-style: italic;
       animation: harny-pulse 1.2s ease-in-out infinite;
     }
     #working-bar.hidden { display: none; }
@@ -306,15 +304,15 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
 
     .tool-header { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; font-weight: 600; color: var(--accent); min-width: 0; }
     .tool-header:hover { color: var(--fg); }
-    .tool-toggle { font-size: 0.77rem; width: 12px; color: #888; flex-shrink: 0; }
+    .tool-toggle { font-size: var(--fs-sm); width: 12px; color: #888; flex-shrink: 0; }
     .tool-name { white-space: nowrap; }
     /* Target file path shown after the tool name (light azure, ellipsized,
        truncated softly when the bubble is narrow — full path on hover). */
     .tool-path { color: #61afef; font-weight: 400; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.95; }
-    .tool-details { margin-top: 2px; font-size: 0.85rem; }
+    .tool-details { margin-top: 2px; font-size: var(--fs-md); }
     .tool-details.collapsed { display: none; }
-    .tool-label { display: block; color: #888; font-size: 0.69rem; text-transform: uppercase; letter-spacing: 0.4px; margin: 6px 0 2px; }
-    .tool-details pre { background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 4px; padding: 5px 7px; white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow-y: auto; font-size: 0.77rem; line-height: 1.4; }
+    .tool-label { display: block; color: #888; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.4px; margin: 6px 0 2px; }
+    .tool-details pre { background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 4px; padding: 5px 7px; white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow-y: auto; font-size: var(--fs-sm); line-height: 1.4; }
     .tool-result-error { color: var(--error); }
     /* Diff section INSIDE the tool bubble (third section: Input / Output /
        Diff). Replaces the previous separate .msg.file-diff bubble: the diff
@@ -323,8 +321,8 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     .tool-diff { margin-top: 2px; }
     .tool-diff-head { display: flex; align-items: baseline; gap: 6px; }
     .tool-diff-head .tool-label { margin: 6px 0 2px; }
-    .fd-stat { opacity: 0.7; font-weight: 500; font-family: var(--mono); font-size: 0.69rem; }
-    .fd-body { padding: 0 0 4px; font-family: var(--mono); font-size: 0.75rem; line-height: 1.5; }
+    .fd-stat { opacity: 0.7; font-weight: 500; font-size: var(--fs-xs); }
+    .fd-body { padding: 0 0 4px; font-size: var(--fs-sm); line-height: 1.5; }
     .fd-body div { padding: 0 10px; white-space: pre-wrap; word-break: break-all; }
     .fd-add { color: #98c379; background: rgba(152, 195, 121, 0.10); }
     .fd-del { color: #e06c75; background: rgba(224, 108, 117, 0.10); }
@@ -344,10 +342,10 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     .fd-body .token.doctype, .fd-body .token.entity { color: #e06c75; }
     .tool-call-pending { opacity: 0.65; }
 
-    .thinking-block { width: 100%; border: 1px dashed var(--border); border-radius: 6px; margin: 4px 0; padding: 0; font-size: 0.85rem; }
+    .thinking-block { width: 100%; border: 1px dashed var(--border); border-radius: 6px; margin: 4px 0; padding: 0; font-size: var(--fs-md); }
     .thinking-header { display: flex; align-items: center; gap: 5px; padding: 5px 8px; cursor: pointer; user-select: none; color: #999; font-style: italic; }
     .thinking-header:hover { color: var(--accent); }
-    .thinking-header .toggle { font-size: 0.77rem; width: 12px; }
+    .thinking-header .toggle { font-size: var(--fs-sm); width: 12px; }
     /* Thinking is now rendered as Markdown (md on the reasoning text), so the
        body uses normal whitespace + breaks:true like the assistant bubbles. */
     .thinking-body { padding: 0 8px 6px; color: #999; line-height: 1.45; }
@@ -360,7 +358,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     .thinking-body a { color: var(--accent); }
     .thinking-body strong { font-weight: 600; }
     .thinking-body em { font-style: italic; }
-    .thinking-body code { background: rgba(0,0,0,0.25); border-radius: 3px; padding: 0 3px; font-size: 0.77rem; }
+    .thinking-body code { background: rgba(0,0,0,0.25); border-radius: 3px; padding: 0 3px; font-size: var(--fs-sm); }
     .thinking-body pre { background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; overflow-x: auto; margin: 4px 0; }
     .thinking-body pre code { background: transparent; padding: 0; }
     .thinking-body blockquote { border-left: 2px solid var(--border); padding-left: 8px; margin: 4px 0; }
@@ -371,7 +369,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     .thinking-body hr { border: none; border-top: 1px solid var(--border); margin: 6px 0; }
     .thinking-body .task-list-item-checkbox { margin-right: 4px; vertical-align: middle; }
     .thinking-body.collapsed { display: none; }
-    .thinking { align-self: flex-start; color: #999; font-style: italic; font-size: 0.85rem; white-space: pre-wrap; }
+    .thinking { align-self: flex-start; color: #999; font-style: italic; font-size: var(--fs-md); white-space: pre-wrap; }
 
     /* Input area: a full-width card matching the sessions/control cards. */
     #input-area {
@@ -383,13 +381,13 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     #user-input {
       flex: 1; background: var(--surface-2); color: var(--fg);
       border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
-      font-family: var(--font); font-size: 0.92rem; line-height: 1.4; resize: none;
+      font-size: var(--fs-lg); line-height: 1.4; resize: none;
       min-height: 2.31rem; max-height: 18.5rem; outline: none;
     }
     #user-input:focus { border-color: var(--accent); }
     button {
       background: var(--accent); color: #fff; border: none; border-radius: 6px;
-      cursor: pointer; font-size: 0.92rem; line-height: 1;
+      cursor: pointer; font-size: var(--fs-lg); line-height: 1;
       /* All button glyphs (▶ ⏹ ✎ 🗑 − + ＋ Compact) stay centered at any font
          size: flex centering + a font-proportional minimum hit area. */
       display: inline-flex; align-items: center; justify-content: center;
@@ -461,7 +459,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     body.no-session #ctl-toggle,
     body.no-workspace #ctl-toggle { display: none; }
 
-    #status { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px 6px; font-size: 0.85rem; }
+    #status { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px 6px; font-size: var(--fs-md); }
     #status .warn { color: var(--error); }
     .ctl-row { display: flex; align-items: center; gap: 6px; }
     /* Provider whose host model list failed to fetch: still VISIBLE in the
@@ -489,24 +487,24 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
        with the label inline and the select stretching (card chrome only). */
     .ctl-card-model { flex-direction: row; align-items: center; gap: 8px; }
     .card-title {
-      font-size: 0.64rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+      font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
       color: #8a8a8a; user-select: none;
     }
     .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-    .field-label { font-size: 0.72rem; color: #9a9a9a; }
+    .field-label { font-size: var(--fs-sm); color: #9a9a9a; }
     /* Working state: the PLAY (send) button blinks in sync with the chat's
        "Working..." bubble — same harny-pulse 1.2s animation, applied in the
        same tick (send/compactStart), so the two pulse together. */
     #send-btn.blinking { animation: harny-pulse 1.2s ease-in-out infinite; }
     #model-select {
       flex: 1; min-width: 0; background: transparent; color: inherit; border: none; outline: none;
-      font-family: var(--font); font-size: 0.85rem; cursor: pointer; height: 1.85rem;
+      font-size: var(--fs-md); cursor: pointer; height: 1.85rem;
     }
     #model-select option, #model-select optgroup { color: #1e1e1e; }
     #thinking-select {
       width: 100%;
       background: var(--input-bg); color: var(--fg); border: 1px solid var(--border);
-      border-radius: 6px; outline: none; font-family: var(--font); font-size: 0.85rem;
+      border-radius: 6px; outline: none; font-size: var(--fs-md);
       cursor: pointer; padding: 0 6px; height: 1.85rem;
     }
     #thinking-select option { color: #1e1e1e; }
@@ -517,7 +515,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     #ctx-input, #out-input, #samp-input, #presence-input, #freq-input {
       flex: 1; min-width: 2.5rem; width: auto; height: 1.85rem; background: var(--input-bg); color: var(--fg);
       border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px;
-      font-family: var(--font); font-size: 0.85rem; text-align: right;
+      font-size: var(--fs-md); text-align: right;
     }
     #ctx-input:focus, #out-input:focus, #samp-input:focus, #presence-input:focus, #freq-input:focus { border-color: var(--accent); outline: none; }
     /* Empty float input = Auto (not sent): neutral italic hint. */
@@ -527,7 +525,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     .sampler-toggle { display: inline-flex; align-items: center; gap: 12px; }
     .sampler-opt {
       display: inline-flex; align-items: center; gap: 4px;
-      font-size: 0.72rem;
+      font-size: var(--fs-sm);
       color: #9a9a9a; cursor: pointer; user-select: none;
       transition: color 0.12s;
     }
@@ -545,7 +543,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       margin: 0 10px 8px; color: #9a9a9a;
       background: var(--input-bg);
     }
-    .metrics-stats { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 0.8rem; }
+    .metrics-stats { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: var(--fs-sm); }
     .metrics-stats .model-label { color: #999; }
     .metrics-stats .met { white-space: nowrap; }
     .met-sep { color: #666; }
@@ -576,7 +574,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       background: linear-gradient(to bottom, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.02)),
         var(--tool-bg, transparent);
       border: 1px solid var(--border); color: var(--fg);
-      border-radius: 6px; padding: 4px 8px; font-size: 0.8rem; cursor: pointer;
+      border-radius: 6px; padding: 4px 8px; font-size: var(--fs-sm); cursor: pointer;
       box-shadow:
         inset 0 1px 0 rgba(255, 255, 255, 0.18),
         inset 0 -1px 0 rgba(0, 0, 0, 0.18),
@@ -609,18 +607,18 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       justify-content: center; gap: 8px; padding: 24px; text-align: center;
       color: #9a9a9a;
     }
-    .empty-hero .empty-icon { font-size: 2.2rem; }
-    .empty-hero h2 { margin: 0; font-size: 1.1rem; color: var(--fg-strong); font-weight: 700; }
-    .empty-hero p { margin: 0; font-size: 0.85rem; line-height: 1.5; }
-    .empty-hero .empty-hint { font-size: 0.8rem; }
-    .empty-hero .empty-cta { margin-top: 12px; padding: 6px 20px; font-size: 0.9rem; border-radius: 6px; }
+    .empty-hero .empty-icon { font-size: var(--fs-hero); }
+    .empty-hero h2 { margin: 0; font-size: var(--fs-xl); color: var(--fg-strong); font-weight: 700; }
+    .empty-hero p { margin: 0; font-size: var(--fs-md); line-height: 1.5; }
+    .empty-hero .empty-hint { font-size: var(--fs-sm); }
+    .empty-hero .empty-cta { margin-top: 12px; padding: 6px 20px; font-size: var(--fs-lg); border-radius: 6px; }
     @keyframes harny-empty-in {
       from { opacity: 0; transform: translateY(6px); }
       to { opacity: 1; transform: none; }
     }
     body.no-session .empty-hero { animation: harny-empty-in 0.25s ease-out; }
     .ctx-btn {
-      width: 1.38rem; height: 1.38rem; padding: 0; font-size: 0.92rem; line-height: 1;
+      width: 1.38rem; height: 1.38rem; padding: 0; font-size: var(--fs-lg); line-height: 1;
       background: linear-gradient(to bottom, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.03)),
         var(--tool-bg, transparent);
       border: 1px solid var(--border); color: var(--fg); border-radius: 4px;
@@ -657,36 +655,36 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       background: var(--bg, #1e1e1e); border: 1px solid var(--border);
       border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column;
       gap: 12px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
-      font-size: 0.95rem;
+      font-size: var(--fs-lg);
     }
-    #providers-modal h3 { margin: 0; font-size: 1.1rem; font-weight: 700; color: var(--fg-strong); }
+    #providers-modal h3 { margin: 0; font-size: var(--fs-xl); font-weight: 700; color: var(--fg-strong); }
     .providers-head { display: flex; flex-direction: column; gap: 4px; }
-    .providers-hint { font-size: 0.8rem; color: var(--muted, #999); }
+    .providers-hint { font-size: var(--fs-sm); color: var(--muted, #999); }
     .providers-body {
       display: grid; grid-template-columns: 190px 1fr; gap: 16px; min-height: 0;
       flex: 1;
     }
     .provider-list-col { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
-    .provider-list-head { display: flex; align-items: center; justify-content: space-between; font-size: 0.78rem; color: #9a9a9a; }
+    .provider-list-head { display: flex; align-items: center; justify-content: space-between; font-size: var(--fs-sm); color: #9a9a9a; }
     #provider-select {
       width: 100%; flex: 1; min-height: 160px; background: var(--input-bg, #252526);
-      border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font-size: 0.9rem;
+      border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font-size: var(--fs-lg);
       padding: 2px;
     }
     #provider-select option { padding: 3px 6px; }
     #provider-select option:checked { background: var(--accent, #3794ff); color: #fff; }
     .provider-form-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; overflow-y: auto; }
-    .provider-form-col .field-label { font-size: 0.82rem; }
+    .provider-form-col .field-label { font-size: var(--fs-md); }
     .provider-form-col input, .provider-form-col select {
-      font-size: 0.95rem; padding: 5px 8px; border-radius: 5px;
+      font-size: var(--fs-lg); padding: 5px 8px; border-radius: 5px;
       background: var(--input-bg, #252526); border: 1px solid var(--border); color: var(--fg);
     }
     .provider-actions { display: flex; flex-wrap: wrap; gap: 8px; }
     .provider-actions .danger { color: var(--error, #f05555); }
     .providers-actions { display: flex; justify-content: flex-end; gap: 10px; }
-    .providers-actions button { font-size: 0.95rem; padding: 6px 14px; border-radius: 6px; }
+    .providers-actions button { font-size: var(--fs-lg); padding: 6px 14px; border-radius: 6px; }
     #provider-test-result {
-      font-size: 0.84rem; line-height: 1.5; border-radius: 6px; padding: 8px 10px;
+      font-size: var(--fs-md); line-height: 1.5; border-radius: 6px; padding: 8px 10px;
       background: rgba(255, 255, 255, 0.05); word-break: break-all;
     }
     #provider-test-result.ok { color: #4ec9b0; }
@@ -723,17 +721,17 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       box-shadow: 0 8px 30px rgba(0,0,0,0.35);
       display: flex; flex-direction: column; gap: 10px;
     }
-    #name-modal h3 { margin: 0; font-size: 0.92rem; font-weight: 700; color: var(--fg-strong); }
+    #name-modal h3 { margin: 0; font-size: var(--fs-lg); font-weight: 700; color: var(--fg-strong); }
     #name-modal #name-input { width: 100%; margin-top: 8px; box-sizing: border-box; }
     #name-modal #name-error {
-      margin-top: 6px; min-height: 1em; font-size: 0.78rem;
+      margin-top: 6px; min-height: 1em; font-size: var(--fs-sm);
       color: var(--error); word-wrap: break-word;
     }
     #name-modal #name-error:empty { display: none; }
     #name-input {
       width: 100%; background: var(--input-bg); color: var(--fg);
       border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
-      font-family: var(--font); font-size: 0.92rem; outline: none; box-sizing: border-box;
+      font-size: var(--fs-lg); outline: none; box-sizing: border-box;
     }
     #name-input:focus { border-color: var(--accent); }
     #name-modal .name-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
@@ -760,9 +758,9 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
       display: flex; flex-direction: column; gap: 10px;
     }
-    #alert-modal h3 { margin: 0; font-size: 0.92rem; font-weight: 700; color: var(--fg-strong); }
+    #alert-modal h3 { margin: 0; font-size: var(--fs-lg); font-weight: 700; color: var(--fg-strong); }
     #alert-modal .alert-message {
-      font-size: 0.85rem; color: #bbb; line-height: 1.5;
+      font-size: var(--fs-md); color: #bbb; line-height: 1.5;
       word-wrap: break-word; white-space: pre-wrap;
     }
     #alert-modal .alert-actions { display: flex; justify-content: flex-end; gap: 8px; }
@@ -782,10 +780,10 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
       width: min(680px, calc(100% - 20px)); max-height: 92%;
       background: var(--bg, #1e1e1e); border: 1px solid var(--border);
       border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column;
-      gap: 12px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5); font-size: 0.95rem;
+      gap: 12px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5); font-size: var(--fs-lg);
     }
-    #sessions-modal h3 { margin: 0; font-size: 1.1rem; font-weight: 700; color: var(--fg-strong); }
-    #sessions-modal .sm-hint { font-size: 0.8rem; color: var(--muted, #999); }
+    #sessions-modal h3 { margin: 0; font-size: var(--fs-xl); font-weight: 700; color: var(--fg-strong); }
+    #sessions-modal .sm-hint { font-size: var(--fs-sm); color: var(--muted, #999); }
     #sessions-manager-list {
       display: flex; flex-direction: column; gap: 6px;
       overflow-y: auto; min-height: 140px; flex: 1;
@@ -798,18 +796,18 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
     .sm-row .sm-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
     .sm-row .sm-name {
       display: flex; align-items: center; gap: 6px; font-weight: 600;
-      font-size: 0.95rem; color: var(--fg-strong); min-width: 0;
+      font-size: var(--fs-lg); color: var(--fg-strong); min-width: 0;
     }
     .sm-row .sm-name > span:first-child {
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .sm-row .sm-tag {
-      flex: none; font-size: 0.66rem; color: var(--accent);
+      flex: none; font-size: var(--fs-xs); color: var(--accent);
       border: 1px solid var(--border); border-radius: 8px; padding: 1px 6px;
     }
-    .sm-row .sm-meta { font-size: 0.72rem; color: #888; }
+    .sm-row .sm-meta { font-size: var(--fs-sm); color: #888; }
     .sm-row .sm-folder {
-      font-size: 0.72rem; font-family: var(--mono); color: #777;
+      font-size: var(--fs-sm); color: #777;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
       cursor: default;
     }
@@ -818,13 +816,13 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
        no longer available is a problem (red). */
     .sm-row .sm-folder.unset { color: #999; font-style: italic; }
     .sm-actions { display: inline-flex; gap: 6px; flex-shrink: 0; }
-    .sm-actions button { min-height: 1.54rem; font-size: 0.85rem; }
+    .sm-actions button { min-height: 1.54rem; font-size: var(--fs-md); }
     .sm-actions button.secondary-ghost {
       background: transparent; border: 1px solid var(--border); color: var(--fg);
     }
     .sm-actions button:disabled { opacity: 0.3; cursor: default; }
     #sessions-modal .sm-footer { display: flex; justify-content: flex-end; }
-    .sm-empty { padding: 18px; text-align: center; color: #888; font-size: 0.9rem; }
+    .sm-empty { padding: 18px; text-align: center; color: #888; font-size: var(--fs-lg); }
   </style>
 </head>
 <body>
