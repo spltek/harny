@@ -144,7 +144,7 @@ export class Agent implements ChatController {
       return;
     }
 
-    const { content, toolCalls, thinking } = await this.runLlmTurn();
+    const { content, toolCalls, thinking, reasoningDetails } = await this.runLlmTurn();
     const toolSummary =
       toolCalls.length > 0
         ? `🔧 ${toolCalls.length === 1 ? "Tool" : "Tools"}: ${toolCalls.map((t) => t.name).join(", ")}`
@@ -164,6 +164,7 @@ export class Agent implements ChatController {
       toolCalls,
       timestamp: Date.now(),
       ...(thinking.trim() ? { thinking } : {}),
+      ...(reasoningDetails && reasoningDetails.length > 0 ? { reasoningDetails } : {}),
     });
 
     if (toolCalls.length === 0) {
@@ -280,7 +281,12 @@ export class Agent implements ChatController {
     });
   }
 
-  private async runLlmTurn(): Promise<{ content: string; toolCalls: ToolCall[]; thinking: string }> {
+  private async runLlmTurn(): Promise<{
+    content: string;
+    toolCalls: ToolCall[];
+    thinking: string;
+    reasoningDetails?: unknown[];
+  }> {
     const config = this.deps.config.get();
     const provider = this.deps.llmFactory.create(config);
 
@@ -293,12 +299,14 @@ export class Agent implements ChatController {
         toolCallId: m.toolCallId,
         images: m.images,
         thinking: m.thinking,
+        reasoningDetails: m.reasoningDetails,
       })),
     ];
 
     const accumulator = new ToolCallAccumulator();
     let content = "";
     let thinking = "";
+    let reasoningDetails: unknown[] | undefined;
     const toolCalls: ToolCall[] = [];
 
     // Thinking tag parser: some models (Qwen, local LLMs) emit reasoning
@@ -329,6 +337,10 @@ export class Agent implements ChatController {
         // Forward reasoning content separately and keep it in the message
         thinking += chunk.content;
         this.deps.events.emit({ type: "thinking_delta", content: chunk.content });
+      } else if (chunk.type === "thinking_details") {
+        // Structured reasoning blocks (OpenRouter): kept BESIDE the plaintext
+        // thinking so they can be passed back verbatim (encrypted reasoning).
+        reasoningDetails = chunk.details;
       } else if (chunk.type === "usage") {
         this.deps.events.emit({ type: "usage", usage: chunk.usage });
       } else {
@@ -350,7 +362,7 @@ export class Agent implements ChatController {
       }
     }
 
-    return { content, toolCalls, thinking };
+    return { content, toolCalls, thinking, reasoningDetails };
   }
 
   private async executeToolSafely(tc: ToolCall): Promise<ToolResult> {

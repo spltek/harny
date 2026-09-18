@@ -715,6 +715,70 @@ describe("ChatViewProvider", () => {
     );
   });
 
+  it("setModel defaults thinking to medium on reasoning-capable providers", async () => {
+    const { provider, modelSelector, store } = buildHarness({
+      providerEntry: {
+        name: "opencode-go",
+        baseUrl: "https://x/v1",
+        apiKey: "sk",
+        thinkingMode: "effort",
+        models: [{ id: "m1" }],
+      },
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "m1", provider: "opencode-go" });
+    // Medium is saved as the session default for the new model selection.
+    expect(store.saveSettings).toHaveBeenCalledWith(
+      "s1",
+      expect.objectContaining({ model: "m1", modelProvider: "opencode-go", thinkingLevel: "medium" }),
+    );
+    // The runtime overrides carry the default so requests send reasoning_effort.
+    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ thinkingLevel: "medium" }));
+  });
+
+  it("setModel keeps an explicit session thinking level (no default overwrite)", async () => {
+    const { provider, modelSelector, store } = buildHarness({
+      providerEntry: {
+        name: "opencode-go",
+        baseUrl: "https://x/v1",
+        apiKey: "sk",
+        thinkingMode: "effort",
+        models: [{ id: "m1" }],
+      },
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await provider.createNew(); // s2 (s1 now inactive? no: s2 active)
+    // Set an explicit level on the active session first, then pick a model.
+    await handler({ type: "setThinkingLevel", level: "high" });
+    await handler({ type: "setModel", model: "m1", provider: "opencode-go" });
+    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ thinkingLevel: "high" }));
+    expect(store.saveSettings).not.toHaveBeenCalledWith(
+      "s2",
+      expect.objectContaining({ model: "m1", thinkingLevel: "medium" }),
+    );
+  });
+
+  it("setModel on a provider without reasoning leaves no thinking default", async () => {
+    const { provider, modelSelector, store } = buildHarness({
+      providerEntry: {
+        name: "plain",
+        baseUrl: "https://x/v1",
+        apiKey: "sk",
+        thinkingMode: "none",
+        models: [{ id: "m1" }],
+      },
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "m1", provider: "plain" });
+    expect(modelSelector.set).toHaveBeenCalledWith(
+      expect.objectContaining({ thinkingMode: "none", thinkingLevel: undefined }),
+    );
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { model: "m1", modelProvider: "plain" });
+  });
+
   it("buildConfig fetches and caches the host model list", async () => {
     const fetchModels = vi.fn(async () => ["h1", "h2"]);
     const { provider } = buildHarness({

@@ -10,6 +10,11 @@ export interface ChatMessage {
   uiOnly?: boolean;
   /** Reasoning/thinking text for assistant messages (shown as a collapsible block). */
   thinking?: string;
+  /**
+   * Structured OpenRouter reasoning blocks captured from the stream, persisted
+   * and passed back verbatim on later turns (encrypted/summarized reasoning).
+   */
+  reasoningDetails?: unknown[];
 
   /** Data-URI images attached to a user message (multimodal). */
   images?: string[];

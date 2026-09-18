@@ -180,6 +180,8 @@ export function activate(context: ExtensionContext) {
       const cfg = config.get();
       window.showInformationMessage(
         `Harny config:\nprovider=${cfg.provider}\nactiveProvider=${cfg.activeProvider}\nmodel=${cfg.model}\nbaseUrl=${cfg.baseUrl}\n` +
+          `thinkingMode=${cfg.thinkingMode}\nthinkingLevel=${cfg.thinkingLevel ?? "Auto"}\ntemperature=${cfg.temperature ?? "Auto"}\ntopP=${cfg.topP ?? "Auto"}\nsampler=${cfg.sampler ?? "temperature"}\n` +
+          `presencePenalty=${cfg.presencePenalty ?? "Auto"}\nfrequencyPenalty=${cfg.frequencyPenalty ?? "Auto"}\n` +
           `availableModels (${(cfg.availableModels ?? []).length})\n` +
           `providerModels (${(cfg.providerModels ?? []).length})\n` +
           `hostModelProviders (${(cfg.hostModelProviders ?? []).length})`,

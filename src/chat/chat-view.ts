@@ -482,7 +482,18 @@ export class ChatViewProvider implements WebviewViewProvider {
           typeof msg.provider === "string" && msg.provider.trim() ? msg.provider.trim() : undefined;
         rt.model = model;
         rt.modelProvider = provider;
-        this.sessions.saveSettings(rt.sessionId, { model, ...(provider ? { modelProvider: provider } : {}) });
+        // Models on reasoning-capable providers (thinking bool/effort) default
+        // to Medium effort unless the session already has an explicit level.
+        if (!rt.thinkingLevel && provider) {
+          const entry = this.providers.getProvider(provider);
+          const mode = entry?.thinkingMode ?? this.config.get().thinkingMode;
+          if (mode === "bool" || mode === "effort" || mode === "type" || mode === "reasoning") rt.thinkingLevel = "medium";
+        }
+        this.sessions.saveSettings(rt.sessionId, {
+          model,
+          ...(provider ? { modelProvider: provider } : {}),
+          ...(rt.thinkingLevel ? { thinkingLevel: rt.thinkingLevel } : {}),
+        });
         this.modelSelector.set(this.computeOverrides(model, provider));
         // Lightweight config push (no full HTML rebuild: the typed prompt,
         // scroll and streaming state are preserved).
@@ -894,7 +905,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     noModels: boolean;
     configHome: string;
     workspaceReady: boolean;
-    thinkingMode?: "bool" | "effort" | "none";
+    thinkingMode?: "bool" | "effort" | "type" | "reasoning" | "none";
     thinkingLevel?: "off" | "low" | "medium" | "high";
     contextWindow: number;
     outputTokens: number;

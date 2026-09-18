@@ -300,7 +300,7 @@ describe("OpenAIChatProvider reasoning support", () => {
     expect(body.chat_template_kwargs.reasoning_effort).toBeUndefined();
   });
 
-  it("sends reasoning_effort in effort mode and omits it when off", async () => {
+  it("sends reasoning_effort in effort mode; off omits the field", async () => {
     const http = new FakeHttpClient();
     http.respondWith(sseResponse("data: [DONE]"));
     http.respondWith(sseResponse("data: [DONE]"));
@@ -315,6 +315,8 @@ describe("OpenAIChatProvider reasoning support", () => {
     expect(body.reasoning_effort).toBe("medium");
     expect(body.chat_template_kwargs).toBeUndefined();
 
+    // "off" OMITS the field: any effort (even "minimal") turns reasoning ON
+    // for models whose default is off (DeepSeek v4 on OpenRouter).
     const off = new OpenAIChatProvider(
       { ...config, thinkingMode: "effort", thinkingLevel: "off" },
       http,
@@ -323,6 +325,70 @@ describe("OpenAIChatProvider reasoning support", () => {
     await collect(off.stream([{ role: "user", content: "x" }]));
     body = JSON.parse(http.requests[1].body);
     expect(body.reasoning_effort).toBeUndefined();
+  });
+
+  it("sends thinking.type in type mode (OpenCode Go / DeepSeek toggle)", async () => {
+    const http = new FakeHttpClient();
+    http.respondWith(sseResponse("data: [DONE]"));
+    http.respondWith(sseResponse("data: [DONE]"));
+    http.respondWith(sseResponse("data: [DONE]"));
+
+    const high = new OpenAIChatProvider(
+      { ...config, thinkingMode: "type", thinkingLevel: "high" },
+      http,
+      tools,
+    );
+    await collect(high.stream([{ role: "user", content: "x" }]));
+    let body = JSON.parse(http.requests[0].body);
+    expect(body.thinking).toEqual({ type: "enabled" });
+    expect(body.reasoning_effort).toBeUndefined();
+
+    const off = new OpenAIChatProvider(
+      { ...config, thinkingMode: "type", thinkingLevel: "off" },
+      http,
+      tools,
+    );
+    await collect(off.stream([{ role: "user", content: "x" }]));
+    body = JSON.parse(http.requests[1].body);
+    expect(body.thinking).toEqual({ type: "disabled" });
+
+    // Auto (no explicit level) -> nothing sent, model default only.
+    const auto = new OpenAIChatProvider({ ...config, thinkingMode: "type" }, http, tools);
+    await collect(auto.stream([{ role: "user", content: "x" }]));
+    body = JSON.parse(http.requests[2].body);
+    expect(body.thinking).toBeUndefined();
+  });
+
+  it("sends the OpenRouter reasoning object in reasoning mode", async () => {
+    const http = new FakeHttpClient();
+    http.respondWith(sseResponse("data: [DONE]"));
+    http.respondWith(sseResponse("data: [DONE]"));
+    http.respondWith(sseResponse("data: [DONE]"));
+
+    const high = new OpenAIChatProvider(
+      { ...config, thinkingMode: "reasoning", thinkingLevel: "high" },
+      http,
+      tools,
+    );
+    await collect(high.stream([{ role: "user", content: "x" }]));
+    let body = JSON.parse(http.requests[0].body);
+    expect(body.reasoning).toEqual({ effort: "high" });
+    expect(body.reasoning_effort).toBeUndefined();
+
+    // off -> enabled:false (the reliable disable for DeepSeek-on-OpenRouter).
+    const off = new OpenAIChatProvider(
+      { ...config, thinkingMode: "reasoning", thinkingLevel: "off" },
+      http,
+      tools,
+    );
+    await collect(off.stream([{ role: "user", content: "x" }]));
+    body = JSON.parse(http.requests[1].body);
+    expect(body.reasoning).toEqual({ enabled: false });
+
+    const auto = new OpenAIChatProvider({ ...config, thinkingMode: "reasoning" }, http, tools);
+    await collect(auto.stream([{ role: "user", content: "x" }]));
+    body = JSON.parse(http.requests[2].body);
+    expect(body.reasoning).toBeUndefined();
   });
 
   it("sends nothing when thinkingMode is none", async () => {
@@ -377,6 +443,52 @@ describe("OpenAIChatProvider reasoning support", () => {
       { type: "thinking", content: "thinking via openrouter" },
       { type: "text", content: "ok" },
     ]);
+  });
+
+  it("keeps thinking when a single delta carries both content and reasoning", async () => {
+    const http = new FakeHttpClient();
+    http.respondWith(
+      sseResponse(
+        'data: {"choices":[{"delta":{"content":"answer","reasoning":"why"}}]}',
+        "data: [DONE]",
+      ),
+    );
+
+    const provider = new OpenAIChatProvider(config, http, tools);
+    const chunks = await collect(provider.stream([{ role: "user", content: "x" }]));
+
+    expect(chunks).toEqual([
+      { type: "text", content: "answer" },
+      { type: "thinking", content: "why" },
+    ]);
+  });
+
+  it("accumulates streamed reasoning_details and emits them pass-back-ready", async () => {
+    const http = new FakeHttpClient();
+    http.respondWith(
+      sseResponse(
+        'data: {"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.summary","summary":"step ","format":"openai-responses-v1","index":0}]}}]}',
+        'data: {"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.summary","summary":"one","format":"openai-responses-v1","index":0}]}}]}',
+        'data: {"choices":[{"delta":{"content":"ok"}}]}',
+        "data: [DONE]",
+      ),
+    );
+
+    const provider = new OpenAIChatProvider(config, http, tools);
+    const chunks = await collect(provider.stream([{ role: "user", content: "x" }]));
+
+    // The summary text is surfaced as thinking (no plaintext `reasoning` here).
+    expect(chunks.filter((c) => c.type === "thinking")).toEqual([
+      { type: "thinking", content: "step " },
+      { type: "thinking", content: "one" },
+    ]);
+    // ...and the merged block is emitted for verbatim pass-back.
+    expect(chunks.at(-1)).toEqual({
+      type: "thinking_details",
+      details: [
+        { type: "reasoning.summary", summary: "step one", format: "openai-responses-v1", index: 0 },
+      ],
+    });
   });
 });
 

@@ -5,9 +5,14 @@ export type ProviderName = "openai" | "openai-compatible" | "anthropic";
  * - "bool":   llama.cpp-style `chat_template_kwargs.enable_thinking` (on/off)
  *             + the standard `reasoning_effort` level inside `chat_template_kwargs`
  * - "effort": OpenAI-style `reasoning_effort` (low/medium/high)
+ * - "type":   DeepSeek/Anthropic-style `thinking: { type: "enabled" | "disabled" }`
+ *             (used by OpenCode Go for DeepSeek/Qwen/Kimi models)
+ * - "reasoning": OpenRouter-native `reasoning: { effort }` for levels and
+ *             `reasoning: { enabled: false }` to disable (reliable for
+ *             DeepSeek; 400 on reasoning-mandatory models like gpt-5)
  * - "none":   no thinking control is sent (default)
  */
-export type ThinkingMode = "bool" | "effort" | "none";
+export type ThinkingMode = "bool" | "effort" | "type" | "reasoning" | "none";
 
 /** Per-session thinking level, generalized across providers. */
 export type ThinkingLevel = "off" | "low" | "medium" | "high";
@@ -17,7 +22,7 @@ export function isThinkingLevel(v: unknown): v is ThinkingLevel {
 }
 
 export function isThinkingMode(v: unknown): v is ThinkingMode {
-  return v === "bool" || v === "effort" || v === "none";
+  return v === "bool" || v === "effort" || v === "type" || v === "reasoning" || v === "none";
 }
 
 export interface HarnyConfig {
@@ -55,7 +60,7 @@ export interface HarnyConfig {
   hostModelProviders?: string[];
   /** Disable reasoning/thinking for reasoning models (llama.cpp `enable_thinking`). Legacy flag. */
   enableThinking?: boolean;
-  /** How the provider exposes thinking control (bool = llama.cpp kwargs + reasoning_effort, effort = reasoning_effort, none = off). */
+  /** How the provider exposes thinking control (bool = llama.cpp kwargs + reasoning_effort, effort = reasoning_effort, type = thinking.type, none = off). */
   thinkingMode?: ThinkingMode;
   /** Thinking level for the current session; ignored when thinkingMode is "none". */
   thinkingLevel?: ThinkingLevel;

@@ -150,16 +150,52 @@ Thinking, …):
 }
 ```
 
-**2. OpenAI-style host (OpenAI, OpenRouter, opencode-go)** — `thinking: "effort"`
+**2. OpenAI-style host (OpenAI)** — `thinking: "effort"`
 sends top-level `reasoning_effort`; with no `models` the dropdown auto-fills
 from `GET /v1/models`:
+
+```jsonc
+"openai": {
+  "baseUrl": "https://api.openai.com/v1",
+  "api": "openai-completions",
+  "apiKey": "sk-...",
+  "thinking": "effort",
+  "thinkingLevel": "medium"
+}
+```
+
+**2a. OpenRouter-native** — `thinking: "reasoning"` sends `reasoning: { effort }`
+for levels and `reasoning: { enabled: false }` for **Off**. This is the
+*reliable* disable on OpenRouter for models whose default is thinking-on
+(e.g. `deepseek/deepseek-v4-flash`, where omitting the field still reasons
+sometimes):
 
 ```jsonc
 "openrouter": {
   "baseUrl": "https://openrouter.ai/api/v1",
   "api": "openai-completions",
   "apiKey": "sk-or-...",
-  "thinking": "effort",
+  "thinking": "reasoning",
+  "thinkingLevel": "medium"
+}
+```
+
+> Reasoning-mandatory models on OpenRouter (gpt-5 family) reject Off with
+> HTTP 400 ("Reasoning is mandatory…"). Use `"effort"` for those — Off then
+> leaves the model default.
+
+**2b. DeepSeek/Anthropic-style toggle (OpenCode Go)** — `thinking: "type"` sends
+`thinking: { type: "enabled" | "disabled" }`. OpenCode Go ignores
+`reasoning_effort` levels for DeepSeek/Qwen/Kimi, so this is the switch that
+actually turns thinking off and on (on `deepseek-v4.1-flash` it is 100%
+reliable; `deepseek-v4-flash` is flaky regardless of the field):
+
+```jsonc
+"opencode-go": {
+  "baseUrl": "https://opencode.ai/zen/go/v1",
+  "api": "openai-completions",
+  "apiKey": "sk-...",
+  "thinking": "type",
   "thinkingLevel": "medium"
 }
 ```
@@ -197,7 +233,9 @@ controls the reasoning phase with `thinking`:
 | `thinking` | What Harny sends | Typical providers |
 |------------|------------------|-------------------|
 | `"bool"` | `chat_template_kwargs.enable_thinking` + `reasoning_effort` (standard OpenAI field, read by the model's Jinja template) | llama.cpp (Qwen3.8, Gemma-4 Thinking, …) |
-| `"effort"` | `reasoning_effort: low/medium/high` (top-level) | OpenAI, OpenRouter, opencode-go |
+| `"effort"` | `reasoning_effort: low/medium/high` (top-level); Off omits it | OpenAI, OpenAI-compatible |
+| `"reasoning"` | `reasoning: { effort }` for levels; `reasoning: { enabled: false }` for Off | OpenRouter (reliable disable) |
+| `"type"` | `thinking: { type: "enabled" \| "disabled" }` (on/off; no effort tiers) | OpenCode Go (DeepSeek, Qwen, Kimi), Anthropic-style hosts |
 | absent / `"none"` | nothing (provider default) | providers without thinking control |
 
 - The level uses the **standard OpenAI field name** `reasoning_effort`
@@ -206,12 +244,20 @@ controls the reasoning phase with `thinking`:
 
 - `thinkingLevel` on a provider entry sets its **default**; the dropdown lets you
   override it **per session** (the choice is persisted with the session).
-- The dropdown is **enabled only for providers that declare** `thinking: "bool"`
-  or `"effort"` (see the config example) — otherwise it stays disabled at the
+- The dropdown is **enabled only for providers that declare** `thinking: "bool"`,
+  `"effort"`, `"type"` or `"reasoning"` (see the config example) — otherwise it stays disabled at the
   provider default and Harny sends nothing.
-- `Off` disables the phase where the provider allows it (`enable_thinking: false`
-  for llama.cpp; `reasoning_effort` is omitted for OpenAI-style APIs, falling
-  back to the model's default).
+- `Off` disables the phase where the provider allows it: `enable_thinking: false`
+  for llama.cpp, `thinking: { type: "disabled" }` in `"type"` mode,
+  `reasoning: { enabled: false }` in `"reasoning"` mode, and by **omitting**
+  `reasoning_effort` in `"effort"` mode. Note: some models default to reasoning
+  ON and cannot be disabled (reasoning-mandatory, e.g. the gpt-5 family rejects
+  effort `"none"`/`enabled: false` with a 400); for models whose default is
+  OFF (DeepSeek v4 on OpenRouter) omitting is exactly what keeps it off.
+- Reasoning is **passed back** on later turns so tool-call chains keep their
+  chain of thought: `reasoning_content` for llama.cpp/DeepSeek/opencode-go, and
+  the full `reasoning_details` blocks (encrypted/summarized) for OpenRouter,
+  captured from the stream and replayed verbatim.
 - The legacy boolean `enableThinking: true/false` is still honored and maps to
   `thinking: "bool"` with a `medium`/`off` level.
 
@@ -255,7 +301,7 @@ For providers that expose their model list (OpenAI, OpenRouter, opencode-go, lla
 | `harny.model` | `gpt-4o` | Model for chat completions |
 | `harny.maxTokens` | `8192` | Max tokens per response |
 | `harny.temperature` | not set | Sampling temperature (omitted when unset; required by strict models) |
-| `harny.thinkingMode` | not set | How the reasoning phase is expressed (`bool`, `effort`, `none`); the provider's `thinking` field and the per-session dropdown override it — see the Thinking section |
+| `harny.thinkingMode` | not set | How the reasoning phase is expressed (`bool`, `effort`, `type`, `reasoning`, `none`); the provider's `thinking` field and the per-session dropdown override it — see the Thinking section |
 | `harny.thinkingLevel` | `medium` | Default thinking level (`off`/`low`/`medium`/`high`); per provider entry you can also set `thinkingLevel` — the dropdown only unlocks for providers that declare `thinking` |
 | `harny.contextFiles` | `true` | Auto-include project files as context |
 | `harny.autoApprove` | `false` | Auto-approve tool calls |

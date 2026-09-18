@@ -1335,7 +1335,7 @@ modelSelect.addEventListener("focus", requestModelRefresh);
 // ── Thinking level (reasoning effort, generalized across providers) ──
 function renderThinkingSelect(c: ConfigState): void {
   const mode = c.thinkingMode;
-  const enabled = mode === "bool" || mode === "effort";
+  const enabled = mode === "bool" || mode === "effort" || mode === "type" || mode === "reasoning";
   thinkingCapable = enabled;
   thinkingSelect.disabled = streamingActive || !enabled;
   const level =
@@ -1345,7 +1345,7 @@ function renderThinkingSelect(c: ConfigState): void {
   thinkingSelect.value = level;
   thinkingSelect.title = enabled
     ? "Thinking level / reasoning effort (per session)"
-    : "This provider/model does not declare thinking control (add \"thinking\": \"bool\" or \"effort\" to its config entry)";
+    : 'This provider/model does not declare thinking control (add "thinking": "bool", "effort" or "type" to its config entry)';
 }
 thinkingSelect.addEventListener("change", () => {
   if (thinkingSelect.disabled) return;

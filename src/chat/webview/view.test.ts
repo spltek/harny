@@ -188,6 +188,14 @@ describe("view webview client", () => {
     });
     expect(sel.disabled).toBe(false);
     expect(sel.value).toBe("medium");
+
+    // DeepSeek/Anthropic toggle (OpenCode Go) also enables the dropdown
+    hostMessage({
+      type: "config",
+      config: { provider: "openai-compatible", model: "deepseek-v4.1-flash", hasKey: true, thinkingMode: "type", thinkingLevel: "high", models: [], providerModels: [], contextWindow: 128000 },
+    });
+    expect(sel.disabled).toBe(false);
+    expect(sel.value).toBe("high");
   });
 
   it("renders sessions, tabs and the active chat", async () => {

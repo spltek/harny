@@ -23,7 +23,7 @@
       "baseUrl": "http://localhost:8090/v1",
       "api": "openai-completions",
       "apiKey": "lamacpp",
-      "thinking": "bool", // "bool" (llama.cpp chat_template_kwargs: enable_thinking + reasoning_effort) | "effort" (reasoning_effort) | "none"
+      "thinking": "bool", // "bool" (llama.cpp kwargs) | "effort" (reasoning_effort) | "type" (thinking.type) | "reasoning" (OpenRouter) | "none"
       // No "models": the dropdown shows the GGUF currently loaded in the server.
       // llama.cpp loads ONE model at a time, so the list is always that one.
     },
@@ -34,7 +34,7 @@
       "baseUrl": "https://opencode.ai/zen/go/v1",
       "api": "openai-completions",
       "apiKey": "sk-...",
-      "thinking": "effort", // OpenAI-style reasoning_effort: low/medium/high
+      "thinking": "type", // DeepSeek/Anthropic-style thinking: { type: "enabled" | "disabled" }
       "thinkingLevel": "high"
       // no "models": the list comes from the host
     },
@@ -44,7 +44,7 @@
       "baseUrl": "https://openrouter.ai/api/v1",
       "api": "openai-completions",
       "apiKey": "sk-or-...",
-      "thinking": "effort"
+      "thinking": "reasoning" // OpenRouter-native: reasoning.effort / enabled:false (reliable off for DeepSeek)
     },
     // Local provider without apiKey: works the same, dynamic list.
     // "ollama": {

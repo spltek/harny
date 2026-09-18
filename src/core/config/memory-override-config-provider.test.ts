@@ -33,6 +33,21 @@ describe("MemoryOverrideConfigProvider", () => {
     expect(o.read()).toEqual({ model: "a", temperature: 0.9 });
   });
 
+  it("undefined deletes the key so base defaults stay active", () => {
+    const o = new MemoryOverrideConfigProvider();
+    o.set({ temperature: 0.9 });
+    expect(o.read()).toEqual({ temperature: 0.9 });
+
+    // A later set with undefined REMOVES the key: the composite merge would
+    // otherwise spread `temperature: undefined` over the base default.
+    o.set({ temperature: undefined });
+    expect(o.read()).toEqual({});
+
+    // End-to-end: after the deletion the base default resurfaces.
+    const composite = new CompositeConfigProvider(new StaticConfigProvider(BASE), [o]);
+    expect(composite.get().temperature).toBe(0);
+  });
+
   it("clear() empties the overrides", () => {
     const o = new MemoryOverrideConfigProvider();
     o.set({ model: "a" });

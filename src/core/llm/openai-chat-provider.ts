@@ -5,6 +5,7 @@ import type { HttpClient } from "./http-client";
 import { sseLines } from "./sse";
 import { toChatToolDefinitions, toOpenAIMessages } from "./message-converter";
 import type { LLMMessage, LLMProvider, StreamChunk } from "./types";
+import * as fs from "node:fs";
 
 /**
  * OpenAI Chat Completions provider (POST /v1/chat/completions, SSE streaming).
@@ -74,8 +75,27 @@ export class OpenAIChatProvider implements LLMProvider {
       }
     } else if (mode === "effort") {
       const level = this.config.thinkingLevel;
-      // "off" omits the field: the model falls back to its provider default.
+      // "off" OMITS the field: sending any effort (even "minimal") turns
+      // reasoning ON for models whose default is off (DeepSeek v4 on
+      // OpenRouter). Omitting leaves the model default: off for DeepSeek,
+      // but NOT disable-able for reasoning-mandatory models (gpt-5 family,
+      // which reject effort "none"/`enabled:false` with a 400).
       if (level && level !== "off") body.reasoning_effort = level;
+    } else if (mode === "type") {
+      // DeepSeek/Anthropic-style toggle, used by OpenCode Go for DeepSeek /
+      // Qwen / Kimi. These models have no effort tiers, so the level collapses
+      // to on/off (`enabled`/`disabled`); `adaptive` remains the model's own
+      // choice and is only used when the level is left on Auto.
+      const level = this.config.thinkingLevel;
+      if (level) body.thinking = { type: level === "off" ? "disabled" : "enabled" };
+    } else if (mode === "reasoning") {
+      // OpenRouter-native reasoning object. `enabled:false` is the RELIABLE
+      // off for models whose default is thinking-on (DeepSeek v4): omitting
+      // or `reasoning_effort` are not deterministic there. Reasoning-mandatory
+      // models (gpt-5 family) answer off with HTTP 400 — use "effort" for them.
+      const level = this.config.thinkingLevel;
+      if (level === "off") body.reasoning = { enabled: false };
+      else if (level) body.reasoning = { effort: level };
     }
 
     const headers: Record<string, string> = {
@@ -102,12 +122,44 @@ export class OpenAIChatProvider implements LLMProvider {
 
     const response = await this.http.post(url, JSON.stringify(body), headers, signal);
 
+    if (process.env.HARNY_DEBUG) {
+      // DEBUG: show EXACTLY what reaches the server (model / reasoning_effort /
+      // temperature / sampler / session header). Verifies whether the model or
+      // the proxy actually receives the configured parameters. Written to the
+      // same /tmp/harny-debug.log as logger.debugLog (no vscode dependency, so
+      // the provider also stays unit-testable).
+      const line = `[${new Date().toISOString()}] [harny] request ${JSON.stringify({
+        url,
+        model: body.model,
+        reasoning_effort: body.reasoning_effort,
+        chat_template_kwargs: body.chat_template_kwargs,
+        thinking: body.thinking,
+        temperature: body.temperature,
+        top_p: body.top_p,
+        presence_penalty: body.presence_penalty,
+        frequency_penalty: body.frequency_penalty,
+        max_tokens: body.max_tokens,
+        sessionHeader: this.config.sessionHeader
+          ? { name: this.config.sessionHeader, value: this.config.sessionId }
+          : undefined,
+      })}\n`;
+      try {
+        fs.appendFileSync("/tmp/harny-debug.log", line);
+      } catch {
+        /* best effort */
+      }
+    }
+
     if (!response.ok) {
       const text = await response.text();
       throw new Error(`OpenAI API error ${response.status}: ${text}`);
     }
 
     const seenToolCallIndices = new Set<number>();
+    // Accumulated OpenRouter `reasoning_details` blocks, keyed by block index
+    // and kept in the exact order the model emitted them. They are passed back
+    // UNMODIFIED on the next turn (required for encrypted/summarized models).
+    const reasoningBlocks = new Map<number, Record<string, unknown>>();
 
     for await (const line of sseLines(response)) {
       const trimmed = line.trim();
@@ -156,14 +208,29 @@ export class OpenAIChatProvider implements LLMProvider {
       if (!choice) continue;
       const delta = choice.delta;
 
+      // Visible answer text.
       if (delta?.content) {
         yield { type: "text", content: delta.content };
-      } else {
-        // Reasoning models stream the thinking phase separately. Field name
-        // varies by host: opencode-go/llama.cpp use `reasoning_content`,
-        // OpenRouter streams `reasoning`. Read both (never both present).
-        const thinking = delta?.reasoning_content ?? delta?.reasoning;
-        if (thinking) yield { type: "thinking", content: thinking };
+      }
+
+      // Reasoning models stream the thinking phase separately. Field name
+      // varies by host: opencode-go/llama.cpp use `reasoning_content`,
+      // OpenRouter streams `reasoning`. Read it INDEPENDENTLY of `content` so
+      // a chunk carrying both never drops the thinking.
+      const thinking = delta?.reasoning_content ?? delta?.reasoning;
+      if (thinking) yield { type: "thinking", content: thinking };
+
+      // OpenRouter also streams structured `reasoning_details`. Accumulate them
+      // for pass-back (encrypted/summarized reasoning) and, when no plaintext
+      // field is present, surface their text so nothing is lost.
+      if (Array.isArray(delta?.reasoning_details) && delta.reasoning_details.length > 0) {
+        accumulateReasoningDetails(reasoningBlocks, delta.reasoning_details);
+        if (!thinking) {
+          for (const detail of delta.reasoning_details) {
+            const text = reasoningDetailText(detail);
+            if (text) yield { type: "thinking", content: text };
+          }
+        }
       }
 
       if (delta?.tool_calls) {
@@ -194,9 +261,58 @@ export class OpenAIChatProvider implements LLMProvider {
       }
     }
 
+    // Emit the accumulated reasoning blocks (if any) so the caller can pass
+    // them back verbatim on the next turn, then close pending tool calls.
+    if (reasoningBlocks.size > 0) {
+      yield { type: "thinking_details", details: orderedReasoningDetails(reasoningBlocks) };
+    }
+
     // Emit tool_call_end for any remaining calls that were never closed.
     for (const idx of seenToolCallIndices) {
       yield { type: "tool_call_end", index: idx };
     }
   }
+}
+
+/**
+ * Merge a streamed OpenRouter `reasoning_details` delta into `blocks`.
+ * Blocks are keyed by their `index`. Only the CONTENT-bearing fields (`summary`,
+ * `text`, `data`) arrive incrementally and must be CONCATENATED; metadata
+ * (`type`, `format`, `index`) is repeated verbatim on every delta, so it is
+ * last-write-wins (concatenating it would duplicate "reasoning.summary" etc.).
+ */
+const REASONING_TEXT_FIELDS = new Set(["summary", "text", "data"]);
+
+function accumulateReasoningDetails(
+  blocks: Map<number, Record<string, unknown>>,
+  deltas: unknown[],
+): void {
+  for (const raw of deltas) {
+    if (!raw || typeof raw !== "object") continue;
+    const delta = raw as Record<string, unknown>;
+    const index = typeof delta.index === "number" ? delta.index : 0;
+    const existing = blocks.get(index);
+    if (!existing) {
+      blocks.set(index, { ...delta });
+      continue;
+    }
+    for (const [key, value] of Object.entries(delta)) {
+      const prev = existing[key];
+      const append = REASONING_TEXT_FIELDS.has(key) && typeof value === "string" && typeof prev === "string";
+      existing[key] = append ? prev + value : value;
+    }
+  }
+}
+
+/** Reasoning blocks in the original emission order (ascending index). */
+function orderedReasoningDetails(blocks: Map<number, Record<string, unknown>>): unknown[] {
+  return [...blocks.entries()].sort((a, b) => a[0] - b[0]).map(([, block]) => block);
+}
+
+/** Plaintext carried by a reasoning_details block, if any. */
+function reasoningDetailText(detail: unknown): string | undefined {
+  if (!detail || typeof detail !== "object") return undefined;
+  const rec = detail as Record<string, unknown>;
+  const text = rec.summary ?? rec.text ?? rec.content;
+  return typeof text === "string" && text.length > 0 ? text : undefined;
 }

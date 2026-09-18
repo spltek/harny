@@ -17,7 +17,7 @@ interface NamedProviderEntry {
   apiKey?: string;
   models?: unknown[];
   enableThinking?: boolean;
-  /** "bool" (llama.cpp kwargs) | "effort" (reasoning_effort) | "none" */
+  /** "bool" (llama.cpp kwargs) | "effort" (reasoning_effort) | "type" (thinking.type) | "reasoning" (OpenRouter reasoning object) | "none" */
   thinking?: string;
   /** Default thinking level for this provider: "off" | "low" | "medium" | "high" */
   thinkingLevel?: string;

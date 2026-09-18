@@ -7,7 +7,7 @@ import { InMemoryChatHistory } from "../history/in-memory-chat-history";
 import { StaticConfigProvider } from "../config/static-config-provider";
 import { ToolRegistry } from "../tools/tool-registry";
 import type { HarnyConfig } from "../config/types";
-import type { LLMProviderFactory, StreamChunk } from "../llm/types";
+import type { LLMMessage, LLMProviderFactory, StreamChunk } from "../llm/types";
 import type { Tool, ToolResult } from "../tools/tool";
 import type { AgentEvent } from "./types";
 
@@ -219,6 +219,50 @@ describe("Agent", () => {
     const assistant = history.all().find((m) => m.role === "assistant");
     expect(assistant?.thinking).toBe("let me reason about this");
     expect(assistant?.content).toBe("Here is the answer");
+  });
+
+  it("persists reasoning_details and passes them back on later turns", async () => {
+    const details = [{ type: "reasoning.encrypted", data: "abc", index: 0 }];
+    const received: LLMMessage[][] = [];
+    let call = 0;
+    const factory: LLMProviderFactory = {
+      create() {
+        return {
+          protocol: "chat" as const,
+          async *stream(messages) {
+            received.push(messages);
+            if (call++ === 0) {
+              yield { type: "thinking_details", details };
+              yield { type: "thinking", content: "thinking..." };
+              yield { type: "text", content: "done" };
+            } else {
+              yield { type: "text", content: "again" };
+            }
+          },
+        };
+      },
+    };
+    const config = new StaticConfigProvider(VALID_CONFIG);
+    const history = new InMemoryChatHistory();
+    const events = new InMemoryEventBus<AgentEvent>();
+    const agent = new Agent({
+      config,
+      llmFactory: factory,
+      tools: new ToolRegistry([]),
+      history,
+      events,
+      systemPrompt: new DefaultSystemPromptBuilder(() => [], () => "/workspace"),
+    });
+
+    await agent.send("first");
+    await agent.send("second");
+
+    const assistant = history.all().find((m) => m.role === "assistant");
+    expect(assistant?.reasoningDetails).toEqual(details);
+    // The second request carries the stored reasoning_details back on the
+    // assistant message (encrypted reasoning continuity across turns).
+    const secondTurnAssistant = received[1].find((m) => m.role === "assistant");
+    expect(secondTurnAssistant?.reasoningDetails).toEqual(details);
   });
 
   it("parses \u003cthink\u003e tags in text into thinking_delta events", async () => {

@@ -13,9 +13,18 @@ export function toOpenAIMessages(messages: LLMMessage[]): Array<Record<string, u
           ],
         }
       : { content: m.content }),
-    // Reasoning pass-back (chat protocol): llama.cpp/DeepSeek reasoning models
-    // require the previous assistant's reasoning_content on every later turn.
-    ...(m.role === "assistant" && m.thinking ? { reasoning_content: m.thinking } : {}),
+    // Reasoning pass-back (chat protocol):
+    //  - llama.cpp / DeepSeek / opencode-go: plaintext `reasoning_content`
+    //    is required on every later turn so the model keeps its reasoning.
+    //  - OpenRouter: `reasoning_details` must be passed back UNMODIFIED for
+    //    models that return encrypted/summarized reasoning (o-series/gpt-5,
+    //    Anthropic, Gemini); `reasoning_content` (= alias of `reasoning`) only
+    //    carries the plaintext summary).
+    ...(m.role === "assistant" && m.reasoningDetails && m.reasoningDetails.length > 0
+      ? { reasoning_details: m.reasoningDetails }
+      : m.role === "assistant" && m.thinking
+        ? { reasoning_content: m.thinking }
+        : {}),
     // Include tool_calls ONLY when there is at least one: an empty array is
     // truthy in JS but rejected by strict servers ("Empty tool_calls is not
     // supported"), so guard with .length > 0.

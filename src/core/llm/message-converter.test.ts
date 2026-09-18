@@ -47,6 +47,33 @@ describe("protocol-level message conversion (generalized rules)", () => {
     expect(out[0].reasoning_content).toBeUndefined();
   });
 
+  it("chat: prefers reasoning_details over reasoning_content when both exist", () => {
+    const details = [
+      { type: "reasoning.summary", summary: "full", format: "openai-responses-v1", index: 0 },
+    ];
+    const out = toOpenAIMessages([
+      { role: "assistant", content: "answer", thinking: "plain", reasoningDetails: details },
+    ]);
+    expect(out[0].reasoning_details).toEqual(details);
+    expect(out[0].reasoning_content).toBeUndefined();
+  });
+
+  it("chat: ignores an empty reasoning_details array and falls back to reasoning_content", () => {
+    const out = toOpenAIMessages([
+      { role: "assistant", content: "answer", thinking: "plain", reasoningDetails: [] },
+    ]);
+    expect(out[0].reasoning_content).toBe("plain");
+    expect(out[0].reasoning_details).toBeUndefined();
+  });
+
+  it("chat: never passes reasoning on non-assistant roles", () => {
+    const out = toOpenAIMessages([
+      { role: "user", content: "q", thinking: "x", reasoningDetails: [{ type: "reasoning.text" }] },
+    ]);
+    expect(out[0].reasoning_content).toBeUndefined();
+    expect(out[0].reasoning_details).toBeUndefined();
+  });
+
 
 });
 

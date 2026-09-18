@@ -1001,7 +1001,9 @@ ${renderViewConfig()}
           <div class="field">
             <label class="field-label" for="pe-thinking">Reasoning</label>
             <select id="pe-thinking">
-              <option value="effort">Effort (OpenAI / OpenRouter)</option>
+              <option value="effort">Effort (OpenAI)</option>
+              <option value="reasoning">Reasoning (OpenRouter)</option>
+              <option value="type">Type (DeepSeek / Anthropic toggle)</option>
               <option value="bool">Bool (llama.cpp)</option>
               <option value="none">None</option>
             </select>

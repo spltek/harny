@@ -424,6 +424,12 @@ describe("HarnyFileConfigProvider multi-provider format", () => {
             thinking: "bool",
             thinkingLevel: "low",
           },
+          "opencode-go": {
+            baseUrl: "https://opencode.ai/zen/go/v1",
+            api: "openai-completions",
+            thinking: "type",
+            thinkingLevel: "medium",
+          },
         },
       }),
     );
@@ -436,6 +442,10 @@ describe("HarnyFileConfigProvider multi-provider format", () => {
     const llama = provider.getProvider("llamacpp");
     expect(llama?.thinkingMode).toBe("bool");
     expect(llama?.thinkingLevel).toBe("low");
+
+    const ocg = provider.getProvider("opencode-go");
+    expect(ocg?.thinkingMode).toBe("type");
+    expect(ocg?.thinkingLevel).toBe("medium");
     // The hosted (non-active) entry must not leak into the runtime config.
     expect(active.thinkingLevel).not.toBe("low");
   });
