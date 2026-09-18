@@ -38,7 +38,7 @@ function setupDom(initOverrides: Record<string, unknown> = {}): void {
         <input id="pe-name" type="text" />
         <input id="pe-baseurl" type="text" />
         <input id="pe-apikey" type="text" />
-        <select id="pe-thinking"><option value="effort">Effort</option><option value="bool">Bool</option><option value="none">None</option></select>
+        <select id="pe-thinking"><option value="effort">Effort</option><option value="bool">Bool</option><option value="unspecified">Unspecified</option></select>
         <input id="pe-session-header" type="text" />
         <button id="provider-test" class="secondary">Test</button>
         <button id="provider-delete" class="secondary">Delete</button>
@@ -1051,7 +1051,7 @@ describe("view webview client", () => {
     expect(data["new-provider"]!.baseUrl).toBe("https://openrouter.ai/api/v1");
   });
 
-  it("renames a provider on save and maps thinking none to undefined", async () => {
+  it("renames a provider on save and maps thinking unspecified to undefined", async () => {
     await loadView();
     hostMessage({
       type: "providersEditor",
@@ -1060,7 +1060,7 @@ describe("view webview client", () => {
     const nameInput = document.getElementById("pe-name") as HTMLInputElement;
     nameInput.value = "llamacpp-2";
     const thinking = document.getElementById("pe-thinking") as HTMLSelectElement;
-    thinking.value = "none";
+    thinking.value = "unspecified";
     posted.length = 0;
     const save = document.getElementById("providers-save") as HTMLButtonElement;
     save.click();
@@ -1068,7 +1068,7 @@ describe("view webview client", () => {
     const data = (saveMsg.data as { providers: Record<string, { thinking?: string }> }).providers;
     expect(data["llamacpp-2"]).toBeTruthy();
     expect(data.llamacpp).toBeUndefined();
-    expect(data["llamacpp-2"]!.thinking).toBeUndefined(); // "none" → omitted
+    expect(data["llamacpp-2"]!.thinking).toBeUndefined(); // "unspecified" → omitted
   });
 
   it("carries unmanaged provider keys through save and rename (lossless)", async () => {

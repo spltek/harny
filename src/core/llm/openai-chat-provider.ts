@@ -56,8 +56,8 @@ export class OpenAIChatProvider implements LLMProvider {
     //            + the STANDARD OpenAI field reasoning_effort for the level,
     //            passed inside chat_template_kwargs for the model's Jinja template.
     // "effort" → OpenAI-style top-level reasoning_effort (low/medium/high)
-    // "none"   → nothing is sent (provider default behavior)
-    const mode = this.config.thinkingMode ?? (this.config.enableThinking !== undefined ? "bool" : "none");
+    // "unspecified" → nothing is sent (provider default behavior)
+    const mode = this.config.thinkingMode ?? (this.config.enableThinking !== undefined ? "bool" : "unspecified");
     if (mode === "bool") {
       if (this.config.thinkingLevel !== undefined) {
         // Level-based control (UI dropdown). `enable_thinking` is the llama.cpp

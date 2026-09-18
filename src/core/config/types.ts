@@ -10,9 +10,10 @@ export type ProviderName = "openai" | "openai-compatible" | "anthropic";
  * - "reasoning": OpenRouter-native `reasoning: { effort }` for levels and
  *             `reasoning: { enabled: false }` to disable (reliable for
  *             DeepSeek; 400 on reasoning-mandatory models like gpt-5)
- * - "none":   no thinking control is sent (default)
+ * - "unspecified": nothing is sent — the provider/model keeps its own default
+ *             (NOT an explicit "off"; it is the same as omitting the field).
  */
-export type ThinkingMode = "bool" | "effort" | "type" | "reasoning" | "none";
+export type ThinkingMode = "bool" | "effort" | "type" | "reasoning" | "unspecified";
 
 /** Per-session thinking level, generalized across providers. */
 export type ThinkingLevel = "off" | "low" | "medium" | "high";
@@ -22,7 +23,7 @@ export function isThinkingLevel(v: unknown): v is ThinkingLevel {
 }
 
 export function isThinkingMode(v: unknown): v is ThinkingMode {
-  return v === "bool" || v === "effort" || v === "type" || v === "reasoning" || v === "none";
+  return v === "bool" || v === "effort" || v === "type" || v === "reasoning" || v === "unspecified";
 }
 
 export interface HarnyConfig {
@@ -60,9 +61,9 @@ export interface HarnyConfig {
   hostModelProviders?: string[];
   /** Disable reasoning/thinking for reasoning models (llama.cpp `enable_thinking`). Legacy flag. */
   enableThinking?: boolean;
-  /** How the provider exposes thinking control (bool = llama.cpp kwargs + reasoning_effort, effort = reasoning_effort, type = thinking.type, none = off). */
+  /** How the provider exposes thinking control (bool = llama.cpp kwargs + reasoning_effort, effort = reasoning_effort, type = thinking.type, unspecified = send nothing). */
   thinkingMode?: ThinkingMode;
-  /** Thinking level for the current session; ignored when thinkingMode is "none". */
+  /** Thinking level for the current session; ignored when thinkingMode is "unspecified". */
   thinkingLevel?: ThinkingLevel;
   /**
    * Extra static request headers from the active named provider (e.g. a

@@ -1021,7 +1021,7 @@ function loadProviderIntoForm(name: string): void {
   peName.value = name;
   peBaseUrl.value = entry?.baseUrl ?? "";
   peApiKey.value = entry?.apiKey ?? "";
-  peThinking.value = entry?.thinking ?? "none";
+  peThinking.value = entry?.thinking ?? "unspecified";
   peSessionHeader.value = entry?.sessionHeader ?? "";
   providerTestResult.classList.add("hidden");
   providerTestBtn.disabled = false;
@@ -1149,7 +1149,7 @@ providersSaveBtn.addEventListener("click", () => {
     ...(entry.thinkingLevel ? { thinkingLevel: entry.thinkingLevel } : {}),
     baseUrl: normalizeBaseUrl(peBaseUrl.value) || undefined,
     apiKey: peApiKey.value.trim() || undefined,
-    thinking: peThinking.value === "none" ? undefined : peThinking.value,
+    thinking: peThinking.value === "unspecified" ? undefined : peThinking.value,
     ...(peSessionHeader.value.trim() ? { sessionHeader: peSessionHeader.value.trim() } : {}),
   };
   vscode.postMessage({ type: "saveProviders", data: providerEditorData });

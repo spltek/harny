@@ -23,7 +23,7 @@
       "baseUrl": "http://localhost:8090/v1",
       "api": "openai-completions",
       "apiKey": "lamacpp",
-      "thinking": "bool", // "bool" (llama.cpp kwargs) | "effort" (reasoning_effort) | "type" (thinking.type) | "reasoning" (OpenRouter) | "none"
+      "thinking": "bool", // "bool" (llama.cpp kwargs) | "effort" (reasoning_effort) | "type" (thinking.type) | "reasoning" (OpenRouter) | "unspecified" (send nothing)
       // No "models": the dropdown shows the GGUF currently loaded in the server.
       // llama.cpp loads ONE model at a time, so the list is always that one.
     },

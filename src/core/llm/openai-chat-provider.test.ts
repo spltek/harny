@@ -391,12 +391,12 @@ describe("OpenAIChatProvider reasoning support", () => {
     expect(body.reasoning).toBeUndefined();
   });
 
-  it("sends nothing when thinkingMode is none", async () => {
+  it("sends nothing when thinkingMode is unspecified", async () => {
     const http = new FakeHttpClient();
     http.respondWith(sseResponse("data: [DONE]"));
 
     const provider = new OpenAIChatProvider(
-      { ...config, thinkingMode: "none", thinkingLevel: "low" },
+      { ...config, thinkingMode: "unspecified", thinkingLevel: "low" },
       http,
       tools,
     );

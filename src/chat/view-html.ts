@@ -1005,7 +1005,7 @@ ${renderViewConfig()}
               <option value="reasoning">Reasoning (OpenRouter)</option>
               <option value="type">Type (DeepSeek / Anthropic toggle)</option>
               <option value="bool">Bool (llama.cpp)</option>
-              <option value="none">None</option>
+              <option value="unspecified">Unspecified (provider default)</option>
             </select>
           </div>
           <div class="field">

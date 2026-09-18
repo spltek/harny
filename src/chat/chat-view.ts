@@ -905,7 +905,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     noModels: boolean;
     configHome: string;
     workspaceReady: boolean;
-    thinkingMode?: "bool" | "effort" | "type" | "reasoning" | "none";
+    thinkingMode?: "bool" | "effort" | "type" | "reasoning" | "unspecified";
     thinkingLevel?: "off" | "low" | "medium" | "high";
     contextWindow: number;
     outputTokens: number;

@@ -200,7 +200,7 @@ reliable; `deepseek-v4-flash` is flaky regardless of the field):
 }
 ```
 
-**3. Host you don't want to touch** — omit `thinking` (or set `"none"`): Harny
+**3. Host you don't want to touch** — omit `thinking` (or set `"unspecified"`): Harny
 sends nothing and the Thinking dropdown stays disabled:
 
 ```jsonc
@@ -236,7 +236,7 @@ controls the reasoning phase with `thinking`:
 | `"effort"` | `reasoning_effort: low/medium/high` (top-level); Off omits it | OpenAI, OpenAI-compatible |
 | `"reasoning"` | `reasoning: { effort }` for levels; `reasoning: { enabled: false }` for Off | OpenRouter (reliable disable) |
 | `"type"` | `thinking: { type: "enabled" \| "disabled" }` (on/off; no effort tiers) | OpenCode Go (DeepSeek, Qwen, Kimi), Anthropic-style hosts |
-| absent / `"none"` | nothing (provider default) | providers without thinking control |
+| absent / `"unspecified"` | nothing (provider default) | providers without thinking control |
 
 - The level uses the **standard OpenAI field name** `reasoning_effort`
   (`low`/`medium`/`high`) in both modes; `enable_thinking` is only the
@@ -301,7 +301,7 @@ For providers that expose their model list (OpenAI, OpenRouter, opencode-go, lla
 | `harny.model` | `gpt-4o` | Model for chat completions |
 | `harny.maxTokens` | `8192` | Max tokens per response |
 | `harny.temperature` | not set | Sampling temperature (omitted when unset; required by strict models) |
-| `harny.thinkingMode` | not set | How the reasoning phase is expressed (`bool`, `effort`, `type`, `reasoning`, `none`); the provider's `thinking` field and the per-session dropdown override it — see the Thinking section |
+| `harny.thinkingMode` | not set | How the reasoning phase is expressed (`bool`, `effort`, `type`, `reasoning`, `unspecified`); the provider's `thinking` field and the per-session dropdown override it — see the Thinking section |
 | `harny.thinkingLevel` | `medium` | Default thinking level (`off`/`low`/`medium`/`high`); per provider entry you can also set `thinkingLevel` — the dropdown only unlocks for providers that declare `thinking` |
 | `harny.contextFiles` | `true` | Auto-include project files as context |
 | `harny.autoApprove` | `false` | Auto-approve tool calls |

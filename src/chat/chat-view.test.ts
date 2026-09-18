@@ -766,7 +766,7 @@ describe("ChatViewProvider", () => {
         name: "plain",
         baseUrl: "https://x/v1",
         apiKey: "sk",
-        thinkingMode: "none",
+        thinkingMode: "unspecified",
         models: [{ id: "m1" }],
       },
     });
@@ -774,7 +774,7 @@ describe("ChatViewProvider", () => {
     await provider.createNew(); // s1
     await handler({ type: "setModel", model: "m1", provider: "plain" });
     expect(modelSelector.set).toHaveBeenCalledWith(
-      expect.objectContaining({ thinkingMode: "none", thinkingLevel: undefined }),
+      expect.objectContaining({ thinkingMode: "unspecified", thinkingLevel: undefined }),
     );
     expect(store.saveSettings).toHaveBeenCalledWith("s1", { model: "m1", modelProvider: "plain" });
   });
