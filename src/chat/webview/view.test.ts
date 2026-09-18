@@ -1071,6 +1071,34 @@ describe("view webview client", () => {
     expect(data["llamacpp-2"]!.thinking).toBeUndefined(); // "none" → omitted
   });
 
+  it("carries unmanaged provider keys through save and rename (lossless)", async () => {
+    await loadView();
+    hostMessage({
+      type: "providersEditor",
+      data: {
+        providers: {
+          custom: {
+            baseUrl: "http://x/v1",
+            thinking: "bool",
+            thinkingLevel: "high",
+            extra: { models: [{ id: "m1" }], customAnything: 7 },
+          },
+        },
+      },
+    });
+    (document.getElementById("pe-name") as HTMLInputElement).value = "renamed";
+    posted.length = 0;
+    (document.getElementById("providers-save") as HTMLButtonElement).click();
+    const saveMsg = posted.find((m) => (m as { type?: string }).type === "saveProviders") as Record<string, unknown>;
+    const data = (saveMsg.data as {
+      providers: Record<string, { extra?: unknown; thinkingLevel?: string }>;
+    }).providers;
+    expect(data.custom).toBeUndefined();
+    expect(data.renamed).toBeTruthy();
+    expect(data.renamed.extra).toEqual({ models: [{ id: "m1" }], customAnything: 7 });
+    expect(data.renamed.thinkingLevel).toBe("high");
+  });
+
   it("deletes a provider after the two-step confirmation", async () => {
     await loadView();
     hostMessage({

@@ -167,6 +167,10 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
         if (typeof entry.sessionHeader === "string" && entry.sessionHeader.trim()) {
           out.sessionHeader = entry.sessionHeader.trim();
         }
+        // Everything the form does not manage is carried through verbatim
+        // (models, enableThinking, unknown keys) so a save never drops it.
+        const extra = editorExtras(entry as unknown as Record<string, unknown>);
+        if (extra) out.extra = extra;
         providers[name] = out;
       }
     }
@@ -196,14 +200,29 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
 
       const providers: Record<string, Record<string, unknown>> = {};
       for (const [name, entry] of Object.entries(data.providers)) {
-        const p: Record<string, unknown> = { api: "openai-completions" };
-        if (entry.baseUrl) p.baseUrl = entry.baseUrl;
-        if (entry.apiKey) p.apiKey = entry.apiKey;
-        if (entry.thinking && isThinkingMode(entry.thinking)) p.thinking = entry.thinking;
-        if (entry.thinkingLevel && isThinkingLevel(entry.thinkingLevel)) p.thinkingLevel = entry.thinkingLevel;
-        if (typeof entry.maxTokens === "number") p.maxTokens = entry.maxTokens;
-        if (entry.headers && Object.keys(entry.headers).length > 0) p.headers = entry.headers;
-        if (entry.sessionHeader && entry.sessionHeader.trim()) p.sessionHeader = entry.sessionHeader.trim();
+        // Start from the keys the editor does NOT manage (models, unknown
+        // fields) so a save is lossless, then overlay the managed ones.
+        const p: Record<string, unknown> = { api: "openai-completions", ...(entry.extra ?? {}) };
+        setOrDelete(p, "baseUrl", entry.baseUrl);
+        setOrDelete(p, "apiKey", entry.apiKey);
+        setOrDelete(
+          p,
+          "sessionHeader",
+          entry.sessionHeader && entry.sessionHeader.trim() ? entry.sessionHeader.trim() : undefined,
+        );
+        if (entry.thinking && isThinkingMode(entry.thinking)) {
+          p.thinking = entry.thinking;
+          setOrDelete(p, "thinkingLevel", entry.thinkingLevel);
+        } else {
+          // Explicitly cleared: drop the modern key, the per-provider default
+          // level AND the legacy flag, or the latter two would keep the
+          // provider reasoning-capable (a lone `thinkingLevel` implies bool).
+          delete p.thinking;
+          delete p.enableThinking;
+          delete p.thinkingLevel;
+        }
+        setOrDelete(p, "maxTokens", typeof entry.maxTokens === "number" ? entry.maxTokens : undefined);
+        setOrDelete(p, "headers", entry.headers && Object.keys(entry.headers).length > 0 ? entry.headers : undefined);
         providers[name] = p;
       }
       parsed.providers = providers;
@@ -374,4 +393,36 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
     }
     return out;
   }
+}
+
+/** Provider keys the gear editor manages explicitly (everything else is `extra`). */
+const EDITOR_MANAGED_KEYS = new Set([
+  "api",
+  "baseUrl",
+  "apiKey",
+  "thinking",
+  "thinkingLevel",
+  "maxTokens",
+  "headers",
+  "sessionHeader",
+  "enableThinking",
+]);
+
+/**
+ * The subset of a raw provider entry that the editor does NOT manage. Kept so
+ * `saveProvidersEditor` can put it back untouched (models, unknown fields).
+ * Returns undefined when there is nothing to preserve.
+ */
+function editorExtras(raw: Record<string, unknown>): Record<string, unknown> | undefined {
+  const extra: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!EDITOR_MANAGED_KEYS.has(key)) extra[key] = value;
+  }
+  return Object.keys(extra).length > 0 ? extra : undefined;
+}
+
+/** `obj[key] = value`, or delete the key when the value is empty/undefined. */
+function setOrDelete(obj: Record<string, unknown>, key: string, value: unknown): void {
+  if (value === undefined || value === null || value === "") delete obj[key];
+  else obj[key] = value;
 }

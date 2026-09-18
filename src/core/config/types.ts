@@ -128,6 +128,11 @@ export interface ProviderEditorEntry {
   headers?: Record<string, string>;
   /** Header name for the per-conversation session id (e.g. x-opencode-session). */
   sessionHeader?: string;
+  /**
+   * Every provider key the editor does NOT manage (e.g. `models`, `enableThinking`,
+   * future/unknown fields), preserved verbatim so a save is LOSSLESS.
+   */
+  extra?: Record<string, unknown>;
 }
 
 export interface ProviderEditorData {

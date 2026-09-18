@@ -980,7 +980,7 @@ const providersSaveBtn = document.getElementById("providers-save") as HTMLButton
 const providersCancelBtn = document.getElementById("providers-cancel") as HTMLButtonElement;
 const gearBtn = document.getElementById("gear-btn") as HTMLButtonElement;
 
-let providerEditorData: { providers: Record<string, { baseUrl?: string; apiKey?: string; thinking?: string; sessionHeader?: string; headers?: Record<string, string>; maxTokens?: number }> } = {
+let providerEditorData: { providers: Record<string, { baseUrl?: string; apiKey?: string; thinking?: string; thinkingLevel?: string; sessionHeader?: string; headers?: Record<string, string>; maxTokens?: number; extra?: Record<string, unknown> }> } = {
   providers: {},
 };
 let providerEditorSelected = "";
@@ -1030,7 +1030,7 @@ function loadProviderIntoForm(name: string): void {
   refreshProviderList();
 }
 
-function openProvidersEditor(data: { providers: Record<string, { baseUrl?: string; apiKey?: string; thinking?: string }> }): void {
+function openProvidersEditor(data: { providers: Record<string, { baseUrl?: string; apiKey?: string; thinking?: string; thinkingLevel?: string; extra?: Record<string, unknown> }> }): void {
   providerEditorData = { providers: JSON.parse(JSON.stringify(data.providers ?? {})) };
   const names = Object.keys(providerEditorData.providers);
   providerEditorSelected = names.length > 0 ? names[0] : "";
@@ -1140,10 +1140,13 @@ providersSaveBtn.addEventListener("click", () => {
     delete providerEditorData.providers[oldName];
   }
   providerEditorData.providers[given] = {
-    // Fields not managed by the form are CARRIED OVER untouched (headers,
-    // maxTokens): editing one field must never drop the others.
+    // Keys the form does not manage are CARRIED OVER untouched so a save is
+    // LOSSLESS: `extra` (models, unknown fields), headers, maxTokens and the
+    // provider's default thinkingLevel.
+    ...(entry.extra ? { extra: entry.extra } : {}),
     ...(entry.headers ? { headers: entry.headers } : {}),
     ...(typeof entry.maxTokens === "number" ? { maxTokens: entry.maxTokens } : {}),
+    ...(entry.thinkingLevel ? { thinkingLevel: entry.thinkingLevel } : {}),
     baseUrl: normalizeBaseUrl(peBaseUrl.value) || undefined,
     apiKey: peApiKey.value.trim() || undefined,
     thinking: peThinking.value === "none" ? undefined : peThinking.value,

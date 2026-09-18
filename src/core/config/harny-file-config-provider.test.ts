@@ -450,6 +450,74 @@ describe("HarnyFileConfigProvider multi-provider format", () => {
     expect(active.thinkingLevel).not.toBe("low");
   });
 
+  it("gear editor preserves unmanaged keys — a save is lossless", () => {
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        provider: "custom",
+        providers: {
+          custom: {
+            baseUrl: "http://old/v1",
+            api: "openai-completions",
+            apiKey: "k",
+            thinking: "type",
+            thinkingLevel: "high",
+            maxTokens: 1234,
+            headers: { "X-A": "1" },
+            models: [{ id: "m1", input: ["text"] }],
+            customAnything: { nested: true },
+          },
+        },
+      }),
+    );
+    const provider = new HarnyFileConfigProvider(tmp, nodeFileSystem);
+
+    // Keys the form does not manage are surfaced as `extra`...
+    const editor = provider.readProvidersEditor();
+    expect(editor.providers.custom.extra).toEqual({
+      models: [{ id: "m1", input: ["text"] }],
+      customAnything: { nested: true },
+    });
+
+    // ...and survive a save that only changes the base URL.
+    const round = provider.readProvidersEditor();
+    round.providers.custom.baseUrl = "http://new/v1";
+    expect(provider.saveProvidersEditor(round)).toBe(true);
+
+    const { readFileSync } = require("node:fs") as typeof import("node:fs");
+    expect(JSON.parse(readFileSync(join(dir, "config.json"), "utf8")).providers.custom).toEqual({
+      api: "openai-completions",
+      baseUrl: "http://new/v1",
+      apiKey: "k",
+      thinking: "type",
+      thinkingLevel: "high",
+      maxTokens: 1234,
+      headers: { "X-A": "1" },
+      models: [{ id: "m1", input: ["text"] }],
+      customAnything: { nested: true },
+    });
+    expect(provider.getProvider("custom")?.models).toEqual([{ id: "m1", input: ["text"] }]);
+  });
+
+  it("clearing thinking also drops the legacy enableThinking flag", () => {
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        provider: "custom",
+        providers: { custom: { baseUrl: "http://x/v1", enableThinking: true } },
+      }),
+    );
+    const provider = new HarnyFileConfigProvider(tmp, nodeFileSystem);
+    const editor = provider.readProvidersEditor();
+    expect(editor.providers.custom.thinking).toBe("bool");
+    editor.providers.custom.thinking = undefined;
+    expect(provider.saveProvidersEditor(editor)).toBe(true);
+    const { readFileSync } = require("node:fs") as typeof import("node:fs");
+    const raw = JSON.parse(readFileSync(join(dir, "config.json"), "utf8"));
+    expect(raw.providers.custom).toEqual({ api: "openai-completions", baseUrl: "http://x/v1" });
+    expect(provider.getProvider("custom")?.thinkingMode).toBeUndefined();
+  });
+
   it("reads flat thinkingMode / thinkingLevel keys", () => {
     writeFileSync(
       join(dir, "config.json"),
