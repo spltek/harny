@@ -432,7 +432,8 @@ ${renderViewConfig()}
     }
 
     /* Control-stack toggle (above the ask card): a centered hover-hot chevron.
-       On hover it appears; clicking collapses/expands the controls below. */
+       On hover it appears; clicking collapses/expands the Window + Sampling
+       cards below (the rest of the controls stays visible). */
     #ctl-toggle {
       display: flex; align-items: center; justify-content: center;
       height: 14px; margin: 0 10px;
@@ -449,17 +450,17 @@ ${renderViewConfig()}
     #ctl-toggle:focus-within #ctl-toggle-btn { visibility: visible; opacity: 1; color: var(--accent); }
     #ctl-toggle-btn svg { transition: transform 0.15s; }
     body.controls-collapsed #ctl-toggle-btn svg { transform: rotate(180deg); }
-    body.controls-collapsed #status,
-    body.controls-collapsed #metrics { display: none; }
-    /* Collapsed: Ask Harny becomes the last element — give it the SAME gap
-       from the panel edge that the tokens/metrics card has when visible
-       (#metrics bottom margin = 8px). */
-    body.controls-collapsed #input-area { margin-bottom: 8px; }
+    /* Collapsed: hide ONLY the Window + Sampling cards. The AI Model card, the
+       ask card and the metrics row stay visible. */
+    body.controls-collapsed #ctl-cards { display: none; }
     /* No stack to toggle -> the strip disappears too. */
     body.no-session #ctl-toggle,
     body.no-workspace #ctl-toggle { display: none; }
 
-    #status { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px 6px; font-size: var(--fs-md); }
+    /* Symmetric padding (8px top/bottom) so the gap above and below the
+       status block is identical — in the collapsed form the 3 visible cards
+       (ask / AI Model / metrics) are then evenly spaced. */
+    #status { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px; font-size: var(--fs-md); }
     #status .warn { color: var(--error); }
     .ctl-row { display: flex; align-items: center; gap: 6px; }
     /* Provider whose host model list failed to fetch: still VISIBLE in the
@@ -839,9 +840,9 @@ ${renderViewConfig()}
   <div id="messages"></div>
   <div id="working-bar" class="hidden">● Working...</div>
   <!-- Control stack toggle: a slim hover-hot strip just above the ask card.
-       On hover a chevron appears; clicking collapses/expands the controls
-       below (#status + #metrics). The tiny label at the right shows the state
-       (Hide/Show controls) — same level as the Working... bar. -->
+       On hover a chevron appears; clicking collapses/expands the Window +
+       Sampling cards (#ctl-cards) while the ask card, the model card and the
+       metrics stay visible. -->
   <div id="ctl-toggle" title="Toggle the controls below" aria-expanded="true">
     <button id="ctl-toggle-btn" aria-label="Toggle controls">
       <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
@@ -858,7 +859,7 @@ ${renderViewConfig()}
       <select id="model-select" title="Switch model"></select>
       <button id="gear-btn" class="icon-btn" title="Configure providers & models"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
     </div>
-    <div class="ctl-cards">
+    <div id="ctl-cards" class="ctl-cards">
       <div class="ctl-card">
         <span class="card-title">Window</span>
         <div class="field">

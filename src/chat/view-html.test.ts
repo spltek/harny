@@ -34,4 +34,17 @@ describe("renderViewHtml", () => {
     expect(html).toContain('"openIds":["a"]');
     expect(html).toContain('"content":"hello"');
   });
+
+  it("collapsing the control stack hides only the Window/Sampling cards", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    // The collapsible container exists and is the only thing hidden on collapse.
+    expect(html).toContain('id="ctl-cards"');
+    expect(html).toMatch(/body\.controls-collapsed\s+#ctl-cards\s*\{\s*display:\s*none/);
+    // The model card, ask card and metrics must NOT disappear when collapsed.
+    expect(html).not.toMatch(/body\.controls-collapsed[^}]*#status/);
+    expect(html).not.toMatch(/body\.controls-collapsed[^}]*#metrics/);
+  });
 });
