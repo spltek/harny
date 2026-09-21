@@ -24,6 +24,10 @@ interface ChatMsg {
   thinking?: string;
   toolCalls?: ToolCallView[];
   toolCallId?: string;
+  /** Files attached to a user message (shown as chips in its bubble). */
+  attachments?: { name: string; size: number }[];
+  /** UI text when it differs from the LLM `content` (file contents inlined). */
+  displayText?: string;
 }
 interface SessionInfo {
   id: string;
@@ -88,6 +92,8 @@ const inputEl = document.getElementById("user-input") as HTMLTextAreaElement;
 const ctlToggle = document.getElementById("ctl-toggle") as HTMLDivElement;
 const sendBtn = document.getElementById("send-btn") as HTMLButtonElement;
 const abortBtn = document.getElementById("abort-btn") as HTMLButtonElement;
+const attachBtn = document.getElementById("attach-btn") as HTMLButtonElement;
+const attachmentChips = document.getElementById("attachment-chips") as HTMLDivElement;
 const modelSelect = document.getElementById("model-select") as HTMLSelectElement;
 const thinkingSelect = document.getElementById("thinking-select") as HTMLSelectElement;
 const ctxInput = document.getElementById("ctx-input") as HTMLInputElement;
@@ -133,6 +139,11 @@ let workingEl: HTMLDivElement | null = null;
 let compactionEl: HTMLDivElement | null = null;
 let aborted = false;
 const pendingToolCalls = new Map<string, HTMLDivElement>();
+
+// ── Pending attachments: files picked via the "+" button and queued for the
+// next send. Transient (never persisted); cleared on send or session switch. ──
+interface AttachedFile { name: string; path: string; size: number; isImage: boolean; }
+let attachedFiles: AttachedFile[] = [];
 
 // ── Throttled markdown rendering for LONG streaming text ──
 // Re-rendering markdown on every delta janks the panel with long outputs
@@ -316,17 +327,34 @@ messagesEl.addEventListener("scroll", () => {
   autoScroll = nearBottom;
 });
 
-function addMessage(role: string, content: string): HTMLDivElement {
+function addMessage(role: string, content: string, attachments?: { name: string; size: number }[]): HTMLDivElement {
   const div = document.createElement("div");
   div.className = "msg " + role;
   if (role === "assistant" || role === "tool") {
     div.innerHTML = renderMarkdown(content || "");
   } else {
     div.textContent = content || "";
+    if (role === "user" && attachments && attachments.length > 0) {
+      div.appendChild(messageAttachmentRow(attachments));
+    }
   }
   messagesEl.appendChild(div);
   scrollDown();
   return div;
+}
+
+/** "Sent with these files" chips shown inside a user bubble (name only). */
+function messageAttachmentRow(attachments: { name: string; size: number }[]): HTMLDivElement {
+  const row = document.createElement("div");
+  row.className = "msg-attachments";
+  for (const file of attachments) {
+    const chip = document.createElement("span");
+    chip.className = "msg-attach";
+    chip.textContent = `📎 ${file.name}`;
+    chip.title = file.size > 0 ? `${file.name} · ${formatBytes(file.size)}` : file.name;
+    row.appendChild(chip);
+  }
+  return row;
 }
 
 function addThinkingBlock(text: string, beforeEl?: HTMLElement | null): HTMLDivElement {
@@ -530,7 +558,7 @@ function renderMessages(msgs: ChatMsg[]): boolean {
       if (content.startsWith("❌")) el.classList.add("error");
       attachBranchAt(el, i);
     } else {
-      addMessage(m.role, m.content || "");
+      addMessage(m.role, m.displayText ?? (m.content || ""), m.attachments);
     }
   }
   return hasVisible;
@@ -703,10 +731,58 @@ function resizeInput(): void {
   inputEl.style.overflowY = next >= MAX_INPUT_HEIGHT ? "auto" : "hidden";
 }
 
+// ── Attachments: chips below the textarea, sent with the next message ──
+function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = n;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+  return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+}
+
+function renderAttachmentChips(): void {
+  attachmentChips.innerHTML = "";
+  attachmentChips.classList.toggle("hidden", attachedFiles.length === 0);
+  attachedFiles.forEach((file, index) => {
+    const chip = document.createElement("span");
+    chip.className = "attach-chip";
+    chip.title = file.path;
+
+    const name = document.createElement("span");
+    name.className = "attach-name";
+    name.textContent = file.name;
+
+    const size = document.createElement("span");
+    size.className = "attach-size";
+    size.textContent = formatBytes(file.size);
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "attach-remove";
+    remove.textContent = "\u00d7";
+    remove.title = "Remove attachment";
+    remove.addEventListener("click", () => {
+      attachedFiles.splice(index, 1);
+      renderAttachmentChips();
+    });
+
+    chip.append(name, size, remove);
+    attachmentChips.appendChild(chip);
+  });
+}
+
+function clearAttachments(): void {
+  if (attachedFiles.length === 0) return;
+  attachedFiles = [];
+  renderAttachmentChips();
+}
+
 function send(): void {
   if (sendBtn.disabled || !activeId) return;
   const text = inputEl.value.trim();
-  if (!text) return;
+  const attachments = attachedFiles.slice();
+  if (!text && attachments.length === 0) return;
   inputEl.value = "";
   inputEl.style.height = "auto"; // back to a single line for the next message
   currentResultEl = null;
@@ -716,16 +792,19 @@ function send(): void {
   aborted = false;
   pendingToolCalls.clear();
   // Show the user's message immediately (don't wait for the turn to finish).
-  addMessage("user", text);
+  // Attachments render as chips; the bubble text is just the typed prompt.
+  addMessage("user", text, attachments);
   workingEl = addWorking();
   scrollDown();
-  vscode.postMessage({ type: "send", text });
+  vscode.postMessage({ type: "send", text, ...(attachments.length > 0 ? { attachments } : {}) });
+  clearAttachments();
   setStreaming(true);
 }
 
 // ── Custom hover tooltip removed: native title attributes are used instead ──
 
 sendBtn.addEventListener("click", send);
+attachBtn.addEventListener("click", () => vscode.postMessage({ type: "pickFiles" }));
 inputEl.addEventListener("input", resizeInput);
 // Recompute the height when the input's width changes (panel/window resize),
 // because line wrapping depends on width. Guarded ResizeObserver avoids loops.
@@ -1191,6 +1270,7 @@ function setStreaming(active: boolean): void {
   sendBtn.classList.toggle("blinking", active);
   sendBtn.disabled = !activeId || active;
   abortBtn.disabled = !active;
+  attachBtn.disabled = active;
   compactBtn.disabled = active;
   modelSelect.disabled = active;
   thinkingSelect.disabled = active || !thinkingCapable;
@@ -1542,6 +1622,21 @@ bindIntegerInput(outInput);
 window.addEventListener("message", (e) => {
   const msg = e.data;
   switch (msg.type) {
+    case "attachments": {
+      // Host response to "pickFiles": APPEND the picked files (several picks
+      // accumulate), de-duplicated by path, shown as chips and sent together.
+      const files = Array.isArray(msg.files) ? (msg.files as AttachedFile[]) : [];
+      if (files.length > 0) {
+        const seen = new Set(attachedFiles.map((f) => f.path));
+        for (const file of files) {
+          if (seen.has(file.path)) continue;
+          attachedFiles.push(file);
+          seen.add(file.path);
+        }
+        renderAttachmentChips();
+      }
+      break;
+    }
     case "textDelta": {
       const resultEl = ensureResult();
       if (resultEl) {
@@ -1796,7 +1891,10 @@ function renderViewState(state: {
   workingIds?: string[];
 }): void {
   openIds = state.openIds || [];
+  const prevActiveId = activeId;
   activeId = state.activeId;
+  // Attachments are per-composition: drop them when the active session changes.
+  if (prevActiveId !== activeId) clearAttachments();
   currentSessions = state.sessions || [];
   workingIds = new Set(state.workingIds || []);
   renderSessions(currentSessions);

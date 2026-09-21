@@ -1,5 +1,12 @@
 import type { ToolCall } from "../tools/tool";
 
+/** Files attached to a user message (metadata only; shown in its bubble). */
+export interface MessageAttachment {
+  name: string;
+  path: string;
+  size: number;
+}
+
 export interface ChatMessage {
   role: "user" | "assistant" | "system" | "tool";
   content: string;
@@ -18,6 +25,18 @@ export interface ChatMessage {
 
   /** Data-URI images attached to a user message (multimodal). */
   images?: string[];
+  /**
+   * Files attached to a user message. Their contents are INLINED into `content`
+   * for the LLM, while these stay as metadata so the bubble can show "sent with
+   * these documents" without dumping the whole file into the transcript.
+   */
+  attachments?: MessageAttachment[];
+  /**
+   * Text to SHOW in the UI when it differs from the LLM `content` (e.g. an
+   * attachment-only send stores the file contents in `content`, but the bubble
+   * should display the typed prompt). Falls back to `content` when absent.
+   */
+  displayText?: string;
 }
 
 export type UserMessage = Omit<ChatMessage, "role" | "toolCalls" | "toolCallId" | "uiOnly"> & {

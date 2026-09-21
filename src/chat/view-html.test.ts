@@ -16,6 +16,8 @@ describe("renderViewHtml", () => {
     expect(html).toContain('id="tabs"');
     expect(html).toContain('id="messages"');
     expect(html).toContain('id="user-input"');
+    expect(html).toContain('id="attach-btn"');
+    expect(html).toContain('id="attachment-chips"');
     expect(html).toContain(`<script src="${base.scriptUri}"></script>`);
   });
 

@@ -58,6 +58,23 @@ describe("JsonlSessionStore", () => {
     expect(loaded.messages[1].toolCalls).toEqual([{ id: "c1", name: "Read", arguments: { path: "/x" } }]);
   });
 
+  it("persists attachment metadata and displayText on user messages", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    store.saveMessages("s1", [
+      msg({
+        role: "user",
+        content: 'Attached file "a.txt":\n```\nSECRET\n```\n\nlook',
+        displayText: "look",
+        attachments: [{ name: "a.txt", path: "/tmp/a.txt", size: 42 }],
+      }),
+    ]);
+
+    const loaded = store.load("s1");
+    expect(loaded.messages[0].displayText).toBe("look");
+    expect(loaded.messages[0].attachments).toEqual([{ name: "a.txt", path: "/tmp/a.txt", size: 42 }]);
+  });
+
   it("renames a session preserving its messages", () => {
     const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
     store.create("Old");

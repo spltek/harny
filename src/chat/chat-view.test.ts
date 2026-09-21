@@ -151,7 +151,7 @@ function buildHarness(opts: Record<string, unknown> = {}) {
   vi.spyOn(modelSelector, "set");
   vi.spyOn(modelSelector, "clear");
   const config = new CompositeConfigProvider(base, [modelSelector]);
-  const attachments = { pick: vi.fn(async () => []), buildContext: vi.fn(async () => ({ text: "", images: [] })) } as unknown as AttachmentService;
+  const attachments = (opts.attachments as AttachmentService | undefined) ?? ({ pick: vi.fn(async () => []), buildContext: vi.fn(async () => ({ text: "", images: [] })) } as unknown as AttachmentService);
   const providers = (opts.providers as ProviderCatalog | undefined) ?? {
     getProvider: vi.fn(() => opts.providerEntry as import("../core/config/types").ResolvedNamedProvider | undefined),
     saveModelSelection: vi.fn(),
@@ -389,6 +389,50 @@ describe("ChatViewProvider", () => {
     expect(view.webview.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: "error", error: expect.stringContaining("Select a model") }),
     );
+  });
+
+  it("send with attachments only builds context and sends (no text needed)", async () => {
+    const attachments = {
+      pick: vi.fn(async () => []),
+      buildContext: vi.fn(async () => ({ text: 'Attached file "a.txt":\n```\nhi\n```', images: [] })),
+    } as unknown as AttachmentService;
+    const { registry, provider } = buildHarness({ attachments });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "m", provider: "p" });
+    const agent = registry.get("s1")!.agent as any;
+
+    await handler({
+      type: "send",
+      text: "",
+      attachments: [{ name: "a.txt", path: "/tmp/a.txt", size: 2, isImage: false }],
+    });
+
+    expect(attachments.buildContext).toHaveBeenCalled();
+    expect(agent.send).toHaveBeenCalledWith(
+      expect.stringContaining("Attached file"),
+      expect.objectContaining({
+        attachments: [{ name: "a.txt", path: "/tmp/a.txt", size: 2 }],
+        displayText: "",
+      }),
+    );
+  });
+
+  it("pickFiles asks the attachment service and posts the picked files", async () => {
+    const picked = [{ name: "a.txt", path: "/tmp/a.txt", size: 2, isImage: false }];
+    const attachments = {
+      pick: vi.fn(async () => picked),
+      buildContext: vi.fn(async () => ({ text: "", images: [] })),
+    } as unknown as AttachmentService;
+    const { provider } = buildHarness({ attachments });
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew();
+    view.webview.postMessage.mockClear();
+
+    await handler({ type: "pickFiles" });
+
+    expect(attachments.pick).toHaveBeenCalled();
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "attachments", files: picked });
   });
 
   it("renameSession renames via the in-panel modal", async () => {
@@ -924,7 +968,7 @@ describe("ChatViewProvider", () => {
     await handler({ type: "setModel", model: "deepseek-v4-flash", provider: "opencode-go" });
     await handler({ type: "send", text: "hello" });
     const rt = registry.get("s1")!;
-    expect(rt.agent.send).toHaveBeenCalledWith("hello", undefined);
+    expect(rt.agent.send).toHaveBeenCalledWith("hello", expect.any(Object));
     // The status posted when the stream starts must ALREADY carry the session
     // id in workingIds — otherwise the row never locks (regression guard for
     // the postStatus-after-send timing).

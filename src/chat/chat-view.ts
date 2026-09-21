@@ -660,26 +660,35 @@ export class ChatViewProvider implements WebviewViewProvider {
 
   private async send(rt: SessionRuntime, msg: any): Promise<void> {
     if (rt.agent.streaming) return;
-    const rawText = msg.text as string;
-    if (!rawText?.trim()) return;
+    const rawText = typeof msg.text === "string" ? msg.text : "";
+    const attached = (msg.attachments as AttachmentInfo[] | undefined) ?? [];
+    // A message may carry text, attachments, or both — an attachment-only send
+    // is valid ("look at this file").
+    if (!rawText.trim() && attached.length === 0) return;
     // New sessions start with no model: the user must pick one first. Keep BOTH
     // the user message and an explanatory error IN the history — otherwise the
     // transcript rebuild (refresh/switch) drops them and the follow-up "now do
     // it" reaches the agent with an EMPTY history.
     if (!rt.model) {
-      rt.history.add({ role: "user", content: rawText, timestamp: Date.now() });
+      const userContent = rawText.trim() ? rawText : `📎 ${attached.map((a) => a.name).join(", ")}`;
+      rt.history.add({ role: "user", content: userContent, timestamp: Date.now() });
       const errorMsg = "Select a model for this session first (dropdown in the header).";
       rt.history.add({ role: "assistant", content: `❌ ${errorMsg}`, timestamp: Date.now() });
       this.view?.webview.postMessage({ type: "error", error: errorMsg });
       return;
     }
-    const attached = (msg.attachments as AttachmentInfo[] | undefined) ?? [];
     let text = rawText;
     let images: string[] | undefined;
+    let displayText: string | undefined;
+    let attachmentMeta: { name: string; path: string; size: number }[] | undefined;
     if (attached.length > 0) {
       const ctx = await this.attachments.buildContext(attached);
       text = ctx.text ? `${ctx.text}\n\n${rawText}` : rawText;
       images = ctx.images.length > 0 ? ctx.images : undefined;
+      // Keep the files as metadata for the bubble, and show ONLY the typed
+      // prompt (possibly empty) — never the inlined file contents.
+      attachmentMeta = attached.map((a) => ({ name: a.name, path: a.path, size: a.size }));
+      displayText = rawText;
     }
     if (images && images.length > 0) {
       const cfg = this.config.get();
@@ -701,7 +710,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     // send() sets _streaming synchronously on invocation: start it first, THEN
     // push the status — otherwise workingIds() is still empty and the session
     // row never locks (branch/rename/delete stay hoverable during the work).
-    const sending = rt.agent.send(text, images);
+    const sending = rt.agent.send(text, { images, attachments: attachmentMeta, displayText });
     this.postStatus(true);
     let hadError = false;
     const unsub = rt.agent.onEvent((e) => {

@@ -219,6 +219,17 @@ ${renderViewConfig()}
        (assistant/tool) use breaks:true and white-space normal to avoid the
        ghost blank lines produced by markdown's structural newlines. */
     .msg.user { align-self: flex-end; background: var(--user-msg); color: #fff; white-space: pre-wrap; }
+    /* "Sent with these files" chips inside a user bubble: the message keeps the
+       typed prompt; the attached documents are shown as a compact indicator
+       (their contents live in the LLM context, not in the transcript). */
+    .msg-attachments { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+    .msg-attach {
+      display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+      padding: 1px 7px; border-radius: 999px; font-size: var(--fs-sm);
+      /* Darker than the terracotta bubble so the white label pops (contrast). */
+      background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(0, 0, 0, 0.5);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
     .msg.assistant, .msg.tool { width: 100%; max-width: 100%; }
     .msg.assistant { align-self: flex-start; background: var(--assistant-msg); min-width: 0; position: relative; font-size: var(--fs-lg); }
     /* Branch-from-this-point: a small ⎇ key on assistant replies, revealed on
@@ -373,11 +384,12 @@ ${renderViewConfig()}
 
     /* Input area: a full-width card matching the sessions/control cards. */
     #input-area {
-      display: flex; gap: 8px; align-items: flex-end;
+      display: flex; flex-direction: column; gap: 6px;
       margin: 8px 10px 0;
       border-radius: 8px; padding: 8px 10px;
       background: var(--input-bg);
     }
+    #input-main { display: flex; gap: 8px; align-items: flex-end; min-width: 0; }
     #user-input {
       flex: 1; background: var(--surface-2); color: var(--fg);
       border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
@@ -422,7 +434,7 @@ ${renderViewConfig()}
        rem units = scale with the UI font; triangle and square have ≈ equal
        visual mass, so the two keys look identical and centered at ANY size.
        font-size:0 keeps the text glyph as an invisible DOM fallback. */
-    #input-area button {
+    #input-main button {
       height: 2.31rem;
       min-width: 2.77rem;
       padding: 0 0.77rem;
@@ -430,6 +442,28 @@ ${renderViewConfig()}
       align-items: center;
       justify-content: center;
     }
+
+    /* Attach row (below the textarea): a compact "+" to pick files plus the
+       chips of the files queued for the next message. */
+    #attach-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    #attach-btn { color: var(--muted); font-size: var(--fs-lg); }
+    #attach-btn:not(:disabled):hover { color: var(--accent); border-color: var(--accent); filter: none; }
+    #attachment-chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+    #attachment-chips.hidden { display: none; }
+    .attach-chip {
+      display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+      padding: 1px 3px 1px 8px; border-radius: 999px;
+      background: var(--tool-bg); border: 1px solid var(--border);
+      font-size: var(--fs-sm); color: var(--fg);
+    }
+    .attach-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 12rem; }
+    .attach-size { color: #888; }
+    #input-area .attach-remove {
+      height: 1.15rem; min-height: 0; min-width: 1.15rem; padding: 0;
+      background: transparent; color: var(--muted); border: none; box-shadow: none;
+      font-size: var(--fs-lg); line-height: 1;
+    }
+    #input-area .attach-remove:not(:disabled):hover { color: var(--error); filter: none; }
 
     /* Control-stack toggle (above the ask card): a centered hover-hot chevron.
        On hover it appears; clicking collapses/expands the Window + Sampling
@@ -849,9 +883,15 @@ ${renderViewConfig()}
     </button>
   </div>
   <div id="input-area">
-    <textarea id="user-input" rows="1" placeholder="Ask Harny... (Enter to send, Esc to abort)"></textarea>
-    <button id="send-btn" aria-label="Send"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg></button>
-    <button id="abort-btn" class="secondary" disabled aria-label="Abort"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg></button>
+    <div id="input-main">
+      <textarea id="user-input" rows="1" placeholder="Ask Harny... (Enter to send, Esc to abort)"></textarea>
+      <button id="send-btn" aria-label="Send"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg></button>
+      <button id="abort-btn" class="secondary" disabled aria-label="Abort"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg></button>
+    </div>
+    <div id="attach-row">
+      <button id="attach-btn" class="secondary" title="Attach files" aria-label="Attach files">+</button>
+      <div id="attachment-chips" class="hidden"></div>
+    </div>
   </div>
   <div id="status">
     <div class="ctl-card ctl-card-model">

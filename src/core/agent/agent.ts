@@ -69,11 +69,14 @@ export class Agent implements ChatController {
     // Otherwise a new send() can start before the previous one's cleanup finishes.
   }
 
-  async send(userMessage: string, images?: string[]): Promise<void> {
+  async send(userMessage: string, options: import("./chat-controller").SendOptions = {}): Promise<void> {
+    const images = options.images;
     this.deps.history.add({
       role: "user",
       content: userMessage,
       images: images && images.length > 0 ? images : undefined,
+      attachments: options.attachments && options.attachments.length > 0 ? options.attachments : undefined,
+      displayText: options.displayText,
       timestamp: Date.now(),
     });
 

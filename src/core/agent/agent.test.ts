@@ -166,12 +166,27 @@ describe("Agent", () => {
     const systemPrompt = new DefaultSystemPromptBuilder(() => [], () => "/workspace");
     const agent = new Agent({ config, llmFactory: factory, tools, history, events, systemPrompt });
 
-    await agent.send("cosa vedi?", ["data:image/png;base64,AAAA"]);
+    await agent.send("cosa vedi?", { images: ["data:image/png;base64,AAAA"] });
 
     const userMessage = received[0][1]; // [0] is the system message
     expect(userMessage.images).toEqual(["data:image/png;base64,AAAA"]);
     // and it is persisted in history too
     expect(history.all()[0].images).toEqual(["data:image/png;base64,AAAA"]);
+  });
+
+  it("stores attachment metadata + displayText on the user message", async () => {
+    const { agent, history } = buildHarness({ chunks: [[{ type: "text", content: "ok" }]] });
+
+    await agent.send('Attached file "a.txt":\n```\nhi\n```\n\nlook', {
+      attachments: [{ name: "a.txt", path: "/tmp/a.txt", size: 2 }],
+      displayText: "look",
+    });
+
+    const user = history.all()[0];
+    // The LLM content keeps the inlined file; the metadata drives the bubble.
+    expect(user.content).toContain("Attached file");
+    expect(user.attachments).toEqual([{ name: "a.txt", path: "/tmp/a.txt", size: 2 }]);
+    expect(user.displayText).toBe("look");
   });
 
   it("streams text and stores the assistant message", async () => {

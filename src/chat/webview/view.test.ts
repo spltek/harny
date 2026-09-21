@@ -23,9 +23,15 @@ function setupDom(initOverrides: Record<string, unknown> = {}): void {
     <div id="messages"></div>
     <div id="working-bar" class="hidden">● Working...</div>
     <div id="input-area">
-      <textarea id="user-input" rows="1"></textarea>
-      <button id="send-btn">▶</button>
-      <button id="abort-btn" disabled>⏹</button>
+      <div id="input-main">
+        <textarea id="user-input" rows="1"></textarea>
+        <button id="send-btn">▶</button>
+        <button id="abort-btn" disabled>⏹</button>
+      </div>
+      <div id="attach-row">
+        <button id="attach-btn">+</button>
+        <div id="attachment-chips" class="hidden"></div>
+      </div>
     </div>
     <div id="status">AI Model: <select id="model-select"></select><button id="gear-btn">⚙</button><button id="ctx-minus">−</button><input id="ctx-input" type="text" value="128000"><button id="ctx-plus">+</button><button id="out-minus">−</button><input id="out-input" type="text" value="8192"><button id="out-plus">+</button><input id="sampler-temp" type="radio" name="sampler" checked><input id="sampler-topp" type="radio" name="sampler"><button id="samp-minus">−</button><input id="samp-input" type="text" placeholder="Auto"><button id="samp-plus">+</button><button id="samp-auto">Auto</button><button id="presence-minus">−</button><input id="presence-input" type="text" placeholder="Auto"><button id="presence-plus">+</button><button id="presence-auto">Auto</button><button id="freq-minus">−</button><input id="freq-input" type="text" placeholder="Auto"><button id="freq-plus">+</button><button id="freq-auto">Auto</button></div>
     <div id="metrics"><select id="thinking-select"><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button></div>
@@ -294,6 +300,123 @@ describe("view webview client", () => {
     expect((document.getElementById("samp-auto") as HTMLButtonElement).disabled).toBe(false);
     expect((document.getElementById("sampler-topp") as HTMLInputElement).disabled).toBe(false);
     expect((document.getElementById("user-input") as HTMLTextAreaElement).disabled).toBe(false);
+  });
+
+  it("attaches files via the + button and sends them with the message", async () => {
+    await loadView();
+    posted.length = 0;
+    (document.getElementById("attach-btn") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "pickFiles" });
+
+    // Host returns the picked files -> chips appear below the textarea.
+    hostMessage({
+      type: "attachments",
+      files: [
+        { name: "notes.txt", path: "/tmp/notes.txt", size: 2048, isImage: false },
+        { name: "shot.png", path: "/tmp/shot.png", size: 1048576, isImage: true },
+      ],
+    });
+    const chips = document.getElementById("attachment-chips") as HTMLDivElement;
+    expect(chips.classList.contains("hidden")).toBe(false);
+    expect(chips.querySelectorAll(".attach-chip").length).toBe(2);
+    expect(chips.querySelector(".attach-name")?.textContent).toBe("notes.txt");
+
+    // Removing a chip drops just that file.
+    (chips.querySelectorAll(".attach-remove")[1] as HTMLButtonElement).click();
+    expect(chips.querySelectorAll(".attach-chip").length).toBe(1);
+
+    // Sending posts the remaining attachment and clears the chips.
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "look";
+    posted.length = 0;
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    const sendMsg = posted.find((m) => (m as { type?: string }).type === "send") as Record<string, unknown>;
+    expect(sendMsg.text).toBe("look");
+    expect((sendMsg.attachments as unknown[]).length).toBe(1);
+    expect(chips.classList.contains("hidden")).toBe(true);
+  });
+
+  it("accumulates attachments across picks (dedup by path)", async () => {
+    await loadView();
+    hostMessage({ type: "attachments", files: [{ name: "a.txt", path: "/a", size: 1, isImage: false }] });
+    hostMessage({
+      type: "attachments",
+      files: [
+        { name: "a.txt", path: "/a", size: 1, isImage: false }, // duplicate path
+        { name: "b.txt", path: "/b", size: 2, isImage: false },
+      ],
+    });
+    const chips = document.getElementById("attachment-chips") as HTMLDivElement;
+    expect(chips.querySelectorAll(".attach-chip").length).toBe(2);
+    // A cancelled pick (empty list) must NOT clear the current selection.
+    hostMessage({ type: "attachments", files: [] });
+    expect(chips.querySelectorAll(".attach-chip").length).toBe(2);
+  });
+
+  it("disables the attach button while working", async () => {
+    await loadView();
+    const btn = document.getElementById("attach-btn") as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+    hostMessage({ type: "status", active: true });
+    expect(btn.disabled).toBe(true);
+    hostMessage({ type: "done" });
+    expect(btn.disabled).toBe(false);
+  });
+
+  it("drops pending attachments when switching to another session", async () => {
+    await loadView(); // activeId "a"
+    hostMessage({ type: "attachments", files: [{ name: "a.txt", path: "/a", size: 1, isImage: false }] });
+    const chips = document.getElementById("attachment-chips") as HTMLDivElement;
+    expect(chips.classList.contains("hidden")).toBe(false);
+
+    hostMessage({ type: "switchView", activeId: "b", sessions: [], openIds: ["a", "b"], messages: [], config: {}, workingIds: [] });
+    expect(chips.classList.contains("hidden")).toBe(true);
+  });
+
+  it("sends an attachment-only message (no text typed)", async () => {
+    await loadView();
+    hostMessage({
+      type: "attachments",
+      files: [{ name: "only.txt", path: "/tmp/only.txt", size: 10, isImage: false }],
+    });
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "";
+    posted.length = 0;
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    const sendMsg = posted.find((m) => (m as { type?: string }).type === "send") as Record<string, unknown>;
+    expect(sendMsg.text).toBe("");
+    expect((sendMsg.attachments as unknown[]).length).toBe(1);
+  });
+
+  it("renders attached files as chips in the user bubble, not the inlined content", async () => {
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [
+        {
+          role: "user",
+          content: 'Attached file "a.txt":\n```\nSECRET\n```\n\nlook',
+          displayText: "look",
+          attachments: [{ name: "a.txt", size: 2048 }],
+        },
+      ],
+    });
+    const bubble = document.querySelector(".msg.user") as HTMLElement;
+    expect(bubble.textContent).toContain("look");
+    expect(bubble.textContent).not.toContain("SECRET");
+    expect(bubble.querySelector(".msg-attach")?.textContent).toContain("a.txt");
+  });
+
+  it("attachment-only bubble shows just the file chip, never the content", async () => {
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "user", content: 'Attached file "a.txt":\n```\nSECRET\n```', displayText: "", attachments: [{ name: "a.txt", size: 2 }] },
+      ],
+    });
+    const bubble = document.querySelector(".msg.user") as HTMLElement;
+    expect(bubble.textContent).not.toContain("SECRET");
+    expect(bubble.querySelector(".msg-attach")?.textContent).toBe("📎 a.txt");
   });
 
   it("blinks the PLAY button while working and stops after", async () => {
