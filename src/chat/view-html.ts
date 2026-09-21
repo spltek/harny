@@ -590,8 +590,8 @@ ${renderViewConfig()}
     #met-cache { white-space: nowrap; color: var(--accent); }
     /* Placeholder state: provider does not report cached tokens. */
     #met-cache.idle { color: #888; }
-    /* The bar is the hero: taller, rounded, glossy track with inner depth.
-       Full width (block level in the column card; no flex-grow here). */
+    /* The bar is the hero: a full-width row of its own. The Compact key lives
+       in the stats row above, right after the cache indicator. */
     #ctx-bar-wrap {
       width: 100%; height: 8px; border-radius: 4px;
       background: var(--tool-bg); border: 1px solid var(--border); overflow: hidden;
@@ -603,9 +603,10 @@ ${renderViewConfig()}
       background-image: linear-gradient(to bottom, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0) 55%);
     }
     #ctx-bar.warn { background-color: var(--error); }
-    /* Compact: a full-width action key that belongs to the card. */
+    /* Compact: a compact action key, inline after the cache indicator but
+       pushed to the right edge of the stats row. */
     #compact-btn {
-      width: 100%;
+      flex: 0 0 auto; width: auto; white-space: nowrap; margin-left: auto;
       background: linear-gradient(to bottom, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.02)),
         var(--tool-bg, transparent);
       border: 1px solid var(--border); color: var(--fg);
@@ -971,9 +972,9 @@ ${renderViewConfig()}
       <span class="met" id="met-ctx" title="Context window (tokens)">${DEFAULT_CONTEXT_WINDOW}</span>
       <span class="met pct" id="met-pct">(0%)</span>
       <span class="met" id="met-cache" title="Input tokens served from prompt cache"></span>
+      <button id="compact-btn" title="Compact the conversation context">Compact</button>
     </div>
     <div id="ctx-bar-wrap"><div id="ctx-bar"></div></div>
-    <button id="compact-btn" title="Compact the conversation context">Compact</button>
   </div>
   <div id="name-modal" class="hidden">
     <div class="name-modal-backdrop"></div>

@@ -18,6 +18,8 @@ describe("renderViewHtml", () => {
     expect(html).toContain('id="user-input"');
     expect(html).toContain('id="attach-btn"');
     expect(html).toContain('id="attachment-chips"');
+    // The Compact key sits in the stats row, right after the cache indicator.
+    expect(html).toMatch(/id="met-cache"[\s\S]*?<button id="compact-btn"/);
     expect(html).toContain(`<script src="${base.scriptUri}"></script>`);
   });
 
