@@ -384,9 +384,9 @@ ${renderViewConfig()}
 
     /* Input area: a full-width card matching the sessions/control cards. */
     #input-area {
-      display: flex; flex-direction: column; gap: 6px;
+      display: flex; flex-direction: column; gap: 4px;
       margin: 8px 10px 0;
-      border-radius: 8px; padding: 8px 10px;
+      border-radius: 8px; padding: 8px 10px 6px;
       background: var(--input-bg);
     }
     /* Input row: the "+" file picker is the head key (same size as the
@@ -446,8 +446,10 @@ ${renderViewConfig()}
     }
 
     /* Chips row under the input: queued files only — the "+" picker lives at
-       the head of the text box (first key in #input-main). */
+       the head of the text box (first key in #input-main). An empty row must
+       not leave a phantom gap at the bottom of the ask box: hide it entirely. */
     #attach-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    #attach-row:has(#attachment-chips.hidden) { display: none; }
     #attach-btn { color: var(--muted); font-size: var(--fs-lg); }
     #attach-btn:not(:disabled):hover { color: var(--accent); border-color: var(--accent); filter: none; }
     #attachment-chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
@@ -486,9 +488,14 @@ ${renderViewConfig()}
     #ctl-toggle:focus-within #ctl-toggle-btn { visibility: visible; opacity: 1; color: var(--accent); }
     #ctl-toggle-btn svg { transition: transform 0.15s; }
     body.controls-collapsed #ctl-toggle-btn svg { transform: rotate(180deg); }
-    /* Collapsed: hide ONLY the Window + Sampling cards. The AI Model card, the
-       ask card and the metrics row stay visible. */
+    /* Collapsed: hide ONLY the Window + Sampling cards. The AI Model row, the
+       ask card and the metrics row stay visible. #status wraps ONLY those
+       cards now (the model row lives in the ask box), so an empty 16px padded
+       box would double the gap to the metrics below — hide it and give the
+       metrics a single normal 8px gap instead. */
     body.controls-collapsed #ctl-cards { display: none; }
+    body.controls-collapsed #status { display: none; }
+    body.controls-collapsed #metrics { margin-top: 8px; }
     /* No stack to toggle -> the strip disappears too. */
     body.no-session #ctl-toggle,
     body.no-workspace #ctl-toggle { display: none; }
@@ -523,6 +530,11 @@ ${renderViewConfig()}
     /* The AI Model card keeps the ORIGINAL proportions: one full-width row
        with the label inline and the select stretching (card chrome only). */
     .ctl-card-model { flex-direction: row; align-items: center; gap: 8px; }
+    /* Inside the prompt area the AI Model row drops the card chrome (the box
+       is the input area itself) and becomes a plain head row above the prompt. */
+    #input-area .ctl-card-model {
+      background: transparent; border-radius: 0; padding: 0;
+    }
     .card-title {
       font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
       color: #8a8a8a; user-select: none;
@@ -546,7 +558,8 @@ ${renderViewConfig()}
     }
     #thinking-select option { color: #1e1e1e; }
     #thinking-select:disabled { opacity: 0.45; cursor: default; }
-    #status .model-label { color: #999; }
+    #status .model-label,
+    #input-area .model-label { color: #999; }
     /* The stepper fills its card field; the −/+ keys stay a tight unit inside. */
     #ctx-window, #out-window, #samp-window, #presence-window, #freq-window { display: inline-flex; align-items: center; gap: 2px; width: 100%; }
     #ctx-input, #out-input, #samp-input, #presence-input, #freq-input {
@@ -944,8 +957,8 @@ ${renderViewConfig()}
   <div id="working-bar" class="hidden">● Working...</div>
   <!-- Control stack toggle: a slim hover-hot strip just above the ask card.
        On hover a chevron appears; clicking collapses/expands the Window +
-       Sampling cards (#ctl-cards) while the ask card, the model card and the
-       metrics stay visible. -->
+       Sampling cards (#ctl-cards) while the ask card (with the AI Model row
+       at its head) and the metrics stay visible. -->
   <div id="ctl-toggle" title="Toggle the controls below" aria-expanded="true">
     <button id="ctl-toggle-btn" aria-label="Toggle controls">
       <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
@@ -958,16 +971,16 @@ ${renderViewConfig()}
       <button id="send-btn" aria-label="Send"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg></button>
       <button id="abort-btn" class="secondary" disabled aria-label="Abort"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg></button>
     </div>
-    <div id="attach-row">
-      <div id="attachment-chips" class="hidden"></div>
-    </div>
-  </div>
-  <div id="status">
     <div class="ctl-card ctl-card-model">
       <span class="model-label">AI Model:</span>
       <select id="model-select" title="Switch model"></select>
       <button id="gear-btn" class="icon-btn" title="Configure providers & models"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
     </div>
+    <div id="attach-row">
+      <div id="attachment-chips" class="hidden"></div>
+    </div>
+  </div>
+  <div id="status">
     <div id="ctl-cards" class="ctl-cards">
       <div class="ctl-card">
         <span class="card-title">Window</span>

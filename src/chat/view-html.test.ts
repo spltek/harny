@@ -57,13 +57,26 @@ describe("renderViewHtml", () => {
     // The collapsible container exists and is the only thing hidden on collapse.
     expect(html).toContain('id="ctl-cards"');
     expect(html).toMatch(/body\.controls-collapsed\s+#ctl-cards\s*\{\s*display:\s*none/);
+    // #status wraps only the collapsible cards (the model row lives in the ask
+    // box): it disappears on collapse so the gap to the metrics is a single 8px.
+    expect(html).toMatch(/body\.controls-collapsed\s+#status\s*\{\s*display:\s*none/);
+    expect(html).toMatch(/body\.controls-collapsed\s+#metrics\s*\{\s*margin-top: 8px/);
+    // The ask card and metrics stay visible when collapsed.
+    expect(html).not.toMatch(/body\.controls-collapsed[^}]*#input-area/);
+    expect(html).not.toMatch(/body\.controls-collapsed[^}]*#metrics[^}]*display:\s*none/);
     // The collapse arrow is centered and the gap around it is symmetric: 8px
     // above (toggle margin-top; the chat scroller adds no bottom padding of
     // its own anymore) and the same 8px below (the ask card's margin-top).
     expect(html).toMatch(/#ctl-toggle\s*\{[^}]*margin: 8px 10px 0/s);
     expect(html).toMatch(/#messages\s*\{[^}]*padding: 10px 0 0 10px/s);
-    // The model card, ask card and metrics must NOT disappear when collapsed.
-    expect(html).not.toMatch(/body\.controls-collapsed[^}]*#status/);
-    expect(html).not.toMatch(/body\.controls-collapsed[^}]*#metrics/);
+    // The AI Model row (label + select + gear) lives INSIDE the ask box, just
+    // below the prompt (after #input-main, before the chips row) — no longer
+    // part of the collapsible block.
+    expect(html).toMatch(/id="input-area"[\s\S]*?<div class="ctl-card ctl-card-model">[\s\S]*?id="model-select"/);
+    expect(html).toMatch(/id="input-main"[\s\S]*?<div class="ctl-card ctl-card-model">[\s\S]*?id="attach-row"/);
+    expect(html).not.toMatch(/<div id="status">[\s\S]*?<div class="ctl-card ctl-card-model"/);
+    // Empty chips row is fully hidden, so the ask box keeps the same 8px
+    // internal space at top and bottom (no phantom bottom gap).
+    expect(html).toMatch(/#attach-row:has\(#attachment-chips\.hidden\)[\s\S]*?display: none/);
   });
 });
