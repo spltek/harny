@@ -343,4 +343,35 @@ describe("JsonlSessionStore saveSettings", () => {
     store.saveSettings("s1", { folder: "   " });
     expect(store.load("s1").summary.folder).toBeUndefined();
   });
+
+  it("persists the compaction threshold % and carries it across reloads, messages and renames", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    store.saveSettings("s1", { compactionThresholdPercent: 65 });
+
+    // Written to disk, visible on load and in the listing.
+    expect(store.load("s1").summary.compactionThresholdPercent).toBe(65);
+    expect(store.list()[0].compactionThresholdPercent).toBe(65);
+
+    // A later message write / rename must NOT drop the setting.
+    store.saveMessages("s1", [msg({ content: "x" })]);
+    expect(store.load("s1").summary.compactionThresholdPercent).toBe(65);
+    store.rename("s1", "Renamed");
+    const reloaded = store.load("s1");
+    expect(reloaded.summary.name).toBe("Renamed");
+    expect(reloaded.summary.compactionThresholdPercent).toBe(65);
+
+    // A fresh store instance (new session read) still sees it.
+    const store2 = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s9" });
+    expect(store2.load("s1").summary.compactionThresholdPercent).toBe(65);
+  });
+
+  it("keeps the stored threshold when the patch omits it (set-only semantics)", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    store.saveSettings("s1", { compactionThresholdPercent: 65, model: "m1" });
+    // The patch's other fields change, the threshold is untouched.
+    store.saveSettings("s1", { model: "m2" });
+    expect(store.load("s1").summary.compactionThresholdPercent).toBe(65);
+  });
 });

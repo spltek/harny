@@ -26,6 +26,8 @@ export interface SessionSummary {
   thinkingLevel?: import("../config/types").ThinkingLevel;
   /** Context window (tokens) for this session; the compaction ceiling. */
   contextWindow?: number;
+  /** Context fill % (of the window) that triggers auto-compaction; undefined = default 80. */
+  compactionThresholdPercent?: number;
   /** Current context tokens in use (latest input_tokens), for the fill %. */
   contextTokens?: number;
   /** Max output tokens per response for this session (persisted; undefined = default). */
@@ -55,6 +57,7 @@ export type SessionSettings = Pick<
   | "modelProvider"
   | "thinkingLevel"
   | "contextWindow"
+  | "compactionThresholdPercent"
   | "contextTokens"
   | "outputTokens"
   | "temperature"

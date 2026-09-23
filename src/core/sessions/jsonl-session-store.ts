@@ -16,6 +16,7 @@ interface SessionMeta {
   modelProvider?: string;
   thinkingLevel?: string;
   contextWindow?: number;
+  compactionThresholdPercent?: number;
   contextTokens?: number;
   outputTokens?: number;
   temperature?: number;
@@ -90,6 +91,7 @@ export class JsonlSessionStore implements SessionStore {
       ...(existing?.modelProvider ? { modelProvider: existing.modelProvider } : {}),
       ...(existing?.thinkingLevel ? { thinkingLevel: existing.thinkingLevel } : {}),
       ...(existing?.contextWindow ? { contextWindow: existing.contextWindow } : {}),
+      ...(existing?.compactionThresholdPercent ? { compactionThresholdPercent: existing.compactionThresholdPercent } : {}),
       ...(existing?.contextTokens ? { contextTokens: existing.contextTokens } : {}),
       ...(existing?.outputTokens ? { outputTokens: existing.outputTokens } : {}),
       // Temperature/penalties: 0 is a VALID value, so `!== undefined` (not truthiness).
@@ -140,6 +142,7 @@ export class JsonlSessionStore implements SessionStore {
       out.thinkingLevel = patch.thinkingLevel;
     }
     if (typeof patch.contextWindow === "number") out.contextWindow = patch.contextWindow;
+    if (typeof patch.compactionThresholdPercent === "number") out.compactionThresholdPercent = patch.compactionThresholdPercent;
     if (typeof patch.contextTokens === "number") out.contextTokens = patch.contextTokens;
     if (typeof patch.outputTokens === "number") out.outputTokens = patch.outputTokens;
     if ("temperature" in patch) out.temperature = patch.temperature;
@@ -232,6 +235,9 @@ export class JsonlSessionStore implements SessionStore {
               ? { thinkingLevel: rec.thinkingLevel }
               : {}),
             ...(typeof rec.contextWindow === "number" ? { contextWindow: rec.contextWindow } : {}),
+            ...(typeof rec.compactionThresholdPercent === "number"
+              ? { compactionThresholdPercent: rec.compactionThresholdPercent }
+              : {}),
             ...(typeof rec.contextTokens === "number" ? { contextTokens: rec.contextTokens } : {}),
             ...(typeof rec.outputTokens === "number" ? { outputTokens: rec.outputTokens } : {}),
             ...(typeof rec.temperature === "number" ? { temperature: rec.temperature } : {}),
@@ -274,6 +280,7 @@ export class JsonlSessionStore implements SessionStore {
       ...(existing?.modelProvider ? { modelProvider: existing.modelProvider } : {}),
       ...(existing?.thinkingLevel ? { thinkingLevel: existing.thinkingLevel } : {}),
       ...(existing?.contextWindow ? { contextWindow: existing.contextWindow } : {}),
+      ...(existing?.compactionThresholdPercent ? { compactionThresholdPercent: existing.compactionThresholdPercent } : {}),
       ...(existing?.contextTokens ? { contextTokens: existing.contextTokens } : {}),
       ...(existing?.outputTokens ? { outputTokens: existing.outputTokens } : {}),
       ...(existing?.temperature !== undefined ? { temperature: existing.temperature } : {}),
@@ -326,6 +333,9 @@ export class JsonlSessionStore implements SessionStore {
         ? { thinkingLevel: rec.thinkingLevel }
         : {}),
       ...(typeof rec.contextWindow === "number" ? { contextWindow: rec.contextWindow } : {}),
+      ...(typeof rec.compactionThresholdPercent === "number"
+        ? { compactionThresholdPercent: rec.compactionThresholdPercent }
+        : {}),
       ...(typeof rec.contextTokens === "number" ? { contextTokens: rec.contextTokens } : {}),
       ...(typeof rec.outputTokens === "number" ? { outputTokens: rec.outputTokens } : {}),
       ...(typeof rec.temperature === "number" ? { temperature: rec.temperature } : {}),
@@ -348,6 +358,7 @@ export class JsonlSessionStore implements SessionStore {
       ...(summary.modelProvider ? { modelProvider: summary.modelProvider } : {}),
       ...(summary.thinkingLevel ? { thinkingLevel: summary.thinkingLevel } : {}),
       ...(summary.contextWindow ? { contextWindow: summary.contextWindow } : {}),
+      ...(summary.compactionThresholdPercent ? { compactionThresholdPercent: summary.compactionThresholdPercent } : {}),
       ...(summary.contextTokens ? { contextTokens: summary.contextTokens } : {}),
       ...(summary.outputTokens ? { outputTokens: summary.outputTokens } : {}),
       ...(summary.temperature !== undefined ? { temperature: summary.temperature } : {}),

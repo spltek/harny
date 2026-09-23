@@ -24,17 +24,31 @@ function setupDom(initOverrides: Record<string, unknown> = {}): void {
     <div id="working-bar" class="hidden">● Working...</div>
     <div id="input-area">
       <div id="input-main">
+        <button id="attach-btn">+</button>
         <textarea id="user-input" rows="1"></textarea>
         <button id="send-btn">▶</button>
         <button id="abort-btn" disabled>⏹</button>
       </div>
       <div id="attach-row">
-        <button id="attach-btn">+</button>
         <div id="attachment-chips" class="hidden"></div>
       </div>
     </div>
     <div id="status">AI Model: <select id="model-select"></select><button id="gear-btn">⚙</button><button id="ctx-minus">−</button><input id="ctx-input" type="text" value="128000"><button id="ctx-plus">+</button><button id="out-minus">−</button><input id="out-input" type="text" value="8192"><button id="out-plus">+</button><input id="sampler-temp" type="radio" name="sampler" checked><input id="sampler-topp" type="radio" name="sampler"><button id="samp-minus">−</button><input id="samp-input" type="text" placeholder="Auto"><button id="samp-plus">+</button><button id="samp-auto">Auto</button><button id="presence-minus">−</button><input id="presence-input" type="text" placeholder="Auto"><button id="presence-plus">+</button><button id="presence-auto">Auto</button><button id="freq-minus">−</button><input id="freq-input" type="text" placeholder="Auto"><button id="freq-plus">+</button><button id="freq-auto">Auto</button></div>
-    <div id="metrics"><select id="thinking-select"><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button></div>
+    <div id="metrics"><select id="thinking-select"><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button><span id="compact-threshold-label"></span><button id="compact-settings-btn">⚙</button></div>
+    <div id="compact-settings-modal" class="hidden">
+      <div class="cs-backdrop"></div>
+      <div class="cs-card">
+        <h3>Compaction settings</h3>
+        <div class="cs-field">
+          <label for="compact-threshold-input">Compaction threshold (%)</label>
+          <input id="compact-threshold-input" type="number" min="1" max="100" />
+        </div>
+        <div class="cs-actions">
+          <button id="compact-settings-cancel" class="secondary">Cancel</button>
+          <button id="compact-settings-save">Save</button>
+        </div>
+      </div>
+    </div>
     <div id="model-warn"></div>
     <div id="providers-modal" class="hidden">
       <div class="providers-backdrop"></div>
@@ -272,6 +286,7 @@ describe("view webview client", () => {
     expect((document.getElementById("send-btn") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("abort-btn") as HTMLButtonElement).disabled).toBe(false); // only abort stays
     expect((document.getElementById("compact-btn") as HTMLButtonElement).disabled).toBe(true);
+    expect((document.getElementById("compact-settings-btn") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("model-select") as HTMLSelectElement).disabled).toBe(true);
     expect((document.getElementById("ctx-input") as HTMLInputElement).disabled).toBe(true);
     expect((document.getElementById("ctx-minus") as HTMLButtonElement).disabled).toBe(true);
@@ -292,6 +307,7 @@ describe("view webview client", () => {
     expect((document.getElementById("user-input") as HTMLTextAreaElement).disabled).toBe(true);
     hostMessage({ type: "status", active: false });
     expect((document.getElementById("compact-btn") as HTMLButtonElement).disabled).toBe(false);
+    expect((document.getElementById("compact-settings-btn") as HTMLButtonElement).disabled).toBe(false);
     expect((document.getElementById("model-select") as HTMLSelectElement).disabled).toBe(false);
     expect((document.getElementById("ctx-input") as HTMLInputElement).disabled).toBe(false);
     expect((document.getElementById("out-input") as HTMLInputElement).disabled).toBe(false);
@@ -1512,6 +1528,60 @@ describe("context metrics line", () => {
     await loadView();
     hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 100000, contextTokens: 95000 } });
     expect((document.getElementById("ctx-bar") as HTMLDivElement).classList.contains("warn")).toBe(true);
+  });
+
+  it("gear opens the threshold form, prefills the current %, saves and posts", async () => {
+    await loadView();
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 200000, compactionThresholdPercent: 60 } });
+    const modal = document.getElementById("compact-settings-modal") as HTMLDivElement;
+    expect(modal.classList.contains("hidden")).toBe(true);
+    // The label already shows the session's saved threshold from the config push.
+    expect(document.getElementById("compact-threshold-label")?.textContent).toBe("Auto Compact threshold: 60%");
+    (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
+    expect(modal.classList.contains("hidden")).toBe(false);
+    const input = document.getElementById("compact-threshold-input") as HTMLInputElement;
+    expect(input.value).toBe("60");
+    input.value = "75";
+    (document.getElementById("compact-settings-save") as HTMLButtonElement).click();
+    expect(modal.classList.contains("hidden")).toBe(true);
+    expect(posted).toContainEqual({ type: "setCompactionThreshold", value: 75 });
+    // The label between Compact and the gear reflects the saved value.
+    expect(document.getElementById("compact-threshold-label")?.textContent).toBe("Auto Compact threshold: 75%");
+
+    // Reopening shows the value saved last (not the config one again).
+    (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
+    expect(input.value).toBe("75");
+  });
+
+  it("clamps an out-of-range typed threshold and cancels without posting", async () => {
+    await loadView();
+    const modal = document.getElementById("compact-settings-modal") as HTMLDivElement;
+    (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
+    const input = document.getElementById("compact-threshold-input") as HTMLInputElement;
+    input.value = "250";
+    (document.getElementById("compact-settings-save") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "setCompactionThreshold", value: 100 });
+    (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
+    input.value = "0";
+    (document.getElementById("compact-settings-cancel") as HTMLButtonElement).click();
+    expect(modal.classList.contains("hidden")).toBe(true);
+    expect(posted).not.toContainEqual({ type: "setCompactionThreshold", value: 1 });
+  });
+
+  it("Enter saves and Escape closes the threshold form", async () => {
+    await loadView();
+    const modal = document.getElementById("compact-settings-modal") as HTMLDivElement;
+    (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
+    const input = document.getElementById("compact-threshold-input") as HTMLInputElement;
+    input.value = "90";
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(posted).toContainEqual({ type: "setCompactionThreshold", value: 90 });
+    expect(modal.classList.contains("hidden")).toBe(true);
+
+    (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(modal.classList.contains("hidden")).toBe(true);
+    expect(posted).not.toContainEqual({ type: "setCompactionThreshold", value: 80 }); // no extra post on Escape
   });
 });
 

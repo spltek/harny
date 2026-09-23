@@ -55,6 +55,7 @@ interface ConfigState {
   thinkingMode?: string;
   thinkingLevel?: string;
   contextWindow?: number;
+  compactionThresholdPercent?: number;
   outputTokens?: number;
   temperature?: number;
   presencePenalty?: number;
@@ -122,6 +123,12 @@ const metPct = document.getElementById("met-pct") as HTMLSpanElement;
 const metCache = document.getElementById("met-cache") as HTMLSpanElement;
 const ctxBar = document.getElementById("ctx-bar") as HTMLDivElement;
 const compactBtn = document.getElementById("compact-btn") as HTMLButtonElement;
+const compactThresholdLabel = document.getElementById("compact-threshold-label") as HTMLSpanElement;
+const compactSettingsBtn = document.getElementById("compact-settings-btn") as HTMLButtonElement;
+const compactSettingsModal = document.getElementById("compact-settings-modal") as HTMLDivElement;
+const compactThresholdInput = document.getElementById("compact-threshold-input") as HTMLInputElement;
+const compactSettingsCancel = document.getElementById("compact-settings-cancel") as HTMLButtonElement;
+const compactSettingsSave = document.getElementById("compact-settings-save") as HTMLButtonElement;
 
 const init = JSON.parse((document.getElementById("harny-view-init") as HTMLScriptElement).textContent ?? "{}") as InitState;
 
@@ -129,6 +136,8 @@ let activeId: string | undefined = init.activeId;
 let openIds: string[] = init.openIds || [];
 let currentSessions: SessionInfo[] = init.sessions || [];
 let workingIds = new Set<string>(init.workingIds || []);
+/** Current auto-compaction threshold % of the context window (updated from config pushes). */
+let compactionThresholdPct = 80;
 
 // ── Streaming session state (chronological, per active chat) ──
 let currentResultEl: HTMLDivElement | null = null;
@@ -1272,6 +1281,7 @@ function setStreaming(active: boolean): void {
   abortBtn.disabled = !active;
   attachBtn.disabled = active;
   compactBtn.disabled = active;
+  compactSettingsBtn.disabled = active;
   modelSelect.disabled = active;
   thinkingSelect.disabled = active || !thinkingCapable;
   ctxMinus.disabled = active;
@@ -1606,6 +1616,53 @@ function renderMetrics(c: ConfigState): void {
 }
 
 compactBtn.addEventListener("click", () => vscode.postMessage({ type: "compact" }));
+
+/** Keep the "Auto Compact threshold: X%" label in sync with the saved %. */
+function renderCompactionThreshold(): void {
+  compactThresholdLabel.textContent = "Auto Compact threshold: " + compactionThresholdPct + "%";
+}
+
+// ── Auto-compaction threshold % (gear next to Compact) ──
+/** Clamp/round a typed threshold % into 1–100 (invalid -> default 80). */
+function clampCompactionThreshold(raw: string): number {
+  const v = Number.parseInt(raw, 10);
+  if (!Number.isFinite(v)) return 80;
+  return Math.min(100, Math.max(1, Math.round(v)));
+}
+
+function openCompactionSettings(): void {
+  compactThresholdInput.value = String(compactionThresholdPct);
+  compactSettingsModal.classList.remove("hidden");
+  compactThresholdInput.focus();
+  compactThresholdInput.select();
+}
+
+function closeCompactionSettings(): void {
+  compactSettingsModal.classList.add("hidden");
+}
+
+compactSettingsBtn.addEventListener("click", openCompactionSettings);
+compactSettingsCancel.addEventListener("click", closeCompactionSettings);
+compactSettingsModal.querySelector(".cs-backdrop")?.addEventListener("click", closeCompactionSettings);
+compactThresholdInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    compactSettingsSave.click();
+  }
+});
+compactSettingsSave.addEventListener("click", () => {
+  const value = clampCompactionThreshold(compactThresholdInput.value);
+  compactionThresholdPct = value;
+  renderCompactionThreshold();
+  vscode.postMessage({ type: "setCompactionThreshold", value });
+  closeCompactionSettings();
+});
+window.addEventListener("keydown", (e) => {
+  if (!compactSettingsModal.classList.contains("hidden") && e.key === "Escape") {
+    e.preventDefault();
+    closeCompactionSettings();
+  }
+});
 ctxMinus.addEventListener("click", () => sendContextWindow(clampContextWindow(Number(ctxInput.value)) - CONTEXT_STEP));
 ctxPlus.addEventListener("click", () => sendContextWindow(clampContextWindow(Number(ctxInput.value)) + CONTEXT_STEP));
 // Fire on change (blur/Enter), not on every keystroke, so values can be typed freely.
@@ -1754,6 +1811,10 @@ window.addEventListener("message", (e) => {
     case "refresh": {
       messagesEl.innerHTML = "";
       resetStreamState();
+      // A refresh rebuilds the transcript from host messages; drop the stale
+      // reference to any previously appended compaction bubble (already wiped
+      // with the container) so a later auto-compaction shows a fresh one.
+      compactionEl = null;
       if (workspaceLocked({ workspaceReady: msg.workspaceReady })) {
         renderWorkspaceShell();
       } else if (!activeId) {
@@ -1835,6 +1896,8 @@ window.addEventListener("message", (e) => {
       renderSamplerControl(msg.config || {});
       presenceControl.render(msg.config && msg.config.presencePenalty);
       freqControl.render(msg.config && msg.config.frequencyPenalty);
+      compactionThresholdPct = (msg.config && msg.config.compactionThresholdPercent) ?? 80;
+      renderCompactionThreshold();
       renderMetrics(msg.config || {});
       break;
     case "providersEditor":
@@ -1906,6 +1969,8 @@ function renderViewState(state: {
   renderSamplerControl(state.config || {});
   presenceControl.render(state.config && state.config.presencePenalty);
   freqControl.render(state.config && state.config.frequencyPenalty);
+  compactionThresholdPct = (state.config && state.config.compactionThresholdPercent) ?? 80;
+  renderCompactionThreshold();
   renderMetrics(state.config || {});
   messagesEl.innerHTML = "";
   resetStreamState();

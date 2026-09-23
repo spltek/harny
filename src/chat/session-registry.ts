@@ -18,6 +18,8 @@ export interface SessionRuntime {
   thinkingLevel?: ThinkingLevel;
   /** Context window (tokens) for compaction; undefined = default. */
   contextWindow?: number;
+  /** Context fill % (of the window) that triggers auto-compaction; undefined = default 80. */
+  compactionThresholdPercent?: number;
   /** Max output tokens per response; undefined = default (8192). */
   outputTokens?: number;
   /** Sampling temperature; undefined = Auto (not sent). 0 is a valid value. */
@@ -80,6 +82,7 @@ export class SessionRegistry {
     rt.modelProvider = loaded.summary.modelProvider;
     rt.thinkingLevel = loaded.summary.thinkingLevel;
     rt.contextWindow = loaded.summary.contextWindow;
+    rt.compactionThresholdPercent = loaded.summary.compactionThresholdPercent;
     rt.outputTokens = loaded.summary.outputTokens;
     rt.temperature = loaded.summary.temperature;
     rt.presencePenalty = loaded.summary.presencePenalty;

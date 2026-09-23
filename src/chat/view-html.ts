@@ -211,7 +211,7 @@ ${renderViewConfig()}
        (same width, symmetric 10px gaps: paddings left 10 / gutter 10 right). */
     #messages {
       flex: 1; overflow-y: auto; scrollbar-gutter: stable;
-      padding: 10px 0 10px 10px;
+      padding: 10px 0 0 10px;
       display: flex; flex-direction: column; gap: 6px;
     }
     .msg { padding: 8px 10px; border-radius: 8px; max-width: 92%; word-wrap: break-word; word-break: break-word; overflow-wrap: break-word; line-height: 1.4; font-size: var(--fs-lg); }
@@ -389,6 +389,8 @@ ${renderViewConfig()}
       border-radius: 8px; padding: 8px 10px;
       background: var(--input-bg);
     }
+    /* Input row: the "+" file picker is the head key (same size as the
+       Play/Stop keys on the right), then the prompt, then ▶/⏹. */
     #input-main { display: flex; gap: 8px; align-items: flex-end; min-width: 0; }
     #user-input {
       flex: 1; background: var(--surface-2); color: var(--fg);
@@ -443,8 +445,8 @@ ${renderViewConfig()}
       justify-content: center;
     }
 
-    /* Attach row (below the textarea): a compact "+" to pick files plus the
-       chips of the files queued for the next message. */
+    /* Chips row under the input: queued files only — the "+" picker lives at
+       the head of the text box (first key in #input-main). */
     #attach-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
     #attach-btn { color: var(--muted); font-size: var(--fs-lg); }
     #attach-btn:not(:disabled):hover { color: var(--accent); border-color: var(--accent); filter: none; }
@@ -470,7 +472,7 @@ ${renderViewConfig()}
        cards below (the rest of the controls stays visible). */
     #ctl-toggle {
       display: flex; align-items: center; justify-content: center;
-      height: 14px; margin: 0 10px;
+      height: 14px; margin: 8px 10px 0;
       cursor: pointer; user-select: none;
     }
     #ctl-toggle-btn {
@@ -622,6 +624,33 @@ ${renderViewConfig()}
       transform: translateY(1px);
       box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
     }
+    /* Gear next to Compact (same visual family, narrower): opens the
+       auto-compaction threshold form. Kept after the flex-auto margin so the
+       pair hugs the right edge of the stats row. */
+    #compact-settings-btn {
+      flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
+      width: 26px; height: 26px; padding: 0;
+      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.02)),
+        var(--tool-bg, transparent);
+      border: 1px solid var(--border); color: var(--fg);
+      border-radius: 6px; cursor: pointer;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.18),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.18),
+        0 1px 2px rgba(0, 0, 0, 0.28);
+      transition: color 0.12s, border-color 0.12s, box-shadow 0.12s, transform 0.08s;
+    }
+    #compact-settings-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+    #compact-settings-btn:active:not(:disabled) {
+      transform: translateY(1px);
+      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+    }
+    #compact-settings-btn:disabled { opacity: 0.5; cursor: default; }
+    /* Threshold label between Compact and its gear: muted, same row. */
+    #compact-threshold-label {
+      flex: 0 0 auto; white-space: nowrap;
+      font-size: var(--fs-sm); color: #9a9a9a;
+    }
     #compact-btn:disabled { opacity: 0.4; }
 
     /* Empty shell (no open session): hide the whole control stack and show a
@@ -772,6 +801,45 @@ ${renderViewConfig()}
     #name-input:focus { border-color: var(--accent); }
     #name-modal .name-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
+    /* ── Compaction settings (gear after Compact): threshold % form ── */
+    #compact-settings-modal {
+      position: fixed; inset: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #compact-settings-modal.hidden { display: none; }
+    #compact-settings-modal .cs-backdrop {
+      position: absolute; inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+    }
+    #compact-settings-modal .cs-card {
+      position: relative;
+      width: min(85%, 360px);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    #compact-settings-modal h3 { margin: 0; font-size: var(--fs-lg); font-weight: 700; color: var(--fg-strong); }
+    #compact-settings-modal .cs-hint {
+      margin: 0; font-size: var(--fs-sm); color: #9a9a9a; line-height: 1.45;
+    }
+    #compact-settings-modal .cs-field { display: flex; flex-direction: column; gap: 6px; }
+    #compact-settings-modal .cs-field label { font-size: var(--fs-sm); color: #9a9a9a; }
+    #compact-settings-modal #compact-threshold-input {
+      width: 100%; box-sizing: border-box;
+      background: var(--input-bg); color: var(--fg);
+      border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+      font-size: var(--fs-lg); outline: none;
+    }
+    #compact-settings-modal #compact-threshold-input:focus { border-color: var(--accent); }
+    #compact-settings-modal #compact-threshold-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    #compact-settings-modal #compact-threshold-input { -moz-appearance: textfield; }
+    #compact-settings-modal .cs-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
     /* ── In-panel alert / confirm modal (same family as the name modal) ── */
     #alert-modal {
       position: fixed; inset: 0; z-index: 110;
@@ -885,12 +953,12 @@ ${renderViewConfig()}
   </div>
   <div id="input-area">
     <div id="input-main">
+      <button id="attach-btn" class="secondary" title="Attach files" aria-label="Attach files">+</button>
       <textarea id="user-input" rows="1" placeholder="Ask Harny... (Enter to send, Esc to abort)"></textarea>
       <button id="send-btn" aria-label="Send"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg></button>
       <button id="abort-btn" class="secondary" disabled aria-label="Abort"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg></button>
     </div>
     <div id="attach-row">
-      <button id="attach-btn" class="secondary" title="Attach files" aria-label="Attach files">+</button>
       <div id="attachment-chips" class="hidden"></div>
     </div>
   </div>
@@ -973,6 +1041,8 @@ ${renderViewConfig()}
       <span class="met pct" id="met-pct">(0%)</span>
       <span class="met" id="met-cache" title="Input tokens served from prompt cache"></span>
       <button id="compact-btn" title="Compact the conversation context">Compact</button>
+      <span id="compact-threshold-label" title="Context fill % that triggers auto-compaction (set via the gear)">Auto Compact threshold: 80%</span>
+      <button id="compact-settings-btn" title="Set the context fill % that auto-compacts"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
     </div>
     <div id="ctx-bar-wrap"><div id="ctx-bar"></div></div>
   </div>
@@ -985,6 +1055,21 @@ ${renderViewConfig()}
       <div class="name-modal-actions">
         <button id="name-cancel" class="secondary">Cancel</button>
         <button id="name-ok">Create</button>
+      </div>
+    </div>
+  </div>
+  <div id="compact-settings-modal" class="hidden">
+    <div class="cs-backdrop"></div>
+    <div class="cs-card">
+      <h3>Compaction settings</h3>
+      <p class="cs-hint">Auto-compaction runs when the conversation reaches this percentage of the declared context window.</p>
+      <div class="cs-field">
+        <label for="compact-threshold-input">Compaction threshold (%)</label>
+        <input id="compact-threshold-input" type="number" inputmode="numeric" min="1" max="100" step="1" autocomplete="off" spellcheck="false" />
+      </div>
+      <div class="cs-actions">
+        <button id="compact-settings-cancel" class="secondary">Cancel</button>
+        <button id="compact-settings-save">Save</button>
       </div>
     </div>
   </div>

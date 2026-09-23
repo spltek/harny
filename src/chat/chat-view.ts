@@ -17,7 +17,7 @@ import { renderViewHtml } from "./view-html";
 import { toTemperature, toTopP } from "./temperature";
 import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, toContextWindow, toOutputTokens } from "./context-window";
 import { PanelModalQueue } from "./panel-modal-queue";
-import { Compactor, DEFAULT_COMPACTION, CompactionSettings, planCompaction, planManualCompaction, shouldCompact, estimateTokens } from "../core/sessions/compactor";
+import { Compactor, DEFAULT_COMPACTION, CompactionSettings, planManualCompaction, shouldCompact, estimateTokens, serializeConversation, toCompactionThresholdPercent } from "../core/sessions/compactor";
 
 /**
  * Single side-view (webview view) hosting: a hideable sessions list, a tab bar
@@ -521,21 +521,7 @@ export class ChatViewProvider implements WebviewViewProvider {
           confirmText: "Compact",
         });
         if (!ok) break;
-        this.compacting = true;
-        // Animated in-chat bubble + working header while it runs.
-        this.view?.webview.postMessage({ type: "compactStart" });
-        this.view?.webview.postMessage({ type: "status", active: true, message: "Compacting…" });
-        try {
-          await this.performCompaction(r, "manual");
-        } finally {
-          this.compacting = false;
-          // Finalize the bubble into a persistent "compacted" message.
-          this.view?.webview.postMessage({ type: "compactDone" });
-          this.view?.webview.postMessage({ type: "status", active: false });
-        }
-        // Update the metrics immediately via a lightweight config push (no full
-        // HTML rebuild, so the user's input/scroll are preserved).
-        void this.pushConfig();
+        await this.compactNow(r);
         break;
       }
 
@@ -555,6 +541,15 @@ export class ChatViewProvider implements WebviewViewProvider {
         rt.outputTokens = value;
         // Re-apply the active overrides so the runtime config carries maxTokens.
         this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { outputTokens: value }));
+        break;
+      }
+      case "setCompactionThreshold": {
+        const rt = this.activeRuntime();
+        if (!rt) break;
+        const value = toCompactionThresholdPercent(msg.value);
+        rt.compactionThresholdPercent = value;
+        // Threshold only affects auto-compaction, never the per-model overrides.
+        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { compactionThresholdPercent: value }), false);
         break;
       }
       case "setSamplerMode": {
@@ -644,6 +639,62 @@ export class ChatViewProvider implements WebviewViewProvider {
   }
 
   /**
+   * Shared compaction run — the SAME routine the manual Compact button has
+   * always executed (bubble in chat, full UI block while the summary runs,
+   * note at the end). Auto-compaction just triggers it. UI messages reach
+   * only the ACTIVE tab; a background session's compaction stays silent.
+   */
+  private async compactNow(rt: SessionRuntime): Promise<void> {
+    this.compacting = true;
+    const isActive = this.activeId === rt.sessionId;
+    if (isActive) {
+      this.view?.webview.postMessage({ type: "compactStart" });
+      this.view?.webview.postMessage({ type: "status", active: true, message: "Compacting…" });
+    }
+    try {
+      await this.performCompaction(rt);
+    } finally {
+      this.compacting = false;
+      if (isActive) {
+        // Finalize the bubble into a persistent "compacted" message.
+        this.view?.webview.postMessage({ type: "compactDone" });
+        this.view?.webview.postMessage({ type: "status", active: false });
+      }
+    }
+    // Update the metrics immediately via a lightweight config push (no full
+    // HTML rebuild, so the user's input/scroll are preserved).
+    void this.pushConfig();
+  }
+
+  /**
+   * Effective compaction settings for a runtime: the shared defaults overlaid
+   * with the session's own threshold % (first run = DEFAULT_COMPACTION 80).
+   */
+  private compactionSettings(rt: SessionRuntime): CompactionSettings {
+    const base = this.options.compaction ?? DEFAULT_COMPACTION;
+    return {
+      ...base,
+      thresholdPercent: rt.compactionThresholdPercent ?? base.thresholdPercent ?? DEFAULT_COMPACTION.thresholdPercent,
+    };
+  }
+
+  /**
+   * True when the runtime's context fill exceeds the auto-compaction threshold.
+   * Provider-reported usage is authoritative when present; the current
+   * transcript estimate is always taken into account (as a floor) so a
+   * provider that does not report usage still triggers. New sessions have no
+   * explicit window yet — the shared DEFAULT_CONTEXT_WINDOW applies (the same
+   * one the metrics UI shows).
+   */
+  private needsAutoCompact(rt: SessionRuntime): boolean {
+    if (!this.options.compactor) return false;
+    const window = rt.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+    const estimated = estimateTokens(serializeConversation(rt.history.conversation()));
+    const tokens = Math.max(rt.contextTokens ?? 0, estimated);
+    return shouldCompact(tokens, window, this.compactionSettings(rt));
+  }
+
+  /**
    * Persist settings, then refresh the view's config. `persist` may write
    * several fields at once (single saveSettings call). When `recomputeOverrides`
    * is true (the default) the per-model overrides are re-applied so the active
@@ -698,13 +749,10 @@ export class ChatViewProvider implements WebviewViewProvider {
         return;
       }
     }
-    // Auto-compaction: free context before the request when near the limit.
-    if (this.options.compactor && rt.contextWindow && rt.contextTokens !== undefined &&
-        shouldCompact(rt.contextTokens, rt.contextWindow, this.options.compaction ?? DEFAULT_COMPACTION)) {
-      await this.performCompaction(rt);
-      if (this.activeId === rt.sessionId) {
-        this.view?.webview.postMessage({ type: "refresh", messages: rt.agent.getMessages() });
-      }
+    // Auto-compaction before the request when already over the threshold:
+    // runs the EXACT same routine as the manual Compact button.
+    if (this.needsAutoCompact(rt) && !this.compacting) {
+      await this.compactNow(rt);
     }
     this.streamTee.clear(rt.sessionId);
     // send() sets _streaming synchronously on invocation: start it first, THEN
@@ -727,6 +775,12 @@ export class ChatViewProvider implements WebviewViewProvider {
         this.postStatus(false);
         if (!hadError) this.view?.webview.postMessage({ type: "refresh", messages: rt.agent.getMessages() });
       }
+    }
+    // Post-response auto-compaction: evaluate the CURRENT fill right after
+    // every final response; if the threshold was crossed, run the EXACT same
+    // routine as pressing Compact -> OK.
+    if (this.needsAutoCompact(rt) && !this.compacting) {
+      await this.compactNow(rt);
     }
   }
 
@@ -845,16 +899,13 @@ export class ChatViewProvider implements WebviewViewProvider {
     this.pushSessionsManager();
   }
 
-  private async performCompaction(rt: SessionRuntime, mode: "auto" | "manual" = "auto"): Promise<void> {
+  private async performCompaction(rt: SessionRuntime): Promise<void> {
     const compactor = this.options.compactor;
     if (!compactor) return;
-    const settings = this.options.compaction ?? DEFAULT_COMPACTION;
     const messages = rt.history.conversation();
-    // Manual compaction always summarizes a fraction of the current context.
-    const plan =
-      mode === "manual"
-        ? planManualCompaction(messages, this.options.manualKeepFraction ?? 0.6)
-        : planCompaction(messages, settings);
+    // The SAME plan the Compact button uses: always summarizes a fraction of
+    // the current context (never a silent no-op).
+    const plan = planManualCompaction(messages, this.options.manualKeepFraction ?? 0.6);
     if (plan.toSummarize.length === 0) return;
     const summary = await compactor.summarize(plan.toSummarize);
     const newHistory = [
@@ -917,6 +968,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     thinkingMode?: "bool" | "effort" | "type" | "reasoning" | "unspecified";
     thinkingLevel?: "off" | "low" | "medium" | "high";
     contextWindow: number;
+    compactionThresholdPercent?: number;
     outputTokens: number;
     temperature?: number;
     presencePenalty?: number;
@@ -984,6 +1036,9 @@ export class ChatViewProvider implements WebviewViewProvider {
       thinkingMode: cfg.thinkingMode,
       thinkingLevel: cfg.thinkingLevel,
       contextWindow: this.activeRuntime()?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+      // Only the session override, so the UI can show "Auto" (undefined) vs
+      // an explicit value. Config-file defaults stay effective but hidden.
+      compactionThresholdPercent: this.activeRuntime()?.compactionThresholdPercent,
       outputTokens: this.activeRuntime()?.outputTokens ?? DEFAULT_OUTPUT_TOKENS,
       // Only the session override, so the UI can show "Auto" (undefined) vs
       // an explicit value. Config-file defaults stay effective but hidden.

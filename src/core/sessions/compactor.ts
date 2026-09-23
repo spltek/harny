@@ -5,17 +5,28 @@ import { fallbackTitle } from "./title-generator";
 
 export interface CompactionSettings {
   enabled: boolean;
-  /** Tokens reserved for the LLM response (defines the trigger ceiling). */
-  reserveTokens: number;
-  /** Recent tokens kept intact (older messages get summarized). */
-  keepRecentTokens: number;
+  /** Context fill % of the declared context window that triggers auto-compaction. */
+  thresholdPercent: number;
 }
 
 export const DEFAULT_COMPACTION: CompactionSettings = {
   enabled: true,
-  reserveTokens: 16_384,
-  keepRecentTokens: 20_000,
+  thresholdPercent: 80,
 };
+
+export const MIN_COMPACTION_THRESHOLD_PERCENT = 1;
+export const MAX_COMPACTION_THRESHOLD_PERCENT = 100;
+
+/** Clamp/round any value into the valid threshold range (1%–100%). */
+export function clampCompactionThresholdPercent(v: number): number {
+  if (!Number.isFinite(v)) return DEFAULT_COMPACTION.thresholdPercent;
+  return Math.min(MAX_COMPACTION_THRESHOLD_PERCENT, Math.max(MIN_COMPACTION_THRESHOLD_PERCENT, Math.round(v)));
+}
+
+/** Coerce a JSON message value to a number (NaN/undefined -> default 80). */
+export function toCompactionThresholdPercent(v: unknown): number {
+  return clampCompactionThresholdPercent(typeof v === "number" ? v : Number(v));
+}
 
 export interface CompactionPlan {
   /** Messages to summarize (the older span, inclusive cut). */
@@ -34,7 +45,8 @@ export function estimateTokens(text: string): number {
 
 /** True when the current context fill reaches the compaction threshold. */
 export function shouldCompact(contextTokens: number, contextWindow: number, settings: CompactionSettings): boolean {
-  return contextTokens > contextWindow - settings.reserveTokens;
+  const pct = Number.isFinite(settings.thresholdPercent) ? settings.thresholdPercent : DEFAULT_COMPACTION.thresholdPercent;
+  return contextTokens > (contextWindow * pct) / 100;
 }
 
 /** Serialize messages to plain text for the summarizer (tool results truncated). */
@@ -77,25 +89,6 @@ export function planManualCompaction(messages: ChatMessage[], keepRecentFraction
   }
   const keptSet = new Set(kept);
   return { toSummarize: visible.filter((m) => !keptSet.has(m)), kept, tokensBefore };
-}
-
-/**
- * Split the message list into [toSummarize, kept]: walks back from the newest
- * keeping up to `keepRecentTokens`, then everything older goes to summarize.
- */
-export function planCompaction(messages: ChatMessage[], settings: CompactionSettings): CompactionPlan {
-  const recent: ChatMessage[] = [];
-  let recentTokens = 0;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m.role === "system" || m.uiOnly) continue;
-    const cost = estimateTokens(m.content);
-    if (recentTokens + cost > settings.keepRecentTokens && recent.length > 0) break;
-    recent.unshift(m);
-    recentTokens += cost;
-  }
-  const toSummarize = messages.filter((m) => !recent.includes(m) && m.role !== "system" && !m.uiOnly);
-  return { toSummarize, kept: recent, tokensBefore: estimateTokens(serializeConversation(messages)) };
 }
 
 const SUMMARY_PROMPT = `You are summarizing an old part of a coding session. Reply ONLY with a structured Markdown summary covering:

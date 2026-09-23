@@ -1238,4 +1238,304 @@ describe("ChatViewProvider compaction", () => {
     // final bubble posted (the UI shows completion, no toast needed)
     expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactDone" });
   });
+
+  it("auto-compacts right after a response when the reply crossed the threshold", async () => {
+    const options = {
+      compactor: new Compactor(compactorFactory(), () => CONFIG),
+      compaction: DEFAULT_COMPACTION,
+    };
+    const { store, registry, provider } = buildHarness(options);
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "m", provider: "p" });
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 200000;
+    rt.contextTokens = 100000; // 50%: under the 80% threshold before the request
+    rt.history.replace([
+      { role: "user", content: "let's go", timestamp: 1 },
+      { role: "assistant", content: "ok", timestamp: 2 },
+      { role: "user", content: "then", timestamp: 3 },
+      { role: "assistant", content: "done", timestamp: 4 },
+    ]);
+    // The in-flight turn pushes the fill above the threshold.
+    (rt.agent as any).send = vi.fn(async () => {
+      (rt.agent as any).streaming = true;
+      rt.contextTokens = 170000; // 85% of 200000
+    });
+
+    await handler({ type: "send", text: "more" });
+
+    // The response landed and the fill crossed the threshold -> the history
+    // was compacted immediately after, WITHOUT the user asking for it.
+    const conv = registry.get("s1")!.history.conversation();
+    expect(conv[0].role).toBe("system");
+    expect(String(conv[0].content)).toContain("## Goal");
+    expect((store.saveSettings as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ contextTokens: expect.any(Number) }),
+    );
+    // The trigger posts the same UI sequence as the manual Compact button:
+    // bubble in chat + blocking status while it runs, then note + release.
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactStart" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "status", active: true, message: "Compacting…" }),
+    );
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactDone" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "status", active: false }),
+    );
+    // …and they arrive in the blocking order: bubble, status-IN, note, status-OUT.
+    const seq = (view.webview.postMessage as ReturnType<typeof vi.fn>)
+      .mock.calls.map((c: unknown[]) => (c[0] as { type: string }).type);
+    const startAt = seq.indexOf("compactStart");
+    const doneAt = seq.indexOf("compactDone");
+    expect(seq[startAt + 1]).toBe("status");
+    expect(seq[doneAt + 1]).toBe("status");
+    expect(startAt).toBeLessThan(doneAt);
+  });
+
+  it("setCompactionThreshold stores the session override (clamped) and persists it", async () => {
+    const options = { compactor: new Compactor(compactorFactory(), () => CONFIG), compaction: DEFAULT_COMPACTION };
+    const { store, registry, provider } = buildHarness(options);
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+
+    await handler({ type: "setCompactionThreshold", value: 65 });
+    expect(rt.compactionThresholdPercent).toBe(65);
+    expect((store.saveSettings as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+      "s1",
+      expect.objectContaining({ compactionThresholdPercent: 65 }),
+    );
+
+    // Out-of-range values are clamped host-side to 1–100.
+    await handler({ type: "setCompactionThreshold", value: 150 });
+    expect(rt.compactionThresholdPercent).toBe(100);
+
+    // Invalid values fall back to the default 80.
+    await handler({ type: "setCompactionThreshold", value: "abc" });
+    expect(rt.compactionThresholdPercent).toBe(80);
+    expect((store.saveSettings as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+      "s1",
+      expect.objectContaining({ compactionThresholdPercent: 80 }),
+    );
+  });
+
+  it("auto-compaction follows the session's custom threshold %", async () => {
+    const options = {
+      compactor: new Compactor(compactorFactory(), () => CONFIG),
+      compaction: DEFAULT_COMPACTION,
+    };
+    const { registry, provider } = buildHarness(options);
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "m", provider: "p" });
+    // The gear saved a custom 65% for this session.
+    await handler({ type: "setCompactionThreshold", value: 65 });
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 200000;
+    rt.history.replace([
+      { role: "user", content: "let's go", timestamp: 1 },
+      { role: "assistant", content: "ok", timestamp: 2 },
+      { role: "user", content: "then", timestamp: 3 },
+      { role: "assistant", content: "done", timestamp: 4 },
+    ]);
+
+    // 62.5%: under the custom 65% (though over the default 60% floor) — no compact.
+    rt.contextTokens = 125000;
+    (rt.agent as any).send = vi.fn(async () => {
+      (rt.agent as any).streaming = true;
+      rt.contextTokens = 125000;
+    });
+    await handler({ type: "send", text: "more" });
+    expect(registry.get("s1")!.history.conversation()[0].role).not.toBe("system");
+
+    // 70%: over the custom 65% -> compacted (same button routine).
+    (rt.agent as any).streaming = false; // the turn above finished (mock quirk)
+    view.webview.postMessage.mockClear();
+    (rt.agent as any).send = vi.fn(async () => {
+      (rt.agent as any).streaming = true;
+      rt.contextTokens = 140000;
+    });
+    await handler({ type: "send", text: "more" });
+    expect(registry.get("s1")!.history.conversation()[0].role).toBe("system");
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactStart" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactDone" });
+  });
+
+  it("auto-compacts before the request when already over the threshold", async () => {
+    const options = {
+      compactor: new Compactor(compactorFactory(), () => CONFIG),
+      compaction: DEFAULT_COMPACTION,
+    };
+    const { registry, provider } = buildHarness(options);
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "m", provider: "p" });
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 200000;
+    rt.contextTokens = 170000; // 85%: OVER before the request starts
+    rt.history.replace([
+      { role: "user", content: "let's go", timestamp: 1 },
+      { role: "assistant", content: "ok", timestamp: 2 },
+      { role: "user", content: "then", timestamp: 3 },
+      { role: "assistant", content: "done", timestamp: 4 },
+    ]);
+    const send = (rt.agent as any).send;
+
+    await handler({ type: "send", text: "more" });
+
+    // The conversation was compacted BEFORE the in-flight turn was sent.
+    const conv = registry.get("s1")!.history.conversation();
+    expect(conv[0].role).toBe("system");
+    expect(String(conv[0].content)).toContain("## Goal");
+    expect(send).toHaveBeenCalled(); // the request still went out afterwards
+    // Visible feedback identical to the manual button: bubble, blocking status
+    // while running, then note + release.
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactStart" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "status", active: true, message: "Compacting…" }),
+    );
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactDone" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "status", active: false }),
+    );
+  });
+
+  it("auto-compacts with the SAME manual plan as the Compact button (never a silent no-op)", async () => {
+    // A small talk that crosses the threshold must still be REALLY compacted:
+    // the button's planManualCompaction always compacts a fraction, so the
+    // auto trigger (same routine) never produces an empty fake bubble.
+    const options = {
+      compactor: new Compactor(compactorFactory(), () => CONFIG),
+      compaction: DEFAULT_COMPACTION,
+    };
+    const { store, registry, provider } = buildHarness(options);
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "m", provider: "p" });
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 200000;
+    rt.contextTokens = 170000; // 85%: over the 80% threshold, small talk
+    rt.history.replace([
+      { role: "user", content: "let's go", timestamp: 1 },
+      { role: "assistant", content: "ok", timestamp: 2 },
+      { role: "user", content: "then", timestamp: 3 },
+      { role: "assistant", content: "done", timestamp: 4 },
+    ]);
+
+    await handler({ type: "send", text: "more" });
+
+    const conv = registry.get("s1")!.history.conversation();
+    expect(conv[0].role).toBe("system"); // REALLY compacted (manual plan)
+    expect(String(conv[0].content)).toContain("## Goal");
+    expect((store.saveSettings as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
+    // Exactly the button's visible flow: bubble -> block -> note -> release.
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactStart" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactDone" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "status", active: true, message: "Compacting…" }),
+    );
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "status", active: false }),
+    );
+  });
+
+  it("does NOT auto-compact after a response that stays under the threshold", async () => {
+    const options = {
+      compactor: new Compactor(compactorFactory(), () => CONFIG),
+      compaction: DEFAULT_COMPACTION,
+    };
+    const { registry, provider } = buildHarness(options);
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "m", provider: "p" });
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 200000;
+    rt.contextTokens = 120000; // 60% stays under the 80% threshold
+    rt.history.replace([
+      { role: "user", content: "let's go", timestamp: 1 },
+      { role: "assistant", content: "ok", timestamp: 2 },
+      { role: "user", content: "then", timestamp: 3 },
+      { role: "assistant", content: "done", timestamp: 4 },
+    ]);
+    (rt.agent as any).send = vi.fn(async () => {
+      (rt.agent as any).streaming = true;
+      rt.contextTokens = 155000; // 77.5%: still under
+    });
+
+    await handler({ type: "send", text: "more" });
+
+    const conv = registry.get("s1")!.history.conversation();
+    expect(conv[0].role).not.toBe("system"); // no summary injected
+    expect(conv.some((m) => m.role === "system")).toBe(false);
+    expect(conv.length).toBe(4); // transcript untouched
+  });
+
+  it("auto-compacts a background session silently (history only, no bubble on the active tab)", async () => {
+    const options = {
+      compactor: new Compactor(compactorFactory(), () => CONFIG),
+      compaction: DEFAULT_COMPACTION,
+    };
+    const { registry, provider } = buildHarness(options);
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "m", provider: "p" });
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 200000;
+    rt.contextTokens = 120000; // under 80% BEFORE the request (no pre-request bubble)
+    rt.history.replace([
+      { role: "user", content: "let's go", timestamp: 1 },
+      { role: "assistant", content: "ok", timestamp: 2 },
+      { role: "user", content: "then", timestamp: 3 },
+      { role: "assistant", content: "done", timestamp: 4 },
+    ]);
+    await provider.createNew(); // s2 (needed for the mid-turn switch)
+    await handler({ type: "switchTab", id: "s1" }); // s1 active again
+    view.webview.postMessage.mockClear();
+    // While s1 streams, the user switches to s2; s1's reply crosses the threshold.
+    (rt.agent as any).send = vi.fn(async () => {
+      (rt.agent as any).streaming = true;
+      rt.contextTokens = 170000; // over after the response
+    });
+    const sendPromise = handler({ type: "send", text: "bg" });
+    await handler({ type: "switchTab", id: "s2" }); // s2 becomes the active tab
+    await sendPromise;
+
+    // The history IS compacted...
+    expect(registry.get("s1")!.history.conversation()[0].role).toBe("system");
+    // ...but the view got NO compaction feedback (it belongs to the active tab).
+    expect(view.webview.postMessage).not.toHaveBeenCalledWith({ type: "compactStart" });
+  });
+
+  it("triggers even when the runtime has no explicit context window (default 128k applies)", async () => {
+    const options = {
+      compactor: new Compactor(compactorFactory(), () => CONFIG),
+      compaction: DEFAULT_COMPACTION,
+    };
+    const { registry, provider } = buildHarness(options);
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "m", provider: "p" });
+    const rt = registry.get("s1")!;
+    expect(rt.contextWindow).toBeUndefined(); // brand-new session, as in practice
+    rt.contextTokens = 110000; // > 80% of the default 128k window
+    rt.history.replace([
+      { role: "user", content: "let's go", timestamp: 1 },
+      { role: "assistant", content: "ok", timestamp: 2 },
+      { role: "user", content: "then", timestamp: 3 },
+      { role: "assistant", content: "done", timestamp: 4 },
+    ]);
+    (rt.agent as any).send = vi.fn(async () => {
+      (rt.agent as any).streaming = true;
+      rt.contextTokens = 110000; // refreshes usage so the post-turn check sees it too
+    });
+
+    await handler({ type: "send", text: "more" });
+
+    const conv = registry.get("s1")!.history.conversation();
+    expect(conv[0].role).toBe("system"); // compacted despite no contextWindow
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactStart" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactDone" });
+  });
 });
