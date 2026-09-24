@@ -529,6 +529,25 @@ describe("ChatViewProvider", () => {
     expect(rt.mode).toBe("analyze");
   });
 
+  it("setMulti stores the flag on the runtime and pushes config", async () => {
+    const { provider, registry } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+
+    await handler({ type: "setMulti", multi: true });
+    expect(rt.multi).toBe(true);
+    const configPosts = view.webview.postMessage.mock.calls
+      .map((c) => c[0] as any)
+      .filter((m) => m.type === "config");
+    const cfg = configPosts[configPosts.length - 1].config;
+    expect(cfg.multi).toBe(true);
+
+    // non-boolean payloads are rejected
+    await handler({ type: "setMulti", multi: "yes" });
+    expect(rt.multi).toBe(true);
+  });
+
   it("setOutputTokens persists the value to the session and refreshes", async () => {
     const { store, provider } = buildHarness();
     const { handler, view } = resolveWith(provider);

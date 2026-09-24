@@ -480,23 +480,22 @@ ${renderViewConfig(deps)}
     }
     #input-area .attach-remove:not(:disabled):hover { color: var(--error); filter: none; }
 
-    /* Control-stack toggle (above the ask card): a centered hover-hot chevron.
-       On hover it appears; clicking collapses/expands the Window + Sampling
-       cards below (the rest of the controls stays visible). */
+    /* Control-stack toggle (above the ask card): a centered chevron that is
+       ALWAYS visible (orange accent) — clicking collapses/expands the Window
+       + Sampling cards below (the rest of the controls stays visible). The
+       stack is COLLAPSED by default. */
     #ctl-toggle {
       display: flex; align-items: center; justify-content: center;
       height: 14px; margin: 8px 10px 0;
       cursor: pointer; user-select: none;
     }
     #ctl-toggle-btn {
-      visibility: hidden; opacity: 0;
-      background: transparent; border: none; color: var(--muted);
+      background: transparent; border: none; color: var(--accent);
       padding: 3px 8px; cursor: pointer; display: inline-flex; align-items: center;
-      transition: opacity 0.12s, color 0.12s, visibility 0.12s;
+      transition: color 0.12s, transform 0.12s;
       box-shadow: none; filter: none; line-height: 0;
     }
-    #ctl-toggle:hover #ctl-toggle-btn,
-    #ctl-toggle:focus-within #ctl-toggle-btn { visibility: visible; opacity: 1; color: var(--accent); }
+    #ctl-toggle:hover #ctl-toggle-btn { color: var(--accent-strong); }
     #ctl-toggle-btn svg { transition: transform 0.15s; }
     body.controls-collapsed #ctl-toggle-btn svg { transform: rotate(180deg); }
     /* Collapsed: hide ONLY the Window + Sampling cards. The AI Model row, the
@@ -637,6 +636,43 @@ ${renderViewConfig(deps)}
     .mode-check { margin-left: 2px; flex-shrink: 0; visibility: hidden; }
     .mode-item.is-active .mode-check { visibility: visible; color: var(--accent); }
     .mode-item[data-mode="agent"].is-active .mode-check { color: #a98dff; }
+
+    /* Multi (multi-agent) toggle on the AI Model row, after the model
+       dropdown: a press/release button with a cluster of dots. Released =
+       quiet dark pill; PRESSED = blue accent with white icon + label. */
+    #multi-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      height: 1.85rem;
+      padding: 0 10px 0 8px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--fg);
+      font-size: var(--fs-sm);
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+      transition: background 0.18s, box-shadow 0.18s, color 0.18s, border-color 0.18s, opacity 0.18s;
+    }
+    #multi-btn svg { flex-shrink: 0; color: var(--muted); transition: color 0.18s; }
+    #multi-btn:hover { border-color: rgba(255, 255, 255, 0.25); color: var(--fg-strong); }
+    #multi-btn:hover svg { color: var(--fg); }
+    #multi-btn:focus-visible { outline: 2px solid #4c8dff; outline-offset: 2px; }
+    #multi-btn:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
+    /* Pressed state: blue, white icon + label, soft glow. */
+    #multi-btn.is-on {
+      background: linear-gradient(135deg, #4c8dff, #2f6fed);
+      border-color: transparent;
+      color: #ffffff;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 12px rgba(76, 141, 255, 0.4);
+    }
+    #multi-btn.is-on svg { color: #ffffff; }
+    #multi-btn.is-on:hover {
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45), 0 0 16px rgba(76, 141, 255, 0.55);
+    }
     .card-title {
       font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
       color: #8a8a8a; user-select: none;
@@ -1044,7 +1080,7 @@ ${renderViewConfig(deps)}
     .sm-empty { padding: 18px; text-align: center; color: #888; font-size: var(--fs-lg); }
   </style>
 </head>
-<body>
+<body class="controls-collapsed">
   <div id="sessions-card" class="sessions-card">
     <div id="session-head">
       <span class="toggle">▼</span><span>Sessions</span>
@@ -1061,7 +1097,7 @@ ${renderViewConfig(deps)}
        On hover a chevron appears; clicking collapses/expands the Window +
        Sampling cards (#ctl-cards) while the ask card (with the AI Model row
        at its head) and the metrics stay visible. -->
-  <div id="ctl-toggle" title="Toggle the controls below" aria-expanded="true">
+  <div id="ctl-toggle" title="Toggle the controls below" aria-expanded="false">
     <button id="ctl-toggle-btn" aria-label="Toggle controls">
       <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
     </button>
@@ -1103,6 +1139,13 @@ ${renderViewConfig(deps)}
       </div>
       <span class="model-label">AI Model:</span>
       <select id="model-select" title="Switch model"></select>
+      <!-- Multi (multi-agent) press button: dot cluster icon + label; pressed
+           → blue. Sits on the AI Model row after the model dropdown. -->
+      <button type="button" id="multi-btn" aria-pressed="false"
+              title="Multi: several agents answer in parallel">
+        <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><circle cx="7.5" cy="9" r="2.4" fill="currentColor"/><circle cx="16.5" cy="9" r="2.4" fill="currentColor"/><circle cx="10" cy="15.5" r="2.2" fill="currentColor"/><circle cx="14" cy="15.5" r="2.2" fill="currentColor"/></svg>
+        <span>multi</span>
+      </button>
       <button id="gear-btn" class="icon-btn" title="Configure providers & models"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
     </div>
     <div id="attach-row">

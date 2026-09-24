@@ -56,6 +56,8 @@ interface ConfigState {
   thinkingLevel?: string;
   /** Per-session chat mode (host truth): "analyze" (default) or "agent". */
   mode?: "analyze" | "agent";
+  /** Per-session multi-agent flag (host truth): pressed = true. */
+  multi?: boolean;
   contextWindow?: number;
   compactionThresholdPercent?: number;
   outputTokens?: number;
@@ -100,6 +102,7 @@ const modeBtnIconAnalyze = document.querySelector<SVGSVGElement>("#mode-btn-icon
 const modeBtnIconAgent = document.querySelector<SVGSVGElement>("#mode-btn-icon-agent")!;
 const modeMenu = document.getElementById("mode-menu") as HTMLDivElement;
 const modeItems = Array.from(modeMenu.querySelectorAll<HTMLButtonElement>(".mode-item"));
+const multiBtn = document.getElementById("multi-btn") as HTMLButtonElement;
 const sendBtn = document.getElementById("send-btn") as HTMLButtonElement;
 const abortBtn = document.getElementById("abort-btn") as HTMLButtonElement;
 const attachBtn = document.getElementById("attach-btn") as HTMLButtonElement;
@@ -839,6 +842,8 @@ abortBtn.addEventListener("click", () => vscode.postMessage({ type: "abort" }));
 ctlToggle.addEventListener("click", () => {
   const collapsed = document.body.classList.toggle("controls-collapsed");
   ctlToggle.setAttribute("aria-expanded", String(!collapsed));
+  const prev = vscode.getState() as object | undefined;
+  vscode.setState({ ...(prev ?? {}), controlsCollapsed: collapsed });
 });
 newSessionBtn.addEventListener("click", () => vscode.postMessage({ type: "newSession" }));
 sessionHead.addEventListener("click", () => {
@@ -1318,6 +1323,7 @@ function setStreaming(active: boolean): void {
   // left open gets closed so the disabled state is obvious.
   if (active && !modeMenu.classList.contains("hidden")) closeModeMenu();
   modeBtn.disabled = active;
+  multiBtn.disabled = active;
   // Branch keys on assistant bubbles follow the same lock.
   for (const b of document.querySelectorAll<HTMLButtonElement>(".branch-at")) {
     b.disabled = active;
@@ -1404,6 +1410,35 @@ window.addEventListener("keydown", (e) => {
     closeModeMenu();
     modeBtn.focus();
   }
+});
+
+// ── Multi (multi-agent) press button ──
+// A press/release toggle on the AI Model row: pressed = blue. Like the mode,
+// the host holds the per-session truth; the panel falls back to its own last
+// choice (off by default).
+let multiOn = false;
+
+function restoredMultiFromState(): boolean {
+  const st = vscode.getState() as { multi?: boolean } | undefined;
+  return st?.multi === true;
+}
+
+/** Render the pressed state (blue class + aria-pressed). `persist` saves it
+ * for this panel; `notify` tells the host (per-session state + config push). */
+function applyMulti(on: boolean, opts?: { persist?: boolean; notify?: boolean }): void {
+  multiOn = on;
+  multiBtn.classList.toggle("is-on", on);
+  multiBtn.setAttribute("aria-pressed", String(on));
+  if (opts?.persist) {
+    const prev = vscode.getState() as object | undefined;
+    vscode.setState({ ...(prev ?? {}), multi: on });
+  }
+  if (opts?.notify) vscode.postMessage({ type: "setMulti", multi: on });
+}
+
+multiBtn.addEventListener("click", () => {
+  if (multiBtn.disabled) return;
+  applyMulti(!multiOn, { persist: true, notify: true });
 });
 
 // ── Model dropdown (all providers, declared or detected from the host) ──
@@ -1989,6 +2024,9 @@ window.addEventListener("message", (e) => {
       if (msg.config && (msg.config.mode === "analyze" || msg.config.mode === "agent")) {
         applyMode(msg.config.mode);
       }
+      if (msg.config && typeof msg.config.multi === "boolean") {
+        applyMulti(msg.config.multi);
+      }
       ctxInput.value = String(clampContextWindow((msg.config && msg.config.contextWindow) || DEFAULT_CONTEXT_WINDOW));
       renderOutputTokens(msg.config || {});
       renderSamplerControl(msg.config || {});
@@ -2064,6 +2102,9 @@ function renderViewState(state: {
   renderThinkingSelect(state.config || {});
   if (state.config && (state.config.mode === "analyze" || state.config.mode === "agent")) {
     applyMode(state.config.mode);
+  }
+  if (state.config && typeof state.config.multi === "boolean") {
+    applyMulti(state.config.multi);
   }
   ctxInput.value = String(clampContextWindow((state.config && state.config.contextWindow) || DEFAULT_CONTEXT_WINDOW));
   renderOutputTokens(state.config || {});
@@ -2141,6 +2182,11 @@ nameInput.addEventListener("keydown", (e) => {
 });
 
 // ── Initial render ──
+// Control stack: COLLAPSED by default; a previously chosen state wins.
+const savedCollapsed = (vscode.getState() as { controlsCollapsed?: boolean } | undefined)?.controlsCollapsed;
+const collapsedDefault = savedCollapsed ?? true;
+document.body.classList.toggle("controls-collapsed", collapsedDefault);
+ctlToggle.setAttribute("aria-expanded", String(!collapsedDefault));
 // Mode: the host's per-session mode wins (e.g. after a switch), otherwise the
 // panel's last choice; a fresh panel defaults to "Analyze".
 applyMode(
@@ -2148,6 +2194,12 @@ applyMode(
     ? init.config.mode
     : restoredModeFromState(),
 );
+// Multi: same rule (host per-session truth → panel memory → off by default).
+if (init.config && typeof init.config.multi === "boolean") {
+  applyMulti(init.config.multi);
+} else {
+  applyMulti(restoredMultiFromState());
+}
 renderViewState({
   sessions: init.sessions || [],
   openIds: init.openIds || [],

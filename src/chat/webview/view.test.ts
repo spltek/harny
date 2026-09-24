@@ -40,6 +40,7 @@ function setupDom(initOverrides: Record<string, unknown> = {}): void {
           <button type="button" class="mode-item" data-mode="agent" role="option" aria-selected="false">Agent</button>
         </div>
       </div>
+      <button type="button" id="multi-btn" aria-pressed="false">multi</button>
       <div id="attach-row">
         <div id="attachment-chips" class="hidden"></div>
       </div>
@@ -180,18 +181,20 @@ describe("view webview client", () => {
     expect(select.value).toBe("qwen.gguf");
   });
 
-  it("collapses and expands the control stack via the toggle", async () => {
+  it("collapses and expands the control stack via the toggle (collapsed by default)", async () => {
     await loadView();
     const strip = document.getElementById("ctl-toggle") as HTMLDivElement;
-    expect(document.body.classList.contains("controls-collapsed")).toBe(false);
-
-    strip.click();
+    // Default: the control stack starts COLLAPSED.
     expect(document.body.classList.contains("controls-collapsed")).toBe(true);
     expect(strip.getAttribute("aria-expanded")).toBe("false");
 
     strip.click();
     expect(document.body.classList.contains("controls-collapsed")).toBe(false);
     expect(strip.getAttribute("aria-expanded")).toBe("true");
+
+    strip.click();
+    expect(document.body.classList.contains("controls-collapsed")).toBe(true);
+    expect(strip.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("defaults the mode button to Analyze and switches modes via its vertical dropdown", async () => {
@@ -272,6 +275,37 @@ describe("view webview client", () => {
     expect(btn.disabled).toBe(false);
     btn.click();
     expect(menu.classList.contains("hidden")).toBe(false);
+  });
+
+  it("multi toggle: off by default, turns blue (pressed) on click and posts setMulti", async () => {
+    await loadView();
+    const btn = document.getElementById("multi-btn") as HTMLButtonElement;
+    expect(btn.classList.contains("is-on")).toBe(false);
+    expect(btn.getAttribute("aria-pressed")).toBe("false");
+
+    btn.click();
+    expect(posted).toContainEqual({ type: "setMulti", multi: true });
+    expect(btn.classList.contains("is-on")).toBe(true);
+    expect(btn.getAttribute("aria-pressed")).toBe("true");
+
+    btn.click();
+    expect(posted).toContainEqual({ type: "setMulti", multi: false });
+    expect(btn.classList.contains("is-on")).toBe(false);
+    expect(btn.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("multi toggle follows the host config and locks while working", async () => {
+    await loadView();
+    const btn = document.getElementById("multi-btn") as HTMLButtonElement;
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, multi: true, models: [], providerModels: [], contextWindow: 128000 } });
+    expect(btn.classList.contains("is-on")).toBe(true);
+
+    hostMessage({ type: "status", active: true });
+    btn.click();
+    expect(posted).not.toContainEqual({ type: "setMulti", multi: false });
+    hostMessage({ type: "status", active: false });
+    btn.click();
+    expect(posted).toContainEqual({ type: "setMulti", multi: false });
   });
 
   it("renders the thinking level dropdown per provider capability", async () => {

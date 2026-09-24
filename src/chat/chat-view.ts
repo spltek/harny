@@ -530,6 +530,15 @@ export class ChatViewProvider implements WebviewViewProvider {
         break;
       }
 
+      case "setMulti": {
+        const rt = this.activeRuntime();
+        if (!rt || typeof msg.multi !== "boolean") break;
+        rt.multi = msg.multi;
+        // Per-session flag; the UI state survives tab switches via the push.
+        void this.pushConfig();
+        break;
+      }
+
       case "compact": {
         const r = this.activeRuntime();
         if (!r || this.compacting) break;
@@ -987,6 +996,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     thinkingMode?: "bool" | "effort" | "type" | "reasoning" | "unspecified";
     thinkingLevel?: "off" | "low" | "medium" | "high";
     mode?: "analyze" | "agent";
+    multi?: boolean;
     contextWindow: number;
     compactionThresholdPercent?: number;
     outputTokens: number;
@@ -1056,6 +1066,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       thinkingMode: cfg.thinkingMode,
       thinkingLevel: cfg.thinkingLevel,
       mode: this.activeRuntime()?.mode,
+      multi: this.activeRuntime()?.multi,
       contextWindow: this.activeRuntime()?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
       // Only the session override, so the UI can show "Auto" (undefined) vs
       // an explicit value. Config-file defaults stay effective but hidden.
