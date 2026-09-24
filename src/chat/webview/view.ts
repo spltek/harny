@@ -383,7 +383,10 @@ function addThinkingBlock(text: string, beforeEl?: HTMLElement | null, opts?: { 
   // Live reasoning in progress: the block pulses (accent edges) until done.
   // Historical blocks re-rendered from the transcript pass pulse:false —
   // they are not animating and must stay quiet (otherwise they pulse forever).
-  if (opts?.pulse !== false) block.classList.add("streaming");
+  if (opts?.pulse !== false) {
+    block.classList.add("streaming");
+    phaseLockPulse(block);
+  }
   return block;
 }
 
@@ -494,6 +497,7 @@ function ensureResult(): HTMLDivElement | null {
   // "streaming" class pulses its border (same cadence as the play button).
   currentResultEl = document.createElement("div");
   currentResultEl.className = "msg assistant streaming";
+  phaseLockPulse(currentResultEl);
   messagesEl.appendChild(currentResultEl);
   return currentResultEl;
 }
@@ -504,6 +508,7 @@ function settlePulse(el: HTMLElement | null): void {
   if (!el) return;
   el.classList.remove("streaming");
   el.classList.add("settling");
+  el.style.animationDelay = "";
   window.setTimeout(() => el.classList.remove("settling"), 700);
 }
 
@@ -1306,6 +1311,20 @@ window.addEventListener("keydown", (e) => {
 let streamingActive = false;
 let thinkingCapable = false; // provider declares thinking control (bool/effort)
 
+// Pulse clock: the play button + Working bar beat on harny-pulse from the
+// moment the turn starts. The active areas (answer bubble / thinking block)
+// start their border pulse LATER (when the first chunk arrives) — a plain
+// CSS animation would then begin mid-cycle and stay permanently out of sync
+// with the play key. phaseLockPulse() aligns each area to the SAME clock with
+// a negative animation-delay, so every border beats together with the button.
+const PULSE_MS = 1200; // must match harny-pulse / stream-border-pulse (1.2s)
+let pulseClockStart = performance.now();
+
+function phaseLockPulse(el: HTMLElement): void {
+  const elapsed = (performance.now() - pulseClockStart) % PULSE_MS;
+  el.style.animationDelay = "-" + elapsed + "ms";
+}
+
 /** Return keyboard focus to the prompt after the agent finishes working. */
 function focusPrompt(): void {
   inputEl.focus();
@@ -1315,6 +1334,9 @@ function setStreaming(active: boolean): void {
   const rising = active && !streamingActive;
   streamingActive = active;
   if (rising) {
+    // The play button + Working bar start harny-pulse now: this becomes the
+    // shared clock the area border pulses lock onto.
+    pulseClockStart = performance.now();
     // Entering working always pins the transcript at the bottom with
     // auto-scroll ON: the reply is arriving below, even if the user had
     // scrolled up to re-read older content.
@@ -2184,7 +2206,8 @@ function restoreLiveStream(state: { streaming?: boolean; liveThinking?: string; 
   if (answer) {
     currentRawText = answer;
     currentResultEl = document.createElement("div");
-    currentResultEl.className = "msg assistant";
+    currentResultEl.className = "msg assistant streaming";
+    phaseLockPulse(currentResultEl);
     currentResultEl.innerHTML = renderMarkdown(answer);
     messagesEl.appendChild(currentResultEl);
   }

@@ -324,14 +324,16 @@ ${renderViewConfig(deps)}
     #working-bar.hidden { display: none; }
     @keyframes harny-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
     /* The ACTIVE areas pulse their border with the SAME 1.2s ease-in-out
-       cadence as the play button (harny-pulse). Deliberately evident: 2px
-       border breathing between a soft accent edge and the full accent with a
-       visible glow, so the streaming zones are obvious at a glance. Applied
-       to the answer bubble being filled AND the live thinking block while it
-       works. box-sizing:border-box keeps the border inside (no layout jump). */
+       cadence as the play button (harny-pulse) and IN PHASE with it: the
+       peak (full accent + glow) is at 0%/100% of the cycle, exactly when the
+       play key is at full opacity; 50% is the dim beat, matching the play
+       key's fade. Deliberately evident: 2px border breathing between a soft
+       accent edge and the full accent with a visible glow. Applied to the
+       answer bubble being filled AND the live thinking block while it works.
+       box-sizing:border-box keeps the border inside (no layout jump). */
     @keyframes stream-border-pulse {
-      0%, 100% { border-color: rgba(217, 95, 39, 0.4); box-shadow: 0 0 4px 0 rgba(217, 95, 39, 0.15); }
-      50% { border-color: #d95f27; box-shadow: 0 0 14px 1px rgba(217, 95, 39, 0.45); }
+      0%, 100% { border-color: #d95f27; box-shadow: 0 0 14px 1px rgba(217, 95, 39, 0.45); }
+      50% { border-color: rgba(217, 95, 39, 0.4); box-shadow: 0 0 4px 0 rgba(217, 95, 39, 0.15); }
     }
     .msg.assistant.streaming {
       border: 2px solid rgba(217, 95, 39, 0.4);

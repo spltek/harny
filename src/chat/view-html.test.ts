@@ -66,6 +66,30 @@ describe("renderViewHtml", () => {
     expect(fallback).not.toMatch(/vscode-editor-font-size/);
   });
 
+  it("defines the streaming pulse and graceful settle animations", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    // Active areas (answer bubble + live thinking block) pulse with accent
+    // edges on the SAME 1.2s ease-in-out cadence as the play button.
+    expect(html).toMatch(/@keyframes stream-border-pulse/);
+    // IN PHASE with the play button (harny-pulse peaks at 0%/100%): the area
+    // pulse must peak (full accent) at 0%/100% and dim at 50% — not inverted.
+    expect(html).toMatch(/@keyframes stream-border-pulse[\s\S]*0%, 100% \{\s*border-color: #d95f27/);
+    expect(html).toMatch(/@keyframes stream-border-pulse[\s\S]*50% \{\s*border-color: rgba\(217, 95, 39, 0\.4\)/);
+    expect(html).toMatch(/\.msg\.assistant\.streaming\s*\{[^}]*animation\s*:\s*stream-border-pulse 1\.2s ease-in-out infinite/s);
+    expect(html).toMatch(/\.thinking-block\.streaming\s*\{[^}]*animation\s*:\s*stream-border-pulse 1\.2s ease-in-out infinite/s);
+    // …and they SETTLE OUT (fade the border back) when the stream ends,
+    // instead of snapping off.
+    expect(html).toMatch(/\.msg\.assistant\.settling\s*\{[^}]*transition\s*:\s*border-color 0\.7s ease/s);
+    expect(html).toMatch(/\.thinking-block\.settling\s*\{[^}]*transition\s*:\s*border-color 0\.7s ease/s);
+    // The multi toggle exists on the AI Model row after the model dropdown,
+    // with the press/release (aria-pressed) state.
+    expect(html).toMatch(/id="model-select"[\s\S]*?<button type="button" id="multi-btn"/);
+    expect(html).toMatch(/id="multi-btn"[\s\S]*?aria-pressed="false"/);
+  });
+
   it("collapsing the control stack hides only the Window/Sampling cards", () => {
     const html = renderViewHtml({
       ...base,

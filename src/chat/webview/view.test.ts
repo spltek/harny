@@ -666,6 +666,9 @@ describe("view webview client", () => {
     hostMessage({ type: "textDelta", content: "hel" });
     let bubble = document.querySelector(".msg.assistant.streaming");
     expect(bubble).toBeTruthy();
+    // Phase-locked to the play button: the animation starts mid-cycle so it
+    // beats WITH the run key, not offset from it.
+    expect((bubble as HTMLElement).style.animationDelay).toMatch(/^-\d+(\.\d+)?ms$/);
     hostMessage({ type: "textDelta", content: "lo" });
     // still the same pulsing bubble (throttled render may lag a beat).
     expect(document.querySelector(".msg.assistant.streaming")).toBe(bubble);
@@ -702,6 +705,8 @@ describe("view webview client", () => {
     const block = document.querySelector(".thinking-block") as HTMLElement;
     expect(block).toBeTruthy();
     expect(block.classList.contains("streaming")).toBe(true);
+    // Phase-locked: same negative-delay trick, in sync with the play button.
+    expect(block.style.animationDelay).toMatch(/^-\d+(\.\d+)?ms$/);
 
     hostMessage({ type: "done" });
     expect(block.classList.contains("streaming")).toBe(false);
@@ -725,6 +730,50 @@ describe("view webview client", () => {
     expect(block.classList.contains("settling")).toBe(true);
     // …while the answer bubble takes over the pulse.
     expect(document.querySelector(".msg.assistant.streaming")).toBeTruthy();
+    // Even live, the thinking body stays collapsed while it fills.
+    expect(block.querySelector(".thinking-body")?.classList.contains("collapsed")).toBe(true);
+  });
+
+  it("settles the active areas when the run errors", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+
+    hostMessage({ type: "thinkingDelta", content: "think" });
+    hostMessage({ type: "textDelta", content: "answer" });
+    const thinking = document.querySelector(".thinking-block") as HTMLElement;
+    const bubble = document.querySelector(".msg.assistant") as HTMLElement;
+    expect(thinking.classList.contains("streaming")).toBe(false); // already settled at hand-off
+    expect(bubble.classList.contains("streaming")).toBe(true);
+
+    hostMessage({ type: "error", error: "boom" });
+    // Nothing keeps animating after the error.
+    expect(bubble.classList.contains("streaming")).toBe(false);
+    expect(bubble.classList.contains("settling")).toBe(true);
+    expect(thinking.classList.contains("streaming")).toBe(false);
+  });
+
+  it("removes the settling class once the pulse fade completes", async () => {
+    vi.useFakeTimers();
+    try {
+      await loadView();
+      const input = document.getElementById("user-input") as HTMLTextAreaElement;
+      input.value = "go";
+      (document.getElementById("send-btn") as HTMLButtonElement).click();
+      hostMessage({ type: "textDelta", content: "x" });
+      hostMessage({ type: "done" });
+
+      const final = document.querySelector(".msg.assistant") as HTMLElement;
+      expect(final.classList.contains("settling")).toBe(true);
+      expect(final.classList.contains("streaming")).toBe(false);
+
+      // After the 0.7s fade the temporary settling class is cleaned up.
+      vi.advanceTimersByTime(750);
+      expect(final.classList.contains("settling")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("renders thinking as markdown (bold, code, lists)", async () => {
@@ -1193,7 +1242,13 @@ describe("view webview client", () => {
     expect((document.getElementById("working-bar") as HTMLElement).classList.contains("hidden")).toBe(false);
 
     hostMessage({ type: "thinkingDelta", content: "thinking" });
+    const liveBlock = document.querySelector(".thinking-block") as HTMLElement;
+    // Live: the collapsed thinking block pulses while it reasons.
+    expect(liveBlock.classList.contains("streaming")).toBe(true);
     hostMessage({ type: "toolCall", id: "c1", name: "read_file", arguments: { path: "/x" } });
+    // Switching to a tool phase settles the thinking (no more animation).
+    expect(liveBlock.classList.contains("streaming")).toBe(false);
+    expect(liveBlock.classList.contains("settling")).toBe(true);
     hostMessage({ type: "toolResult", toolCallId: "c1", output: "content", isError: false });
     hostMessage({ type: "textDelta", content: "Answers" });
     hostMessage({ type: "done" });
