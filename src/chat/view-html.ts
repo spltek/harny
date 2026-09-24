@@ -323,6 +323,40 @@ ${renderViewConfig(deps)}
     }
     #working-bar.hidden { display: none; }
     @keyframes harny-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+    /* The ACTIVE areas pulse their border with the SAME 1.2s ease-in-out
+       cadence as the play button (harny-pulse). Deliberately evident: 2px
+       border breathing between a soft accent edge and the full accent with a
+       visible glow, so the streaming zones are obvious at a glance. Applied
+       to the answer bubble being filled AND the live thinking block while it
+       works. box-sizing:border-box keeps the border inside (no layout jump). */
+    @keyframes stream-border-pulse {
+      0%, 100% { border-color: rgba(217, 95, 39, 0.4); box-shadow: 0 0 4px 0 rgba(217, 95, 39, 0.15); }
+      50% { border-color: #d95f27; box-shadow: 0 0 14px 1px rgba(217, 95, 39, 0.45); }
+    }
+    .msg.assistant.streaming {
+      border: 2px solid rgba(217, 95, 39, 0.4);
+      animation: stream-border-pulse 1.2s ease-in-out infinite;
+    }
+    /* Live thinking header (the block is collapsed by default, so this is the
+       visible "working" indicator): same cadence, accent edges. */
+    .thinking-block.streaming {
+      animation: stream-border-pulse 1.2s ease-in-out infinite;
+    }
+    /* Graceful end: when a stream finishes the pulse settles out smoothly
+       (~0.7s fade) instead of snapping off — the answer bubble fades back to
+       borderless, the thinking block back to its quiet dashed edge. */
+    .msg.assistant.settling {
+      border: 2px solid rgba(217, 95, 39, 0.4);
+      animation: none;
+      transition: border-color 0.7s ease, box-shadow 0.7s ease;
+      border-color: transparent;
+      box-shadow: none;
+    }
+    .thinking-block.settling {
+      animation: none;
+      transition: border-color 0.7s ease;
+      border-color: var(--border);
+    }
 
     .tool-header { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; font-weight: 600; color: var(--accent); min-width: 0; }
     .tool-header:hover { color: var(--fg); }

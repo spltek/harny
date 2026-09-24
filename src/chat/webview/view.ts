@@ -378,8 +378,13 @@ function messageAttachmentRow(attachments: { name: string; size: number }[]): HT
   return row;
 }
 
-function addThinkingBlock(text: string, beforeEl?: HTMLElement | null): HTMLDivElement {
-  return makeThinkingBlock("🤔 Thinking...", text, undefined, beforeEl);
+function addThinkingBlock(text: string, beforeEl?: HTMLElement | null, opts?: { pulse?: boolean }): HTMLDivElement {
+  const block = makeThinkingBlock("🤔 Thinking...", text, undefined, beforeEl);
+  // Live reasoning in progress: the block pulses (accent edges) until done.
+  // Historical blocks re-rendered from the transcript pass pulse:false —
+  // they are not animating and must stay quiet (otherwise they pulse forever).
+  if (opts?.pulse !== false) block.classList.add("streaming");
+  return block;
 }
 
 /** Builds a collapsible "thinking-style" block (shared by thinking + compaction notes). */
@@ -391,9 +396,11 @@ function makeThinkingBlock(
 ): HTMLDivElement {
   const block = (host ?? document.createElement("div")) as HTMLDivElement;
   block.className = "thinking-block";
+  // Thinking areas start COLLAPSED (▶): expand on click. The streaming body
+  // keeps accumulating text while hidden, so it is never lost.
   block.innerHTML =
-    '<div class="thinking-header"><span class="toggle">▼</span>' + label + "</div>" +
-    '<div class="thinking-body"></div>';
+    '<div class="thinking-header"><span class="toggle">▶</span>' + label + "</div>" +
+    '<div class="thinking-body collapsed"></div>';
   const body = block.querySelector(".thinking-body");
   if (body) body.innerHTML = renderMarkdown(bodyText);
   const header = block.querySelector(".thinking-header");
@@ -483,11 +490,34 @@ function ensureResult(): HTMLDivElement | null {
   if (currentResultEl) return currentResultEl;
   if (!workingEl) return null;
   // Each emission segment (after a thinking/tool phase) gets its OWN blue
-  // bubble, appended in chronological order — nothing ever moves.
+  // bubble, appended in chronological order — nothing ever moves. The
+  // "streaming" class pulses its border (same cadence as the play button).
   currentResultEl = document.createElement("div");
-  currentResultEl.className = "msg assistant";
+  currentResultEl.className = "msg assistant streaming";
   messagesEl.appendChild(currentResultEl);
   return currentResultEl;
+}
+
+/** Settle an area's pulse when it stops streaming: the animation ends with a
+ * smooth ~0.7s fade to the resting state instead of dropping abruptly. */
+function settlePulse(el: HTMLElement | null): void {
+  if (!el) return;
+  el.classList.remove("streaming");
+  el.classList.add("settling");
+  window.setTimeout(() => el.classList.remove("settling"), 700);
+}
+
+/** Close the live streaming bubble: stop its border pulse before it becomes
+ * a permanent transcript entry (final flush / new segment / reset). */
+function clearStreamingBubble(): void {
+  settlePulse(currentResultEl);
+  currentResultEl = null;
+}
+
+/** Stop the live thinking block's pulse when it stops being the active one. */
+function clearThinkingBlock(): void {
+  settlePulse(currentThinkingBlock);
+  currentThinkingBlock = null;
 }
 
 function addWelcome(): HTMLDivElement {
@@ -560,7 +590,8 @@ function renderMessages(msgs: ChatMsg[]): boolean {
     if (m.role === "system" || m.role === "tool") continue;
     hasVisible = true;
     if (m.role === "assistant") {
-      if (m.thinking) addThinkingBlock(m.thinking);
+      // Historical thinking blocks are NOT live: no streaming pulse.
+      if (m.thinking) addThinkingBlock(m.thinking, undefined, { pulse: false });
       if (m.toolCalls && m.toolCalls.length > 0) {
         for (const tc of m.toolCalls) {
           const id = tc.id ?? tc.name;
@@ -624,8 +655,8 @@ function finishStream(): void {
 function resetStreamState(): void {
   thinkingMd.reset();
   answerMd.reset();
-  currentResultEl = null;
-  currentThinkingBlock = null;
+  clearStreamingBubble();
+  clearThinkingBlock();
   currentThinkingText = "";
   currentRawText = "";
   hideWorking();
@@ -806,8 +837,8 @@ function send(): void {
   if (!text && attachments.length === 0) return;
   inputEl.value = "";
   inputEl.style.height = "auto"; // back to a single line for the next message
-  currentResultEl = null;
-  currentThinkingBlock = null;
+  clearStreamingBubble();
+  clearThinkingBlock();
   currentThinkingText = "";
   currentRawText = "";
   aborted = false;
@@ -1825,6 +1856,9 @@ window.addEventListener("message", (e) => {
       break;
     }
     case "textDelta": {
+      // Thinking phase is over (the answer is streaming now): the thinking
+      // block stops pulsing and settles, instead of animating until done.
+      if (currentThinkingBlock) clearThinkingBlock();
       const resultEl = ensureResult();
       if (resultEl) {
         currentRawText += msg.content;
@@ -1841,7 +1875,7 @@ window.addEventListener("message", (e) => {
         flushStreamingMd();
         currentThinkingBlock = addThinkingBlock("");
         currentThinkingText = "";
-        currentResultEl = null;
+        clearStreamingBubble();
         currentRawText = "";
       }
       if (currentThinkingBlock) {
@@ -1859,9 +1893,9 @@ window.addEventListener("message", (e) => {
       const toolEl = addToolCall(msg.name, msg.arguments);
       pendingToolCalls.set(msg.id, toolEl);
       if (workingEl) workingEl.textContent = "● Working... 🔧 " + msg.name;
-      currentThinkingBlock = null;
+      clearThinkingBlock();
       currentThinkingText = "";
-      currentResultEl = null;
+      clearStreamingBubble();
       currentRawText = "";
       break;
     }

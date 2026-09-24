@@ -643,13 +643,88 @@ describe("view webview client", () => {
     });
     const blocks = document.querySelectorAll(".thinking-block");
     expect(blocks.length).toBe(1);
-    // Thinking is open by default (down arrow) and can be collapsed.
-    expect(blocks[0].querySelector(".thinking-body")?.classList.contains("collapsed")).toBe(false);
-    (blocks[0].querySelector(".thinking-header") as HTMLElement).click();
+    // Thinking starts COLLAPSED (▶) and expands on click.
     expect(blocks[0].querySelector(".thinking-body")?.classList.contains("collapsed")).toBe(true);
+    expect(blocks[0].querySelector(".toggle")?.textContent).toBe("▶");
+    // Historical blocks re-rendered from the transcript are NOT live: no
+    // streaming pulse, so they never keep animating.
+    expect(blocks[0].classList.contains("streaming")).toBe(false);
+    (blocks[0].querySelector(".thinking-header") as HTMLElement).click();
+    expect(blocks[0].querySelector(".thinking-body")?.classList.contains("collapsed")).toBe(false);
+    expect(blocks[0].querySelector(".toggle")?.textContent).toBe("▼");
     // The final textual response is the last message.
     const last = (messagesElLastContent() || "").trim();
     expect(last).toBe("fine");
+  });
+
+  it("pulses the live streaming bubble with the streaming class and stops it on done", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click(); // sets the working bar
+
+    hostMessage({ type: "textDelta", content: "hel" });
+    let bubble = document.querySelector(".msg.assistant.streaming");
+    expect(bubble).toBeTruthy();
+    hostMessage({ type: "textDelta", content: "lo" });
+    // still the same pulsing bubble (throttled render may lag a beat).
+    expect(document.querySelector(".msg.assistant.streaming")).toBe(bubble);
+
+    // done: the bubble stops pulsing (class removed) and settles out
+    // gracefully; it stays in the chat with the FULL flushed text.
+    hostMessage({ type: "done" });
+    expect(document.querySelector(".msg.assistant.streaming")).toBe(null);
+    const final = document.querySelector(".msg.assistant");
+    expect(final?.textContent).toContain("hello");
+    // the pulse fades out rather than snapping: settling class is applied.
+    expect(final?.classList.contains("settling")).toBe(true);
+  });
+
+  it("stops the streaming pulse when a new thinking phase starts", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+
+    hostMessage({ type: "textDelta", content: "partial" });
+    expect(document.querySelector(".msg.assistant.streaming")).toBeTruthy();
+    hostMessage({ type: "thinkingDelta", content: "reasoning..." });
+    expect(document.querySelector(".msg.assistant.streaming")).toBe(null);
+  });
+
+  it("pulses the live thinking block while streaming and stops the pulse on done", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+
+    hostMessage({ type: "thinkingDelta", content: "think..." });
+    const block = document.querySelector(".thinking-block") as HTMLElement;
+    expect(block).toBeTruthy();
+    expect(block.classList.contains("streaming")).toBe(true);
+
+    hostMessage({ type: "done" });
+    expect(block.classList.contains("streaming")).toBe(false);
+    // the thinking block settles out (pulse fades) instead of snapping off.
+    expect(block.classList.contains("settling")).toBe(true);
+  });
+
+  it("stops the thinking pulse as soon as the answer starts streaming (not only on done)", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+
+    hostMessage({ type: "thinkingDelta", content: "reasoning" });
+    const block = document.querySelector(".thinking-block") as HTMLElement;
+    expect(block.classList.contains("streaming")).toBe(true);
+
+    // Answer starts streaming: the thinking block must stop animating NOW.
+    hostMessage({ type: "textDelta", content: "answer" });
+    expect(block.classList.contains("streaming")).toBe(false);
+    expect(block.classList.contains("settling")).toBe(true);
+    // …while the answer bubble takes over the pulse.
+    expect(document.querySelector(".msg.assistant.streaming")).toBeTruthy();
   });
 
   it("renders thinking as markdown (bold, code, lists)", async () => {
@@ -1123,11 +1198,11 @@ describe("view webview client", () => {
     hostMessage({ type: "textDelta", content: "Answers" });
     hostMessage({ type: "done" });
 
-    // Thinking stays as a collapsed block, tool details collapsed, result last.
+    // Thinking stays as a collapsed block (▶) even while/after streaming,
+    // tool details collapsed, result last.
     const thinking = document.querySelector(".thinking-block .thinking-body") as HTMLElement;
-    // Open by default while streaming.
-    expect(thinking.classList.contains("collapsed")).toBe(false);
-    expect((document.querySelector(".thinking-header .toggle") as HTMLElement).textContent).toBe("▼");
+    expect(thinking.classList.contains("collapsed")).toBe(true);
+    expect((document.querySelector(".thinking-header .toggle") as HTMLElement).textContent).toBe("▶");
     const tool = document.querySelector(".msg.tool") as HTMLElement;
     expect(tool.textContent).toContain("read_file");
     expect(tool.querySelector(".tool-details")?.classList.contains("collapsed")).toBe(true);
