@@ -37,6 +37,10 @@ vi.mock("vscode", () => ({
     showInformationMessage: state.showInformationMessage,
     showOpenDialog: state.showOpenDialog,
   },
+  workspace: {
+    getConfiguration: () => ({ get: (key: string) => (key === "fontSize" ? 14 : undefined) }),
+    onDidChangeConfiguration: () => ({ dispose: () => {} }),
+  },
   Uri: { joinPath: () => ({}) },
 }));
 
@@ -128,6 +132,7 @@ function buildHarness(opts: Record<string, unknown> = {}) {
         agent.streaming = true;
       }),
       abort: vi.fn(),
+      setMode: vi.fn(),
       onEvent: vi.fn((fn: (e: any) => void) => {
         handlers.push(fn);
         return () => {
@@ -498,6 +503,30 @@ describe("ChatViewProvider", () => {
       .map((c) => c[0] as any)
       .filter((m) => m.type === "config");
     expect(configPosts[configPosts.length - 1].config.thinkingLevel).toBe("high");
+  });
+
+  it("setMode stores the mode on the runtime, propagates it to the agent and pushes config", async () => {
+    const { provider, registry } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+
+    await handler({ type: "setMode", mode: "agent" });
+    expect(rt.mode).toBe("agent");
+    expect(rt.agent.setMode).toHaveBeenCalledWith("agent");
+
+    await handler({ type: "setMode", mode: "analyze" });
+    expect(rt.mode).toBe("analyze");
+    expect(rt.agent.setMode).toHaveBeenCalledWith("analyze");
+
+    const configPosts = view.webview.postMessage.mock.calls
+      .map((c) => c[0] as any)
+      .filter((m) => m.type === "config");
+    expect(configPosts[configPosts.length - 1].config.mode).toBe("analyze");
+
+    // invalid modes are rejected
+    await handler({ type: "setMode", mode: "banana" });
+    expect(rt.mode).toBe("analyze");
   });
 
   it("setOutputTokens persists the value to the session and refreshes", async () => {

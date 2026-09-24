@@ -9,6 +9,8 @@ import { ToolRegistry } from "../tools/tool-registry";
 import type { HarnyConfig } from "../config/types";
 import type { LLMMessage, LLMProviderFactory, StreamChunk } from "../llm/types";
 import type { Tool, ToolResult } from "../tools/tool";
+import type { ToolDefinition } from "../tools/tool";
+import { toolDefinitionsForMode } from "../tools/mode-policy";
 import type { AgentEvent } from "./types";
 
 const VALID_CONFIG: HarnyConfig = {
@@ -731,6 +733,158 @@ describe("Agent follow-through guard", () => {
     expect(userMsgs).toEqual([expect.objectContaining({ content: "find me the weather?" })]);
     const assistants = history.all().filter((m) => m.role === "assistant").map((m) => m.content);
     expect(assistants).toEqual(["Sure! I will search for it."]);
+  });
+});
+
+describe("Analyze (read-only) mode", () => {
+  // Captures the tool definitions AND the system prompt each LLM turn
+  // advertises, so tests can assert what the model was (and was NOT) allowed
+  // to call and what rules it was given.
+  function capturingHarness(
+    tools: Tool[],
+    chunks?: StreamChunk[][],
+    mode: "analyze" | "agent" = "analyze",
+  ): { agent: Agent; seenDefinitions: ToolDefinition[][]; seenSystemPrompts: string[]; history: InMemoryChatHistory } {
+    const config = new StaticConfigProvider(VALID_CONFIG);
+    const history = new InMemoryChatHistory();
+    const events = new InMemoryEventBus<AgentEvent>();
+    const seenDefinitions: ToolDefinition[][] = [];
+    const seenSystemPrompts: string[] = [];
+    let calls = 0;
+    const factory: LLMProviderFactory = {
+      create() {
+        return {
+          protocol: "chat" as const,
+          async *stream(messages: LLMMessage[], _signal?: AbortSignal, toolDefinitions?: ToolDefinition[]) {
+            if (toolDefinitions) seenDefinitions.push(toolDefinitions);
+            seenSystemPrompts.push(String(messages[0]?.content ?? ""));
+            const perCall = chunks ?? [[{ type: "text", content: "ok" }]];
+            const list = perCall[Math.min(calls, perCall.length - 1)];
+            calls++;
+            for (const c of list) yield c;
+          },
+        };
+      },
+    };
+    const registry = new ToolRegistry(tools);
+    const systemPrompt = new DefaultSystemPromptBuilder(
+      (m) => toolDefinitionsForMode(registry.getAll(), m),
+      () => "/workspace",
+    );
+    const agent = new Agent({ config, llmFactory: factory, tools: registry, history, events, systemPrompt });
+    agent.setMode(mode);
+    return { agent, seenDefinitions, seenSystemPrompts, history };
+  }
+
+  function toolCallChunks(name: string, argsJson: string): StreamChunk[] {
+    return [
+      { type: "tool_call_start", index: 0, id: "c1", name },
+      { type: "tool_call_delta", index: 0, delta: argsJson },
+      { type: "tool_call_end", index: 0 },
+    ];
+  }
+
+  it("advertises only the read-only tool set in analyze and all tools after setMode('agent')", async () => {
+    const tools = ["Read", "Write", "Edit", "Delete", "StrReplace", "Shell", "Grep"].map((n) =>
+      ({ name: n, definition: { name: n, description: n, parameters: { type: "object", properties: {} } }, execute: async () => ({ content: "ok", isError: false }) }) as Tool,
+    );
+    const { agent, seenDefinitions } = capturingHarness(tools);
+
+    await agent.send("analyze this"); // default mode = analyze
+    expect(seenDefinitions[0].map((d) => d.name)).toEqual(["Read", "Shell", "Grep"]);
+    // the advertised Shell is explicitly read-only
+    expect(seenDefinitions[0].find((d) => d.name === "Shell")!.description).toContain("READ-ONLY");
+
+    agent.setMode("agent");
+    await agent.send("now edit it");
+    expect(seenDefinitions[1].map((d) => d.name).sort()).toEqual([...tools.map((t) => t.name)].sort());
+  });
+
+  it("refuses file-mutating tool calls in analyze WITHOUT running them", async () => {
+    const writeTool = { ...makeTool("Write"), execute: vi.fn(async (): Promise<ToolResult> => ({ content: "wrote", isError: false })) };
+    const { agent, history } = capturingHarness(
+      [writeTool, makeTool("Read")],
+      [toolCallChunks("Write", '{"path":"a.txt","content":"x"}'), [{ type: "text", content: "ok" }]],
+    );
+
+    await agent.send("write a file");
+
+    expect(writeTool.execute as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    const toolResult = history.all().find((m) => m.role === "tool");
+    expect(toolResult?.content).toContain("disabled in Analyze");
+  });
+
+  it("runs the same write tool after switching to agent mode", async () => {
+    const writeTool = { ...makeTool("Write"), execute: vi.fn(async (): Promise<ToolResult> => ({ content: "wrote", isError: false })) };
+    const { agent, history } = capturingHarness(
+      [writeTool],
+      [toolCallChunks("Write", '{"path":"a.txt","content":"x"}'), [{ type: "text", content: "ok" }]],
+      "agent",
+    );
+
+    await agent.send("write a file");
+
+    expect(writeTool.execute as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+    expect(history.all().find((m) => m.role === "tool")?.content).toBe("wrote");
+  });
+
+  it("refuses a write shell command in analyze without running it, but allows read-only commands", async () => {
+    const shell = {
+      ...makeTool("Shell"),
+      execute: vi.fn(async (): Promise<ToolResult> => ({ content: "ran", isError: false })),
+    };
+    const { agent } = capturingHarness(
+      [shell],
+      [toolCallChunks("Shell", '{"command":"rm -rf /tmp/x"}'), [{ type: "text", content: "ok" }]],
+    );
+    await agent.send("delete temp");
+    expect(shell.execute as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+
+    const { agent: agent2, history: history2 } = capturingHarness(
+      [shell, makeTool("Read")],
+      [toolCallChunks("Shell", '{"command":"ls -la"}'), [{ type: "text", content: "ok" }]],
+    );
+    await agent2.send("list files");
+    expect(shell.execute as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+    expect(history2.all().find((m) => m.role === "tool")?.content).toBe("ran");
+  });
+
+  it("keeps read tools fully functional in analyze mode", async () => {
+    const readTool = makeTool("Read", { content: "contents", isError: false });
+    const { agent, history } = capturingHarness(
+      [readTool],
+      [toolCallChunks("Read", '{"path":"a.ts"}'), [{ type: "text", content: "ok" }]],
+    );
+
+    await agent.send("read the file");
+
+    expect(readTool.called).toBe(true);
+    expect(history.all().find((m) => m.role === "tool")?.content).toBe("contents");
+  });
+
+  it("sends a read-only system prompt in analyze and a full one after setMode('agent')", async () => {
+    const { agent, seenSystemPrompts } = capturingHarness([makeTool("Read")]);
+
+    await agent.send("analyze this");
+    expect(seenSystemPrompts[0]).toContain("READ-ONLY MODE (Analyze)");
+
+    agent.setMode("agent");
+    await agent.send("now do it");
+    expect(seenSystemPrompts[1]).not.toContain("READ-ONLY MODE (Analyze)");
+  });
+
+  it("switching back from agent to analyze restores the read-only tool set", async () => {
+    const tools = ["Read", "Write", "Shell"].map((n) =>
+      ({ name: n, definition: { name: n, description: n, parameters: { type: "object", properties: {} } }, execute: async () => ({ content: "ok", isError: false }) }) as Tool,
+    );
+    const { agent, seenDefinitions } = capturingHarness(tools, undefined, "agent");
+
+    await agent.send("full mode");
+    expect(seenDefinitions[0].map((d) => d.name).sort()).toEqual(["Read", "Write", "Shell"].sort());
+
+    agent.setMode("analyze"); // back to read-only
+    await agent.send("analyze again");
+    expect(seenDefinitions[1].map((d) => d.name)).toEqual(["Read", "Shell"]);
   });
 });
 

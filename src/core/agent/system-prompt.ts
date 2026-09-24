@@ -1,24 +1,38 @@
 import type { ToolDefinition } from "../tools/tool";
+import type { ChatMode } from "../tools/mode-policy";
 
 export interface SystemPromptBuilder {
-  build(): string;
+  build(mode?: ChatMode): string;
 }
 
 /**
  * Builds the system prompt from the registered tools, so the prompt always
- * reflects the actual tool set (Open/Closed principle).
+ * reflects the actual tool set (Open/Closed principle). In Analyze (read-only)
+ * mode the tool list is the mode-filtered set and an explicit read-only rule
+ * reinforces the runtime block (the model must not attempt file writes at all,
+ * not even via the shell).
  */
 export class DefaultSystemPromptBuilder implements SystemPromptBuilder {
   constructor(
-    private toolDefinitions: () => ToolDefinition[],
+    private toolDefinitions: (mode: ChatMode) => ToolDefinition[],
     private cwd: () => string,
   ) {}
 
-  build(): string {
+  build(mode: ChatMode = "analyze"): string {
     const cwd = this.cwd();
-    const toolList = this.toolDefinitions()
-      .map((d) => `- ${d.name}: ${this.summarize(d.description)}`)
-      .join("\n");
+    const definitions = this.toolDefinitions(mode);
+    const toolList = definitions.map((d) => `- ${d.name}: ${this.summarize(d.description)}`).join("\n");
+    const analyzeRules =
+      mode === "analyze"
+        ? `
+
+READ-ONLY MODE (Analyze) — STRICT RULES:
+- You are in READ-ONLY mode: you inspect and answer, you NEVER modify anything.
+- The file-modifying tools (Write, StrReplace, Edit, Delete) are NOT available to you.
+- The Shell tool runs read-only: any command that would write, delete, move, rename, create, install or build files is refused before it runs. Do not try to work around it (no redirection, no scripts that write). Prefer the Read/Grep/Glob tools for inspection.
+- Do NOT run commands that modify the project (git add/commit/push, npm install, mkdir, touch, ...). Use Shell only for read-only inspection (ls, cat, find, git status/diff/log, tests that run without writing would still be refused if they write — so prefer Read/Grep/Glob).
+- Analyse the code, explain it, point out problems and propose what the change would be — but make no changes.`
+        : "";
 
     return `You are Harny, an expert AI coding agent embedded in VS Code.
 Working directory: ${cwd}
@@ -41,7 +55,7 @@ Guidelines:
 - Use Grep/Glob to search and explore the codebase.
 - Use TodoWrite to track progress on complex multi-step tasks.
 - Use ReadLints only on files you've edited or are about to edit.
-- When broadly exploring the codebase, prefer Grep and Glob over Shell find/grep.`;
+- When broadly exploring the codebase, prefer Grep and Glob over Shell find/grep.${analyzeRules}`;
   }
 
   private summarize(description: string): string {

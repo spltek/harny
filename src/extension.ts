@@ -26,6 +26,7 @@ import {
   ToolRegistry,
   VscodeDiagnosticsProvider,
 } from "./core/tools";
+import { toolDefinitionsForMode } from "./core/tools/mode-policy";
 import { ChatViewProvider } from "./chat/chat-view";
 import { SessionRegistry } from "./chat/session-registry";
 import { AttachmentService } from "./chat/attachment-service";
@@ -87,7 +88,13 @@ export function activate(context: ExtensionContext) {
     }),
   );
   const llmFactory = new DefaultLlmProviderFactory(nodeHttpClient, tools.definitions());
-  const systemPrompt = new DefaultSystemPromptBuilder(() => tools.definitions(), cwd);
+  // The tool list the system prompt advertises follows the chat mode
+  // (Analyze advertises the read-only set), so the prompt never mentions
+  // tools the model cannot use in the current mode.
+  const systemPrompt = new DefaultSystemPromptBuilder(
+    (mode) => toolDefinitionsForMode(tools.getAll(), mode),
+    cwd,
+  );
   const compactor = new Compactor(llmFactory, () => config.get());
 
   const store = new AllFoldersSessionStore({

@@ -57,8 +57,11 @@ export const PALETTE = {
 } as const;
 
 /**
- * Root font size: follows the VS Code EDITOR size (not the UI size), so
- * Harny's output text lines up with the code in the editing windows. Must
- * live on the ROOT (html): rem units resolve against it.
+ * Root font size fallback. The extension host reads editor.fontSize and passes
+ * it to the webview as a px value (see view-html.ts: editorFontSizePx), which
+ * becomes the rem base so Harny's text matches the editor. Webviews expose
+ * ONLY --vscode-font-size (the UI font, 13px default) — they do NOT receive
+ * --vscode-editor-font-size — so this var chain is just the fallback when the
+ * host value is missing. Must live on the ROOT (html): rem units resolve it.
  */
-export const ROOT_FONT_SIZE = "var(--vscode-editor-font-size, var(--vscode-font-size, 13px))";
+export const ROOT_FONT_SIZE = "var(--vscode-font-size, 13px)";

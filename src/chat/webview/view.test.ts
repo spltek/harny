@@ -29,6 +29,17 @@ function setupDom(initOverrides: Record<string, unknown> = {}): void {
         <button id="send-btn">▶</button>
         <button id="abort-btn" disabled>⏹</button>
       </div>
+      <div id="mode-select">
+        <button type="button" id="mode-btn" aria-haspopup="listbox" aria-expanded="false">
+          <svg id="mode-btn-icon-analyze" width="12" height="12"></svg>
+          <svg id="mode-btn-icon-agent" class="hidden" width="12" height="12"></svg>
+          <span id="mode-btn-label">Analyze</span>
+        </button>
+        <div id="mode-menu" class="hidden" role="listbox">
+          <button type="button" class="mode-item is-active" data-mode="analyze" role="option" aria-selected="true">Analyze</button>
+          <button type="button" class="mode-item" data-mode="agent" role="option" aria-selected="false">Agent</button>
+        </div>
+      </div>
       <div id="attach-row">
         <div id="attachment-chips" class="hidden"></div>
       </div>
@@ -181,6 +192,86 @@ describe("view webview client", () => {
     strip.click();
     expect(document.body.classList.contains("controls-collapsed")).toBe(false);
     expect(strip.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("defaults the mode button to Analyze and switches modes via its vertical dropdown", async () => {
+    await loadView();
+    const btn = document.getElementById("mode-btn") as HTMLButtonElement;
+    const label = document.getElementById("mode-btn-label") as HTMLSpanElement;
+    const menu = document.getElementById("mode-menu") as HTMLDivElement;
+    const analyze = document.querySelector('.mode-item[data-mode="analyze"]') as HTMLButtonElement;
+    const agent = document.querySelector('.mode-item[data-mode="agent"]') as HTMLButtonElement;
+    // Default: Analyze shown, dropdown closed, agent accent off.
+    expect(label.textContent).toBe("Analyze");
+    expect(btn.classList.contains("is-agent")).toBe(false);
+    expect(menu.classList.contains("hidden")).toBe(true);
+    expect(analyze.getAttribute("aria-selected")).toBe("true");
+    expect(btn.getAttribute("aria-expanded")).toBe("false");
+
+    // Open the dropdown (vertical menu) and pick Agent.
+    btn.click();
+    expect(menu.classList.contains("hidden")).toBe(false);
+    expect(btn.getAttribute("aria-expanded")).toBe("true");
+    agent.click();
+    expect(posted).toContainEqual({ type: "setMode", mode: "agent" });
+    expect(label.textContent).toBe("Agent");
+    expect(btn.classList.contains("is-agent")).toBe(true);
+    expect(analyze.getAttribute("aria-selected")).toBe("false");
+    expect(agent.getAttribute("aria-selected")).toBe("true");
+    // Picking closed the dropdown.
+    expect(menu.classList.contains("hidden")).toBe(true);
+
+    // Back to Analyze via the dropdown.
+    btn.click();
+    analyze.click();
+    expect(posted).toContainEqual({ type: "setMode", mode: "analyze" });
+    expect(label.textContent).toBe("Analyze");
+    expect(btn.classList.contains("is-agent")).toBe(false);
+  });
+
+  it("closes the mode dropdown on outside click", async () => {
+    await loadView();
+    const btn = document.getElementById("mode-btn") as HTMLButtonElement;
+    const menu = document.getElementById("mode-menu") as HTMLDivElement;
+    btn.click();
+    expect(menu.classList.contains("hidden")).toBe(false);
+    document.body.click(); // click outside #mode-select
+    expect(menu.classList.contains("hidden")).toBe(true);
+    expect(btn.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("follows the host's per-session mode pushed in the config", async () => {
+    await loadView();
+    const label = document.getElementById("mode-btn-label") as HTMLSpanElement;
+    const btn = document.getElementById("mode-btn") as HTMLButtonElement;
+    const agent = document.querySelector('.mode-item[data-mode="agent"]') as HTMLButtonElement;
+    // No mode in config → stays on the default.
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } });
+    expect(label.textContent).toBe("Analyze");
+
+    // Host says this session is in Agent mode → the button follows.
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, mode: "agent", models: [], providerModels: [], contextWindow: 128000 } });
+    expect(label.textContent).toBe("Agent");
+    expect(btn.classList.contains("is-agent")).toBe(true);
+    expect(agent.classList.contains("is-active")).toBe(true);
+  });
+
+  it("locks the mode button while working and ignores clicks", async () => {
+    await loadView();
+    const btn = document.getElementById("mode-btn") as HTMLButtonElement;
+    const menu = document.getElementById("mode-menu") as HTMLDivElement;
+    const postedAtLock = posted.length;
+
+    hostMessage({ type: "status", active: true });
+    expect(btn.disabled).toBe(true);
+    btn.click();
+    expect(menu.classList.contains("hidden")).toBe(true); // stays closed while locked
+    expect(posted.slice(postedAtLock)).not.toContainEqual({ type: "setMode", mode: "agent" });
+
+    hostMessage({ type: "status", active: false });
+    expect(btn.disabled).toBe(false);
+    btn.click();
+    expect(menu.classList.contains("hidden")).toBe(false);
   });
 
   it("renders the thinking level dropdown per provider capability", async () => {

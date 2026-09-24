@@ -1,4 +1,4 @@
-import type { ToolCall } from "../tools/tool";
+import type { ToolCall, ToolDefinition } from "../tools/tool";
 
 export interface LLMMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -41,7 +41,16 @@ export type StreamChunk =
   | { type: "usage"; usage: Usage };
 
 export interface LLMProvider {
-  stream(messages: LLMMessage[], signal?: AbortSignal): AsyncGenerator<StreamChunk>;
+  /**
+   * Stream a chat completion. `toolDefinitions` optionally overrides the
+   * fixture-level definitions per call (mode-filtered tool set); undefined
+   * falls back to the definitions the provider was constructed with.
+   */
+  stream(
+    messages: LLMMessage[],
+    signal?: AbortSignal,
+    toolDefinitions?: ToolDefinition[],
+  ): AsyncGenerator<StreamChunk>;
 }
 
 export interface LLMProviderFactory {

@@ -1,5 +1,5 @@
 import type { ExtensionContext, WebviewView, WebviewViewProvider, WebviewViewResolveContext } from "vscode";
-import { Uri } from "vscode";
+import { Uri, workspace } from "vscode";
 import * as fs from "fs";
 import type { ConfigProvider, HarnyConfig, ProviderCatalog, ProviderEditorData, ThinkingLevel } from "../core/config/types";
 import { isThinkingLevel } from "../core/config/types";
@@ -64,6 +64,13 @@ export class ChatViewProvider implements WebviewViewProvider {
 
   setContext(context: ExtensionContext): void {
     this.context = context;
+    // The root font follows editor.fontSize, so a change while the panel is
+    // open must rebuild the HTML for the new size to take effect.
+    context.subscriptions.push(
+      workspace.onDidChangeConfiguration((e) => {
+        if (e.affectsConfiguration("editor.fontSize")) this.refresh();
+      }),
+    );
   }
 
   /**
@@ -508,6 +515,18 @@ export class ChatViewProvider implements WebviewViewProvider {
         this.commitSetting(rt, () =>
           this.sessions.saveSettings(rt.sessionId, { thinkingLevel: msg.level as ThinkingLevel }),
         );
+        break;
+      }
+
+      case "setMode": {
+        const rt = this.activeRuntime();
+        if (!rt || (msg.mode !== "analyze" && msg.mode !== "agent")) break;
+        rt.mode = msg.mode as "analyze" | "agent";
+        // The agent is the one enforcing it: analyze = read-only tools & shell.
+        rt.agent.setMode(rt.mode);
+        // Lightweight push so the toggle reflects the per-session mode (also
+        // re-renders the toggle correctly after a session switch).
+        void this.pushConfig();
         break;
       }
 
@@ -967,6 +986,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     workspaceReady: boolean;
     thinkingMode?: "bool" | "effort" | "type" | "reasoning" | "unspecified";
     thinkingLevel?: "off" | "low" | "medium" | "high";
+    mode?: "analyze" | "agent";
     contextWindow: number;
     compactionThresholdPercent?: number;
     outputTokens: number;
@@ -1035,6 +1055,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       configHome: this.options.configHome ?? "",
       thinkingMode: cfg.thinkingMode,
       thinkingLevel: cfg.thinkingLevel,
+      mode: this.activeRuntime()?.mode,
       contextWindow: this.activeRuntime()?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
       // Only the session override, so the UI can show "Auto" (undefined) vs
       // an explicit value. Config-file defaults stay effective but hidden.
@@ -1069,6 +1090,13 @@ export class ChatViewProvider implements WebviewViewProvider {
     this.view?.webview.postMessage({ type: "config", config });
   }
 
+  /** The editor font size in px (editor.fontSize). Harny's root font follows
+   * it so the chat text lines up with the code in the editing windows. */
+  private editorFontSizePx(): number {
+    const size = workspace.getConfiguration("editor").get<number>("fontSize");
+    return typeof size === "number" && size > 0 ? size : 14;
+  }
+
   private async buildHtml(): Promise<string> {
     const active = this.activeRuntime();
     const messages = active ? active.agent.getMessages() : [];
@@ -1088,6 +1116,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     return renderViewHtml({
       cspSource: this.view!.webview.cspSource,
       scriptUri: viewUri.with({ query: "v=" + version }).toString(),
+      editorFontSizePx: this.editorFontSizePx(),
       state: {
         sessions: this.currentFolderSessions(),
         openIds: this.registry.listOpenIds(),

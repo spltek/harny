@@ -17,7 +17,12 @@ export class OpenAIChatProvider implements LLMProvider {
     private toolDefinitions: ToolDefinition[],
   ) {}
 
-  async *stream(messages: LLMMessage[], signal?: AbortSignal): AsyncGenerator<StreamChunk> {
+  async *stream(
+    messages: LLMMessage[],
+    signal?: AbortSignal,
+    toolDefinitions?: ToolDefinition[],
+  ): AsyncGenerator<StreamChunk> {
+    const effectiveTools = toolDefinitions ?? this.toolDefinitions;
     const url = endpointUrl(this.config.baseUrl, "/chat/completions");
 
     const body: Record<string, unknown> = {
@@ -47,8 +52,8 @@ export class OpenAIChatProvider implements LLMProvider {
     }
     // Send tool definitions ONLY when there are any: an empty `tools` array with
     // `tool_choice` is rejected by strict providers (opencode-go/Console Go).
-    if (this.toolDefinitions.length > 0) {
-      body.tools = toChatToolDefinitions(this.toolDefinitions);
+    if (effectiveTools.length > 0) {
+      body.tools = toChatToolDefinitions(effectiveTools);
       body.tool_choice = "auto";
     }
     // Reasoning/thinking phase, generalized across providers.

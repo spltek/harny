@@ -6,6 +6,17 @@ import type { ChatHistory } from "../history/chat-history";
 import type { ChatMessage } from "../history/types";
 import type { LLMProviderFactory, LLMMessage } from "../llm/types";
 import type { Tool, ToolCall, ToolRegistry, ToolResult } from "../tools";
+import {
+  ANALYZE_BLOCKED_SHELL_MESSAGE,
+  ANALYZE_BLOCKED_TOOL_MESSAGE,
+  DEFAULT_CHAT_MODE,
+  isToolBlockedInAnalyze,
+  isWriteCommand,
+  isAnalyzeMode,
+  toolDefinitionsForMode,
+  type ChatMode,
+} from "../tools/mode-policy";
+import type { ToolDefinition } from "../tools/tool";
 import type { ChatController } from "./chat-controller";
 import type { SystemPromptBuilder } from "./system-prompt";
 import { ToolCallAccumulator } from "./tool-call-accumulator";
@@ -30,6 +41,8 @@ export interface AgentDeps {
 export class Agent implements ChatController {
   private abortController: AbortController | null = null;
   private _streaming = false;
+  /** Chat mode: "analyze" (read-only) by default — see setMode(). */
+  private _mode: ChatMode = DEFAULT_CHAT_MODE;
   /** Consecutive turns whose tool calls ALL failed (reset per send). */
   private consecutiveErrorTurns = 0;
   /** Per-turn signature of tool calls (name|args), for repetition detection (reset per send). */
@@ -38,6 +51,11 @@ export class Agent implements ChatController {
   private corrected = false;
 
   constructor(private deps: AgentDeps) {}
+
+  /** Switch between read-only "analyze" and full "agent" mode. */
+  setMode(mode: ChatMode): void {
+    this._mode = mode === "agent" ? "agent" : DEFAULT_CHAT_MODE;
+  }
 
   get streaming(): boolean {
     return this._streaming;
@@ -292,9 +310,13 @@ export class Agent implements ChatController {
   }> {
     const config = this.deps.config.get();
     const provider = this.deps.llmFactory.create(config);
+    // Mode-filtered tool set: analyze advertises NO file-mutating tools, so
+    // the model cannot even attempt a write (the execution side below is the
+    // second layer of defense).
+    const toolDefinitions: ToolDefinition[] = toolDefinitionsForMode(this.deps.tools.getAll(), this._mode);
 
     const messages: LLMMessage[] = [
-      { role: "system", content: this.deps.systemPrompt.build() },
+      { role: "system", content: this.deps.systemPrompt.build(this._mode) },
       ...this.deps.history.conversation().map((m) => ({
         role: m.role,
         content: m.content,
@@ -318,7 +340,7 @@ export class Agent implements ChatController {
     // is stateful across chunks (a block may span several chunks).
     const thinkingParser = new ThinkingTagParser();
 
-    for await (const chunk of provider.stream(messages, this.abortController!.signal)) {
+    for await (const chunk of provider.stream(messages, this.abortController!.signal, toolDefinitions)) {
       if (chunk.type === "text") {
         // Emit raw chunk for stream log
         this.deps.events.emit({ type: "raw_chunk", chunk: chunk.content, kind: "text" });
@@ -371,6 +393,17 @@ export class Agent implements ChatController {
   private async executeToolSafely(tc: ToolCall): Promise<ToolResult> {
     const tool: Tool | undefined = this.deps.tools.get(tc.name);
     if (!tool) return { content: `Unknown tool: ${tc.name}`, isError: true };
+    // Analyze (read-only) mode: refuse file-mutating tools and read-only
+    // shell usage BEFORE anything runs (defense in depth — the model must not
+    // see these tools either, but never trust the model).
+    if (isAnalyzeMode(this._mode)) {
+      if (isToolBlockedInAnalyze(tc.name)) {
+        return { content: ANALYZE_BLOCKED_TOOL_MESSAGE(tc.name), isError: true };
+      }
+      if (tc.name === "Shell" && isWriteCommand(String(tc.arguments.command ?? ""))) {
+        return { content: ANALYZE_BLOCKED_SHELL_MESSAGE(String(tc.arguments.command ?? "")), isError: true };
+      }
+    }
     // Explicit signal for calls whose arguments contained no valid JSON, so the
     // model sees WHY it failed (instead of a generic "missing arg" error) and
     // the corrective nudge can fire on the next turn.

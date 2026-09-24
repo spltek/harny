@@ -19,3 +19,14 @@ export { TodoTool } from "./todo-tool";
 export { WebSearchTool } from "./web-search-tool";
 export { WebFetchTool } from "./web-fetch-tool";
 export { ReadLintsTool } from "./read-lints-tool";
+export {
+  DEFAULT_CHAT_MODE,
+  ANALYZE_BLOCKED_TOOL_MESSAGE,
+  ANALYZE_BLOCKED_SHELL_MESSAGE,
+  isAnalyzeMode,
+  isToolBlockedInAnalyze,
+  isWriteCommand,
+  toolDefinitionsForMode,
+  toolsForMode,
+  type ChatMode,
+} from "./mode-policy";

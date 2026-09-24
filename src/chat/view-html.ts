@@ -41,9 +41,16 @@ export interface ViewHtmlDeps {
   cspSource: string;
   scriptUri: string;
   state: ViewState;
+  /** The VS Code editor font size (editor.fontSize) in px, read on the host.
+   * The size families are rem-based, so 1rem == the editor font and Harny's
+   * reading text matches the code in the editor. Webviews expose only
+   * --vscode-font-size (UI font, 13px), NOT --vscode-editor-font-size, so the
+   * host must read the setting and hand it over as a px value.
+   */
+  editorFontSizePx?: number;
 }
 
-function renderViewConfig(): string {
+function renderViewConfig(deps: ViewHtmlDeps): string {
   const palette = Object.entries(PALETTE)
     .map(([name, value]) => `      --${name}: ${value};`)
     .join("\n");
@@ -53,11 +60,15 @@ function renderViewConfig(): string {
   const sizes = Object.entries(FAMILIES)
     .map(([name, fam]) => `      --fs-${name}: ${fam.size};`)
     .join("\n");
+  const rootSize =
+    typeof deps.editorFontSizePx === "number" && deps.editorFontSizePx > 0
+      ? `${deps.editorFontSizePx}px`
+      : ROOT_FONT_SIZE;
   return `    :root {
       /* Palette, fonts and size families — defined in src/chat/view-config.ts */
 ${palette}
 ${fonts}
-      --font-size: ${ROOT_FONT_SIZE};
+      --font-size: ${rootSize};
       font-size: var(--font-size);
 ${sizes}
     }`;
@@ -78,7 +89,7 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${cspSource} data: https:; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline'; font-src ${cspSource};">
   <title>Harny</title>
   <style>
-${renderViewConfig()}
+${renderViewConfig(deps)}
     * { box-sizing: border-box; margin: 0; padding: 0; }
     /* UI: one sans family everywhere (inherited); only real code/diff
        content switches to the single mono family. Grouped selectors so every
@@ -254,7 +265,7 @@ ${renderViewConfig()}
     .msg.assistant ol { list-style: decimal; }
     .msg.assistant ul { list-style: disc; }
     .msg.assistant li { margin: 2px 0; }
-    .msg.assistant code { background: var(--tool-bg); border-radius: 3px; padding: 0 3px; font-size: var(--fs-md); }
+    .msg.assistant code { background: var(--tool-bg); border-radius: 3px; padding: 0 3px; font-size: 1em; }
     .msg.assistant pre { background: var(--tool-bg); border: 1px solid var(--border); border-radius: 5px; padding: 6px 8px; overflow-x: auto; margin: 6px 0; }
     .msg.assistant pre code { background: transparent; padding: 0; }
     .msg.assistant a { color: var(--accent); }
@@ -323,7 +334,7 @@ ${renderViewConfig()}
     .tool-details { margin-top: 2px; font-size: var(--fs-md); }
     .tool-details.collapsed { display: none; }
     .tool-label { display: block; color: #888; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.4px; margin: 6px 0 2px; }
-    .tool-details pre { background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 4px; padding: 5px 7px; white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow-y: auto; font-size: var(--fs-sm); line-height: 1.4; }
+    .tool-details pre { background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 4px; padding: 5px 7px; white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow-y: auto; font-size: var(--fs-md); line-height: 1.4; }
     .tool-result-error { color: var(--error); }
     /* Diff section INSIDE the tool bubble (third section: Input / Output /
        Diff). Replaces the previous separate .msg.file-diff bubble: the diff
@@ -333,7 +344,7 @@ ${renderViewConfig()}
     .tool-diff-head { display: flex; align-items: baseline; gap: 6px; }
     .tool-diff-head .tool-label { margin: 6px 0 2px; }
     .fd-stat { opacity: 0.7; font-weight: 500; font-size: var(--fs-xs); }
-    .fd-body { padding: 0 0 4px; font-size: var(--fs-sm); line-height: 1.5; }
+    .fd-body { padding: 0 0 4px; font-size: var(--fs-md); line-height: 1.5; }
     .fd-body div { padding: 0 10px; white-space: pre-wrap; word-break: break-all; }
     .fd-add { color: #98c379; background: rgba(152, 195, 121, 0.10); }
     .fd-del { color: #e06c75; background: rgba(224, 108, 117, 0.10); }
@@ -369,7 +380,7 @@ ${renderViewConfig()}
     .thinking-body a { color: var(--accent); }
     .thinking-body strong { font-weight: 600; }
     .thinking-body em { font-style: italic; }
-    .thinking-body code { background: rgba(0,0,0,0.25); border-radius: 3px; padding: 0 3px; font-size: var(--fs-sm); }
+    .thinking-body code { background: rgba(0,0,0,0.25); border-radius: 3px; padding: 0 3px; font-size: var(--fs-md); }
     .thinking-body pre { background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; overflow-x: auto; margin: 4px 0; }
     .thinking-body pre code { background: transparent; padding: 0; }
     .thinking-body blockquote { border-left: 2px solid var(--border); padding-left: 8px; margin: 4px 0; }
@@ -531,10 +542,101 @@ ${renderViewConfig()}
        with the label inline and the select stretching (card chrome only). */
     .ctl-card-model { flex-direction: row; align-items: center; gap: 8px; }
     /* Inside the prompt area the AI Model row drops the card chrome (the box
-       is the input area itself) and becomes a plain head row above the prompt. */
+       is the input area itself) and becomes a plain head row above the prompt.
+       The mode button lives HERE on the same line as the model select; the
+       extra top margin opens breathing room below the prompt row above. */
     #input-area .ctl-card-model {
       background: transparent; border-radius: 0; padding: 0;
+      gap: 8px;
+      margin-top: 10px;
     }
+
+    /* Mode select (Analyze / Agent): ONE compact pill button showing the
+       current mode; clicking opens a small VERTICAL dropdown with the two
+       choices. The button is painted in the mode accent (terracotta for
+       Analyze, violet for Agent) with WHITE icon + label on top — maximum
+       contrast on the colored surface. It sits on the AI Model row, so the
+       dropdown is anchored to the button (z-index keeps it above the cards). */
+    #mode-select {
+      position: relative;
+      width: max-content;
+      max-width: 100%;
+      flex-shrink: 0;
+      user-select: none;
+    }
+    #mode-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-width: 0;
+      height: 1.85rem;
+      padding: 0 9px 0 8px;
+      border: none;
+      border-radius: 999px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+      color: #ffffff;
+      font-size: var(--fs-sm);
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      cursor: pointer;
+      white-space: nowrap;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 10px rgba(217, 95, 39, 0.28);
+      transition: box-shadow 0.18s, transform 0.12s, opacity 0.18s;
+    }
+    #mode-btn:hover { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45), 0 0 14px rgba(217, 95, 39, 0.42); }
+    #mode-btn:active { transform: scale(0.96); }
+    #mode-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    /* Agent mode: switches to the violet tool accent (white icon stays). */
+    #mode-btn.is-agent { background: linear-gradient(135deg, #8b6cff, #5a3df0); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 12px rgba(124, 92, 255, 0.4); }
+    #mode-btn.is-agent:hover { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45), 0 0 16px rgba(124, 92, 255, 0.52); }
+    #mode-btn:disabled { opacity: 0.55; cursor: default; transform: none; box-shadow: none; }
+    #mode-btn-icon-analyze, #mode-btn-icon-agent { flex-shrink: 0; }
+    #mode-btn-icon-analyze.hidden, #mode-btn-icon-agent.hidden { display: none; }
+    /* Chevron rotates when the dropdown is open. */
+    #mode-btn .mode-btn-chevron { flex-shrink: 0; color: rgba(255, 255, 255, 0.85); transition: transform 0.18s; }
+    #mode-select.open #mode-btn .mode-btn-chevron { transform: rotate(180deg); }
+    /* The vertical dropdown: stacks the two choices under the button. */
+    #mode-menu {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      min-width: 100%;
+      z-index: 40;
+      display: flex;
+      flex-direction: column;
+      padding: 3px;
+      border-radius: 10px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.55);
+    }
+    #mode-menu.hidden { display: none; }
+    .mode-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 10px;
+      border: none;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--fg);
+      font-size: var(--fs-sm);
+      font-weight: 600;
+      cursor: pointer;
+      text-align: left;
+      white-space: nowrap;
+      transition: background-color 0.1s, color 0.1s;
+    }
+    .mode-item:hover { background: var(--tool-bg); color: var(--fg-strong); }
+    .mode-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .mode-item.is-active { color: var(--fg-strong); }
+    /* Icon + check tinted by mode accent (safe here: dark menu background). */
+    .mode-item[data-mode="analyze"] svg { color: var(--accent); }
+    .mode-item[data-mode="agent"] svg { color: #a98dff; }
+    .mode-item.is-active:not(:hover) { background: rgba(255, 255, 255, 0.06); }
+    .mode-check { margin-left: 2px; flex-shrink: 0; visibility: hidden; }
+    .mode-item.is-active .mode-check { visibility: visible; color: var(--accent); }
+    .mode-item[data-mode="agent"].is-active .mode-check { color: #a98dff; }
     .card-title {
       font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
       color: #8a8a8a; user-select: none;
@@ -971,7 +1073,34 @@ ${renderViewConfig()}
       <button id="send-btn" aria-label="Send"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg></button>
       <button id="abort-btn" class="secondary" disabled aria-label="Abort"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg></button>
     </div>
+    <!-- AI Model row: the mode select (Analyze/Agent) sits on the SAME
+         horizontal line as the label, model select and gear button. The
+         dropdown anchors to the button and overlays the cards below. -->
     <div class="ctl-card ctl-card-model">
+      <div id="mode-select"
+           title="Analyze: reasoned answers only · Agent: full tool use (files, shell, search)">
+        <button type="button" id="mode-btn" aria-haspopup="listbox" aria-expanded="false"
+                aria-label="Mode">
+          <svg id="mode-btn-icon-analyze" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M20 20l-4.3-4.3" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+          <svg id="mode-btn-icon-agent" class="hidden" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+          <span id="mode-btn-label">Analyze</span>
+          <svg class="mode-btn-chevron" width="10" height="10" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+        </button>
+        <div id="mode-menu" class="hidden" role="listbox" aria-label="Mode">
+          <button type="button" class="mode-item is-active" data-mode="analyze" role="option" aria-selected="true"
+                  title="Analyze: reasoned answers only">
+            <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M20 20l-4.3-4.3" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+            <span>Analyze</span>
+            <svg class="mode-check" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+          </button>
+          <button type="button" class="mode-item" data-mode="agent" role="option" aria-selected="false"
+                  title="Agent: full tool use (files, shell, search)">
+            <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+            <span>Agent</span>
+            <svg class="mode-check" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+          </button>
+        </div>
+      </div>
       <span class="model-label">AI Model:</span>
       <select id="model-select" title="Switch model"></select>
       <button id="gear-btn" class="icon-btn" title="Configure providers & models"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>

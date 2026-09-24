@@ -49,6 +49,23 @@ describe("renderViewHtml", () => {
     expect(html).toContain('"content":"hello"');
   });
 
+  it("uses the editor font size from the host as the rem root", () => {
+    const html = renderViewHtml({
+      ...base,
+      editorFontSizePx: 16,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    expect(html).toMatch(/--font-size: 16px;/);
+    // Without a host value it falls back to the UI-font var chain (webviews
+    // expose --vscode-font-size but NOT --vscode-editor-font-size).
+    const fallback = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    expect(fallback).toMatch(/--font-size: var\(--vscode-font-size, 13px\);/);
+    expect(fallback).not.toMatch(/vscode-editor-font-size/);
+  });
+
   it("collapsing the control stack hides only the Window/Sampling cards", () => {
     const html = renderViewHtml({
       ...base,

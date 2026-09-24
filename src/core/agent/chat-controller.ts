@@ -1,5 +1,6 @@
 import type { ChatMessage, MessageAttachment } from "../history/types";
 import type { AgentEvent } from "./types";
+import type { ChatMode } from "../tools/mode-policy";
 
 /** Optional payload for {@link ChatController.send}. */
 export interface SendOptions {
@@ -26,4 +27,9 @@ export interface ChatController {
   onEvent(handler: (event: AgentEvent) => void): () => void;
   /** Queue a user message without starting the agent loop (used by context-menu commands). */
   addUserMessage(content: string): void;
+  /**
+   * Set the chat mode: "analyze" (read-only — no file modification, Shell
+   * guarded) or "agent" (full tool access). Defaults to analyze.
+   */
+  setMode(mode: ChatMode): void;
 }
