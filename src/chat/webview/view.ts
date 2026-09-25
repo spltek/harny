@@ -1587,8 +1587,9 @@ let currentMode: ChatMode = DEFAULT_MODE;
 
 /** Render the active state: button accent + label/icon, dropdown selection.
  * `persist` saves the choice for this panel; `notify` tells the host to
- * store it on the session runtime. */
-function applyMode(mode: ChatMode, opts?: { persist?: boolean; notify?: boolean }): void {
+ * store it on the session runtime. The mode is NOT persisted in the panel:
+ * every load starts from Analyze. */
+function applyMode(mode: ChatMode, opts?: { notify?: boolean }): void {
   if (mode !== "analyze" && mode !== "agent") mode = DEFAULT_MODE;
   currentMode = mode;
   const agent = mode === "agent";
@@ -1600,10 +1601,6 @@ function applyMode(mode: ChatMode, opts?: { persist?: boolean; notify?: boolean 
     const on = item.dataset.mode === mode;
     item.classList.toggle("is-active", on);
     item.setAttribute("aria-selected", String(on));
-  }
-  if (opts?.persist) {
-    const prev = vscode.getState() as object | undefined;
-    vscode.setState({ ...(prev ?? {}), mode });
   }
   if (opts?.notify) vscode.postMessage({ type: "setMode", mode });
 }
@@ -1632,7 +1629,7 @@ for (const item of modeItems) {
     const m = item.dataset.mode as ChatMode | undefined;
     if (m !== "analyze" && m !== "agent") return;
     if (m === currentMode) return;
-    applyMode(m, { persist: true, notify: true });
+    applyMode(m, { notify: true });
   });
 }
 
@@ -2441,16 +2438,12 @@ const collapsedDefault = savedCollapsed ?? true;
 document.body.classList.toggle("controls-collapsed", collapsedDefault);
 ctlToggle.setAttribute("aria-expanded", String(!collapsedDefault));
 // Mode + multi: the PANEL's remembered choice wins on load (so a reload keeps
-// Mode: the panel's remembered choice wins on load, then it is RE-ASSERTED to
-// the host so the active session's agent adopts it. MULTI, instead, is ALWAYS
-// DISABLED at startup (orchestration is opt-in) — never restored.
-const savedState = vscode.getState() as { mode?: "analyze" | "agent" } | undefined;
-const hostMode: "analyze" | "agent" = init.config?.mode === "agent" ? "agent" : "analyze";
-const initialMode: "analyze" | "agent" =
-  savedState?.mode === "agent" || savedState?.mode === "analyze" ? savedState.mode : hostMode;
-applyMode(initialMode);
-applyMulti(false); // multi starts OFF, always
-vscode.postMessage({ type: "setMode", mode: initialMode });
+// Mode AND multi: both start from their defaults on EVERY load — neither is
+// restored from a remembered panel state. The mode is re-asserted to the host
+// so the active session's agent resets to Analyze too (no stale state).
+applyMode("analyze");
+applyMulti(false);
+vscode.postMessage({ type: "setMode", mode: "analyze" });
 vscode.postMessage({ type: "setMulti", multi: false });
 renderViewState({
   sessions: init.sessions || [],

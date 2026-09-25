@@ -301,14 +301,13 @@ describe("view webview client", () => {
     expect(btn.getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("re-asserts the remembered mode on load, but multi ALWAYS starts disabled", async () => {
+  it("always starts from Analyze + multi off on load (nothing is restored)", async () => {
     setupDom({}, { mode: "agent", multi: true });
     await loadView();
-    // The remembered MODE is restored and pushed to the host…
-    expect(posted).toContainEqual({ type: "setMode", mode: "agent" });
-    expect(document.getElementById("mode-btn-label")?.textContent).toBe("Agent");
-    // …but MULTI is NOT restored: orchestration is opt-in, off by default.
+    // Neither mode nor multi is restored from a remembered panel state.
+    expect(posted).toContainEqual({ type: "setMode", mode: "analyze" });
     expect(posted).toContainEqual({ type: "setMulti", multi: false });
+    expect(document.getElementById("mode-btn-label")?.textContent).toBe("Analyze");
     expect(document.getElementById("multi-btn")?.classList.contains("is-on")).toBe(false);
   });
 
