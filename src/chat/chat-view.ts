@@ -1078,7 +1078,9 @@ export class ChatViewProvider implements WebviewViewProvider {
       configHome: this.options.configHome ?? "",
       thinkingMode: cfg.thinkingMode,
       thinkingLevel: cfg.thinkingLevel,
-      mode: this.activeRuntime()?.mode,
+      // CONCRETE mode (never undefined): a fresh session is analyze, so the UI
+      // always mirrors what the agent actually enforces (no stale read-only).
+      mode: this.activeRuntime()?.mode ?? "analyze",
       parallel: this.parallelEnabled,
       contextWindow: this.activeRuntime()?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
       // Only the session override, so the UI can show "Auto" (undefined) vs

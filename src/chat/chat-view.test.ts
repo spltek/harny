@@ -566,6 +566,23 @@ describe("ChatViewProvider", () => {
     expect(switchPosts[switchPosts.length - 1].config.parallel).toBe(false);
   });
 
+  it("reports a CONCRETE mode: a fresh session is analyze even after another was agent", async () => {
+    const { provider, registry } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setMode", mode: "agent" });
+    expect(registry.get("s1")!.mode).toBe("agent");
+
+    // A brand-new session must report analyze (never a stale/undefined mode).
+    const s2 = registry.create("Other");
+    await provider.setActive(s2.sessionId);
+
+    const switchPosts = view.webview.postMessage.mock.calls
+      .map((c) => c[0] as any)
+      .filter((m) => m.type === "switchView");
+    expect(switchPosts[switchPosts.length - 1].config.mode).toBe("analyze");
+  });
+
   it("setOutputTokens persists the value to the session and refreshes", async () => {
     const { store, provider } = buildHarness();
     const { handler, view } = resolveWith(provider);
