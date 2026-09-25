@@ -1055,6 +1055,33 @@ describe("view webview client", () => {
     expect(diff?.querySelector(".fd-del")?.textContent).toBe("-old");
   });
 
+  it("on refresh keeps the assistant preamble ABOVE its sub-agent bubbles", async () => {
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "user", content: "do the thing", timestamp: 1 },
+        {
+          role: "assistant",
+          content: "Good idea: I'll split this into 4 independent sub-tasks.",
+          timestamp: 2,
+          toolCalls: [
+            { id: "s1", name: "Delegate", arguments: { id: "A", goal: "Analyze a", access: "read" } },
+            { id: "s2", name: "Delegate", arguments: { id: "B", goal: "Analyze b", access: "read" } },
+          ],
+        },
+      ],
+    });
+    const order = [...document.querySelectorAll("#messages > *")].map((el) => el.className);
+    const answerAt = order.findIndex((c) => c.includes("assistant") && !c.includes("tool"));
+    const firstSubagentAt = order.findIndex((c) => c.includes("subagent"));
+    expect(answerAt).toBeGreaterThanOrEqual(0);
+    expect(firstSubagentAt).toBeGreaterThanOrEqual(0);
+    // The preamble bubble precedes the sub-agent bubbles (chronology), matching
+    // the live stream instead of jumping below them after the refresh.
+    expect(answerAt).toBeLessThan(firstSubagentAt);
+  });
+
   it("returns focus to the prompt when the agent finishes (done)", async () => {
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;

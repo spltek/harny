@@ -768,6 +768,18 @@ function renderMessages(msgs: ChatMsg[]): boolean {
     if (m.role === "assistant") {
       // Historical thinking blocks are NOT live: no streaming pulse.
       if (m.thinking) addThinkingBlock(m.thinking, undefined, { pulse: false });
+      // Chronology MUST match the live stream: the turn's answer bubble comes
+      // BEFORE its tool/sub-agent bubbles (the model emits text, then calls;
+      // the live path appends the result bubble on the first text delta and
+      // the tool bubbles afterwards). Rendering tools first made a preamble
+      // like "I'll split this into 4 sub-tasks" jump BELOW the sub-agent
+      // bubbles after the completion `refresh` re-rendered the transcript.
+      const content = m.content || "";
+      if (content.trim() && !content.startsWith("🔧 ")) {
+        const el = addMessage("assistant", content);
+        if (content.startsWith("❌")) el.classList.add("error");
+        attachBranchAt(el, i);
+      }
       if (m.toolCalls && m.toolCalls.length > 0) {
         for (const tc of m.toolCalls) {
           const id = tc.id ?? tc.name;
@@ -794,11 +806,6 @@ function renderMessages(msgs: ChatMsg[]): boolean {
           }
         }
       }
-      const content = m.content || "";
-      if (!content.trim() || content.startsWith("🔧 ")) continue;
-      const el = addMessage("assistant", content);
-      if (content.startsWith("❌")) el.classList.add("error");
-      attachBranchAt(el, i);
     } else {
       addMessage(m.role, m.displayText ?? (m.content || ""), m.attachments);
     }
