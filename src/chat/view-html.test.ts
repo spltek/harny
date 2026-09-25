@@ -107,8 +107,9 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/\.sa-log\s*\{/);
     expect(html).toMatch(/\.sa-thinking\s*\{/);
     expect(html).toMatch(/\.sa-answer\s*\{/);
-    expect(html).toMatch(/\.sa-answer code\s*\{/);
-    expect(html).toMatch(/\.sa-answer pre\s*\{/);
+    expect(html).toMatch(/\.sa-answer code/);
+    expect(html).toMatch(/\.sa-answer pre/);
+    expect(html).toMatch(/\.subagent-report\s*\{/);
     expect(html).toMatch(/\.sa-tool\.ok\s*\{/);
   });
 

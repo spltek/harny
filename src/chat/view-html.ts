@@ -431,23 +431,26 @@ ${renderViewConfig(deps)}
     .sa-thinking { color: #888; font-style: italic; font-size: var(--fs-sm); word-break: break-word; }
     .sa-answer { color: var(--fg); font-size: var(--fs-md); word-break: break-word; }
     /* Markdown inside the nested live stream (same shapes as the thinking body). */
-    .sa-thinking p, .sa-answer p { margin: 2px 0; }
-    .sa-thinking ul, .sa-thinking ol, .sa-answer ul, .sa-answer ol { margin: 2px 0; padding-left: 1.2em; }
-    .sa-thinking ol, .sa-answer ol { list-style: decimal; }
-    .sa-thinking ul, .sa-answer ul { list-style: disc; }
-    .sa-thinking li, .sa-answer li { margin: 1px 0; }
-    .sa-thinking strong, .sa-answer strong { font-weight: 600; }
-    .sa-thinking em, .sa-answer em { font-style: italic; }
-    .sa-thinking code, .sa-answer code {
+    /* Markdown shapes shared by the nested stream AND the sub-agent report. */
+    .subagent-report { color: var(--fg); font-size: var(--fs-md); word-break: break-word; }
+    .sa-thinking p, .sa-answer p, .subagent-report p { margin: 2px 0; }
+    .sa-thinking ul, .sa-thinking ol, .sa-answer ul, .sa-answer ol, .subagent-report ul, .subagent-report ol { margin: 2px 0; padding-left: 1.2em; }
+    .sa-thinking ol, .sa-answer ol, .subagent-report ol { list-style: decimal; }
+    .sa-thinking ul, .sa-answer ul, .subagent-report ul { list-style: disc; }
+    .sa-thinking li, .sa-answer li, .subagent-report li { margin: 1px 0; }
+    .sa-thinking strong, .sa-answer strong, .subagent-report strong { font-weight: 600; }
+    .sa-thinking em, .sa-answer em, .subagent-report em { font-style: italic; }
+    .sa-thinking code, .sa-answer code, .subagent-report code {
       background: rgba(0, 0, 0, 0.25); border-radius: 3px; padding: 0 3px;
       font-family: var(--font-mono); font-size: var(--fs-sm);
     }
-    .sa-thinking pre, .sa-answer pre {
+    .sa-thinking pre, .sa-answer pre, .subagent-report pre {
       background: rgba(0, 0, 0, 0.25); border: 1px solid var(--border); border-radius: 4px;
       padding: 4px 6px; overflow-x: auto; margin: 3px 0; font-family: var(--font-mono); font-size: var(--fs-sm);
     }
-    .sa-thinking pre code, .sa-answer pre code { background: transparent; padding: 0; }
-    .sa-thinking a, .sa-answer a { color: var(--accent); }
+    .sa-thinking pre code, .sa-answer pre code, .subagent-report pre code { background: transparent; padding: 0; }
+    .sa-thinking a, .sa-answer a, .subagent-report a { color: var(--accent); }
+    .subagent-report.tool-result-error { color: var(--error); }
     .sa-tool {
       color: #9a9a9a; font-size: var(--fs-sm); font-family: var(--font-mono);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

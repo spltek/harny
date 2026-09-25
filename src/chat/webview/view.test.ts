@@ -1447,6 +1447,22 @@ describe("view webview client", () => {
     expect(bubble.querySelectorAll(".sa-answer li").length).toBe(2);
   });
 
+  it("renders the sub-agent REPORT as markdown", async () => {
+    await loadView();
+    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "s1",
+      output: '🔁 Sub-agent "A" report:\n**findings** with `code` and\n\n- one\n- two',
+      isError: false,
+    });
+    const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
+    const report = bubble.querySelector(".subagent-report") as HTMLElement;
+    expect(report.querySelector("strong")?.textContent).toBe("findings");
+    expect(report.querySelector("code")?.textContent).toBe("code");
+    expect(report.querySelectorAll("li").length).toBe(2);
+  });
+
   it("marks a failed sub-agent as failed", async () => {
     await loadView();
     hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "edit", access: "write", resources: ["a.ts"] } });

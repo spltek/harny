@@ -530,7 +530,7 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
     resources.map((r) => '<span class="subagent-chip res" title="' + escapeHtml(r) + '">' + escapeHtml(r) + "</span>").join("") +
     "</div>" +
     '<div class="tool-input"><span class="tool-label">Task</span><pre class="tool-args">' + escapeHtml(formatArgs(args)) + "</pre></div>" +
-    '<div class="tool-output"><span class="tool-label">Report</span><pre class="tool-result">⏳ working…</pre></div>' +
+    '<div class="tool-output"><span class="tool-label">Report</span><div class="tool-result subagent-report">⏳ working…</div></div>' +
     "</div>";
   // Header toggles the WHOLE body (goal + nested stream + report).
   div.querySelector(".subagent-header")?.addEventListener("click", () => {
@@ -758,7 +758,8 @@ function renderMessages(msgs: ChatMsg[]): boolean {
           const out = el.querySelector(".tool-result");
           if (out) {
             const text = outputs.get(id);
-            renderToolOutput(out as HTMLPreElement, text !== undefined ? text.slice(0, 12000) : "");
+            if (tc.name === "Delegate") out.innerHTML = renderMarkdown((text ?? "").slice(0, 12000));
+            else renderToolOutput(out as HTMLPreElement, text !== undefined ? text.slice(0, 12000) : "");
           }
           if (tc.name === "Delegate") {
             const report = outputs.get(id) ?? "";
@@ -2137,12 +2138,14 @@ window.addEventListener("message", (e) => {
       const el = pendingToolCalls.get(msg.toolCallId);
       if (el) {
         el.classList.remove("tool-call-pending");
-        if (el.classList.contains("subagent")) {
-          setSubAgentStatus(el, msg.isError ? "failed" : "done");
-        }
+        const isSubAgent = el.classList.contains("subagent");
+        if (isSubAgent) setSubAgentStatus(el, msg.isError ? "failed" : "done");
         const resultEl = el.querySelector(".tool-result");
         if (resultEl) {
-          renderToolOutput(resultEl as HTMLPreElement, String(msg.output).slice(0, 12000));
+          // A sub-agent report is Markdown (its own answer); ordinary tool
+          // output stays the plain/diff-aware renderer.
+          if (isSubAgent) resultEl.innerHTML = renderMarkdown(String(msg.output).slice(0, 12000));
+          else renderToolOutput(resultEl as HTMLPreElement, String(msg.output).slice(0, 12000));
           resultEl.classList.toggle("tool-result-error", !!msg.isError);
         }
         pendingToolCalls.delete(msg.toolCallId);
