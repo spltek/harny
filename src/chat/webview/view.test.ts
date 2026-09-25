@@ -1531,6 +1531,25 @@ describe("view webview client", () => {
     expect(bubble.querySelector(".subagent-status")?.classList.contains("aborted")).toBe(true);
   });
 
+  it("after Stop: finished -> done, running -> interrupted, queued -> aborted", async () => {
+    await loadView();
+    hostMessage(PARALLEL_ON);
+    for (const id of ["s1", "s2", "s3"]) {
+      hostMessage({ type: "toolCall", id, name: "Delegate", arguments: { id, goal: "g", access: "read", resources: ["a.ts"] } });
+    }
+    hostMessage({ type: "subagentStart", toolCallId: "s1" });
+    hostMessage({ type: "subagentStart", toolCallId: "s2" });
+    // s1 finished before Stop; s2 was running; s3 was queued.
+    hostMessage({ type: "toolResult", toolCallId: "s1", output: '🔁 Sub-agent "s1" report:\ndone', isError: false });
+    hostMessage({ type: "toolResult", toolCallId: "s2", output: '⏹ Sub-agent "s2" interrupted.', isError: true });
+    hostMessage({ type: "toolResult", toolCallId: "s3", output: "⏹ aborted before running (Parallel stopped).", isError: true });
+
+    const bubbles = document.querySelectorAll(".msg.tool.subagent");
+    expect(bubbles[0].querySelector(".subagent-status")?.classList.contains("done")).toBe(true);
+    expect(bubbles[1].querySelector(".subagent-status")?.classList.contains("interrupted")).toBe(true);
+    expect(bubbles[2].querySelector(".subagent-status")?.classList.contains("aborted")).toBe(true);
+  });
+
   it("marks a failed sub-agent as failed", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);

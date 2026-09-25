@@ -62,7 +62,13 @@ export class SubAgentRunner {
   /** Run one delegated sub-task and return its report as a tool result.
    * `onEvent` (optional) receives the sub-agent's live events so the caller
    * can stream them into the sub-agent bubble. */
-  async run(spec: DelegateSpec, onEvent?: (event: SubAgentEvent) => void): Promise<ToolResult> {
+  async run(
+    spec: DelegateSpec,
+    onEvent?: (event: SubAgentEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<ToolResult> {
+    // Stop arrived BEFORE this sub-agent started: never start it (queued -> aborted).
+    if (signal?.aborted) return { content: formatSubAgentInterrupted(spec), isError: true };
     // Analyze-style read-only sub-agent, or a full agent for writers.
     const mode: ChatMode = spec.access === "read" ? "analyze" : "agent";
     const history = new InMemoryChatHistory();
@@ -102,15 +108,23 @@ export class SubAgentRunner {
     }
 
     this.active.add(agent);
+    // Link the parent abort signal so a sub-agent that starts JUST as the user
+    // presses Stop is aborted too (closes the start/abort race).
+    const onParentAbort = (): void => {
+      this.abortedAgents.add(agent);
+      agent.abort();
+    };
+    signal?.addEventListener("abort", onParentAbort);
     try {
       await agent.send(buildSubAgentTask(spec));
-      if (this.abortedAgents.has(agent)) {
+      if (this.abortedAgents.has(agent) || signal?.aborted) {
         return { content: formatSubAgentInterrupted(spec), isError: true };
       }
       return { content: formatSubAgentReport(spec, lastAssistantReport(agent.getMessages())), isError: false };
     } catch (e) {
       return { content: formatSubAgentError(spec, e instanceof Error ? e.message : String(e)), isError: true };
     } finally {
+      signal?.removeEventListener("abort", onParentAbort);
       this.active.delete(agent);
     }
   }

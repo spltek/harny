@@ -12,6 +12,7 @@ import type { Tool, ToolResult } from "../tools/tool";
 import type { ToolDefinition } from "../tools/tool";
 import { toolDefinitionsForMode } from "../tools/mode-policy";
 import type { DelegateSpec } from "./orchestration";
+import { SubAgentRunner } from "./subagent";
 import type { AgentEvent, SubAgentEvent } from "./types";
 
 const VALID_CONFIG: HarnyConfig = {
@@ -1402,6 +1403,96 @@ describe("Orchestration (Delegate)", () => {
     await agent.send("go");
 
     expect(max).toBe(2);
+  });
+
+  it("REAL runner: sub-agents run concurrently up to maxParallelSubAgents", async () => {
+    let running = 0;
+    let max = 0;
+    // Each sub-agent makes ONE stream call (a text-only turn); tracking that
+    // call measures how many sub-agents run at the same time.
+    const subFactory: LLMProviderFactory = {
+      create() {
+        return {
+          protocol: "chat" as const,
+          async *stream() {
+            running++;
+            max = Math.max(max, running);
+            await new Promise((r) => setTimeout(r, 15));
+            running--;
+            yield { type: "text", content: "sub report" };
+          },
+        };
+      },
+    };
+    const runner = new SubAgentRunner({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: subFactory,
+      tools: new ToolRegistry([makeTool("Read")]),
+      cwd: () => "/w",
+    });
+    const calls = ["A", "B", "C", "D", "E"].map((id, i) => ({
+      id,
+      goal: id,
+      access: "read",
+      resources: [`${i}.ts`],
+    }));
+    const { agent } = build({ calls, maxParallel: 2, spawn: (spec, onEvent) => runner.run(spec, onEvent) });
+
+    await agent.send("go");
+
+    // Two sub-agents must be running at the same time (cap = 2).
+    expect(max).toBe(2);
+  });
+
+  it("REAL runner on abort: running -> interrupted, queued -> aborted", async () => {
+    const started: string[] = [];
+    let agentRef: Agent;
+    // A sub-agent hangs until aborted (so B stays queued behind cap 1).
+    const hanging: LLMProviderFactory = {
+      create() {
+        return {
+          protocol: "chat" as const,
+          async *stream(_m: LLMMessage[], signal?: AbortSignal) {
+            await new Promise<void>((resolve) => {
+              if (signal?.aborted) return resolve();
+              signal?.addEventListener("abort", () => resolve());
+            });
+          },
+        };
+      },
+    };
+    const runner = new SubAgentRunner({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: hanging,
+      tools: new ToolRegistry([makeTool("Read")]),
+      cwd: () => "/w",
+    });
+    const calls = ["A", "B"].map((id, i) => ({
+      id,
+      goal: id,
+      access: "read",
+      resources: [`${i}.ts`],
+    }));
+    const { agent, eventLog } = build({
+      calls,
+      maxParallel: 1,
+      spawn: (spec, onEvent, signal) => {
+        started.push(spec.id);
+        if (spec.id === "A") agentRef.abort();
+        return runner.run(spec, onEvent, signal);
+      },
+    });
+    agentRef = agent;
+
+    await agent.send("go");
+
+    // Only A started; B stayed queued.
+    expect(started).toEqual(["A"]);
+    const outputs = eventLog
+      .filter((e) => e.type === "tool_result")
+      .map((e) => (e as { toolResult: { output: string } }).toolResult.output);
+    expect(outputs.some((o) => /interrupted/i.test(o))).toBe(true); // A (running)
+    expect(outputs.some((o) => /aborted/i.test(o))).toBe(true); // B (queued)
   });
 
   it("rejects invalid delegate args (missing resources) without spawning", async () => {

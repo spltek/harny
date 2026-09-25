@@ -65,6 +65,9 @@ export interface AgentDeps {
   spawnSubAgent?: (
     spec: DelegateSpec,
     onEvent?: (event: import("./types").SubAgentEvent) => void,
+    /** Parent abort signal: lets the runner abort a sub-agent that starts
+     * AFTER Stop (closes the start/abort race). */
+    signal?: AbortSignal,
   ) => Promise<ToolResult>;
   /** Called by abort() so the parent can cascade Stop to active sub-agents. */
   onAbort?: () => void;
@@ -633,7 +636,7 @@ export class Agent implements ChatController {
       // Forward the sub-agent's live events into its bubble (nested streaming).
       const onEvent = (event: import("./types").SubAgentEvent) =>
         this.deps.events.emit({ type: "subagent_event", toolCallId: tc.id, event });
-      return await this.deps.spawnSubAgent(spec, onEvent);
+      return await this.deps.spawnSubAgent(spec, onEvent, this.abortController?.signal);
     } catch (err: any) {
       return { content: formatSubAgentError(spec, err?.message || String(err)), isError: true };
     }
