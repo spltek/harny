@@ -1429,6 +1429,48 @@ describe("Orchestration (Delegate)", () => {
     expect(max).toBe(2);
   });
 
+  it("prepends an ALWAYS-present state banner (mode + Parallel) to every turn", async () => {
+    const seen: string[] = [];
+    const factory: LLMProviderFactory = {
+      create() {
+        return {
+          protocol: "chat" as const,
+          async *stream(messages: LLMMessage[]) {
+            seen.push(String(messages[0]?.content ?? ""));
+            yield { type: "text", content: "ok" };
+          },
+        };
+      },
+    };
+    const tools = new ToolRegistry([makeTool("Read")]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history: new InMemoryChatHistory(),
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        (m) => toolDefinitionsForMode(tools.getAll(), m),
+        () => "/w",
+      ),
+      allowDelegation: true,
+      spawnSubAgent: async () => ({ content: "r", isError: false }),
+    });
+
+    agent.setMode("analyze");
+    agent.setDelegation(false);
+    await agent.send("a");
+    expect(seen[0]).toContain("[CURRENT STATE]");
+    expect(seen[0]).toContain("Analyze — READ-ONLY");
+    expect(seen[0]).toContain("Parallel: OFF");
+
+    agent.setMode("agent");
+    agent.setDelegation(true);
+    await agent.send("b");
+    expect(seen[1]).toContain("Build/Edit");
+    expect(seen[1]).toContain("Parallel: ON");
+  });
+
   it("REAL runner: sub-agents run concurrently up to maxParallelSubAgents", async () => {
     let running = 0;
     let max = 0;

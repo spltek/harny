@@ -473,6 +473,22 @@ export class Agent implements ChatController {
     return out;
   }
 
+  /**
+   * A one-line, ALWAYS-PRESENT state banner prepended to the system prompt on
+   * EVERY turn, so the model cannot miss the current mode / Parallel state
+   * (a tool would require the model to call it — this does not).
+   */
+  private stateLine(): string {
+    const readOnly = isAnalyzeMode(this._mode);
+    const mode = readOnly
+      ? "Analyze — READ-ONLY: you CANNOT create, modify, move or delete files"
+      : "Build/Edit — you CAN create, modify and delete files";
+    const parallel = this.delegationEnabled
+      ? "ON — you may delegate independent sub-tasks to sub-agents via the Delegate tool"
+      : "OFF — no sub-agents: use your own tools only";
+    return `[CURRENT STATE] Mode: ${mode}. Parallel: ${parallel}.`;
+  }
+
   private async runLlmTurn(toolDefinitionsOverride?: ToolDefinition[]): Promise<{
     content: string;
     toolCalls: ToolCall[];
@@ -492,7 +508,7 @@ export class Agent implements ChatController {
       });
 
     const messages: LLMMessage[] = [
-      { role: "system", content: this.deps.systemPrompt.build(this._mode, toolDefinitions) },
+      { role: "system", content: `${this.stateLine()}\n\n${this.deps.systemPrompt.build(this._mode, toolDefinitions)}` },
       ...this.llmConversation().map((m) => ({
         role: m.role,
         content: m.content,
