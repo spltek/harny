@@ -591,7 +591,6 @@ function handleSubAgentEvent(parentId: string, event: SubAgentStreamEvent): void
     // element) and let the container scroll — never trim from the top.
     t._raw = (t._raw ?? "") + event.content;
     t.innerHTML = renderMarkdown(t._raw);
-    t.scrollTop = t.scrollHeight;
     scrollDown();
   } else if (event.type === "text_delta" && typeof event.content === "string") {
     let a = log.querySelector(".sa-answer") as (HTMLElement & { _raw?: string }) | null;
@@ -602,7 +601,6 @@ function handleSubAgentEvent(parentId: string, event: SubAgentStreamEvent): void
     }
     a._raw = (a._raw ?? "") + event.content;
     a.innerHTML = renderMarkdown(a._raw);
-    a.scrollTop = a.scrollHeight;
     scrollDown();
   } else if (event.type === "tool_call" && event.toolCall) {
     const line = document.createElement("div");
