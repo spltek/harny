@@ -498,6 +498,16 @@ function setSubAgentStatus(
  * clear text, and the declared resources/access (what it may touch) in the
  * collapsed details together with the final report.
  */
+/** A small robot glyph for sub-agent bubbles (SVG, currentColor). */
+const SUBAGENT_ICON =
+  '<svg class="subagent-icon" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">' +
+  '<rect x="4" y="8" width="16" height="11" rx="3" stroke="currentColor" stroke-width="2" fill="none"/>' +
+  '<circle cx="9.2" cy="13" r="1.5" fill="currentColor"/>' +
+  '<circle cx="14.8" cy="13" r="1.5" fill="currentColor"/>' +
+  '<path d="M12 4.2v3.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>' +
+  '<circle cx="12" cy="3" r="1.4" fill="currentColor"/>' +
+  "</svg>";
+
 function addSubAgentCall(args: unknown): HTMLDivElement {
   const a = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
   const id = typeof a.id === "string" ? a.id : "";
@@ -518,7 +528,9 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
   div.innerHTML =
     '<div class="tool-header subagent-header">' +
     '<span class="tool-toggle">▶</span>' +
-    '<span class="tool-name">🤖 Sub-agent' +
+    '<span class="tool-name">' +
+    SUBAGENT_ICON +
+    " Sub-agent" +
     (id ? ' "' + escapeHtml(id) + '"' : "") +
     "</span>" +
     (role ? '<span class="subagent-role">' + escapeHtml(role) + "</span>" : "") +
@@ -2133,7 +2145,10 @@ window.addEventListener("message", (e) => {
       const toolEl = isSubAgent ? addSubAgentCall(msg.arguments) : addToolCall(msg.name, msg.arguments);
       pendingToolCalls.set(msg.id, toolEl);
       if (workingEl) {
-        workingEl.textContent = msg.name === "Delegate" ? "● Working... 🤖 sub-agent" : "● Working... 🔧 " + msg.name;
+        workingEl.innerHTML =
+          msg.name === "Delegate"
+            ? "● Working... " + SUBAGENT_ICON + " sub-agent"
+            : "● Working... 🔧 " + escapeHtml(msg.name);
       }
       clearThinkingBlock();
       currentThinkingText = "";

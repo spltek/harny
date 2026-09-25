@@ -1550,6 +1550,16 @@ describe("view webview client", () => {
     expect(bubbles[2].querySelector(".subagent-status")?.classList.contains("aborted")).toBe(true);
   });
 
+  it("uses a robot SVG icon in the sub-agent bubble header", async () => {
+    await loadView();
+    hostMessage(PARALLEL_ON);
+    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
+    const icon = bubble.querySelector(".tool-name .subagent-icon");
+    expect(icon).toBeTruthy();
+    expect(icon?.querySelector("rect")).toBeTruthy(); // robot body
+  });
+
   it("marks a failed sub-agent as failed", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);

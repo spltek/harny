@@ -406,6 +406,8 @@ ${renderViewConfig(deps)}
        ordinary tool calls. */
     .msg.tool.subagent { border-color: rgba(124, 92, 255, 0.45); background: rgba(124, 92, 255, 0.06); }
     .subagent-header { gap: 6px; }
+    .subagent-header .subagent-icon { color: #a98dff; vertical-align: -2px; }
+    #working-bar .subagent-icon { vertical-align: -2px; }
     .subagent-role { color: #a98dff; font-weight: 500; }
     .subagent-status {
       margin-left: auto; flex-shrink: 0;
