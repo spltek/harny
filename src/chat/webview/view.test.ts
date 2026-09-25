@@ -1489,12 +1489,12 @@ describe("view webview client", () => {
     expect(report.querySelectorAll("li").length).toBe(2);
   });
 
-  it("renders a Delegate call as a PLAIN tool bubble when Parallel is OFF", async () => {
+  it("renders a Delegate call as a sub-agent bubble even before the Parallel config arrives (no race)", async () => {
     await loadView();
-    // Parallel is off by default: no sub-agent bubble is ever created.
+    // No config push yet: the Delegate call must STILL be a sub-agent bubble
+    // (the host hides the tool when Parallel is off, so the UI never gates on it).
     hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
-    expect(document.querySelector(".msg.tool.subagent")).toBe(null);
-    expect(document.querySelector(".msg.tool")).toBeTruthy();
+    expect(document.querySelector(".msg.tool.subagent")).toBeTruthy();
   });
 
   it("keeps the FULL sub-agent stream text (never trims from the top)", async () => {
