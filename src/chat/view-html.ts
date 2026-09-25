@@ -420,6 +420,7 @@ ${renderViewConfig(deps)}
     .subagent-status.done { color: #98c379; border-color: rgba(152, 195, 121, 0.5); }
     .subagent-status.failed { color: var(--error); border-color: rgba(244, 71, 71, 0.5); }
     .subagent-status.interrupted { color: #e5c07b; border-color: rgba(229, 192, 123, 0.5); }
+    .subagent-status.aborted { color: #999; border-color: var(--border); }
     .subagent-goal { padding: 0 8px 4px 22px; color: var(--fg); font-style: italic; font-size: var(--fs-md); }
     /* The bubble body (goal + nested stream + report) is collapsed by default. */
     .subagent-body.collapsed { display: none; }

@@ -1521,6 +1521,16 @@ describe("view webview client", () => {
     expect(bubble.querySelector(".subagent-status")?.classList.contains("interrupted")).toBe(true);
   });
 
+  it("marks a queued (never-started) sub-agent as aborted", async () => {
+    await loadView();
+    hostMessage(PARALLEL_ON);
+    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    // No subagentStart: it stayed queued, then Stop arrived.
+    hostMessage({ type: "toolResult", toolCallId: "s1", output: "⏹ aborted before running (Parallel stopped).", isError: true });
+    const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
+    expect(bubble.querySelector(".subagent-status")?.classList.contains("aborted")).toBe(true);
+  });
+
   it("marks a failed sub-agent as failed", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);

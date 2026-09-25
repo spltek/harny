@@ -480,8 +480,11 @@ function wireCollapsible(div: HTMLElement): void {
   });
 }
 
-/** Update a sub-agent bubble's status chip (queued → running → done/failed/interrupted). */
-function setSubAgentStatus(el: HTMLElement, status: "queued" | "running" | "done" | "failed" | "interrupted"): void {
+/** Update a sub-agent bubble's status chip. */
+function setSubAgentStatus(
+  el: HTMLElement,
+  status: "queued" | "running" | "done" | "failed" | "interrupted" | "aborted",
+): void {
   const chip = el.querySelector(".subagent-status");
   if (!chip) return;
   chip.className = "subagent-status " + status;
@@ -766,7 +769,13 @@ function renderMessages(msgs: ChatMsg[]): boolean {
             const report = outputs.get(id) ?? "";
             setSubAgentStatus(
               el,
-              /interrupted/i.test(report) ? "interrupted" : report.includes(" failed:") ? "failed" : "done",
+              /interrupted/i.test(report)
+                ? "interrupted"
+                : /aborted/i.test(report)
+                  ? "aborted"
+                  : report.includes(" failed:")
+                    ? "failed"
+                    : "done",
             );
           }
         }
@@ -2150,7 +2159,13 @@ window.addEventListener("message", (e) => {
           const out = String(msg.output);
           setSubAgentStatus(
             el,
-            msg.isError ? (/interrupted/i.test(out) ? "interrupted" : "failed") : "done",
+            !msg.isError
+              ? "done"
+              : /interrupted/i.test(out)
+                ? "interrupted"
+                : /aborted/i.test(out)
+                  ? "aborted"
+                  : "failed",
           );
         }
         const resultEl = el.querySelector(".tool-result");

@@ -291,7 +291,9 @@ export class Agent implements ChatController {
     });
     const steps = planToolExecution(planned);
     const results: ToolResult[] = new Array(toolCalls.length);
+    const emitted = new Set<number>();
     const emitResult = (index: number, result: ToolResult): void => {
+      emitted.add(index);
       this.deps.events.emit({
         type: "tool_result",
         toolResult: { toolCallId: toolCalls[index].id, output: result.content, isError: result.isError },
@@ -330,8 +332,11 @@ export class Agent implements ChatController {
       const result =
         results[i] ??
         (abortedRun()
-          ? { content: "\u23f9 Aborted before running (Parallel stopped).", isError: true }
+          ? { content: "\u23f9 aborted before running (Parallel stopped).", isError: true }
           : { content: `Tool ${tc.name} produced no result`, isError: true });
+      // Calls that never started (queued sub-agents killed by Stop) still get a
+      // tool_result so the UI can mark them ABORTED.
+      if (!emitted.has(i)) emitResult(i, result);
       this.deps.history.add({ role: "tool", content: result.content, toolCallId: tc.id, timestamp: Date.now() });
       toolResults.push({ name: tc.name, args: tc.arguments, isError: result.isError });
     }

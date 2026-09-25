@@ -1367,7 +1367,7 @@ describe("Orchestration (Delegate)", () => {
       resources: [`${i}.ts`],
       parallel: "yes",
     }));
-    const { agent, history } = build({ calls, maxParallel: 1, spawn });
+    const { agent, history, eventLog } = build({ calls, maxParallel: 1, spawn });
     agentRef = agent;
 
     await agent.send("go");
@@ -1376,8 +1376,13 @@ describe("Orchestration (Delegate)", () => {
     expect(started).toEqual(["A"]);
     // The not-started calls still get a tool result so the history stays coherent.
     expect(
-      history.all().some((m) => m.role === "tool" && /Aborted before running/.test(m.content ?? "")),
+      history.all().some((m) => m.role === "tool" && /aborted before running/i.test(m.content ?? "")),
     ).toBe(true);
+    // …and a tool_result event is EMITTED for them, so the UI marks them ABORTED.
+    const abortedEvents = eventLog.filter(
+      (e) => e.type === "tool_result" && /aborted before running/i.test(e.toolResult.output),
+    );
+    expect(abortedEvents.length).toBe(2); // B and C
   });
 
   it("read-only delegates are parallel BY DEFAULT (no parallel flag needed)", async () => {
