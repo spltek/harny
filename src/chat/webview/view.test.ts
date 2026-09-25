@@ -1399,8 +1399,8 @@ describe("view webview client", () => {
     hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "text_delta", content: "alpha" } });
     hostMessage({ type: "subagentEvent", toolCallId: "s2", event: { type: "text_delta", content: "beta" } });
     const bubbles = document.querySelectorAll(".msg.tool.subagent");
-    expect(bubbles[0].querySelector(".sa-answer")?.textContent).toBe("alpha");
-    expect(bubbles[1].querySelector(".sa-answer")?.textContent).toBe("beta");
+    expect(bubbles[0].querySelector(".sa-answer")?.textContent?.trim()).toBe("alpha");
+    expect(bubbles[1].querySelector(".sa-answer")?.textContent?.trim()).toBe("beta");
   });
 
   it("flips a sub-agent to done as soon as its own done event arrives", async () => {
@@ -1432,6 +1432,19 @@ describe("view webview client", () => {
     hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "error", error: "boom" } });
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
     expect(bubble.querySelector(".subagent-status")?.classList.contains("failed")).toBe(true);
+  });
+
+  it("renders markdown inside the sub-agent live stream (thinking + answer)", async () => {
+    await loadView();
+    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "thinking_delta", content: "**plan**" } });
+    hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "text_delta", content: "result: `x`\n\n- a\n- b" } });
+
+    const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
+    // Thinking + answer are rendered as Markdown (strong / inline code / list).
+    expect(bubble.querySelector(".sa-thinking strong")?.textContent).toBe("plan");
+    expect(bubble.querySelector(".sa-answer code")?.textContent).toBe("x");
+    expect(bubble.querySelectorAll(".sa-answer li").length).toBe(2);
   });
 
   it("marks a failed sub-agent as failed", async () => {

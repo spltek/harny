@@ -428,8 +428,26 @@ ${renderViewConfig(deps)}
       padding: 2px 8px 6px 22px; border-left: 2px solid rgba(124, 92, 255, 0.25);
       margin: 0 0 2px 8px;
     }
-    .sa-thinking { color: #888; font-style: italic; font-size: var(--fs-sm); white-space: pre-wrap; word-break: break-word; }
-    .sa-answer { color: var(--fg); font-size: var(--fs-md); white-space: pre-wrap; word-break: break-word; }
+    .sa-thinking { color: #888; font-style: italic; font-size: var(--fs-sm); word-break: break-word; }
+    .sa-answer { color: var(--fg); font-size: var(--fs-md); word-break: break-word; }
+    /* Markdown inside the nested live stream (same shapes as the thinking body). */
+    .sa-thinking p, .sa-answer p { margin: 2px 0; }
+    .sa-thinking ul, .sa-thinking ol, .sa-answer ul, .sa-answer ol { margin: 2px 0; padding-left: 1.2em; }
+    .sa-thinking ol, .sa-answer ol { list-style: decimal; }
+    .sa-thinking ul, .sa-answer ul { list-style: disc; }
+    .sa-thinking li, .sa-answer li { margin: 1px 0; }
+    .sa-thinking strong, .sa-answer strong { font-weight: 600; }
+    .sa-thinking em, .sa-answer em { font-style: italic; }
+    .sa-thinking code, .sa-answer code {
+      background: rgba(0, 0, 0, 0.25); border-radius: 3px; padding: 0 3px;
+      font-family: var(--font-mono); font-size: var(--fs-sm);
+    }
+    .sa-thinking pre, .sa-answer pre {
+      background: rgba(0, 0, 0, 0.25); border: 1px solid var(--border); border-radius: 4px;
+      padding: 4px 6px; overflow-x: auto; margin: 3px 0; font-family: var(--font-mono); font-size: var(--fs-sm);
+    }
+    .sa-thinking pre code, .sa-answer pre code { background: transparent; padding: 0; }
+    .sa-thinking a, .sa-answer a { color: var(--accent); }
     .sa-tool {
       color: #9a9a9a; font-size: var(--fs-sm); font-family: var(--font-mono);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

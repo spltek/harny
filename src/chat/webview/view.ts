@@ -580,22 +580,27 @@ function handleSubAgentEvent(parentId: string, event: SubAgentStreamEvent): void
   if (!el) return;
   const log = subAgentLog(el);
   if (event.type === "thinking_delta" && typeof event.content === "string") {
-    let t = log.querySelector(".sa-thinking") as HTMLElement | null;
+    let t = log.querySelector(".sa-thinking") as (HTMLElement & { _raw?: string }) | null;
     if (!t) {
       t = document.createElement("div");
       t.className = "sa-thinking";
       log.appendChild(t);
     }
-    t.textContent = ((t.textContent ?? "") + event.content).slice(-SA_LIVE_MAX);
+    // Markdown, like the thinking blocks (raw text kept on the element).
+    const next = ((t._raw ?? "") + event.content).slice(-SA_LIVE_MAX);
+    t._raw = next;
+    t.innerHTML = renderMarkdown(next);
     scrollDown();
   } else if (event.type === "text_delta" && typeof event.content === "string") {
-    let a = log.querySelector(".sa-answer") as HTMLElement | null;
+    let a = log.querySelector(".sa-answer") as (HTMLElement & { _raw?: string }) | null;
     if (!a) {
       a = document.createElement("div");
       a.className = "sa-answer";
       log.appendChild(a);
     }
-    a.textContent = ((a.textContent ?? "") + event.content).slice(-SA_LIVE_MAX);
+    const next = ((a._raw ?? "") + event.content).slice(-SA_LIVE_MAX);
+    a._raw = next;
+    a.innerHTML = renderMarkdown(next);
     scrollDown();
   } else if (event.type === "tool_call" && event.toolCall) {
     const line = document.createElement("div");
