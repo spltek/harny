@@ -10,9 +10,10 @@ import {
   ANALYZE_BLOCKED_SHELL_MESSAGE,
   ANALYZE_BLOCKED_TOOL_MESSAGE,
   DEFAULT_CHAT_MODE,
+  isAnalyzeMode,
+  isMultiAgentMode,
   isToolBlockedInAnalyze,
   isWriteCommand,
-  isAnalyzeMode,
   toolDefinitionsForMode,
   type ChatMode,
 } from "../tools/mode-policy";
@@ -58,8 +59,6 @@ export interface AgentDeps {
   /** Whether this agent may launch sub-agents via Delegate (default true).
    * Sub-agents pass false, capping orchestration depth at 1. */
   allowDelegation?: boolean;
-  /** Initial delegation state (the "multi" flag). Defaults to the cap. */
-  delegateByDefault?: boolean;
   /** Session-scoped runner for delegated sub-tasks. Required to execute a
    * Delegate call. `onEvent` forwards the sub-agent's live events (thinking /
    * text / tools) so the UI can stream them inside the sub-agent bubble. */
@@ -94,22 +93,22 @@ export class Agent implements ChatController {
   private forcedFinalReport = false;
   /** Cap: may this agent EVER delegate? Sub-agents pass false (depth 1). */
   private readonly mayDelegate: boolean;
-  /** Runtime toggle driven by the UI "multi" flag. */
-  private delegationEnabled: boolean;
 
   constructor(private deps: AgentDeps) {
     this.mayDelegate = deps.allowDelegation !== false;
-    this.delegationEnabled = (deps.delegateByDefault ?? this.mayDelegate) && this.mayDelegate;
   }
 
-  /** Enable/disable orchestration for this session (the UI "multi" flag). */
-  setDelegation(enabled: boolean): void {
-    this.delegationEnabled = enabled && this.mayDelegate;
+  /**
+   * Orchestration is enabled by the "multi" MODE (full access + sub-agents),
+   * and never for sub-agents themselves (depth 1).
+   */
+  private get delegationEnabled(): boolean {
+    return this.mayDelegate && isMultiAgentMode(this._mode);
   }
 
-  /** Switch between read-only "analyze" and full "agent" mode. */
+  /** Switch chat mode. "multi" enables orchestration (sub-agents). */
   setMode(mode: ChatMode): void {
-    this._mode = mode === "agent" ? "agent" : DEFAULT_CHAT_MODE;
+    this._mode = mode === "agent" || mode === "multi" ? mode : DEFAULT_CHAT_MODE;
   }
 
   get streaming(): boolean {
@@ -564,8 +563,7 @@ export class Agent implements ChatController {
     }
     if (!this.delegationEnabled) {
       return {
-        content:
-          "Delegation is disabled for this session. Turn on the \"multi\" toggle to allow sub-agents.",
+        content: 'Delegation is disabled. Switch the mode to "Multi Agent" to allow sub-agents.',
         isError: true,
       };
     }
@@ -575,13 +573,8 @@ export class Agent implements ChatController {
     const parsed = parseDelegateSpec(tc.arguments);
     const spec = parsed.spec;
     if (!spec) return { content: parsed.error ?? "Invalid Delegate call.", isError: true };
-    // Analyze is read-only: delegating a writer would bypass it.
-    if (isAnalyzeMode(this._mode) && spec.access !== "read") {
-      return {
-        content: '⛔ Analyze (read-only) mode: sub-agents may only be delegated with access "read".',
-        isError: true,
-      };
-    }
+    // (Analyze mode never reaches here: delegation requires the Multi Agent
+    // mode, which is full access — so a write delegate cannot bypass read-only.)
     try {
       // Signal the UI that this sub-agent is STARTING now (queued → running):
       // with a concurrency cap, several delegates may be queued behind others.

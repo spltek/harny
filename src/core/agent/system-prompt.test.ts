@@ -69,6 +69,9 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     );
     expect(withDelegate.build("agent")).toContain("ORCHESTRATION (Delegate)");
     expect(withDelegate.build("agent")).toContain("EDITS ARE NEVER PARALLEL");
+    // Multi Agent pushes the orchestrator to ASSESS parallelizability first.
+    expect(withDelegate.build("multi")).toContain("assess parallelizability");
+    expect(withDelegate.build("multi")).toContain("ACTUALLY do it");
 
     const without = new DefaultSystemPromptBuilder((mode) => toolDefinitionsForMode(tools(), mode), () => "/w");
     expect(without.build("agent")).not.toContain("ORCHESTRATION (Delegate)");

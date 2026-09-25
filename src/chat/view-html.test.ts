@@ -86,8 +86,11 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/\.thinking-block\.settling\s*\{[^}]*transition\s*:\s*border-color 0\.7s ease/s);
     // The multi toggle exists on the AI Model row after the model dropdown,
     // with the press/release (aria-pressed) state.
-    expect(html).toMatch(/id="model-select"[\s\S]*?<button type="button" id="multi-btn"/);
-    expect(html).toMatch(/id="multi-btn"[\s\S]*?aria-pressed="false"/);
+    // The mode dropdown has all three choices, including Multi Agent.
+    expect(html).toMatch(/data-mode="analyze"/);
+    expect(html).toMatch(/data-mode="agent"/);
+    expect(html).toMatch(/data-mode="multi"[\s\S]*?Multi Agent/);
+    expect(html).toMatch(/id="mode-btn-icon-multi"/);
   });
 
   it("styles the sub-agent bubble with its status states", () => {

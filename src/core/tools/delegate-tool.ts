@@ -24,6 +24,9 @@ export class DelegateTool implements Tool {
       "runs alone, one at a time (edits are never concurrent).\n" +
       "- after: ids of sibling sub-tasks that must finish first (use it when a sub-agent needs another's output).\n\n" +
       "RULES:\n" +
+      "- FIRST assess parallelizability: split the task and decide which parts are INDEPENDENT. Read-only + " +
+      "disjoint resources → parallel; anything that writes or shares a file → serial (one owner). If nothing is " +
+      "parallelizable, do it yourself — do not force parallelism.\n" +
       "- Parallelize ONLY independent read-only analysis on disjoint or shared-read files.\n" +
       "- Never launch two writers that touch the same file; serialize them (after) or give the file to ONE owner.\n" +
       "- Do NOT parallelize trivial tasks or tasks that would do the same work — parallelism costs tokens.\n" +

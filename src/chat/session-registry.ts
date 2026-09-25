@@ -32,8 +32,9 @@ export interface SessionRuntime {
   topP?: number;
   /** Active sampler: only its value is sent ("temperature" | "topP"). */
   sampler?: "temperature" | "topP";
-  /** Chat mode chosen in this session (in-memory; default "analyze"). */
-  mode?: "analyze" | "agent";
+  /** Chat mode chosen in this session (in-memory; default "analyze").
+   * "multi" = full tools + orchestration (sub-agents). */
+  mode?: "analyze" | "agent" | "multi";
   /** Current context tokens in use (fill metric). */
   contextTokens?: number;
   /** Input tokens served from the provider's prompt cache (informational). */

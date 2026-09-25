@@ -36,14 +36,6 @@ export class ChatViewProvider implements WebviewViewProvider {
   // fetch itself is bounded by HOST_MODEL_TIMEOUT_MS anyway.
   private static readonly HOST_CACHE_TTL = 5_000;
   private compacting = false;
-  /**
-   * Orchestration (sub-agents) master switch — the UI "multi" toggle. GLOBAL
-   * on purpose: it is a UI-level mode, so it must never diverge from the agent
-   * (a per-session flag + a remembered panel toggle caused the button to read
-   * ON while the session's agent had delegation off). Persisted in memory for
-   * the extension session; the webview re-asserts it on load.
-   */
-  private multiEnabled = false;
   /** FIFO queue for in-panel modals (name dialog, alerts, confirms…). */
   private modals: PanelModalQueue;
 
@@ -528,22 +520,13 @@ export class ChatViewProvider implements WebviewViewProvider {
 
       case "setMode": {
         const rt = this.activeRuntime();
-        if (!rt || (msg.mode !== "analyze" && msg.mode !== "agent")) break;
-        rt.mode = msg.mode as "analyze" | "agent";
-        // The agent is the one enforcing it: analyze = read-only tools & shell.
+        if (!rt || (msg.mode !== "analyze" && msg.mode !== "agent" && msg.mode !== "multi")) break;
+        rt.mode = msg.mode as "analyze" | "agent" | "multi";
+        // The agent is the one enforcing it: analyze = read-only; multi = full
+        // tools + orchestration (sub-agents).
         rt.agent.setMode(rt.mode);
         // Lightweight push so the toggle reflects the per-session mode (also
         // re-renders the toggle correctly after a session switch).
-        void this.pushConfig();
-        break;
-      }
-
-      case "setMulti": {
-        if (typeof msg.multi !== "boolean") break;
-        // Global master switch: applies to whatever agent is active now, and
-        // to every session from here on (synced at send time too).
-        this.multiEnabled = msg.multi;
-        this.activeRuntime()?.agent.setDelegation(this.multiEnabled);
         void this.pushConfig();
         break;
       }
@@ -748,11 +731,9 @@ export class ChatViewProvider implements WebviewViewProvider {
 
   private async send(rt: SessionRuntime, msg: any): Promise<void> {
     if (rt.agent.streaming) return;
-    // Re-assert the controls on the agent right before it runs: a session
-    // created before a UI toggle (or a reloaded panel) must not send with
-    // stale mode/delegation state.
+    // Re-assert the mode on the agent right before it runs: a session created
+    // before a UI toggle (or a reloaded panel) must not send with stale state.
     rt.agent.setMode(rt.mode ?? "analyze");
-    rt.agent.setDelegation(this.multiEnabled);
     const rawText = typeof msg.text === "string" ? msg.text : "";
     const attached = (msg.attachments as AttachmentInfo[] | undefined) ?? [];
     // A message may carry text, attachments, or both — an attachment-only send
@@ -1009,8 +990,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     workspaceReady: boolean;
     thinkingMode?: "bool" | "effort" | "type" | "reasoning" | "unspecified";
     thinkingLevel?: "off" | "low" | "medium" | "high";
-    mode?: "analyze" | "agent";
-    multi?: boolean;
+    mode?: "analyze" | "agent" | "multi";
     contextWindow: number;
     compactionThresholdPercent?: number;
     outputTokens: number;
@@ -1080,7 +1060,6 @@ export class ChatViewProvider implements WebviewViewProvider {
       thinkingMode: cfg.thinkingMode,
       thinkingLevel: cfg.thinkingLevel,
       mode: this.activeRuntime()?.mode,
-      multi: this.multiEnabled,
       contextWindow: this.activeRuntime()?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
       // Only the session override, so the UI can show "Auto" (undefined) vs
       // an explicit value. Config-file defaults stay effective but hidden.

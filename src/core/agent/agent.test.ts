@@ -932,6 +932,7 @@ describe("Orchestration (Delegate)", () => {
       spawnSubAgent: opts.spawn ?? (async () => ({ content: "default report", isError: false })),
     });
     if (opts.mode) agent.setMode(opts.mode);
+    else agent.setMode("multi"); // orchestration tests need the multi mode
     return { agent, history, eventLog };
   }
 
@@ -1103,7 +1104,7 @@ describe("Orchestration (Delegate)", () => {
         { id: "A", goal: "a", access: "write", resources: ["a.ts"], parallel: "yes" },
         { id: "B", goal: "b", access: "create", resources: ["b.ts"], parallel: "yes" },
       ],
-      mode: "agent",
+      mode: "multi",
       spawn,
     });
 
@@ -1112,10 +1113,10 @@ describe("Orchestration (Delegate)", () => {
     expect(order).toEqual(["start:A", "end:A", "start:B", "end:B"]);
   });
 
-  it("refuses a write delegate in Analyze mode without spawning", async () => {
+  it("refuses delegation in Analyze / Agent modes (only Multi Agent orchestrates)", async () => {
     let spawned = 0;
     const { agent, history } = build({
-      calls: [{ id: "A", goal: "edit", access: "write", resources: ["a.ts"] }],
+      calls: [{ id: "A", goal: "read", access: "read", resources: ["a.ts"] }],
       mode: "analyze",
       spawn: async () => {
         spawned++;
@@ -1126,23 +1127,7 @@ describe("Orchestration (Delegate)", () => {
     await agent.send("go");
 
     expect(spawned).toBe(0);
-    expect(history.all().find((m) => m.role === "tool")?.content).toContain("Analyze (read-only)");
-  });
-
-  it("allows a read delegate in Analyze mode", async () => {
-    let spawned = 0;
-    const { agent } = build({
-      calls: [{ id: "A", goal: "read", access: "read", resources: ["a.ts"] }],
-      mode: "analyze",
-      spawn: async () => {
-        spawned++;
-        return { content: "ok", isError: false };
-      },
-    });
-
-    await agent.send("go");
-
-    expect(spawned).toBe(1);
+    expect(history.all().find((m) => m.role === "tool")?.content).toContain("Delegation is disabled");
   });
 
   it("rejects invalid delegate args (missing resources) without spawning", async () => {
@@ -1176,6 +1161,7 @@ describe("Orchestration (Delegate)", () => {
       allowDelegation: true,
       // no spawnSubAgent on purpose
     });
+    agent.setMode("multi");
 
     await agent.send("go");
 
@@ -1214,7 +1200,7 @@ describe("Orchestration (Delegate)", () => {
     expect(history.all().find((m) => m.role === "tool")?.content).toContain("cannot delegate further");
   });
 
-  it("setDelegation(false) disables orchestration for the session (multi off)", async () => {
+  it("switching from Multi Agent to Agent disables orchestration", async () => {
     let spawned = 0;
     const { agent, history } = build({
       calls: [{ id: "A", goal: "x", access: "read", resources: ["a.ts"] }],
@@ -1223,12 +1209,12 @@ describe("Orchestration (Delegate)", () => {
         return { content: "x", isError: false };
       },
     });
-    agent.setDelegation(false);
+    agent.setMode("agent"); // back to single-agent full access
 
     await agent.send("go");
 
     expect(spawned).toBe(0);
-    expect(history.all().find((m) => m.role === "tool")?.content).toContain("disabled for this session");
+    expect(history.all().find((m) => m.role === "tool")?.content).toContain("Delegation is disabled");
   });
 
   it("advertises Delegate (and its rules) only when delegation is on", async () => {
@@ -1258,15 +1244,17 @@ describe("Orchestration (Delegate)", () => {
       events: new InMemoryEventBus<AgentEvent>(),
       systemPrompt,
       allowDelegation: true,
-      delegateByDefault: false,
       spawnSubAgent: async () => ({ content: "r", isError: false }),
     });
 
+    // Agent mode (full tools, single agent): Delegate is NOT advertised.
+    agent.setMode("agent");
     await agent.send("off");
     expect(seen[0]).not.toContain("- Delegate:");
     expect(seen[0]).not.toContain("ORCHESTRATION (Delegate)");
 
-    agent.setDelegation(true);
+    // Multi Agent mode: Delegate + orchestration rules appear.
+    agent.setMode("multi");
     await agent.send("on");
     expect(seen[1]).toContain("- Delegate:");
     expect(seen[1]).toContain("ORCHESTRATION (Delegate)");

@@ -1,12 +1,24 @@
 import type { Tool, ToolDefinition } from "./tool";
 
 /**
- * Chat mode: "analyze" = READ-ONLY (the agent inspects but never modifies
- * files), "agent" = full tool access. The UI's default mode is Analyze, so
- * the default here matches.
+ * Chat mode:
+ *   · "analyze" = READ-ONLY (inspects but never modifies files)
+ *   · "agent"   = full tool access, single agent
+ *   · "multi"   = full tool access + ORCHESTRATION (can spawn sub-agents)
+ * The UI's default mode is Analyze, so the default here matches.
  */
-export type ChatMode = "analyze" | "agent";
+export type ChatMode = "analyze" | "agent" | "multi";
 export const DEFAULT_CHAT_MODE: ChatMode = "analyze";
+
+/** True for the full-tool modes (everything except the read-only Analyze). */
+export function isFullAccessMode(mode: ChatMode | undefined): boolean {
+  return (mode ?? DEFAULT_CHAT_MODE) !== "analyze";
+}
+
+/** True when orchestration (sub-agents) is enabled by the mode. */
+export function isMultiAgentMode(mode: ChatMode | undefined): boolean {
+  return mode === "multi";
+}
 
 /** File-MUTATING tools: never advertised to nor callable by the model in
  * Analyze mode. Read-only tools (Read, Grep, Glob, TodoWrite, WebSearch,
@@ -19,7 +31,7 @@ export function isToolBlockedInAnalyze(name: string): boolean {
 }
 
 export function isAnalyzeMode(mode: ChatMode | undefined): boolean {
-  return (mode ?? DEFAULT_CHAT_MODE) !== "agent";
+  return (mode ?? DEFAULT_CHAT_MODE) === "analyze";
 }
 
 /** Extra filtering for a tool set (e.g. hide the Delegate tool from
@@ -31,7 +43,7 @@ export interface ToolFilterOptions {
 /** The tools visible in a given mode (analyze drops the file-mutating ones). */
 export function toolsForMode(tools: readonly Tool[], mode: ChatMode, opts?: ToolFilterOptions): Tool[] {
   const excluded = opts?.exclude && opts.exclude.length > 0 ? new Set(opts.exclude) : null;
-  const base = mode === "agent" ? [...tools] : tools.filter((t) => !isToolBlockedInAnalyze(t.name));
+  const base = isFullAccessMode(mode) ? [...tools] : tools.filter((t) => !isToolBlockedInAnalyze(t.name));
   return excluded ? base.filter((t) => !excluded.has(t.name)) : base;
 }
 
