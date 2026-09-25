@@ -3,21 +3,21 @@ import type { Tool, ToolDefinition } from "./tool";
 /**
  * Chat mode:
  *   · "analyze" = READ-ONLY (inspects but never modifies files)
- *   · "agent"   = full tool access, single agent
- *   · "multi"   = full tool access + ORCHESTRATION (can spawn sub-agents)
- * The UI's default mode is Analyze, so the default here matches.
+ *   · "agent"   = full tool access
+ * Orchestration (sub-agents) is NOT a mode: it is the separate "Parallel"
+ * toggle, which can be combined with either mode.
  */
-export type ChatMode = "analyze" | "agent" | "multi";
+export type ChatMode = "analyze" | "agent";
 export const DEFAULT_CHAT_MODE: ChatMode = "analyze";
 
-/** True for the full-tool modes (everything except the read-only Analyze). */
-export function isFullAccessMode(mode: ChatMode | undefined): boolean {
-  return (mode ?? DEFAULT_CHAT_MODE) !== "analyze";
+/** True for the read-only mode (Analyze). */
+export function isAnalyzeMode(mode: ChatMode | undefined): boolean {
+  return (mode ?? DEFAULT_CHAT_MODE) === "analyze";
 }
 
-/** True when orchestration (sub-agents) is enabled by the mode. */
-export function isMultiAgentMode(mode: ChatMode | undefined): boolean {
-  return mode === "multi";
+/** True for the full-tool mode (Agent). */
+export function isFullAccessMode(mode: ChatMode | undefined): boolean {
+  return !isAnalyzeMode(mode);
 }
 
 /** File-MUTATING tools: never advertised to nor callable by the model in
@@ -28,10 +28,6 @@ const BLOCKED_IN_ANALYZE = new Set(["Write", "StrReplace", "Edit", "Delete"]);
 
 export function isToolBlockedInAnalyze(name: string): boolean {
   return BLOCKED_IN_ANALYZE.has(name);
-}
-
-export function isAnalyzeMode(mode: ChatMode | undefined): boolean {
-  return (mode ?? DEFAULT_CHAT_MODE) === "analyze";
 }
 
 /** Extra filtering for a tool set (e.g. hide the Delegate tool from
@@ -56,7 +52,7 @@ export function toolDefinitionsForMode(
   opts?: ToolFilterOptions,
 ): ToolDefinition[] {
   return toolsForMode(tools, mode, opts).map((t) =>
-    mode === "analyze" && t.name === "Shell"
+    isAnalyzeMode(mode) && t.name === "Shell"
       ? { ...t.definition, description: t.definition.description + SHELL_READ_ONLY_NOTE }
       : t.definition,
   );

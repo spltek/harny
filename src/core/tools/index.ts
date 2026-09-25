@@ -25,6 +25,7 @@ export {
   ANALYZE_BLOCKED_TOOL_MESSAGE,
   ANALYZE_BLOCKED_SHELL_MESSAGE,
   isAnalyzeMode,
+  isFullAccessMode,
   isToolBlockedInAnalyze,
   isWriteCommand,
   toolDefinitionsForMode,

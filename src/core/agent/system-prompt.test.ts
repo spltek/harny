@@ -62,6 +62,21 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     expect(builder.build("agent")).toContain("Never repeat the same tool call");
   });
 
+  it("analyze mode + Delegate: read-only rules AND orchestration rules together", () => {
+    const builder = new DefaultSystemPromptBuilder(
+      (mode) => toolDefinitionsForMode(toolsWithDelegate(), mode),
+      () => "/w",
+    );
+    const prompt = builder.build("analyze");
+    expect(prompt).toContain("READ-ONLY MODE (Analyze)");
+    expect(prompt).toContain("they MUST be read-only");
+    expect(prompt).toContain("ORCHESTRATION (Delegate)");
+    // Read-only: no file-mutating tools advertised.
+    const listSection = prompt.slice(prompt.indexOf("You have access to these tools:"), prompt.indexOf("\nGuidelines:"));
+    expect(listSection).not.toContain("- Write:");
+    expect(listSection).not.toContain("- Edit:");
+  });
+
   it("adds orchestration rules only when the Delegate tool is available", () => {
     const withDelegate = new DefaultSystemPromptBuilder(
       (mode) => toolDefinitionsForMode(toolsWithDelegate(), mode),

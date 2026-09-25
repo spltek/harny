@@ -1,5 +1,6 @@
 import type { ToolDefinition } from "../tools/tool";
 import type { ChatMode } from "../tools/mode-policy";
+import { isAnalyzeMode } from "../tools/mode-policy";
 import { DELEGATE_TOOL_NAME } from "./orchestration";
 
 export interface SystemPromptBuilder {
@@ -30,13 +31,13 @@ export class DefaultSystemPromptBuilder implements SystemPromptBuilder {
     const definitions = effective ? [...effective] : this.toolDefinitions(mode);
     const toolList = definitions.map((d) => `- ${d.name}: ${this.summarize(d.description)}`).join("\n");
     const analyzeRules =
-      mode === "analyze"
+      isAnalyzeMode(mode)
         ? `
 
 READ-ONLY MODE (Analyze) — STRICT RULES:
 - You are in READ-ONLY mode: you inspect and answer, you NEVER modify anything.
 - The file-modifying tools (Write, StrReplace, Edit, Delete) are NOT available to you.
-- Sub-agents you delegate to must be read-only too (access: "read") — you cannot delegate a write while in Analyze mode.
+- If you delegate sub-agents, they MUST be read-only too (access: "read") — a write/create delegate is refused in this mode.
 - The Shell tool runs read-only: any command that would write, delete, move, rename, create, install or build files is refused before it runs. Do not try to work around it (no redirection, no scripts that write). Prefer the Read/Grep/Glob tools for inspection.
 - Do NOT run commands that modify the project (git add/commit/push, npm install, mkdir, touch, ...). Use Shell only for read-only inspection (ls, cat, find, git status/diff/log, tests that run without writing would still be refused if they write — so prefer Read/Grep/Glob).
 - Analyse the code, explain it, point out problems and propose what the change would be — but make no changes.`

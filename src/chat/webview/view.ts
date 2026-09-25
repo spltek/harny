@@ -54,8 +54,10 @@ interface ConfigState {
   workspaceReady?: boolean;
   thinkingMode?: string;
   thinkingLevel?: string;
-  /** Per-session chat mode (host truth): analyze (default), agent or multi. */
-  mode?: "analyze" | "agent" | "multi";
+  /** Per-session chat mode (host truth): analyze (default) or agent. */
+  mode?: "analyze" | "agent";
+  /** Global "Parallel" switch: orchestration/sub-agents enabled. */
+  parallel?: boolean;
   contextWindow?: number;
   compactionThresholdPercent?: number;
   outputTokens?: number;
@@ -98,9 +100,9 @@ const modeBtn = document.getElementById("mode-btn") as HTMLButtonElement;
 const modeBtnLabel = document.getElementById("mode-btn-label") as HTMLSpanElement;
 const modeBtnIconAnalyze = document.querySelector<SVGSVGElement>("#mode-btn-icon-analyze")!;
 const modeBtnIconAgent = document.querySelector<SVGSVGElement>("#mode-btn-icon-agent")!;
-const modeBtnIconMulti = document.querySelector<SVGSVGElement>("#mode-btn-icon-multi")!;
 const modeMenu = document.getElementById("mode-menu") as HTMLDivElement;
 const modeItems = Array.from(modeMenu.querySelectorAll<HTMLButtonElement>(".mode-item"));
+const parallelBtn = document.getElementById("parallel-btn") as HTMLButtonElement;
 const sendBtn = document.getElementById("send-btn") as HTMLButtonElement;
 const abortBtn = document.getElementById("abort-btn") as HTMLButtonElement;
 const attachBtn = document.getElementById("attach-btn") as HTMLButtonElement;
@@ -1574,6 +1576,7 @@ function setStreaming(active: boolean): void {
   // left open gets closed so the disabled state is obvious.
   if (active && !modeMenu.classList.contains("hidden")) closeModeMenu();
   modeBtn.disabled = active;
+  parallelBtn.disabled = active;
   // Branch keys on assistant bubbles follow the same lock.
   for (const b of document.querySelectorAll<HTMLButtonElement>(".branch-at")) {
     b.disabled = active;
@@ -1586,22 +1589,24 @@ function setStreaming(active: boolean): void {
 // picked mode in its persistent webview state (still Analyze by default, so a
 // first run always lands on "Analyze"). The button is painted in the mode
 // accent with a WHITE icon/label; clicking it opens the vertical dropdown.
-type ChatMode = "analyze" | "agent" | "multi";
+type ChatMode = "analyze" | "agent";
 const DEFAULT_MODE: ChatMode = "analyze";
 let currentMode: ChatMode = DEFAULT_MODE;
+
+function isChatMode(v: unknown): v is ChatMode {
+  return v === "analyze" || v === "agent";
+}
 
 /** Render the active state: button accent + label/icon, dropdown selection.
  * `notify` tells the host to store it on the session runtime. The mode is NOT
  * persisted in the panel: every load starts from Analyze. */
 function applyMode(mode: ChatMode, opts?: { notify?: boolean }): void {
-  if (mode !== "analyze" && mode !== "agent" && mode !== "multi") mode = DEFAULT_MODE;
+  if (!isChatMode(mode)) mode = DEFAULT_MODE;
   currentMode = mode;
   modeBtn.classList.toggle("is-agent", mode === "agent");
-  modeBtn.classList.toggle("is-multi", mode === "multi");
-  modeBtnLabel.textContent = mode === "agent" ? "Agent" : mode === "multi" ? "Multi Agent" : "Analyze";
+  modeBtnLabel.textContent = mode === "agent" ? "Agent" : "Analyze";
   modeBtnIconAnalyze.classList.toggle("hidden", mode !== "analyze");
   modeBtnIconAgent.classList.toggle("hidden", mode !== "agent");
-  modeBtnIconMulti.classList.toggle("hidden", mode !== "multi");
   for (const item of modeItems) {
     const on = item.dataset.mode === mode;
     item.classList.toggle("is-active", on);
@@ -1632,7 +1637,7 @@ for (const item of modeItems) {
   item.addEventListener("click", () => {
     closeModeMenu();
     const m = item.dataset.mode as ChatMode | undefined;
-    if (m !== "analyze" && m !== "agent" && m !== "multi") return;
+    if (!isChatMode(m)) return;
     if (m === currentMode) return;
     applyMode(m, { notify: true });
   });
@@ -1652,6 +1657,24 @@ window.addEventListener("keydown", (e) => {
     closeModeMenu();
     modeBtn.focus();
   }
+});
+
+// ── Parallel toggle (orchestration / sub-agents) ──
+// Press/release switch right after the mode button: blue when pressed. The
+// host keeps it as a global master switch; the panel re-asserts it on load.
+let parallelOn = false;
+
+/** Render the pressed state. `notify` tells the host (global switch). */
+function applyParallel(on: boolean, opts?: { notify?: boolean }): void {
+  parallelOn = on;
+  parallelBtn.classList.toggle("is-on", on);
+  parallelBtn.setAttribute("aria-pressed", String(on));
+  if (opts?.notify) vscode.postMessage({ type: "setParallel", parallel: on });
+}
+
+parallelBtn.addEventListener("click", () => {
+  if (parallelBtn.disabled) return;
+  applyParallel(!parallelOn, { notify: true });
 });
 
 // ── Model dropdown (all providers, declared or detected from the host) ──
@@ -2260,8 +2283,11 @@ window.addEventListener("message", (e) => {
     case "config":
       renderModelSelect(msg.config || {});
       renderThinkingSelect(msg.config || {});
-      if (msg.config && (msg.config.mode === "analyze" || msg.config.mode === "agent" || msg.config.mode === "multi")) {
+      if (msg.config && isChatMode(msg.config.mode)) {
         applyMode(msg.config.mode);
+      }
+      if (msg.config && typeof msg.config.parallel === "boolean") {
+        applyParallel(msg.config.parallel);
       }
       ctxInput.value = String(clampContextWindow((msg.config && msg.config.contextWindow) || DEFAULT_CONTEXT_WINDOW));
       renderOutputTokens(msg.config || {});
@@ -2336,8 +2362,11 @@ function renderViewState(state: {
   renderTabs(currentSessions);
   renderModelSelect(state.config || {});
   renderThinkingSelect(state.config || {});
-  if (state.config && (state.config.mode === "analyze" || state.config.mode === "agent" || state.config.mode === "multi")) {
+  if (state.config && isChatMode(state.config.mode)) {
     applyMode(state.config.mode);
+  }
+  if (state.config && typeof state.config.parallel === "boolean") {
+    applyParallel(state.config.parallel);
   }
   ctxInput.value = String(clampContextWindow((state.config && state.config.contextWindow) || DEFAULT_CONTEXT_WINDOW));
   renderOutputTokens(state.config || {});
@@ -2421,12 +2450,13 @@ const savedCollapsed = (vscode.getState() as { controlsCollapsed?: boolean } | u
 const collapsedDefault = savedCollapsed ?? true;
 document.body.classList.toggle("controls-collapsed", collapsedDefault);
 ctlToggle.setAttribute("aria-expanded", String(!collapsedDefault));
-// Mode + multi: the PANEL's remembered choice wins on load (so a reload keeps
-// Mode AND multi: both start from their defaults on EVERY load — neither is
-// restored from a remembered panel state. The mode is re-asserted to the host
-// so the active session's agent resets to Analyze too (no stale state).
+// Mode AND Parallel: both start from their defaults on EVERY load — neither is
+// restored from a remembered panel state. Both are re-asserted to the host so
+// the active session's agent resets too (no stale state).
 applyMode("analyze");
+applyParallel(false);
 vscode.postMessage({ type: "setMode", mode: "analyze" });
+vscode.postMessage({ type: "setParallel", parallel: false });
 renderViewState({
   sessions: init.sessions || [],
   openIds: init.openIds || [],

@@ -909,6 +909,7 @@ describe("Orchestration (Delegate)", () => {
     mode?: "analyze" | "agent";
     allowDelegation?: boolean;
     maxParallel?: number;
+    delegate?: boolean;
     spawn?: (spec: DelegateSpec, onEvent?: (e: SubAgentEvent) => void) => Promise<ToolResult>;
   }): { agent: Agent; history: InMemoryChatHistory; eventLog: AgentEvent[] } {
     const config = new StaticConfigProvider(
@@ -931,8 +932,8 @@ describe("Orchestration (Delegate)", () => {
       allowDelegation: opts.allowDelegation,
       spawnSubAgent: opts.spawn ?? (async () => ({ content: "default report", isError: false })),
     });
-    if (opts.mode) agent.setMode(opts.mode);
-    else agent.setMode("multi"); // orchestration tests need the multi mode
+    agent.setMode(opts.mode ?? "agent");
+    agent.setDelegation(opts.delegate !== false); // orchestration tests: ON by default
     return { agent, history, eventLog };
   }
 
@@ -1134,7 +1135,7 @@ describe("Orchestration (Delegate)", () => {
         { id: "A", goal: "a", access: "write", resources: ["a.ts"], parallel: "yes" },
         { id: "B", goal: "b", access: "create", resources: ["b.ts"], parallel: "yes" },
       ],
-      mode: "multi",
+      mode: "agent",
       spawn,
     });
 
@@ -1143,11 +1144,12 @@ describe("Orchestration (Delegate)", () => {
     expect(order).toEqual(["start:A", "end:A", "start:B", "end:B"]);
   });
 
-  it("refuses delegation in Analyze / Agent modes (only Multi Agent orchestrates)", async () => {
+  it("refuses delegation when Parallel is OFF (Analyze or Agent)", async () => {
     let spawned = 0;
     const { agent, history } = build({
       calls: [{ id: "A", goal: "read", access: "read", resources: ["a.ts"] }],
       mode: "analyze",
+      delegate: false,
       spawn: async () => {
         spawned++;
         return { content: "x", isError: false };
@@ -1158,6 +1160,27 @@ describe("Orchestration (Delegate)", () => {
 
     expect(spawned).toBe(0);
     expect(history.all().find((m) => m.role === "tool")?.content).toContain("Delegation is disabled");
+  });
+
+  it("Analyze + Parallel: orchestrates read-only sub-agents but refuses writers", async () => {
+    const spawned: string[] = [];
+    const { agent, history } = build({
+      calls: [
+        { id: "A", goal: "read a", access: "read", resources: ["a.ts"], parallel: "yes" },
+        { id: "B", goal: "write b", access: "write", resources: ["b.ts"] },
+      ],
+      mode: "analyze",
+      spawn: async (spec) => {
+        spawned.push(spec.id);
+        return { content: "r", isError: false };
+      },
+    });
+
+    await agent.send("go");
+
+    // The read-only sub-agent ran; the writer was refused (read-only mode).
+    expect(spawned).toEqual(["A"]);
+    expect(history.all().some((m) => m.role === "tool" && /read-only/i.test(m.content ?? ""))).toBe(true);
   });
 
   it("rejects invalid delegate args (missing resources) without spawning", async () => {
@@ -1191,7 +1214,7 @@ describe("Orchestration (Delegate)", () => {
       allowDelegation: true,
       // no spawnSubAgent on purpose
     });
-    agent.setMode("multi");
+    agent.setDelegation(true);
 
     await agent.send("go");
 
@@ -1230,7 +1253,7 @@ describe("Orchestration (Delegate)", () => {
     expect(history.all().find((m) => m.role === "tool")?.content).toContain("cannot delegate further");
   });
 
-  it("switching from Multi Agent to Agent disables orchestration", async () => {
+  it("turning Parallel off disables orchestration", async () => {
     let spawned = 0;
     const { agent, history } = build({
       calls: [{ id: "A", goal: "x", access: "read", resources: ["a.ts"] }],
@@ -1239,7 +1262,7 @@ describe("Orchestration (Delegate)", () => {
         return { content: "x", isError: false };
       },
     });
-    agent.setMode("agent"); // back to single-agent full access
+    agent.setDelegation(false); // Parallel turned off
 
     await agent.send("go");
 
@@ -1277,14 +1300,15 @@ describe("Orchestration (Delegate)", () => {
       spawnSubAgent: async () => ({ content: "r", isError: false }),
     });
 
-    // Agent mode (full tools, single agent): Delegate is NOT advertised.
+    // Parallel OFF: Delegate is NOT advertised.
     agent.setMode("agent");
+    agent.setDelegation(false);
     await agent.send("off");
     expect(seen[0]).not.toContain("- Delegate:");
     expect(seen[0]).not.toContain("ORCHESTRATION (Delegate)");
 
-    // Multi Agent mode: Delegate + orchestration rules appear.
-    agent.setMode("multi");
+    // Parallel ON: Delegate + orchestration rules appear.
+    agent.setDelegation(true);
     await agent.send("on");
     expect(seen[1]).toContain("- Delegate:");
     expect(seen[1]).toContain("ORCHESTRATION (Delegate)");

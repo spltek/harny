@@ -36,15 +36,14 @@ function setupDom(
         <button type="button" id="mode-btn" aria-haspopup="listbox" aria-expanded="false">
           <svg id="mode-btn-icon-analyze" width="12" height="12"></svg>
           <svg id="mode-btn-icon-agent" class="hidden" width="12" height="12"></svg>
-          <svg id="mode-btn-icon-multi" class="hidden" width="12" height="12"></svg>
           <span id="mode-btn-label">Analyze</span>
         </button>
         <div id="mode-menu" class="hidden" role="listbox">
           <button type="button" class="mode-item is-active" data-mode="analyze" role="option" aria-selected="true">Analyze</button>
           <button type="button" class="mode-item" data-mode="agent" role="option" aria-selected="false">Agent</button>
-          <button type="button" class="mode-item" data-mode="multi" role="option" aria-selected="false">Multi Agent</button>
         </div>
       </div>
+      <button type="button" id="parallel-btn" aria-pressed="false">Parallel</button>
       <div id="attach-row">
         <div id="attachment-chips" class="hidden"></div>
       </div>
@@ -212,12 +211,9 @@ describe("view webview client", () => {
     const menu = document.getElementById("mode-menu") as HTMLDivElement;
     const analyze = document.querySelector('.mode-item[data-mode="analyze"]') as HTMLButtonElement;
     const agent = document.querySelector('.mode-item[data-mode="agent"]') as HTMLButtonElement;
-    const multi = document.querySelector('.mode-item[data-mode="multi"]') as HTMLButtonElement;
-    const iconMulti = document.querySelector<SVGElement>("#mode-btn-icon-multi")!;
     // Default: Analyze shown, dropdown closed, no accent.
     expect(label.textContent).toBe("Analyze");
     expect(btn.classList.contains("is-agent")).toBe(false);
-    expect(btn.classList.contains("is-multi")).toBe(false);
     expect(menu.classList.contains("hidden")).toBe(true);
     expect(analyze.getAttribute("aria-selected")).toBe("true");
 
@@ -227,26 +223,15 @@ describe("view webview client", () => {
     expect(posted).toContainEqual({ type: "setMode", mode: "agent" });
     expect(label.textContent).toBe("Agent");
     expect(btn.classList.contains("is-agent")).toBe(true);
-    expect(btn.classList.contains("is-multi")).toBe(false);
     expect(agent.getAttribute("aria-selected")).toBe("true");
     expect(menu.classList.contains("hidden")).toBe(true);
-
-    // Pick Multi Agent (blue) — the multi icon shows.
-    btn.click();
-    multi.click();
-    expect(posted).toContainEqual({ type: "setMode", mode: "multi" });
-    expect(label.textContent).toBe("Multi Agent");
-    expect(btn.classList.contains("is-multi")).toBe(true);
-    expect(btn.classList.contains("is-agent")).toBe(false);
-    expect(iconMulti.classList.contains("hidden")).toBe(false);
-    expect(multi.getAttribute("aria-selected")).toBe("true");
 
     // Back to Analyze.
     btn.click();
     analyze.click();
     expect(posted).toContainEqual({ type: "setMode", mode: "analyze" });
     expect(label.textContent).toBe("Analyze");
-    expect(btn.classList.contains("is-multi")).toBe(false);
+    expect(btn.classList.contains("is-agent")).toBe(false);
   });
 
   it("closes the mode dropdown on outside click", async () => {
@@ -260,12 +245,11 @@ describe("view webview client", () => {
     expect(btn.getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("follows the host's per-session mode pushed in the config (agent / multi)", async () => {
+  it("follows the host's per-session mode pushed in the config", async () => {
     await loadView();
     const label = document.getElementById("mode-btn-label") as HTMLSpanElement;
     const btn = document.getElementById("mode-btn") as HTMLButtonElement;
     const agent = document.querySelector('.mode-item[data-mode="agent"]') as HTMLButtonElement;
-    // No mode in config → stays on the default.
     hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } });
     expect(label.textContent).toBe("Analyze");
 
@@ -273,10 +257,38 @@ describe("view webview client", () => {
     expect(label.textContent).toBe("Agent");
     expect(btn.classList.contains("is-agent")).toBe(true);
     expect(agent.classList.contains("is-active")).toBe(true);
+  });
 
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, mode: "multi", models: [], providerModels: [], contextWindow: 128000 } });
-    expect(label.textContent).toBe("Multi Agent");
-    expect(btn.classList.contains("is-multi")).toBe(true);
+  it("Parallel: off by default, turns blue on click and posts setParallel", async () => {
+    await loadView();
+    const btn = document.getElementById("parallel-btn") as HTMLButtonElement;
+    expect(btn.classList.contains("is-on")).toBe(false);
+    expect(btn.getAttribute("aria-pressed")).toBe("false");
+
+    btn.click();
+    expect(posted).toContainEqual({ type: "setParallel", parallel: true });
+    expect(btn.classList.contains("is-on")).toBe(true);
+    expect(btn.getAttribute("aria-pressed")).toBe("true");
+
+    btn.click();
+    expect(posted).toContainEqual({ type: "setParallel", parallel: false });
+    expect(btn.classList.contains("is-on")).toBe(false);
+    expect(btn.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("Parallel follows the host config and locks while working", async () => {
+    await loadView();
+    const btn = document.getElementById("parallel-btn") as HTMLButtonElement;
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, parallel: true, models: [], providerModels: [], contextWindow: 128000 } });
+    expect(btn.classList.contains("is-on")).toBe(true);
+
+    hostMessage({ type: "status", active: true });
+    const before = posted.length;
+    btn.click();
+    expect(posted.slice(before)).not.toContainEqual({ type: "setParallel", parallel: false });
+    hostMessage({ type: "status", active: false });
+    btn.click();
+    expect(posted.slice(before)).toContainEqual({ type: "setParallel", parallel: false });
   });
 
   it("locks the mode button while working and ignores clicks", async () => {
@@ -297,11 +309,13 @@ describe("view webview client", () => {
     expect(menu.classList.contains("hidden")).toBe(false);
   });
 
-  it("always starts from Analyze on load (mode is not restored)", async () => {
-    setupDom({}, { mode: "agent", multi: true });
+  it("always starts from Analyze + Parallel off on load (nothing is restored)", async () => {
+    setupDom({}, { mode: "agent", parallel: true });
     await loadView();
     expect(posted).toContainEqual({ type: "setMode", mode: "analyze" });
+    expect(posted).toContainEqual({ type: "setParallel", parallel: false });
     expect(document.getElementById("mode-btn-label")?.textContent).toBe("Analyze");
+    expect(document.getElementById("parallel-btn")?.classList.contains("is-on")).toBe(false);
   });
 
   it("renders the thinking level dropdown per provider capability", async () => {

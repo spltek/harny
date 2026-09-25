@@ -86,11 +86,11 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/\.thinking-block\.settling\s*\{[^}]*transition\s*:\s*border-color 0\.7s ease/s);
     // The multi toggle exists on the AI Model row after the model dropdown,
     // with the press/release (aria-pressed) state.
-    // The mode dropdown has all three choices, including Multi Agent.
+    // Two modes + the Parallel toggle right after the mode button.
     expect(html).toMatch(/data-mode="analyze"/);
     expect(html).toMatch(/data-mode="agent"/);
-    expect(html).toMatch(/data-mode="multi"[\s\S]*?Multi Agent/);
-    expect(html).toMatch(/id="mode-btn-icon-multi"/);
+    expect(html).toMatch(/id="mode-select"[\s\S]*?<\/div>[\s\S]*?<button type="button" id="parallel-btn"/);
+    expect(html).toMatch(/id="parallel-btn"[\s\S]*?aria-pressed="false"[\s\S]*?Parallel/);
   });
 
   it("styles the sub-agent bubble with its status states", () => {

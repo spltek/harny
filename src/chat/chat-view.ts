@@ -36,6 +36,12 @@ export class ChatViewProvider implements WebviewViewProvider {
   // fetch itself is bounded by HOST_MODEL_TIMEOUT_MS anyway.
   private static readonly HOST_CACHE_TTL = 5_000;
   private compacting = false;
+  /**
+   * Orchestration (sub-agents) master switch — the UI "Parallel" toggle.
+   * GLOBAL on purpose: it is a UI-level switch, so it must never diverge from
+   * the agent. The webview re-asserts it on load.
+   */
+  private parallelEnabled = false;
   /** FIFO queue for in-panel modals (name dialog, alerts, confirms…). */
   private modals: PanelModalQueue;
 
@@ -520,13 +526,20 @@ export class ChatViewProvider implements WebviewViewProvider {
 
       case "setMode": {
         const rt = this.activeRuntime();
-        if (!rt || (msg.mode !== "analyze" && msg.mode !== "agent" && msg.mode !== "multi")) break;
-        rt.mode = msg.mode as "analyze" | "agent" | "multi";
-        // The agent is the one enforcing it: analyze = read-only; multi = full
-        // tools + orchestration (sub-agents).
+        if (!rt || (msg.mode !== "analyze" && msg.mode !== "agent")) break;
+        rt.mode = msg.mode as "analyze" | "agent";
+        // The agent enforces it: analyze = read-only; agent = full tools.
         rt.agent.setMode(rt.mode);
-        // Lightweight push so the toggle reflects the per-session mode (also
-        // re-renders the toggle correctly after a session switch).
+        void this.pushConfig();
+        break;
+      }
+
+      case "setParallel": {
+        if (typeof msg.parallel !== "boolean") break;
+        // Global master switch: applies to the active agent now, and to every
+        // session from here on (also re-synced at send time).
+        this.parallelEnabled = msg.parallel;
+        this.activeRuntime()?.agent.setDelegation(this.parallelEnabled);
         void this.pushConfig();
         break;
       }
@@ -731,9 +744,11 @@ export class ChatViewProvider implements WebviewViewProvider {
 
   private async send(rt: SessionRuntime, msg: any): Promise<void> {
     if (rt.agent.streaming) return;
-    // Re-assert the mode on the agent right before it runs: a session created
-    // before a UI toggle (or a reloaded panel) must not send with stale state.
+    // Re-assert the controls on the agent right before it runs: a session
+    // created before a UI toggle (or a reloaded panel) must not send with
+    // stale mode/parallel state.
     rt.agent.setMode(rt.mode ?? "analyze");
+    rt.agent.setDelegation(this.parallelEnabled);
     const rawText = typeof msg.text === "string" ? msg.text : "";
     const attached = (msg.attachments as AttachmentInfo[] | undefined) ?? [];
     // A message may carry text, attachments, or both — an attachment-only send
@@ -990,7 +1005,8 @@ export class ChatViewProvider implements WebviewViewProvider {
     workspaceReady: boolean;
     thinkingMode?: "bool" | "effort" | "type" | "reasoning" | "unspecified";
     thinkingLevel?: "off" | "low" | "medium" | "high";
-    mode?: "analyze" | "agent" | "multi";
+    mode?: "analyze" | "agent";
+    parallel?: boolean;
     contextWindow: number;
     compactionThresholdPercent?: number;
     outputTokens: number;
@@ -1060,6 +1076,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       thinkingMode: cfg.thinkingMode,
       thinkingLevel: cfg.thinkingLevel,
       mode: this.activeRuntime()?.mode,
+      parallel: this.parallelEnabled,
       contextWindow: this.activeRuntime()?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
       // Only the session override, so the UI can show "Auto" (undefined) vs
       // an explicit value. Config-file defaults stay effective but hidden.

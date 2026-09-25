@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   isAnalyzeMode,
-  isMultiAgentMode,
   isToolBlockedInAnalyze,
   isWriteCommand,
   toolDefinitionsForMode,
@@ -37,8 +36,6 @@ describe("mode policy", () => {
     const analyze = toolsForMode(all, "analyze").map((t) => t.name);
     expect(analyze).toEqual(["Read", "Shell", "Grep"]);
     expect(toolsForMode(all, "agent").map((t) => t.name)).toEqual(all.map((t) => t.name));
-    // "multi" is full access too (plus orchestration, handled elsewhere).
-    expect(toolsForMode(all, "multi").map((t) => t.name)).toEqual(all.map((t) => t.name));
   });
 
   it("toolDefinitionsForMode tags the shell as read-only in analyze", () => {
@@ -122,13 +119,9 @@ describe("mode policy", () => {
     expect(isWriteCommand("git diff --stat")).toBe(false);
   });
 
-  it("isAnalyzeMode: only analyze is read-only; agent/multi are full access", () => {
+  it("isAnalyzeMode: only analyze is read-only; agent is full access", () => {
     expect(isAnalyzeMode(undefined)).toBe(true);
     expect(isAnalyzeMode("analyze")).toBe(true);
     expect(isAnalyzeMode("agent")).toBe(false);
-    expect(isAnalyzeMode("multi")).toBe(false);
-    expect(isMultiAgentMode("multi")).toBe(true);
-    expect(isMultiAgentMode("agent")).toBe(false);
-    expect(isMultiAgentMode(undefined)).toBe(false);
   });
 });

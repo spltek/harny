@@ -28,8 +28,13 @@ export interface ChatController {
   /** Queue a user message without starting the agent loop (used by context-menu commands). */
   addUserMessage(content: string): void;
   /**
-   * Set the chat mode: "analyze" (read-only), "agent" (full tools) or
-   * "multi" (full tools + orchestration/sub-agents). Defaults to analyze.
+   * Set the chat mode: "analyze" (read-only) or "agent" (full tool access).
+   * Defaults to analyze.
    */
   setMode(mode: ChatMode): void;
+  /**
+   * Enable/disable orchestration (sub-agents) — the UI "Parallel" toggle.
+   * When off, the Delegate tool is hidden and refused.
+   */
+  setDelegation(enabled: boolean): void;
 }

@@ -667,14 +667,12 @@ ${renderViewConfig(deps)}
     #mode-btn:hover { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45), 0 0 14px rgba(217, 95, 39, 0.42); }
     #mode-btn:active { transform: scale(0.96); }
     #mode-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-    /* Agent mode: violet. Multi Agent mode: blue. (White icon stays.) */
+    /* Agent mode: violet (white icon stays). */
     #mode-btn.is-agent { background: linear-gradient(135deg, #8b6cff, #5a3df0); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 12px rgba(124, 92, 255, 0.4); }
     #mode-btn.is-agent:hover { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45), 0 0 16px rgba(124, 92, 255, 0.52); }
-    #mode-btn.is-multi { background: linear-gradient(135deg, #4c8dff, #2f6fed); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 12px rgba(76, 141, 255, 0.4); }
-    #mode-btn.is-multi:hover { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45), 0 0 16px rgba(76, 141, 255, 0.55); }
     #mode-btn:disabled { opacity: 0.55; cursor: default; transform: none; box-shadow: none; }
-    #mode-btn-icon-analyze, #mode-btn-icon-agent, #mode-btn-icon-multi { flex-shrink: 0; }
-    #mode-btn-icon-analyze.hidden, #mode-btn-icon-agent.hidden, #mode-btn-icon-multi.hidden { display: none; }
+    #mode-btn-icon-analyze, #mode-btn-icon-agent { flex-shrink: 0; }
+    #mode-btn-icon-analyze.hidden, #mode-btn-icon-agent.hidden { display: none; }
     /* Chevron rotates when the dropdown is open. */
     #mode-btn .mode-btn-chevron { flex-shrink: 0; color: rgba(255, 255, 255, 0.85); transition: transform 0.18s; }
     #mode-select.open #mode-btn .mode-btn-chevron { transform: rotate(180deg); }
@@ -716,12 +714,44 @@ ${renderViewConfig(deps)}
     /* Icon + check tinted by mode accent (safe here: dark menu background). */
     .mode-item[data-mode="analyze"] svg { color: var(--accent); }
     .mode-item[data-mode="agent"] svg { color: #a98dff; }
-    .mode-item[data-mode="multi"] svg { color: #61afef; }
     .mode-item.is-active:not(:hover) { background: rgba(255, 255, 255, 0.06); }
     .mode-check { margin-left: 2px; flex-shrink: 0; visibility: hidden; }
     .mode-item.is-active .mode-check { visibility: visible; color: var(--accent); }
     .mode-item[data-mode="agent"].is-active .mode-check { color: #a98dff; }
-    .mode-item[data-mode="multi"].is-active .mode-check { color: #61afef; }
+
+    /* Parallel toggle: press/release button right after the mode button.
+       Released = quiet dark pill; PRESSED = blue with white icon + label. */
+    #parallel-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      height: 1.85rem;
+      padding: 0 10px 0 8px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--fg);
+      font-size: var(--fs-sm);
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+      transition: background 0.18s, box-shadow 0.18s, color 0.18s, border-color 0.18s, opacity 0.18s;
+    }
+    #parallel-btn svg { flex-shrink: 0; color: var(--muted); transition: color 0.18s; }
+    #parallel-btn:hover { border-color: rgba(255, 255, 255, 0.25); color: var(--fg-strong); }
+    #parallel-btn:hover svg { color: var(--fg); }
+    #parallel-btn:focus-visible { outline: 2px solid #4c8dff; outline-offset: 2px; }
+    #parallel-btn:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
+    #parallel-btn.is-on {
+      background: linear-gradient(135deg, #4c8dff, #2f6fed);
+      border-color: transparent;
+      color: #ffffff;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 12px rgba(76, 141, 255, 0.4);
+    }
+    #parallel-btn.is-on svg { color: #ffffff; }
+    #parallel-btn.is-on:hover { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45), 0 0 16px rgba(76, 141, 255, 0.55); }
 
     .card-title {
       font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
@@ -1182,12 +1212,11 @@ ${renderViewConfig(deps)}
          dropdown anchors to the button and overlays the cards below. -->
     <div class="ctl-card ctl-card-model">
       <div id="mode-select"
-           title="Analyze: read-only · Agent: full tool use · Multi Agent: full tool use + sub-agents">
+           title="Analyze: read-only · Agent: full tool use">
         <button type="button" id="mode-btn" aria-haspopup="listbox" aria-expanded="false"
                 aria-label="Mode">
           <svg id="mode-btn-icon-analyze" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M20 20l-4.3-4.3" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
           <svg id="mode-btn-icon-agent" class="hidden" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
-          <svg id="mode-btn-icon-multi" class="hidden" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><circle cx="7.5" cy="9" r="2.4" fill="currentColor"/><circle cx="16.5" cy="9" r="2.4" fill="currentColor"/><circle cx="10" cy="15.5" r="2.2" fill="currentColor"/><circle cx="14" cy="15.5" r="2.2" fill="currentColor"/></svg>
           <span id="mode-btn-label">Analyze</span>
           <svg class="mode-btn-chevron" width="10" height="10" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
         </button>
@@ -1204,14 +1233,15 @@ ${renderViewConfig(deps)}
             <span>Agent</span>
             <svg class="mode-check" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
           </button>
-          <button type="button" class="mode-item" data-mode="multi" role="option" aria-selected="false"
-                  title="Multi Agent: full tool use + orchestration (launches sub-agents)">
-            <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><circle cx="7.5" cy="9" r="2.4" fill="currentColor"/><circle cx="16.5" cy="9" r="2.4" fill="currentColor"/><circle cx="10" cy="15.5" r="2.2" fill="currentColor"/><circle cx="14" cy="15.5" r="2.2" fill="currentColor"/></svg>
-            <span>Multi Agent</span>
-            <svg class="mode-check" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
-          </button>
         </div>
       </div>
+      <!-- Parallel: press/release toggle enabling orchestration (sub-agents)
+           for the current mode. Blue when pressed. -->
+      <button type="button" id="parallel-btn" aria-pressed="false"
+              title="Parallel: let the agent launch sub-agents (read-only in Analyze)">
+        <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><circle cx="7.5" cy="9" r="2.4" fill="currentColor"/><circle cx="16.5" cy="9" r="2.4" fill="currentColor"/><circle cx="10" cy="15.5" r="2.2" fill="currentColor"/><circle cx="14" cy="15.5" r="2.2" fill="currentColor"/></svg>
+        <span>Parallel</span>
+      </button>
       <span class="model-label">AI Model:</span>
       <select id="model-select" title="Switch model"></select>
       <button id="gear-btn" class="icon-btn" title="Configure providers & models"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
