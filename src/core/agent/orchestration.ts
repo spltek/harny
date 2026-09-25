@@ -19,8 +19,9 @@ export interface DelegateSpec {
   access: DelegateAccess;
   /** Files/dirs the sub-agent will touch (drives the parallel decision). */
   resources: string[];
-  /** Orchestrator's request to run this alongside other reads in the turn. */
-  parallel: boolean;
+  /** Whether this read-only sub-task may run alongside other reads. Undefined
+   * = default (read-only tasks ARE parallelizable); `false` = force serial. */
+  parallel?: boolean;
   /** Ids of sibling sub-tasks that must finish first. */
   after: string[];
 }
@@ -49,7 +50,8 @@ export function parseDelegateSpec(args: Record<string, unknown>): { spec?: Deleg
   const id = typeof args.id === "string" && args.id.trim() ? args.id.trim() : "";
   const role = typeof args.role === "string" && args.role.trim() ? args.role.trim() : undefined;
   const context = typeof args.context === "string" && args.context.trim() ? args.context.trim() : undefined;
-  const parallel = args.parallel === "yes" || args.parallel === true;
+  const parallel =
+    args.parallel === "yes" ? true : args.parallel === "no" ? false : undefined;
   const after = Array.isArray(args.after)
     ? args.after.filter((a): a is string => typeof a === "string" && a.trim().length > 0).map((a) => a.trim())
     : [];
@@ -57,11 +59,11 @@ export function parseDelegateSpec(args: Record<string, unknown>): { spec?: Deleg
   return { spec: { id, goal, context, role, access, resources, parallel, after } };
 }
 
-/** A read-only sub-task that explicitly asked to run concurrently and has no
- * ordering dependency is eligible for a parallel batch. WRITERS ARE NEVER
- * PARALLEL — edits/creations always run one at a time. */
+/** A read-only sub-task with no ordering dependency is eligible for a parallel
+ * batch BY DEFAULT (opt-out: set parallel:"no" to force it serial). WRITERS ARE
+ * NEVER PARALLEL — edits/creations always run one at a time. */
 export function isParallelizable(spec: DelegateSpec): boolean {
-  return spec.access === "read" && spec.parallel && spec.after.length === 0;
+  return spec.access === "read" && spec.parallel !== false && spec.after.length === 0;
 }
 
 function normalizePath(p: string): string {

@@ -20,9 +20,9 @@ export class DelegateTool implements Tool {
       "DECLARE EXACTLY what the sub-agent will touch so the system can parallelize safely:\n" +
       "- resources: the files/dirs it will read or write (paths relative to the working directory).\n" +
       "- access: \"read\" (inspect only), \"write\" (modify existing files) or \"create\" (new files).\n" +
-      "- parallel: \"yes\" to allow this sub-agent to run at the same time as OTHER read-only " +
-      "sub-agents launched in the SAME turn. WRITERS ARE NEVER PARALLEL: any write/create sub-agent " +
-      "runs alone, one at a time (edits are never concurrent).\n" +
+      "- parallel: read-only sub-agents launched in the SAME turn run TOGETHER BY DEFAULT. " +
+      "Set \"no\" to force one to run alone (serial). WRITERS ARE NEVER PARALLEL: any write/create " +
+      "sub-agent runs alone, one at a time (edits are never concurrent).\n" +
       "- after: ids of sibling sub-tasks that must finish first (use it when a sub-agent needs another's output).\n\n" +
       "RULES:\n" +
       "- MANDATORY FIRST STEP (every request): assess parallelizability before acting. Split the task and decide " +
@@ -31,7 +31,8 @@ export class DelegateTool implements Tool {
       "- Parallelize ONLY independent read-only analysis on disjoint or shared-read files.\n" +
       "- Never launch two writers that touch the same file; serialize them (after) or give the file to ONE owner.\n" +
       "- Do NOT parallelize trivial tasks or tasks that would do the same work — parallelism costs tokens.\n" +
-      "- Emit several Delegate calls in the SAME turn to request parallelism; results arrive together.",
+      "- Emit several Delegate calls in the SAME turn: read-only sub-agents then run in parallel (up to " +
+      "the configured max); results arrive together.",
     parameters: {
       type: "object",
       properties: {
@@ -65,7 +66,8 @@ export class DelegateTool implements Tool {
         parallel: {
           type: "string",
           enum: ["yes", "no"],
-          description: 'Allow running alongside other read-only sub-agents from the same turn. Defaults to "no".',
+          description:
+            'Read-only sub-agents run in parallel with the others from the same turn BY DEFAULT; set "no" to force this one serial.',
         },
         after: {
           type: "array",

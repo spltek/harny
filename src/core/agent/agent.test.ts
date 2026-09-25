@@ -1380,6 +1380,25 @@ describe("Orchestration (Delegate)", () => {
     ).toBe(true);
   });
 
+  it("read-only delegates are parallel BY DEFAULT (no parallel flag needed)", async () => {
+    let running = 0;
+    let max = 0;
+    const spawn = async (): Promise<ToolResult> => {
+      running++;
+      max = Math.max(max, running);
+      await new Promise((r) => setTimeout(r, 5));
+      running--;
+      return { content: "r", isError: false };
+    };
+    // No `parallel` field at all — reads must still run together.
+    const calls = ["A", "B", "C"].map((id, i) => ({ id, goal: id, access: "read", resources: [`${i}.ts`] }));
+    const { agent } = build({ calls, maxParallel: 2, spawn });
+
+    await agent.send("go");
+
+    expect(max).toBe(2);
+  });
+
   it("rejects invalid delegate args (missing resources) without spawning", async () => {
     let spawned = 0;
     const { agent, history } = build({

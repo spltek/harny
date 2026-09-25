@@ -29,7 +29,7 @@ describe("parseDelegateSpec", () => {
   it("parses a valid spec and defaults the optional fields", () => {
     const { spec: s, error } = parseDelegateSpec({ goal: "analyze", access: "read", resources: ["src/a.ts"] });
     expect(error).toBeUndefined();
-    expect(s).toMatchObject({ goal: "analyze", access: "read", resources: ["src/a.ts"], parallel: false, after: [] });
+    expect(s).toMatchObject({ goal: "analyze", access: "read", resources: ["src/a.ts"], parallel: undefined, after: [] });
   });
 
   it("requires goal, a valid access and a non-empty resources list", () => {
@@ -54,6 +54,8 @@ describe("parseDelegateSpec", () => {
 describe("parallelism policy", () => {
   it("only read sub-tasks that asked for it and have no dependency are parallelizable", () => {
     expect(isParallelizable(spec({ access: "read", parallel: true }))).toBe(true);
+    // Default (no `parallel` flag) is parallelizable for reads; explicit "no" is not.
+    expect(isParallelizable({ ...spec({ access: "read" }), parallel: undefined })).toBe(true);
     expect(isParallelizable(spec({ access: "read", parallel: false }))).toBe(false);
     expect(isParallelizable(spec({ access: "write", parallel: true }))).toBe(false);
     expect(isParallelizable(spec({ access: "create", parallel: true }))).toBe(false);
