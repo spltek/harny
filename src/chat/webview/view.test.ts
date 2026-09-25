@@ -705,20 +705,38 @@ describe("view webview client", () => {
     expect(document.querySelector(".msg.assistant.streaming")).toBe(null);
   });
 
-  it("ignores empty text/thinking deltas (no empty bubble)", async () => {
+  it("ignores empty / whitespace-only text deltas (no empty bubble)", async () => {
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
     input.value = "go";
     (document.getElementById("send-btn") as HTMLButtonElement).click();
 
-    // Some providers emit an empty content delta: it must NOT create a bubble.
+    // Empty content delta: must NOT create a bubble.
     hostMessage({ type: "textDelta", content: "" });
+    expect(document.querySelector(".msg.assistant")).toBe(null);
+    // Whitespace-only delta (e.g. a lone newline): must NOT create a bubble.
+    hostMessage({ type: "textDelta", content: "\n\n" });
     expect(document.querySelector(".msg.assistant")).toBe(null);
     hostMessage({ type: "thinkingDelta", content: "" });
     expect(document.querySelector(".thinking-block")).toBe(null);
 
+    // Once real text arrives, the bubble appears with the accumulated text.
     hostMessage({ type: "textDelta", content: "hi" });
     expect(document.querySelector(".msg.assistant")?.textContent).toContain("hi");
+  });
+
+  it("does not create an empty bubble for whitespace-only text after thinking", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+
+    hostMessage({ type: "thinkingDelta", content: "Let me try a different approach." });
+    hostMessage({ type: "textDelta", content: "\n" }); // whitespace-only, no bubble
+    hostMessage({ type: "toolCall", id: "c1", name: "Read", arguments: { path: "a.ts" } });
+
+    expect(document.querySelector(".msg.assistant")).toBe(null);
+    expect(document.querySelector(".msg.tool")).toBeTruthy();
   });
 
   it("pulses the live thinking block while streaming and stops the pulse on done", async () => {

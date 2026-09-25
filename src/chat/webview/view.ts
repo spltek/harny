@@ -762,7 +762,7 @@ function renderMessages(msgs: ChatMsg[]): boolean {
         }
       }
       const content = m.content || "";
-      if (content === "" || content.startsWith("🔧 ")) continue;
+      if (!content.trim() || content.startsWith("🔧 ")) continue;
       const el = addMessage("assistant", content);
       if (content.startsWith("❌")) el.classList.add("error");
       attachBranchAt(el, i);
@@ -2061,15 +2061,19 @@ window.addEventListener("message", (e) => {
       break;
     }
     case "textDelta": {
-      // Ignore empty chunks: some providers emit a trailing/leading empty
-      // content delta, which would otherwise create an EMPTY bubble.
+      // Ignore empty chunks (some providers emit a trailing/leading empty
+      // content delta).
       if (!msg.content) break;
       // Thinking phase is over (the answer is streaming now): the thinking
       // block stops pulsing and settles, instead of animating until done.
       if (currentThinkingBlock) clearThinkingBlock();
+      // Accumulate ALWAYS, but only CREATE the bubble once the segment has
+      // MEANINGFUL text: a whitespace-only chunk (e.g. a lone newline after a
+      // thinking/tool phase) must not create an empty bubble.
+      currentRawText += msg.content;
+      if (!currentRawText.trim()) break;
       const resultEl = ensureResult();
       if (resultEl) {
-        currentRawText += msg.content;
         answerMd.push(resultEl, () => currentRawText);
         scrollDown();
       }
