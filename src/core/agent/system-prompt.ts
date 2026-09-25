@@ -44,15 +44,15 @@ READ-ONLY MODE (Analyze) — STRICT RULES:
         : "";
 
     // Orchestration guidance appears only when the Delegate tool is available
-    // (i.e. in the Multi Agent mode).
+    // (i.e. when the "Parallel" toggle is ON).
     const delegateRules = definitions.some((d) => d.name === DELEGATE_TOOL_NAME)
       ? `
 
-ORCHESTRATION (Delegate) — Multi Agent mode:
-- FIRST, assess parallelizability BEFORE acting. Break the task down and ask: does it split into INDEPENDENT sub-tasks? For each part, what does it touch, and how (read vs write)? Then:
+ORCHESTRATION (Delegate) — Parallel is ON:
+- MANDATORY FIRST STEP, for EVERY request: before acting, assess whether the task can be parallelized with sub-agents. Never skip this assessment. Break the task down and ask: does it split into INDEPENDENT sub-tasks? For each part, what does it touch, and how (read vs write)? Then:
   · read-only parts on disjoint (or shared-read) resources → PARALLELIZABLE (run them together);
   · any part that WRITES, or that shares a file with another part → NOT parallelizable (serialize / one owner).
-- If the assessment finds parallelizable work, ACTUALLY do it: emit several Delegate calls in the SAME turn with parallel:"yes" (don't silently fall back to doing it serially). If nothing is parallelizable, do the work yourself — never force parallelism on sequential work.
+- Then ACT on that assessment: if it found parallelizable work, ACTUALLY delegate it — emit several Delegate calls in the SAME turn with parallel:"yes" (do not silently fall back to doing it serially). If nothing is parallelizable, do the work yourself — never force parallelism on sequential work.
 - Use Delegate for INDEPENDENT, bounded sub-tasks (analysis, exploration, a self-contained edit). Do NOT delegate the core task itself or trivial work.
 - ALWAYS declare resources (exact files/dirs) and access (read/write/create) — it drives the safe-parallelism decision. An undeclared delegate is rejected.
 - PARALLELISM: only read-only sub-agents ever run concurrently. EDITS ARE NEVER PARALLEL: any write/create sub-agent runs alone, one at a time. Never give the same file to two writers — serialize with after, or assign a single owner. Sibling results arrive together.
