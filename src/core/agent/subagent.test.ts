@@ -209,9 +209,12 @@ describe("SubAgentRunner", () => {
     await Promise.resolve();
     expect(runner.activeCount).toBe(1);
     runner.abortAll();
-    await pending;
+    const res = await pending;
     expect(aborted).toBe(true);
     expect(runner.activeCount).toBe(0);
+    // An aborted run is INTERRUPTED (an error result), never a plain report.
+    expect(res.isError).toBe(true);
+    expect(res.content).toContain("interrupted");
   });
 });
 

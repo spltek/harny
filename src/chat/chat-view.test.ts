@@ -530,7 +530,7 @@ describe("ChatViewProvider", () => {
     expect(rt.mode).toBe("analyze");
   });
 
-  it("setParallel is a global orchestration switch applied to the active agent and config", async () => {
+  it("setParallel applies to the active agent and pushes config", async () => {
     const { provider, registry } = buildHarness();
     const { handler, view } = resolveWith(provider);
     await provider.createNew(); // s1
@@ -543,18 +543,27 @@ describe("ChatViewProvider", () => {
       .filter((m) => m.type === "config");
     expect(configPosts[configPosts.length - 1].config.parallel).toBe(true);
 
-    // Global: a session created afterwards gets it re-synced at send time.
-    await provider.createNew();
-    const rt2 = registry.get([...registry.listOpenIds()].pop()!)!;
-    await handler({ type: "send", text: "go" });
-    expect(rt2.agent.setDelegation).toHaveBeenCalledWith(true);
-
     // non-boolean payloads are rejected
     await handler({ type: "setParallel", parallel: "yes" });
     const after = view.webview.postMessage.mock.calls
       .map((c) => c[0] as any)
       .filter((m) => m.type === "config");
     expect(after[after.length - 1].config.parallel).toBe(true);
+  });
+
+  it("a NEW session resets Parallel OFF", async () => {
+    const { provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    // Turn Parallel on globally (no active session yet).
+    await handler({ type: "setParallel", parallel: true });
+
+    // Creating a session must force Parallel off (the switchView config).
+    await provider.createNew();
+
+    const switchPosts = view.webview.postMessage.mock.calls
+      .map((c) => c[0] as any)
+      .filter((m) => m.type === "switchView");
+    expect(switchPosts[switchPosts.length - 1].config.parallel).toBe(false);
   });
 
   it("setOutputTokens persists the value to the session and refreshes", async () => {

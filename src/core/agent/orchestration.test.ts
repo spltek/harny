@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildSubAgentTask,
   formatSubAgentError,
+  formatSubAgentInterrupted,
   formatSubAgentReport,
   haveWriteConflict,
   isParallelizable,
@@ -165,5 +166,6 @@ describe("sub-agent messaging", () => {
     expect(buildSubAgentTask(s)).toContain("Context provided by the calling agent:");
     expect(formatSubAgentReport(s, "done")).toBe('🔁 Sub-agent "A" [implementer] report:\ndone');
     expect(formatSubAgentError(s, "boom")).toBe('🔁 Sub-agent "A" failed: boom');
+    expect(formatSubAgentInterrupted(s)).toBe('⏹ Sub-agent "A" interrupted.');
   });
 });

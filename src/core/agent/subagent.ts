@@ -12,6 +12,7 @@ import {
   DELEGATE_TOOL_NAME,
   buildSubAgentTask,
   formatSubAgentError,
+  formatSubAgentInterrupted,
   formatSubAgentReport,
   type DelegateSpec,
 } from "./orchestration";
@@ -40,12 +41,17 @@ export interface SubAgentRunnerDeps {
  */
 export class SubAgentRunner {
   private active = new Set<ChatController>();
+  /** Sub-agents aborted by the parent (Stop): their run is INTERRUPTED, not done. */
+  private abortedAgents = new WeakSet<ChatController>();
 
   constructor(private deps: SubAgentRunnerDeps) {}
 
   /** Abort every in-flight sub-agent (called when the parent run is aborted). */
   abortAll(): void {
-    for (const agent of this.active) agent.abort();
+    for (const agent of this.active) {
+      this.abortedAgents.add(agent);
+      agent.abort();
+    }
     this.active.clear();
   }
 
@@ -61,14 +67,6 @@ export class SubAgentRunner {
     const mode: ChatMode = spec.access === "read" ? "analyze" : "agent";
     const history = new InMemoryChatHistory();
     const events = new InMemoryEventBus<AgentEvent>();
-    // Forward the sub-agent's live activity (thinking / text / tools) to the
-    // caller, tagged by the Delegate tool call — nested streaming in the UI.
-    if (onEvent) {
-      events.subscribe((e) => {
-        const sub = toSubAgentEvent(e);
-        if (sub) onEvent(sub);
-      });
-    }
     const maxTurns = this.deps.maxTurns ?? SUBAGENT_MAX_TURNS;
     const systemPrompt = new SubAgentSystemPromptBuilder(
       (m) => toolDefinitionsForMode(this.deps.tools.getAll(), m, { exclude: [DELEGATE_TOOL_NAME] }),
@@ -91,9 +89,24 @@ export class SubAgentRunner {
     });
     agent.setMode(mode);
 
+    // Forward the sub-agent's live activity (thinking / text / tools) to the
+    // caller, tagged by the Delegate tool call — nested streaming in the UI.
+    // On abort we DROP the sub-agent's own "done" (it was interrupted, not
+    // finished) so the UI can mark it interrupted instead of done.
+    if (onEvent) {
+      events.subscribe((e) => {
+        if (e.type === "done" && this.abortedAgents.has(agent)) return;
+        const sub = toSubAgentEvent(e);
+        if (sub) onEvent(sub);
+      });
+    }
+
     this.active.add(agent);
     try {
       await agent.send(buildSubAgentTask(spec));
+      if (this.abortedAgents.has(agent)) {
+        return { content: formatSubAgentInterrupted(spec), isError: true };
+      }
       return { content: formatSubAgentReport(spec, lastAssistantReport(agent.getMessages())), isError: false };
     } catch (e) {
       return { content: formatSubAgentError(spec, e instanceof Error ? e.message : String(e)), isError: true };

@@ -153,6 +153,12 @@ export function formatSubAgentError(spec: DelegateSpec, message: string): string
   return `🔁 Sub-agent${label} failed: ${message}`;
 }
 
+/** Marker/result for a sub-agent that was STOPPED by the user (not failed). */
+export function formatSubAgentInterrupted(spec: DelegateSpec): string {
+  const label = spec.id ? ` "${spec.id}"` : "";
+  return `⏹ Sub-agent${label} interrupted.`;
+}
+
 export type { ToolResult };
 
 /**

@@ -1511,6 +1511,16 @@ describe("view webview client", () => {
     expect(a.textContent!.length).toBeGreaterThan(3000);
   });
 
+  it("marks a stopped sub-agent as interrupted (not done)", async () => {
+    await loadView();
+    hostMessage(PARALLEL_ON);
+    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({ type: "subagentStart", toolCallId: "s1" });
+    hostMessage({ type: "toolResult", toolCallId: "s1", output: '⏹ Sub-agent "A" interrupted.', isError: true });
+    const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
+    expect(bubble.querySelector(".subagent-status")?.classList.contains("interrupted")).toBe(true);
+  });
+
   it("marks a failed sub-agent as failed", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);

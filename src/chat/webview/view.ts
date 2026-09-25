@@ -480,8 +480,8 @@ function wireCollapsible(div: HTMLElement): void {
   });
 }
 
-/** Update a sub-agent bubble's status chip (queued → running → done/failed). */
-function setSubAgentStatus(el: HTMLElement, status: "queued" | "running" | "done" | "failed"): void {
+/** Update a sub-agent bubble's status chip (queued → running → done/failed/interrupted). */
+function setSubAgentStatus(el: HTMLElement, status: "queued" | "running" | "done" | "failed" | "interrupted"): void {
   const chip = el.querySelector(".subagent-status");
   if (!chip) return;
   chip.className = "subagent-status " + status;
@@ -766,7 +766,10 @@ function renderMessages(msgs: ChatMsg[]): boolean {
           }
           if (tc.name === "Delegate") {
             const report = outputs.get(id) ?? "";
-            setSubAgentStatus(el, report.includes(" failed:") ? "failed" : "done");
+            setSubAgentStatus(
+              el,
+              /interrupted/i.test(report) ? "interrupted" : report.includes(" failed:") ? "failed" : "done",
+            );
           }
         }
       }
@@ -2145,7 +2148,13 @@ window.addEventListener("message", (e) => {
       if (el) {
         el.classList.remove("tool-call-pending");
         const isSubAgent = el.classList.contains("subagent");
-        if (isSubAgent) setSubAgentStatus(el, msg.isError ? "failed" : "done");
+        if (isSubAgent) {
+          const out = String(msg.output);
+          setSubAgentStatus(
+            el,
+            msg.isError ? (/interrupted/i.test(out) ? "interrupted" : "failed") : "done",
+          );
+        }
         const resultEl = el.querySelector(".tool-result");
         if (resultEl) {
           // A sub-agent report is Markdown (its own answer); ordinary tool

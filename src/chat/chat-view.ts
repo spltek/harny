@@ -163,6 +163,9 @@ export class ChatViewProvider implements WebviewViewProvider {
       return;
     }
     const rt = this.registry.create(name);
+    // A NEW session always starts with Parallel OFF (orchestration is opt-in).
+    this.parallelEnabled = false;
+    rt.agent.setDelegation(false);
     await this.setActive(rt.sessionId);
   }
 
