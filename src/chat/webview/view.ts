@@ -611,6 +611,14 @@ function handleSubAgentEvent(parentId: string, event: SubAgentStreamEvent): void
       line.classList.remove("pending");
       line.classList.add(event.toolResult.isError ? "err" : "ok");
     }
+  } else if (event.type === "done") {
+    // The sub-agent finished and produced its answer: flip THIS bubble to done
+    // immediately (don't wait for the parent's tool_result to arrive).
+    if (!el.querySelector(".subagent-status.failed")) setSubAgentStatus(el, "done");
+  } else if (event.type === "error") {
+    // A fatal sub-agent error (e.g. loop/API): mark failed unless it already
+    // reported done.
+    if (!el.querySelector(".subagent-status.done")) setSubAgentStatus(el, "failed");
   }
 }
 

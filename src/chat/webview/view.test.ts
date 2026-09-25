@@ -1371,6 +1371,37 @@ describe("view webview client", () => {
     expect(bubbles[1].querySelector(".sa-answer")?.textContent).toBe("beta");
   });
 
+  it("flips a sub-agent to done as soon as its own done event arrives", async () => {
+    await loadView();
+    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "a", access: "read", resources: ["a.ts"] } });
+    hostMessage({ type: "subagentStart", toolCallId: "s1" });
+    const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
+    expect(bubble.querySelector(".subagent-status")?.classList.contains("running")).toBe(true);
+    // No parent toolResult yet — the sub-agent's own done flips it.
+    hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "done" } });
+    expect(bubble.querySelector(".subagent-status")?.classList.contains("done")).toBe(true);
+  });
+
+  it("marks each sub-agent done individually when its own done arrives", async () => {
+    await loadView();
+    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "a", access: "read", resources: ["a.ts"] } });
+    hostMessage({ type: "toolCall", id: "s2", name: "Delegate", arguments: { id: "B", goal: "b", access: "read", resources: ["b.ts"] } });
+    hostMessage({ type: "subagentStart", toolCallId: "s1" });
+    hostMessage({ type: "subagentStart", toolCallId: "s2" });
+    const bubbles = document.querySelectorAll(".msg.tool.subagent");
+    hostMessage({ type: "subagentEvent", toolCallId: "s2", event: { type: "done" } });
+    expect(bubbles[0].querySelector(".subagent-status")?.classList.contains("running")).toBe(true);
+    expect(bubbles[1].querySelector(".subagent-status")?.classList.contains("done")).toBe(true);
+  });
+
+  it("marks a sub-agent failed on its own error event", async () => {
+    await loadView();
+    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "a", access: "read", resources: ["a.ts"] } });
+    hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "error", error: "boom" } });
+    const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
+    expect(bubble.querySelector(".subagent-status")?.classList.contains("failed")).toBe(true);
+  });
+
   it("marks a failed sub-agent as failed", async () => {
     await loadView();
     hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "edit", access: "write", resources: ["a.ts"] } });
