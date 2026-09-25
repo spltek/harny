@@ -23,6 +23,7 @@ import {
   formatSubAgentError,
   parseDelegateSpec,
   planToolExecution,
+  runWithConcurrency,
   type DelegateSpec,
   type PlannedCall,
 } from "./orchestration";
@@ -307,19 +308,15 @@ export class Agent implements ChatController {
         results[step.index] = r;
         emitResult(step.index, r);
       } else {
-        // Run the parallel batch in chunks of at most `parallelCap` so no more
-        // than N sub-agents are ever in flight at once. Emit EACH result the
-        // moment it resolves (not after the whole batch).
-        for (let i = 0; i < step.indices.length; i += parallelCap) {
-          const chunk = step.indices.slice(i, i + parallelCap);
-          await Promise.all(
-            chunk.map(async (idx) => {
-              const r = await this.executeToolSafely(toolCalls[idx]);
-              results[idx] = r;
-              emitResult(idx, r);
-            }),
-          );
-        }
+        // Run the parallel batch with at most `parallelCap` sub-agents in
+        // flight: as soon as one finishes its slot is freed for the next one,
+        // so there are ALWAYS ~cap running (a sliding window, not a barrier).
+        // Each result is emitted the moment its call resolves.
+        await runWithConcurrency(step.indices, parallelCap, async (idx) => {
+          const r = await this.executeToolSafely(toolCalls[idx]);
+          results[idx] = r;
+          emitResult(idx, r);
+        });
       }
     }
 

@@ -152,3 +152,28 @@ export function formatSubAgentError(spec: DelegateSpec, message: string): string
 }
 
 export type { ToolResult };
+
+/**
+ * Run `worker` over `items` with at most `limit` in flight at any time. Unlike
+ * chunked Promise.all (which waits for the whole chunk before starting the
+ * next), a finished item immediately frees its slot for the next queued one,
+ * so the pool stays saturated: there are always ~limit running until the
+ * queue drains.
+ */
+export async function runWithConcurrency<T>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+  if (items.length === 0) return;
+  const max = Math.max(1, Math.min(limit, items.length));
+  let next = 0;
+  const run = async (): Promise<void> => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      await worker(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: max }, () => run()));
+}

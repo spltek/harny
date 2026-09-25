@@ -980,11 +980,16 @@ describe("Orchestration (Delegate)", () => {
     expect(order).toEqual(["start:A", "start:B", "end:A", "end:B"]);
   });
 
-  it("caps concurrency at maxParallelSubAgents (chunks of N)", async () => {
+  it("caps concurrency at maxParallelSubAgents with a sliding window (never more than N running)", async () => {
+    let running = 0;
+    let maxRunning = 0;
     const order: string[] = [];
     const spawn = async (spec: DelegateSpec): Promise<ToolResult> => {
+      running++;
+      maxRunning = Math.max(maxRunning, running);
       order.push("start:" + spec.id);
       await new Promise((r) => setTimeout(r, 5));
+      running--;
       order.push("end:" + spec.id);
       return { content: "r", isError: false };
     };
@@ -1000,8 +1005,38 @@ describe("Orchestration (Delegate)", () => {
 
     await agent.send("go");
 
-    // Two at a time: A+B, then C alone.
-    expect(order).toEqual(["start:A", "start:B", "end:A", "end:B", "start:C", "end:C"]);
+    // Never more than 2 in flight…
+    expect(maxRunning).toBe(2);
+    // …and the slot of a finished agent is reused: C starts as soon as A ends
+    // (it does NOT wait for B to finish too).
+    expect(order.indexOf("start:C")).toBeGreaterThan(order.indexOf("end:A"));
+    expect(order.indexOf("start:C")).toBeLessThan(order.indexOf("end:B"));
+  });
+
+  it("keeps the pool saturated: a fast agent frees its slot for the next one", async () => {
+    const order: string[] = [];
+    const spawn = async (spec: DelegateSpec): Promise<ToolResult> => {
+      order.push("start:" + spec.id);
+      // A is fast, B is slow, C is fast.
+      await new Promise((r) => setTimeout(r, spec.id === "B" ? 40 : 5));
+      order.push("end:" + spec.id);
+      return { content: "r", isError: false };
+    };
+    const { agent } = build({
+      calls: [
+        { id: "A", goal: "a", access: "read", resources: ["a.ts"], parallel: "yes" },
+        { id: "B", goal: "b", access: "read", resources: ["b.ts"], parallel: "yes" },
+        { id: "C", goal: "c", access: "read", resources: ["c.ts"], parallel: "yes" },
+      ],
+      maxParallel: 2,
+      spawn,
+    });
+
+    await agent.send("go");
+
+    // A (fast) ends → C starts while B is still running (sliding window).
+    expect(order.indexOf("end:A")).toBeLessThan(order.indexOf("start:C"));
+    expect(order.indexOf("start:C")).toBeLessThan(order.indexOf("end:B"));
   });
 
   it("forwards the sub-agent's live events tagged with the Delegate tool call", async () => {

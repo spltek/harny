@@ -8,6 +8,7 @@ import {
   parseDelegateSpec,
   planToolExecution,
   resourcesOverlap,
+  runWithConcurrency,
   type DelegateSpec,
   type PlannedCall,
 } from "./orchestration";
@@ -114,6 +115,43 @@ describe("planToolExecution", () => {
       { kind: "single", index: 0 },
       { kind: "single", index: 1 },
     ]);
+  });
+});
+
+describe("runWithConcurrency", () => {
+  it("never exceeds the limit and reuses a slot as soon as an item finishes", async () => {
+    let running = 0;
+    let max = 0;
+    const order: string[] = [];
+    await runWithConcurrency(["A", "B", "C"], 2, async (id) => {
+      running++;
+      max = Math.max(max, running);
+      order.push("start:" + id);
+      await new Promise((r) => setTimeout(r, id === "B" ? 30 : 3));
+      running--;
+      order.push("end:" + id);
+    });
+    expect(max).toBe(2);
+    // A (fast) ends → C starts BEFORE B (slow) ends: sliding window.
+    expect(order.indexOf("start:C")).toBeGreaterThan(order.indexOf("end:A"));
+    expect(order.indexOf("start:C")).toBeLessThan(order.indexOf("end:B"));
+  });
+
+  it("limit 1 runs strictly sequentially; limit >= length runs all at once", async () => {
+    let running = 0;
+    let max = 0;
+    const track = async () => {
+      running++;
+      max = Math.max(max, running);
+      await new Promise((r) => setTimeout(r, 2));
+      running--;
+    };
+    await runWithConcurrency([1, 2, 3], 1, track);
+    expect(max).toBe(1);
+    max = 0;
+    await runWithConcurrency([1, 2, 3], 99, track);
+    expect(max).toBe(3);
+    await runWithConcurrency([], 5, track); // no-op, no throw
   });
 });
 
