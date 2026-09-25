@@ -1113,6 +1113,96 @@ describe("Orchestration (Delegate)", () => {
     expect(byCall.get("d1")).toBe("from B");
   });
 
+  it("hides the Delegate tool from the LLM entirely when Parallel is OFF", async () => {
+    const seenDefs: string[][] = [];
+    const factory: LLMProviderFactory = {
+      create() {
+        return {
+          protocol: "chat" as const,
+          async *stream(_m: LLMMessage[], _s?: AbortSignal, defs?: { name: string }[]) {
+            seenDefs.push((defs ?? []).map((d) => d.name));
+            yield { type: "text", content: "ok" };
+          },
+        };
+      },
+    };
+    const tools = new ToolRegistry([makeTool("Read"), makeTool("Delegate")]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history: new InMemoryChatHistory(),
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        (m) => toolDefinitionsForMode(tools.getAll(), m),
+        () => "/w",
+      ),
+      allowDelegation: true,
+      spawnSubAgent: async () => ({ content: "r", isError: false }),
+    });
+    agent.setMode("agent");
+
+    agent.setDelegation(false);
+    await agent.send("off");
+    expect(seenDefs[0]).not.toContain("Delegate");
+
+    agent.setDelegation(true);
+    await agent.send("on");
+    expect(seenDefs[1]).toContain("Delegate");
+  });
+
+  it("drops past Delegate turns from the LLM conversation when Parallel is OFF", async () => {
+    const seen: LLMMessage[][] = [];
+    const factory: LLMProviderFactory = {
+      create() {
+        return {
+          protocol: "chat" as const,
+          async *stream(messages: LLMMessage[]) {
+            seen.push(messages);
+            yield { type: "text", content: "ok" };
+          },
+        };
+      },
+    };
+    const history = new InMemoryChatHistory();
+    history.add({ role: "user", content: "earlier", timestamp: 1 });
+    history.add({
+      role: "assistant",
+      content: "🔧 Tools: Delegate",
+      timestamp: 2,
+      toolCalls: [{ id: "d1", name: "Delegate", arguments: {} }],
+    });
+    history.add({ role: "tool", content: "🔁 report", toolCallId: "d1", timestamp: 3 });
+    history.add({ role: "assistant", content: "done", timestamp: 4 });
+
+    const tools = new ToolRegistry([makeTool("Read")]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history,
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        (m) => toolDefinitionsForMode(tools.getAll(), m),
+        () => "/w",
+      ),
+      allowDelegation: true,
+      spawnSubAgent: async () => ({ content: "r", isError: false }),
+    });
+    agent.setMode("agent");
+
+    agent.setDelegation(false);
+    await agent.send("now");
+    const off = seen[0].map((m) => m.content ?? "").join("|");
+    expect(off).not.toContain("Delegate");
+    expect(off).not.toContain("report");
+
+    agent.setDelegation(true);
+    await agent.send("now2");
+    const on = seen[1].map((m) => m.content ?? "").join("|");
+    expect(on).toContain("Delegate");
+  });
+
   it("emits subagent_start when each delegate actually begins (cap visible)", async () => {
     const started: string[] = [];
     const spawn = async (spec: DelegateSpec): Promise<ToolResult> => {

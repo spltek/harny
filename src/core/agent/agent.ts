@@ -431,6 +431,28 @@ export class Agent implements ChatController {
     });
   }
 
+  /**
+   * The conversation sent to the LLM. When orchestration is OFF (Parallel not
+   * enabled) any past Delegate turn and its results are DROPPED, so the model
+   * has no trace of sub-agents to imitate: delegation is not even a visible
+   * possibility. The stored history is untouched (only this view is filtered).
+   */
+  private llmConversation(): ChatMessage[] {
+    const all = this.deps.history.conversation();
+    if (this.delegationEnabled) return all;
+    const droppedIds = new Set<string>();
+    const out: ChatMessage[] = [];
+    for (const m of all) {
+      if (m.role === "assistant" && m.toolCalls?.some((tc) => tc.name === DELEGATE_TOOL_NAME)) {
+        for (const tc of m.toolCalls) droppedIds.add(tc.id);
+        continue; // drop the whole Delegate turn
+      }
+      if (m.role === "tool" && m.toolCallId && droppedIds.has(m.toolCallId)) continue;
+      out.push(m);
+    }
+    return out;
+  }
+
   private async runLlmTurn(toolDefinitionsOverride?: ToolDefinition[]): Promise<{
     content: string;
     toolCalls: ToolCall[];
@@ -451,7 +473,7 @@ export class Agent implements ChatController {
 
     const messages: LLMMessage[] = [
       { role: "system", content: this.deps.systemPrompt.build(this._mode, toolDefinitions) },
-      ...this.deps.history.conversation().map((m) => ({
+      ...this.llmConversation().map((m) => ({
         role: m.role,
         content: m.content,
         toolCalls: m.toolCalls,
