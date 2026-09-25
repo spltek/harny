@@ -59,11 +59,12 @@ export function parseDelegateSpec(args: Record<string, unknown>): { spec?: Deleg
   return { spec: { id, goal, context, role, access, resources, parallel, after } };
 }
 
-/** A read-only sub-task with no ordering dependency is eligible for a parallel
- * batch BY DEFAULT (opt-out: set parallel:"no" to force it serial). WRITERS ARE
- * NEVER PARALLEL — edits/creations always run one at a time. */
+/** A read-only sub-task with no ordering dependency is ALWAYS eligible for a
+ * parallel batch (the `parallel` flag is advisory and ignored here, so a
+ * stray "no" cannot silently serialize reads). WRITERS ARE NEVER PARALLEL —
+ * edits/creations always run one at a time. */
 export function isParallelizable(spec: DelegateSpec): boolean {
-  return spec.access === "read" && spec.parallel !== false && spec.after.length === 0;
+  return spec.access === "read" && spec.after.length === 0;
 }
 
 function normalizePath(p: string): string {

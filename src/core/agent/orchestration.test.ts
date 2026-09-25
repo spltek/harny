@@ -53,11 +53,11 @@ describe("parseDelegateSpec", () => {
 });
 
 describe("parallelism policy", () => {
-  it("only read sub-tasks that asked for it and have no dependency are parallelizable", () => {
+  it("only read sub-tasks with no dependency are parallelizable (flag ignored)", () => {
     expect(isParallelizable(spec({ access: "read", parallel: true }))).toBe(true);
-    // Default (no `parallel` flag) is parallelizable for reads; explicit "no" is not.
+    // The `parallel` flag is advisory and IGNORED: a stray "no" cannot serialize reads.
     expect(isParallelizable({ ...spec({ access: "read" }), parallel: undefined })).toBe(true);
-    expect(isParallelizable(spec({ access: "read", parallel: false }))).toBe(false);
+    expect(isParallelizable(spec({ access: "read", parallel: false }))).toBe(true);
     expect(isParallelizable(spec({ access: "write", parallel: true }))).toBe(false);
     expect(isParallelizable(spec({ access: "create", parallel: true }))).toBe(false);
     expect(isParallelizable(spec({ access: "read", parallel: true, after: ["B"] }))).toBe(false);
