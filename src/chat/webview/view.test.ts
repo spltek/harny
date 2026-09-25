@@ -40,7 +40,7 @@ function setupDom(
         </button>
         <div id="mode-menu" class="hidden" role="listbox">
           <button type="button" class="mode-item is-active" data-mode="analyze" role="option" aria-selected="true">Analyze</button>
-          <button type="button" class="mode-item" data-mode="agent" role="option" aria-selected="false">Agent</button>
+          <button type="button" class="mode-item" data-mode="agent" role="option" aria-selected="false">Act</button>
         </div>
       </div>
       <button type="button" id="parallel-btn" aria-pressed="false">Parallel</button>
@@ -221,7 +221,7 @@ describe("view webview client", () => {
     btn.click();
     agent.click();
     expect(posted).toContainEqual({ type: "setMode", mode: "agent" });
-    expect(label.textContent).toBe("Agent");
+    expect(label.textContent).toBe("Act");
     expect(btn.classList.contains("is-agent")).toBe(true);
     expect(agent.getAttribute("aria-selected")).toBe("true");
     expect(menu.classList.contains("hidden")).toBe(true);
@@ -254,7 +254,7 @@ describe("view webview client", () => {
     expect(label.textContent).toBe("Analyze");
 
     hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, mode: "agent", models: [], providerModels: [], contextWindow: 128000 } });
-    expect(label.textContent).toBe("Agent");
+    expect(label.textContent).toBe("Act");
     expect(btn.classList.contains("is-agent")).toBe(true);
     expect(agent.classList.contains("is-active")).toBe(true);
   });
