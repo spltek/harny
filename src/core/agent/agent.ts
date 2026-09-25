@@ -283,14 +283,21 @@ export class Agent implements ChatController {
 
     // Plan the execution. Non-delegates and writers run one at a time, in
     // order; CONSECUTIVE read-only parallel delegates run as a concurrent
-    // batch. Results are emitted and stored in the ORIGINAL call order either
-    // way, so the model always sees its tool results in the order it asked.
+    // batch. Each result is EMITTED as soon as its call completes (so the UI
+    // flips each sub-agent to done individually), while history still stores
+    // them in the ORIGINAL call order for the model.
     const planned: PlannedCall[] = toolCalls.map((tc) => {
       const isDelegate = tc.name === DELEGATE_TOOL_NAME;
       return { isDelegate, spec: isDelegate ? parseDelegateSpec(tc.arguments).spec : undefined };
     });
     const steps = planToolExecution(planned);
     const results: ToolResult[] = new Array(toolCalls.length);
+    const emitResult = (index: number, result: ToolResult): void => {
+      this.deps.events.emit({
+        type: "tool_result",
+        toolResult: { toolCallId: toolCalls[index].id, output: result.content, isError: result.isError },
+      });
+    };
     // Global cap on concurrently-running sub-agents (gear setting). Undefined
     // or invalid = no cap (the whole parallel batch waits together).
     const capRaw = this.deps.config.get().maxParallelSubAgents;
@@ -298,14 +305,22 @@ export class Agent implements ChatController {
       typeof capRaw === "number" && Number.isInteger(capRaw) && capRaw > 0 ? capRaw : Infinity;
     for (const step of steps) {
       if (step.kind === "single") {
-        results[step.index] = await this.executeToolSafely(toolCalls[step.index]);
+        const r = await this.executeToolSafely(toolCalls[step.index]);
+        results[step.index] = r;
+        emitResult(step.index, r);
       } else {
         // Run the parallel batch in chunks of at most `parallelCap` so no more
-        // than N sub-agents are ever in flight at once.
+        // than N sub-agents are ever in flight at once. Emit EACH result the
+        // moment it resolves (not after the whole batch).
         for (let i = 0; i < step.indices.length; i += parallelCap) {
           const chunk = step.indices.slice(i, i + parallelCap);
-          const batch = await Promise.all(chunk.map((idx) => this.executeToolSafely(toolCalls[idx])));
-          chunk.forEach((idx, k) => (results[idx] = batch[k]));
+          await Promise.all(
+            chunk.map(async (idx) => {
+              const r = await this.executeToolSafely(toolCalls[idx]);
+              results[idx] = r;
+              emitResult(idx, r);
+            }),
+          );
         }
       }
     }
@@ -313,10 +328,6 @@ export class Agent implements ChatController {
     for (let i = 0; i < toolCalls.length; i++) {
       const tc = toolCalls[i];
       const result = results[i] ?? { content: `Tool ${tc.name} produced no result`, isError: true };
-      this.deps.events.emit({
-        type: "tool_result",
-        toolResult: { toolCallId: tc.id, output: result.content, isError: result.isError },
-      });
       this.deps.history.add({ role: "tool", content: result.content, toolCallId: tc.id, timestamp: Date.now() });
       toolResults.push({ name: tc.name, args: tc.arguments, isError: result.isError });
     }

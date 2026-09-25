@@ -1021,6 +1021,36 @@ describe("Orchestration (Delegate)", () => {
     expect(forwarded[1]).toMatchObject({ toolCallId: "d0", event: { type: "tool_call" } });
   });
 
+  it("emits each tool_result as its sub-agent finishes (not after the whole batch)", async () => {
+    const spawn = async (spec: DelegateSpec): Promise<ToolResult> => {
+      // A is slower than B: B must reach "done" first.
+      await new Promise((r) => setTimeout(r, spec.id === "A" ? 15 : 3));
+      return { content: "r" + spec.id, isError: false };
+    };
+    const { agent, eventLog, history } = build({
+      calls: [
+        { id: "A", goal: "a", access: "read", resources: ["a.ts"], parallel: "yes" },
+        { id: "B", goal: "b", access: "read", resources: ["b.ts"], parallel: "yes" },
+      ],
+      spawn,
+    });
+
+    await agent.send("go");
+
+    // Emission order follows COMPLETION order (B before A)…
+    const emitted = eventLog
+      .filter((e) => e.type === "tool_result")
+      .map((e) => (e as { toolResult: { toolCallId: string } }).toolResult.toolCallId);
+    expect(emitted).toEqual(["d1", "d0"]);
+
+    // …while history still stores tool messages in the ORIGINAL call order.
+    const stored = history
+      .all()
+      .filter((m) => m.role === "tool")
+      .map((m) => m.toolCallId);
+    expect(stored).toEqual(["d0", "d1"]);
+  });
+
   it("routes each sub-agent's live events to its OWN Delegate call", async () => {
     const { agent, eventLog } = build({
       calls: [
