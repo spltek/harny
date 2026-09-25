@@ -420,6 +420,23 @@ ${renderViewConfig(deps)}
     .subagent-status.done { color: #98c379; border-color: rgba(152, 195, 121, 0.5); }
     .subagent-status.failed { color: var(--error); border-color: rgba(244, 71, 71, 0.5); }
     .subagent-goal { padding: 0 8px 4px 22px; color: var(--fg); font-style: italic; font-size: var(--fs-md); }
+    /* The bubble body (goal + nested stream + report) is collapsed by default. */
+    .subagent-body.collapsed { display: none; }
+    /* Nested live stream inside a running sub-agent bubble. */
+    .sa-log {
+      display: flex; flex-direction: column; gap: 2px;
+      padding: 2px 8px 6px 22px; border-left: 2px solid rgba(124, 92, 255, 0.25);
+      margin: 0 0 2px 8px;
+    }
+    .sa-thinking { color: #888; font-style: italic; font-size: var(--fs-sm); white-space: pre-wrap; word-break: break-word; }
+    .sa-answer { color: var(--fg); font-size: var(--fs-md); white-space: pre-wrap; word-break: break-word; }
+    .sa-tool {
+      color: #9a9a9a; font-size: var(--fs-sm); font-family: var(--font-mono);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .sa-tool.pending { opacity: 0.6; }
+    .sa-tool.ok { color: #98c379; }
+    .sa-tool.err { color: var(--error); }
     .subagent-meta { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 2px; }
     .subagent-chip {
       display: inline-flex; align-items: center; padding: 0 6px; border-radius: 999px;

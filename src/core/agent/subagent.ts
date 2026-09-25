@@ -7,7 +7,7 @@ import type { ToolRegistry, ToolResult } from "../tools";
 import { toolDefinitionsForMode, type ChatMode } from "../tools/mode-policy";
 import { Agent } from "./agent";
 import type { ChatController } from "./chat-controller";
-import type { AgentEvent } from "./types";
+import type { AgentEvent, SubAgentEvent } from "./types";
 import {
   DELEGATE_TOOL_NAME,
   buildSubAgentTask,
@@ -53,12 +53,22 @@ export class SubAgentRunner {
     return this.active.size;
   }
 
-  /** Run one delegated sub-task and return its report as a tool result. */
-  async run(spec: DelegateSpec): Promise<ToolResult> {
+  /** Run one delegated sub-task and return its report as a tool result.
+   * `onEvent` (optional) receives the sub-agent's live events so the caller
+   * can stream them into the sub-agent bubble. */
+  async run(spec: DelegateSpec, onEvent?: (event: SubAgentEvent) => void): Promise<ToolResult> {
     // Analyze-style read-only sub-agent, or a full agent for writers.
     const mode: ChatMode = spec.access === "read" ? "analyze" : "agent";
     const history = new InMemoryChatHistory();
     const events = new InMemoryEventBus<AgentEvent>();
+    // Forward the sub-agent's live activity (thinking / text / tools) to the
+    // caller, tagged by the Delegate tool call — nested streaming in the UI.
+    if (onEvent) {
+      events.subscribe((e) => {
+        const sub = toSubAgentEvent(e);
+        if (sub) onEvent(sub);
+      });
+    }
     const maxTurns = this.deps.maxTurns ?? SUBAGENT_MAX_TURNS;
     const systemPrompt = new SubAgentSystemPromptBuilder(
       (m) => toolDefinitionsForMode(this.deps.tools.getAll(), m, { exclude: [DELEGATE_TOOL_NAME] }),
@@ -90,6 +100,21 @@ export class SubAgentRunner {
     } finally {
       this.active.delete(agent);
     }
+  }
+}
+
+/** Keep only the sub-agent events worth streaming (drop usage / raw chunks). */
+export function toSubAgentEvent(e: AgentEvent): SubAgentEvent | undefined {
+  switch (e.type) {
+    case "text_delta":
+    case "thinking_delta":
+    case "tool_call":
+    case "tool_result":
+    case "done":
+    case "error":
+      return e;
+    default:
+      return undefined;
   }
 }
 

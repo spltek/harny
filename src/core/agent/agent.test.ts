@@ -12,7 +12,7 @@ import type { Tool, ToolResult } from "../tools/tool";
 import type { ToolDefinition } from "../tools/tool";
 import { toolDefinitionsForMode } from "../tools/mode-policy";
 import type { DelegateSpec } from "./orchestration";
-import type { AgentEvent } from "./types";
+import type { AgentEvent, SubAgentEvent } from "./types";
 
 const VALID_CONFIG: HarnyConfig = {
   provider: "openai",
@@ -909,7 +909,7 @@ describe("Orchestration (Delegate)", () => {
     mode?: "analyze" | "agent";
     allowDelegation?: boolean;
     maxParallel?: number;
-    spawn?: (spec: DelegateSpec) => Promise<ToolResult>;
+    spawn?: (spec: DelegateSpec, onEvent?: (e: SubAgentEvent) => void) => Promise<ToolResult>;
   }): { agent: Agent; history: InMemoryChatHistory; eventLog: AgentEvent[] } {
     const config = new StaticConfigProvider(
       opts.maxParallel ? { ...VALID_CONFIG, maxParallelSubAgents: opts.maxParallel } : VALID_CONFIG,
@@ -1000,6 +1000,50 @@ describe("Orchestration (Delegate)", () => {
 
     // Two at a time: A+B, then C alone.
     expect(order).toEqual(["start:A", "start:B", "end:A", "end:B", "start:C", "end:C"]);
+  });
+
+  it("forwards the sub-agent's live events tagged with the Delegate tool call", async () => {
+    const { agent, eventLog } = build({
+      calls: [{ id: "A", goal: "a", access: "read", resources: ["a.ts"] }],
+      spawn: async (_spec, onEvent) => {
+        onEvent?.({ type: "thinking_delta", content: "thinking..." });
+        onEvent?.({ type: "tool_call", toolCall: { id: "t1", name: "Read", arguments: { path: "a.ts" } } });
+        return { content: "report", isError: false };
+      },
+    });
+
+    await agent.send("go");
+
+    const forwarded = eventLog.filter((e) => e.type === "subagent_event");
+    expect(forwarded).toHaveLength(2);
+    expect(forwarded[0]).toMatchObject({ toolCallId: "d0", event: { type: "thinking_delta" } });
+    expect(forwarded[1]).toMatchObject({ toolCallId: "d0", event: { type: "tool_call" } });
+  });
+
+  it("routes each sub-agent's live events to its OWN Delegate call", async () => {
+    const { agent, eventLog } = build({
+      calls: [
+        { id: "A", goal: "a", access: "read", resources: ["a.ts"], parallel: "yes" },
+        { id: "B", goal: "b", access: "read", resources: ["b.ts"], parallel: "yes" },
+      ],
+      spawn: async (spec, onEvent) => {
+        onEvent?.({ type: "text_delta", content: "from " + spec.id });
+        return { content: "r" + spec.id, isError: false };
+      },
+    });
+
+    await agent.send("go");
+
+    const forwarded = eventLog.filter((e) => e.type === "subagent_event");
+    const byCall = new Map(
+      forwarded.map((e) => [
+        (e as { toolCallId: string }).toolCallId,
+        (e as { event: { content?: string } }).event.content ?? "",
+      ]),
+    );
+    // Two parallel delegates → two tool-call ids (d0, d1), each with its event.
+    expect(byCall.get("d0")).toBe("from A");
+    expect(byCall.get("d1")).toBe("from B");
   });
 
   it("emits subagent_start when each delegate actually begins (cap visible)", async () => {
@@ -1115,6 +1159,42 @@ describe("Orchestration (Delegate)", () => {
 
     expect(spawned).toBe(0);
     expect(history.all().find((m) => m.role === "tool")?.content).toContain("resources");
+  });
+
+  it("reports delegation unavailable when no spawn hook is configured", async () => {
+    const history = new InMemoryChatHistory();
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: fakeFactory(
+        delegateTurn([{ id: "A", goal: "x", access: "read", resources: ["a.ts"] }]),
+        [{ type: "text", content: "ok" }],
+      ),
+      tools: new ToolRegistry([makeTool("Read")]),
+      history,
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(() => [], () => "/w"),
+      allowDelegation: true,
+      // no spawnSubAgent on purpose
+    });
+
+    await agent.send("go");
+
+    expect(history.all().find((m) => m.role === "tool")?.content).toContain("not available");
+  });
+
+  it("wraps a thrown sub-agent error as a failed report", async () => {
+    const { agent, history } = build({
+      calls: [{ id: "A", goal: "x", access: "read", resources: ["a.ts"] }],
+      spawn: async () => {
+        throw new Error("kaboom");
+      },
+    });
+
+    await agent.send("go");
+
+    const tool = history.all().find((m) => m.role === "tool");
+    expect(tool?.content).toContain("kaboom");
+    expect(tool?.content).toContain('Sub-agent "A" failed');
   });
 
   it("sub-agents cannot delegate further (depth 1)", async () => {

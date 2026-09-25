@@ -100,6 +100,10 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/\.subagent-status\.done\s*\{/);
     expect(html).toMatch(/\.subagent-status\.failed\s*\{/);
     expect(html).toMatch(/\.subagent-goal\s*\{/);
+    // Nested live-stream styles.
+    expect(html).toMatch(/\.sa-log\s*\{/);
+    expect(html).toMatch(/\.sa-thinking\s*\{/);
+    expect(html).toMatch(/\.sa-tool\.ok\s*\{/);
   });
 
   it("renders the max-parallel sub-agents flag + stepper in the providers form", () => {

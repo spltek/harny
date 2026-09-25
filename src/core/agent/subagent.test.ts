@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { SubAgentRunner, lastAssistantReport } from "./subagent";
+import { SubAgentRunner, lastAssistantReport, toSubAgentEvent } from "./subagent";
 import { StaticConfigProvider } from "../config/static-config-provider";
 import { ToolRegistry } from "../tools/tool-registry";
 import type { Tool, ToolResult } from "../tools/tool";
 import type { HarnyConfig } from "../config/types";
 import type { LLMMessage, LLMProviderFactory, StreamChunk } from "../llm/types";
 import type { ChatMessage } from "../history/types";
+import type { SubAgentEvent } from "./types";
 import type { DelegateSpec } from "./orchestration";
 
 const CONFIG: HarnyConfig = {
@@ -96,6 +97,46 @@ describe("SubAgentRunner", () => {
     expect(res.content).toContain("report");
   });
 
+  it("honours a custom turn budget from deps (and still returns a report)", async () => {
+    const toolCall = (): StreamChunk[] => [
+      { type: "tool_call_start", index: 0, id: "c1", name: "Read" },
+      { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts"}' },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const read: Tool = {
+      name: "Read",
+      definition: { name: "Read", description: "read", parameters: { type: "object", properties: {} } },
+      execute: (): ToolResult => ({ content: "data", isError: false }),
+    };
+    const runner = new SubAgentRunner({
+      config: new StaticConfigProvider(CONFIG),
+      llmFactory: factory([toolCall(), toolCall(), [{ type: "text", content: "forced report" }]]),
+      tools: new ToolRegistry([read]),
+      cwd: () => "/workspace",
+      maxTurns: 2,
+    });
+
+    const res = await runner.run(spec({ access: "read" }));
+
+    // Budget exhausted → the forced final report turn still yields a report.
+    expect(res.isError).toBe(false);
+    expect(res.content).toContain("forced report");
+  });
+
+  it("forwards its live events to the caller (nested streaming)", async () => {
+    const runner = buildRunner(
+      factory([[{ type: "thinking", content: "hmm" }], [{ type: "text", content: "report" }]]),
+    );
+    const seen: SubAgentEvent[] = [];
+
+    const res = await runner.run(spec({ access: "read" }), (e) => seen.push(e));
+
+    expect(seen.some((e) => e.type === "thinking_delta" && e.content === "hmm")).toBe(true);
+    expect(seen.some((e) => e.type === "text_delta")).toBe(true);
+    expect(seen.some((e) => e.type === "done")).toBe(true);
+    expect(res.content).toContain("report");
+  });
+
   it("recovers a sub-agent stuck repeating a tool call and returns its report", async () => {
     const read: Tool = {
       name: "Read",
@@ -171,6 +212,14 @@ describe("SubAgentRunner", () => {
     await pending;
     expect(aborted).toBe(true);
     expect(runner.activeCount).toBe(0);
+  });
+});
+
+describe("toSubAgentEvent", () => {
+  it("keeps live events and drops usage / raw chunks", () => {
+    expect(toSubAgentEvent({ type: "text_delta", content: "x" })).toEqual({ type: "text_delta", content: "x" });
+    expect(toSubAgentEvent({ type: "usage", usage: {} as never })).toBeUndefined();
+    expect(toSubAgentEvent({ type: "raw_chunk", chunk: "x", kind: "text" })).toBeUndefined();
   });
 });
 

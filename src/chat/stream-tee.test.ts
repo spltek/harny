@@ -73,6 +73,18 @@ describe("StreamTee", () => {
     expect(deps.onPost).toHaveBeenCalledWith({ type: "subagentStart", toolCallId: "d1" });
   });
 
+  it("forwards subagent_event (nested streaming) to the view when active", () => {
+    const { tee, deps } = makeTee();
+    const a = fakeRuntime("a");
+    tee.attach(a.rt);
+    a.emit({ type: "subagent_event", toolCallId: "d1", event: { type: "text_delta", content: "x" } });
+    expect(deps.onPost).toHaveBeenCalledWith({
+      type: "subagentEvent",
+      toolCallId: "d1",
+      event: { type: "text_delta", content: "x" },
+    });
+  });
+
   it("clears on done and on error", () => {
     const { tee } = makeTee();
     const a = fakeRuntime("a");

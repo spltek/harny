@@ -127,7 +127,7 @@ export function activate(context: ExtensionContext) {
       // Sub-agents (orchestration) are opt-in via the "multi" toggle: off by
       // default so a single agent behaves exactly as before until enabled.
       delegateByDefault: false,
-      spawnSubAgent: (spec) => subAgents.run(spec),
+      spawnSubAgent: (spec, onEvent) => subAgents.run(spec, onEvent),
       onAbort: () => subAgents.abortAll(),
     });
   };

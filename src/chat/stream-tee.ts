@@ -55,6 +55,10 @@ export class StreamTee {
           // The delegate actually left the queue and started running.
           if (active) post({ type: "subagentStart", toolCallId: event.toolCallId });
           break;
+        case "subagent_event":
+          // Live nested activity of a running sub-agent.
+          if (active) post({ type: "subagentEvent", toolCallId: event.toolCallId, event: event.event });
+          break;
         case "tool_result":
           // The assistant message (thinking included) is now in history.
           live.thinking = "";

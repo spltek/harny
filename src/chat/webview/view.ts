@@ -462,14 +462,7 @@ function addToolCall(name: string, args: unknown, beforeEl?: HTMLElement | null)
     '<div class="tool-input"><span class="tool-label">Input</span><pre class="tool-args">' + escapeHtml(formatArgs(args)) + "</pre></div>" +
     '<div class="tool-output"><span class="tool-label">Output</span><pre class="tool-result">⏳ running…</pre></div>' +
     "</div>";
-  const header = div.querySelector(".tool-header");
-  header?.addEventListener("click", () => {
-    const details = div.querySelector(".tool-details");
-    const tog = div.querySelector(".tool-toggle");
-    if (!details || !tog) return;
-    const collapsed = details.classList.toggle("collapsed");
-    tog.textContent = collapsed ? "▶" : "▼";
-  });
+  wireCollapsible(div);
   if (beforeEl && beforeEl.parentNode) beforeEl.parentNode.insertBefore(div, beforeEl);
   else messagesEl.appendChild(div);
   scrollDown();
@@ -516,6 +509,9 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
 
   const div = document.createElement("div");
   div.className = "msg tool subagent tool-call-pending";
+  // The bubble is COLLAPSED by default (like thinking blocks): only the header
+  // with the live status is visible; expanding reveals goal, resources, the
+  // nested live stream and the final report.
   div.innerHTML =
     '<div class="tool-header subagent-header">' +
     '<span class="tool-toggle">▶</span>' +
@@ -525,8 +521,8 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
     (role ? '<span class="subagent-role">' + escapeHtml(role) + "</span>" : "") +
     '<span class="subagent-status queued">queued…</span>' +
     "</div>" +
+    '<div class="subagent-body collapsed">' +
     (goal ? '<div class="subagent-goal">' + escapeHtml(goal) + "</div>" : "") +
-    '<div class="tool-details collapsed">' +
     '<div class="subagent-meta">' +
     (access ? '<span class="subagent-chip access-' + escapeHtml(access) + '">' + escapeHtml(access) + "</span>" : "") +
     (parallel ? '<span class="subagent-chip parallel" title="may run in parallel with other read-only sub-agents">⫽ parallel</span>' : "") +
@@ -536,10 +532,88 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
     '<div class="tool-input"><span class="tool-label">Task</span><pre class="tool-args">' + escapeHtml(formatArgs(args)) + "</pre></div>" +
     '<div class="tool-output"><span class="tool-label">Report</span><pre class="tool-result">⏳ working…</pre></div>' +
     "</div>";
-  wireCollapsible(div);
+  // Header toggles the WHOLE body (goal + nested stream + report).
+  div.querySelector(".subagent-header")?.addEventListener("click", () => {
+    const body = div.querySelector(".subagent-body");
+    const tog = div.querySelector(".tool-toggle");
+    if (!body || !tog) return;
+    const collapsed = body.classList.toggle("collapsed");
+    tog.textContent = collapsed ? "▶" : "▼";
+  });
   messagesEl.appendChild(div);
   scrollDown();
   return div;
+}
+
+/** Live nested activity of a running sub-agent (forwarded by the host). */
+interface SubAgentStreamEvent {
+  type: "text_delta" | "thinking_delta" | "tool_call" | "tool_result" | "done" | "error";
+  content?: string;
+  toolCall?: { id?: string; name: string; arguments: unknown };
+  toolResult?: { toolCallId: string; output: string; isError: boolean };
+  error?: string;
+}
+
+/** Bounded live text kept per sub-agent bubble (the full report arrives at the end). */
+const SA_LIVE_MAX = 1500;
+const subAgentToolEls = new Map<string, HTMLElement>();
+
+/** Ensure the nested live-log container exists inside a sub-agent bubble. */
+function subAgentLog(el: HTMLElement): HTMLElement {
+  let log = el.querySelector(".sa-log") as HTMLElement | null;
+  if (!log) {
+    log = document.createElement("div");
+    log.className = "sa-log";
+    // Always INSIDE the collapsible body (never leak outside when collapsed).
+    const body = el.querySelector(".subagent-body");
+    const goal = el.querySelector(".subagent-goal");
+    if (goal) goal.insertAdjacentElement("afterend", log);
+    else if (body) body.insertBefore(log, body.firstChild);
+    else el.appendChild(log);
+  }
+  return log;
+}
+
+/** Stream one sub-agent event into its bubble (thinking, answer text, tools). */
+function handleSubAgentEvent(parentId: string, event: SubAgentStreamEvent): void {
+  const el = pendingToolCalls.get(parentId);
+  if (!el) return;
+  const log = subAgentLog(el);
+  if (event.type === "thinking_delta" && typeof event.content === "string") {
+    let t = log.querySelector(".sa-thinking") as HTMLElement | null;
+    if (!t) {
+      t = document.createElement("div");
+      t.className = "sa-thinking";
+      log.appendChild(t);
+    }
+    t.textContent = ((t.textContent ?? "") + event.content).slice(-SA_LIVE_MAX);
+    scrollDown();
+  } else if (event.type === "text_delta" && typeof event.content === "string") {
+    let a = log.querySelector(".sa-answer") as HTMLElement | null;
+    if (!a) {
+      a = document.createElement("div");
+      a.className = "sa-answer";
+      log.appendChild(a);
+    }
+    a.textContent = ((a.textContent ?? "") + event.content).slice(-SA_LIVE_MAX);
+    scrollDown();
+  } else if (event.type === "tool_call" && event.toolCall) {
+    const line = document.createElement("div");
+    line.className = "sa-tool pending";
+    const id = event.toolCall.id ?? event.toolCall.name;
+    line.dataset.id = id;
+    const target = toolTargetArg(event.toolCall.arguments);
+    line.textContent = "🔧 " + event.toolCall.name + (target ? " " + target : "");
+    log.appendChild(line);
+    subAgentToolEls.set(parentId + ":" + id, line);
+    scrollDown();
+  } else if (event.type === "tool_result" && event.toolResult) {
+    const line = subAgentToolEls.get(parentId + ":" + event.toolResult.toolCallId);
+    if (line) {
+      line.classList.remove("pending");
+      line.classList.add(event.toolResult.isError ? "err" : "ok");
+    }
+  }
 }
 
 function addWorking(): HTMLDivElement {
@@ -2043,6 +2117,11 @@ window.addEventListener("message", (e) => {
       // visible: queued bubbles flip to running only when they actually start).
       const el = pendingToolCalls.get(msg.toolCallId);
       if (el) setSubAgentStatus(el, "running");
+      break;
+    }
+    case "subagentEvent": {
+      // Nested live streaming from inside the running sub-agent.
+      handleSubAgentEvent(msg.toolCallId, msg.event as SubAgentStreamEvent);
       break;
     }
     case "toolResult": {

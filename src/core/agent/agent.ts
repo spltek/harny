@@ -61,8 +61,12 @@ export interface AgentDeps {
   /** Initial delegation state (the "multi" flag). Defaults to the cap. */
   delegateByDefault?: boolean;
   /** Session-scoped runner for delegated sub-tasks. Required to execute a
-   * Delegate call. */
-  spawnSubAgent?: (spec: DelegateSpec) => Promise<ToolResult>;
+   * Delegate call. `onEvent` forwards the sub-agent's live events (thinking /
+   * text / tools) so the UI can stream them inside the sub-agent bubble. */
+  spawnSubAgent?: (
+    spec: DelegateSpec,
+    onEvent?: (event: import("./types").SubAgentEvent) => void,
+  ) => Promise<ToolResult>;
   /** Called by abort() so the parent can cascade Stop to active sub-agents. */
   onAbort?: () => void;
   /** When the turn budget is exhausted, run ONE final tool-less turn that asks
@@ -582,7 +586,10 @@ export class Agent implements ChatController {
       // Signal the UI that this sub-agent is STARTING now (queued → running):
       // with a concurrency cap, several delegates may be queued behind others.
       this.deps.events.emit({ type: "subagent_start", toolCallId: tc.id });
-      return await this.deps.spawnSubAgent(spec);
+      // Forward the sub-agent's live events into its bubble (nested streaming).
+      const onEvent = (event: import("./types").SubAgentEvent) =>
+        this.deps.events.emit({ type: "subagent_event", toolCallId: tc.id, event });
+      return await this.deps.spawnSubAgent(spec, onEvent);
     } catch (err: any) {
       return { content: formatSubAgentError(spec, err?.message || String(err)), isError: true };
     }
