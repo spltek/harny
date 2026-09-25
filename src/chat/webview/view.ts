@@ -1654,32 +1654,22 @@ window.addEventListener("keydown", (e) => {
 
 // ── Multi (multi-agent) press button ──
 // A press/release toggle on the AI Model row: pressed = blue. The host keeps
-// it as a GLOBAL master switch; the panel remembers its last choice and
-// re-asserts it on load (see the initial render) so a reload never leaves the
-// button ON while the agent has orchestration off.
+// it as a GLOBAL master switch. It is ALWAYS DISABLED on load (not restored
+// from a previous panel state): orchestration is strictly opt-in per session.
 let multiOn = false;
 
-function savedMultiFromState(): boolean | undefined {
-  const st = vscode.getState() as { multi?: boolean } | undefined;
-  return typeof st?.multi === "boolean" ? st.multi : undefined;
-}
-
-/** Render the pressed state (blue class + aria-pressed). `persist` saves it
- * for this panel; `notify` tells the host (per-session state + config push). */
-function applyMulti(on: boolean, opts?: { persist?: boolean; notify?: boolean }): void {
+/** Render the pressed state (blue class + aria-pressed). `notify` tells the
+ * host (global master switch + config push). */
+function applyMulti(on: boolean, opts?: { notify?: boolean }): void {
   multiOn = on;
   multiBtn.classList.toggle("is-on", on);
   multiBtn.setAttribute("aria-pressed", String(on));
-  if (opts?.persist) {
-    const prev = vscode.getState() as object | undefined;
-    vscode.setState({ ...(prev ?? {}), multi: on });
-  }
   if (opts?.notify) vscode.postMessage({ type: "setMulti", multi: on });
 }
 
 multiBtn.addEventListener("click", () => {
   if (multiBtn.disabled) return;
-  applyMulti(!multiOn, { persist: true, notify: true });
+  applyMulti(!multiOn, { notify: true });
 });
 
 // ── Model dropdown (all providers, declared or detected from the host) ──
@@ -2451,18 +2441,17 @@ const collapsedDefault = savedCollapsed ?? true;
 document.body.classList.toggle("controls-collapsed", collapsedDefault);
 ctlToggle.setAttribute("aria-expanded", String(!collapsedDefault));
 // Mode + multi: the PANEL's remembered choice wins on load (so a reload keeps
-// the user's UI state); we then RE-ASSERT both to the host so the active
-// session's agent adopts them. This is what fixes the "multi ON but no
-// sub-agents" desync after a reload.
-const savedState = vscode.getState() as { mode?: "analyze" | "agent"; multi?: boolean } | undefined;
+// Mode: the panel's remembered choice wins on load, then it is RE-ASSERTED to
+// the host so the active session's agent adopts it. MULTI, instead, is ALWAYS
+// DISABLED at startup (orchestration is opt-in) — never restored.
+const savedState = vscode.getState() as { mode?: "analyze" | "agent" } | undefined;
 const hostMode: "analyze" | "agent" = init.config?.mode === "agent" ? "agent" : "analyze";
 const initialMode: "analyze" | "agent" =
   savedState?.mode === "agent" || savedState?.mode === "analyze" ? savedState.mode : hostMode;
 applyMode(initialMode);
-const initialMulti = savedMultiFromState() ?? init.config?.multi === true;
-applyMulti(initialMulti);
+applyMulti(false); // multi starts OFF, always
 vscode.postMessage({ type: "setMode", mode: initialMode });
-vscode.postMessage({ type: "setMulti", multi: initialMulti });
+vscode.postMessage({ type: "setMulti", multi: false });
 renderViewState({
   sessions: init.sessions || [],
   openIds: init.openIds || [],

@@ -301,15 +301,15 @@ describe("view webview client", () => {
     expect(btn.getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("re-asserts the remembered mode/multi to the host on load (reload desync fix)", async () => {
+  it("re-asserts the remembered mode on load, but multi ALWAYS starts disabled", async () => {
     setupDom({}, { mode: "agent", multi: true });
     await loadView();
-    // The panel's remembered UI state is pushed to the host so the active
-    // session's agent adopts it — no more "multi ON but agent OFF".
+    // The remembered MODE is restored and pushed to the host…
     expect(posted).toContainEqual({ type: "setMode", mode: "agent" });
-    expect(posted).toContainEqual({ type: "setMulti", multi: true });
-    expect(document.getElementById("multi-btn")?.classList.contains("is-on")).toBe(true);
     expect(document.getElementById("mode-btn-label")?.textContent).toBe("Agent");
+    // …but MULTI is NOT restored: orchestration is opt-in, off by default.
+    expect(posted).toContainEqual({ type: "setMulti", multi: false });
+    expect(document.getElementById("multi-btn")?.classList.contains("is-on")).toBe(false);
   });
 
   it("multi toggle follows the host config and locks while working", async () => {
