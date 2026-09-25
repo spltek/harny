@@ -2030,6 +2030,9 @@ window.addEventListener("message", (e) => {
       break;
     }
     case "textDelta": {
+      // Ignore empty chunks: some providers emit a trailing/leading empty
+      // content delta, which would otherwise create an EMPTY bubble.
+      if (!msg.content) break;
       // Thinking phase is over (the answer is streaming now): the thinking
       // block stops pulsing and settles, instead of animating until done.
       if (currentThinkingBlock) clearThinkingBlock();
@@ -2042,6 +2045,8 @@ window.addEventListener("message", (e) => {
       break;
     }
     case "thinkingDelta": {
+      // Empty thinking chunks must not create an empty thinking block.
+      if (!msg.content) break;
       if (!currentThinkingBlock) {
         // A thinking phase starts a NEW segment: commit any pending renders and
         // close the previous answer bubble — the next text emission will get a

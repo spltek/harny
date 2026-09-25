@@ -691,6 +691,22 @@ describe("view webview client", () => {
     expect(document.querySelector(".msg.assistant.streaming")).toBe(null);
   });
 
+  it("ignores empty text/thinking deltas (no empty bubble)", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+
+    // Some providers emit an empty content delta: it must NOT create a bubble.
+    hostMessage({ type: "textDelta", content: "" });
+    expect(document.querySelector(".msg.assistant")).toBe(null);
+    hostMessage({ type: "thinkingDelta", content: "" });
+    expect(document.querySelector(".thinking-block")).toBe(null);
+
+    hostMessage({ type: "textDelta", content: "hi" });
+    expect(document.querySelector(".msg.assistant")?.textContent).toContain("hi");
+  });
+
   it("pulses the live thinking block while streaming and stops the pulse on done", async () => {
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
