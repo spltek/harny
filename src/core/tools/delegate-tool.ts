@@ -15,6 +15,7 @@ export class DelegateTool implements Tool {
     name: "Delegate",
     description:
       "Launch a sub-agent to work on ONE independent sub-task and return its report. " +
+      "You are the ORCHESTRATOR: prefer delegating independent sub-tasks to SUB-AGENTS over doing everything yourself. " +
       "The sub-agent runs its own agent loop with the full tool set on the SAME working directory.\n\n" +
       "DECLARE EXACTLY what the sub-agent will touch so the system can parallelize safely:\n" +
       "- resources: the files/dirs it will read or write (paths relative to the working directory).\n" +

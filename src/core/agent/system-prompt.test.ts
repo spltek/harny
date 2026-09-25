@@ -70,7 +70,8 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     const prompt = builder.build("analyze");
     expect(prompt).toContain("READ-ONLY MODE (Analyze)");
     expect(prompt).toContain("they MUST be read-only");
-    expect(prompt).toContain("ORCHESTRATION (Delegate)");
+    expect(prompt).toContain("ORCHESTRATION");
+    expect(prompt).toContain("SUB-AGENTS");
     // Read-only: no file-mutating tools advertised.
     const listSection = prompt.slice(prompt.indexOf("You have access to these tools:"), prompt.indexOf("\nGuidelines:"));
     expect(listSection).not.toContain("- Write:");
@@ -82,14 +83,15 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
       (mode) => toolDefinitionsForMode(toolsWithDelegate(), mode),
       () => "/w",
     );
-    expect(withDelegate.build("agent")).toContain("ORCHESTRATION (Delegate)");
+    expect(withDelegate.build("agent")).toContain("ORCHESTRATION");
+    expect(withDelegate.build("agent")).toContain("SUB-AGENTS");
     expect(withDelegate.build("agent")).toContain("EDITS ARE NEVER PARALLEL");
     // Parallel ON pushes a MANDATORY first-step parallelizability assessment.
     expect(withDelegate.build("agent")).toContain("MANDATORY FIRST STEP");
     expect(withDelegate.build("agent")).toContain("assess whether the task can be parallelized");
 
     const without = new DefaultSystemPromptBuilder((mode) => toolDefinitionsForMode(tools(), mode), () => "/w");
-    expect(without.build("agent")).not.toContain("ORCHESTRATION (Delegate)");
+    expect(without.build("agent")).not.toContain("ORCHESTRATION");
   });
 });
 

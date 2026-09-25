@@ -1430,13 +1430,13 @@ describe("Orchestration (Delegate)", () => {
     agent.setDelegation(false);
     await agent.send("off");
     expect(seen[0]).not.toContain("- Delegate:");
-    expect(seen[0]).not.toContain("ORCHESTRATION (Delegate)");
+    expect(seen[0]).not.toContain("ORCHESTRATION");
 
     // Parallel ON: Delegate + orchestration rules appear.
     agent.setDelegation(true);
     await agent.send("on");
     expect(seen[1]).toContain("- Delegate:");
-    expect(seen[1]).toContain("ORCHESTRATION (Delegate)");
+    expect(seen[1]).toContain("ORCHESTRATION");
   });
 });
 
