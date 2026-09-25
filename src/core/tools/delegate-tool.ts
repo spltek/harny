@@ -25,14 +25,18 @@ export class DelegateTool implements Tool {
       "(or overlapping dirs) are serialized automatically (use `after` to order them).\n" +
       "- after: ids of sibling sub-tasks that must finish first (use it when a sub-agent needs another's output).\n\n" +
       "RULES:\n" +
-      "- MANDATORY FIRST STEP (every request): assess parallelizability before acting. Split the task and decide " +
-      "which parts are INDEPENDENT. Read-only + disjoint resources → parallel; anything that writes or shares a " +
-      "file → serial (one owner). If nothing is parallelizable, do it yourself — do not force parallelism.\n" +
-      "- Parallelize ONLY independent read-only analysis on disjoint or shared-read files.\n" +
-      "- Never launch two writers that touch the same file; serialize them (after) or give the file to ONE owner.\n" +
-      "- Do NOT parallelize trivial tasks or tasks that would do the same work — parallelism costs tokens.\n" +
-      "- Emit several Delegate calls in the SAME turn: read-only sub-agents then run in parallel (up to " +
-      "the configured max); results arrive together.",
+      "- You are the ORCHESTRATOR: YOU organize the sub-tasks and decide what runs in parallel. MANDATORY FIRST STEP " +
+      "(every request): decompose the task and analyze conflicts BEFORE acting.\n" +
+      "- Reason about RESOURCES, not only exact file paths: a writer conflicts with another writer on the same " +
+      "file/dir, with DELETING/MOVING a parent folder, and with a concurrent reader of the same file. Shared " +
+      "config/manifests/lockfiles/generated code and the same module/feature are conflicts too. If unsure, ORDER " +
+      "the tasks (use after) — do not parallelize uncertain conflicts.\n" +
+      "- Declare resources (files AND/OR directories) and access honestly: the host serializes overlapping " +
+      "writers and refuses undeclared delegates, but YOU own a correct conflict-free plan.\n" +
+      "- Emit ALL independent Delegate calls in the SAME turn so they run in parallel (up to the configured max); " +
+      "use after for dependencies. Do not flood: group tiny steps. WRITE/CREATE sub-agents on DIFFERENT files " +
+      "run in parallel too.\n" +
+      "- Do NOT delegate the core reasoning or trivial work; delegate independent, bounded sub-tasks.",
     parameters: {
       type: "object",
       properties: {

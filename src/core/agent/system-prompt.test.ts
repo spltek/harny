@@ -84,11 +84,11 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
       () => "/w",
     );
     expect(withDelegate.build("agent")).toContain("ORCHESTRATION");
-    expect(withDelegate.build("agent")).toContain("SUB-AGENTS");
+    expect(withDelegate.build("agent")).toContain("ANALYZE CONFLICTS");
     expect(withDelegate.build("agent")).toContain("WRITES TO DISJOINT FILES RUN IN PARALLEL");
-    // Parallel ON pushes a MANDATORY first-step parallelizability assessment.
-    expect(withDelegate.build("agent")).toContain("MANDATORY FIRST STEP");
-    expect(withDelegate.build("agent")).toContain("assess whether the task can be parallelized");
+    // The orchestrator must decompose + reason about resources (not just files).
+    expect(withDelegate.build("agent")).toContain("DECOMPOSE");
+    expect(withDelegate.build("agent")).toContain("parent folder");
 
     const without = new DefaultSystemPromptBuilder((mode) => toolDefinitionsForMode(tools(), mode), () => "/w");
     expect(without.build("agent")).not.toContain("ORCHESTRATION");
