@@ -79,4 +79,22 @@ describe("ToolCallAccumulator", () => {
     expect(call.malformed).toBe(false);
     expect(call.arguments).toEqual({ path: "a.txt", contents: "b" });
   });
+
+  it("keeps N parallel calls that REUSE the same index (provider without index)", () => {
+    const acc = new ToolCallAccumulator();
+    // Three Delegate calls all emitted at index 0 (index omitted by the host).
+    const first = acc.handle({ type: "tool_call_start", index: 0, id: "a", name: "Delegate" });
+    acc.handle({ type: "tool_call_delta", index: 0, delta: '{"id":"A"}' });
+    // A NEW start at the same index must FLUSH the previous call, not drop it.
+    const second = acc.handle({ type: "tool_call_start", index: 0, id: "b", name: "Delegate" });
+    acc.handle({ type: "tool_call_delta", index: 0, delta: '{"id":"B"}' });
+    const third = acc.handle({ type: "tool_call_start", index: 0, id: "c", name: "Delegate" });
+    acc.handle({ type: "tool_call_delta", index: 0, delta: '{"id":"C"}' });
+    const last = acc.handle({ type: "tool_call_end", index: 0 });
+
+    expect(first).toBeUndefined();
+    expect(second).toMatchObject({ id: "a", arguments: { id: "A" } });
+    expect(third).toMatchObject({ id: "b", arguments: { id: "B" } });
+    expect(last).toMatchObject({ id: "c", arguments: { id: "C" } });
+  });
 });

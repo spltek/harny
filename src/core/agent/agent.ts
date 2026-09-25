@@ -302,7 +302,11 @@ export class Agent implements ChatController {
     const capRaw = this.deps.config.get().maxParallelSubAgents;
     const parallelCap =
       typeof capRaw === "number" && Number.isInteger(capRaw) && capRaw > 0 ? capRaw : Infinity;
+    // Stop launching MORE work once the run is aborted (queued sub-agents must
+    // not start after the user pressed Stop).
+    const abortedRun = (): boolean => this.abortController?.signal.aborted === true;
     for (const step of steps) {
+      if (abortedRun()) break;
       if (step.kind === "single") {
         const r = await this.executeToolSafely(toolCalls[step.index]);
         results[step.index] = r;
@@ -313,6 +317,7 @@ export class Agent implements ChatController {
         // so there are ALWAYS ~cap running (a sliding window, not a barrier).
         // Each result is emitted the moment its call resolves.
         await runWithConcurrency(step.indices, parallelCap, async (idx) => {
+          if (abortedRun()) return; // do not START a queued sub-agent after Stop
           const r = await this.executeToolSafely(toolCalls[idx]);
           results[idx] = r;
           emitResult(idx, r);
@@ -322,10 +327,17 @@ export class Agent implements ChatController {
 
     for (let i = 0; i < toolCalls.length; i++) {
       const tc = toolCalls[i];
-      const result = results[i] ?? { content: `Tool ${tc.name} produced no result`, isError: true };
+      const result =
+        results[i] ??
+        (abortedRun()
+          ? { content: "\u23f9 Aborted before running (Parallel stopped).", isError: true }
+          : { content: `Tool ${tc.name} produced no result`, isError: true });
       this.deps.history.add({ role: "tool", content: result.content, toolCallId: tc.id, timestamp: Date.now() });
       toolResults.push({ name: tc.name, args: tc.arguments, isError: result.isError });
     }
+
+    // Aborted: do not continue the turn loop.
+    if (abortedRun()) return;
 
     // ── Loop detection ────────────────────────────────────────────────
     // A) The same tool calls (name AND arguments) failed for 2 consecutive

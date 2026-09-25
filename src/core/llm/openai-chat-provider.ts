@@ -161,6 +161,9 @@ export class OpenAIChatProvider implements LLMProvider {
     }
 
     const seenToolCallIndices = new Set<number>();
+    // Fallback ids for providers that omit tool-call ids: a counter keeps them
+    // unique even when several calls share the same index.
+    let toolCallSeq = 0;
     // Accumulated OpenRouter `reasoning_details` blocks, keyed by block index
     // and kept in the exact order the model emitted them. They are passed back
     // UNMODIFIED on the next turn (required for encrypted/summarized models).
@@ -246,7 +249,7 @@ export class OpenAIChatProvider implements LLMProvider {
             yield {
               type: "tool_call_start",
               index: idx,
-              id: tc.id || `call_${idx}`,
+              id: tc.id || `call_${toolCallSeq++}`,
               name: tc.function.name,
             };
           }

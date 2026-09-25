@@ -753,7 +753,8 @@ function renderMessages(msgs: ChatMsg[]): boolean {
       if (m.toolCalls && m.toolCalls.length > 0) {
         for (const tc of m.toolCalls) {
           const id = tc.id ?? tc.name;
-          const el = tc.name === "Delegate" ? addSubAgentCall(tc.arguments) : addToolCall(tc.name, tc.arguments);
+          const isSubAgent = tc.name === "Delegate" && parallelOn;
+          const el = isSubAgent ? addSubAgentCall(tc.arguments) : addToolCall(tc.name, tc.arguments);
           el.classList.remove("tool-call-pending");
           const out = el.querySelector(".tool-result");
           if (out) {
@@ -2111,7 +2112,10 @@ window.addEventListener("message", (e) => {
       // and close the bubble — later text becomes a NEW blue bubble.
       flushStreamingMd();
       // Sub-agents get their own visible bubble (goal + status + resources).
-      const toolEl = msg.name === "Delegate" ? addSubAgentCall(msg.arguments) : addToolCall(msg.name, msg.arguments);
+      // A Delegate call is only a SUB-AGENT when Parallel is ON; otherwise it
+      // is (at most) a refused tool call — never a sub-agent bubble.
+      const isSubAgent = msg.name === "Delegate" && parallelOn;
+      const toolEl = isSubAgent ? addSubAgentCall(msg.arguments) : addToolCall(msg.name, msg.arguments);
       pendingToolCalls.set(msg.id, toolEl);
       if (workingEl) {
         workingEl.textContent = msg.name === "Delegate" ? "● Working... 🤖 sub-agent" : "● Working... 🔧 " + msg.name;

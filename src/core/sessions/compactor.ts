@@ -125,7 +125,9 @@ export class Compactor {
   async summarize(toSummarize: ChatMessage[], previousSummary?: string): Promise<string> {
     const provider = this.factory.create(this.buildConfig());
     let out = "";
-    for await (const chunk of provider.stream(buildSummaryMessages(toSummarize, previousSummary))) {
+    // No tools for a summary turn: pass [] so the provider never advertises
+    // the (possibly orchestration) tool set during compaction.
+    for await (const chunk of provider.stream(buildSummaryMessages(toSummarize, previousSummary), undefined, [])) {
       if (chunk.type === "text") out += chunk.content;
       if (out.length > 40000) break;
     }

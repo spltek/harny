@@ -11,11 +11,20 @@ export class ToolCallAccumulator {
   handle(chunk: StreamChunk): ToolCall | undefined {
     switch (chunk.type) {
       case "tool_call_start": {
+        const existing = this.calls.get(chunk.index);
         this.calls.set(chunk.index, {
           id: chunk.id ?? `call_${chunk.index}`,
           name: chunk.name ?? "unknown",
           args: "",
         });
+        // A provider that OMITS or REUSES the tool-call index sends several
+        // STARTS at the same index (e.g. parallel calls with index undefined).
+        // Flush the previous call instead of silently overwriting it, so N
+        // parallel calls survive as N calls.
+        if (existing) {
+          const res = parseToolArgs(existing.args);
+          return { id: existing.id, name: existing.name, arguments: res.args, malformed: res.malformed };
+        }
         return undefined;
       }
       case "tool_call_delta": {

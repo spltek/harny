@@ -4,6 +4,20 @@ import { vi } from "vitest";
 
 const posted: unknown[] = [];
 
+/** Config push that turns the "Parallel" toggle ON (sub-agents available). */
+const PARALLEL_ON = {
+  type: "config",
+  config: {
+    provider: "openai",
+    model: "gpt-4o",
+    hasKey: true,
+    parallel: true,
+    models: [],
+    providerModels: [],
+    contextWindow: 128000,
+  },
+};
+
 function setupDom(
   initOverrides: Record<string, unknown> = {},
   savedState: Record<string, unknown> = {},
@@ -1312,6 +1326,7 @@ describe("view webview client", () => {
 
   it("renders a dedicated sub-agent bubble for Delegate calls with a live status", async () => {
     await loadView();
+    hostMessage(PARALLEL_ON);
     hostMessage({
       type: "toolCall",
       id: "s1",
@@ -1347,6 +1362,7 @@ describe("view webview client", () => {
 
   it("streams a sub-agent's live thinking/text/tools into its bubble", async () => {
     await loadView();
+    hostMessage(PARALLEL_ON);
     hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
     hostMessage({ type: "subagentStart", toolCallId: "s1" });
     hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "thinking_delta", content: "reasoning" } });
@@ -1364,6 +1380,7 @@ describe("view webview client", () => {
 
   it("sub-agent bubbles are collapsed by default and expand on click", async () => {
     await loadView();
+    hostMessage(PARALLEL_ON);
     hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
     const body = bubble.querySelector(".subagent-body") as HTMLElement;
@@ -1377,6 +1394,7 @@ describe("view webview client", () => {
 
   it("marks a failed nested tool line in red", async () => {
     await loadView();
+    hostMessage(PARALLEL_ON);
     hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
     hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "tool_call", toolCall: { id: "t1", name: "Read", arguments: {} } } });
     hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "tool_result", toolResult: { toolCallId: "t1", output: "boom", isError: true } } });
@@ -1394,7 +1412,9 @@ describe("view webview client", () => {
 
   it("routes nested events to the right bubble when several sub-agents run", async () => {
     await loadView();
+    hostMessage(PARALLEL_ON);
     hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "a", access: "read", resources: ["a.ts"] } });
+    hostMessage(PARALLEL_ON);
     hostMessage({ type: "toolCall", id: "s2", name: "Delegate", arguments: { id: "B", goal: "b", access: "read", resources: ["b.ts"] } });
     hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "text_delta", content: "alpha" } });
     hostMessage({ type: "subagentEvent", toolCallId: "s2", event: { type: "text_delta", content: "beta" } });
@@ -1405,6 +1425,7 @@ describe("view webview client", () => {
 
   it("flips a sub-agent to done as soon as its own done event arrives", async () => {
     await loadView();
+    hostMessage(PARALLEL_ON);
     hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "a", access: "read", resources: ["a.ts"] } });
     hostMessage({ type: "subagentStart", toolCallId: "s1" });
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
@@ -1416,7 +1437,9 @@ describe("view webview client", () => {
 
   it("marks each sub-agent done individually when its own done arrives", async () => {
     await loadView();
+    hostMessage(PARALLEL_ON);
     hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "a", access: "read", resources: ["a.ts"] } });
+    hostMessage(PARALLEL_ON);
     hostMessage({ type: "toolCall", id: "s2", name: "Delegate", arguments: { id: "B", goal: "b", access: "read", resources: ["b.ts"] } });
     hostMessage({ type: "subagentStart", toolCallId: "s1" });
     hostMessage({ type: "subagentStart", toolCallId: "s2" });
@@ -1428,6 +1451,7 @@ describe("view webview client", () => {
 
   it("marks a sub-agent failed on its own error event", async () => {
     await loadView();
+    hostMessage(PARALLEL_ON);
     hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "a", access: "read", resources: ["a.ts"] } });
     hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "error", error: "boom" } });
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
@@ -1436,6 +1460,7 @@ describe("view webview client", () => {
 
   it("renders markdown inside the sub-agent live stream (thinking + answer)", async () => {
     await loadView();
+    hostMessage(PARALLEL_ON);
     hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
     hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "thinking_delta", content: "**plan**" } });
     hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "text_delta", content: "result: `x`\n\n- a\n- b" } });
@@ -1449,6 +1474,7 @@ describe("view webview client", () => {
 
   it("renders the sub-agent REPORT as markdown", async () => {
     await loadView();
+    hostMessage(PARALLEL_ON);
     hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
     hostMessage({
       type: "toolResult",
@@ -1463,8 +1489,17 @@ describe("view webview client", () => {
     expect(report.querySelectorAll("li").length).toBe(2);
   });
 
+  it("renders a Delegate call as a PLAIN tool bubble when Parallel is OFF", async () => {
+    await loadView();
+    // Parallel is off by default: no sub-agent bubble is ever created.
+    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    expect(document.querySelector(".msg.tool.subagent")).toBe(null);
+    expect(document.querySelector(".msg.tool")).toBeTruthy();
+  });
+
   it("marks a failed sub-agent as failed", async () => {
     await loadView();
+    hostMessage(PARALLEL_ON);
     hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "edit", access: "write", resources: ["a.ts"] } });
     hostMessage({ type: "toolResult", toolCallId: "s1", output: '🔁 Sub-agent "A" failed: boom', isError: true });
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
@@ -1473,6 +1508,7 @@ describe("view webview client", () => {
 
   it("re-renders sub-agent bubbles from the transcript with a done status", async () => {
     await loadView();
+    hostMessage(PARALLEL_ON);
     hostMessage({
       type: "refresh",
       messages: [

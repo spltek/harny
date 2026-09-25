@@ -1308,6 +1308,78 @@ describe("Orchestration (Delegate)", () => {
     expect(history.all().some((m) => m.role === "tool" && /read-only/i.test(m.content ?? ""))).toBe(true);
   });
 
+  it("abort() cascades to the sub-agents via onAbort", () => {
+    let called = false;
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: fakeFactory([{ type: "text", content: "ok" }]),
+      tools: new ToolRegistry([makeTool("Read")]),
+      history: new InMemoryChatHistory(),
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(() => [], () => "/w"),
+      allowDelegation: true,
+      spawnSubAgent: async () => ({ content: "r", isError: false }),
+      onAbort: () => {
+        called = true;
+      },
+    });
+    agent.abort();
+    expect(called).toBe(true);
+  });
+
+  it("maxParallelSubAgents caps 5 parallel delegates to 2 concurrent", async () => {
+    let running = 0;
+    let max = 0;
+    const spawn = async (): Promise<ToolResult> => {
+      running++;
+      max = Math.max(max, running);
+      await new Promise((r) => setTimeout(r, 5));
+      running--;
+      return { content: "r", isError: false };
+    };
+    const calls = ["A", "B", "C", "D", "E"].map((id, i) => ({
+      id,
+      goal: id,
+      access: "read",
+      resources: [`${i}.ts`],
+      parallel: "yes",
+    }));
+    const { agent } = build({ calls, maxParallel: 2, spawn });
+
+    await agent.send("go");
+
+    expect(max).toBe(2);
+  });
+
+  it("abort stops launching queued sub-agents and ends the turn", async () => {
+    const started: string[] = [];
+    let agentRef: Agent;
+    const spawn = async (spec: DelegateSpec): Promise<ToolResult> => {
+      started.push(spec.id);
+      if (spec.id === "A") agentRef.abort(); // user presses Stop while A runs
+      await new Promise((r) => setTimeout(r, 5));
+      return { content: "r", isError: false };
+    };
+    const calls = ["A", "B", "C"].map((id, i) => ({
+      id,
+      goal: id,
+      access: "read",
+      resources: [`${i}.ts`],
+      parallel: "yes",
+    }));
+    const { agent, history } = build({ calls, maxParallel: 1, spawn });
+    agentRef = agent;
+
+    await agent.send("go");
+
+    // Only A started; the queued B/C must NEVER start after Stop.
+    expect(started).toEqual(["A"]);
+    // The not-started calls still get a tool result so the history stays coherent.
+    expect(
+      history.all().some((m) => m.role === "tool" && /Aborted before running/.test(m.content ?? "")),
+    ).toBe(true);
+  });
+
   it("rejects invalid delegate args (missing resources) without spawning", async () => {
     let spawned = 0;
     const { agent, history } = build({
