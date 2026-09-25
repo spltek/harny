@@ -5,7 +5,6 @@ import {
   formatSubAgentInterrupted,
   formatSubAgentReport,
   haveWriteConflict,
-  isParallelizable,
   parseDelegateSpec,
   planToolExecution,
   resourcesOverlap,
@@ -53,16 +52,6 @@ describe("parseDelegateSpec", () => {
 });
 
 describe("parallelism policy", () => {
-  it("only read sub-tasks with no dependency are parallelizable (flag ignored)", () => {
-    expect(isParallelizable(spec({ access: "read", parallel: true }))).toBe(true);
-    // The `parallel` flag is advisory and IGNORED: a stray "no" cannot serialize reads.
-    expect(isParallelizable({ ...spec({ access: "read" }), parallel: undefined })).toBe(true);
-    expect(isParallelizable(spec({ access: "read", parallel: false }))).toBe(true);
-    expect(isParallelizable(spec({ access: "write", parallel: true }))).toBe(false);
-    expect(isParallelizable(spec({ access: "create", parallel: true }))).toBe(false);
-    expect(isParallelizable(spec({ access: "read", parallel: true, after: ["B"] }))).toBe(false);
-  });
-
   it("detects resource overlap and write conflicts", () => {
     expect(resourcesOverlap(["src/a.ts"], ["src/a.ts"])).toBe(true);
     expect(resourcesOverlap(["src"], ["src/a.ts"])).toBe(true);
@@ -81,17 +70,30 @@ describe("planToolExecution", () => {
     isDelegate: true,
     spec: spec({ id, parallel: true, resources: [res] }),
   });
-  const seq = (id: string, access: DelegateSpec["access"] = "read"): PlannedCall => ({
-    isDelegate: true,
-    spec: spec({ id, access, parallel: access === "read" }),
-  });
 
   it("groups consecutive parallel read-delegates into one batch", () => {
     expect(planToolExecution([par("A"), par("B"), par("C")])).toEqual([{ kind: "parallel", indices: [0, 1, 2] }]);
   });
 
-  it("keeps writers serial (never parallel)", () => {
-    expect(planToolExecution([seq("A", "write"), seq("B", "write")])).toEqual([
+  it("runs WRITERS on DISJOINT files in parallel", () => {
+    const w1: PlannedCall = { isDelegate: true, spec: spec({ id: "A", access: "write", resources: ["a.ts"] }) };
+    const w2: PlannedCall = { isDelegate: true, spec: spec({ id: "B", access: "create", resources: ["b.ts"] }) };
+    expect(planToolExecution([w1, w2])).toEqual([{ kind: "parallel", indices: [0, 1] }]);
+  });
+
+  it("serializes writers that SHARE a resource (never two writers on the same file)", () => {
+    const w1: PlannedCall = { isDelegate: true, spec: spec({ id: "A", access: "write", resources: ["a.ts"] }) };
+    const w2: PlannedCall = { isDelegate: true, spec: spec({ id: "B", access: "write", resources: ["a.ts"] }) };
+    expect(planToolExecution([w1, w2])).toEqual([
+      { kind: "single", index: 0 },
+      { kind: "single", index: 1 },
+    ]);
+  });
+
+  it("keeps a READER out of a batch that writes its file", () => {
+    const w: PlannedCall = { isDelegate: true, spec: spec({ id: "A", access: "write", resources: ["a.ts"] }) };
+    const r: PlannedCall = { isDelegate: true, spec: spec({ id: "B", access: "read", resources: ["a.ts"] }) };
+    expect(planToolExecution([w, r])).toEqual([
       { kind: "single", index: 0 },
       { kind: "single", index: 1 },
     ]);

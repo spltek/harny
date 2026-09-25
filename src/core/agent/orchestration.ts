@@ -59,14 +59,6 @@ export function parseDelegateSpec(args: Record<string, unknown>): { spec?: Deleg
   return { spec: { id, goal, context, role, access, resources, parallel, after } };
 }
 
-/** A read-only sub-task with no ordering dependency is ALWAYS eligible for a
- * parallel batch (the `parallel` flag is advisory and ignored here, so a
- * stray "no" cannot silently serialize reads). WRITERS ARE NEVER PARALLEL —
- * edits/creations always run one at a time. */
-export function isParallelizable(spec: DelegateSpec): boolean {
-  return spec.access === "read" && spec.after.length === 0;
-}
-
 function normalizePath(p: string): string {
   return p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 }
@@ -103,29 +95,36 @@ export type ExecutionStep =
   | { kind: "parallel"; indices: number[] };
 
 /**
- * Plan how to execute a turn's tool calls. Only CONSECUTIVE parallelizable
- * read-delegates are batched together: any other call (a non-delegate tool, a
- * writer, an undeclared/dependent sub-task) is a BARRIER that runs on its own,
- * in order. This guarantees:
- *   · at most one writer sub-agent runs at any time (never parallel edits),
- *   · nothing runs concurrently with a step that could change its inputs.
- * Results are still appended to the transcript in the original call order.
+ * Plan how to execute a turn's tool calls.
+ *
+ * CONSECUTIVE delegates with no ordering dependency are batched together as
+ * long as they do NOT conflict on resources: reads never conflict with reads,
+ * and a WRITE only conflicts with another call whose resources OVERLAP it.
+ * So 5 writers on 5 DIFFERENT files run in parallel; two writers on the same
+ * file (or a reader of a file being written) are split into separate steps.
+ * Any non-delegate call, or a delegate with an `after` dependency, is a
+ * BARRIER that runs on its own. Results keep the original call order.
  */
 export function planToolExecution(calls: readonly PlannedCall[]): ExecutionStep[] {
   const steps: ExecutionStep[] = [];
-  let batch: number[] = [];
+  let batch: { index: number; spec: DelegateSpec }[] = [];
   const flush = () => {
-    if (batch.length === 1) steps.push({ kind: "single", index: batch[0] });
-    else if (batch.length > 1) steps.push({ kind: "parallel", indices: batch });
+    if (batch.length === 1) steps.push({ kind: "single", index: batch[0].index });
+    else if (batch.length > 1) steps.push({ kind: "parallel", indices: batch.map((b) => b.index) });
     batch = [];
   };
   calls.forEach((call, i) => {
-    if (call.isDelegate && call.spec && isParallelizable(call.spec)) {
-      batch.push(i);
+    const spec =
+      call.isDelegate && call.spec && call.spec.after.length === 0 ? call.spec : undefined;
+    if (!spec) {
+      flush();
+      steps.push({ kind: "single", index: i });
       return;
     }
-    flush();
-    steps.push({ kind: "single", index: i });
+    // Cannot share a batch with a conflicting call (overlapping write): start
+    // a fresh batch so it can still parallelize with later safe calls.
+    if (batch.some((b) => haveWriteConflict(spec, b.spec))) flush();
+    batch.push({ index: i, spec });
   });
   flush();
   return steps;

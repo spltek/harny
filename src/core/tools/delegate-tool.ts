@@ -20,9 +20,9 @@ export class DelegateTool implements Tool {
       "DECLARE EXACTLY what the sub-agent will touch so the system can parallelize safely:\n" +
       "- resources: the files/dirs it will read or write (paths relative to the working directory).\n" +
       "- access: \"read\" (inspect only), \"write\" (modify existing files) or \"create\" (new files).\n" +
-      "- parallel: IGNORED for read-only sub-agents — they ALWAYS run in parallel with the others from " +
-      "the SAME turn (use `after` to order them). WRITERS ARE NEVER PARALLEL: any write/create sub-agent " +
-      "runs alone, one at a time (edits are never concurrent).\n" +
+      "- parallel: IGNORED. Read-only sub-agents ALWAYS run in parallel with the others from the SAME turn; " +
+      "WRITE/CREATE sub-agents on DIFFERENT files also run in parallel. Two writers that touch the SAME file " +
+      "(or overlapping dirs) are serialized automatically (use `after` to order them).\n" +
       "- after: ids of sibling sub-tasks that must finish first (use it when a sub-agent needs another's output).\n\n" +
       "RULES:\n" +
       "- MANDATORY FIRST STEP (every request): assess parallelizability before acting. Split the task and decide " +

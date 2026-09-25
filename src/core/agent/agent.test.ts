@@ -1248,18 +1248,42 @@ describe("Orchestration (Delegate)", () => {
     expect(order).toEqual(["start:A", "end:A", "start:B", "end:B"]);
   });
 
-  it("never runs two writers concurrently", async () => {
+  it("runs writers on DISJOINT files in parallel", async () => {
+    let running = 0;
+    let max = 0;
+    const spawn = async (): Promise<ToolResult> => {
+      running++;
+      max = Math.max(max, running);
+      await new Promise((r) => setTimeout(r, 5));
+      running--;
+      return { content: "r", isError: false };
+    };
+    const { agent } = build({
+      calls: [
+        { id: "A", goal: "a", access: "write", resources: ["a.ts"] },
+        { id: "B", goal: "b", access: "create", resources: ["b.ts"] },
+      ],
+      mode: "agent",
+      spawn,
+    });
+
+    await agent.send("go");
+
+    expect(max).toBe(2); // two writers on different files run together
+  });
+
+  it("serializes two writers that share the same file", async () => {
     const order: string[] = [];
     const spawn = async (spec: DelegateSpec): Promise<ToolResult> => {
       order.push("start:" + spec.id);
       await new Promise((r) => setTimeout(r, 5));
       order.push("end:" + spec.id);
-      return { content: "r" + spec.id, isError: false };
+      return { content: "r", isError: false };
     };
     const { agent } = build({
       calls: [
-        { id: "A", goal: "a", access: "write", resources: ["a.ts"], parallel: "yes" },
-        { id: "B", goal: "b", access: "create", resources: ["b.ts"], parallel: "yes" },
+        { id: "A", goal: "a", access: "write", resources: ["a.ts"] },
+        { id: "B", goal: "b", access: "write", resources: ["a.ts"] },
       ],
       mode: "agent",
       spawn,

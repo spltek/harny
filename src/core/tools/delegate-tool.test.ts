@@ -18,7 +18,7 @@ describe("DelegateTool", () => {
     expect(props.context?.type).toBe("string");
     expect(props.id?.type).toBe("string");
     // The description steers the orchestrator on parallelism and edits.
-    expect(d.description).toContain("WRITERS ARE NEVER PARALLEL");
+    expect(d.description).toContain("WRITE/CREATE sub-agents on DIFFERENT files");
     expect(d.description).toContain("MANDATORY FIRST STEP");
     expect(d.description).toContain("resources");
   });

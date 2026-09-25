@@ -85,7 +85,7 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     );
     expect(withDelegate.build("agent")).toContain("ORCHESTRATION");
     expect(withDelegate.build("agent")).toContain("SUB-AGENTS");
-    expect(withDelegate.build("agent")).toContain("EDITS ARE NEVER PARALLEL");
+    expect(withDelegate.build("agent")).toContain("WRITES TO DISJOINT FILES RUN IN PARALLEL");
     // Parallel ON pushes a MANDATORY first-step parallelizability assessment.
     expect(withDelegate.build("agent")).toContain("MANDATORY FIRST STEP");
     expect(withDelegate.build("agent")).toContain("assess whether the task can be parallelized");

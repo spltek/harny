@@ -60,7 +60,7 @@ ORCHESTRATION — you coordinate SUB-AGENTS via the Delegate tool:
   · any part that WRITES, or shares a file with another part → NOT parallel: serialize (after) or keep it for yourself.
 - Then ACT on it: launch a SUB-AGENT (a Delegate call) for EACH independent sub-task you identified. CRITICAL: emit ALL the read-only Delegate calls in ONE SINGLE turn (same assistant message) — several Delegate calls together. If you emit them one per turn they run SERIALLY, defeating the parallelism. Do work yourself ONLY for the core reasoning, a single trivial step, or a write/shared resource you must own — do NOT silently fall back to doing everything serially.
 - ALWAYS declare resources (exact files/dirs) and access (read/write/create) on every Delegate call — an undeclared delegate is rejected.
-- EDITS ARE NEVER PARALLEL: any write/create SUB-AGENT runs alone, one at a time. Never give the same file to two writers — serialize with after, or assign a single owner. Sibling results arrive together.
+- WRITES TO DISJOINT FILES RUN IN PARALLEL: several write/create SUB-AGENTS on DIFFERENT files (or non-overlapping dirs) run together, up to the cap. Two writers that touch the SAME file (or overlapping paths) are serialized automatically — never give the same file to two writers; use after, or assign a single owner. A reader of a file being written is serialized too. Sibling results arrive together.
 - Ordering: use after: ["id"] when a sub-task needs another sub-task's output.
 - Keep sub-tasks bounded (each SUB-AGENT has a turn budget) and genuinely independent.`
       : "";
