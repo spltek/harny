@@ -476,6 +476,72 @@ function addToolCall(name: string, args: unknown, beforeEl?: HTMLElement | null)
   return div;
 }
 
+/** Wire the collapsible details header (shared by tool + sub-agent bubbles). */
+function wireCollapsible(div: HTMLElement): void {
+  div.querySelector(".tool-header")?.addEventListener("click", () => {
+    const details = div.querySelector(".tool-details");
+    const tog = div.querySelector(".tool-toggle");
+    if (!details || !tog) return;
+    const collapsed = details.classList.toggle("collapsed");
+    tog.textContent = collapsed ? "▶" : "▼";
+  });
+}
+
+/** Update a sub-agent bubble's status chip (queued → running → done/failed). */
+function setSubAgentStatus(el: HTMLElement, status: "queued" | "running" | "done" | "failed"): void {
+  const chip = el.querySelector(".subagent-status");
+  if (!chip) return;
+  chip.className = "subagent-status " + status;
+  chip.textContent =
+    status === "running" ? "running…" : status === "queued" ? "queued…" : status;
+}
+
+/**
+ * A sub-agent (Delegate) call gets its OWN bubble so you can SEE when the
+ * orchestrator launches one: header with id/role + live status, the goal in
+ * clear text, and the declared resources/access (what it may touch) in the
+ * collapsed details together with the final report.
+ */
+function addSubAgentCall(args: unknown): HTMLDivElement {
+  const a = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+  const id = typeof a.id === "string" ? a.id : "";
+  const role = typeof a.role === "string" ? a.role : "";
+  const access = typeof a.access === "string" ? a.access : "";
+  const goal = typeof a.goal === "string" ? a.goal : "";
+  const parallel = a.parallel === "yes" || a.parallel === true;
+  const after = Array.isArray(a.after) ? a.after.filter((x): x is string => typeof x === "string" && !!x) : [];
+  const resources = Array.isArray(a.resources)
+    ? a.resources.filter((x): x is string => typeof x === "string" && !!x)
+    : [];
+
+  const div = document.createElement("div");
+  div.className = "msg tool subagent tool-call-pending";
+  div.innerHTML =
+    '<div class="tool-header subagent-header">' +
+    '<span class="tool-toggle">▶</span>' +
+    '<span class="tool-name">🤖 Sub-agent' +
+    (id ? ' "' + escapeHtml(id) + '"' : "") +
+    "</span>" +
+    (role ? '<span class="subagent-role">' + escapeHtml(role) + "</span>" : "") +
+    '<span class="subagent-status queued">queued…</span>' +
+    "</div>" +
+    (goal ? '<div class="subagent-goal">' + escapeHtml(goal) + "</div>" : "") +
+    '<div class="tool-details collapsed">' +
+    '<div class="subagent-meta">' +
+    (access ? '<span class="subagent-chip access-' + escapeHtml(access) + '">' + escapeHtml(access) + "</span>" : "") +
+    (parallel ? '<span class="subagent-chip parallel" title="may run in parallel with other read-only sub-agents">⫽ parallel</span>' : "") +
+    (after.length > 0 ? '<span class="subagent-chip" title="waits for">after: ' + escapeHtml(after.join(", ")) + "</span>" : "") +
+    resources.map((r) => '<span class="subagent-chip res" title="' + escapeHtml(r) + '">' + escapeHtml(r) + "</span>").join("") +
+    "</div>" +
+    '<div class="tool-input"><span class="tool-label">Task</span><pre class="tool-args">' + escapeHtml(formatArgs(args)) + "</pre></div>" +
+    '<div class="tool-output"><span class="tool-label">Report</span><pre class="tool-result">⏳ working…</pre></div>' +
+    "</div>";
+  wireCollapsible(div);
+  messagesEl.appendChild(div);
+  scrollDown();
+  return div;
+}
+
 function addWorking(): HTMLDivElement {
   workingEl = workingBar;
   workingBar.classList.remove("hidden");
@@ -600,12 +666,16 @@ function renderMessages(msgs: ChatMsg[]): boolean {
       if (m.toolCalls && m.toolCalls.length > 0) {
         for (const tc of m.toolCalls) {
           const id = tc.id ?? tc.name;
-          const el = addToolCall(tc.name, tc.arguments);
+          const el = tc.name === "Delegate" ? addSubAgentCall(tc.arguments) : addToolCall(tc.name, tc.arguments);
           el.classList.remove("tool-call-pending");
           const out = el.querySelector(".tool-result");
           if (out) {
             const text = outputs.get(id);
             renderToolOutput(out as HTMLPreElement, text !== undefined ? text.slice(0, 12000) : "");
+          }
+          if (tc.name === "Delegate") {
+            const report = outputs.get(id) ?? "";
+            setSubAgentStatus(el, report.includes(" failed:") ? "failed" : "done");
           }
         }
       }
@@ -1110,6 +1180,10 @@ const peBaseUrl = document.getElementById("pe-baseurl") as HTMLInputElement;
 const peApiKey = document.getElementById("pe-apikey") as HTMLInputElement;
 const peThinking = document.getElementById("pe-thinking") as HTMLSelectElement;
 const peSessionHeader = document.getElementById("pe-session-header") as HTMLInputElement;
+const peMaxParallelEnabled = document.getElementById("pe-maxparallel-enabled") as HTMLInputElement;
+const peMaxParallelInput = document.getElementById("pe-maxparallel-input") as HTMLInputElement;
+const peMaxParallelMinus = document.getElementById("pe-maxparallel-minus") as HTMLButtonElement;
+const peMaxParallelPlus = document.getElementById("pe-maxparallel-plus") as HTMLButtonElement;
 const providerTestBtn = document.getElementById("provider-test") as HTMLButtonElement;
 const providerDeleteBtn = document.getElementById("provider-delete") as HTMLButtonElement;
 const providerAddBtn = document.getElementById("provider-add") as HTMLButtonElement;
@@ -1168,8 +1242,17 @@ function loadProviderIntoForm(name: string): void {
   refreshProviderList();
 }
 
-function openProvidersEditor(data: { providers: Record<string, { baseUrl?: string; apiKey?: string; thinking?: string; thinkingLevel?: string; extra?: Record<string, unknown> }> }): void {
+function openProvidersEditor(data: {
+  providers: Record<string, { baseUrl?: string; apiKey?: string; thinking?: string; thinkingLevel?: string; extra?: Record<string, unknown> }>;
+  maxParallelSubAgents?: number;
+}): void {
   providerEditorData = { providers: JSON.parse(JSON.stringify(data.providers ?? {})) };
+  // Bottom settings: max parallel sub-agents flag + value.
+  const cap = data.maxParallelSubAgents;
+  const hasCap = typeof cap === "number" && Number.isInteger(cap) && cap > 0;
+  peMaxParallelEnabled.checked = hasCap;
+  peMaxParallelInput.value = String(hasCap ? cap : DEFAULT_MAX_PARALLEL);
+  syncMaxParallelUi();
   const names = Object.keys(providerEditorData.providers);
   providerEditorSelected = names.length > 0 ? names[0] : "";
   refreshProviderList();
@@ -1290,8 +1373,43 @@ providersSaveBtn.addEventListener("click", () => {
     thinking: peThinking.value === "unspecified" ? undefined : peThinking.value,
     ...(peSessionHeader.value.trim() ? { sessionHeader: peSessionHeader.value.trim() } : {}),
   };
-  vscode.postMessage({ type: "saveProviders", data: providerEditorData });
+  vscode.postMessage({
+    type: "saveProviders",
+    data: {
+      ...providerEditorData,
+      maxParallelSubAgents: peMaxParallelEnabled.checked
+        ? clampMaxParallel(Number(peMaxParallelInput.value))
+        : undefined,
+    },
+  });
   providersSaveBtn.disabled = true;
+});
+
+// ── Max parallel sub-agents stepper (bottom settings row) ──
+const DEFAULT_MAX_PARALLEL = 3;
+
+function clampMaxParallel(v: number): number {
+  if (!Number.isFinite(v)) return DEFAULT_MAX_PARALLEL;
+  return Math.min(99, Math.max(1, Math.trunc(v)));
+}
+
+function syncMaxParallelUi(): void {
+  const on = peMaxParallelEnabled.checked;
+  peMaxParallelInput.disabled = !on;
+  peMaxParallelMinus.disabled = !on;
+  peMaxParallelPlus.disabled = !on;
+}
+
+peMaxParallelEnabled.addEventListener("change", syncMaxParallelUi);
+peMaxParallelMinus.addEventListener("click", () => {
+  peMaxParallelInput.value = String(clampMaxParallel(Number(peMaxParallelInput.value) - 1));
+});
+peMaxParallelPlus.addEventListener("click", () => {
+  peMaxParallelInput.value = String(clampMaxParallel(Number(peMaxParallelInput.value) + 1));
+});
+bindIntegerInput(peMaxParallelInput);
+peMaxParallelInput.addEventListener("change", () => {
+  peMaxParallelInput.value = String(clampMaxParallel(Number(peMaxParallelInput.value)));
 });
 
 providersCancelBtn.addEventListener("click", closeProvidersEditor);
@@ -1393,11 +1511,6 @@ type ChatMode = "analyze" | "agent";
 const DEFAULT_MODE: ChatMode = "analyze";
 let currentMode: ChatMode = DEFAULT_MODE;
 
-function restoredModeFromState(): ChatMode {
-  const st = vscode.getState() as { mode?: ChatMode } | undefined;
-  return st?.mode === "agent" ? "agent" : DEFAULT_MODE;
-}
-
 /** Render the active state: button accent + label/icon, dropdown selection.
  * `persist` saves the choice for this panel; `notify` tells the host to
  * store it on the session runtime. */
@@ -1466,14 +1579,15 @@ window.addEventListener("keydown", (e) => {
 });
 
 // ── Multi (multi-agent) press button ──
-// A press/release toggle on the AI Model row: pressed = blue. Like the mode,
-// the host holds the per-session truth; the panel falls back to its own last
-// choice (off by default).
+// A press/release toggle on the AI Model row: pressed = blue. The host keeps
+// it as a GLOBAL master switch; the panel remembers its last choice and
+// re-asserts it on load (see the initial render) so a reload never leaves the
+// button ON while the agent has orchestration off.
 let multiOn = false;
 
-function restoredMultiFromState(): boolean {
+function savedMultiFromState(): boolean | undefined {
   const st = vscode.getState() as { multi?: boolean } | undefined;
-  return st?.multi === true;
+  return typeof st?.multi === "boolean" ? st.multi : undefined;
 }
 
 /** Render the pressed state (blue class + aria-pressed). `persist` saves it
@@ -1912,19 +2026,32 @@ window.addEventListener("message", (e) => {
       // A tool phase ends the current answer segment: commit pending renders
       // and close the bubble — later text becomes a NEW blue bubble.
       flushStreamingMd();
-      const toolEl = addToolCall(msg.name, msg.arguments);
+      // Sub-agents get their own visible bubble (goal + status + resources).
+      const toolEl = msg.name === "Delegate" ? addSubAgentCall(msg.arguments) : addToolCall(msg.name, msg.arguments);
       pendingToolCalls.set(msg.id, toolEl);
-      if (workingEl) workingEl.textContent = "● Working... 🔧 " + msg.name;
+      if (workingEl) {
+        workingEl.textContent = msg.name === "Delegate" ? "● Working... 🤖 sub-agent" : "● Working... 🔧 " + msg.name;
+      }
       clearThinkingBlock();
       currentThinkingText = "";
       clearStreamingBubble();
       currentRawText = "";
       break;
     }
+    case "subagentStart": {
+      // The delegate left the queue and is running now (concurrency cap made
+      // visible: queued bubbles flip to running only when they actually start).
+      const el = pendingToolCalls.get(msg.toolCallId);
+      if (el) setSubAgentStatus(el, "running");
+      break;
+    }
     case "toolResult": {
       const el = pendingToolCalls.get(msg.toolCallId);
       if (el) {
         el.classList.remove("tool-call-pending");
+        if (el.classList.contains("subagent")) {
+          setSubAgentStatus(el, msg.isError ? "failed" : "done");
+        }
         const resultEl = el.querySelector(".tool-result");
         if (resultEl) {
           renderToolOutput(resultEl as HTMLPreElement, String(msg.output).slice(0, 12000));
@@ -2244,19 +2371,19 @@ const savedCollapsed = (vscode.getState() as { controlsCollapsed?: boolean } | u
 const collapsedDefault = savedCollapsed ?? true;
 document.body.classList.toggle("controls-collapsed", collapsedDefault);
 ctlToggle.setAttribute("aria-expanded", String(!collapsedDefault));
-// Mode: the host's per-session mode wins (e.g. after a switch), otherwise the
-// panel's last choice; a fresh panel defaults to "Analyze".
-applyMode(
-  init.config && (init.config.mode === "analyze" || init.config.mode === "agent")
-    ? init.config.mode
-    : restoredModeFromState(),
-);
-// Multi: same rule (host per-session truth → panel memory → off by default).
-if (init.config && typeof init.config.multi === "boolean") {
-  applyMulti(init.config.multi);
-} else {
-  applyMulti(restoredMultiFromState());
-}
+// Mode + multi: the PANEL's remembered choice wins on load (so a reload keeps
+// the user's UI state); we then RE-ASSERT both to the host so the active
+// session's agent adopts them. This is what fixes the "multi ON but no
+// sub-agents" desync after a reload.
+const savedState = vscode.getState() as { mode?: "analyze" | "agent"; multi?: boolean } | undefined;
+const hostMode: "analyze" | "agent" = init.config?.mode === "agent" ? "agent" : "analyze";
+const initialMode: "analyze" | "agent" =
+  savedState?.mode === "agent" || savedState?.mode === "analyze" ? savedState.mode : hostMode;
+applyMode(initialMode);
+const initialMulti = savedMultiFromState() ?? init.config?.multi === true;
+applyMulti(initialMulti);
+vscode.postMessage({ type: "setMode", mode: initialMode });
+vscode.postMessage({ type: "setMulti", multi: initialMulti });
 renderViewState({
   sessions: init.sessions || [],
   openIds: init.openIds || [],

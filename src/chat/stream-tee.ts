@@ -51,6 +51,10 @@ export class StreamTee {
           // the buffer is reset only later (on tool_result / done / error).
           if (active) post({ type: "toolCall", id: event.toolCall.id, name: event.toolCall.name, arguments: event.toolCall.arguments });
           break;
+        case "subagent_start":
+          // The delegate actually left the queue and started running.
+          if (active) post({ type: "subagentStart", toolCallId: event.toolCallId });
+          break;
         case "tool_result":
           // The assistant message (thinking included) is now in history.
           live.thinking = "";

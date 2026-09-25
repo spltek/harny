@@ -1,5 +1,6 @@
 import type { HttpClient } from "../llm/http-client";
 import type { CommandRunner } from "./command-runner";
+import { DelegateTool } from "./delegate-tool";
 import { DeleteTool } from "./delete-tool";
 import { EditTool } from "./edit-tool";
 import type { DiagnosticsProvider } from "./diagnostics-provider";
@@ -27,6 +28,7 @@ export interface DefaultToolsDeps {
 /** Builds the standard set of tools with injected dependencies. */
 export function createDefaultTools(deps: DefaultToolsDeps): Tool[] {
   return [
+    new DelegateTool(),
     new ReadTool(deps.fs, deps.cwd),
     new WriteTool(deps.fs, deps.cwd),
     new StrReplaceTool(deps.fs, deps.cwd),

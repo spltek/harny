@@ -1,0 +1,110 @@
+import type { ConfigProvider } from "../config/types";
+import type { ChatMessage } from "../history/types";
+import { InMemoryChatHistory } from "../history/in-memory-chat-history";
+import { InMemoryEventBus } from "../events/in-memory-event-bus";
+import type { LLMProviderFactory } from "../llm/types";
+import type { ToolRegistry, ToolResult } from "../tools";
+import { toolDefinitionsForMode, type ChatMode } from "../tools/mode-policy";
+import { Agent } from "./agent";
+import type { ChatController } from "./chat-controller";
+import type { AgentEvent } from "./types";
+import {
+  DELEGATE_TOOL_NAME,
+  buildSubAgentTask,
+  formatSubAgentError,
+  formatSubAgentReport,
+  type DelegateSpec,
+} from "./orchestration";
+import { SubAgentSystemPromptBuilder } from "./system-prompt";
+
+/** Turn budget for a sub-agent: bounded work, but generous enough for real
+ * exploration with verbose models (DeepSeek and friends). When the budget is
+ * exhausted the agent still runs ONE forced, tool-less report turn. */
+export const SUBAGENT_MAX_TURNS = 25;
+
+export interface SubAgentRunnerDeps {
+  config: ConfigProvider;
+  llmFactory: LLMProviderFactory;
+  tools: ToolRegistry;
+  cwd: () => string;
+  /** Turn budget per sub-agent (default SUBAGENT_MAX_TURNS). */
+  maxTurns?: number;
+}
+
+/**
+ * Runs delegated sub-agents for ONE session. Each run gets a fresh in-memory
+ * history (ephemeral — never written to the session file), the SHARED tool
+ * registry and LLM factory, its own system prompt and a bounded turn budget.
+ * Sub-agents cannot delegate further (depth 1). The runner tracks active
+ * sub-agents so the parent's Stop aborts them all (cascade).
+ */
+export class SubAgentRunner {
+  private active = new Set<ChatController>();
+
+  constructor(private deps: SubAgentRunnerDeps) {}
+
+  /** Abort every in-flight sub-agent (called when the parent run is aborted). */
+  abortAll(): void {
+    for (const agent of this.active) agent.abort();
+    this.active.clear();
+  }
+
+  get activeCount(): number {
+    return this.active.size;
+  }
+
+  /** Run one delegated sub-task and return its report as a tool result. */
+  async run(spec: DelegateSpec): Promise<ToolResult> {
+    // Analyze-style read-only sub-agent, or a full agent for writers.
+    const mode: ChatMode = spec.access === "read" ? "analyze" : "agent";
+    const history = new InMemoryChatHistory();
+    const events = new InMemoryEventBus<AgentEvent>();
+    const maxTurns = this.deps.maxTurns ?? SUBAGENT_MAX_TURNS;
+    const systemPrompt = new SubAgentSystemPromptBuilder(
+      (m) => toolDefinitionsForMode(this.deps.tools.getAll(), m, { exclude: [DELEGATE_TOOL_NAME] }),
+      this.deps.cwd,
+      { role: spec.role, access: spec.access, resources: spec.resources, turnBudget: maxTurns },
+    );
+
+    const agent = new Agent({
+      config: this.deps.config,
+      llmFactory: this.deps.llmFactory,
+      tools: this.deps.tools,
+      history,
+      events,
+      systemPrompt,
+      maxTurns,
+      allowDelegation: false,
+      // Never end a heavy sub-agent with a bare "turn limit": force a final
+      // tool-less report turn so the caller always gets a usable synthesis.
+      forceFinalReportOnLimit: true,
+    });
+    agent.setMode(mode);
+
+    this.active.add(agent);
+    try {
+      await agent.send(buildSubAgentTask(spec));
+      return { content: formatSubAgentReport(spec, lastAssistantReport(agent.getMessages())), isError: false };
+    } catch (e) {
+      return { content: formatSubAgentError(spec, e instanceof Error ? e.message : String(e)), isError: true };
+    } finally {
+      this.active.delete(agent);
+    }
+  }
+}
+
+/** The sub-agent's final answer: the last assistant message with text that is
+ * not a pending tool-call turn and is visible to the model. */
+export function lastAssistantReport(messages: readonly ChatMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== "assistant" || !m.content || m.uiOnly) continue;
+    if (m.toolCalls && m.toolCalls.length > 0) continue;
+    return m.content;
+  }
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role === "assistant" && m.content && !m.uiOnly) return m.content;
+  }
+  return "(no report produced)";
+}

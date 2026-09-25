@@ -559,6 +559,41 @@ describe("HarnyFileConfigProvider multi-provider format", () => {
     });
   });
 
+  it("round-trips the global maxParallelSubAgents setting (flag off removes it)", () => {
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({ providers: { p: { baseUrl: "http://x/v1" } }, maxParallelSubAgents: 4 }),
+    );
+    const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+    expect(provider.readProvidersEditor().maxParallelSubAgents).toBe(4);
+    expect(provider.read().maxParallelSubAgents).toBe(4);
+
+    // Save with the cap set.
+    const editor = provider.readProvidersEditor();
+    editor.maxParallelSubAgents = 2;
+    expect(provider.saveProvidersEditor(editor)).toBe(true);
+    expect(provider.readProvidersEditor().maxParallelSubAgents).toBe(2);
+    expect(provider.read().maxParallelSubAgents).toBe(2);
+
+    // Flag off → undefined → the key is REMOVED from the file.
+    const editor2 = provider.readProvidersEditor();
+    editor2.maxParallelSubAgents = undefined;
+    expect(provider.saveProvidersEditor(editor2)).toBe(true);
+    expect(provider.readProvidersEditor().maxParallelSubAgents).toBeUndefined();
+    expect(provider.read().maxParallelSubAgents).toBeUndefined();
+    const raw = JSON.parse(
+      (require("node:fs") as typeof import("node:fs")).readFileSync(join(dir, "config.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect("maxParallelSubAgents" in raw).toBe(false);
+  });
+
+  it("ignores invalid maxParallelSubAgents values (0, negative, non-integer)", () => {
+    writeFileSync(join(dir, "config.json"), JSON.stringify({ providers: {}, maxParallelSubAgents: 0 }));
+    const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+    expect(provider.read().maxParallelSubAgents).toBeUndefined();
+    expect(provider.readProvidersEditor().maxParallelSubAgents).toBeUndefined();
+  });
+
   it("saveProvidersEditor replaces the provider map, preserves other keys, and creates the file when missing", () => {
     const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
     const ok = provider.saveProvidersEditor({

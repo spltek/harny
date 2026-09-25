@@ -34,8 +34,6 @@ export interface SessionRuntime {
   sampler?: "temperature" | "topP";
   /** Chat mode chosen in this session (in-memory; default "analyze"). */
   mode?: "analyze" | "agent";
-  /** Multi-agent flag for this session (in-memory; false by default). */
-  multi?: boolean;
   /** Current context tokens in use (fill metric). */
   contextTokens?: number;
   /** Input tokens served from the provider's prompt cache (informational). */

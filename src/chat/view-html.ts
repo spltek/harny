@@ -400,6 +400,35 @@ ${renderViewConfig(deps)}
     .fd-body .token.doctype, .fd-body .token.entity { color: #e06c75; }
     .tool-call-pending { opacity: 0.65; }
 
+    /* Sub-agent (Delegate) bubble: clearly shows that the orchestrator LAUNCHED
+       a sub-agent — id/role, live status, the goal in clear text and the
+       declared resources/access it may touch. Tinted violet to stand out from
+       ordinary tool calls. */
+    .msg.tool.subagent { border-color: rgba(124, 92, 255, 0.45); background: rgba(124, 92, 255, 0.06); }
+    .subagent-header { gap: 6px; }
+    .subagent-role { color: #a98dff; font-weight: 500; }
+    .subagent-status {
+      margin-left: auto; flex-shrink: 0;
+      font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+      padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); color: #999;
+    }
+    .subagent-status.queued { color: #999; border-color: var(--border); }
+    .subagent-status.running {
+      color: #a98dff; border-color: rgba(124, 92, 255, 0.5);
+      animation: harny-pulse 1.2s ease-in-out infinite;
+    }
+    .subagent-status.done { color: #98c379; border-color: rgba(152, 195, 121, 0.5); }
+    .subagent-status.failed { color: var(--error); border-color: rgba(244, 71, 71, 0.5); }
+    .subagent-goal { padding: 0 8px 4px 22px; color: var(--fg); font-style: italic; font-size: var(--fs-md); }
+    .subagent-meta { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 2px; }
+    .subagent-chip {
+      display: inline-flex; align-items: center; padding: 0 6px; border-radius: 999px;
+      background: var(--tool-bg); border: 1px solid var(--border); color: #9a9a9a; font-size: var(--fs-xs);
+    }
+    .subagent-chip.access-read { color: #61afef; border-color: rgba(97, 175, 239, 0.4); }
+    .subagent-chip.access-write, .subagent-chip.access-create { color: #e5c07b; border-color: rgba(229, 192, 123, 0.4); }
+    .subagent-chip.parallel { color: #a98dff; border-color: rgba(124, 92, 255, 0.4); }
+
     .thinking-block { width: 100%; border: 1px dashed var(--border); border-radius: 6px; margin: 4px 0; padding: 0; font-size: var(--fs-md); }
     .thinking-header { display: flex; align-items: center; gap: 5px; padding: 5px 8px; cursor: pointer; user-select: none; color: #999; font-style: italic; }
     .thinking-header:hover { color: var(--accent); }
@@ -935,6 +964,24 @@ ${renderViewConfig(deps)}
     .provider-actions .danger { color: var(--error, #f05555); }
     .providers-actions { display: flex; justify-content: flex-end; gap: 10px; }
     .providers-actions button { font-size: var(--fs-lg); padding: 6px 14px; border-radius: 6px; }
+    /* Bottom settings row: a flag + a numeric stepper (max parallel sub-agents). */
+    .providers-settings {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      padding-top: 10px; border-top: 1px solid var(--border);
+    }
+    .ps-flag {
+      display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+      font-size: var(--fs-lg); color: var(--fg); user-select: none;
+    }
+    .ps-flag input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+    .ps-hint { font-size: var(--fs-sm); color: var(--muted, #999); }
+    .ps-stepper { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; }
+    .ps-stepper input {
+      width: 4.2rem; text-align: center; font-size: var(--fs-lg);
+      padding: 4px 6px; border-radius: 6px; color: var(--fg);
+      background: var(--input-bg, #252526); border: 1px solid var(--border);
+    }
+    .ps-stepper input:disabled { opacity: 0.4; }
     #provider-test-result {
       font-size: var(--fs-md); line-height: 1.5; border-radius: 6px; padding: 8px 10px;
       background: rgba(255, 255, 255, 0.05); word-break: break-all;
@@ -1365,6 +1412,18 @@ ${renderViewConfig(deps)}
             <button id="provider-delete" class="secondary danger" title="Remove this provider">Delete</button>
           </div>
           <div id="provider-test-result" class="hidden"></div>
+        </div>
+      </div>
+      <div class="providers-settings">
+        <label class="ps-flag" for="pe-maxparallel-enabled">
+          <input type="checkbox" id="pe-maxparallel-enabled" />
+          <span>Set max parallel sub-agents</span>
+        </label>
+        <span class="ps-hint">Cap how many read-only sub-agents run at the same time (edits are never parallel). Off = no limit.</span>
+        <div class="ps-stepper">
+          <button id="pe-maxparallel-minus" class="ctx-btn" type="button" title="Decrease" aria-label="Decrease max parallel sub-agents"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
+          <input id="pe-maxparallel-input" type="text" inputmode="numeric" autocomplete="off" value="3" disabled aria-label="Max parallel sub-agents" />
+          <button id="pe-maxparallel-plus" class="ctx-btn" type="button" title="Increase" aria-label="Increase max parallel sub-agents"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
         </div>
       </div>
       <div class="providers-actions">

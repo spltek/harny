@@ -65,6 +65,14 @@ describe("StreamTee", () => {
     expect(tee.liveOf("a")?.answer).toBe("");
   });
 
+  it("forwards subagent_start to the view when the session is active", () => {
+    const { tee, deps } = makeTee();
+    const a = fakeRuntime("a");
+    tee.attach(a.rt);
+    a.emit({ type: "subagent_start", toolCallId: "d1" });
+    expect(deps.onPost).toHaveBeenCalledWith({ type: "subagentStart", toolCallId: "d1" });
+  });
+
   it("clears on done and on error", () => {
     const { tee } = makeTee();
     const a = fakeRuntime("a");

@@ -8,6 +8,7 @@ export { NodeCommandRunner } from "./command-runner";
 export type { DiagnosticsProvider, DiagnosticFile, DiagnosticEntry } from "./diagnostics-provider";
 export { VscodeDiagnosticsProvider } from "./vscode-diagnostics-provider";
 export { ReadTool } from "./read-tool";
+export { DelegateTool } from "./delegate-tool";
 export { WriteTool } from "./write-tool";
 export { StrReplaceTool } from "./str-replace-tool";
 export { DeleteTool } from "./delete-tool";

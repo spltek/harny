@@ -18,10 +18,33 @@ import {
 } from "../tools/mode-policy";
 import type { ToolDefinition } from "../tools/tool";
 import type { ChatController } from "./chat-controller";
+import {
+  DELEGATE_TOOL_NAME,
+  formatSubAgentError,
+  parseDelegateSpec,
+  planToolExecution,
+  type DelegateSpec,
+  type PlannedCall,
+} from "./orchestration";
 import type { SystemPromptBuilder } from "./system-prompt";
 import { ToolCallAccumulator } from "./tool-call-accumulator";
 import { ThinkingTagParser } from "./thinking-parser";
 import type { AgentEvent } from "./types";
+
+/**
+ * One-shot corrective prompt injected when the model repeats the SAME tool call
+ * (name + arguments) 3 turns in a row. The usual cause is retrying an
+ * identical Shell command instead of switching tools — so point it at
+ * Glob/Grep/Read and tell it to change approach or conclude.
+ */
+function repeatedCallNudge(name?: string): string {
+  return (
+    `You called the SAME tool ("${name ?? "?"}") with identical arguments 3 times in a row and made no progress. ` +
+    "STOP repeating it. Change approach NOW: use Glob to locate files, Grep to search and Read to inspect — " +
+    "prefer these over Shell. If a command failed or returned nothing, do not run it verbatim again: use different " +
+    "arguments or a different tool, or conclude. Then write your final report."
+  );
+}
 
 export interface AgentDeps {
   config: ConfigProvider;
@@ -32,6 +55,20 @@ export interface AgentDeps {
   systemPrompt: SystemPromptBuilder;
   /** Maximum number of LLM turns per user message (default 20). */
   maxTurns?: number;
+  /** Whether this agent may launch sub-agents via Delegate (default true).
+   * Sub-agents pass false, capping orchestration depth at 1. */
+  allowDelegation?: boolean;
+  /** Initial delegation state (the "multi" flag). Defaults to the cap. */
+  delegateByDefault?: boolean;
+  /** Session-scoped runner for delegated sub-tasks. Required to execute a
+   * Delegate call. */
+  spawnSubAgent?: (spec: DelegateSpec) => Promise<ToolResult>;
+  /** Called by abort() so the parent can cascade Stop to active sub-agents. */
+  onAbort?: () => void;
+  /** When the turn budget is exhausted, run ONE final tool-less turn that asks
+   * the model for its report, instead of stopping with a bare "turn limit"
+   * note. Sub-agents set this so the caller always gets a usable report. */
+  forceFinalReportOnLimit?: boolean;
 }
 
 /**
@@ -49,8 +86,22 @@ export class Agent implements ChatController {
   private turnSignatures: string[] = [];
   /** Whether the corrective re-emit prompt was already sent this user message. */
   private corrected = false;
+  /** Whether the forced final-report turn already ran (turn-budget exhausted). */
+  private forcedFinalReport = false;
+  /** Cap: may this agent EVER delegate? Sub-agents pass false (depth 1). */
+  private readonly mayDelegate: boolean;
+  /** Runtime toggle driven by the UI "multi" flag. */
+  private delegationEnabled: boolean;
 
-  constructor(private deps: AgentDeps) {}
+  constructor(private deps: AgentDeps) {
+    this.mayDelegate = deps.allowDelegation !== false;
+    this.delegationEnabled = (deps.delegateByDefault ?? this.mayDelegate) && this.mayDelegate;
+  }
+
+  /** Enable/disable orchestration for this session (the UI "multi" flag). */
+  setDelegation(enabled: boolean): void {
+    this.delegationEnabled = enabled && this.mayDelegate;
+  }
 
   /** Switch between read-only "analyze" and full "agent" mode. */
   setMode(mode: ChatMode): void {
@@ -83,6 +134,8 @@ export class Agent implements ChatController {
 
   abort(): void {
     this.abortController?.abort();
+    // Cascade the stop to any sub-agents this run launched.
+    this.deps.onAbort?.();
     // Do NOT set _streaming = false here. Let send()'s finally block do it.
     // Otherwise a new send() can start before the previous one's cleanup finishes.
   }
@@ -115,6 +168,7 @@ export class Agent implements ChatController {
     this.consecutiveErrorTurns = 0;
     this.turnSignatures = [];
     this.corrected = false;
+    this.forcedFinalReport = false;
     try {
       await this.runTurns(0);
       this.deps.events.emit({ type: "done" });
@@ -155,6 +209,30 @@ export class Agent implements ChatController {
     // `maxTurns` (e.g. a future config option or a unit test).
     const maxTurns = this.deps.maxTurns ?? Infinity;
     if (turn >= maxTurns) {
+      // Budget exhausted. If enabled (sub-agents), force ONE final turn with
+      // NO tools so the model synthesises a report from what it already has —
+      // otherwise every heavy sub-agent would return a raw "turn limit" note.
+      if (this.deps.forceFinalReportOnLimit && !this.forcedFinalReport) {
+        this.forcedFinalReport = true;
+        this.deps.history.add({
+          role: "user",
+          content:
+            "Tool budget exhausted. Do NOT call any more tools. Reply NOW with your final report " +
+            "(what you did, key findings/results, files touched, blockers).",
+          timestamp: Date.now(),
+        });
+        const final = await this.runLlmTurn([]);
+        this.deps.history.add({
+          role: "assistant",
+          content: final.content.trim() || "(no report produced)",
+          timestamp: Date.now(),
+          ...(final.thinking.trim() ? { thinking: final.thinking } : {}),
+          ...(final.reasoningDetails && final.reasoningDetails.length > 0
+            ? { reasoningDetails: final.reasoningDetails }
+            : {}),
+        });
+        return;
+      }
       // Bounded, but say so: a silent stop looks like a hang. This branch only
       // runs when maxTurns is explicitly configured.
       this.deps.history.add({
@@ -200,8 +278,38 @@ export class Agent implements ChatController {
     // Track consecutive tool failures to detect loops
     const toolResults: { name: string; args: Record<string, unknown>; isError: boolean }[] = [];
 
-    for (const tc of toolCalls) {
-      const result = await this.executeToolSafely(tc);
+    // Plan the execution. Non-delegates and writers run one at a time, in
+    // order; CONSECUTIVE read-only parallel delegates run as a concurrent
+    // batch. Results are emitted and stored in the ORIGINAL call order either
+    // way, so the model always sees its tool results in the order it asked.
+    const planned: PlannedCall[] = toolCalls.map((tc) => {
+      const isDelegate = tc.name === DELEGATE_TOOL_NAME;
+      return { isDelegate, spec: isDelegate ? parseDelegateSpec(tc.arguments).spec : undefined };
+    });
+    const steps = planToolExecution(planned);
+    const results: ToolResult[] = new Array(toolCalls.length);
+    // Global cap on concurrently-running sub-agents (gear setting). Undefined
+    // or invalid = no cap (the whole parallel batch waits together).
+    const capRaw = this.deps.config.get().maxParallelSubAgents;
+    const parallelCap =
+      typeof capRaw === "number" && Number.isInteger(capRaw) && capRaw > 0 ? capRaw : Infinity;
+    for (const step of steps) {
+      if (step.kind === "single") {
+        results[step.index] = await this.executeToolSafely(toolCalls[step.index]);
+      } else {
+        // Run the parallel batch in chunks of at most `parallelCap` so no more
+        // than N sub-agents are ever in flight at once.
+        for (let i = 0; i < step.indices.length; i += parallelCap) {
+          const chunk = step.indices.slice(i, i + parallelCap);
+          const batch = await Promise.all(chunk.map((idx) => this.executeToolSafely(toolCalls[idx])));
+          chunk.forEach((idx, k) => (results[idx] = batch[k]));
+        }
+      }
+    }
+
+    for (let i = 0; i < toolCalls.length; i++) {
+      const tc = toolCalls[i];
+      const result = results[i] ?? { content: `Tool ${tc.name} produced no result`, isError: true };
       this.deps.events.emit({
         type: "tool_result",
         toolResult: { toolCallId: tc.id, output: result.content, isError: result.isError },
@@ -278,6 +386,18 @@ export class Agent implements ChatController {
     const signature = toolCalls.map((t) => `${t.name}|${JSON.stringify(t.arguments)}`).join("&");
     const sigs = this.turnSignatures;
     if (signature && sigs.length >= 2 && sigs[sigs.length - 1] === signature && sigs[sigs.length - 2] === signature) {
+      // One corrective chance BEFORE hard-stopping: the usual cause is the
+      // model retrying the same Shell command instead of switching to
+      // Glob/Grep/Read (or changing arguments). Tell it to change approach.
+      if (!this.corrected && turn + 1 < maxTurns) {
+        this.corrected = true;
+        this.deps.history.add({
+          role: "user",
+          content: repeatedCallNudge(toolCalls[0]?.name),
+          timestamp: Date.now(),
+        });
+        return this.runTurns(turn + 1);
+      }
       this.stopWithLoopMessage(
         `Loop detected: the model called "${toolCalls[0]?.name ?? "?"}" 3 times in a row with the same ` +
           "arguments without making progress. Stopping to avoid burning tokens.",
@@ -302,7 +422,7 @@ export class Agent implements ChatController {
     });
   }
 
-  private async runLlmTurn(): Promise<{
+  private async runLlmTurn(toolDefinitionsOverride?: ToolDefinition[]): Promise<{
     content: string;
     toolCalls: ToolCall[];
     thinking: string;
@@ -312,11 +432,16 @@ export class Agent implements ChatController {
     const provider = this.deps.llmFactory.create(config);
     // Mode-filtered tool set: analyze advertises NO file-mutating tools, so
     // the model cannot even attempt a write (the execution side below is the
-    // second layer of defense).
-    const toolDefinitions: ToolDefinition[] = toolDefinitionsForMode(this.deps.tools.getAll(), this._mode);
+    // second layer of defense). An explicit [] (forced final report) makes the
+    // turn tool-less.
+    const toolDefinitions: ToolDefinition[] =
+      toolDefinitionsOverride ??
+      toolDefinitionsForMode(this.deps.tools.getAll(), this._mode, {
+        exclude: this.delegationEnabled ? [] : [DELEGATE_TOOL_NAME],
+      });
 
     const messages: LLMMessage[] = [
-      { role: "system", content: this.deps.systemPrompt.build(this._mode) },
+      { role: "system", content: this.deps.systemPrompt.build(this._mode, toolDefinitions) },
       ...this.deps.history.conversation().map((m) => ({
         role: m.role,
         content: m.content,
@@ -391,6 +516,9 @@ export class Agent implements ChatController {
   }
 
   private async executeToolSafely(tc: ToolCall): Promise<ToolResult> {
+    // Delegate is executed by the orchestrator (not the generic tool path):
+    // it owns the session's sub-agent runner and the depth-1 policy.
+    if (tc.name === DELEGATE_TOOL_NAME) return this.executeDelegate(tc);
     const tool: Tool | undefined = this.deps.tools.get(tc.name);
     if (!tool) return { content: `Unknown tool: ${tc.name}`, isError: true };
     // Analyze (read-only) mode: refuse file-mutating tools and read-only
@@ -418,6 +546,45 @@ export class Agent implements ChatController {
       return await tool.execute(tc.arguments);
     } catch (err: any) {
       return { content: `Tool error (${tc.name}): ${err.message || String(err)}`, isError: true };
+    }
+  }
+
+  /**
+   * Run one Delegate call: validate the declared spec, enforce the read-only
+   * rule in Analyze mode and the depth-1 policy, then hand the sub-task to the
+   * session's runner (which builds and drives a separate Agent).
+   */
+  private async executeDelegate(tc: ToolCall): Promise<ToolResult> {
+    if (!this.mayDelegate) {
+      return { content: "Sub-agents cannot delegate further (orchestration depth is 1).", isError: true };
+    }
+    if (!this.delegationEnabled) {
+      return {
+        content:
+          "Delegation is disabled for this session. Turn on the \"multi\" toggle to allow sub-agents.",
+        isError: true,
+      };
+    }
+    if (!this.deps.spawnSubAgent) {
+      return { content: "Delegation is not available in this build.", isError: true };
+    }
+    const parsed = parseDelegateSpec(tc.arguments);
+    const spec = parsed.spec;
+    if (!spec) return { content: parsed.error ?? "Invalid Delegate call.", isError: true };
+    // Analyze is read-only: delegating a writer would bypass it.
+    if (isAnalyzeMode(this._mode) && spec.access !== "read") {
+      return {
+        content: '⛔ Analyze (read-only) mode: sub-agents may only be delegated with access "read".',
+        isError: true,
+      };
+    }
+    try {
+      // Signal the UI that this sub-agent is STARTING now (queued → running):
+      // with a concurrency cap, several delegates may be queued behind others.
+      this.deps.events.emit({ type: "subagent_start", toolCallId: tc.id });
+      return await this.deps.spawnSubAgent(spec);
+    } catch (err: any) {
+      return { content: formatSubAgentError(spec, err?.message || String(err)), isError: true };
     }
   }
 }

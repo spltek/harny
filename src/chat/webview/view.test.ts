@@ -4,7 +4,10 @@ import { vi } from "vitest";
 
 const posted: unknown[] = [];
 
-function setupDom(initOverrides: Record<string, unknown> = {}): void {
+function setupDom(
+  initOverrides: Record<string, unknown> = {},
+  savedState: Record<string, unknown> = {},
+): void {
   const init = {
     sessions: [
       { id: "a", name: "Refactor", createdAt: 1, updatedAt: 2, messageCount: 3 },
@@ -72,6 +75,10 @@ function setupDom(initOverrides: Record<string, unknown> = {}): void {
         <input id="pe-apikey" type="text" />
         <select id="pe-thinking"><option value="effort">Effort</option><option value="bool">Bool</option><option value="unspecified">Unspecified</option></select>
         <input id="pe-session-header" type="text" />
+        <input type="checkbox" id="pe-maxparallel-enabled" />
+        <button id="pe-maxparallel-minus"></button>
+        <input id="pe-maxparallel-input" type="text" value="3" />
+        <button id="pe-maxparallel-plus"></button>
         <button id="provider-test" class="secondary">Test</button>
         <button id="provider-delete" class="secondary">Delete</button>
         <button id="provider-add" class="secondary">+ New</button>
@@ -133,7 +140,7 @@ function setupDom(initOverrides: Record<string, unknown> = {}): void {
   `;
   (globalThis as Record<string, unknown>).acquireVsCodeApi = () => ({
     postMessage: (m: unknown) => posted.push(m),
-    getState: () => ({}),
+    getState: () => savedState,
     setState: () => {},
   });
 }
@@ -294,6 +301,17 @@ describe("view webview client", () => {
     expect(btn.getAttribute("aria-pressed")).toBe("false");
   });
 
+  it("re-asserts the remembered mode/multi to the host on load (reload desync fix)", async () => {
+    setupDom({}, { mode: "agent", multi: true });
+    await loadView();
+    // The panel's remembered UI state is pushed to the host so the active
+    // session's agent adopts it — no more "multi ON but agent OFF".
+    expect(posted).toContainEqual({ type: "setMode", mode: "agent" });
+    expect(posted).toContainEqual({ type: "setMulti", multi: true });
+    expect(document.getElementById("multi-btn")?.classList.contains("is-on")).toBe(true);
+    expect(document.getElementById("mode-btn-label")?.textContent).toBe("Agent");
+  });
+
   it("multi toggle follows the host config and locks while working", async () => {
     await loadView();
     const btn = document.getElementById("multi-btn") as HTMLButtonElement;
@@ -301,11 +319,12 @@ describe("view webview client", () => {
     expect(btn.classList.contains("is-on")).toBe(true);
 
     hostMessage({ type: "status", active: true });
+    const before = posted.length; // ignore the init re-assert posts
     btn.click();
-    expect(posted).not.toContainEqual({ type: "setMulti", multi: false });
+    expect(posted.slice(before)).not.toContainEqual({ type: "setMulti", multi: false });
     hostMessage({ type: "status", active: false });
     btn.click();
-    expect(posted).toContainEqual({ type: "setMulti", multi: false });
+    expect(posted.slice(before)).toContainEqual({ type: "setMulti", multi: false });
   });
 
   it("renders the thinking level dropdown per provider capability", async () => {
@@ -1266,6 +1285,71 @@ describe("view webview client", () => {
     expect(messagesElLastContent()).toContain("Answers");
   });
 
+  it("renders a dedicated sub-agent bubble for Delegate calls with a live status", async () => {
+    await loadView();
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: {
+        id: "A",
+        goal: "Analyze src/fetch.ts",
+        access: "read",
+        resources: ["src/fetch.ts"],
+        parallel: "yes",
+        role: "analyst",
+      },
+    });
+    const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
+    expect(bubble).toBeTruthy();
+    expect(bubble.querySelector(".tool-name")?.textContent).toContain('Sub-agent "A"');
+    expect(bubble.querySelector(".subagent-role")?.textContent).toBe("analyst");
+    expect(bubble.querySelector(".subagent-goal")?.textContent).toContain("Analyze src/fetch.ts");
+    // A freshly-planned delegate is QUEUED (the cap may hold it back); it only
+    // flips to running when the host says it actually started.
+    expect(bubble.querySelector(".subagent-status")?.classList.contains("queued")).toBe(true);
+    expect(bubble.querySelector(".subagent-chip.access-read")).toBeTruthy();
+    expect(bubble.querySelector(".subagent-chip.parallel")).toBeTruthy();
+    expect([...bubble.querySelectorAll(".subagent-chip.res")].map((c) => c.textContent)).toEqual(["src/fetch.ts"]);
+
+    hostMessage({ type: "subagentStart", toolCallId: "s1" });
+    expect(bubble.querySelector(".subagent-status")?.classList.contains("running")).toBe(true);
+
+    hostMessage({ type: "toolResult", toolCallId: "s1", output: '🔁 Sub-agent "A" report:\nfindings', isError: false });
+    expect(bubble.querySelector(".subagent-status")?.classList.contains("done")).toBe(true);
+    expect(bubble.querySelector(".tool-result")?.textContent).toContain("findings");
+  });
+
+  it("marks a failed sub-agent as failed", async () => {
+    await loadView();
+    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "edit", access: "write", resources: ["a.ts"] } });
+    hostMessage({ type: "toolResult", toolCallId: "s1", output: '🔁 Sub-agent "A" failed: boom', isError: true });
+    const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
+    expect(bubble.querySelector(".subagent-status")?.classList.contains("failed")).toBe(true);
+  });
+
+  it("re-renders sub-agent bubbles from the transcript with a done status", async () => {
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "user", content: "go", timestamp: 1 },
+        {
+          role: "assistant",
+          content: "🔧 Tools: Delegate",
+          timestamp: 2,
+          toolCalls: [{ id: "s1", name: "Delegate", arguments: { id: "A", goal: "do it", access: "read", resources: ["a.ts"] } }],
+        },
+        { role: "tool", toolCallId: "s1", content: '🔁 Sub-agent "A" report:\ndone', timestamp: 3 },
+        { role: "assistant", content: "final", timestamp: 4 },
+      ],
+    });
+    const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
+    expect(bubble).toBeTruthy();
+    expect(bubble.querySelector(".subagent-status")?.classList.contains("done")).toBe(true);
+    expect(bubble.querySelector(".tool-result")?.textContent).toContain("done");
+  });
+
   it("renders a model dropdown grouped by provider and posts setModel on change", async () => {
     await loadView();
     hostMessage({
@@ -1419,6 +1503,56 @@ describe("view webview client", () => {
     hostMessage({ type: "providersTested", ok: false, error: "HTTP 500" });
     expect(result.textContent).toContain("HTTP 500");
     expect(result.className).toContain("err");
+  });
+
+  it("max parallel sub-agents: flag + stepper, and the value is posted on save", async () => {
+    await loadView();
+    hostMessage({
+      type: "providersEditor",
+      data: { providers: { llamacpp: { baseUrl: "http://localhost:8090/v1" } }, maxParallelSubAgents: 4 },
+    });
+    const flag = document.getElementById("pe-maxparallel-enabled") as HTMLInputElement;
+    const input = document.getElementById("pe-maxparallel-input") as HTMLInputElement;
+    const plus = document.getElementById("pe-maxparallel-plus") as HTMLButtonElement;
+    const minus = document.getElementById("pe-maxparallel-minus") as HTMLButtonElement;
+    // A saved cap turns the flag on and populates the value.
+    expect(flag.checked).toBe(true);
+    expect(input.value).toBe("4");
+    expect(input.disabled).toBe(false);
+
+    plus.click();
+    expect(input.value).toBe("5");
+    minus.click();
+    minus.click();
+    expect(input.value).toBe("3");
+
+    posted.length = 0;
+    (document.getElementById("providers-save") as HTMLButtonElement).click();
+    const saveMsg = posted.find((m) => (m as { type?: string }).type === "saveProviders") as Record<string, unknown>;
+    expect((saveMsg.data as { maxParallelSubAgents?: number }).maxParallelSubAgents).toBe(3);
+  });
+
+  it("max parallel sub-agents: flag off disables the field and saves undefined", async () => {
+    await loadView();
+    hostMessage({
+      type: "providersEditor",
+      data: { providers: { llamacpp: { baseUrl: "http://localhost:8090/v1" } } },
+    });
+    const flag = document.getElementById("pe-maxparallel-enabled") as HTMLInputElement;
+    const input = document.getElementById("pe-maxparallel-input") as HTMLInputElement;
+    // No cap saved → flag off, field disabled.
+    expect(flag.checked).toBe(false);
+    expect(input.disabled).toBe(true);
+
+    flag.checked = true;
+    flag.dispatchEvent(new Event("change"));
+    expect(input.disabled).toBe(false);
+
+    posted.length = 0;
+    (document.getElementById("providers-save") as HTMLButtonElement).click();
+    const saveMsg = posted.find((m) => (m as { type?: string }).type === "saveProviders") as Record<string, unknown>;
+    // With the flag on, the default value (3) is sent.
+    expect((saveMsg.data as { maxParallelSubAgents?: number }).maxParallelSubAgents).toBe(3);
   });
 
   it("adds a new provider with + New and keeps a complete URL untouched", async () => {

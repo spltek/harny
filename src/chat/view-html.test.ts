@@ -90,6 +90,29 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/id="multi-btn"[\s\S]*?aria-pressed="false"/);
   });
 
+  it("styles the sub-agent bubble with its status states", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    expect(html).toMatch(/\.msg\.tool\.subagent\s*\{/);
+    expect(html).toMatch(/\.subagent-status\.running\s*\{[^}]*animation:\s*harny-pulse/s);
+    expect(html).toMatch(/\.subagent-status\.done\s*\{/);
+    expect(html).toMatch(/\.subagent-status\.failed\s*\{/);
+    expect(html).toMatch(/\.subagent-goal\s*\{/);
+  });
+
+  it("renders the max-parallel sub-agents flag + stepper in the providers form", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    expect(html).toMatch(/<input type="checkbox" id="pe-maxparallel-enabled"/);
+    expect(html).toMatch(/id="pe-maxparallel-minus"[\s\S]*?id="pe-maxparallel-input"[\s\S]*?id="pe-maxparallel-plus"/);
+    expect(html).toMatch(/id="pe-maxparallel-input"[\s\S]*?disabled/);
+    expect(html).toMatch(/\.providers-settings\s*\{/);
+  });
+
   it("collapsing the control stack hides only the Window/Sampling cards", () => {
     const html = renderViewHtml({
       ...base,

@@ -22,17 +22,28 @@ export function isAnalyzeMode(mode: ChatMode | undefined): boolean {
   return (mode ?? DEFAULT_CHAT_MODE) !== "agent";
 }
 
+/** Extra filtering for a tool set (e.g. hide the Delegate tool from
+ * sub-agents so orchestration cannot nest: depth is capped at 1). */
+export interface ToolFilterOptions {
+  exclude?: readonly string[];
+}
+
 /** The tools visible in a given mode (analyze drops the file-mutating ones). */
-export function toolsForMode(tools: readonly Tool[], mode: ChatMode): Tool[] {
-  if (mode === "agent") return [...tools];
-  return tools.filter((t) => !isToolBlockedInAnalyze(t.name));
+export function toolsForMode(tools: readonly Tool[], mode: ChatMode, opts?: ToolFilterOptions): Tool[] {
+  const excluded = opts?.exclude && opts.exclude.length > 0 ? new Set(opts.exclude) : null;
+  const base = mode === "agent" ? [...tools] : tools.filter((t) => !isToolBlockedInAnalyze(t.name));
+  return excluded ? base.filter((t) => !excluded.has(t.name)) : base;
 }
 
 /** Tool definitions sent to the LLM for a given mode. In Analyze mode the
  * file-mutating tools are omitted entirely and the Shell advertises itself
  * as read-only, so the model cannot even attempt a write. */
-export function toolDefinitionsForMode(tools: readonly Tool[], mode: ChatMode): ToolDefinition[] {
-  return toolsForMode(tools, mode).map((t) =>
+export function toolDefinitionsForMode(
+  tools: readonly Tool[],
+  mode: ChatMode,
+  opts?: ToolFilterOptions,
+): ToolDefinition[] {
+  return toolsForMode(tools, mode, opts).map((t) =>
     mode === "analyze" && t.name === "Shell"
       ? { ...t.definition, description: t.definition.description + SHELL_READ_ONLY_NOTE }
       : t.definition,

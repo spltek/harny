@@ -11,6 +11,11 @@ import type {
   ResolvedNamedProvider,
 } from "./types";
 
+/** True for a positive integer (a valid concurrency cap / count). */
+function isPositiveInt(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v > 0;
+}
+
 interface NamedProviderEntry {
   baseUrl?: string;
   api?: string;
@@ -177,6 +182,9 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
     return {
       activeProvider: data ? this.activeProviderName(data, map ?? {}) : undefined,
       providers,
+      ...(data && isPositiveInt(data.maxParallelSubAgents)
+        ? { maxParallelSubAgents: data.maxParallelSubAgents }
+        : {}),
     };
   }
 
@@ -226,6 +234,11 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
         providers[name] = p;
       }
       parsed.providers = providers;
+      setOrDelete(
+        parsed,
+        "maxParallelSubAgents",
+        isPositiveInt(data.maxParallelSubAgents) ? data.maxParallelSubAgents : undefined,
+      );
       if (data.activeProvider && providers[data.activeProvider]) {
         parsed.provider = data.activeProvider;
       } else if (data.activeProvider === undefined) {
@@ -294,6 +307,7 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
     if (typeof data.autoOpen === "boolean") out.autoOpen = data.autoOpen;
     if (typeof data.enableThinking === "boolean") out.enableThinking = data.enableThinking;
     if (isThinkingMode(data.thinkingMode)) out.thinkingMode = data.thinkingMode;
+    if (isPositiveInt(data.maxParallelSubAgents)) out.maxParallelSubAgents = data.maxParallelSubAgents;
     if (isThinkingLevel(data.thinkingLevel)) out.thinkingLevel = data.thinkingLevel;
     // Legacy `enableThinking` (boolean) drives the provider entry too.
     if (typeof data.enableThinking === "boolean" && !isThinkingMode(data.thinkingMode)) {

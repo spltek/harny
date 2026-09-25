@@ -3,6 +3,7 @@ import type { ExtensionContext } from "vscode";
 import { mkdirSync, watch } from "node:fs";
 import { join } from "node:path";
 import { Agent } from "./core/agent/agent";
+import { SubAgentRunner } from "./core/agent/subagent";
 import { DefaultSystemPromptBuilder } from "./core/agent/system-prompt";
 import type { ChatController } from "./core/agent/chat-controller";
 import type { ChatHistory } from "./core/history/chat-history";
@@ -111,15 +112,25 @@ export function activate(context: ExtensionContext) {
     return uris?.map((u) => u.fsPath);
   });
 
-  const createAgent = (history: ChatHistory): ChatController =>
-    new Agent({
+  const createAgent = (history: ChatHistory): ChatController => {
+    // One sub-agent runner per session: it owns the ephemeral sub-agent
+    // histories and cascades Stop to any in-flight sub-agent.
+    const subAgents = new SubAgentRunner({ config, llmFactory, tools, cwd });
+    return new Agent({
       config,
       llmFactory,
       tools,
       history,
       events: new InMemoryEventBus<AgentEvent>(),
       systemPrompt,
+      allowDelegation: true,
+      // Sub-agents (orchestration) are opt-in via the "multi" toggle: off by
+      // default so a single agent behaves exactly as before until enabled.
+      delegateByDefault: false,
+      spawnSubAgent: (spec) => subAgents.run(spec),
+      onAbort: () => subAgents.abortAll(),
     });
+  };
 
   const registry = new SessionRegistry({ sessions, store, createAgent });
 

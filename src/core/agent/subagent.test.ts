@@ -1,0 +1,191 @@
+import { describe, expect, it } from "vitest";
+import { SubAgentRunner, lastAssistantReport } from "./subagent";
+import { StaticConfigProvider } from "../config/static-config-provider";
+import { ToolRegistry } from "../tools/tool-registry";
+import type { Tool, ToolResult } from "../tools/tool";
+import type { HarnyConfig } from "../config/types";
+import type { LLMMessage, LLMProviderFactory, StreamChunk } from "../llm/types";
+import type { ChatMessage } from "../history/types";
+import type { DelegateSpec } from "./orchestration";
+
+const CONFIG: HarnyConfig = {
+  provider: "openai",
+  apiKey: "sk-test",
+  baseUrl: "https://api.openai.com",
+  model: "gpt-4o",
+  maxTokens: 4096,
+  temperature: 0.1,
+  thinkingLevel: "off",
+  contextFiles: true,
+  autoApprove: false,
+  autoOpen: false,
+};
+
+/** Factory that yields the given chunk batches per successive stream call. */
+function factory(batches: StreamChunk[][]): LLMProviderFactory {
+  let calls = 0;
+  return {
+    create() {
+      return {
+        protocol: "chat" as const,
+        async *stream() {
+          const batch = batches[Math.min(calls, batches.length - 1)];
+          calls++;
+          for (const c of batch) yield c;
+        },
+      };
+    },
+  };
+}
+
+function spec(partial: Partial<DelegateSpec>): DelegateSpec {
+  return {
+    id: "A",
+    goal: "do the thing",
+    access: "read",
+    resources: ["src/a.ts"],
+    parallel: false,
+    after: [],
+    ...partial,
+  };
+}
+
+function makeWriteTool(): Tool & { called: boolean } {
+  const tool = {
+    name: "Write",
+    definition: { name: "Write", description: "write", parameters: { type: "object", properties: {} } },
+    called: false,
+    execute: (): ToolResult => {
+      tool.called = true;
+      return { content: "wrote", isError: false };
+    },
+  };
+  return tool;
+}
+
+function writeCall(): StreamChunk[] {
+  return [
+    { type: "tool_call_start", index: 0, id: "c1", name: "Write" },
+    { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts","content":"x"}' },
+    { type: "tool_call_end", index: 0 },
+  ];
+}
+
+function buildRunner(llmFactory: LLMProviderFactory, tools: Tool[] = []) {
+  return new SubAgentRunner({
+    config: new StaticConfigProvider(CONFIG),
+    llmFactory,
+    tools: new ToolRegistry(tools),
+    cwd: () => "/workspace",
+  });
+}
+
+describe("SubAgentRunner", () => {
+  it("runs the sub-agent and returns its final text as a wrapped report", async () => {
+    const runner = buildRunner(factory([[{ type: "text", content: "I analysed a.ts; no issues." }]]));
+    const res = await runner.run(spec({ id: "A", role: "analyst" }));
+    expect(res.isError).toBe(false);
+    expect(res.content).toBe('🔁 Sub-agent "A" [analyst] report:\nI analysed a.ts; no issues.');
+  });
+
+  it("read sub-agents run read-only: Write is blocked", async () => {
+    const write = makeWriteTool();
+    const runner = buildRunner(factory([writeCall(), [{ type: "text", content: "report" }]]), [write]);
+    const res = await runner.run(spec({ access: "read" }));
+    expect(write.called).toBe(false);
+    expect(res.content).toContain("report");
+  });
+
+  it("recovers a sub-agent stuck repeating a tool call and returns its report", async () => {
+    const read: Tool = {
+      name: "Read",
+      definition: { name: "Read", description: "read", parameters: { type: "object", properties: {} } },
+      execute: (): ToolResult => ({ content: "data", isError: false }),
+    };
+    const sameCall = (): StreamChunk[] => [
+      { type: "tool_call_start", index: 0, id: "c1", name: "Read" },
+      { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts"}' },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const runner = buildRunner(
+      factory([sameCall(), sameCall(), sameCall(), [{ type: "text", content: "recovered report" }]]),
+      [read],
+    );
+
+    const res = await runner.run(spec({ access: "read" }));
+
+    expect(res.isError).toBe(false);
+    expect(res.content).toContain("recovered report");
+    expect(res.content).not.toContain("Loop detected");
+  });
+
+  it("write sub-agents can use Write (full agent mode)", async () => {
+    const write = makeWriteTool();
+    const runner = buildRunner(factory([writeCall(), [{ type: "text", content: "done writing" }]]), [write]);
+    const res = await runner.run(spec({ access: "write", resources: ["a.ts"] }));
+    expect(write.called).toBe(true);
+    expect(res.content).toContain("done writing");
+  });
+
+  it("wraps a failing sub-agent as an error result", async () => {
+    const failing: LLMProviderFactory = {
+      create() {
+        return {
+          protocol: "chat" as const,
+          async *stream(): AsyncGenerator<StreamChunk> {
+            throw new Error("boom");
+          },
+        };
+      },
+    };
+    // The Agent reports mid-run fetch errors into the transcript; the runner
+    // still produces a report/error result without throwing.
+    const res = await buildRunner(failing).run(spec({ id: "Z" }));
+    expect(res.content).toContain('Sub-agent "Z"');
+  });
+
+  it("abortAll aborts the in-flight sub-agents", async () => {
+    let aborted = false;
+    const hanging: LLMProviderFactory = {
+      create() {
+        return {
+          protocol: "chat" as const,
+          async *stream(_m: LLMMessage[], signal?: AbortSignal): AsyncGenerator<StreamChunk> {
+            await new Promise<void>((resolve) => {
+              if (signal?.aborted) return resolve();
+              signal?.addEventListener("abort", () => {
+                aborted = true;
+                resolve();
+              });
+            });
+          },
+        };
+      },
+    };
+    const runner = buildRunner(hanging);
+    const pending = runner.run(spec());
+    // Give the run a tick to register as active, then abort everything.
+    await Promise.resolve();
+    expect(runner.activeCount).toBe(1);
+    runner.abortAll();
+    await pending;
+    expect(aborted).toBe(true);
+    expect(runner.activeCount).toBe(0);
+  });
+});
+
+describe("lastAssistantReport", () => {
+  it("returns the last visible assistant text with no pending tool calls", () => {
+    const msgs: ChatMessage[] = [
+      { role: "user", content: "go", timestamp: 1 },
+      { role: "assistant", content: "🔧 Tool: Read", toolCalls: [{ id: "1", name: "Read", arguments: {} }], timestamp: 2 },
+      { role: "tool", content: "data", toolCallId: "1", timestamp: 3 },
+      { role: "assistant", content: "final report", timestamp: 4 },
+    ];
+    expect(lastAssistantReport(msgs)).toBe("final report");
+  });
+
+  it("falls back when there is no clean final message", () => {
+    expect(lastAssistantReport([{ role: "user", content: "go", timestamp: 1 }])).toBe("(no report produced)");
+  });
+});

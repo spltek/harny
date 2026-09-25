@@ -32,4 +32,9 @@ export interface ChatController {
    * guarded) or "agent" (full tool access). Defaults to analyze.
    */
   setMode(mode: ChatMode): void;
+  /**
+   * Enable/disable orchestration (sub-agents) for this session — the UI
+   * "multi" toggle. When off, the Delegate tool is hidden and refused.
+   */
+  setDelegation(enabled: boolean): void;
 }

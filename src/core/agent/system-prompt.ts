@@ -1,8 +1,15 @@
 import type { ToolDefinition } from "../tools/tool";
 import type { ChatMode } from "../tools/mode-policy";
+import { DELEGATE_TOOL_NAME } from "./orchestration";
 
 export interface SystemPromptBuilder {
-  build(mode?: ChatMode): string;
+  /**
+   * @param mode current chat mode
+   * @param toolDefinitions the EFFECTIVE tool set for this turn (mode-filtered
+   *   and, for sub-agents / multi-off, Delegate-excluded). When omitted the
+   *   builder falls back to its own definitions thunk.
+   */
+  build(mode?: ChatMode, toolDefinitions?: readonly ToolDefinition[]): string;
 }
 
 /**
@@ -18,9 +25,9 @@ export class DefaultSystemPromptBuilder implements SystemPromptBuilder {
     private cwd: () => string,
   ) {}
 
-  build(mode: ChatMode = "analyze"): string {
+  build(mode: ChatMode = "analyze", effective?: readonly ToolDefinition[]): string {
     const cwd = this.cwd();
-    const definitions = this.toolDefinitions(mode);
+    const definitions = effective ? [...effective] : this.toolDefinitions(mode);
     const toolList = definitions.map((d) => `- ${d.name}: ${this.summarize(d.description)}`).join("\n");
     const analyzeRules =
       mode === "analyze"
@@ -29,10 +36,24 @@ export class DefaultSystemPromptBuilder implements SystemPromptBuilder {
 READ-ONLY MODE (Analyze) — STRICT RULES:
 - You are in READ-ONLY mode: you inspect and answer, you NEVER modify anything.
 - The file-modifying tools (Write, StrReplace, Edit, Delete) are NOT available to you.
+- Sub-agents you delegate to must be read-only too (access: "read") — you cannot delegate a write while in Analyze mode.
 - The Shell tool runs read-only: any command that would write, delete, move, rename, create, install or build files is refused before it runs. Do not try to work around it (no redirection, no scripts that write). Prefer the Read/Grep/Glob tools for inspection.
 - Do NOT run commands that modify the project (git add/commit/push, npm install, mkdir, touch, ...). Use Shell only for read-only inspection (ls, cat, find, git status/diff/log, tests that run without writing would still be refused if they write — so prefer Read/Grep/Glob).
 - Analyse the code, explain it, point out problems and propose what the change would be — but make no changes.`
         : "";
+
+    // Orchestration guidance appears only when the Delegate tool is available.
+    const delegateRules = definitions.some((d) => d.name === DELEGATE_TOOL_NAME)
+      ? `
+
+ORCHESTRATION (Delegate) — when to launch sub-agents:
+- Use Delegate for INDEPENDENT, bounded sub-tasks (analysis, exploration, a self-contained edit). Do NOT delegate the core task itself or trivial work.
+- ALWAYS declare resources (exact files/dirs) and access (read/write/create) — it drives the safe-parallelism decision. An undeclared delegate is rejected.
+- PARALLELISM: mark a read-only sub-task parallel: "yes" and emit several Delegate calls in the SAME turn. Only read-only sub-agents ever run concurrently.
+- EDITS ARE NEVER PARALLEL: any write/create sub-agent runs alone, one at a time. Never give the same file to two writers — serialize with after, or assign a single owner. Sibling results arrive together.
+- Ordering: use after: ["id"] when a sub-task needs another sub-task's output.
+- Cost: parallelize only when the sub-tasks are genuinely independent and heavy.`
+      : "";
 
     return `You are Harny, an expert AI coding agent embedded in VS Code.
 Working directory: ${cwd}
@@ -55,7 +76,74 @@ Guidelines:
 - Use Grep/Glob to search and explore the codebase.
 - Use TodoWrite to track progress on complex multi-step tasks.
 - Use ReadLints only on files you've edited or are about to edit.
-- When broadly exploring the codebase, prefer Grep and Glob over Shell find/grep.${analyzeRules}`;
+- When broadly exploring the codebase, prefer Grep and Glob over Shell find/grep.
+- Never repeat the same tool call with identical arguments: if it failed or returned nothing, change approach (Glob/Grep/Read or different arguments) instead of retrying it.${delegateRules}${analyzeRules}`;
+  }
+
+  private summarize(description: string): string {
+    const first = description.split("\n")[0].trim();
+    return first.length > 120 ? first.slice(0, 120) + "..." : first;
+  }
+}
+
+/** Options describing a delegated sub-agent, provided by the orchestrator. */
+export interface SubAgentPromptOptions {
+  role?: string;
+  access: "read" | "write" | "create";
+  resources: readonly string[];
+  /** Turn budget hint: the model is told to wrap up within it. */
+  turnBudget?: number;
+}
+
+/**
+ * System prompt for a DELEGATED sub-agent: a focused worker that completes one
+ * task and reports back. The FRAME (role, boundaries, report contract, tool
+ * rules) is owned by the host; the orchestrator only supplies the goal/context
+ * (the user seed message). Read-only sub-agents get the Analyze rules; writers
+ * are told the exact resources they own.
+ */
+export class SubAgentSystemPromptBuilder implements SystemPromptBuilder {
+  constructor(
+    private toolDefinitions: (mode: ChatMode) => ToolDefinition[],
+    private cwd: () => string,
+    private options: SubAgentPromptOptions,
+  ) {}
+
+  build(mode: ChatMode = "analyze", effective?: readonly ToolDefinition[]): string {
+    const cwd = this.cwd();
+    const definitions = effective ? [...effective] : this.toolDefinitions(mode);
+    const toolList = definitions
+      .map((d) => `- ${d.name}: ${this.summarize(d.description)}`)
+      .join("\n");
+    const role = this.options.role ? `Your role: ${this.options.role}.` : "Your role: a focused generalist worker.";
+    const readOnly = this.options.access === "read";
+    const resourceRule = readOnly
+      ? `You are READ-ONLY: you must NOT modify any file. Your read scope: ${this.options.resources.join(", ")}.`
+      : `You may ${this.options.access} ONLY these resources (own them): ${this.options.resources.join(", ")}. ` +
+        "Do not touch anything else; another agent may own it.";
+    const readOnlyRules = readOnly
+      ? `\n- The file-modifying tools are disabled and Shell is read-only: no writes, redirects, installs or builds.`
+      : "";
+    const budgetRule = this.options.turnBudget
+      ? `\n- BUDGET: you have about ${this.options.turnBudget} tool turns. Work efficiently, do not over-explore, and STOP calling tools to write your report well within the budget.`
+      : "";
+
+    return `You are a sub-agent of Harny, launched by the main Harny agent to complete ONE focused task and report back.
+Working directory: ${cwd}
+${role}
+${resourceRule}
+
+Rules:
+- Complete ONLY the task in the user message. Do not ask questions or make conversation.
+- Be concise and get to the point.${readOnlyRules}${budgetRule}
+- NEVER repeat the same tool call with identical arguments. If it errors or returns nothing, change approach (Glob/Grep/Read, or different arguments) — retrying verbatim wastes turns and gets you stopped.
+- Prefer Glob/Grep/Read to explore and read files; use Shell only when no dedicated tool fits (and never the same command twice).
+- A turn with NO tool call counts as your final answer: when the task is done, reply with your REPORT.
+- REPORT FORMAT (your last message): what you did, key findings/results, files touched (if any), blockers. No filler.
+- Use tools for real; never just announce an action. Prefer Read/Grep/Glob to inspect before editing.
+
+You have access to these tools:
+${toolList}`;
   }
 
   private summarize(description: string): string {

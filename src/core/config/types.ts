@@ -79,6 +79,11 @@ export interface HarnyConfig {
   sessionHeader?: string;
   /** Stable id of the harny session building the request (from the registry). */
   sessionId?: string;
+  /**
+   * Optional global cap on concurrently-running sub-agents (parallel reads).
+   * Undefined = no cap. Set from the gear form.
+   */
+  maxParallelSubAgents?: number;
 
 }
 
@@ -140,6 +145,12 @@ export interface ProviderEditorData {
   activeProvider?: string;
   /** All named providers from the config file, keyed by name. */
   providers: Record<string, ProviderEditorEntry>;
+  /**
+   * Optional global cap on how many sub-agents run in PARALLEL. Undefined =
+   * no cap (the orchestrator's batches all wait together). Set from the gear
+   * form ("Set max parallel sub-agents").
+   */
+  maxParallelSubAgents?: number;
 }
 
 /** Persists the model selection (and optionally the active named provider) into the config file. */

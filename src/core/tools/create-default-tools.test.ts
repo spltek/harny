@@ -30,6 +30,7 @@ describe("createDefaultTools", () => {
     });
 
     expect(tools.map((t) => t.name)).toEqual([
+      "Delegate",
       "Read",
       "Write",
       "StrReplace",

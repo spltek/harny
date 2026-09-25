@@ -11,6 +11,7 @@ import type { LLMMessage, LLMProviderFactory, StreamChunk } from "../llm/types";
 import type { Tool, ToolResult } from "../tools/tool";
 import type { ToolDefinition } from "../tools/tool";
 import { toolDefinitionsForMode } from "../tools/mode-policy";
+import type { DelegateSpec } from "./orchestration";
 import type { AgentEvent } from "./types";
 
 const VALID_CONFIG: HarnyConfig = {
@@ -569,8 +570,8 @@ describe("Agent", () => {
     expect(error && error.type === "error" ? error.error : "").toContain("consecutive turns of tool errors");
   });
 
-  it("stops when the same successful tool call is repeated 3 times in a row", async () => {
-    const { agent, factory, events } = buildHarness({
+  it("nudges once, then stops when the same successful tool call keeps repeating", async () => {
+    const { agent, factory, events, history } = buildHarness({
       chunks: [
         [{ type: "tool_call_start", index: 0, id: "c1", name: "FakeTool" }, { type: "tool_call_end", index: 0 }],
         [{ type: "tool_call_start", index: 0, id: "c2", name: "FakeTool" }, { type: "tool_call_end", index: 0 }],
@@ -581,7 +582,9 @@ describe("Agent", () => {
 
     await agent.send("x");
 
-    expect(factory.calls).toBe(3);
+    // 3 identical calls → corrective nudge; one more identical → stop (4 calls).
+    expect(factory.calls).toBe(4);
+    expect(history.all().some((m) => m.role === "user" && /SAME tool/.test(m.content ?? ""))).toBe(true);
     const error = events.find((e) => e.type === "error");
     expect(error && error.type === "error" ? error.error : "").toContain("3 times in a row");
   });
@@ -889,3 +892,499 @@ describe("Analyze (read-only) mode", () => {
 });
 
 
+
+describe("Orchestration (Delegate)", () => {
+  function delegateTurn(calls: Array<Record<string, unknown>>): StreamChunk[] {
+    const out: StreamChunk[] = [];
+    calls.forEach((args, i) => {
+      out.push({ type: "tool_call_start", index: i, id: "d" + i, name: "Delegate" });
+      out.push({ type: "tool_call_delta", index: i, delta: JSON.stringify(args) });
+      out.push({ type: "tool_call_end", index: i });
+    });
+    return out;
+  }
+
+  function build(opts: {
+    calls: Array<Record<string, unknown>>;
+    mode?: "analyze" | "agent";
+    allowDelegation?: boolean;
+    maxParallel?: number;
+    spawn?: (spec: DelegateSpec) => Promise<ToolResult>;
+  }): { agent: Agent; history: InMemoryChatHistory; eventLog: AgentEvent[] } {
+    const config = new StaticConfigProvider(
+      opts.maxParallel ? { ...VALID_CONFIG, maxParallelSubAgents: opts.maxParallel } : VALID_CONFIG,
+    );
+    const history = new InMemoryChatHistory();
+    const events = new InMemoryEventBus<AgentEvent>();
+    const eventLog: AgentEvent[] = [];
+    events.subscribe((e) => eventLog.push(e));
+    const factory = fakeFactory(delegateTurn(opts.calls), [{ type: "text", content: "done" }]);
+    const tools = new ToolRegistry([makeTool("Read")]);
+    const systemPrompt = new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w");
+    const agent = new Agent({
+      config,
+      llmFactory: factory,
+      tools,
+      history,
+      events,
+      systemPrompt,
+      allowDelegation: opts.allowDelegation,
+      spawnSubAgent: opts.spawn ?? (async () => ({ content: "default report", isError: false })),
+    });
+    if (opts.mode) agent.setMode(opts.mode);
+    return { agent, history, eventLog };
+  }
+
+  it("intercepts Delegate and hands the parsed spec to the runner", async () => {
+    const seen: DelegateSpec[] = [];
+    const { agent } = build({
+      calls: [{ id: "A", goal: "analyze x", access: "read", resources: ["src/a.ts"], parallel: "yes" }],
+      spawn: async (spec) => {
+        seen.push(spec);
+        return { content: "🔁 report A", isError: false };
+      },
+    });
+
+    await agent.send("go");
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({
+      id: "A",
+      goal: "analyze x",
+      access: "read",
+      resources: ["src/a.ts"],
+      parallel: true,
+    });
+  });
+
+  it("runs parallel read-delegates concurrently (both start before either ends)", async () => {
+    const order: string[] = [];
+    const spawn = async (spec: DelegateSpec): Promise<ToolResult> => {
+      order.push("start:" + spec.id);
+      await new Promise((r) => setTimeout(r, 5));
+      order.push("end:" + spec.id);
+      return { content: "r" + spec.id, isError: false };
+    };
+    const { agent } = build({
+      calls: [
+        { id: "A", goal: "a", access: "read", resources: ["a.ts"], parallel: "yes" },
+        { id: "B", goal: "b", access: "read", resources: ["b.ts"], parallel: "yes" },
+      ],
+      spawn,
+    });
+
+    await agent.send("go");
+
+    expect(order).toEqual(["start:A", "start:B", "end:A", "end:B"]);
+  });
+
+  it("caps concurrency at maxParallelSubAgents (chunks of N)", async () => {
+    const order: string[] = [];
+    const spawn = async (spec: DelegateSpec): Promise<ToolResult> => {
+      order.push("start:" + spec.id);
+      await new Promise((r) => setTimeout(r, 5));
+      order.push("end:" + spec.id);
+      return { content: "r", isError: false };
+    };
+    const { agent } = build({
+      calls: [
+        { id: "A", goal: "a", access: "read", resources: ["a.ts"], parallel: "yes" },
+        { id: "B", goal: "b", access: "read", resources: ["b.ts"], parallel: "yes" },
+        { id: "C", goal: "c", access: "read", resources: ["c.ts"], parallel: "yes" },
+      ],
+      maxParallel: 2,
+      spawn,
+    });
+
+    await agent.send("go");
+
+    // Two at a time: A+B, then C alone.
+    expect(order).toEqual(["start:A", "start:B", "end:A", "end:B", "start:C", "end:C"]);
+  });
+
+  it("emits subagent_start when each delegate actually begins (cap visible)", async () => {
+    const started: string[] = [];
+    const spawn = async (spec: DelegateSpec): Promise<ToolResult> => {
+      started.push(spec.id);
+      await new Promise((r) => setTimeout(r, 3));
+      return { content: "r", isError: false };
+    };
+    const { agent, eventLog } = build({
+      calls: [
+        { id: "A", goal: "a", access: "read", resources: ["a.ts"], parallel: "yes" },
+        { id: "B", goal: "b", access: "read", resources: ["b.ts"], parallel: "yes" },
+      ],
+      spawn,
+    });
+
+    await agent.send("go");
+
+    const starts = eventLog.filter((e) => e.type === "subagent_start");
+    expect(starts).toHaveLength(2);
+    expect(started).toEqual(["A", "B"]);
+  });
+
+  it("maxParallelSubAgents = 1 serializes even parallel read-delegates", async () => {
+    const order: string[] = [];
+    const spawn = async (spec: DelegateSpec): Promise<ToolResult> => {
+      order.push("start:" + spec.id);
+      await new Promise((r) => setTimeout(r, 3));
+      order.push("end:" + spec.id);
+      return { content: "r", isError: false };
+    };
+    const { agent } = build({
+      calls: [
+        { id: "A", goal: "a", access: "read", resources: ["a.ts"], parallel: "yes" },
+        { id: "B", goal: "b", access: "read", resources: ["b.ts"], parallel: "yes" },
+      ],
+      maxParallel: 1,
+      spawn,
+    });
+
+    await agent.send("go");
+
+    expect(order).toEqual(["start:A", "end:A", "start:B", "end:B"]);
+  });
+
+  it("never runs two writers concurrently", async () => {
+    const order: string[] = [];
+    const spawn = async (spec: DelegateSpec): Promise<ToolResult> => {
+      order.push("start:" + spec.id);
+      await new Promise((r) => setTimeout(r, 5));
+      order.push("end:" + spec.id);
+      return { content: "r" + spec.id, isError: false };
+    };
+    const { agent } = build({
+      calls: [
+        { id: "A", goal: "a", access: "write", resources: ["a.ts"], parallel: "yes" },
+        { id: "B", goal: "b", access: "create", resources: ["b.ts"], parallel: "yes" },
+      ],
+      mode: "agent",
+      spawn,
+    });
+
+    await agent.send("go");
+
+    expect(order).toEqual(["start:A", "end:A", "start:B", "end:B"]);
+  });
+
+  it("refuses a write delegate in Analyze mode without spawning", async () => {
+    let spawned = 0;
+    const { agent, history } = build({
+      calls: [{ id: "A", goal: "edit", access: "write", resources: ["a.ts"] }],
+      mode: "analyze",
+      spawn: async () => {
+        spawned++;
+        return { content: "x", isError: false };
+      },
+    });
+
+    await agent.send("go");
+
+    expect(spawned).toBe(0);
+    expect(history.all().find((m) => m.role === "tool")?.content).toContain("Analyze (read-only)");
+  });
+
+  it("allows a read delegate in Analyze mode", async () => {
+    let spawned = 0;
+    const { agent } = build({
+      calls: [{ id: "A", goal: "read", access: "read", resources: ["a.ts"] }],
+      mode: "analyze",
+      spawn: async () => {
+        spawned++;
+        return { content: "ok", isError: false };
+      },
+    });
+
+    await agent.send("go");
+
+    expect(spawned).toBe(1);
+  });
+
+  it("rejects invalid delegate args (missing resources) without spawning", async () => {
+    let spawned = 0;
+    const { agent, history } = build({
+      calls: [{ id: "A", goal: "x", access: "read" }],
+      spawn: async () => {
+        spawned++;
+        return { content: "x", isError: false };
+      },
+    });
+
+    await agent.send("go");
+
+    expect(spawned).toBe(0);
+    expect(history.all().find((m) => m.role === "tool")?.content).toContain("resources");
+  });
+
+  it("sub-agents cannot delegate further (depth 1)", async () => {
+    let spawned = 0;
+    const { agent, history } = build({
+      calls: [{ id: "A", goal: "x", access: "read", resources: ["a.ts"] }],
+      allowDelegation: false,
+      spawn: async () => {
+        spawned++;
+        return { content: "x", isError: false };
+      },
+    });
+
+    await agent.send("go");
+
+    expect(spawned).toBe(0);
+    expect(history.all().find((m) => m.role === "tool")?.content).toContain("cannot delegate further");
+  });
+
+  it("setDelegation(false) disables orchestration for the session (multi off)", async () => {
+    let spawned = 0;
+    const { agent, history } = build({
+      calls: [{ id: "A", goal: "x", access: "read", resources: ["a.ts"] }],
+      spawn: async () => {
+        spawned++;
+        return { content: "x", isError: false };
+      },
+    });
+    agent.setDelegation(false);
+
+    await agent.send("go");
+
+    expect(spawned).toBe(0);
+    expect(history.all().find((m) => m.role === "tool")?.content).toContain("disabled for this session");
+  });
+
+  it("advertises Delegate (and its rules) only when delegation is on", async () => {
+    const seen: string[] = [];
+    const factory: LLMProviderFactory = {
+      create() {
+        return {
+          protocol: "chat" as const,
+          async *stream(messages: LLMMessage[]) {
+            seen.push(String(messages[0]?.content ?? ""));
+            yield { type: "text", content: "ok" };
+          },
+        };
+      },
+    };
+    const delegateTool = makeTool("Delegate");
+    const tools = new ToolRegistry([makeTool("Read"), delegateTool]);
+    const systemPrompt = new DefaultSystemPromptBuilder(
+      (m) => toolDefinitionsForMode(tools.getAll(), m),
+      () => "/w",
+    );
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history: new InMemoryChatHistory(),
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt,
+      allowDelegation: true,
+      delegateByDefault: false,
+      spawnSubAgent: async () => ({ content: "r", isError: false }),
+    });
+
+    await agent.send("off");
+    expect(seen[0]).not.toContain("- Delegate:");
+    expect(seen[0]).not.toContain("ORCHESTRATION (Delegate)");
+
+    agent.setDelegation(true);
+    await agent.send("on");
+    expect(seen[1]).toContain("- Delegate:");
+    expect(seen[1]).toContain("ORCHESTRATION (Delegate)");
+  });
+});
+
+describe("Turn budget + forced final report", () => {
+  it("when the budget is exhausted it asks for a report with NO tools (not a bare limit note)", async () => {
+    const seenTools: (number | undefined)[] = [];
+    let calls = 0;
+    const factory: LLMProviderFactory = {
+      create() {
+        return {
+          protocol: "chat" as const,
+          async *stream(_m: LLMMessage[], _s?: AbortSignal, toolDefs?: { name: string }[]) {
+            seenTools.push(toolDefs?.length);
+            calls++;
+            if (calls === 1) {
+              yield { type: "tool_call_start", index: 0, id: "c1", name: "Read" };
+              yield { type: "tool_call_end", index: 0 };
+            } else {
+              yield { type: "text", content: "FINAL REPORT: shipped" };
+            }
+          },
+        };
+      },
+    };
+    const history = new InMemoryChatHistory();
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools: new ToolRegistry([makeTool("Read")]),
+      history,
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(() => [], () => "/w"),
+      maxTurns: 1,
+      forceFinalReportOnLimit: true,
+    });
+
+    await agent.send("do it");
+
+    // The forced turn advertised ZERO tools.
+    expect(seenTools[0]).toBe(1);
+    expect(seenTools[1]).toBe(0);
+    const last = [...history.all()].reverse().find((m) => m.role === "assistant" && m.content);
+    expect(last?.content).toContain("FINAL REPORT");
+    expect(history.all().some((m) => /turn limit/.test(m.content ?? ""))).toBe(false);
+  });
+
+  it("without the flag it keeps the plain turn-limit stop note", async () => {
+    const history = new InMemoryChatHistory();
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: {
+        create() {
+          return {
+            protocol: "chat" as const,
+            async *stream(): AsyncGenerator<StreamChunk> {
+              yield { type: "tool_call_start", index: 0, id: "c1", name: "Read" };
+              yield { type: "tool_call_end", index: 0 };
+            },
+          };
+        },
+      },
+      tools: new ToolRegistry([makeTool("Read")]),
+      history,
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(() => [], () => "/w"),
+      maxTurns: 1,
+    });
+
+    await agent.send("do it");
+
+    expect(history.all().some((m) => /reached the 1-turn limit/.test(m.content ?? ""))).toBe(true);
+  });
+});
+
+describe("Repeated-call loop: nudge before hard stop", () => {
+  it("gives one corrective nudge to change approach, then stops if it repeats", async () => {
+    const repeated = (): StreamChunk[] => [
+      { type: "tool_call_start", index: 0, id: "c1", name: "Shell" },
+      { type: "tool_call_delta", index: 0, delta: '{"command":"ls -la"}' },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const history = new InMemoryChatHistory();
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      // The SAME call every turn, forever.
+      llmFactory: fakeFactory(repeated(), repeated(), repeated(), repeated(), repeated()),
+      tools: new ToolRegistry([makeTool("Shell")]),
+      history,
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(() => [], () => "/w"),
+    });
+
+    await agent.send("go");
+
+    // A corrective user message pointing at Glob/Grep/Read was injected…
+    const nudge = history.all().find((m) => m.role === "user" && /SAME tool/.test(m.content ?? ""));
+    expect(nudge).toBeDefined();
+    expect(nudge!.content).toContain("Glob");
+    expect(nudge!.content).toContain("Grep");
+    // …and after it repeated again, the loop was stopped.
+    expect(history.all().some((m) => /Loop detected/.test(m.content ?? ""))).toBe(true);
+  });
+
+  it("recovers: after the nudge the model changes approach and finishes", async () => {
+    const shell = (): StreamChunk[] => [
+      { type: "tool_call_start", index: 0, id: "c1", name: "Shell" },
+      { type: "tool_call_delta", index: 0, delta: '{"command":"find . -name x"}' },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const glob = (): StreamChunk[] => [
+      { type: "tool_call_start", index: 0, id: "c2", name: "Glob" },
+      { type: "tool_call_delta", index: 0, delta: '{"glob_pattern":"**/x"}' },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const { agent, history } = buildHarness({
+      tools: [makeTool("Shell"), makeTool("Glob")],
+      // 3 identical Shell calls → nudge; then the model SWITCHES to Glob.
+      chunks: [shell(), shell(), shell(), glob(), [{ type: "text", content: "done via Glob" }]],
+    });
+
+    await agent.send("go");
+
+    expect(history.all().some((m) => m.role === "user" && /SAME tool/.test(m.content ?? ""))).toBe(true);
+    // The nudge worked: no hard stop, and the final answer is present.
+    expect(history.all().some((m) => /Loop detected/.test(m.content ?? ""))).toBe(false);
+    expect(history.all().some((m) => /done via Glob/.test(m.content ?? ""))).toBe(true);
+  });
+
+  it("injects the corrective nudge at most once per send", async () => {
+    const shell = (): StreamChunk[] => [
+      { type: "tool_call_start", index: 0, id: "c1", name: "Shell" },
+      { type: "tool_call_delta", index: 0, delta: '{"command":"ls -la"}' },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const { agent, history } = buildHarness({
+      tools: [makeTool("Shell")],
+      chunks: [shell(), shell(), shell(), shell(), shell(), shell()],
+    });
+
+    await agent.send("go");
+
+    const nudges = history.all().filter((m) => m.role === "user" && /SAME tool/.test(m.content ?? ""));
+    expect(nudges).toHaveLength(1);
+  });
+
+  it("skips the nudge when the turn budget leaves no room (stops instead)", async () => {
+    const shell = (): StreamChunk[] => [
+      { type: "tool_call_start", index: 0, id: "c1", name: "Shell" },
+      { type: "tool_call_delta", index: 0, delta: '{"command":"ls"}' },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const { agent, history } = buildHarness({
+      tools: [makeTool("Shell")],
+      chunks: [shell(), shell(), shell()],
+      maxTurns: 3,
+    });
+
+    await agent.send("go");
+
+    // turn+1 would hit the cap → no corrective turn, straight stop.
+    expect(history.all().some((m) => m.role === "user" && /SAME tool/.test(m.content ?? ""))).toBe(false);
+    expect(history.all().some((m) => /Loop detected/.test(m.content ?? ""))).toBe(true);
+  });
+
+  it("does not stop a healthy run that changes its tool calls", async () => {
+    const history = new InMemoryChatHistory();
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: fakeFactory(
+        [
+          { type: "tool_call_start", index: 0, id: "c1", name: "Read" },
+          { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts"}' },
+          { type: "tool_call_end", index: 0 },
+        ],
+        [
+          { type: "tool_call_start", index: 0, id: "c2", name: "Read" },
+          { type: "tool_call_delta", index: 0, delta: '{"path":"b.ts"}' },
+          { type: "tool_call_end", index: 0 },
+        ],
+        [
+          { type: "tool_call_start", index: 0, id: "c3", name: "Grep" },
+          { type: "tool_call_delta", index: 0, delta: '{"search_term":"x"}' },
+          { type: "tool_call_end", index: 0 },
+        ],
+        [{ type: "text", content: "final report" }],
+      ),
+      tools: new ToolRegistry([makeTool("Read"), makeTool("Grep")]),
+      history,
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(() => [], () => "/w"),
+    });
+
+    await agent.send("go");
+
+    expect(history.all().some((m) => /Loop detected/.test(m.content ?? ""))).toBe(false);
+    expect(history.all().some((m) => /final report/.test(m.content ?? ""))).toBe(true);
+  });
+});
