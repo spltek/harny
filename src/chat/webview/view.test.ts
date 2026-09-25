@@ -1497,6 +1497,20 @@ describe("view webview client", () => {
     expect(document.querySelector(".msg.tool")).toBeTruthy();
   });
 
+  it("keeps the FULL sub-agent stream text (never trims from the top)", async () => {
+    await loadView();
+    hostMessage(PARALLEL_ON);
+    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({
+      type: "subagentEvent",
+      toolCallId: "s1",
+      event: { type: "text_delta", content: "HEAD-MARKER" + "x".repeat(3000) },
+    });
+    const a = document.querySelector(".sa-answer") as HTMLElement;
+    expect(a.textContent).toContain("HEAD-MARKER");
+    expect(a.textContent!.length).toBeGreaterThan(3000);
+  });
+
   it("marks a failed sub-agent as failed", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);

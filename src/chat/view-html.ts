@@ -428,8 +428,8 @@ ${renderViewConfig(deps)}
       padding: 2px 8px 6px 22px; border-left: 2px solid rgba(124, 92, 255, 0.25);
       margin: 0 0 2px 8px;
     }
-    .sa-thinking { color: #888; font-style: italic; font-size: var(--fs-sm); word-break: break-word; }
-    .sa-answer { color: var(--fg); font-size: var(--fs-md); word-break: break-word; }
+    .sa-thinking { color: #888; font-style: italic; font-size: var(--fs-sm); word-break: break-word; max-height: 12rem; overflow-y: auto; }
+    .sa-answer { color: var(--fg); font-size: var(--fs-md); word-break: break-word; max-height: 16rem; overflow-y: auto; }
     /* Markdown inside the nested live stream (same shapes as the thinking body). */
     /* Markdown shapes shared by the nested stream AND the sub-agent report. */
     .subagent-report { color: var(--fg); font-size: var(--fs-md); word-break: break-word; }

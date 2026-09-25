@@ -555,7 +555,8 @@ interface SubAgentStreamEvent {
 }
 
 /** Bounded live text kept per sub-agent bubble (the full report arrives at the end). */
-const SA_LIVE_MAX = 1500;
+/** Bounded live view height (CSS max-height); the FULL text is kept and
+ * scrollable — nothing is trimmed from the top. */
 const subAgentToolEls = new Map<string, HTMLElement>();
 
 /** Ensure the nested live-log container exists inside a sub-agent bubble. */
@@ -586,10 +587,11 @@ function handleSubAgentEvent(parentId: string, event: SubAgentStreamEvent): void
       t.className = "sa-thinking";
       log.appendChild(t);
     }
-    // Markdown, like the thinking blocks (raw text kept on the element).
-    const next = ((t._raw ?? "") + event.content).slice(-SA_LIVE_MAX);
-    t._raw = next;
-    t.innerHTML = renderMarkdown(next);
+    // Markdown, like the thinking blocks: keep the FULL text (raw on the
+    // element) and let the container scroll — never trim from the top.
+    t._raw = (t._raw ?? "") + event.content;
+    t.innerHTML = renderMarkdown(t._raw);
+    t.scrollTop = t.scrollHeight;
     scrollDown();
   } else if (event.type === "text_delta" && typeof event.content === "string") {
     let a = log.querySelector(".sa-answer") as (HTMLElement & { _raw?: string }) | null;
@@ -598,9 +600,9 @@ function handleSubAgentEvent(parentId: string, event: SubAgentStreamEvent): void
       a.className = "sa-answer";
       log.appendChild(a);
     }
-    const next = ((a._raw ?? "") + event.content).slice(-SA_LIVE_MAX);
-    a._raw = next;
-    a.innerHTML = renderMarkdown(next);
+    a._raw = (a._raw ?? "") + event.content;
+    a.innerHTML = renderMarkdown(a._raw);
+    a.scrollTop = a.scrollHeight;
     scrollDown();
   } else if (event.type === "tool_call" && event.toolCall) {
     const line = document.createElement("div");
