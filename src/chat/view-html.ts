@@ -1212,7 +1212,7 @@ ${renderViewConfig(deps)}
          dropdown anchors to the button and overlays the cards below. -->
     <div class="ctl-card ctl-card-model">
       <div id="mode-select"
-           title="Analyze: read-only · Act: full tool use (create, modify, run)">
+           title="Analyze: read-only · Build/Edit: full tool use (create, modify, run)">
         <button type="button" id="mode-btn" aria-haspopup="listbox" aria-expanded="false"
                 aria-label="Mode">
           <svg id="mode-btn-icon-analyze" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M20 20l-4.3-4.3" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
@@ -1228,9 +1228,9 @@ ${renderViewConfig(deps)}
             <svg class="mode-check" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
           </button>
           <button type="button" class="mode-item" data-mode="agent" role="option" aria-selected="false"
-                  title="Act: full tool use — create, modify and run (files, shell, search)">
+                  title="Build/Edit: full tool use — create, modify and run (files, shell, search)">
             <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
-            <span>Act</span>
+            <span>Build/Edit</span>
             <svg class="mode-check" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
           </button>
         </div>

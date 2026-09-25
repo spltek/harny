@@ -1604,7 +1604,7 @@ function applyMode(mode: ChatMode, opts?: { notify?: boolean }): void {
   if (!isChatMode(mode)) mode = DEFAULT_MODE;
   currentMode = mode;
   modeBtn.classList.toggle("is-agent", mode === "agent");
-  modeBtnLabel.textContent = mode === "agent" ? "Act" : "Analyze";
+  modeBtnLabel.textContent = mode === "agent" ? "Build/Edit" : "Analyze";
   modeBtnIconAnalyze.classList.toggle("hidden", mode !== "analyze");
   modeBtnIconAgent.classList.toggle("hidden", mode !== "agent");
   for (const item of modeItems) {
