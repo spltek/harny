@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { Agent } from "./agent";
 import { ToolCallAccumulator } from "./tool-call-accumulator";
-import { DefaultSystemPromptBuilder } from "./system-prompt";
+import { BUILD_SWITCH_HINT, DefaultSystemPromptBuilder } from "./system-prompt";
 import { InMemoryEventBus } from "../events/in-memory-event-bus";
 import { InMemoryChatHistory } from "../history/in-memory-chat-history";
 import { StaticConfigProvider } from "../config/static-config-provider";
@@ -658,7 +658,8 @@ describe("Agent", () => {
     await agent.send("go");
 
     // The echoed label did NOT end the run: the guard nudged and the model answered.
-    expect(history.all().some((m) => m.role === "assistant" && m.content === "real answer")).toBe(true);
+    // (Analyze mode also appends the preview footer, hence `includes`.)
+    expect(history.all().some((m) => m.role === "assistant" && m.content.includes("real answer"))).toBe(true);
     expect(history.all().some((m) => m.role === "user" && /Continue NOW/.test(m.content))).toBe(true);
     expect(factory.calls).toBeGreaterThanOrEqual(3);
   });
@@ -1096,6 +1097,55 @@ describe("Analyze (read-only) mode", () => {
 
     expect(readTool.called).toBe(true);
     expect(history.all().find((m) => m.role === "tool")?.content).toBe("contents");
+  });
+
+  it("appends an explicit 'nothing applied / switch to Build' footer when previews were prepared", async () => {
+    const { agent, history } = capturingHarness(
+      [makeTool("Edit"), makeTool("Read")],
+      [
+        toolCallChunks("Edit", '{"path":"a.ts","edits":[{"oldText":"x","newText":"y"}]}'),
+        [{ type: "text", content: "I fixed the bug for you." }],
+      ],
+      "analyze",
+    );
+
+    await agent.send("fix it");
+
+    const final = history.all().filter((m) => m.role === "assistant").at(-1);
+    expect(final?.content).toContain("I fixed the bug for you.");
+    expect(final?.content).toContain("Nothing has been applied");
+    expect(final?.content).toContain("previews");
+    expect(final?.content).toContain("Switch to **Build**");
+  });
+
+  it("does not duplicate the footer when the model already told the user to switch", async () => {
+    const { agent, history } = capturingHarness(
+      [makeTool("Edit")],
+      [
+        toolCallChunks("Edit", '{"path":"a.ts","edits":[{"oldText":"x","newText":"y"}]}'),
+        [{ type: "text", content: `Done.\n\n${BUILD_SWITCH_HINT}` }],
+      ],
+      "analyze",
+    );
+
+    await agent.send("fix it");
+
+    const final = history.all().filter((m) => m.role === "assistant").at(-1);
+    const occurrences = (final?.content.match(/Switch to \*\*Build\*\*/g) ?? []).length;
+    expect(occurrences).toBe(1);
+  });
+
+  it("does not add the preview footer in Build mode", async () => {
+    const { agent, history } = capturingHarness(
+      [makeTool("Edit")],
+      [toolCallChunks("Edit", '{"path":"a.ts","edits":[]}'), [{ type: "text", content: "Applied the change." }]],
+      "agent",
+    );
+
+    await agent.send("fix it");
+
+    const final = history.all().filter((m) => m.role === "assistant").at(-1);
+    expect(final?.content).toBe("Applied the change.");
   });
 
   it("sends a read-only system prompt in analyze and a full one after setMode('agent')", async () => {

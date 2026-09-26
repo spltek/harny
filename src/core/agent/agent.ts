@@ -27,7 +27,7 @@ import {
   type DelegateSpec,
   type PlannedCall,
 } from "./orchestration";
-import type { SystemPromptBuilder } from "./system-prompt";
+import { BUILD_SWITCH_HINT, type SystemPromptBuilder } from "./system-prompt";
 import { LoopGuard, type LoopDecision } from "./loop-guard";
 import { ToolCallAccumulator } from "./tool-call-accumulator";
 import { ThinkingTagParser } from "./thinking-parser";
@@ -91,6 +91,8 @@ export class Agent implements ChatController {
   private _mode: ChatMode = DEFAULT_CHAT_MODE;
   /** Loop detection/breaking state (reset per run). */
   private readonly guard = new LoopGuard();
+  /** Analyze mode: at least one change was PREPARED as a dry-run preview. */
+  private preparedPreviews = false;
   /** Whether the forced final-report turn already ran (turn-budget exhausted). */
   private forcedFinalReport = false;
   /** Cap: may this agent EVER delegate? Sub-agents pass false (depth 1). */
@@ -170,6 +172,7 @@ export class Agent implements ChatController {
     this.abortController = new AbortController();
     this._streaming = true;
     this.guard.reset();
+    this.preparedPreviews = false;
     this.forcedFinalReport = false;
     try {
       await this.runTurns(0);
@@ -294,9 +297,12 @@ export class Agent implements ChatController {
     // the truncation explicit (appended to the content so it survives refresh
     // and stays valid around any tool calls).
     const storedContent = content || toolSummary || "(empty response)";
+    const withTruncation = truncated
+      ? `${storedContent}\n\n> ⚠️ ${this.truncationNote(thinking.trim().length > 0)}`
+      : storedContent;
     this.deps.history.add({
       role: "assistant",
-      content: truncated ? `${storedContent}\n\n> ⚠️ ${this.truncationNote(thinking.trim().length > 0)}` : storedContent,
+      content: this.withPreviewFooter(withTruncation),
       toolCalls,
       timestamp: Date.now(),
       ...(thinking.trim() ? { thinking } : {}),
@@ -682,10 +688,29 @@ export class Agent implements ChatController {
       };
     }
     try {
-      return await tool.execute(tc.arguments, dryRun ? { dryRun: true } : undefined);
+      const result = await tool.execute(tc.arguments, dryRun ? { dryRun: true } : undefined);
+      // Remember that a preview was prepared so the final answer can be made
+      // unambiguous (the model may still claim it "applied" the change).
+      if (dryRun && !result.isError) this.preparedPreviews = true;
+      return result;
     } catch (err: any) {
       return { content: `Tool error (${tc.name}): ${err.message || String(err)}`, isError: true };
     }
+  }
+
+  /**
+   * In Analyze mode, if changes were prepared as previews, GUARANTEE that the
+   * final message says nothing was applied and how to apply it — independently
+   * of whether the model did (it regularly replies "fixed it" anyway).
+   */
+  private withPreviewFooter(content: string): string {
+    if (!this.preparedPreviews || !isAnalyzeMode(this._mode)) return content;
+    // Do not duplicate the hint if the model already included it.
+    if (/switch to\s*\**build\**/i.test(content)) return content;
+    return (
+      `${content}\n\n---\n⚠️ Nothing has been applied: the changes above were prepared as **previews** ` +
+      `and are NOT on disk. ${BUILD_SWITCH_HINT}`
+    );
   }
 
   /**
