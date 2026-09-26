@@ -17,7 +17,7 @@ function tools(): Tool[] {
 }
 
 describe("DefaultSystemPromptBuilder mode awareness", () => {
-  it("analyze mode: lists only read-only tools and enforces the read-only rules", () => {
+  it("analyze mode: lists ALL tools and enforces the read-only PREVIEW rules", () => {
     const builder = new DefaultSystemPromptBuilder((mode) => toolDefinitionsForMode(tools(), mode), () => "/w");
     const prompt = builder.build("analyze");
     const listSection = prompt.slice(
@@ -25,16 +25,15 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
       prompt.indexOf("\nGuidelines:"),
     );
 
-    // Tool list respects the mode-filtered set: no Write/Edit/Delete/StrReplace.
+    // Analyze advertises the SAME set: writers are available as previews.
     expect(listSection).toContain("- Read:");
     expect(listSection).toContain("- Shell:");
-    expect(listSection).not.toContain("- Write:");
-    expect(listSection).not.toContain("- StrReplace:");
-    expect(listSection).not.toContain("- Edit:");
-    expect(listSection).not.toContain("- Delete:");
-    // Explicit read-only rules are present.
+    expect(listSection).toContain("- Write:");
+    expect(listSection).toContain("- Edit:");
+    // Explicit read-only PREVIEW rules are present.
     expect(prompt).toContain("READ-ONLY MODE (Analyze)");
-    expect(prompt).toContain("make no changes");
+    expect(prompt).toContain("PREVIEW");
+    expect(prompt).toContain("Switch to **Build**");
   });
 
   it("agent mode: lists every tool and has NO read-only rules", () => {
@@ -72,10 +71,9 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     expect(prompt).toContain("they MUST be read-only");
     expect(prompt).toContain("ORCHESTRATION");
     expect(prompt).toContain("SUB-AGENTS");
-    // Read-only: no file-mutating tools advertised.
+    // Read-only preview: writers are advertised (they run as previews).
     const listSection = prompt.slice(prompt.indexOf("You have access to these tools:"), prompt.indexOf("\nGuidelines:"));
-    expect(listSection).not.toContain("- Write:");
-    expect(listSection).not.toContain("- Edit:");
+    expect(listSection).toContain("- Write:");
   });
 
   it("adds orchestration rules only when the Delegate tool is available", () => {
@@ -130,11 +128,11 @@ describe("SubAgentSystemPromptBuilder", () => {
     expect(prompt).not.toContain("You are READ-ONLY");
   });
 
-  it("shows only the mode-filtered tools (no writers in read-only)", () => {
+  it("advertises writers to a read sub-agent as PREVIEWS", () => {
     const prompt = build({ access: "read", resources: ["a"] }, "analyze");
     expect(prompt).toContain("- Read:");
-    expect(prompt).not.toContain("- Write:");
-    expect(prompt).not.toContain("- Edit:");
+    expect(prompt).toContain("- Write:");
+    expect(prompt).toContain("PREVIEW");
   });
 
   it("includes the turn-budget hint when provided", () => {

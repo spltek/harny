@@ -164,6 +164,8 @@ export class OpenAIChatProvider implements LLMProvider {
     // Fallback ids for providers that omit tool-call ids: a counter keeps them
     // unique even when several calls share the same index.
     let toolCallSeq = 0;
+    // Some hosts repeat finish_reason on several chunks: surface it once.
+    let finishEmitted = false;
     // Accumulated OpenRouter `reasoning_details` blocks, keyed by block index
     // and kept in the exact order the model emitted them. They are passed back
     // UNMODIFIED on the next turn (required for encrypted/summarized models).
@@ -266,6 +268,12 @@ export class OpenAIChatProvider implements LLMProvider {
             seenToolCallIndices.delete(idx);
           }
         }
+      }
+      // Surface the finish reason LAST (after any closing tool-call events), so
+      // consumers see a clean end-of-turn marker.
+      if (choice.finish_reason && !finishEmitted) {
+        finishEmitted = true;
+        yield { type: "finish", reason: String(choice.finish_reason) };
       }
     }
 

@@ -31,8 +31,20 @@ export interface ToolDefinition {
   };
 }
 
+/**
+ * Execution context passed by the orchestrator to a tool.
+ *
+ * `dryRun` is set in Analyze (read-only preview) mode: the tool must VALIDATE
+ * and describe the change (compute the diff) but NEVER touch the filesystem.
+ * The result is shown to the user as a proposal, to be applied after switching
+ * to Build mode.
+ */
+export interface ToolContext {
+  dryRun?: boolean;
+}
+
 export interface Tool {
   readonly name: string;
   readonly definition: ToolDefinition;
-  execute(args: Record<string, unknown>): Promise<ToolResult> | ToolResult;
+  execute(args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolResult> | ToolResult;
 }

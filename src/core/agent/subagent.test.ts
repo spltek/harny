@@ -51,13 +51,15 @@ function spec(partial: Partial<DelegateSpec>): DelegateSpec {
   };
 }
 
-function makeWriteTool(): Tool & { called: boolean } {
+function makeWriteTool(): Tool & { called: boolean; lastDryRun?: boolean } {
   const tool = {
     name: "Write",
     definition: { name: "Write", description: "write", parameters: { type: "object", properties: {} } },
     called: false,
-    execute: (): ToolResult => {
+    lastDryRun: undefined as boolean | undefined,
+    execute: (_args: Record<string, unknown>, ctx?: { dryRun?: boolean }): ToolResult => {
       tool.called = true;
+      tool.lastDryRun = ctx?.dryRun;
       return { content: "wrote", isError: false };
     },
   };
@@ -89,11 +91,12 @@ describe("SubAgentRunner", () => {
     expect(res.content).toBe('🔁 Sub-agent "A" [analyst] report:\nI analysed a.ts; no issues.');
   });
 
-  it("read sub-agents run read-only: Write is blocked", async () => {
+  it("read sub-agents are read-only: Write runs as a DRY-RUN preview (nothing written)", async () => {
     const write = makeWriteTool();
     const runner = buildRunner(factory([writeCall(), [{ type: "text", content: "report" }]]), [write]);
     const res = await runner.run(spec({ access: "read" }));
-    expect(write.called).toBe(false);
+    expect(write.called).toBe(true);
+    expect(write.lastDryRun).toBe(true);
     expect(res.content).toContain("report");
   });
 

@@ -12,7 +12,7 @@ import type { SessionRegistry, SessionRuntime } from "./session-registry";
 import { StreamTee } from "./stream-tee";
 import type { AttachmentService } from "./attachment-service";
 import type { AttachmentInfo } from "./attachment-types";
-import { debugLog } from "../logger";
+import { debugLog, infoLog } from "../logger";
 import { renderViewHtml } from "./view-html";
 import { toTemperature, toTopP } from "./temperature";
 import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, toContextWindow, toOutputTokens } from "./context-window";
@@ -791,9 +791,15 @@ export class ChatViewProvider implements WebviewViewProvider {
       }
     }
     // Auto-compaction before the request when already over the threshold:
-    // runs the EXACT same routine as the manual Compact button.
+    // runs the EXACT same routine as the manual Compact button. BEST-EFFORT:
+    // if the summarizer errors (network), the user's request must still run —
+    // otherwise the send never starts and the working indicator hangs.
     if (this.needsAutoCompact(rt) && !this.compacting) {
-      await this.compactNow(rt);
+      try {
+        await this.compactNow(rt);
+      } catch (e: any) {
+        infoLog("auto-compaction failed; continuing with the request:", e?.message || String(e));
+      }
     }
     this.streamTee.clear(rt.sessionId);
     // send() sets _streaming synchronously on invocation: start it first, THEN
@@ -821,7 +827,11 @@ export class ChatViewProvider implements WebviewViewProvider {
     // every final response; if the threshold was crossed, run the EXACT same
     // routine as pressing Compact -> OK.
     if (this.needsAutoCompact(rt) && !this.compacting) {
-      await this.compactNow(rt);
+      try {
+        await this.compactNow(rt);
+      } catch (e: any) {
+        infoLog("post-response auto-compaction failed:", e?.message || String(e));
+      }
     }
   }
 

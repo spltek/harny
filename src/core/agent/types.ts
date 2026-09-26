@@ -24,4 +24,7 @@ export type AgentEvent =
   | { type: "usage"; usage: Usage }
   | { type: "done" }
   | { type: "error"; error: string }
+  /** The loop guard detected a degenerate loop and REACTED (broke it and told
+   * the model how to recover). Surfaced as an amber notice in the transcript. */
+  | { type: "loop_intervention"; loopType: string; level: number; message: string }
   | { type: "raw_chunk"; chunk: string; kind: "text" | "thinking" | "tool_start" | "tool_args" | "tool_end" };

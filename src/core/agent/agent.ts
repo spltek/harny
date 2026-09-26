@@ -8,10 +8,10 @@ import type { LLMProviderFactory, LLMMessage } from "../llm/types";
 import type { Tool, ToolCall, ToolRegistry, ToolResult } from "../tools";
 import {
   ANALYZE_BLOCKED_SHELL_MESSAGE,
-  ANALYZE_BLOCKED_TOOL_MESSAGE,
   DEFAULT_CHAT_MODE,
   isAnalyzeMode,
-  isToolBlockedInAnalyze,
+  isFileMutatingTool,
+  isReadOnlyTool,
   isWriteCommand,
   toolDefinitionsForMode,
   type ChatMode,
@@ -28,25 +28,24 @@ import {
   type PlannedCall,
 } from "./orchestration";
 import type { SystemPromptBuilder } from "./system-prompt";
+import { LoopGuard, type LoopDecision } from "./loop-guard";
 import { ToolCallAccumulator } from "./tool-call-accumulator";
 import { ThinkingTagParser } from "./thinking-parser";
 import type { AgentEvent } from "./types";
 
 /**
- * One-shot corrective prompt injected when the model repeats the SAME tool call
- * (name + arguments) 3 turns in a row. The usual cause is retrying an
- * identical Shell command instead of switching tools — so point it at
- * Glob/Grep/Read and tell it to change approach or conclude.
+ * The host writes a synthetic label as the assistant content of a turn that
+ * only called tools (no model text). It exists for the transcript/logs, but it
+ * must NEVER reach the model: models IMITATE it and emit it back as visible
+ * text with no tool call, which then looks like an empty final answer and ends
+ * the run. It is stripped from the LLM conversation and treated as empty when
+ * the model echoes it.
  */
-function repeatedCallNudge(name?: string): string {
-  return (
-    `You called the SAME tool ("${name ?? "?"}") with identical arguments 3 times in a row and made no progress. ` +
-    "STOP repeating it. Change approach NOW: use Glob to locate files, Grep to search and Read to inspect — " +
-    "prefer these over Shell. If a command failed or returned nothing, do not run it verbatim again: use different " +
-    "arguments or a different tool, or conclude. Then write your final report."
-  );
-}
+const TOOL_SUMMARY_RE = /^🔧 (?:Tool|Tools):/;
 
+function isSyntheticToolSummary(content: string): boolean {
+  return TOOL_SUMMARY_RE.test(content);
+}
 export interface AgentDeps {
   config: ConfigProvider;
   llmFactory: LLMProviderFactory;
@@ -75,6 +74,10 @@ export interface AgentDeps {
    * the model for its report, instead of stopping with a bare "turn limit"
    * note. Sub-agents set this so the caller always gets a usable report. */
   forceFinalReportOnLimit?: boolean;
+  /** Optional diagnostic sink (wired to the "Output > Harny" channel). One
+   * line per turn + one per loop/stop decision, so a run can be diagnosed
+   * after the fact without the in-memory raw stream. Never throws. */
+  log?: (message: string) => void;
 }
 
 /**
@@ -86,12 +89,8 @@ export class Agent implements ChatController {
   private _streaming = false;
   /** Chat mode: "analyze" (read-only) by default — see setMode(). */
   private _mode: ChatMode = DEFAULT_CHAT_MODE;
-  /** Consecutive turns whose tool calls ALL failed (reset per send). */
-  private consecutiveErrorTurns = 0;
-  /** Per-turn signature of tool calls (name|args), for repetition detection (reset per send). */
-  private turnSignatures: string[] = [];
-  /** Whether the corrective re-emit prompt was already sent this user message. */
-  private corrected = false;
+  /** Loop detection/breaking state (reset per run). */
+  private readonly guard = new LoopGuard();
   /** Whether the forced final-report turn already ran (turn-budget exhausted). */
   private forcedFinalReport = false;
   /** Cap: may this agent EVER delegate? Sub-agents pass false (depth 1). */
@@ -170,9 +169,7 @@ export class Agent implements ChatController {
 
     this.abortController = new AbortController();
     this._streaming = true;
-    this.consecutiveErrorTurns = 0;
-    this.turnSignatures = [];
-    this.corrected = false;
+    this.guard.reset();
     this.forcedFinalReport = false;
     try {
       await this.runTurns(0);
@@ -227,9 +224,11 @@ export class Agent implements ChatController {
           timestamp: Date.now(),
         });
         const final = await this.runLlmTurn([]);
+        // Never let the synthetic tool label leak into a stored report either.
+        const finalText = isSyntheticToolSummary(final.content) ? "" : final.content.trim();
         this.deps.history.add({
           role: "assistant",
-          content: final.content.trim() || "(no report produced)",
+          content: finalText || "(no report produced)",
           timestamp: Date.now(),
           ...(final.thinking.trim() ? { thinking: final.thinking } : {}),
           ...(final.reasoningDetails && final.reasoningDetails.length > 0
@@ -248,23 +247,56 @@ export class Agent implements ChatController {
       return;
     }
 
-    const { content, toolCalls, thinking, reasoningDetails } = await this.runLlmTurn();
+    this.guard.beginTurn();
+    const turnResult = await this.runLlmTurn();
+    // An echoed synthetic label is NOT an answer: treat it as empty so the loop
+    // guard nudges the model to actually act/answer instead of ending the run.
+    const echoedLabel = isSyntheticToolSummary(turnResult.content);
+    const content = echoedLabel ? "" : turnResult.content;
+    const { toolCalls, thinking, reasoningDetails, finishReason, reasoningLoop } = turnResult;
+    this.log(
+      `turn ${turn}: finish=${finishReason ?? "-"} content=${content.length}c thinking=${thinking.length}c ` +
+        `tools=[${toolCalls.map((t) => t.name).join(",")}]` +
+        (reasoningLoop ? " reasoningLoop" : "") +
+        (echoedLabel ? " discardedEchoedLabel" : ""),
+    );
     const toolSummary =
       toolCalls.length > 0
         ? `🔧 ${toolCalls.length === 1 ? "Tool" : "Tools"}: ${toolCalls.map((t) => t.name).join(", ")}`
         : "";
+    const truncated = finishReason === "length";
 
-    // A turn that only reasoned (no text, no tools) produced no answer yet.
-    // Give the model another chance instead of stopping with an empty
-    // response — common with reasoning models that think before acting.
-    // Bounded by maxTurns, and the thinking was already streamed to the UI.
-    if (toolCalls.length === 0 && !content.trim() && thinking.trim()) {
+    // A reasoning loop was cut mid-stream: the stream was interrupted, so any
+    // half-emitted tool call is untrustworthy. Break the loop and nudge.
+    if (reasoningLoop) {
+      if (!this.handleLoop(this.guard.noteReasoningLoop(), turn + 1 < maxTurns)) return;
       return this.runTurns(turn + 1);
     }
 
+    // A turn with NO answer and NO tool call is NOT a final answer: the model
+    // stalled. This is common right after a tool result with local/reasoning
+    // models, which may emit only reasoning (thinking) or nothing at all and
+    // then stop. The guard nudges a bounded number of times, then stops loudly.
+    if (toolCalls.length === 0 && !content.trim()) {
+      // Output-token limit reached before ANY answer/tool: nudging will not
+      // help (the budget is the problem). Say so explicitly.
+      if (truncated) {
+        this.stopWithTruncationMessage(thinking.trim().length > 0);
+        return;
+      }
+      const decision = this.guard.observeTurn({ content, thinking, toolCalls: [], toolResults: [] });
+      if (decision.kind === "continue") return; // defensive; should not happen
+      if (!this.handleLoop(decision, turn + 1 < maxTurns)) return;
+      return this.runTurns(turn + 1);
+    }
+
+    // Token-limit truncation WITH an answer: keep the partial answer, but make
+    // the truncation explicit (appended to the content so it survives refresh
+    // and stays valid around any tool calls).
+    const storedContent = content || toolSummary || "(empty response)";
     this.deps.history.add({
       role: "assistant",
-      content: content || toolSummary || "(empty response)",
+      content: truncated ? `${storedContent}\n\n> ⚠️ ${this.truncationNote(thinking.trim().length > 0)}` : storedContent,
       toolCalls,
       timestamp: Date.now(),
       ...(thinking.trim() ? { thinking } : {}),
@@ -280,8 +312,8 @@ export class Agent implements ChatController {
       return;
     }
 
-    // Track consecutive tool failures to detect loops
-    const toolResults: { name: string; args: Record<string, unknown>; isError: boolean }[] = [];
+    // Track tool outcomes for loop classification.
+    const toolResults: { name: string; args: Record<string, unknown>; isError: boolean; content: string }[] = [];
 
     // Plan the execution. Non-delegates and writers run one at a time, in
     // order; CONSECUTIVE read-only parallel delegates run as a concurrent
@@ -310,12 +342,27 @@ export class Agent implements ChatController {
     // Stop launching MORE work once the run is aborted (queued sub-agents must
     // not start after the user pressed Stop).
     const abortedRun = (): boolean => this.abortController?.signal.aborted === true;
+    // Execute ONE call through the loop guard: identical successful read-only
+    // calls reuse the cached result; identical failing calls are refused (not
+    // re-run). This BREAKS tool loops at the source instead of only nudging.
+    const runOne = async (index: number): Promise<void> => {
+      const tc = toolCalls[index];
+      const readOnly = isReadOnlyTool(tc.name);
+      const decision = this.guard.beforeToolCall(tc, readOnly);
+      let r: ToolResult;
+      if (decision.mode === "run") {
+        r = await this.executeToolSafely(tc);
+        this.guard.afterToolCall(tc, r.isError, r.content, readOnly);
+      } else {
+        r = { content: decision.content, isError: decision.mode === "refuse" };
+      }
+      results[index] = r;
+      emitResult(index, r);
+    };
     for (const step of steps) {
       if (abortedRun()) break;
       if (step.kind === "single") {
-        const r = await this.executeToolSafely(toolCalls[step.index]);
-        results[step.index] = r;
-        emitResult(step.index, r);
+        await runOne(step.index);
       } else {
         // Run the parallel batch with at most `parallelCap` sub-agents in
         // flight: as soon as one finishes its slot is freed for the next one,
@@ -323,9 +370,7 @@ export class Agent implements ChatController {
         // Each result is emitted the moment its call resolves.
         await runWithConcurrency(step.indices, parallelCap, async (idx) => {
           if (abortedRun()) return; // do not START a queued sub-agent after Stop
-          const r = await this.executeToolSafely(toolCalls[idx]);
-          results[idx] = r;
-          emitResult(idx, r);
+          await runOne(idx);
         });
       }
     }
@@ -341,104 +386,88 @@ export class Agent implements ChatController {
       // tool_result so the UI can mark them ABORTED.
       if (!emitted.has(i)) emitResult(i, result);
       this.deps.history.add({ role: "tool", content: result.content, toolCallId: tc.id, timestamp: Date.now() });
-      toolResults.push({ name: tc.name, args: tc.arguments, isError: result.isError });
+      toolResults.push({ name: tc.name, args: tc.arguments, isError: result.isError, content: result.content });
     }
 
     // Aborted: do not continue the turn loop.
     if (abortedRun()) return;
 
-    // ── Loop detection ────────────────────────────────────────────────
-    // A) The same tool calls (name AND arguments) failed for 2 consecutive
-    //    turns. Two DIFFERENT failing calls of the same tool (e.g. Read a.ts
-    //    then Read b.ts) do NOT match: they are distinct work, not a loop.
-    // B) 3 consecutive turns where every tool call failed (even different tools).
-    // C) The same tool call (name+args) repeated for 3 consecutive turns,
-    //    even when it succeeds (e.g. reading the same file forever).
-    const allFailed = toolResults.length >= 1 && toolResults.every((r) => r.isError);
-
-    if (allFailed) {
-      // A) identical failing sequence as the previous turn
-      const prevAssistant = this.deps.history
-        .all()
-        .filter((m) => m.role === "assistant" && m.toolCalls && m.toolCalls.length > 0)
-        .slice(-2, -1); // second-to-last assistant (the current one is the last)
-      if (prevAssistant.length > 0) {
-        const prevTools = prevAssistant[0].toolCalls!;
-        const sameAsPrevious =
-          toolResults.length === prevTools.length &&
-          toolResults.every(
-            (r, i) =>
-              i < prevTools.length &&
-              prevTools[i].name === r.name &&
-              JSON.stringify(prevTools[i].arguments) === JSON.stringify(r.args),
-          );
-        if (sameAsPrevious) {
-          // Local reasoning models can fail tool-call JSON once (often a
-          // truncated trace), then recover if prompted again. Give it one
-          // corrective re-emit before hard-stopping on the next identical miss.
-          if (!this.corrected && turn + 1 < maxTurns) {
-            this.corrected = true;
-            this.deps.history.add({
-              role: "user",
-              content:
-                "Your last tool call(s) failed: their arguments were empty or malformed JSON, or the target text " +
-                "was not found in the file (wrong/stale path or stale content). Re-Read the file first, then " +
-                "re-emit the tool call(s) with complete, valid JSON against the ACTUAL file content.",
-              timestamp: Date.now(),
-            });
-            return this.runTurns(turn + 1);
-          }
-          this.stopWithLoopMessage(
-            "Tool loop detected: the model repeated the same failing tool call(s) even after a " +
-              "corrective prompt. Empty or malformed tool arguments usually mean the LLM failed to emit " +
-              "tool-call JSON (check the 📡 raw stream to see what it sent).",
-          );
-          return;
-        }
-      }
-
-      // B) too many error turns in a row, whatever the tools
-      this.consecutiveErrorTurns++;
-      if (this.consecutiveErrorTurns >= 3) {
-        this.stopWithLoopMessage(
-          `Loop detected: ${this.consecutiveErrorTurns} consecutive turns of tool errors ` +
-            `(${toolResults.map((r) => r.name || "?").join(", ")}). The model cannot recover — ` +
-            "check the 📡 raw stream and verify the tools are reachable.",
-        );
-        return;
-      }
-    } else {
-      this.consecutiveErrorTurns = 0;
-    }
-
-    // C) identical tool call repeated across 3 consecutive turns
-    const signature = toolCalls.map((t) => `${t.name}|${JSON.stringify(t.arguments)}`).join("&");
-    const sigs = this.turnSignatures;
-    if (signature && sigs.length >= 2 && sigs[sigs.length - 1] === signature && sigs[sigs.length - 2] === signature) {
-      // One corrective chance BEFORE hard-stopping: the usual cause is the
-      // model retrying the same Shell command instead of switching to
-      // Glob/Grep/Read (or changing arguments). Tell it to change approach.
-      if (!this.corrected && turn + 1 < maxTurns) {
-        this.corrected = true;
-        this.deps.history.add({
-          role: "user",
-          content: repeatedCallNudge(toolCalls[0]?.name),
-          timestamp: Date.now(),
-        });
-        return this.runTurns(turn + 1);
-      }
-      this.stopWithLoopMessage(
-        `Loop detected: the model called "${toolCalls[0]?.name ?? "?"}" 3 times in a row with the same ` +
-          "arguments without making progress. Stopping to avoid burning tokens.",
-      );
+    // ── Loop guard ─────────────────────────────────────────────────────
+    // Classify the turn (reasoning / empty / tool-failure / error-streak /
+    // tool-repeat) and BREAK it: log what happened, tell the model how to
+    // recover, and keep going. The guard escalates after repeated interventions
+    // and only then returns a final `stop`.
+    const decision = this.guard.observeTurn({ content, thinking, toolCalls, toolResults });
+    if (decision.kind === "continue") {
+      await this.runTurns(turn + 1);
       return;
     }
-    sigs.push(signature);
-
+    if (!this.handleLoop(decision, turn + 1 < maxTurns)) return;
     await this.runTurns(turn + 1);
   }
 
+  /**
+   * Apply a loop decision: `react` logs the loop (UI-only note + event) and
+   * injects a corrective user nudge so the model can recover; `stop` emits the
+   * final diagnostic. Returns true when the run should continue.
+   */
+  private handleLoop(decision: LoopDecision, hasRoom = true): boolean {
+    if (decision.kind === "continue") return true;
+    if (decision.kind === "stop") {
+      this.log(`loop-stop [${decision.type}] after ${decision.level} intervention(s): ${decision.message}`);
+      this.stopWithLoopMessage(
+        `Loop not resolved [${decision.type}] after ${decision.level} intervention(s): ${decision.message}`,
+      );
+      return false;
+    }
+    this.log(`loop-guard [${decision.type}] level ${decision.level}: ${decision.note}`);
+    if (!hasRoom) {
+      this.stopWithLoopMessage(`Loop detected [${decision.type}] but the turn budget is exhausted: ${decision.note}`);
+      return false;
+    }
+    const note = `🔁 **Loop guard** [${decision.type}] — ${decision.note}`;
+    this.deps.history.add({ role: "assistant", content: note, timestamp: Date.now(), uiOnly: true });
+    this.deps.events.emit({
+      type: "loop_intervention",
+      loopType: decision.type,
+      level: decision.level,
+      message: decision.note,
+    });
+    this.deps.history.add({ role: "user", content: decision.nudge, timestamp: Date.now() });
+    return true;
+  }
+
+  /** Human-readable note for a response truncated at the output-token limit. */
+  private truncationNote(reasoningAteBudget: boolean): string {
+    const maxTokens = this.deps.config.get().maxTokens;
+    return (
+      "Output truncated by the token limit (finish_reason=length" +
+      `, maxTokens=${maxTokens})` +
+      (reasoningAteBudget ? " — the reasoning likely consumed the whole budget" : "") +
+      ". Increase `harny.maxTokens` (or shorten the request/reasoning) and ask me to continue."
+    );
+  }
+
+  /** Best-effort diagnostic sink; diagnostics must never break a run. */
+  private log(message: string): void {
+    try {
+      this.deps.log?.(message);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** Stop a run whose turn was truncated by the output-token limit before it
+   * could answer or call a tool (the reasoning usually ate the budget). */
+  private stopWithTruncationMessage(reasoningAteBudget: boolean): void {
+    this.log(`stop [truncation]: output-token limit reached (finish_reason=length)`);
+    const note = this.truncationNote(reasoningAteBudget);
+    this.deps.history.add({ role: "assistant", content: `❌ ${note}`, timestamp: Date.now() });
+    this.deps.events.emit({ type: "error", error: note });
+  }
+
   private stopWithLoopMessage(message: string): void {
+    this.log(`stop: ${message}`);
     this.deps.events.emit({ type: "error", error: message });
     // Persist the FULL diagnostic (not just a short label) so it stays in the
     // transcript for later debugging AND the story the LLM sees stays coherent
@@ -481,8 +510,9 @@ export class Agent implements ChatController {
   private stateLine(): string {
     const readOnly = isAnalyzeMode(this._mode);
     const mode = readOnly
-      ? "Analyze — READ-ONLY: you CANNOT create, modify, move or delete files"
-      : "Build/Edit — you CAN create, modify and delete files";
+      ? "Analyze — READ-ONLY PREVIEW: you can PREPARE changes (Write/Edit/StrReplace/Delete run as " +
+        "VALIDATED diff previews) but nothing is applied; finish by telling the user to switch to Build to apply"
+      : "Build — you CAN create, modify and delete files";
     const parallel = this.delegationEnabled
       ? "ON — you may delegate independent sub-tasks to sub-agents via the Delegate tool"
       : "OFF — no sub-agents: use your own tools only";
@@ -494,6 +524,11 @@ export class Agent implements ChatController {
     toolCalls: ToolCall[];
     thinking: string;
     reasoningDetails?: unknown[];
+    /** Provider finish reason for this turn ("length" = output-token limit). */
+    finishReason?: string;
+    /** True when the loop guard cut this turn short because the reasoning
+     * repeated itself; the caller must nudge instead of executing tools. */
+    reasoningLoop?: boolean;
   }> {
     const config = this.deps.config.get();
     const provider = this.deps.llmFactory.create(config);
@@ -511,7 +546,8 @@ export class Agent implements ChatController {
       { role: "system", content: `${this.stateLine()}\n\n${this.deps.systemPrompt.build(this._mode, toolDefinitions)}` },
       ...this.llmConversation().map((m) => ({
         role: m.role,
-        content: m.content,
+        // Never send the synthetic tool label to the model (it gets imitated).
+        content: m.role === "assistant" && isSyntheticToolSummary(m.content) ? "" : m.content,
         toolCalls: m.toolCalls,
         toolCallId: m.toolCallId,
         images: m.images,
@@ -524,6 +560,8 @@ export class Agent implements ChatController {
     let content = "";
     let thinking = "";
     let reasoningDetails: unknown[] | undefined;
+    let finishReason: string | undefined;
+    let reasoningLoop = false;
     const toolCalls: ToolCall[] = [];
 
     // Thinking tag parser: some models (Qwen, local LLMs) emit reasoning
@@ -532,54 +570,87 @@ export class Agent implements ChatController {
     // is stateful across chunks (a block may span several chunks).
     const thinkingParser = new ThinkingTagParser();
 
-    for await (const chunk of provider.stream(messages, this.abortController!.signal, toolDefinitions)) {
-      if (chunk.type === "text") {
-        // Emit raw chunk for stream log
-        this.deps.events.emit({ type: "raw_chunk", chunk: chunk.content, kind: "text" });
+    // Per-turn abort: lets the LOOP GUARD cut a runaway reasoning stream
+    // WITHOUT cancelling the whole run. A user Stop still aborts through the
+    // main signal, which is linked here.
+    const turnAbort = new AbortController();
+    const linkMainAbort = (): void => turnAbort.abort();
+    if (this.abortController!.signal.aborted) turnAbort.abort();
+    this.abortController!.signal.addEventListener("abort", linkMainAbort);
 
-        // Stream the text, splitting <think>/<reason> blocks into thinking
-        // deltas and the rest into visible text deltas, in order.
-        for (const ev of thinkingParser.feed(chunk.content)) {
-          if (ev.kind === "thinking") {
-            thinking += ev.content;
-            this.deps.events.emit({ type: "thinking_delta", content: ev.content });
-          } else {
-            content += ev.content;
-            this.deps.events.emit({ type: "text_delta", content: ev.content });
+    try {
+      for await (const chunk of provider.stream(messages, turnAbort.signal, toolDefinitions)) {
+        if (chunk.type === "text") {
+          // Emit raw chunk for stream log
+          this.deps.events.emit({ type: "raw_chunk", chunk: chunk.content, kind: "text" });
+
+          // Stream the text, splitting <think>/<reason> blocks into thinking
+          // deltas and the rest into visible text deltas, in order.
+          for (const ev of thinkingParser.feed(chunk.content)) {
+            if (ev.kind === "thinking") {
+              thinking += ev.content;
+              this.deps.events.emit({ type: "thinking_delta", content: ev.content });
+            } else {
+              content += ev.content;
+              this.deps.events.emit({ type: "text_delta", content: ev.content });
+            }
+          }
+        } else if (chunk.type === "thinking") {
+          // Emit raw chunk for stream log
+          this.deps.events.emit({ type: "raw_chunk", chunk: chunk.content, kind: "thinking" });
+          // Forward reasoning content separately and keep it in the message
+          thinking += chunk.content;
+          this.deps.events.emit({ type: "thinking_delta", content: chunk.content });
+        } else if (chunk.type === "thinking_details") {
+          // Structured reasoning blocks (OpenRouter): kept BESIDE the plaintext
+          // thinking so they can be passed back verbatim (encrypted reasoning).
+          reasoningDetails = chunk.details;
+        } else if (chunk.type === "usage") {
+          this.deps.events.emit({ type: "usage", usage: chunk.usage });
+        } else if (chunk.type === "finish") {
+          finishReason = chunk.reason;
+        } else {
+          // Emit raw chunk for tool events
+          if (chunk.type === "tool_call_start") {
+            this.deps.events.emit({ type: "raw_chunk", chunk: JSON.stringify({ id: chunk.id, name: chunk.name }), kind: "tool_start" });
+          } else if (chunk.type === "tool_call_delta") {
+            // Show exactly what the model emitted for the arguments — critical
+            // when tool calls come back empty.
+            this.deps.events.emit({ type: "raw_chunk", chunk: chunk.delta, kind: "tool_args" });
+          } else if (chunk.type === "tool_call_end") {
+            this.deps.events.emit({ type: "raw_chunk", chunk: JSON.stringify({ index: chunk.index }), kind: "tool_end" });
+          }
+          const completed = accumulator.handle(chunk);
+          if (completed) {
+            toolCalls.push(completed);
+            this.deps.events.emit({ type: "tool_call", toolCall: completed });
           }
         }
-      } else if (chunk.type === "thinking") {
-        // Emit raw chunk for stream log
-        this.deps.events.emit({ type: "raw_chunk", chunk: chunk.content, kind: "thinking" });
-        // Forward reasoning content separately and keep it in the message
-        thinking += chunk.content;
-        this.deps.events.emit({ type: "thinking_delta", content: chunk.content });
-      } else if (chunk.type === "thinking_details") {
-        // Structured reasoning blocks (OpenRouter): kept BESIDE the plaintext
-        // thinking so they can be passed back verbatim (encrypted reasoning).
-        reasoningDetails = chunk.details;
-      } else if (chunk.type === "usage") {
-        this.deps.events.emit({ type: "usage", usage: chunk.usage });
-      } else {
-        // Emit raw chunk for tool events
-        if (chunk.type === "tool_call_start") {
-          this.deps.events.emit({ type: "raw_chunk", chunk: JSON.stringify({ id: chunk.id, name: chunk.name }), kind: "tool_start" });
-        } else if (chunk.type === "tool_call_delta") {
-          // Show exactly what the model emitted for the arguments — critical
-          // when tool calls come back empty.
-          this.deps.events.emit({ type: "raw_chunk", chunk: chunk.delta, kind: "tool_args" });
-        } else if (chunk.type === "tool_call_end") {
-          this.deps.events.emit({ type: "raw_chunk", chunk: JSON.stringify({ index: chunk.index }), kind: "tool_end" });
-        }
-        const completed = accumulator.handle(chunk);
-        if (completed) {
-          toolCalls.push(completed);
-          this.deps.events.emit({ type: "tool_call", toolCall: completed });
+
+        // Within-turn reasoning loop: cut the stream and let the caller nudge.
+        if (!reasoningLoop && this.guard.observeThinking(thinking)) {
+          reasoningLoop = true;
+          turnAbort.abort();
+          break;
         }
       }
+    } catch (err) {
+      // A real user Stop must propagate; a guard-initiated cut must not.
+      if (this.abortController!.signal.aborted) throw err;
+      if (!reasoningLoop) throw err;
+    } finally {
+      this.abortController!.signal.removeEventListener("abort", linkMainAbort);
     }
 
-    return { content, toolCalls, thinking, reasoningDetails };
+    // A user Stop must end the run even when the provider resolved the stream
+    // cleanly instead of throwing (some providers/mocks do).
+    if (this.abortController!.signal.aborted) {
+      const abortErr = new Error("Aborted");
+      abortErr.name = "AbortError";
+      throw abortErr;
+    }
+
+    return { content, toolCalls, thinking, reasoningDetails, finishReason, reasoningLoop };
   }
 
   private async executeToolSafely(tc: ToolCall): Promise<ToolResult> {
@@ -588,16 +659,17 @@ export class Agent implements ChatController {
     if (tc.name === DELEGATE_TOOL_NAME) return this.executeDelegate(tc);
     const tool: Tool | undefined = this.deps.tools.get(tc.name);
     if (!tool) return { content: `Unknown tool: ${tc.name}`, isError: true };
-    // Analyze (read-only) mode: refuse file-mutating tools and read-only
-    // shell usage BEFORE anything runs (defense in depth — the model must not
-    // see these tools either, but never trust the model).
+    // Analyze (read-only PREVIEW) mode, defense in depth — never trust the
+    // model even though the prompt tells it how to behave:
+    //  · Shell is refused when the command could modify the filesystem;
+    //  · the file-mutating tools (Write/StrReplace/Edit/Delete) run DRY-RUN:
+    //    they validate the change and return the diff, but write NOTHING.
+    let dryRun = false;
     if (isAnalyzeMode(this._mode)) {
-      if (isToolBlockedInAnalyze(tc.name)) {
-        return { content: ANALYZE_BLOCKED_TOOL_MESSAGE(tc.name), isError: true };
-      }
       if (tc.name === "Shell" && isWriteCommand(String(tc.arguments.command ?? ""))) {
         return { content: ANALYZE_BLOCKED_SHELL_MESSAGE(String(tc.arguments.command ?? "")), isError: true };
       }
+      dryRun = isFileMutatingTool(tc.name);
     }
     // Explicit signal for calls whose arguments contained no valid JSON, so the
     // model sees WHY it failed (instead of a generic "missing arg" error) and
@@ -610,7 +682,7 @@ export class Agent implements ChatController {
       };
     }
     try {
-      return await tool.execute(tc.arguments);
+      return await tool.execute(tc.arguments, dryRun ? { dryRun: true } : undefined);
     } catch (err: any) {
       return { content: `Tool error (${tc.name}): ${err.message || String(err)}`, isError: true };
     }

@@ -1,6 +1,6 @@
 import type { FileSystem } from "./file-system";
 import { resolvePath } from "./path-utils";
-import type { Tool, ToolDefinition, ToolResult } from "./tool";
+import type { Tool, ToolContext, ToolDefinition, ToolResult } from "./tool";
 import { buildDiff, fencedDiffBlock } from "./diff-text";
 
 export class DeleteTool implements Tool {
@@ -23,7 +23,7 @@ export class DeleteTool implements Tool {
     private cwd: () => string,
   ) {}
 
-  execute(args: Record<string, unknown>): ToolResult {
+  execute(args: Record<string, unknown>, ctx?: ToolContext): ToolResult {
     const pathArg = args.path as string | undefined;
     if (!pathArg) {
       return {
@@ -40,6 +40,13 @@ export class DeleteTool implements Tool {
       // Deletion preview for the dedicated diff bubble: the whole file becomes
       // a removal (every line a "−"). Capped like every other preview.
       const content = this.fs.readText(filePath);
+      // Analyze (preview) mode: describe the deletion, delete NOTHING.
+      if (ctx?.dryRun) {
+        return {
+          content: `PROPOSED (preview — NOT deleted): ${filePath}${fencedDiffBlock(buildDiff(content, ""))}`,
+          isError: false,
+        };
+      }
       this.fs.delete(filePath);
       return {
         content: `Successfully deleted ${filePath}${fencedDiffBlock(buildDiff(content, ""))}`,

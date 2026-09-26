@@ -1,6 +1,6 @@
 import type { FileSystem } from "./file-system";
 import { resolvePath } from "./path-utils";
-import type { Tool, ToolDefinition, ToolResult } from "./tool";
+import type { Tool, ToolContext, ToolDefinition, ToolResult } from "./tool";
 import { buildDiff, fencedDiffBlock } from "./diff-text";
 import { fuzzyUniqueReplace } from "./edit-engine";
 
@@ -69,7 +69,7 @@ export class StrReplaceTool implements Tool {
     private cwd: () => string,
   ) {}
 
-  execute(args: Record<string, unknown>): ToolResult {
+  execute(args: Record<string, unknown>, ctx?: ToolContext): ToolResult {
     const pathArg = args.path as string | undefined;
     const oldStr = args.old_string as string | undefined;
     const newStr = args.new_string as string | undefined;
@@ -153,6 +153,15 @@ export class StrReplaceTool implements Tool {
 
       // Change preview for the dedicated diff bubble (mixed +/−), like the
       // other file tools — one shared fenced format.
+      // Analyze (preview) mode: validate + diff, but do NOT write to disk.
+      if (ctx?.dryRun) {
+        return {
+          content:
+            `PROPOSED (preview — NOT applied): ${headline.replace(/^Successfully /, "")}` +
+            fencedDiffBlock(buildDiff(original, nextContent)),
+          isError: false,
+        };
+      }
       this.fs.writeText(filePath, nextContent);
       return { content: headline + fencedDiffBlock(buildDiff(original, nextContent)), isError: false };
     } catch (err: any) {

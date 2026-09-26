@@ -118,6 +118,18 @@ describe("file tools", () => {
       expect(nodeFileSystem.exists(join(dir, "nested", "deep", "out.txt"))).toBe(true);
     });
 
+    it("dry-run (Analyze preview): reports the proposal but writes NOTHING", () => {
+      const tool = new WriteTool(nodeFileSystem, cwd);
+      const p = join(dir, "preview.txt");
+      const result = tool.execute({ path: p, contents: "hello" }, { dryRun: true });
+
+      expect(result.isError).toBe(false);
+      expect(result.content).toContain("PROPOSED");
+      expect(result.content).not.toContain("Successfully wrote");
+      expect(result.content).toContain("```diff");
+      expect(nodeFileSystem.exists(p)).toBe(false);
+    });
+
     it("fails when path or contents are missing", () => {
       const tool = new WriteTool(nodeFileSystem, cwd);
       expect(tool.execute({}).isError).toBe(true);
@@ -195,6 +207,19 @@ describe("file tools", () => {
       tool.execute({ path: p, old_string: "aaa", new_string: "XXX", replace_all: true });
 
       expect(nodeFileSystem.readText(p)).toBe("XXX bbb XXX");
+    });
+
+    it("dry-run (Analyze preview): reports the proposal but writes NOTHING", () => {
+      const p = join(dir, "a.txt");
+      writeFileSync(p, "aaa bbb aaa");
+      const tool = new StrReplaceTool(nodeFileSystem, cwd);
+
+      const result = tool.execute({ path: p, old_string: "bbb", new_string: "XXX" }, { dryRun: true });
+
+      expect(result.isError).toBe(false);
+      expect(result.content).toContain("PROPOSED");
+      expect(result.content).toContain("```diff");
+      expect(nodeFileSystem.readText(p)).toBe("aaa bbb aaa"); // unchanged on disk
     });
 
     it("emits a mixed diff preview (view diff bubble)", () => {
@@ -361,6 +386,18 @@ describe("file tools", () => {
       expect(result.content).toContain("-x");
       expect(result.content).toContain("-y");
       expect(result.content).not.toContain("+x");
+    });
+
+    it("dry-run (Analyze preview): reports the deletion but deletes NOTHING", () => {
+      const p = join(dir, "keep.txt");
+      writeFileSync(p, "content");
+      const tool = new DeleteTool(nodeFileSystem, cwd);
+
+      const result = tool.execute({ path: p }, { dryRun: true });
+
+      expect(result.isError).toBe(false);
+      expect(result.content).toContain("PROPOSED");
+      expect(nodeFileSystem.exists(p)).toBe(true); // still on disk
     });
 
     it("errors when the file does not exist", () => {

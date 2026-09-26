@@ -115,7 +115,7 @@ export function activate(context: ExtensionContext) {
   const createAgent = (history: ChatHistory): ChatController => {
     // One sub-agent runner per session: it owns the ephemeral sub-agent
     // histories and cascades Stop to any in-flight sub-agent.
-    const subAgents = new SubAgentRunner({ config, llmFactory, tools, cwd });
+    const subAgents = new SubAgentRunner({ config, llmFactory, tools, cwd, log: (m) => infoLog(`[agent] ${m}`) });
     return new Agent({
       config,
       llmFactory,
@@ -126,6 +126,7 @@ export function activate(context: ExtensionContext) {
       allowDelegation: true,
       spawnSubAgent: (spec, onEvent, signal) => subAgents.run(spec, onEvent, signal),
       onAbort: () => subAgents.abortAll(),
+      log: (m) => infoLog(`[agent] ${m}`),
     });
   };
 

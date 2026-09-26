@@ -1,6 +1,6 @@
 import type { FileSystem } from "./file-system";
 import { resolvePath } from "./path-utils";
-import type { Tool, ToolDefinition, ToolResult } from "./tool";
+import type { Tool, ToolContext, ToolDefinition, ToolResult } from "./tool";
 import { applyEdits, checkStructuralBalance, closestContext, type EditOp } from "./edit-engine";
 import { diffStat, fencedDiffBlock } from "./diff-text";
 
@@ -49,7 +49,7 @@ export class EditTool implements Tool {
     private cwd: () => string,
   ) {}
 
-  execute(args: Record<string, unknown>): ToolResult {
+  execute(args: Record<string, unknown>, ctx?: ToolContext): ToolResult {
     const pathArg = args.path as string | undefined;
     const edits = args.edits as EditOp[] | undefined;
     if (!pathArg || !Array.isArray(edits) || edits.length === 0) {
@@ -109,8 +109,17 @@ export class EditTool implements Tool {
         };
       }
 
-      this.fs.writeText(filePath, result.content);
       const stat = result.diff ? diffStat(result.diff) : "+0/-0";
+      // Analyze (preview) mode: validate + diff, but do NOT write to disk.
+      if (ctx?.dryRun) {
+        return {
+          content:
+            `PROPOSED (preview — NOT applied): ${result.applied} edit(s) (${result.modes.join(", ")}) to ${filePath} — ${stat}.` +
+            fencedDiffBlock(result.diff),
+          isError: false,
+        };
+      }
+      this.fs.writeText(filePath, result.content);
       return {
         content:
           `Applied ${result.applied} edit(s) (${result.modes.join(", ")}) to ${filePath} — ${stat}.` +

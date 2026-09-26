@@ -65,6 +65,23 @@ describe("StreamTee", () => {
     expect(tee.liveOf("a")?.answer).toBe("");
   });
 
+  it("forwards loop_intervention to the view and resets the live buffer", () => {
+    const { tee, deps } = makeTee();
+    const a = fakeRuntime("a");
+    tee.attach(a.rt);
+
+    a.emit({ type: "thinking_delta", content: "looping reasoning" });
+    a.emit({ type: "loop_intervention", loopType: "reasoning", level: 1, message: "reasoning loop detected" });
+
+    expect(deps.onPost).toHaveBeenCalledWith({
+      type: "loopIntervention",
+      loopType: "reasoning",
+      level: 1,
+      message: "reasoning loop detected",
+    });
+    expect(tee.liveOf("a")?.thinking).toBe("");
+  });
+
   it("forwards subagent_start to the view when the session is active", () => {
     const { tee, deps } = makeTee();
     const a = fakeRuntime("a");

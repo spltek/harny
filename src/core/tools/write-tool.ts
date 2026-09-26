@@ -1,7 +1,7 @@
 import { dirname } from "node:path";
 import type { FileSystem } from "./file-system";
 import { resolvePath } from "./path-utils";
-import type { Tool, ToolDefinition, ToolResult } from "./tool";
+import type { Tool, ToolContext, ToolDefinition, ToolResult } from "./tool";
 import { buildDiff, fencedDiffBlock } from "./diff-text";
 
 export class WriteTool implements Tool {
@@ -35,7 +35,7 @@ export class WriteTool implements Tool {
     private cwd: () => string,
   ) {}
 
-  execute(args: Record<string, unknown>): ToolResult {
+  execute(args: Record<string, unknown>, ctx?: ToolContext): ToolResult {
     const pathArg = args.path as string | undefined;
     const contents = args.contents as string | undefined;
     const cwd = this.cwd();
@@ -76,15 +76,23 @@ export class WriteTool implements Tool {
     }
     const filePath = resolvePath(pathArg, this.cwd());
     try {
-      this.fs.mkdirRecursive(dirname(filePath));
       // Change preview for the dedicated diff bubble: a NEW file diffs against
       // an empty base (every line is an addition), an overwrite diffs old → new.
       const oldContent = this.fs.exists(filePath) ? this.fs.readText(filePath) : "";
-      this.fs.writeText(filePath, contents);
       // chars (UTF-16 code points) AND bytes (UTF-8): byte length is the
       // truthful size (contents.length is code units, not bytes).
       const chars = [...contents].length;
       const bytes = Buffer.byteLength(contents, "utf8");
+      // Analyze (preview) mode: describe the change, write NOTHING.
+      if (ctx?.dryRun) {
+        const verb = this.fs.exists(filePath) ? "update" : "create";
+        return {
+          content: `PROPOSED (preview — NOT written): ${verb} ${filePath} (${chars} chars, ${bytes} bytes)${fencedDiffBlock(buildDiff(oldContent, contents))}`,
+          isError: false,
+        };
+      }
+      this.fs.mkdirRecursive(dirname(filePath));
+      this.fs.writeText(filePath, contents);
       return {
         content: `Successfully wrote ${chars} chars (${bytes} bytes) to ${filePath}${fencedDiffBlock(buildDiff(oldContent, contents))}`,
         isError: false,

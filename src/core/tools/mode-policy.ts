@@ -20,14 +20,27 @@ export function isFullAccessMode(mode: ChatMode | undefined): boolean {
   return !isAnalyzeMode(mode);
 }
 
-/** File-MUTATING tools: never advertised to nor callable by the model in
- * Analyze mode. Read-only tools (Read, Grep, Glob, TodoWrite, WebSearch,
- * WebFetch, ReadLints) are always available. Shell stays available but is
- * guarded read-only at execution time (see isWriteCommand). */
-const BLOCKED_IN_ANALYZE = new Set(["Write", "StrReplace", "Edit", "Delete"]);
+/** File-MUTATING tools. In Analyze (read-only PREVIEW) mode they are NOT
+ * removed nor refused: they run as PREVIEWS (dry-run) — they validate the
+ * change and return the exact diff, but write NOTHING to disk. Applying them
+ * requires switching to Build mode (the model is told to instruct the user).
+ * Shell stays available but is guarded read-only at execution time (see
+ * isWriteCommand). */
+const FILE_MUTATING_TOOLS = new Set(["Write", "StrReplace", "Edit", "Delete"]);
 
-export function isToolBlockedInAnalyze(name: string): boolean {
-  return BLOCKED_IN_ANALYZE.has(name);
+/** True for a tool that would modify the filesystem (Write/StrReplace/Edit/Delete). */
+export function isFileMutatingTool(name: string): boolean {
+  return FILE_MUTATING_TOOLS.has(name);
+}
+
+/** Pure read-only, side-effect-free tools whose result can be safely reused
+ * for an identical call (loop guard cache). Deliberately excludes Shell
+ * (arbitrary side effects), Delegate (nested run) and WebSearch/WebFetch
+ * (external, time-varying) and TodoWrite (mutates todo state). */
+const READ_ONLY_TOOLS = new Set(["Read", "Grep", "Glob", "ReadLints"]);
+
+export function isReadOnlyTool(name: string): boolean {
+  return READ_ONLY_TOOLS.has(name);
 }
 
 /** Extra filtering for a tool set (e.g. hide the Delegate tool from
@@ -36,37 +49,40 @@ export interface ToolFilterOptions {
   exclude?: readonly string[];
 }
 
-/** The tools visible in a given mode (analyze drops the file-mutating ones). */
-export function toolsForMode(tools: readonly Tool[], mode: ChatMode, opts?: ToolFilterOptions): Tool[] {
+/** The tools visible in a given mode. Both modes expose the SAME tool set:
+ * in Analyze the file-mutating tools run as previews (see the note appended to
+ * their definitions), so the model can PREPARE changes without applying them. */
+export function toolsForMode(tools: readonly Tool[], _mode: ChatMode, opts?: ToolFilterOptions): Tool[] {
   const excluded = opts?.exclude && opts.exclude.length > 0 ? new Set(opts.exclude) : null;
-  const base = isFullAccessMode(mode) ? [...tools] : tools.filter((t) => !isToolBlockedInAnalyze(t.name));
-  return excluded ? base.filter((t) => !excluded.has(t.name)) : base;
+  return excluded ? tools.filter((t) => !excluded.has(t.name)) : [...tools];
 }
 
 /** Tool definitions sent to the LLM for a given mode. In Analyze mode the
- * file-mutating tools are omitted entirely and the Shell advertises itself
- * as read-only, so the model cannot even attempt a write. */
+ * Shell advertises itself as read-only and the file-mutating tools advertise
+ * the PREVIEW contract (validated diff, never written to disk). */
 export function toolDefinitionsForMode(
   tools: readonly Tool[],
   mode: ChatMode,
   opts?: ToolFilterOptions,
 ): ToolDefinition[] {
-  return toolsForMode(tools, mode, opts).map((t) =>
-    isAnalyzeMode(mode) && t.name === "Shell"
-      ? { ...t.definition, description: t.definition.description + SHELL_READ_ONLY_NOTE }
-      : t.definition,
-  );
+  return toolsForMode(tools, mode, opts).map((t) => {
+    if (!isAnalyzeMode(mode)) return t.definition;
+    if (t.name === "Shell") return { ...t.definition, description: t.definition.description + SHELL_READ_ONLY_NOTE };
+    if (isFileMutatingTool(t.name)) return { ...t.definition, description: t.definition.description + FILE_PREVIEW_NOTE };
+    return t.definition;
+  });
 }
+
+export const FILE_PREVIEW_NOTE =
+  "\n\nPREVIEW MODE (Analyze): this tool does NOT write. It PREPARES and validates the change " +
+  "and returns the resulting diff as a PROPOSAL for the user to review. To actually apply it the " +
+  "user must switch to Build mode — never claim the change was applied.";
 
 export const SHELL_READ_ONLY_NOTE =
   "\n\nREAD-ONLY MODE: commands run with NO ability to modify the filesystem. " +
   "Any command that writes, deletes, moves, renames, creates, or installs is refused before running. " +
   "Only read-only inspection is allowed (ls, cat, find, grep, git status/diff/log, ...). " +
   "Prefer the Read/Grep/Glob tools for file inspection.";
-
-export const ANALYZE_BLOCKED_TOOL_MESSAGE = (name: string): string =>
-  `⛔ Tool "${name}" is disabled in Analyze (read-only) mode: it can modify files. ` +
-  "Switch the mode to Agent to use it, or answer from what you can already read.";
 
 export const ANALYZE_BLOCKED_SHELL_MESSAGE = (command: string): string =>
   `⛔ Analyze mode is READ-ONLY: the command "${command}" could modify the filesystem and was refused without running. ` +

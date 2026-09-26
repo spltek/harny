@@ -30,6 +30,8 @@ export interface SubAgentRunnerDeps {
   cwd: () => string;
   /** Turn budget per sub-agent (default SUBAGENT_MAX_TURNS). */
   maxTurns?: number;
+  /** Optional diagnostic sink; sub-agent lines are tagged with their id. */
+  log?: (message: string) => void;
 }
 
 /**
@@ -92,6 +94,7 @@ export class SubAgentRunner {
       // Never end a heavy sub-agent with a bare "turn limit": force a final
       // tool-less report turn so the caller always gets a usable synthesis.
       forceFinalReportOnLimit: true,
+      log: this.deps.log ? (m) => this.deps.log!(`subagent "${spec.id}": ${m}`) : undefined,
     });
     agent.setMode(mode);
 

@@ -146,6 +146,7 @@ describe("OpenAIChatProvider", () => {
       { type: "tool_call_delta", index: 0, delta: '{"path":"/tmp' },
       { type: "tool_call_delta", index: 0, delta: '/a.txt"}' },
       { type: "tool_call_end", index: 0 },
+      { type: "finish", reason: "tool_calls" },
     ]);
   });
 
@@ -166,7 +167,24 @@ describe("OpenAIChatProvider", () => {
       { type: "tool_call_start", index: 0, id: "c1", name: "Read" },
       { type: "tool_call_delta", index: 0, delta: '{"path":"/x"}' },
       { type: "tool_call_end", index: 0 },
+      { type: "finish", reason: "tool_calls" },
     ]);
+  });
+
+  it("surfaces a length finish_reason (output-token limit)", async () => {
+    const http = new FakeHttpClient();
+    http.respondWith(
+      sseResponse(
+        'data: {"choices":[{"delta":{"content":"partial"}}]}',
+        'data: {"choices":[{"delta":{},"finish_reason":"length"}]}',
+        "data: [DONE]",
+      ),
+    );
+
+    const provider = new OpenAIChatProvider(config, http, tools);
+    const chunks = await collect(provider.stream([{ role: "user", content: "x" }]));
+
+    expect(chunks).toContainEqual({ type: "finish", reason: "length" });
   });
 
   it("does not duplicate /v1 when the base URL already includes it", async () => {

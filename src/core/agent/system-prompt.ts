@@ -3,6 +3,10 @@ import type { ChatMode } from "../tools/mode-policy";
 import { isAnalyzeMode } from "../tools/mode-policy";
 import { DELEGATE_TOOL_NAME } from "./orchestration";
 
+/** The sentence the model must end with after preparing changes in Analyze
+ * (read-only preview) mode, so the user knows to switch to Build to apply. */
+export const BUILD_SWITCH_HINT = "➡️ Switch to **Build** to apply the changes.";
+
 export interface SystemPromptBuilder {
   /**
    * @param mode current chat mode
@@ -34,13 +38,15 @@ export class DefaultSystemPromptBuilder implements SystemPromptBuilder {
       isAnalyzeMode(mode)
         ? `
 
-READ-ONLY MODE (Analyze) — STRICT RULES:
-- You are in READ-ONLY mode: you inspect and answer, you NEVER modify anything.
-- The file-modifying tools (Write, StrReplace, Edit, Delete) are NOT available to you.
+READ-ONLY MODE (Analyze) — PREVIEW RULES:
+- You are in Analyze (read-only PREVIEW): you inspect, explain and PREPARE changes — you NEVER apply them.
+- The file-modifying tools (Write, StrReplace, Edit, Delete) run as PREVIEWS: they validate the change and return the exact diff, but write NOTHING to disk.
+- When the user asks for a modification, PREPARE it for real: Read the target files first, then call the file tools with the exact edits. The result is a validated PROPOSAL shown in the chat — not a written change.
+- NEVER claim a change was applied: it was only prepared. When the changes are prepared, END your reply with this exact line on its own:
+  "${BUILD_SWITCH_HINT}"
+- If the request needs no change (a pure question or explanation), just answer — do not invent edits.
 - If you delegate sub-agents, they MUST be read-only too (access: "read") — a write/create delegate is refused in this mode.
-- The Shell tool runs read-only: any command that would write, delete, move, rename, create, install or build files is refused before it runs. Do not try to work around it (no redirection, no scripts that write). Prefer the Read/Grep/Glob tools for inspection.
-- Do NOT run commands that modify the project (git add/commit/push, npm install, mkdir, touch, ...). Use Shell only for read-only inspection (ls, cat, find, git status/diff/log, tests that run without writing would still be refused if they write — so prefer Read/Grep/Glob).
-- Analyse the code, explain it, point out problems and propose what the change would be — but make no changes.`
+- The Shell tool runs read-only: any command that would write, delete, move, rename, create, install or build files is refused before it runs. Do not try to work around it (no redirection, no scripts that write). Prefer the Read/Grep/Glob tools for inspection.`
         : "";
 
     // Orchestration guidance appears only when the Delegate tool is available
@@ -84,6 +90,7 @@ Guidelines:
 - Use tools for real, do not just promise to use them: when the request needs external/current content (a web page, a file, codebase, a command), ACTUALLY invoke the matching tool (e.g. WebFetch/WebSearch to look something up) and answer from its result. Never reply with only "I will search/read..." — either call the tool now or answer directly.
 - A turn that contains NO tool call counts as your final answer. Never announce an action you are about to take: if you intend to use a tool, call it in the SAME turn in which you mention it.
 - Use Read to inspect files before editing.
+- If the conversation contains changes marked PROPOSED / preview (prepared in Analyze mode), they were NOT applied to disk: re-issue those exact edits with the file tools now to actually apply them.
 - Edit: surgical, atomic multi-edits. Each edit's oldText must match a UNIQUE region exactly (trailing-space/Unicode tolerated). The result shows the applied diff — always re-check it. StrReplace is the strict single-edit variant.
 - Use Shell for running commands (tests, builds, git operations).
 - Use Grep/Glob to search and explore the codebase.
@@ -135,7 +142,7 @@ export class SubAgentSystemPromptBuilder implements SystemPromptBuilder {
       : `You may ${this.options.access} ONLY these resources (own them): ${this.options.resources.join(", ")}. ` +
         "Do not touch anything else; another agent may own it.";
     const readOnlyRules = readOnly
-      ? `\n- The file-modifying tools are disabled and Shell is read-only: no writes, redirects, installs or builds.`
+      ? `\n- You are READ-ONLY: the file-modifying tools run as PREVIEWS (they validate the change and return a diff but NEVER write), and Shell is read-only: no writes, redirects, installs or builds.`
       : "";
     const budgetRule = this.options.turnBudget
       ? `\n- BUDGET: you have about ${this.options.turnBudget} tool turns. Work efficiently, do not over-explore, and STOP calling tools to write your report well within the budget.`

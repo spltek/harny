@@ -38,7 +38,10 @@ export type StreamChunk =
   | { type: "tool_call_start"; index: number; id?: string; name?: string }
   | { type: "tool_call_delta"; index: number; delta: string }
   | { type: "tool_call_end"; index: number; id?: string; name?: string }
-  | { type: "usage"; usage: Usage };
+  | { type: "usage"; usage: Usage }
+  /** Provider finish reason: "stop" (normal), "length" (output-token limit),
+   * "tool_calls", "content_filter", ... Emitted once when reported. */
+  | { type: "finish"; reason: string };
 
 export interface LLMProvider {
   /**

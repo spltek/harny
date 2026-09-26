@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isAnalyzeMode,
-  isToolBlockedInAnalyze,
+  isFileMutatingTool,
   isWriteCommand,
   toolDefinitionsForMode,
   toolsForMode,
@@ -21,28 +21,41 @@ function stubTool(name: string): Tool {
 }
 
 describe("mode policy", () => {
-  it("blocks exactly the file-mutating tools in analyze mode", () => {
+  it("flags exactly the file-mutating tools", () => {
     for (const name of ["Write", "StrReplace", "Edit", "Delete"]) {
-      expect(isToolBlockedInAnalyze(name)).toBe(true);
+      expect(isFileMutatingTool(name)).toBe(true);
     }
-    // Read-only / inspection tools stay available.
+    // Read-only / inspection tools are NOT file-mutating.
     for (const name of ["Read", "Grep", "Glob", "ReadLints", "TodoWrite", "WebSearch", "WebFetch", "Shell"]) {
-      expect(isToolBlockedInAnalyze(name)).toBe(false);
+      expect(isFileMutatingTool(name)).toBe(false);
     }
   });
 
-  it("toolsForMode drops the mutating tools in analyze and keeps all in agent mode", () => {
+  it("toolsForMode keeps the SAME tool set in both modes (previews, not blocking)", () => {
     const all = ["Read", "Write", "Edit", "Delete", "StrReplace", "Shell", "Grep"].map(stubTool);
-    const analyze = toolsForMode(all, "analyze").map((t) => t.name);
-    expect(analyze).toEqual(["Read", "Shell", "Grep"]);
-    expect(toolsForMode(all, "agent").map((t) => t.name)).toEqual(all.map((t) => t.name));
+    const names = all.map((t) => t.name);
+    expect(toolsForMode(all, "analyze").map((t) => t.name)).toEqual(names);
+    expect(toolsForMode(all, "agent").map((t) => t.name)).toEqual(names);
+    // Explicit filtering (exclude) still applies in both modes.
+    expect(toolsForMode(all, "analyze", { exclude: ["Write"] }).map((t) => t.name)).toEqual(
+      names.filter((n) => n !== "Write"),
+    );
   });
 
-  it("toolDefinitionsForMode tags the shell as read-only in analyze", () => {
-    const all = [stubTool("Read"), stubTool("Shell"), stubTool("Write")];
+  it("toolDefinitionsForMode tags the shell read-only and writers as PREVIEW in analyze", () => {
+    const all = [stubTool("Read"), stubTool("Shell"), stubTool("Write"), stubTool("Edit")];
     const defs = toolDefinitionsForMode(all, "analyze");
-    expect(defs.map((d) => d.name)).toEqual(["Read", "Shell"]);
-    expect(defs[1].description).toContain("READ-ONLY");
+    // Every tool is advertised (writers run as validated previews, not hidden).
+    expect(defs.map((d) => d.name)).toEqual(["Read", "Shell", "Write", "Edit"]);
+    expect(defs.find((d) => d.name === "Shell")!.description).toContain("READ-ONLY");
+    expect(defs.find((d) => d.name === "Write")!.description).toContain("PREVIEW MODE");
+    expect(defs.find((d) => d.name === "Edit")!.description).toContain("PREVIEW MODE");
+    expect(defs.find((d) => d.name === "Read")!.description).not.toContain("PREVIEW MODE");
+    // Agent mode appends no read-only / preview notes.
+    for (const d of toolDefinitionsForMode(all, "agent")) {
+      expect(d.description).not.toContain("READ-ONLY");
+      expect(d.description).not.toContain("PREVIEW MODE");
+    }
   });
 
   it("isWriteCommand refuses redirection, mutating verbs, installers, git writes and build drivers", () => {

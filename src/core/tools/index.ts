@@ -1,4 +1,4 @@
-export type { Tool, ToolCall, ToolResult, ToolDefinition, ToolParameter } from "./tool";
+export type { Tool, ToolCall, ToolResult, ToolDefinition, ToolParameter, ToolContext } from "./tool";
 export { ToolRegistry } from "./tool-registry";
 export { createDefaultTools, type DefaultToolsDeps } from "./create-default-tools";
 export type { FileSystem } from "./file-system";
@@ -22,11 +22,12 @@ export { WebFetchTool } from "./web-fetch-tool";
 export { ReadLintsTool } from "./read-lints-tool";
 export {
   DEFAULT_CHAT_MODE,
-  ANALYZE_BLOCKED_TOOL_MESSAGE,
   ANALYZE_BLOCKED_SHELL_MESSAGE,
+  FILE_PREVIEW_NOTE,
   isAnalyzeMode,
   isFullAccessMode,
-  isToolBlockedInAnalyze,
+  isFileMutatingTool,
+  isReadOnlyTool,
   isWriteCommand,
   toolDefinitionsForMode,
   toolsForMode,

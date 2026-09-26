@@ -159,6 +159,9 @@ let currentRawText = "";
 let workingEl: HTMLDivElement | null = null;
 let compactionEl: HTMLDivElement | null = null;
 let aborted = false;
+/** A terminal bubble (error/interrupted) was already shown for this turn, so
+ * `done` must NOT append a bogus "(empty response)" fallback. */
+let terminalShown = false;
 const pendingToolCalls = new Map<string, HTMLDivElement>();
 
 // ── Pending attachments: files picked via the "+" button and queued for the
@@ -778,7 +781,9 @@ function renderMessages(msgs: ChatMsg[]): boolean {
       if (content.trim() && !content.startsWith("🔧 ")) {
         const el = addMessage("assistant", content);
         if (content.startsWith("❌")) el.classList.add("error");
-        attachBranchAt(el, i);
+        else if (content.startsWith("🔁")) el.classList.add("loop");
+        // Loop notices are system annotations, not branchable messages.
+        if (!content.startsWith("🔁")) attachBranchAt(el, i);
       }
       if (m.toolCalls && m.toolCalls.length > 0) {
         for (const tc of m.toolCalls) {
@@ -838,9 +843,9 @@ function attachBranchAt(el: HTMLElement, index: number): void {
 
 function finishStream(): void {
   hideWorking();
-  // When interrupted, the red bubble was already added by the host; never
-  // append a stray "(empty response)" fallback for that case.
-  if (!currentResultEl && !aborted) {
+  // When interrupted or an error bubble was already shown, never append a
+  // stray "(empty response)" fallback for that case.
+  if (!currentResultEl && !aborted && !terminalShown) {
     const el = document.createElement("div");
     el.className = "msg assistant";
     el.innerHTML = "<em>(empty response)</em>";
@@ -850,6 +855,7 @@ function finishStream(): void {
 }
 
 function resetStreamState(): void {
+  terminalShown = false;
   thinkingMd.reset();
   answerMd.reset();
   clearStreamingBubble();
@@ -1039,6 +1045,7 @@ function send(): void {
   currentThinkingText = "";
   currentRawText = "";
   aborted = false;
+  terminalShown = false;
   pendingToolCalls.clear();
   // Show the user's message immediately (don't wait for the turn to finish).
   // Attachments render as chips; the bubble text is just the typed prompt.
@@ -1644,7 +1651,7 @@ function applyMode(mode: ChatMode, opts?: { notify?: boolean }): void {
   if (!isChatMode(mode)) mode = DEFAULT_MODE;
   currentMode = mode;
   modeBtn.classList.toggle("is-agent", mode === "agent");
-  modeBtnLabel.textContent = mode === "agent" ? "Build/Edit" : "Analyze";
+  modeBtnLabel.textContent = mode === "agent" ? "Build" : "Analyze";
   modeBtnIconAnalyze.classList.toggle("hidden", mode !== "analyze");
   modeBtnIconAgent.classList.toggle("hidden", mode !== "agent");
   for (const item of modeItems) {
@@ -2210,6 +2217,7 @@ window.addEventListener("message", (e) => {
       // state and append a red bubble. State resets when `done` arrives.
       flushStreamingMd();
       aborted = true;
+      terminalShown = true;
       setStreaming(false);
       hideWorking();
       const stopEl = addMessage("assistant", "❌ ⏹ Processing interrupted.");
@@ -2242,6 +2250,16 @@ window.addEventListener("message", (e) => {
       }
       break;
     }
+    case "loopIntervention": {
+      // The loop guard broke a degenerate loop and the run CONTINUES: settle
+      // the interrupted segment and show an amber notice (not a red error).
+      flushStreamingMd();
+      clearStreamingBubble();
+      const el = addMessage("assistant", `🔁 **Loop guard** [${msg.loopType}] — ${msg.message}`);
+      el.classList.add("loop");
+      scrollDown();
+      break;
+    }
     case "done":
       flushStreamingMd();
       finishStream();
@@ -2250,17 +2268,21 @@ window.addEventListener("message", (e) => {
       break;
     case "error": {
       flushStreamingMd();
-      const wasWorking = !!workingEl;
       setStreaming(false);
       hideWorking();
       if (currentResultEl) {
         currentResultEl.classList.add("error");
         currentResultEl.innerHTML = "<strong>" + escapeHtml(msg.error) + "</strong>";
-      } else if (wasWorking) {
+      } else {
+        // Always surface an error: dropping it when no bubble was open made
+        // the run look like it silently stopped.
         const errEl = addMessage("assistant", "❌ " + (msg.error || "error"));
         errEl.classList.add("error");
       }
       resetStreamState();
+      // An error already produced a visible terminal bubble: suppress the
+      // "(empty response)" fallback when `done` follows (it always does).
+      terminalShown = true;
       focusPrompt();
       break;
     }

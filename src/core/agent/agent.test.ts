@@ -69,7 +69,15 @@ interface Harness {
   history: InMemoryChatHistory;
 }
 
-function buildHarness(opts: { config?: HarnyConfig; chunks?: StreamChunk[][]; tools?: Tool[]; maxTurns?: number } = {}): Harness {
+function buildHarness(
+  opts: {
+    config?: HarnyConfig;
+    chunks?: StreamChunk[][];
+    tools?: Tool[];
+    maxTurns?: number;
+    log?: (message: string) => void;
+  } = {},
+): Harness {
   const config = new StaticConfigProvider(opts.config ?? VALID_CONFIG);
   const history = new InMemoryChatHistory();
   const events = new InMemoryEventBus<AgentEvent>();
@@ -79,7 +87,16 @@ function buildHarness(opts: { config?: HarnyConfig; chunks?: StreamChunk[][]; to
   const tools = new ToolRegistry(opts.tools ?? [makeTool("FakeTool")]);
   const systemPrompt = new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/workspace");
 
-  const agent = new Agent({ config, llmFactory: factory, tools, history, events, systemPrompt, maxTurns: opts.maxTurns });
+  const agent = new Agent({
+    config,
+    llmFactory: factory,
+    tools,
+    history,
+    events,
+    systemPrompt,
+    maxTurns: opts.maxTurns,
+    log: opts.log,
+  });
   return { agent, factory, events: eventsLog, history };
 }
 
@@ -455,7 +472,7 @@ describe("Agent", () => {
     expect(factory.calls).toBe(3);
   });
 
-  it("retries when a turn only produces thinking (no text, no tools) instead of an empty response", async () => {
+  it("nudges and continues when a turn only produces thinking (no text, no tools)", async () => {
     const { agent, factory, history, events } = buildHarness({
       chunks: [
         [{ type: "thinking", content: "let me think about this" }],
@@ -465,129 +482,330 @@ describe("Agent", () => {
 
     await agent.send("x");
 
-    // Two LLM calls: the thinking-only turn is retried, not stored as empty.
+    // Two LLM calls: the thinking-only turn is nudged, then answered.
     expect(factory.calls).toBe(2);
-    const roles = history.all().map((m) => m.role);
-    expect(roles).toEqual(["user", "assistant"]);
-    expect(history.all()[1].content).toBe("final answer");
+    // The guard logs a UI-only note and injects a corrective user nudge.
+    expect(history.all().some((m) => m.role === "user" && /reasoning but no answer/.test(m.content))).toBe(true);
+    expect(history.all().some((m) => m.role === "assistant" && m.content === "final answer")).toBe(true);
     expect(history.all().some((m) => m.content === "(empty response)")).toBe(false);
     // thinking deltas were streamed to the UI
     expect(events.some((e) => e.type === "thinking_delta" && e.content === "let me think about this")).toBe(true);
   });
 
-  it("detects repeated identical tool failures and stops early", async () => {
-    const failingTool = makeTool("Read", { content: "boom", isError: true });
-    const { agent, factory, events, history } = buildHarness({
-      tools: [failingTool],
-      chunks: [
-        [
-          { type: "tool_call_start", index: 0, id: "c1", name: "Read" },
-          { type: "tool_call_end", index: 0 },
-        ],
-        [
-          { type: "tool_call_start", index: 0, id: "c2", name: "Read" },
-          { type: "tool_call_end", index: 0 },
-        ],
-        [
-          { type: "tool_call_start", index: 0, id: "c3", name: "Read" },
-          { type: "tool_call_end", index: 0 },
-        ],
-      ],
-      maxTurns: 6,
+  it("nudges and continues when a turn is completely empty (no text, no thinking, no tools)", async () => {
+    const { agent, factory, history } = buildHarness({
+      chunks: [[], [{ type: "text", content: "recovered answer" }]],
     });
 
     await agent.send("x");
 
-    // Stops early (NOT burning all maxTurns), but only AFTER one corrective
-    // prompt was injected: local models get a chance to fix malformed args
-    // before the loop detector hard-stops on the next identical failure.
-    expect(factory.calls).toBe(3);
-    const error = events.find((e) => e.type === "error");
-    expect(error && error.type === "error" ? error.error : "").toContain("Tool loop detected");
-    const roles = history.all().map((m) => m.role);
-    // user, assistant(c0), tool, assistant(c1), tool, user(corrective),
-    // assistant(c2), tool, assistant(loop stop msg)
-    expect(roles).toContain("user");
-    expect(roles.length).toBe(9);
-    expect(history.all().some((m) => m.role === "user" && /[Rr]e-emit the tool call/.test(m.content))).toBe(true);
+    expect(factory.calls).toBe(2);
+    expect(history.all().some((m) => m.role === "user" && /turn was empty/.test(m.content))).toBe(true);
+    expect(history.all().some((m) => m.role === "assistant" && m.content === "recovered answer")).toBe(true);
   });
 
-  it("stops after 3 consecutive all-error turns even when the tool names differ", async () => {
-    const failA = makeTool("Read", { content: "err A", isError: true });
-    const failB = makeTool("Write", { content: "err B", isError: true });
-    const failC = makeTool("Shell", { content: "err C", isError: true });
-    const { agent, factory, events } = buildHarness({
-      tools: [failA, failB, failC],
+  it("stops with a clear error (not '(empty response)') when the model keeps stalling", async () => {
+    const { agent, factory, history, events } = buildHarness({ chunks: [[]] });
+
+    await agent.send("x");
+
+    // Two nudges + the final failed attempt = 3 LLM calls, then a clear stop.
+    expect(factory.calls).toBe(3);
+    expect(history.all().some((m) => m.content === "(empty response)")).toBe(false);
+    const last = history.all().filter((m) => m.role === "assistant").at(-1);
+    expect(last?.content).toContain("Loop not resolved");
+    expect(last?.content).toContain("[empty]");
+    expect(events.some((e) => e.type === "error" && /Loop not resolved/.test(e.error))).toBe(true);
+  });
+
+  it("reports a token-limit truncation when the turn is empty (finish_reason=length)", async () => {
+    const { agent, factory, history, events } = buildHarness({
+      chunks: [[{ type: "thinking", content: "lots of reasoning" }, { type: "finish", reason: "length" }]],
+    });
+
+    await agent.send("x");
+
+    // "length" is diagnosed immediately — no nudge/retry loop.
+    expect(factory.calls).toBe(1);
+    const last = history.all().filter((m) => m.role === "assistant").at(-1);
+    expect(last?.content).toContain("token limit");
+    expect(last?.content).toContain("harny.maxTokens");
+    expect(last?.content).toContain("reasoning");
+    expect(events.some((e) => e.type === "error" && /token limit|truncat/i.test(e.error))).toBe(true);
+  });
+
+  it("marks a partial answer as truncated when finish_reason=length", async () => {
+    const { agent, history } = buildHarness({
+      chunks: [[{ type: "text", content: "Partial ans" }, { type: "finish", reason: "length" }]],
+    });
+
+    await agent.send("x");
+
+    const last = history.all().filter((m) => m.role === "assistant").at(-1);
+    expect(last?.content).toContain("Partial ans");
+    expect(last?.content).toContain("truncated");
+    expect(last?.content).toContain("harny.maxTokens");
+  });
+
+  it("breaks a within-turn reasoning loop and nudges instead of burning the token budget", async () => {
+    const loopText = "Let me check the CSS and the controls again. ".repeat(24);
+    const { agent, factory, history, events } = buildHarness({
+      chunks: [
+        // Turn 0: a runaway repetitive reasoning stream.
+        [{ type: "thinking", content: loopText }, { type: "finish", reason: "stop" }],
+        // Turn 1: the model recovers with a final answer.
+        [{ type: "text", content: "final answer after loop" }],
+      ],
+    });
+
+    await agent.send("x");
+
+    expect(factory.calls).toBe(2);
+    const intervention = events.find((e) => e.type === "loop_intervention");
+    expect(intervention && intervention.type === "loop_intervention" ? intervention.loopType : "").toBe("reasoning");
+    expect(history.all().some((m) => m.role === "assistant" && /Loop guard/.test(m.content))).toBe(true);
+    expect(history.all().some((m) => m.role === "assistant" && m.content === "final answer after loop")).toBe(true);
+    // The broken reasoning was NOT stored as a normal assistant answer.
+    expect(history.all().some((m) => m.role === "assistant" && m.content.includes(loopText))).toBe(false);
+  });
+
+  it("reuses a cached read-only result instead of re-running an identical read", async () => {
+    let runs = 0;
+    const read: Tool = {
+      name: "Read",
+      definition: { name: "Read", description: "read", parameters: { type: "object", properties: {} } },
+      execute: (): ToolResult => {
+        runs++;
+        return { content: "FILE CONTENT", isError: false };
+      },
+    };
+    const readCall = (): StreamChunk[] => [
+      { type: "tool_call_start", index: 0, id: "c", name: "Read" },
+      { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts"}' },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const { agent, history } = buildHarness({
+      tools: [read],
+      chunks: [readCall(), readCall(), [{ type: "text", content: "done" }]],
+    });
+
+    await agent.send("x");
+
+    // The underlying Read executed exactly once; the 2nd identical call reused it.
+    expect(runs).toBe(1);
+    expect(history.all().some((m) => m.role === "tool" && /reused the cached result/i.test(m.content))).toBe(true);
+    expect(history.all().some((m) => m.content === "done")).toBe(true);
+  });
+
+  it("never sends the synthetic tool label to the model", async () => {
+    const seen: LLMMessage[][] = [];
+    const toolCall: StreamChunk[] = [
+      { type: "tool_call_start", index: 0, id: "c1", name: "StrReplace" },
+      { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts","old_string":"x","new_string":"y"}' },
+      { type: "tool_call_end", index: 0 },
+    ];
+    let call = 0;
+    const factory: LLMProviderFactory = {
+      create() {
+        return {
+          protocol: "chat" as const,
+          async *stream(messages: LLMMessage[]) {
+            seen.push(messages);
+            call++;
+            if (call === 1) {
+              for (const c of toolCall) yield c;
+            } else {
+              yield { type: "text", content: "done" };
+            }
+          },
+        };
+      },
+    };
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools: new ToolRegistry([makeTool("StrReplace")]),
+      history: new InMemoryChatHistory(),
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(() => [], () => "/w"),
+    });
+
+    await agent.send("go");
+
+    expect(seen.length).toBeGreaterThanOrEqual(2);
+    const assistantWithTools = seen[1].filter((m) => m.role === "assistant" && m.toolCalls?.length);
+    expect(assistantWithTools).toHaveLength(1);
+    expect(assistantWithTools[0].content).toBe("");
+    // The synthetic label must never appear anywhere in the request.
+    expect(JSON.stringify(seen[1])).not.toContain("🔧 Tool");
+  });
+
+  it("treats an ECHOED synthetic tool label as an empty turn and nudges instead of finishing", async () => {
+    const toolCall: StreamChunk[] = [
+      { type: "tool_call_start", index: 0, id: "c1", name: "StrReplace" },
+      { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts","old_string":"x","new_string":"y"}' },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const { agent, factory, history } = buildHarness({
+      tools: [makeTool("StrReplace")],
+      chunks: [
+        toolCall,
+        [{ type: "text", content: "🔧 Tool: StrReplace\n\n" }],
+        [{ type: "text", content: "real answer" }],
+      ],
+    });
+
+    await agent.send("go");
+
+    // The echoed label did NOT end the run: the guard nudged and the model answered.
+    expect(history.all().some((m) => m.role === "assistant" && m.content === "real answer")).toBe(true);
+    expect(history.all().some((m) => m.role === "user" && /Continue NOW/.test(m.content))).toBe(true);
+    expect(factory.calls).toBeGreaterThanOrEqual(3);
+  });
+
+  it("emits a per-turn diagnostic line to the injected log", async () => {
+    const logs: string[] = [];
+    const repeated = (): StreamChunk[] => [
+      { type: "tool_call_start", index: 0, id: "c", name: "Shell" },
+      { type: "tool_call_delta", index: 0, delta: '{"command":"ls"}' },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const { agent } = buildHarness({
+      tools: [makeTool("Shell")],
+      chunks: [repeated(), repeated(), repeated(), [{ type: "text", content: "ok" }]],
+      log: (m) => logs.push(m),
+    });
+
+    await agent.send("x");
+
+    expect(logs.some((l) => /^turn 0: finish=/.test(l))).toBe(true);
+    expect(logs.some((l) => l.includes("tools=[Shell]"))).toBe(true);
+    expect(logs.some((l) => /loop-guard \[tool-repeat\] level 1/.test(l))).toBe(true);
+  });
+
+  it("logs a stop line when it gives up on a loop", async () => {
+    const logs: string[] = [];
+    const empty: StreamChunk[] = [];
+    const { agent } = buildHarness({ chunks: [empty], log: (m) => logs.push(m) });
+    await agent.send("x");
+    expect(logs.some((l) => /^loop-stop \[empty\]/.test(l))).toBe(true);
+  });
+
+  it("emits a loop_intervention event when it breaks a loop", async () => {
+    const repeated = (): StreamChunk[] => [
+      { type: "tool_call_start", index: 0, id: "c", name: "Shell" },
+      { type: "tool_call_delta", index: 0, delta: '{"command":"ls"}' },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const { agent, events } = buildHarness({
+      tools: [makeTool("Shell")],
+      chunks: [repeated(), repeated(), repeated(), [{ type: "text", content: "ok" }]],
+    });
+
+    await agent.send("x");
+
+    const intervention = events.find((e) => e.type === "loop_intervention");
+    expect(intervention).toBeTruthy();
+    if (intervention && intervention.type === "loop_intervention") {
+      expect(intervention.loopType).toBe("tool-repeat");
+      expect(intervention.level).toBe(1);
+      expect(intervention.message.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("refuses to re-run an identical failing call, nudges, then stops", async () => {
+    const failingTool = makeTool("Read", { content: "boom", isError: true });
+    const { agent, factory, events, history } = buildHarness({
+      tools: [failingTool],
       chunks: [
         [{ type: "tool_call_start", index: 0, id: "c1", name: "Read" }, { type: "tool_call_end", index: 0 }],
-        [{ type: "tool_call_start", index: 0, id: "c2", name: "Write" }, { type: "tool_call_end", index: 0 }],
-        [{ type: "tool_call_start", index: 0, id: "c3", name: "Shell" }, { type: "tool_call_end", index: 0 }],
+        [{ type: "tool_call_start", index: 0, id: "c2", name: "Read" }, { type: "tool_call_end", index: 0 }],
+        [{ type: "tool_call_start", index: 0, id: "c3", name: "Read" }, { type: "tool_call_end", index: 0 }],
       ],
-      maxTurns: 6,
+      maxTurns: 8,
     });
 
     await agent.send("x");
 
-    // Three different failing tools in a row = loop, not a fixable single error.
-    expect(factory.calls).toBe(3);
+    // The failing call runs ONCE, then identical repeats are REFUSED; the guard
+    // nudges twice and stops on the third repeated failure (4 LLM turns).
+    expect(factory.calls).toBe(4);
     const error = events.find((e) => e.type === "error");
-    expect(error && error.type === "error" ? error.error : "").toContain("consecutive turns of tool errors");
+    const message = error && error.type === "error" ? error.error : "";
+    expect(message).toContain("Loop not resolved");
+    expect(message).toContain("tool-failure");
+    expect(history.all().some((m) => m.role === "user" && /SAME arguments/.test(m.content))).toBe(true);
+    const refused = history.all().filter((m) => m.role === "tool" && /already failed and was NOT re-run/.test(m.content));
+    expect(refused.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("does not fire the corrective prompt when the same tool fails with different args", async () => {
+  it("nudges then stops after consecutive all-error turns with DIFFERENT tools", async () => {
+    const tools = ["Read", "Write", "Grep", "Glob", "Shell"].map((n) =>
+      makeTool(n, { content: `err ${n}`, isError: true }),
+    );
+    const call = (name: string): StreamChunk[] => [
+      { type: "tool_call_start", index: 0, id: `c-${name}`, name },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const { agent, factory, events } = buildHarness({
+      tools,
+      chunks: tools.map((t) => call(t.name)),
+      maxTurns: 8,
+    });
+
+    await agent.send("x");
+
+    // Distinct calls each turn → the error STREAK drives escalation: nudge at 3,
+    // nudge at 4, stop at 5.
+    expect(factory.calls).toBe(5);
+    const error = events.find((e) => e.type === "error");
+    const message = error && error.type === "error" ? error.error : "";
+    expect(message).toContain("Loop not resolved");
+    expect(message).toContain("error-streak");
+  });
+
+  it("does not treat different arguments as the same failing call (uses the error streak)", async () => {
     const failingTool = makeTool("Read", { content: "boom", isError: true });
+    const read = (p: string): StreamChunk[] => [
+      { type: "tool_call_start", index: 0, id: `c-${p}`, name: "Read" },
+      { type: "tool_call_delta", index: 0, delta: JSON.stringify({ path: p }) },
+      { type: "tool_call_end", index: 0 },
+    ];
     const { agent, factory, events, history } = buildHarness({
       tools: [failingTool],
-      chunks: [
-        [
-          { type: "tool_call_start", index: 0, id: "c1", name: "Read" },
-          { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts"}' },
-          { type: "tool_call_end", index: 0 },
-        ],
-        [
-          { type: "tool_call_start", index: 0, id: "c2", name: "Read" },
-          { type: "tool_call_delta", index: 0, delta: '{"path":"b.ts"}' },
-          { type: "tool_call_end", index: 0 },
-        ],
-        [
-          { type: "tool_call_start", index: 0, id: "c3", name: "Read" },
-          { type: "tool_call_delta", index: 0, delta: '{"path":"c.ts"}' },
-          { type: "tool_call_end", index: 0 },
-        ],
-      ],
-      maxTurns: 6,
+      chunks: [read("a.ts"), read("b.ts"), read("c.ts"), read("d.ts"), read("e.ts")],
+      maxTurns: 8,
     });
 
     await agent.send("x");
 
-    // Different arguments each turn: detector A must NOT treat them as the
-    // same failing call, so no corrective user prompt is injected. Detector B
-    // (3 consecutive all-error turns) is what stops the loop.
-    expect(factory.calls).toBe(3);
-    expect(
-      history.all().some((m) => m.role === "user" && /[Rr]e-emit the tool call/.test(m.content)),
-    ).toBe(false);
+    // Different arguments each turn: the SAME-call tool-failure guard never
+    // fires; the error STREAK is what stops the loop.
+    expect(history.all().some((m) => m.role === "user" && /SAME arguments/.test(m.content))).toBe(false);
     const error = events.find((e) => e.type === "error");
-    expect(error && error.type === "error" ? error.error : "").toContain("consecutive turns of tool errors");
+    const message = error && error.type === "error" ? error.error : "";
+    expect(message).toContain("Loop not resolved");
+    expect(message).toContain("error-streak");
+    expect(factory.calls).toBe(5);
   });
 
-  it("nudges once, then stops when the same successful tool call keeps repeating", async () => {
+  it("nudges twice, then stops when the same successful tool call keeps repeating", async () => {
     const { agent, factory, events, history } = buildHarness({
       chunks: [
         [{ type: "tool_call_start", index: 0, id: "c1", name: "FakeTool" }, { type: "tool_call_end", index: 0 }],
         [{ type: "tool_call_start", index: 0, id: "c2", name: "FakeTool" }, { type: "tool_call_end", index: 0 }],
         [{ type: "tool_call_start", index: 0, id: "c3", name: "FakeTool" }, { type: "tool_call_end", index: 0 }],
       ],
-      maxTurns: 6,
+      maxTurns: 8,
     });
 
     await agent.send("x");
 
-    // 3 identical calls → corrective nudge; one more identical → stop (4 calls).
-    expect(factory.calls).toBe(4);
+    // 3 identical calls → nudge; a 4th → second nudge; a 5th → stop (5 turns).
+    expect(factory.calls).toBe(5);
     expect(history.all().some((m) => m.role === "user" && /SAME tool/.test(m.content ?? ""))).toBe(true);
     const error = events.find((e) => e.type === "error");
-    expect(error && error.type === "error" ? error.error : "").toContain("3 times in a row");
+    expect(error && error.type === "error" ? error.error : "").toContain("Loop not resolved");
   });
 
   it("notices the maxTurns limit with an explicit message", async () => {
@@ -788,34 +1006,43 @@ describe("Analyze (read-only) mode", () => {
     ];
   }
 
-  it("advertises only the read-only tool set in analyze and all tools after setMode('agent')", async () => {
+  it("advertises the SAME tool set in both modes; Analyze tags Shell read-only and writers as previews", async () => {
     const tools = ["Read", "Write", "Edit", "Delete", "StrReplace", "Shell", "Grep"].map((n) =>
       ({ name: n, definition: { name: n, description: n, parameters: { type: "object", properties: {} } }, execute: async () => ({ content: "ok", isError: false }) }) as Tool,
     );
     const { agent, seenDefinitions } = capturingHarness(tools);
 
     await agent.send("analyze this"); // default mode = analyze
-    expect(seenDefinitions[0].map((d) => d.name)).toEqual(["Read", "Shell", "Grep"]);
-    // the advertised Shell is explicitly read-only
+    // Writers are NOT hidden: they are available as validated previews.
+    expect(seenDefinitions[0].map((d) => d.name).sort()).toEqual([...tools.map((t) => t.name)].sort());
     expect(seenDefinitions[0].find((d) => d.name === "Shell")!.description).toContain("READ-ONLY");
+    expect(seenDefinitions[0].find((d) => d.name === "Write")!.description).toContain("PREVIEW MODE");
 
     agent.setMode("agent");
     await agent.send("now edit it");
     expect(seenDefinitions[1].map((d) => d.name).sort()).toEqual([...tools.map((t) => t.name)].sort());
+    expect(seenDefinitions[1].find((d) => d.name === "Write")!.description).not.toContain("PREVIEW MODE");
   });
 
-  it("refuses file-mutating tool calls in analyze WITHOUT running them", async () => {
-    const writeTool = { ...makeTool("Write"), execute: vi.fn(async (): Promise<ToolResult> => ({ content: "wrote", isError: false })) };
+  it("runs file-mutating tool calls in analyze as DRY-RUN previews (never applied)", async () => {
+    const writeTool = {
+      ...makeTool("Write"),
+      execute: vi.fn(async (): Promise<ToolResult> => ({ content: "PROPOSED (preview — NOT written): a.txt", isError: false })),
+    };
     const { agent, history } = capturingHarness(
-      [writeTool, makeTool("Read")],
+      [writeTool],
       [toolCallChunks("Write", '{"path":"a.txt","content":"x"}'), [{ type: "text", content: "ok" }]],
     );
 
     await agent.send("write a file");
 
-    expect(writeTool.execute as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    // The tool RUNS, but with the dryRun context — it must not touch disk.
+    expect(writeTool.execute as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+      expect.objectContaining({ path: "a.txt" }),
+      { dryRun: true },
+    );
     const toolResult = history.all().find((m) => m.role === "tool");
-    expect(toolResult?.content).toContain("disabled in Analyze");
+    expect(toolResult?.content).toContain("PROPOSED");
   });
 
   it("runs the same write tool after switching to agent mode", async () => {
@@ -829,6 +1056,11 @@ describe("Analyze (read-only) mode", () => {
     await agent.send("write a file");
 
     expect(writeTool.execute as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+    // Agent mode = real write: NO dryRun context.
+    expect(writeTool.execute as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+      expect.objectContaining({ path: "a.txt" }),
+      undefined,
+    );
     expect(history.all().find((m) => m.role === "tool")?.content).toBe("wrote");
   });
 
@@ -877,18 +1109,20 @@ describe("Analyze (read-only) mode", () => {
     expect(seenSystemPrompts[1]).not.toContain("READ-ONLY MODE (Analyze)");
   });
 
-  it("switching back from agent to analyze restores the read-only tool set", async () => {
+  it("switching back to analyze re-tags the tool definitions as read-only previews", async () => {
     const tools = ["Read", "Write", "Shell"].map((n) =>
       ({ name: n, definition: { name: n, description: n, parameters: { type: "object", properties: {} } }, execute: async () => ({ content: "ok", isError: false }) }) as Tool,
     );
     const { agent, seenDefinitions } = capturingHarness(tools, undefined, "agent");
 
     await agent.send("full mode");
-    expect(seenDefinitions[0].map((d) => d.name).sort()).toEqual(["Read", "Write", "Shell"].sort());
+    expect(seenDefinitions[0].find((d) => d.name === "Write")!.description).not.toContain("PREVIEW MODE");
+    expect(seenDefinitions[0].find((d) => d.name === "Shell")!.description).not.toContain("READ-ONLY");
 
-    agent.setMode("analyze"); // back to read-only
+    agent.setMode("analyze"); // back to read-only preview
     await agent.send("analyze again");
-    expect(seenDefinitions[1].map((d) => d.name)).toEqual(["Read", "Shell"]);
+    expect(seenDefinitions[1].find((d) => d.name === "Write")!.description).toContain("PREVIEW MODE");
+    expect(seenDefinitions[1].find((d) => d.name === "Shell")!.description).toContain("READ-ONLY");
   });
 });
 
@@ -1467,7 +1701,7 @@ describe("Orchestration (Delegate)", () => {
     agent.setMode("agent");
     agent.setDelegation(true);
     await agent.send("b");
-    expect(seen[1]).toContain("Build/Edit");
+    expect(seen[1]).toContain("Build");
     expect(seen[1]).toContain("Parallel: ON");
   });
 
@@ -1790,7 +2024,7 @@ describe("Repeated-call loop: nudge before hard stop", () => {
     expect(nudge!.content).toContain("Glob");
     expect(nudge!.content).toContain("Grep");
     // …and after it repeated again, the loop was stopped.
-    expect(history.all().some((m) => /Loop detected/.test(m.content ?? ""))).toBe(true);
+    expect(history.all().some((m) => /Loop not resolved/.test(m.content ?? ""))).toBe(true);
   });
 
   it("recovers: after the nudge the model changes approach and finishes", async () => {
@@ -1814,11 +2048,11 @@ describe("Repeated-call loop: nudge before hard stop", () => {
 
     expect(history.all().some((m) => m.role === "user" && /SAME tool/.test(m.content ?? ""))).toBe(true);
     // The nudge worked: no hard stop, and the final answer is present.
-    expect(history.all().some((m) => /Loop detected/.test(m.content ?? ""))).toBe(false);
+    expect(history.all().some((m) => /Loop not resolved/.test(m.content ?? ""))).toBe(false);
     expect(history.all().some((m) => /done via Glob/.test(m.content ?? ""))).toBe(true);
   });
 
-  it("injects the corrective nudge at most once per send", async () => {
+  it("injects the corrective nudge at most twice per send", async () => {
     const shell = (): StreamChunk[] => [
       { type: "tool_call_start", index: 0, id: "c1", name: "Shell" },
       { type: "tool_call_delta", index: 0, delta: '{"command":"ls -la"}' },
@@ -1832,7 +2066,7 @@ describe("Repeated-call loop: nudge before hard stop", () => {
     await agent.send("go");
 
     const nudges = history.all().filter((m) => m.role === "user" && /SAME tool/.test(m.content ?? ""));
-    expect(nudges).toHaveLength(1);
+    expect(nudges).toHaveLength(2);
   });
 
   it("skips the nudge when the turn budget leaves no room (stops instead)", async () => {

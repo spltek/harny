@@ -54,7 +54,7 @@ function setupDom(
         </button>
         <div id="mode-menu" class="hidden" role="listbox">
           <button type="button" class="mode-item is-active" data-mode="analyze" role="option" aria-selected="true">Analyze</button>
-          <button type="button" class="mode-item" data-mode="agent" role="option" aria-selected="false">Build/Edit</button>
+          <button type="button" class="mode-item" data-mode="agent" role="option" aria-selected="false">Build</button>
         </div>
       </div>
       <button type="button" id="parallel-btn" aria-pressed="false">Parallel</button>
@@ -235,7 +235,7 @@ describe("view webview client", () => {
     btn.click();
     agent.click();
     expect(posted).toContainEqual({ type: "setMode", mode: "agent" });
-    expect(label.textContent).toBe("Build/Edit");
+    expect(label.textContent).toBe("Build");
     expect(btn.classList.contains("is-agent")).toBe(true);
     expect(agent.getAttribute("aria-selected")).toBe("true");
     expect(menu.classList.contains("hidden")).toBe(true);
@@ -268,7 +268,7 @@ describe("view webview client", () => {
     expect(label.textContent).toBe("Analyze");
 
     hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, mode: "agent", models: [], providerModels: [], contextWindow: 128000 } });
-    expect(label.textContent).toBe("Build/Edit");
+    expect(label.textContent).toBe("Build");
     expect(btn.classList.contains("is-agent")).toBe(true);
     expect(agent.classList.contains("is-active")).toBe(true);
   });
@@ -650,6 +650,14 @@ describe("view webview client", () => {
     expect(bubbles.length).toBe(1);
     expect(bubbles[0].textContent).toContain("Processing interrupted");
     // no stray "(empty response)" appended later by done
+    hostMessage({ type: "done" });
+    expect(document.querySelectorAll(".msg.assistant.error").length).toBe(1);
+    expect([...document.querySelectorAll(".msg")].some((m) => m.textContent?.includes("(empty response)"))).toBe(false);
+  });
+
+  it("does not append '(empty response)' after an error bubble when done follows", async () => {
+    await loadView();
+    hostMessage({ type: "error", error: "Loop not resolved [empty] after 3 intervention(s)" });
     hostMessage({ type: "done" });
     expect(document.querySelectorAll(".msg.assistant.error").length).toBe(1);
     expect([...document.querySelectorAll(".msg")].some((m) => m.textContent?.includes("(empty response)"))).toBe(false);
@@ -1053,6 +1061,38 @@ describe("view webview client", () => {
     expect(diff).not.toBeNull();
     expect(diff?.querySelector(".fd-add")?.textContent).toBe("+new");
     expect(diff?.querySelector(".fd-del")?.textContent).toBe("-old");
+  });
+
+  it("renders a loop-intervention notice as an amber (non-error) bubble", async () => {
+    await loadView();
+    hostMessage({
+      type: "loopIntervention",
+      loopType: "reasoning",
+      level: 1,
+      message: "reasoning loop detected — cut short and told to act.",
+    });
+    const el = [...document.querySelectorAll(".msg.assistant.loop")].at(-1) as HTMLElement;
+    expect(el).toBeTruthy();
+    expect(el.textContent).toContain("Loop guard");
+    expect(el.textContent).toContain("reasoning");
+    expect(el.classList.contains("error")).toBe(false);
+  });
+
+  it("re-renders a persisted loop notice with the amber class on refresh", async () => {
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "user", content: "q", timestamp: 1 },
+        { role: "assistant", content: "🔁 **Loop guard** [empty] — empty turn nudged.", timestamp: 2, uiOnly: true },
+        { role: "assistant", content: "answer", timestamp: 3 },
+      ],
+    });
+    const el = document.querySelector(".msg.assistant.loop") as HTMLElement;
+    expect(el).toBeTruthy();
+    expect(el.textContent).toContain("Loop guard");
+    // Loop notices are system annotations: not branchable.
+    expect(el.querySelector(".branch-at")).toBeNull();
   });
 
   it("on refresh keeps the assistant preamble ABOVE its sub-agent bubbles", async () => {
