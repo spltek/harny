@@ -18,19 +18,23 @@ harny/
 │   │   ├── history/              # ChatHistory <- PersistentChatHistory (bound to a session)
 │   │   ├── llm/                  # LLMProvider <- OpenAIChatProvider
 │   │   │                         #   HttpClient, SSE parser, factory, model-list fetcher
-│   │   ├── agent/                # Agent orchestrator (DI), ToolCallAccumulator, SystemPrompt
-│   │   ├── sessions/             # SessionStore <- JsonlSessionStore, SessionManager
+│   │   ├── agent/                # Agent orchestrator (DI), LoopGuard, ToolCallAccumulator,
+│   │   │                         #   ThinkingTagParser, SystemPrompt, orchestration + sub-agents
+│   │   ├── sessions/             # SessionStore <- JsonlSessionStore, SessionManager, Compactor
 │   │   │                         #   + one runtime (dedicated Agent) per open session
 │   │   ├── storage/              # Cross-platform path resolution (context.globalStorageUri)
-│   │   └── tools/                # Tool interface + ToolRegistry + 12 tools (one file each)
-│   │                             #   FileSystem / CommandRunner / HttpClient abstractions
+│   │   └── tools/                # Tool interface + ToolRegistry + 13 tools (one file each)
+│   │                             #   mode-policy (Analyze preview / Build), FileSystem /
+│   │                             #   CommandRunner / HttpClient abstractions
 │   ├── chat/
 │   │   ├── chat-view.ts          # Host WebviewViewProvider (single right-side view)
 │   │   ├── session-registry.ts   # Per-session agents (one agent = one session)
+│   │   ├── stream-tee.ts         # Per-session event router + live buffers
+│   │   ├── attachment-service.ts # Attach files/images as context
 │   │   ├── view-html.ts          # Pure HTML generator (sessions + tabs + chat)
 │   │   └── webview/              # Webview client (TS): view.ts + markdown.ts
 │   │       #                       markdown-it + DOMPurify, bundled with esbuild
-│   └── logger.ts                 # Optional file logger (HARNY_DEBUG=1)
+│   └── logger.ts                 # Diagnostics: "Output > Harny" channel + HARNY_DEBUG file
 ├── media/view.js                 # Webview client bundle (generated: node scripts/build-webview.mjs)
 ├── media/icon.svg                # Activity Bar icon
 ├── vitest.config.mts
@@ -52,16 +56,21 @@ npm test          # run all unit tests (vitest)
 npm run coverage  # with coverage report
 ```
 
-443 unit tests cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (JSONL store, manager, registry), the OpenAI-compatible LLM provider, host-model fetching, all 12 tools, the agent loop (fake LLM, abort, max turns, loop detection), markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code).
+795 unit tests cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (JSONL store, manager, registry, compactor), the OpenAI-compatible LLM provider (streaming, tool calls, `finish_reason`), host-model fetching, all 13 tools (including the Analyze dry-run preview), the mode policy, the agent loop (fake LLM, abort, max turns), the **loop guard** (reasoning/empty/tool-failure/error-streak/tool-repeat detection, tool-call dedup), orchestration/sub-agents, markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code).
 
 ## Features
 
 - **Chat Completions protocol** (`/v1/chat/completions`)
 - **Streaming**: Real-time SSE streaming for responsive UX
-- **12 tools**: Read, Write, StrReplace, Edit, Delete, Shell, Grep, Glob, TodoWrite, WebSearch, WebFetch, ReadLints
+- **13 tools**: Read, Write, StrReplace, Edit, Delete, Shell, Grep, Glob, TodoWrite, WebSearch, WebFetch, ReadLints, Delegate
 - **Plain tool outputs + three-section tool bubbles**: tool outputs are never colorized by line-prefix heuristics (a `ls -la` listing stays plain text); when Edit/Write/StrReplace/Delete touch a file, the tool bubble gets a third **Diff** section (Input / Output / Diff, collapsed with the bubble) showing the unified diff — a new file as all `+` additions, a deleted file as all `−` removals, modifications/string replacements as a mixed diff — with the **target file path in azure right after the tool name** and `+N/−M` counts in the Diff header
 - **Syntax highlighting in tool Diff sections**: code lines get editor-style syntax colors (Prism, one-dark palette) for TypeScript, JavaScript, Python, Rust, C#, HTML, CSS, JSON, Markdown, Bash, SQL and Go — unknown extensions fall back to plain diff coloring. The webview bundle is minified
-- **Agent loop**: Automatic tool execution, multi-turn continuation, loop detection (repeated failing/succeeding tool calls), no bounded turn count (Stop button only) — a `maxTurns` cap exists behind the scenes for tests/future config
+- **Agent loop**: Automatic tool execution, multi-turn continuation, no bounded turn count (Stop button only) — a `maxTurns` cap exists behind the scenes for tests/future config
+- **Two chat modes**: **Analyze** (read-only **preview** — changes are prepared and diffed but never written; the agent tells you to switch) and **Build** (full tool use, writes for real)
+- **Parallel / sub-agents**: the `Delegate` tool launches independent sub-tasks as sub-agents, with conflict analysis and automatic serialization of overlapping writers
+- **Loop guard**: reasoning, empty, failing-tool, error-streak and repeated-tool loops are **broken, not just stopped** — the host interrupts the degenerate behaviour, tells the model how to recover and keeps going; identical read-only calls are served from cache and identical failing calls are not re-run
+- **Output-token-limit handling**: the provider's `finish_reason` is propagated; a truncated response is surfaced explicitly ("raise `harny.maxTokens`") instead of failing silently
+- **Diagnostics**: one line per turn (finish reason, content/thinking sizes, tool names, loop-guard decisions) in **Output > Harny**; an optional full request file log with `HARNY_DEBUG=1`
 - **Per-session controls**: context window, output tokens and temperature are editable in the panel, persisted **per session** (JSONL header) and restored on reopen; output tokens/temperature win over the provider defaults
 - **Empty shell**: with no open session the control stack is hidden and a hero invites you to pick a session from the list or create a new one
 - **Sessions**: Persistent per-workspace sessions (JSONL), one agent per session, right-side view with tabs
@@ -72,6 +81,46 @@ npm run coverage  # with coverage report
 - **Cross-platform storage**: config and sessions live in `context.globalStorageUri` (per-OS, macOS `~/Library/…/globalStorage/spltek.harny`), overridable with `HARNY_HOME`; nothing is written inside the workspace
 - **VS Code native**: Right-side Activity Bar view, context menu integration, keybindings
 - **Extensible**: Add a tool by implementing the `Tool` interface and registering it in the `ToolRegistry`
+
+## Chat modes: Analyze (preview) & Build
+
+The header has a mode selector:
+
+- **Analyze** — read-only **preview**. The file-modifying tools (Write, StrReplace, Edit, Delete) still run, but in **dry-run**: they validate the change and return the exact **diff**, writing NOTHING to disk. So you can ask "fix X", review the proposed diffs in the tool bubbles, then apply them. The agent ends by telling you to switch to Build, and the host guarantees the closing note even if the model forgets (it regularly claims it "fixed" something it only previewed).
+- **Build** — full tool use: the same tools **write to disk**.
+
+The Shell tool is read-only in Analyze (commands that would modify the filesystem are refused before running) and sub-agents launched in Analyze must be `access: "read"`.
+
+## Parallel: sub-agents (orchestration)
+
+The **Parallel** toggle enables the `Delegate` tool: the main agent becomes an **orchestrator** that decomposes a task into independent sub-tasks and runs them as **sub-agents** — each a separate `Agent` with its own ephemeral history and turn budget, with orchestration depth capped at 1. Sub-tasks that touch disjoint files run **in parallel**; overlapping writers (or a writer and a reader of the same resource) are **serialized** automatically. A configurable cap limits how many run at once. Each sub-agent streams live inside its own bubble and returns a report.
+
+## Loop guard
+
+Degenerate loops are detected and **broken** instead of silently stopping the run:
+
+| Loop | How it's broken |
+|------|-----------------|
+| **reasoning** (within a turn) | the stream is cut and the model is told to stop reasoning and act |
+| **reasoning** (across turns) | a corrective nudge is injected |
+| **empty** (no text, no tool call) | the model is nudged to continue (bounded), then stopped loudly |
+| **tool-failure** | identical failing calls are not re-run; a corrective is injected |
+| **error-streak** | a summary of the failures + "change strategy" |
+| **tool-repeat** | identical successful read-only calls are served from cache; a corrective is injected |
+
+Each type escalates independently (up to two interventions, then a final `❌ Loop not resolved […]`). Every intervention is logged in the transcript as an amber **"Loop guard"** notice stating the type and how the system reacted.
+
+## Diagnostics
+
+Every turn writes one line to the **Output > Harny** channel:
+
+```
+[agent] turn 0: finish=stop content=123c thinking=456c tools=[Shell]
+[agent] loop-guard [tool-repeat] level 1: identical successful tool call repeated three times — …
+[agent] stop [truncation]: output-token limit reached (finish_reason=length)
+```
+
+Set `HARNY_DEBUG=1` to also log the exact request body to `/tmp/harny-debug.log`. Session transcripts are plain **JSONL** under `<home>/sessions/<workspace-key>/`, handy to reconstruct any run.
 
 ## Sessions: right-side view (Activity Bar icon)
 
