@@ -54,12 +54,13 @@ READ-ONLY MODE (Analyze) — PREVIEW RULES:
     // the agent must act as an orchestrator and actually use sub-agents.
     const hasDelegate = definitions.some((d) => d.name === DELEGATE_TOOL_NAME);
     const orchestratorIntro = hasDelegate
-      ? `\nORCHESTRATION MODE: the "Parallel" toggle is ON. You are the ORCHESTRATOR: coordinate SUB-AGENTS through the Delegate tool, and prefer delegating independent work over doing everything yourself.`
+      ? `\nORCHESTRATION MODE (MANDATORY): the "Parallel" toggle is ON. You are the ORCHESTRATOR: coordinate SUB-AGENTS through the Delegate tool. You MUST delegate at least one sub-task on every request — do NOT answer directly.`
       : "";
     const delegateRules = hasDelegate
       ? `
 
 ORCHESTRATION — you are the ORCHESTRATOR: you ORGANIZE the work into sub-tasks and decide what runs in PARALLEL.
+- MANDATORY: with Parallel ON you MUST run at least one sub-agent per user request. ALWAYS analyze whether the work can be parallelized; if nothing can run in parallel, delegate the whole bounded task to ONE sub-agent. Never answer a request without delegating.
 - STEP 1 — DECOMPOSE: split the request into bounded sub-tasks, each with a clear goal, an optional role, and the resources it touches.
 - STEP 2 — ANALYZE CONFLICTS (the critical thinking step). Decide which sub-tasks are INDEPENDENT and which CONFLICT. Do NOT look only at exact file paths — reason about resources and dependencies in general:
   · two writers on the same file or directory conflict;

@@ -95,6 +95,10 @@ export class Agent implements ChatController {
   private readonly guard = new LoopGuard();
   /** Analyze mode: at least one change was PREPARED as a dry-run preview. */
   private preparedPreviews = false;
+  /** Parallel ON: at least one Delegate call was emitted for this user message. */
+  private delegatedThisRun = false;
+  /** Parallel ON: the "you must delegate" corrective was already injected. */
+  private forcedDelegationNudge = false;
   /** Whether the forced final-report turn already ran (turn-budget exhausted). */
   private forcedFinalReport = false;
   /** Cap: may this agent EVER delegate? Sub-agents pass false (depth 1). */
@@ -175,6 +179,8 @@ export class Agent implements ChatController {
     this._streaming = true;
     this.guard.reset();
     this.preparedPreviews = false;
+    this.delegatedThisRun = false;
+    this.forcedDelegationNudge = false;
     this.forcedFinalReport = false;
     try {
       await this.runTurns(0);
@@ -312,6 +318,27 @@ export class Agent implements ChatController {
     });
 
     if (toolCalls.length === 0) {
+      // Parallel ON is a HARD guarantee: the user expects to see at least one
+      // sub-agent per request. If the model answered directly, nudge it once
+      // (host-enforced, not just prompt-enforced) to actually delegate.
+      if (
+        this.delegationEnabled &&
+        !this.delegatedThisRun &&
+        !this.forcedDelegationNudge &&
+        turn + 1 < maxTurns
+      ) {
+        this.forcedDelegationNudge = true;
+        this.log(`parallel ON but no Delegate call — nudging the model to delegate`);
+        this.deps.history.add({
+          role: "user",
+          content:
+            "Parallel is ON but you did NOT delegate. This is MANDATORY: emit at least one Delegate call NOW. " +
+            "Decompose the request and run its independent sub-tasks as sub-agents; if nothing can run in parallel, " +
+            "delegate the single bounded sub-task to ONE sub-agent. Do not answer directly.",
+          timestamp: Date.now(),
+        });
+        return this.runTurns(turn + 1);
+      }
       // Follow-through safety is enforced by the system prompt, not by runtime
       // heuristics: it states that an action MUST be expressed as a tool call
       // in the same turn and that a no-tool turn counts as the final answer.
@@ -522,7 +549,8 @@ export class Agent implements ChatController {
         "VALIDATED diff previews) but nothing is applied; finish by telling the user to switch to Build to apply"
       : "Build — you CAN create, modify and delete files";
     const parallel = this.delegationEnabled
-      ? "ON — you may delegate independent sub-tasks to sub-agents via the Delegate tool"
+      ? "ON — MANDATORY: you MUST run at least one sub-agent via the Delegate tool on EVERY request " +
+        "(a single one is fine when nothing can run in parallel)"
       : "OFF — no sub-agents: use your own tools only";
     return `[CURRENT STATE] Mode: ${mode}. Parallel: ${parallel}.`;
   }
@@ -706,6 +734,10 @@ export class Agent implements ChatController {
    * of whether the model did (it regularly replies "fixed it" anyway).
    */
   private withPreviewFooter(content: string): string {
+    // Only the TOP-LEVEL orchestrator (which the user reads) gets the footer:
+    // a sub-agent's report is consumed by the orchestrator, so the notice there
+    // is noise.
+    if (!this.mayDelegate) return content;
     if (!this.preparedPreviews || !isAnalyzeMode(this._mode)) return content;
     // Do not duplicate the hint if the model already included it.
     if (/switch to\s*\**build\**/i.test(content)) return content;
@@ -721,6 +753,9 @@ export class Agent implements ChatController {
    * session's runner (which builds and drives a separate Agent).
    */
   private async executeDelegate(tc: ToolCall): Promise<ToolResult> {
+    // Mark that the model DID delegate this run (used by the Parallel hard
+    // guarantee: at least one Delegate per user message when Parallel is ON).
+    this.delegatedThisRun = true;
     if (!this.mayDelegate) {
       return { content: "Sub-agents cannot delegate further (orchestration depth is 1).", isError: true };
     }

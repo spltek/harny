@@ -93,7 +93,9 @@ The Shell tool is read-only in Analyze (commands that would modify the filesyste
 
 ## Parallel: sub-agents (orchestration)
 
-The **Parallel** toggle enables the `Delegate` tool: the main agent becomes an **orchestrator** that decomposes a task into independent sub-tasks and runs them as **sub-agents** — each a separate `Agent` with its own ephemeral history and turn budget, with orchestration depth capped at 1. Sub-tasks that touch disjoint files run **in parallel**; overlapping writers (or a writer and a reader of the same resource) are **serialized** automatically. A configurable cap limits how many run at once. Each sub-agent streams live inside its own bubble and returns a report.
+The **Parallel** toggle enables the `Delegate` tool: the main agent becomes an **orchestrator** that decomposes a task into independent sub-tasks and runs them as **sub-agents** — each a separate `Agent` with its own ephemeral history (unbounded by default, like the orchestrator), with orchestration depth capped at 1. Sub-tasks that touch disjoint files run **in parallel**; overlapping writers (or a writer and a reader of the same resource) are **serialized** automatically. A configurable cap limits how many run at once. Each sub-agent streams live inside its own bubble and returns a report.
+
+**With Parallel ON the orchestrator MUST run at least one sub-agent per request** — always analyzing whether the work can be parallelized, and falling back to a single delegated sub-task when nothing can run in parallel. The host enforces this: if the model tries to answer directly, it is nudged to delegate. Sub-agents share all tools (except `Delegate`) and the loop guard, and are stopped together with the parent.
 
 ## Loop guard
 

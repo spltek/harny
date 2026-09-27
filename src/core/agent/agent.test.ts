@@ -1244,6 +1244,80 @@ describe("Orchestration (Delegate)", () => {
     });
   });
 
+  it("Parallel ON hard guarantee: nudges a direct answer so at least one sub-agent runs", async () => {
+    const spawned: DelegateSpec[] = [];
+    const history = new InMemoryChatHistory();
+    const factory = fakeFactory(
+      [{ type: "text", content: "here is your answer" }],
+      delegateTurn([{ id: "A", goal: "do it", access: "read", resources: ["a.ts"] }]),
+      [{ type: "text", content: "done" }],
+    );
+    const tools = new ToolRegistry([makeTool("Read")]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history,
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      spawnSubAgent: async (spec) => {
+        spawned.push(spec);
+        return { content: "report", isError: false };
+      },
+    });
+    agent.setMode("agent");
+    agent.setDelegation(true);
+
+    await agent.send("do the thing");
+
+    expect(spawned).toHaveLength(1);
+    expect(history.all().some((m) => m.role === "user" && /MANDATORY/.test(m.content))).toBe(true);
+  });
+
+  it("Parallel ON: nudges only once when the model keeps refusing to delegate", async () => {
+    const history = new InMemoryChatHistory();
+    const factory = fakeFactory([{ type: "text", content: "answer" }]); // repeats forever
+    const tools = new ToolRegistry([makeTool("Read")]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history,
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      spawnSubAgent: async () => ({ content: "r", isError: false }),
+    });
+    agent.setMode("agent");
+    agent.setDelegation(true);
+
+    await agent.send("x");
+
+    expect(factory.calls).toBe(2); // direct answer + one nudge turn
+    expect(history.all().filter((m) => m.role === "user" && /MANDATORY/.test(m.content))).toHaveLength(1);
+  });
+
+  it("Parallel OFF: no mandatory-delegation nudge", async () => {
+    const history = new InMemoryChatHistory();
+    const factory = fakeFactory([{ type: "text", content: "answer" }]);
+    const tools = new ToolRegistry([makeTool("Read")]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history,
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      spawnSubAgent: async () => ({ content: "r", isError: false }),
+    });
+    agent.setMode("agent");
+    agent.setDelegation(false);
+
+    await agent.send("x");
+
+    expect(factory.calls).toBe(1);
+    expect(history.all().some((m) => m.role === "user" && /MANDATORY/.test(m.content))).toBe(false);
+  });
+
   it("runs parallel read-delegates concurrently (both start before either ends)", async () => {
     const order: string[] = [];
     const spawn = async (spec: DelegateSpec): Promise<ToolResult> => {
