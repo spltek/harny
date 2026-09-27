@@ -76,6 +76,7 @@ function buildHarness(
     tools?: Tool[];
     maxTurns?: number;
     log?: (message: string) => void;
+    onTurnBoundary?: () => Promise<void> | void;
   } = {},
 ): Harness {
   const config = new StaticConfigProvider(opts.config ?? VALID_CONFIG);
@@ -96,6 +97,7 @@ function buildHarness(
     systemPrompt,
     maxTurns: opts.maxTurns,
     log: opts.log,
+    onTurnBoundary: opts.onTurnBoundary,
   });
   return { agent, factory, events: eventsLog, history };
 }
@@ -662,6 +664,24 @@ describe("Agent", () => {
     expect(history.all().some((m) => m.role === "assistant" && m.content.includes("real answer"))).toBe(true);
     expect(history.all().some((m) => m.role === "user" && /Continue NOW/.test(m.content))).toBe(true);
     expect(factory.calls).toBeGreaterThanOrEqual(3);
+  });
+
+  it("awaits onTurnBoundary before EVERY turn (mid-run hook)", async () => {
+    let boundaries = 0;
+    const { agent } = buildHarness({
+      chunks: [
+        [{ type: "tool_call_start", index: 0, id: "c", name: "FakeTool" }, { type: "tool_call_end", index: 0 }],
+        [{ type: "text", content: "done" }],
+      ],
+      onTurnBoundary: () => {
+        boundaries++;
+      },
+    });
+
+    await agent.send("x");
+
+    // Once before turn 0 (tool call) and once before turn 1 (final answer).
+    expect(boundaries).toBe(2);
   });
 
   it("emits a per-turn diagnostic line to the injected log", async () => {

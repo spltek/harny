@@ -38,6 +38,7 @@ describe("SessionRegistry", () => {
     const rt = registry.create();
 
     expect(createAgent).toHaveBeenCalledTimes(1);
+    expect(createAgent).toHaveBeenCalledWith(expect.anything(), "s1");
     expect(rt.sessionId).toBe("s1");
     expect(registry.isOpen("s1")).toBe(true);
     expect(registry.listOpenIds()).toEqual(["s1"]);

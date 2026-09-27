@@ -112,7 +112,11 @@ export function activate(context: ExtensionContext) {
     return uris?.map((u) => u.fsPath);
   });
 
-  const createAgent = (history: ChatHistory): ChatController => {
+  // Mid-run auto-compaction hook, wired once the view provider exists (below):
+  // the agent awaits it at every turn boundary so a long run compacts then
+  // continues.
+  let midRunCompact: ((sessionId: string) => Promise<void>) | undefined;
+  const createAgent = (history: ChatHistory, sessionId: string): ChatController => {
     // One sub-agent runner per session: it owns the ephemeral sub-agent
     // histories and cascades Stop to any in-flight sub-agent.
     const subAgents = new SubAgentRunner({ config, llmFactory, tools, cwd, log: (m) => infoLog(`[agent] ${m}`) });
@@ -127,6 +131,7 @@ export function activate(context: ExtensionContext) {
       spawnSubAgent: (spec, onEvent, signal) => subAgents.run(spec, onEvent, signal),
       onAbort: () => subAgents.abortAll(),
       log: (m) => infoLog(`[agent] ${m}`),
+      onTurnBoundary: () => midRunCompact?.(sessionId),
     });
   };
 
@@ -149,6 +154,7 @@ export function activate(context: ExtensionContext) {
     },
   );
   viewProvider.setContext(context);
+  midRunCompact = (id) => viewProvider.maybeCompactDuringRun(id);
 
   // The sessions live in the CENTRAL home bucket keyed by the root: when the
   // open folder set changes, re-derive the single root and rebuild the view

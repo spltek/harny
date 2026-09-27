@@ -1519,6 +1519,46 @@ describe("ChatViewProvider compaction", () => {
     expect(send).toHaveBeenCalled();
   });
 
+  it("mid-run auto-compaction compacts at a turn boundary without ending the working state", async () => {
+    const options = { compactor: new Compactor(compactorFactory(), () => CONFIG), compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    const { view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 200000;
+    rt.contextTokens = 170000; // over the threshold
+    rt.history.replace([
+      { role: "user", content: "let's go", timestamp: 1 },
+      { role: "assistant", content: "ok", timestamp: 2 },
+      { role: "user", content: "then", timestamp: 3 },
+      { role: "assistant", content: "done", timestamp: 4 },
+    ]);
+    view.webview.postMessage.mockClear();
+
+    await provider.maybeCompactDuringRun("s1");
+
+    expect(registry.get("s1")!.history.conversation()[0].role).toBe("system");
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactStart" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactDone" });
+    // The run is still going: NO status message may turn the working bar off.
+    expect(view.webview.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "status", active: false }),
+    );
+  });
+
+  it("mid-run auto-compaction is a no-op below the threshold", async () => {
+    const options = { compactor: new Compactor(compactorFactory(), () => CONFIG), compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    const { view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    registry.get("s1")!.contextTokens = 1000; // 0.5%: way below
+    view.webview.postMessage.mockClear();
+
+    await provider.maybeCompactDuringRun("s1");
+
+    expect(view.webview.postMessage).not.toHaveBeenCalledWith({ type: "compactStart" });
+  });
+
   it("auto-compacts with the SAME manual plan as the Compact button (never a silent no-op)", async () => {
     // A small talk that crosses the threshold must still be REALLY compacted:
     // the button's planManualCompaction always compacts a fraction, so the

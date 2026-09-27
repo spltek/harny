@@ -80,6 +80,10 @@ export interface AgentDeps {
    * line per turn + one per loop/stop decision, so a run can be diagnosed
    * after the fact without the in-memory raw stream. Never throws. */
   log?: (message: string) => void;
+  /** Called (and awaited) at the START of every turn, before the LLM request.
+   * The host uses it to auto-compact MID-RUN when the context threshold is
+   * exceeded: it compacts at a step boundary, then the run continues. */
+  onTurnBoundary?: () => Promise<void> | void;
 }
 
 /**
@@ -221,6 +225,16 @@ export class Agent implements ChatController {
   }
 
   private async runTurns(turn: number): Promise<void> {
+    // Turn boundary: the host may auto-compact here (threshold exceeded) so a
+    // long run compacts at a step boundary and CONTINUES. Awaited so the next
+    // LLM request already sees the compacted history.
+    if (this.deps.onTurnBoundary) {
+      try {
+        await this.deps.onTurnBoundary();
+      } catch (err: any) {
+        this.log(`onTurnBoundary failed: ${err?.message ?? String(err)}`);
+      }
+    }
     // No default turn budget: the user keeps control and can abort manually
     // (the Stop button). The cap ONLY applies when a caller opts in via
     // `maxTurns` (e.g. a future config option or a unit test).

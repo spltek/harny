@@ -45,7 +45,7 @@ export interface SessionRuntime {
 export interface SessionRegistryDeps {
   sessions: SessionManager;
   store: SessionStore;
-  createAgent: (history: ChatHistory) => ChatController;
+  createAgent: (history: ChatHistory, sessionId: string) => ChatController;
 }
 
 /**
@@ -115,7 +115,7 @@ export class SessionRegistry {
   }
 
   private spawn(id: string, history: ChatHistory): SessionRuntime {
-    const agent = this.deps.createAgent(history);
+    const agent = this.deps.createAgent(history, id);
     const rt: SessionRuntime = { sessionId: id, agent, history };
     this.open.set(id, rt);
     return rt;

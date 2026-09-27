@@ -703,6 +703,36 @@ export class ChatViewProvider implements WebviewViewProvider {
   }
 
   /**
+   * Mid-run auto-compaction, invoked by the agent at every TURN BOUNDARY. If
+   * the context threshold is exceeded, compact the session in place and let the
+   * agent resume with the compacted history (the run continues). The global
+   * "working" status is deliberately NOT touched: the agent is still running.
+   */
+  async maybeCompactDuringRun(sessionId: string): Promise<void> {
+    const rt = this.registry.get(sessionId);
+    if (!rt || this.compacting) return;
+    if (!this.needsAutoCompact(rt)) return;
+    await this.compactDuringRun(rt);
+  }
+
+  private async compactDuringRun(rt: SessionRuntime): Promise<void> {
+    this.compacting = true;
+    const isActive = this.activeId === rt.sessionId;
+    if (isActive) this.view?.webview.postMessage({ type: "compactStart" });
+    try {
+      await this.performCompaction(rt);
+    } catch (e: any) {
+      infoLog("mid-run auto-compaction failed; continuing:", e?.message || String(e));
+    } finally {
+      this.compacting = false;
+      // Only the in-chat bubble changes: no `status` posts, so the working
+      // indicator keeps showing (the run is still in flight).
+      if (isActive) this.view?.webview.postMessage({ type: "compactDone" });
+    }
+    void this.pushConfig();
+  }
+
+  /**
    * Effective compaction settings for a runtime: the shared defaults overlaid
    * with the session's own threshold % (first run = DEFAULT_COMPACTION 80).
    */
