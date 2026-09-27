@@ -100,6 +100,11 @@
           "default": 8192,
           "description": "Maximum tokens per response"
         },
+        "harny.subagentMaxTurns": {
+          "type": "number",
+          "default": 100,
+          "description": "Max tool turns a single sub-agent may use before it is asked for its report. Raise it for long sub-tasks; the loop guard still stops degenerate loops."
+        },
         "harny.temperature": {
           "type": "number",
           "description": "Sampling temperature"
@@ -109,9 +114,11 @@
           "enum": [
             "bool",
             "effort",
-            "none"
+            "type",
+            "reasoning",
+            "unspecified"
           ],
-          "description": "How the provider exposes the reasoning/thinking phase: \"bool\" (llama.cpp chat_template_kwargs.enable_thinking), \"effort\" (OpenAI-style reasoning_effort), \"none\" (nothing sent)"
+          "description": "How the provider exposes the reasoning/thinking phase: \"bool\" (llama.cpp chat_template_kwargs.enable_thinking), \"effort\" (OpenAI-style reasoning_effort), \"type\" (DeepSeek/Anthropic thinking.type), \"reasoning\" (OpenRouter-native), \"unspecified\" (nothing sent)"
         },
         "harny.thinkingLevel": {
           "type": "string",

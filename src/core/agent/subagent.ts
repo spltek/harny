@@ -21,7 +21,7 @@ import { SubAgentSystemPromptBuilder } from "./system-prompt";
 /** Turn budget for a sub-agent: bounded work, but generous enough for real
  * exploration with verbose models (DeepSeek and friends). When the budget is
  * exhausted the agent still runs ONE forced, tool-less report turn. */
-export const SUBAGENT_MAX_TURNS = 25;
+export const SUBAGENT_MAX_TURNS = 100;
 
 export interface SubAgentRunnerDeps {
   config: ConfigProvider;
@@ -75,7 +75,9 @@ export class SubAgentRunner {
     const mode: ChatMode = spec.access === "read" ? "analyze" : "agent";
     const history = new InMemoryChatHistory();
     const events = new InMemoryEventBus<AgentEvent>();
-    const maxTurns = this.deps.maxTurns ?? SUBAGENT_MAX_TURNS;
+    // Explicit dep (tests) wins; otherwise the configured budget (default
+    // 100) so a long sub-task is not truncated at an arbitrary low number.
+    const maxTurns = this.deps.maxTurns ?? this.deps.config.get().subagentMaxTurns ?? SUBAGENT_MAX_TURNS;
     const systemPrompt = new SubAgentSystemPromptBuilder(
       (m) => toolDefinitionsForMode(this.deps.tools.getAll(), m, { exclude: [DELEGATE_TOOL_NAME] }),
       this.deps.cwd,

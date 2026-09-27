@@ -126,6 +126,58 @@ describe("SubAgentRunner", () => {
     expect(res.content).toContain("forced report");
   });
 
+  it("uses the configured subagentMaxTurns as the turn budget", async () => {
+    let systemPrompt = "";
+    const captureFactory: LLMProviderFactory = {
+      create() {
+        return {
+          protocol: "chat" as const,
+          async *stream(messages: LLMMessage[]) {
+            if (!systemPrompt) systemPrompt = String(messages[0]?.content ?? "");
+            yield { type: "text", content: "report" };
+          },
+        };
+      },
+    };
+    const runner = new SubAgentRunner({
+      config: new StaticConfigProvider({ ...CONFIG, subagentMaxTurns: 7 }),
+      llmFactory: captureFactory,
+      tools: new ToolRegistry([]),
+      cwd: () => "/workspace",
+    });
+
+    await runner.run(spec({ access: "read" }));
+
+    expect(systemPrompt).toContain("BUDGET");
+    expect(systemPrompt).toContain("7");
+  });
+
+  it("defaults the sub-agent budget to 100 turns when unset", async () => {
+    let systemPrompt = "";
+    const captureFactory: LLMProviderFactory = {
+      create() {
+        return {
+          protocol: "chat" as const,
+          async *stream(messages: LLMMessage[]) {
+            if (!systemPrompt) systemPrompt = String(messages[0]?.content ?? "");
+            yield { type: "text", content: "report" };
+          },
+        };
+      },
+    };
+    const runner = new SubAgentRunner({
+      config: new StaticConfigProvider(CONFIG),
+      llmFactory: captureFactory,
+      tools: new ToolRegistry([]),
+      cwd: () => "/workspace",
+    });
+
+    await runner.run(spec({ access: "read" }));
+
+    expect(systemPrompt).toContain("BUDGET");
+    expect(systemPrompt).toContain("100");
+  });
+
   it("forwards its live events to the caller (nested streaming)", async () => {
     const runner = buildRunner(
       factory([[{ type: "thinking", content: "hmm" }], [{ type: "text", content: "report" }]]),

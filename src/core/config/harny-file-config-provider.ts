@@ -308,6 +308,7 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
     if (typeof data.enableThinking === "boolean") out.enableThinking = data.enableThinking;
     if (isThinkingMode(data.thinkingMode)) out.thinkingMode = data.thinkingMode;
     if (isPositiveInt(data.maxParallelSubAgents)) out.maxParallelSubAgents = data.maxParallelSubAgents;
+    if (isPositiveInt(data.subagentMaxTurns)) out.subagentMaxTurns = data.subagentMaxTurns;
     if (isThinkingLevel(data.thinkingLevel)) out.thinkingLevel = data.thinkingLevel;
     // Legacy `enableThinking` (boolean) drives the provider entry too.
     if (typeof data.enableThinking === "boolean" && !isThinkingMode(data.thinkingMode)) {

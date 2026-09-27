@@ -84,7 +84,12 @@ export interface HarnyConfig {
    * Undefined = no cap. Set from the gear form.
    */
   maxParallelSubAgents?: number;
-
+  /**
+   * Max tool turns a single sub-agent may use before it is asked for its
+   * report (default 100). Raise it for long sub-tasks; the loop guard still
+   * stops degenerate loops independently.
+   */
+  subagentMaxTurns?: number;
 }
 
 export const DEFAULT_CONFIG: HarnyConfig = {
@@ -96,6 +101,7 @@ export const DEFAULT_CONFIG: HarnyConfig = {
   contextFiles: true,
   autoApprove: false,
   autoOpen: false,
+  subagentMaxTurns: 100,
 };
 
 export interface ConfigProvider {

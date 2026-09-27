@@ -349,6 +349,7 @@ For providers that expose their model list (OpenAI, OpenRouter, opencode-go, lla
 | `harny.baseUrl` | `https://api.openai.com` | Base URL (for compatible providers) |
 | `harny.model` | `gpt-4o` | Model for chat completions |
 | `harny.maxTokens` | `8192` | Max tokens per response |
+| `harny.subagentMaxTurns` | `100` | Max tool turns a single sub-agent may use before it is asked for its report (also settable as `subagentMaxTurns` in the config file); raise it for long sub-tasks |
 | `harny.temperature` | not set | Sampling temperature (omitted when unset; required by strict models) |
 | `harny.thinkingMode` | not set | How the reasoning phase is expressed (`bool`, `effort`, `type`, `reasoning`, `unspecified`); the provider's `thinking` field and the per-session dropdown override it — see the Thinking section |
 | `harny.thinkingLevel` | `medium` | Default thinking level (`off`/`low`/`medium`/`high`); per provider entry you can also set `thinkingLevel` — the dropdown only unlocks for providers that declare `thinking` |

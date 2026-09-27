@@ -28,6 +28,7 @@ export class VscodeConfigProvider implements ConfigProvider {
       contextFiles: cfg.get<boolean>("contextFiles", DEFAULT_CONFIG.contextFiles),
       autoApprove: cfg.get<boolean>("autoApprove", DEFAULT_CONFIG.autoApprove),
       autoOpen: cfg.get<boolean>("autoOpen", DEFAULT_CONFIG.autoOpen),
+      subagentMaxTurns: cfg.get<number>("subagentMaxTurns", DEFAULT_CONFIG.subagentMaxTurns ?? 100),
       enableThinking: cfg.get<boolean | undefined>("enableThinking", undefined),
       thinkingMode: (() => {
         const v = cfg.get<unknown>("thinkingMode", undefined);
