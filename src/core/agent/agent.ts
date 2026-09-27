@@ -31,7 +31,7 @@ import { BUILD_SWITCH_HINT, type SystemPromptBuilder } from "./system-prompt";
 import { LoopGuard, type LoopDecision } from "./loop-guard";
 import { ToolCallAccumulator } from "./tool-call-accumulator";
 import { ThinkingTagParser } from "./thinking-parser";
-import type { AgentEvent } from "./types";
+import type { AgentEvent, SubAgentEvent } from "./types";
 
 /**
  * The host writes a synthetic label as the assistant content of a turn that
@@ -99,6 +99,8 @@ export class Agent implements ChatController {
   private delegatedThisRun = false;
   /** Parallel ON: the "you must delegate" corrective was already injected. */
   private forcedDelegationNudge = false;
+  /** The user message that started the current run (goal for the forced sub-agent). */
+  private runGoal = "";
   /** Whether the forced final-report turn already ran (turn-budget exhausted). */
   private forcedFinalReport = false;
   /** Cap: may this agent EVER delegate? Sub-agents pass false (depth 1). */
@@ -162,6 +164,7 @@ export class Agent implements ChatController {
       displayText: options.displayText,
       timestamp: Date.now(),
     });
+    this.runGoal = userMessage.trim() || options.displayText?.trim() || "";
 
     const config = this.deps.config.get();
     if (requiresApiKey(config)) {
@@ -308,36 +311,48 @@ export class Agent implements ChatController {
     const withTruncation = truncated
       ? `${storedContent}\n\n> ⚠️ ${this.truncationNote(thinking.trim().length > 0)}`
       : storedContent;
+    // Parallel ON is a HARD guarantee (≥1 sub-agent per request). If the model
+    // refused even after the nudge, the HOST will dispatch one itself; in that
+    // case keep the model's direct answer only in the UI (uiOnly) so the LLM
+    // story does not carry a now-superseded answer before the sub-agent turn.
+    const willForceDelegate =
+      toolCalls.length === 0 &&
+      this.delegationEnabled &&
+      !this.delegatedThisRun &&
+      this.forcedDelegationNudge &&
+      !!this.deps.spawnSubAgent &&
+      !!this.runGoal;
     this.deps.history.add({
       role: "assistant",
       content: this.withPreviewFooter(withTruncation),
       toolCalls,
       timestamp: Date.now(),
+      ...(willForceDelegate ? { uiOnly: true } : {}),
       ...(thinking.trim() ? { thinking } : {}),
       ...(reasoningDetails && reasoningDetails.length > 0 ? { reasoningDetails } : {}),
     });
 
     if (toolCalls.length === 0) {
-      // Parallel ON is a HARD guarantee: the user expects to see at least one
-      // sub-agent per request. If the model answered directly, nudge it once
-      // (host-enforced, not just prompt-enforced) to actually delegate.
-      if (
-        this.delegationEnabled &&
-        !this.delegatedThisRun &&
-        !this.forcedDelegationNudge &&
-        turn + 1 < maxTurns
-      ) {
-        this.forcedDelegationNudge = true;
-        this.log(`parallel ON but no Delegate call — nudging the model to delegate`);
-        this.deps.history.add({
-          role: "user",
-          content:
-            "Parallel is ON but you did NOT delegate. This is MANDATORY: emit at least one Delegate call NOW. " +
-            "Decompose the request and run its independent sub-tasks as sub-agents; if nothing can run in parallel, " +
-            "delegate the single bounded sub-task to ONE sub-agent. Do not answer directly.",
-          timestamp: Date.now(),
-        });
-        return this.runTurns(turn + 1);
+      if (this.delegationEnabled && !this.delegatedThisRun) {
+        // 1) First offense: nudge the model to delegate and continue.
+        if (!this.forcedDelegationNudge && turn + 1 < maxTurns) {
+          this.forcedDelegationNudge = true;
+          this.log(`parallel ON but no Delegate call — nudging the model to delegate`);
+          this.deps.history.add({
+            role: "user",
+            content:
+              "Parallel is ON but you did NOT delegate. This is MANDATORY: emit at least one Delegate call NOW. " +
+              "Decompose the request and run its independent sub-tasks as sub-agents; if nothing can run in parallel, " +
+              "delegate the single bounded sub-task to ONE sub-agent. Do not answer directly.",
+            timestamp: Date.now(),
+          });
+          return this.runTurns(turn + 1);
+        }
+        // 2) The model ignored the nudge: the HOST dispatches one sub-agent.
+        if (willForceDelegate) {
+          await this.forceDelegate(turn);
+          return;
+        }
       }
       // Follow-through safety is enforced by the system prompt, not by runtime
       // heuristics: it states that an action MUST be expressed as a tool call
@@ -745,6 +760,60 @@ export class Agent implements ChatController {
       `${content}\n\n---\n⚠️ Nothing has been applied: the changes above were prepared as **previews** ` +
       `and are NOT on disk. ${BUILD_SWITCH_HINT}`
     );
+  }
+
+  /**
+   * HARD guarantee for Parallel ON: the model refused to delegate even after
+   * the corrective nudge, so the HOST dispatches ONE sub-agent with the whole
+   * user request. It is recorded as a synthetic Delegate tool call (so the
+   * transcript, the UI bubble and the LLM story all stay coherent), then the
+   * orchestrator is asked to answer from the report.
+   */
+  private async forceDelegate(turn: number): Promise<void> {
+    if (!this.deps.spawnSubAgent || !this.runGoal) return;
+    const spec: DelegateSpec = {
+      id: "auto",
+      goal: this.runGoal,
+      access: isAnalyzeMode(this._mode) ? "read" : "write",
+      resources: ["."],
+      parallel: false,
+      after: [],
+    };
+    const toolCallId = "auto-delegate";
+    const args: Record<string, unknown> = {
+      id: spec.id,
+      goal: spec.goal,
+      access: spec.access,
+      resources: spec.resources,
+    };
+    this.delegatedThisRun = true;
+    this.log(`parallel hard fallback: host dispatched one sub-agent ("${spec.id}")`);
+    this.deps.history.add({
+      role: "assistant",
+      content: "",
+      toolCalls: [{ id: toolCallId, name: DELEGATE_TOOL_NAME, arguments: args }],
+      timestamp: Date.now(),
+    });
+    this.deps.events.emit({
+      type: "tool_call",
+      toolCall: { id: toolCallId, name: DELEGATE_TOOL_NAME, arguments: args },
+    });
+    let result: ToolResult;
+    try {
+      this.deps.events.emit({ type: "subagent_start", toolCallId });
+      const onEvent = (event: SubAgentEvent) =>
+        this.deps.events.emit({ type: "subagent_event", toolCallId, event });
+      result = await this.deps.spawnSubAgent(spec, onEvent, this.abortController?.signal);
+    } catch (err: any) {
+      result = { content: formatSubAgentError(spec, err?.message || String(err)), isError: true };
+    }
+    this.deps.events.emit({
+      type: "tool_result",
+      toolResult: { toolCallId, output: result.content, isError: result.isError },
+    });
+    this.deps.history.add({ role: "tool", content: result.content, toolCallId, timestamp: Date.now() });
+    if (this.abortController?.signal.aborted) return;
+    await this.runTurns(turn + 1);
   }
 
   /**

@@ -1274,9 +1274,10 @@ describe("Orchestration (Delegate)", () => {
     expect(history.all().some((m) => m.role === "user" && /MANDATORY/.test(m.content))).toBe(true);
   });
 
-  it("Parallel ON: nudges only once when the model keeps refusing to delegate", async () => {
+  it("Parallel ON hard fallback: the HOST dispatches a sub-agent if the model never delegates", async () => {
+    const spawned: DelegateSpec[] = [];
     const history = new InMemoryChatHistory();
-    const factory = fakeFactory([{ type: "text", content: "answer" }]); // repeats forever
+    const factory = fakeFactory([{ type: "text", content: "direct answer" }]); // never delegates
     const tools = new ToolRegistry([makeTool("Read")]);
     const agent = new Agent({
       config: new StaticConfigProvider(VALID_CONFIG),
@@ -1285,15 +1286,25 @@ describe("Orchestration (Delegate)", () => {
       history,
       events: new InMemoryEventBus<AgentEvent>(),
       systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
-      spawnSubAgent: async () => ({ content: "r", isError: false }),
+      spawnSubAgent: async (spec) => {
+        spawned.push(spec);
+        return { content: "auto report", isError: false };
+      },
     });
     agent.setMode("agent");
     agent.setDelegation(true);
 
-    await agent.send("x");
+    await agent.send("do the thing");
 
-    expect(factory.calls).toBe(2); // direct answer + one nudge turn
+    // The nudge was injected ONCE, then the host dispatched exactly one sub-agent.
     expect(history.all().filter((m) => m.role === "user" && /MANDATORY/.test(m.content))).toHaveLength(1);
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0].goal).toBe("do the thing");
+    // The report is in the transcript as a tool result of a synthetic Delegate call.
+    expect(history.all().some((m) => m.role === "tool" && /auto report/.test(m.content))).toBe(true);
+    expect(
+      history.all().some((m) => m.role === "assistant" && m.toolCalls?.some((tc) => tc.name === "Delegate")),
+    ).toBe(true);
   });
 
   it("Parallel OFF: no mandatory-delegation nudge", async () => {
