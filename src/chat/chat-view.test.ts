@@ -1485,6 +1485,40 @@ describe("ChatViewProvider compaction", () => {
     );
   });
 
+  it("best-effort: a failed auto-compaction does not abort the request or hang", async () => {
+    const failingFactory = {
+      create: vi.fn(() => ({
+        protocol: "chat" as const,
+        async *stream() {
+          throw new Error("summarizer network error");
+        },
+      })),
+    } as unknown as LLMProviderFactory;
+    const options = { compactor: new Compactor(failingFactory, () => CONFIG), compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "m", provider: "p" });
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 200000;
+    rt.contextTokens = 170000; // over the threshold -> would compact BEFORE the request
+    rt.history.replace([
+      { role: "user", content: "let's go", timestamp: 1 },
+      { role: "assistant", content: "ok", timestamp: 2 },
+      { role: "user", content: "then", timestamp: 3 },
+      { role: "assistant", content: "done", timestamp: 4 },
+    ]);
+    const send = vi.fn(async () => {
+      (rt.agent as any).streaming = true;
+    });
+    (rt.agent as any).send = send;
+
+    // Must resolve (no throw) and still dispatch the user's request.
+    await handler({ type: "send", text: "more" });
+
+    expect(send).toHaveBeenCalled();
+  });
+
   it("auto-compacts with the SAME manual plan as the Compact button (never a silent no-op)", async () => {
     // A small talk that crosses the threshold must still be REALLY compacted:
     // the button's planManualCompaction always compacts a fraction, so the

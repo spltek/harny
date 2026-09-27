@@ -178,6 +178,24 @@ describe("SubAgentRunner", () => {
     expect(systemPrompt).not.toContain("BUDGET");
   });
 
+  it("does not append the Analyze preview footer to a sub-agent report", async () => {
+    const write: Tool = {
+      name: "Write",
+      definition: { name: "Write", description: "write", parameters: { type: "object", properties: {} } },
+      execute: () => ({ content: "PROPOSED (preview — NOT written): x", isError: false }),
+    };
+    const runner = buildRunner(
+      factory([writeCall(), [{ type: "text", content: "REPORT: done" }]]),
+      [write],
+    );
+
+    const res = await runner.run(spec({ access: "read" }));
+
+    expect(res.content).toContain("REPORT: done");
+    // The preview footer is for the TOP-LEVEL answer only, never a report.
+    expect(res.content).not.toContain("Nothing has been applied");
+  });
+
   it("forwards its live events to the caller (nested streaming)", async () => {
     const runner = buildRunner(
       factory([[{ type: "thinking", content: "hmm" }], [{ type: "text", content: "report" }]]),
