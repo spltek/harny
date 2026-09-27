@@ -176,6 +176,17 @@ describe("SubAgentRunner", () => {
 
     // No budget configured -> no BUDGET hint and no finite cap.
     expect(systemPrompt).not.toContain("BUDGET");
+
+    // An explicit 0 also means "no cap".
+    const zeroRunner = new SubAgentRunner({
+      config: new StaticConfigProvider({ ...CONFIG, subagentMaxTurns: 0 }),
+      llmFactory: captureFactory,
+      tools: new ToolRegistry([]),
+      cwd: () => "/workspace",
+    });
+    systemPrompt = "";
+    await zeroRunner.run(spec({ access: "read" }));
+    expect(systemPrompt).not.toContain("BUDGET");
   });
 
   it("does not append the Analyze preview footer to a sub-agent report", async () => {
