@@ -323,13 +323,26 @@ describe("view webview client", () => {
     expect(menu.classList.contains("hidden")).toBe(false);
   });
 
-  it("always starts from Analyze + Parallel off on load (nothing is restored)", async () => {
-    setupDom({}, { mode: "agent", parallel: true });
+  it("reflects the host's mode + Parallel on load and does NOT reset them", async () => {
+    // The view is recreated on hide/show: it must show the HOST state, never
+    // force it back to defaults (that desynced the toggle from the agent).
+    setupDom({
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        mode: "agent",
+        parallel: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
+    });
     await loadView();
-    expect(posted).toContainEqual({ type: "setMode", mode: "analyze" });
-    expect(posted).toContainEqual({ type: "setParallel", parallel: false });
-    expect(document.getElementById("mode-btn-label")?.textContent).toBe("Analyze");
-    expect(document.getElementById("parallel-btn")?.classList.contains("is-on")).toBe(false);
+    expect(posted).not.toContainEqual({ type: "setMode", mode: "analyze" });
+    expect(posted).not.toContainEqual({ type: "setParallel", parallel: false });
+    expect(document.getElementById("mode-btn-label")?.textContent).toBe("Build");
+    expect(document.getElementById("parallel-btn")?.classList.contains("is-on")).toBe(true);
   });
 
   it("renders the thinking level dropdown per provider capability", async () => {

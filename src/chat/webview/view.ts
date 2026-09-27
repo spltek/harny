@@ -2536,13 +2536,11 @@ const savedCollapsed = (vscode.getState() as { controlsCollapsed?: boolean } | u
 const collapsedDefault = savedCollapsed ?? true;
 document.body.classList.toggle("controls-collapsed", collapsedDefault);
 ctlToggle.setAttribute("aria-expanded", String(!collapsedDefault));
-// Mode AND Parallel: both start from their defaults on EVERY load — neither is
-// restored from a remembered panel state. Both are re-asserted to the host so
-// the active session's agent resets too (no stale state).
-applyMode("analyze");
-applyParallel(false);
-vscode.postMessage({ type: "setMode", mode: "analyze" });
-vscode.postMessage({ type: "setParallel", parallel: false });
+// The HOST is authoritative for mode + Parallel: the panel reflects
+// `init.config` and must NOT reset them to defaults on load. The webview is
+// recreated whenever the view is hidden/shown (no retainContextWhenHidden), so
+// force-posting setParallel(false)/setMode("analyze") here would silently turn
+// Parallel off on the host while the toggle still shows ON.
 renderViewState({
   sessions: init.sessions || [],
   openIds: init.openIds || [],

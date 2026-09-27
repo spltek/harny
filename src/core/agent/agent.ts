@@ -180,6 +180,7 @@ export class Agent implements ChatController {
 
     this.abortController = new AbortController();
     this._streaming = true;
+    this.log(`send: mode=${this._mode} parallel=${this.delegationEnabled ? "ON" : "OFF"}`);
     this.guard.reset();
     this.preparedPreviews = false;
     this.delegatedThisRun = false;
