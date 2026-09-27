@@ -152,7 +152,7 @@ describe("SubAgentRunner", () => {
     expect(systemPrompt).toContain("7");
   });
 
-  it("defaults the sub-agent budget to 100 turns when unset", async () => {
+  it("is UNBOUNDED by default (no turn cap, like the orchestrator)", async () => {
     let systemPrompt = "";
     const captureFactory: LLMProviderFactory = {
       create() {
@@ -174,8 +174,8 @@ describe("SubAgentRunner", () => {
 
     await runner.run(spec({ access: "read" }));
 
-    expect(systemPrompt).toContain("BUDGET");
-    expect(systemPrompt).toContain("100");
+    // No budget configured -> no BUDGET hint and no finite cap.
+    expect(systemPrompt).not.toContain("BUDGET");
   });
 
   it("forwards its live events to the caller (nested streaming)", async () => {

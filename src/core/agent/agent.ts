@@ -53,7 +53,9 @@ export interface AgentDeps {
   history: ChatHistory;
   events: EventBus<AgentEvent>;
   systemPrompt: SystemPromptBuilder;
-  /** Maximum number of LLM turns per user message (default 20). */
+  /** Maximum number of LLM turns per user message. Undefined = no cap
+   * (the orchestrator runs until it answers or the user Stops; the loop guard
+   * stops degenerate loops). Sub-agents may pass a finite cap. */
   maxTurns?: number;
   /** Whether this agent may launch sub-agents via Delegate (default true).
    * Sub-agents pass false, capping orchestration depth at 1. */

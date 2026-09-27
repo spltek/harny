@@ -102,8 +102,7 @@
         },
         "harny.subagentMaxTurns": {
           "type": "number",
-          "default": 100,
-          "description": "Max tool turns a single sub-agent may use before it is asked for its report. Raise it for long sub-tasks; the loop guard still stops degenerate loops."
+          "description": "Optional cap on the tool turns a single sub-agent may use before it is asked for its report. 0 or unset = no cap (sub-agents run until they finish or you press Stop, like the orchestrator). The loop guard still stops degenerate loops."
         },
         "harny.temperature": {
           "type": "number",
