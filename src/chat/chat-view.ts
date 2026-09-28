@@ -6,6 +6,7 @@ import { isThinkingLevel } from "../core/config/types";
 import type { MemoryOverrideConfigProvider } from "../core/config/memory-override-config-provider";
 import { requiresApiKey } from "../core/config/requires-api-key";
 import type { ModelInfo, ModelListProvider } from "../core/llm/model-list";
+import { modelsDevProviderCandidates } from "../core/llm/models-dev";
 import type { SessionManager } from "../core/sessions/session-manager";
 import type { SessionSettingsPatch, SessionSummary } from "../core/sessions/types";
 import type { SessionRegistry, SessionRuntime } from "./session-registry";
@@ -80,6 +81,9 @@ export class ChatViewProvider implements WebviewViewProvider {
       currentFolder?: () => string | undefined;
       /** Extension data folder (home), for error hints pointing at config.json. */
       configHome?: string;
+      /** Optional models.dev catalog: fallback context window for hosts that
+       * do not report it in `/models` (e.g. OpenCode Go). */
+      modelsDev?: { getContext(modelId: string, providerCandidates: readonly string[]): Promise<number | undefined> };
     } = {},
   ) {
     this.modals = new PanelModalQueue((msg) => this.view?.webview.postMessage(msg));
@@ -546,6 +550,9 @@ export class ChatViewProvider implements WebviewViewProvider {
         // Lightweight config push (no full HTML rebuild: the typed prompt,
         // scroll and streaming state are preserved).
         void this.pushConfig();
+        // Host did not report a context window (e.g. OpenCode Go): resolve it
+        // from models.dev in the background and update the panel when loaded.
+        if (!adoptedWindow && provider) this.resolveContextFromModelsDev(rt, model, provider);
         break;
       }
 
@@ -1191,6 +1198,30 @@ export class ChatViewProvider implements WebviewViewProvider {
       cachedTokens: this.activeRuntime()?.cachedTokens,
       cachedWrite: this.activeRuntime()?.cachedWriteTokens,
     };
+  }
+
+  /**
+   * Best-effort context window for a model whose host does not report it, from
+   * the models.dev catalog (cached). Updates the panel when it resolves and the
+   * user is still on that model.
+   */
+  private resolveContextFromModelsDev(rt: SessionRuntime, model: string, provider: string): void {
+    const catalog = this.options.modelsDev;
+    if (!catalog) return;
+    const entry = this.providers.getProvider(provider);
+    void catalog
+      .getContext(model, modelsDevProviderCandidates(provider, entry?.baseUrl))
+      .then((ctx) => {
+        if (!ctx) return;
+        // A fast model switch may have raced: only apply to the current model.
+        if (this.activeRuntime() !== rt || rt.model !== model) return;
+        rt.contextWindow = ctx;
+        this.sessions.saveSettings(rt.sessionId, { contextWindow: ctx });
+        void this.pushConfig();
+      })
+      .catch(() => {
+        /* offline: keep the current window */
+      });
   }
 
   private async fetchHostModels(name: string): Promise<ModelInfo[]> {

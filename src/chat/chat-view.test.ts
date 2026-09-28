@@ -1406,6 +1406,22 @@ describe("ChatViewProvider compaction", () => {
     expect(rt.contextWindow).toBe(131072);
   });
 
+  it("falls back to models.dev for the context window when the host does not report it", async () => {
+    const { registry, provider } = buildHarness({
+      providerEntry: { name: "opencode-go", baseUrl: "https://opencode.ai/zen/go/v1", models: [] },
+      fetchModelInfos: async () => [{ id: "kimi-k3" }], // host reports NO context
+      modelsDev: { getContext: vi.fn(async () => 1048576) },
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+
+    await handler({ type: "setModel", model: "kimi-k3", provider: "opencode-go" });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(rt.contextWindow).toBe(1048576);
+  });
+
   it("setCompactionThreshold stores the session override (clamped) and persists it", async () => {
     const options = { compactor: new Compactor(compactorFactory(), () => CONFIG), compaction: DEFAULT_COMPACTION };
     const { store, registry, provider } = buildHarness(options);

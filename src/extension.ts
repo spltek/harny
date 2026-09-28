@@ -20,6 +20,7 @@ import { Compactor, DEFAULT_COMPACTION } from "./core/sessions/compactor";
 import { DefaultLlmProviderFactory } from "./core/llm/llm-provider-factory";
 import { nodeHttpClient } from "./core/llm/http-client";
 import { HttpModelListProvider } from "./core/llm/model-list";
+import { ModelsDevCatalog } from "./core/llm/models-dev";
 import {
   createDefaultTools,
   NodeCommandRunner,
@@ -151,6 +152,8 @@ export function activate(context: ExtensionContext) {
       workspaceReady: () => !!root,
       currentFolder: () => root,
       configHome: resolved.home,
+      // Fallback context window for hosts that don't report it (OpenCode Go).
+      modelsDev: new ModelsDevCatalog(nodeHttpClient),
     },
   );
   viewProvider.setContext(context);
