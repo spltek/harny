@@ -27,4 +27,7 @@ export type AgentEvent =
   /** The loop guard detected a degenerate loop and REACTED (broke it and told
    * the model how to recover). Surfaced as an amber notice in the transcript. */
   | { type: "loop_intervention"; loopType: string; level: number; message: string }
+  /** Analyze finished with prepared changes that are NOT applied: the UI
+   * shows a highlighted "Switch to Build" call to action. */
+  | { type: "preview_ready" }
   | { type: "raw_chunk"; chunk: string; kind: "text" | "thinking" | "tool_start" | "tool_args" | "tool_end" };

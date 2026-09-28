@@ -259,6 +259,11 @@ ${renderViewConfig(deps)}
     .branch-at:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); background: rgba(255, 255, 255, 0.1); }
     .msg.assistant.error { background: rgba(244, 71, 71, 0.15); border: 1px solid var(--error); }
     .msg.assistant.loop { background: rgba(245, 166, 35, 0.12); border: 1px solid #f5a623; }
+    /* Prominent "Switch to Build" call to action (Analyze prepared previews). */
+    .build-cta { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; margin: 8px 0; padding: 10px 12px; border: 1px solid #f5a623; border-radius: 6px; background: rgba(245, 166, 35, 0.16); }
+    .build-cta-text { color: var(--fg-strong); font-size: 13px; }
+    .build-cta-btn { flex: 0 0 auto; background: #f5a623; color: #1a1a1a; border: none; border-radius: 5px; padding: 6px 12px; font-weight: 600; font-size: 13px; cursor: pointer; white-space: nowrap; }
+    .build-cta-btn:hover { background: #ffb84d; }
     .msg.assistant p { margin: 4px 0; }
     .msg.assistant h1, .msg.assistant h2, .msg.assistant h3, .msg.assistant h4, .msg.assistant h5, .msg.assistant h6 { margin: 8px 0 4px; font-weight: 700; color: var(--fg-strong); }
     .msg.assistant h1 { font-size: 1.15em; } .msg.assistant h2 { font-size: 1.05em; } .msg.assistant h3 { font-size: 1em; }

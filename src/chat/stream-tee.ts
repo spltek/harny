@@ -65,6 +65,10 @@ export class StreamTee {
           live.answer = "";
           if (active) post({ type: "toolResult", toolCallId: event.toolResult.toolCallId, output: event.toolResult.output, isError: event.toolResult.isError });
           break;
+        case "preview_ready":
+          // Analyze prepared changes that are NOT applied: surface the CTA.
+          if (active) post({ type: "previewReady" });
+          break;
         case "loop_intervention":
           // A degenerate loop was broken and the run continues: drop the
           // interrupted live text so the next turn starts fresh.

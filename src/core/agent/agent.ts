@@ -43,6 +43,10 @@ import type { AgentEvent, SubAgentEvent } from "./types";
  */
 const TOOL_SUMMARY_RE = /^🔧 (?:Tool|Tools):/;
 
+/** Marker of the host-added "nothing applied" footer (used to trigger the
+ * highlighted "Switch to Build" call to action in the UI). */
+const PREVIEW_FOOTER_MARKER = "Nothing has been applied";
+
 function isSyntheticToolSummary(content: string): boolean {
   return TOOL_SUMMARY_RE.test(content);
 }
@@ -326,6 +330,9 @@ export class Agent implements ChatController {
     const withTruncation = truncated
       ? `${storedContent}\n\n> ⚠️ ${this.truncationNote(thinking.trim().length > 0)}`
       : storedContent;
+    // The Analyze preview footer belongs to the FINAL answer only: appending it
+    // to an intermediate tool turn (the run continues) would be premature.
+    const finalContent = toolCalls.length === 0 ? this.withPreviewFooter(withTruncation) : withTruncation;
     // Parallel ON is a HARD guarantee (≥1 sub-agent per request). If the model
     // refused even after the nudge, the HOST will dispatch one itself; in that
     // case keep the model's direct answer only in the UI (uiOnly) so the LLM
@@ -339,13 +346,17 @@ export class Agent implements ChatController {
       !!this.runGoal;
     this.deps.history.add({
       role: "assistant",
-      content: this.withPreviewFooter(withTruncation),
+      content: finalContent,
       toolCalls,
       timestamp: Date.now(),
       ...(willForceDelegate ? { uiOnly: true } : {}),
       ...(thinking.trim() ? { thinking } : {}),
       ...(reasoningDetails && reasoningDetails.length > 0 ? { reasoningDetails } : {}),
     });
+    // Changes prepared as previews: highlight the "Switch to Build" CTA in the UI.
+    if (finalContent.includes(PREVIEW_FOOTER_MARKER)) {
+      this.deps.events.emit({ type: "preview_ready" });
+    }
 
     if (toolCalls.length === 0) {
       if (this.delegationEnabled && !this.delegatedThisRun) {

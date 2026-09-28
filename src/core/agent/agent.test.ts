@@ -712,6 +712,30 @@ describe("Agent", () => {
     expect(logs.some((l) => /^loop-stop \[empty\]/.test(l))).toBe(true);
   });
 
+  it("emits preview_ready when Analyze prepared changes (nothing applied)", async () => {
+    const { agent, events } = buildHarness({
+      tools: [makeTool("Edit")],
+      chunks: [
+        [
+          { type: "tool_call_start", index: 0, id: "c", name: "Edit" },
+          { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts","edits":[]}' },
+          { type: "tool_call_end", index: 0 },
+        ],
+        [{ type: "text", content: "done" }],
+      ],
+    });
+
+    await agent.send("fix it");
+
+    expect(events.some((e) => e.type === "preview_ready")).toBe(true);
+  });
+
+  it("does NOT emit preview_ready when nothing was prepared", async () => {
+    const { agent, events } = buildHarness({ chunks: [[{ type: "text", content: "answer" }]] });
+    await agent.send("a question");
+    expect(events.some((e) => e.type === "preview_ready")).toBe(false);
+  });
+
   it("emits a loop_intervention event when it breaks a loop", async () => {
     const repeated = (): StreamChunk[] => [
       { type: "tool_call_start", index: 0, id: "c", name: "Shell" },

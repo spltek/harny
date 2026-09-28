@@ -82,6 +82,14 @@ describe("StreamTee", () => {
     expect(tee.liveOf("a")?.thinking).toBe("");
   });
 
+  it("forwards preview_ready to the view when the session is active", () => {
+    const { tee, deps } = makeTee();
+    const a = fakeRuntime("a");
+    tee.attach(a.rt);
+    a.emit({ type: "preview_ready" });
+    expect(deps.onPost).toHaveBeenCalledWith({ type: "previewReady" });
+  });
+
   it("forwards subagent_start to the view when the session is active", () => {
     const { tee, deps } = makeTee();
     const a = fakeRuntime("a");

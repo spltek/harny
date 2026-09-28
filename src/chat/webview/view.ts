@@ -367,6 +367,27 @@ function addMessage(role: string, content: string, attachments?: { name: string;
   return div;
 }
 
+/**
+ * Highlighted, clickable call to action shown when Analyze prepared changes
+ * that are NOT applied. Makes the mandatory "switch to Build" step obvious
+ * instead of burying it in a line of text.
+ */
+function addSwitchToBuildBanner(): void {
+  const el = document.createElement("div");
+  el.className = "build-cta";
+  const text = document.createElement("span");
+  text.className = "build-cta-text";
+  text.textContent = "Changes are ready as previews — nothing has been written to disk yet.";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "build-cta-btn";
+  btn.textContent = "Switch to Build";
+  btn.addEventListener("click", () => applyMode("agent", { notify: true }));
+  el.append(text, btn);
+  messagesEl.appendChild(el);
+  scrollDown();
+}
+
 /** "Sent with these files" chips shown inside a user bubble (name only). */
 function messageAttachmentRow(attachments: { name: string; size: number }[]): HTMLDivElement {
   const row = document.createElement("div");
@@ -784,6 +805,8 @@ function renderMessages(msgs: ChatMsg[]): boolean {
         else if (content.startsWith("🔁")) el.classList.add("loop");
         // Loop notices are system annotations, not branchable messages.
         if (!content.startsWith("🔁")) attachBranchAt(el, i);
+        // Prepared-but-not-applied changes: re-render the highlighted CTA.
+        if (content.includes("Nothing has been applied")) addSwitchToBuildBanner();
       }
       if (m.toolCalls && m.toolCalls.length > 0) {
         for (const tc of m.toolCalls) {
@@ -2248,6 +2271,11 @@ window.addEventListener("message", (e) => {
         );
         compactionEl = null;
       }
+      break;
+    }
+    case "previewReady": {
+      // Analyze prepared changes that are not applied: prominent CTA.
+      addSwitchToBuildBanner();
       break;
     }
     case "loopIntervention": {

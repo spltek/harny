@@ -1076,6 +1076,37 @@ describe("view webview client", () => {
     expect(diff?.querySelector(".fd-del")?.textContent).toBe("-old");
   });
 
+  it("shows a highlighted 'Switch to Build' CTA on previewReady and switches mode on click", async () => {
+    await loadView();
+    hostMessage({ type: "previewReady" });
+    const cta = document.querySelector(".build-cta") as HTMLElement;
+    expect(cta).toBeTruthy();
+    const btn = cta.querySelector(".build-cta-btn") as HTMLButtonElement;
+    expect(btn.textContent).toBe("Switch to Build");
+
+    posted.length = 0;
+    btn.click();
+    expect(posted).toContainEqual({ type: "setMode", mode: "agent" });
+    expect(document.getElementById("mode-btn-label")?.textContent).toBe("Build");
+  });
+
+  it("re-renders the Switch to Build CTA on refresh from the stored footer", async () => {
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "user", content: "fix it", timestamp: 1 },
+        {
+          role: "assistant",
+          content:
+            "Done.\n\n---\n⚠️ Nothing has been applied: the changes above were prepared as **previews** and are NOT on disk. ➡️ Switch to **Build** to apply the changes.",
+          timestamp: 2,
+        },
+      ],
+    });
+    expect(document.querySelector(".build-cta .build-cta-btn")?.textContent).toBe("Switch to Build");
+  });
+
   it("renders a loop-intervention notice as an amber (non-error) bubble", async () => {
     await loadView();
     hostMessage({
