@@ -172,7 +172,10 @@ describe("file tools", () => {
       expect(result.content).toContain("+a");
       expect(result.content).toContain("+b");
       expect(result.content).toContain("+c");
-      expect(result.content).not.toContain("-a");
+      // Scope the "no removals" check to the DIFF block: the message also
+      // carries the temp file path, whose random suffix can contain "-a".
+      const diffBlock = result.content.split("```diff")[1] ?? "";
+      expect(diffBlock).not.toMatch(/^-[abc]/m);
     });
 
     it("emits a mixed diff preview when overwriting an existing file", () => {

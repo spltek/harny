@@ -46,7 +46,7 @@ interface ConfigState {
   model: string;
   hasKey: boolean;
   models?: string[];
-  providerModels?: { provider: string; model: string }[];
+  providerModels?: { provider: string; model: string; contextLength?: number }[];
   modelMissing?: boolean;
   hostModelErrors?: { provider: string; error: string }[];
   noModels?: boolean;
@@ -2036,6 +2036,13 @@ parallelBtn.addEventListener("click", () => {
 });
 
 // ── Model dropdown (all providers, declared or detected from the host) ──
+/** Compact token count for a model's context window (e.g. 128k, 1M). */
+function formatContext(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
+  if (n >= 1000) return `${Math.round(n / 1000)}k`;
+  return String(n);
+}
+
 function renderModelSelect(c: ConfigState): void {
   modelSelect.innerHTML = "";
   const providerModels = c.providerModels && c.providerModels.length > 0 ? c.providerModels : null;
@@ -2056,14 +2063,14 @@ function renderModelSelect(c: ConfigState): void {
   }
 
   if (providerModels) {
-    const groups = new Map<string, string[]>();
+    const groups = new Map<string, { model: string; contextLength?: number }[]>();
     const order: string[] = [];
     for (const pm of providerModels) {
       if (!groups.has(pm.provider)) {
         groups.set(pm.provider, []);
         order.push(pm.provider);
       }
-      groups.get(pm.provider)!.push(pm.model);
+      groups.get(pm.provider)!.push({ model: pm.model, contextLength: pm.contextLength });
     }
     // One combined list of groups (normal + failed), appended together in
     // alphabetical order so a red provider stays in its proper position.
@@ -2072,13 +2079,15 @@ function renderModelSelect(c: ConfigState): void {
       const g = document.createElement("optgroup");
       g.label = provider;
       // Alphabetical within each provider group.
-      const sorted = [...(groups.get(provider) || [])].sort();
-      for (const m of sorted) {
+      const sorted = [...(groups.get(provider) || [])].sort((a, b) => a.model.localeCompare(b.model));
+      for (const mi of sorted) {
         const opt = document.createElement("option");
-        opt.value = m;
-        opt.textContent = m;
+        opt.value = mi.model;
+        // Show the host-reported context window next to the model (OpenRouter,
+        // vLLM, llama.cpp, …).
+        opt.textContent = mi.contextLength ? `${mi.model} · ${formatContext(mi.contextLength)}` : mi.model;
         opt.dataset.provider = provider;
-        if (m === c.model && (provider === activeProvider || !activeProvider)) opt.selected = true;
+        if (mi.model === c.model && (provider === activeProvider || !activeProvider)) opt.selected = true;
         g.appendChild(opt);
       }
       allGroups.push(g);

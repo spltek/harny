@@ -164,7 +164,10 @@ function buildHarness(opts: Record<string, unknown> = {}) {
     readProvidersEditor: vi.fn(() => ({ providers: {} })),
     saveProvidersEditor: vi.fn(() => true),
   } as unknown as ProviderCatalog;
-  const modelList = { fetchModels: vi.fn(opts.fetchModels ?? (async () => [])) } as unknown as ModelListProvider;
+  const modelList = {
+    fetchModels: vi.fn(opts.fetchModels ?? (async () => [])),
+    ...(opts.fetchModelInfos ? { fetchModelInfos: vi.fn(opts.fetchModelInfos as () => Promise<unknown[]>) } : {}),
+  } as unknown as ModelListProvider;
 
   const provider = new ChatViewProvider(config, modelSelector, attachments, providers, modelList, sessions, registry, opts);
   provider.setContext({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as any);
@@ -1375,6 +1378,27 @@ describe("ChatViewProvider compaction", () => {
     expect(seq[startAt + 1]).toBe("status");
     expect(seq[doneAt + 1]).toBe("status");
     expect(startAt).toBeLessThan(doneAt);
+  });
+
+  it("adopts the host-reported context window when a model is selected", async () => {
+    const { store, registry, provider } = buildHarness({
+      providerEntry: { name: "openrouter", baseUrl: "http://x/v1", models: [] },
+      fetchModelInfos: async () => [
+        { id: "openrouter/x", contextLength: 131072 },
+        { id: "openrouter/plain" },
+      ],
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+
+    await handler({ type: "setModel", model: "openrouter/x", provider: "openrouter" });
+    expect(rt.contextWindow).toBe(131072);
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", expect.objectContaining({ contextWindow: 131072 }));
+
+    // A model WITHOUT a reported window keeps the current one.
+    await handler({ type: "setModel", model: "openrouter/plain", provider: "openrouter" });
+    expect(rt.contextWindow).toBe(131072);
   });
 
   it("setCompactionThreshold stores the session override (clamped) and persists it", async () => {

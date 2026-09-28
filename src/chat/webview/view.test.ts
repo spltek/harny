@@ -1874,6 +1874,30 @@ describe("view webview client", () => {
     expect(posted).toContainEqual({ type: "setModel", model: "LLM/gemma.gguf", provider: "llamacpp" });
   });
 
+  it("shows the host-reported context window next to each model", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai-compatible",
+        activeProvider: "openrouter",
+        model: "openrouter/x",
+        hasKey: true,
+        models: [],
+        providerModels: [
+          { provider: "openrouter", model: "openrouter/x", contextLength: 128000 },
+          { provider: "openrouter", model: "openrouter/big", contextLength: 1000000 },
+          { provider: "openrouter", model: "openrouter/plain" },
+        ],
+      },
+    });
+    const select = document.getElementById("model-select") as HTMLSelectElement;
+    const byValue = (v: string) => [...select.options].find((o) => o.value === v) as HTMLOptionElement;
+    expect(byValue("openrouter/x").textContent).toBe("openrouter/x · 128k");
+    expect(byValue("openrouter/big").textContent).toBe("openrouter/big · 1M");
+    expect(byValue("openrouter/plain").textContent).toBe("openrouter/plain");
+  });
+
   it("orders provider groups alphabetically and merges failed providers into their sorted position", async () => {
     await loadView();
     hostMessage({

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { HttpModelListProvider } from "./model-list";
+import { extractContextLength, HttpModelListProvider } from "./model-list";
 import type { HttpClient, HttpResponse } from "./http-client";
 
 function fakeHttp(response: HttpResponse): HttpClient {
@@ -65,6 +65,35 @@ describe("HttpModelListProvider", () => {
     );
     const models = await provider.fetchModels({ baseUrl: "https://openrouter.ai/api/v1", apiKey: "sk-or-1" });
     expect(models).toEqual(["deepseek/deepseek-chat-v3", "qwen/qwen-3-32b"]);
+  });
+
+  it("returns model infos with the host-reported context window", async () => {
+    const provider = new HttpModelListProvider(
+      fakeHttp(
+        jsonResponse(200, {
+          data: [
+            { id: "openrouter/x", context_length: 131072 },
+            { id: "vllm/y", max_model_len: 32768 },
+            { id: "llamacpp/z", meta: { n_ctx_train: 8192 } },
+            { id: "nested", top_provider: { context_length: 200000 } },
+            { id: "plain" },
+          ],
+        }),
+      ),
+    );
+    const infos = await provider.fetchModelInfos!({ baseUrl: "http://h", apiKey: "k" });
+    expect(infos.find((m) => m.id === "openrouter/x")?.contextLength).toBe(131072);
+    expect(infos.find((m) => m.id === "vllm/y")?.contextLength).toBe(32768);
+    expect(infos.find((m) => m.id === "llamacpp/z")?.contextLength).toBe(8192);
+    expect(infos.find((m) => m.id === "nested")?.contextLength).toBe(200000);
+    expect(infos.find((m) => m.id === "plain")?.contextLength).toBeUndefined();
+  });
+
+  it("extractContextLength ignores non-numeric / non-positive values", () => {
+    expect(extractContextLength({ context_length: "abc" })).toBeUndefined();
+    expect(extractContextLength({ context_length: 0 })).toBeUndefined();
+    expect(extractContextLength({ context_length: -5 })).toBeUndefined();
+    expect(extractContextLength(null)).toBeUndefined();
   });
 
   it("accepts a bare array body", async () => {

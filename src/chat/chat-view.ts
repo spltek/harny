@@ -5,7 +5,7 @@ import type { ConfigProvider, HarnyConfig, ProviderCatalog, ProviderEditorData, 
 import { isThinkingLevel } from "../core/config/types";
 import type { MemoryOverrideConfigProvider } from "../core/config/memory-override-config-provider";
 import { requiresApiKey } from "../core/config/requires-api-key";
-import type { ModelListProvider } from "../core/llm/model-list";
+import type { ModelInfo, ModelListProvider } from "../core/llm/model-list";
 import type { SessionManager } from "../core/sessions/session-manager";
 import type { SessionSettingsPatch, SessionSummary } from "../core/sessions/types";
 import type { SessionRegistry, SessionRuntime } from "./session-registry";
@@ -46,7 +46,7 @@ export class ChatViewProvider implements WebviewViewProvider {
   private view: WebviewView | undefined;
   private context: ExtensionContext | undefined;
   private activeId: string | undefined;
-  private hostCache = new Map<string, { at: number; models: string[] }>();
+  private hostCache = new Map<string, { at: number; models: ModelInfo[] }>();
   // Short host-model cache: the dropdown re-fetches on open (view sends
   // getConfig on mousedown/focus), so a host that comes up later (e.g. llama.cpp
   // started after the panel) shows up on the next open. Kept short because the
@@ -522,10 +522,25 @@ export class ChatViewProvider implements WebviewViewProvider {
           const mode = entry?.thinkingMode ?? this.config.get().thinkingMode;
           if (mode === "bool" || mode === "effort" || mode === "type" || mode === "reasoning") rt.thinkingLevel = "medium";
         }
+        // If the host reports this model's context window, adopt it (the
+        // compaction ceiling follows the real model size). Host unreachable →
+        // keep whatever the session already had.
+        let adoptedWindow: number | undefined;
+        if (provider) {
+          try {
+            const infos = await this.fetchHostModels(provider);
+            const info = infos.find((m) => m.id === model);
+            if (info?.contextLength && info.contextLength > 0) adoptedWindow = info.contextLength;
+          } catch {
+            /* keep the current window */
+          }
+        }
+        if (adoptedWindow) rt.contextWindow = adoptedWindow;
         this.sessions.saveSettings(rt.sessionId, {
           model,
           ...(provider ? { modelProvider: provider } : {}),
           ...(rt.thinkingLevel ? { thinkingLevel: rt.thinkingLevel } : {}),
+          ...(adoptedWindow ? { contextWindow: adoptedWindow } : {}),
         });
         this.modelSelector.set(this.computeOverrides(model, provider));
         // Lightweight config push (no full HTML rebuild: the typed prompt,
@@ -1076,7 +1091,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     model: string;
     hasKey: boolean;
     models: string[];
-    providerModels: { provider: string; model: string }[];
+    providerModels: { provider: string; model: string; contextLength?: number }[];
     modelMissing: boolean;
     hostModelErrors: { provider: string; error: string }[];
     noModels: boolean;
@@ -1105,7 +1120,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     const declared = cfg.providerModels ?? [];
     const hostProviders = cfg.hostModelProviders ?? [];
     const allNames = [...new Set([...hostProviders, ...declared.map((p) => p.provider)])];
-    const fetched = new Map<string, string[]>();
+    const fetched = new Map<string, ModelInfo[]>();
     const hostModelErrors: { provider: string; error: string }[] = [];
     if (allNames.length > 0) {
       const results = await Promise.allSettled(allNames.map((name) => this.fetchHostModels(name)));
@@ -1123,9 +1138,11 @@ export class ChatViewProvider implements WebviewViewProvider {
 
     // Dropdown lists come from the fetched hosts ONLY (no stale declared
     // model lists mixed in).
-    const providerModels: { provider: string; model: string }[] = [];
+    const providerModels: { provider: string; model: string; contextLength?: number }[] = [];
     for (const [name, models] of fetched) {
-      for (const m of models) providerModels.push({ provider: name, model: m });
+      for (const m of models) {
+        providerModels.push({ provider: name, model: m.id, ...(m.contextLength ? { contextLength: m.contextLength } : {}) });
+      }
     }
 
     let modelMissing = false;
@@ -1134,7 +1151,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     const sessionProvider = rt?.modelProvider ?? cfg.activeProvider;
     const activeName = sessionProvider;
     const activeList = activeName ? (fetched.get(activeName) ?? []) : [];
-    if (sessionModel && activeList.length > 0 && !activeList.includes(sessionModel)) modelMissing = true;
+    if (sessionModel && activeList.length > 0 && !activeList.some((m) => m.id === sessionModel)) modelMissing = true;
 
     // Explicit in-panel warning: NO model at all (no config file, empty config,
     // or every host unreachable) -> the dropdown would be silently empty.
@@ -1176,13 +1193,15 @@ export class ChatViewProvider implements WebviewViewProvider {
     };
   }
 
-  private async fetchHostModels(name: string): Promise<string[]> {
+  private async fetchHostModels(name: string): Promise<ModelInfo[]> {
     const entry = this.providers.getProvider(name);
     if (!entry?.baseUrl) throw new Error("no baseUrl configured");
     const key = `${name}|${entry.baseUrl}|${entry.apiKey ?? ""}`;
     const cached = this.hostCache.get(key);
     if (cached && Date.now() - cached.at < ChatViewProvider.HOST_CACHE_TTL) return cached.models;
-    const models = await this.modelList.fetchModels({ baseUrl: entry.baseUrl, apiKey: entry.apiKey });
+    const models = this.modelList.fetchModelInfos
+      ? await this.modelList.fetchModelInfos({ baseUrl: entry.baseUrl, apiKey: entry.apiKey })
+      : (await this.modelList.fetchModels({ baseUrl: entry.baseUrl, apiKey: entry.apiKey })).map((id) => ({ id }));
     this.hostCache.set(key, { at: Date.now(), models });
     return models;
   }
