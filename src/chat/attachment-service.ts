@@ -37,12 +37,21 @@ export class AttachmentService {
   async pick(): Promise<AttachmentInfo[]> {
     const paths = await this.pickDialog();
     if (!paths || paths.length === 0) return [];
-    return paths.map((path) => ({
-      name: basename(path),
-      path,
-      size: this.fs.exists(path) ? this.fs.size(path) : 0,
-      isImage: isImagePath(path),
-    }));
+    return this.fromPaths(paths);
+  }
+
+  /** Metadata for known paths (used by the file dialog AND a pasted path/URI).
+   * Non-existent paths are dropped. */
+  fromPaths(paths: readonly string[]): AttachmentInfo[] {
+    return paths
+      .map((p) => (typeof p === "string" ? p.trim() : ""))
+      .filter((p) => p.length > 0 && this.fs.exists(p))
+      .map((path) => ({
+        name: basename(path),
+        path,
+        size: this.fs.size(path),
+        isImage: isImagePath(path),
+      }));
   }
 
   async buildContext(files: AttachmentInfo[]): Promise<AttachmentContext> {
@@ -64,12 +73,22 @@ export class AttachmentService {
         }
         continue;
       }
-      let content: string;
-      try {
-        content = this.fs.readText(f.path);
-      } catch {
-        textParts.push(`[Could not read file: ${f.name}]`);
-        continue;
+      // Inline text (a pasted text file) OR a real file read from disk.
+      let content: string | undefined = f.content;
+      if (content === undefined) {
+        if (!f.path) {
+          textParts.push(
+            `[Attached file "${f.name}" (${formatSize(f.size)}) could not be included: its content is not ` +
+              "available (binary file or unsupported over the chat protocol)]",
+          );
+          continue;
+        }
+        try {
+          content = this.fs.readText(f.path);
+        } catch {
+          textParts.push(`[Could not read file: ${f.name}]`);
+          continue;
+        }
       }
       if (content.length > MAX_ATTACHMENT_CHARS) {
         content = content.slice(0, MAX_ATTACHMENT_CHARS) + "\n\n[Content truncated...]";

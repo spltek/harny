@@ -546,7 +546,7 @@ describe("view webview client", () => {
 
     const chips = document.getElementById("attachment-chips") as HTMLDivElement;
     expect(chips.querySelectorAll(".attach-chip").length).toBe(1);
-    expect(chips.querySelector(".attach-name")?.textContent).toContain("pasted-image");
+    expect(chips.querySelector(".attach-name")?.textContent).toBe("shot.png");
 
     // Sending carries the inline data URI (no path on disk).
     input.value = "look at this";
@@ -557,6 +557,40 @@ describe("view webview client", () => {
     expect(atts).toHaveLength(1);
     expect(String(atts[0].dataUri)).toContain("data:image/png");
     expect(atts[0].path).toBe("");
+  });
+
+  it("pastes a text file from the clipboard as an inline text attachment", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    const file = new File(["# hello"], "notes.md", { type: "text/markdown" });
+    const ev = new Event("paste", { cancelable: true }) as unknown as ClipboardEvent & { clipboardData: unknown };
+    (ev as unknown as { clipboardData: unknown }).clipboardData = {
+      items: [{ kind: "file", type: "text/markdown", getAsFile: () => file }],
+    };
+    input.dispatchEvent(ev);
+    await new Promise((r) => setTimeout(r, 20));
+
+    const chips = document.getElementById("attachment-chips") as HTMLDivElement;
+    expect(chips.querySelectorAll(".attach-chip").length).toBe(1);
+
+    input.value = "summarize";
+    posted.length = 0;
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    const sendMsg = posted.find((m) => (m as { type?: string }).type === "send") as Record<string, unknown>;
+    const atts = sendMsg.attachments as Array<Record<string, unknown>>;
+    expect(atts[0].content).toContain("# hello");
+  });
+
+  it("attaches a pasted absolute path via the host", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    const ev = new Event("paste", { cancelable: true }) as unknown as ClipboardEvent & { clipboardData: unknown };
+    (ev as unknown as { clipboardData: unknown }).clipboardData = {
+      items: [],
+      getData: (t: string) => (t === "text/plain" ? "/Users/x/report.pdf" : ""),
+    };
+    input.dispatchEvent(ev);
+    expect(posted).toContainEqual({ type: "attachPath", path: "/Users/x/report.pdf" });
   });
 
   it("ignores a plain-text paste (keeps default behaviour)", async () => {

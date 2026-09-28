@@ -71,6 +71,33 @@ describe("AttachmentService", () => {
     expect(ctx.text).toContain("pasted from clipboard");
   });
 
+  it("inlines a pasted text file's content (no path)", async () => {
+    const service = makeService(async () => []);
+    const ctx = await service.buildContext([
+      { name: "notes.md", path: "", size: 5, isImage: false, content: "# hi\n" },
+    ]);
+    expect(ctx.text).toContain('Attached file "notes.md":');
+    expect(ctx.text).toContain("# hi");
+  });
+
+  it("notes a pasted binary file whose content is unavailable", async () => {
+    const service = makeService(async () => []);
+    const ctx = await service.buildContext([{ name: "report.pdf", path: "", size: 12345, isImage: false }]);
+    expect(ctx.text).toContain('Attached file "report.pdf"');
+    expect(ctx.text).toContain("binary");
+  });
+
+  it("fromPaths returns metadata only for existing paths", () => {
+    dir = mkdtempSync(join(tmpdir(), "harny-att-"));
+    const txt = join(dir, "a.txt");
+    writeFileSync(txt, "hi");
+    const service = makeService(async () => []);
+    const files = service.fromPaths([txt, join(dir, "missing.txt"), ""]);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatchObject({ name: "a.txt", path: txt, size: 2, isImage: false });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("truncates very large files", async () => {
     dir = mkdtempSync(join(tmpdir(), "harny-att-"));
     const big = join(dir, "big.txt");

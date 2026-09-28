@@ -166,7 +166,7 @@ const pendingToolCalls = new Map<string, HTMLDivElement>();
 
 // ── Pending attachments: files picked via the "+" button and queued for the
 // next send. Transient (never persisted); cleared on send or session switch. ──
-interface AttachedFile { name: string; path: string; size: number; isImage: boolean; dataUri?: string; }
+interface AttachedFile { name: string; path: string; size: number; isImage: boolean; dataUri?: string; content?: string; }
 let attachedFiles: AttachedFile[] = [];
 
 /** Max size of a clipboard image pasted into the chat (matches the host cap). */
@@ -1109,38 +1109,91 @@ function extFromMime(mime: string): string {
   return map[mime] ?? "png";
 }
 
-/**
- * Paste images from the clipboard straight into the chat (screenshots, copied
- * images). Plain text keeps its default paste behaviour. OS FILES copied in
- * Finder/Explorer cannot be attached this way: the VS Code webview does not
- * expose their path (use the "+" button instead).
- */
-async function handlePaste(e: ClipboardEvent): Promise<void> {
-  const items = e.clipboardData ? Array.from(e.clipboardData.items) : [];
-  const imageItems = items.filter((i) => i.kind === "file" && i.type.startsWith("image/"));
-  if (imageItems.length === 0) return; // normal text paste
-  e.preventDefault();
-  for (const item of imageItems) {
-    const file = item.getAsFile();
-    if (!file) continue;
-    if (file.size > MAX_PASTE_IMAGE_BYTES) {
-      addMessage("assistant", `⚠️ Pasted image is too large (${formatBytes(file.size)}); max 15 MB.`).classList.add("loop");
-      continue;
-    }
+function readAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file);
+  });
+}
+
+/** Text-like mime types / extensions we can inline as a text attachment. */
+function isTextLikeFile(mime: string, name: string): boolean {
+  if (mime.startsWith("text/")) return true;
+  if (/^application\/(json|xml|javascript|x-yaml|yaml)\b/.test(mime)) return true;
+  return /\.(txt|md|markdown|json|jsonc|ya?ml|xml|html?|css|scss|less|js|jsx|ts|tsx|py|rb|go|rs|java|c|cc|cpp|h|hpp|cs|sh|bash|zsh|sql|csv|log|ini|toml|env)$/i.test(
+    name,
+  );
+}
+
+/** True for a single-line absolute path or file:// URI (a pasted path). */
+function looksLikePath(text: string): boolean {
+  if (!text || text.includes("\n")) return false;
+  return /^(file:\/\/|\/|[A-Za-z]:[\\/]|\\\\)/.test(text.trim());
+}
+
+/** Attach one pasted File: images inline as a data URI, text files inline as
+ * text; binary files (e.g. PDF) are attached with a clear "not readable" note. */
+async function attachPastedFile(file: File): Promise<void> {
+  if (file.size > MAX_PASTE_IMAGE_BYTES) {
+    addMessage("assistant", `⚠️ Pasted file is too large (${formatBytes(file.size)}); max 15 MB.`).classList.add("loop");
+    return;
+  }
+  if (file.type.startsWith("image/")) {
     try {
-      const dataUri = await readAsDataUrl(file);
       attachedFiles.push({
-        name: `pasted-image.${extFromMime(file.type)}`,
+        name: file.name || `pasted-image.${extFromMime(file.type)}`,
         path: "",
         size: file.size,
         isImage: true,
-        dataUri,
+        dataUri: await readAsDataUrl(file),
       });
     } catch {
-      /* unreadable clipboard image: ignore */
+      /* unreadable image */
+    }
+    return;
+  }
+  let content: string | undefined;
+  if (isTextLikeFile(file.type, file.name)) {
+    try {
+      content = await readAsText(file);
+    } catch {
+      /* ignore */
     }
   }
-  renderAttachmentChips();
+  attachedFiles.push({ name: file.name || "pasted-file", path: "", size: file.size, isImage: false, content });
+}
+
+/**
+ * Paste into the chat:
+ *  · images -> attached inline as a data URI;
+ *  · text files -> attached inline as text;
+ *  · a pasted absolute path / file:// URI -> the host attaches that file;
+ *  · plain text -> default behaviour.
+ * A file copied in Finder/Explorer often reaches the webview only as its NAME
+ * (text), not as a file — then nothing can be attached; use the "+" button.
+ */
+async function handlePaste(e: ClipboardEvent): Promise<void> {
+  const data = e.clipboardData;
+  const items = data ? Array.from(data.items) : [];
+  const fileItems = items.filter((i) => i.kind === "file");
+  if (fileItems.length > 0) {
+    e.preventDefault();
+    for (const item of fileItems) {
+      const file = item.getAsFile();
+      if (file) await attachPastedFile(file);
+    }
+    renderAttachmentChips();
+    return;
+  }
+  const rawText = data && typeof data.getData === "function" ? data.getData("text/plain") : "";
+  const text = (rawText ?? "").trim();
+  if (looksLikePath(text)) {
+    e.preventDefault();
+    vscode.postMessage({ type: "attachPath", path: text });
+  }
+  // Otherwise: normal text paste.
 }
 
 inputEl.addEventListener("paste", (e) => {

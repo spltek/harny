@@ -25,6 +25,23 @@ import { Compactor, DEFAULT_COMPACTION, CompactionSettings, planManualCompaction
  * visible at a time). Messages from the webview are routed to the active
  * session's runtime; agent events of the active runtime are forwarded here.
  */
+/** Convert a pasted `file://` URI or plain path to a local filesystem path. */
+function toLocalPath(input: string): string {
+  const raw = input.trim();
+  if (!raw) return "";
+  if (raw.startsWith("file://")) {
+    try {
+      const url = new URL(raw);
+      let p = decodeURIComponent(url.pathname);
+      if (/^\/[A-Za-z]:\//.test(p)) p = p.slice(1); // Windows /C:/... -> C:/...
+      return p;
+    } catch {
+      return raw.replace(/^file:\/\//, "");
+    }
+  }
+  return raw;
+}
+
 export class ChatViewProvider implements WebviewViewProvider {
   private view: WebviewView | undefined;
   private context: ExtensionContext | undefined;
@@ -667,6 +684,13 @@ export class ChatViewProvider implements WebviewViewProvider {
           this.view.webview.postMessage({ type: "attachments", files });
         }
         break;
+      case "attachPath": {
+        // A pasted absolute path or file:// URI: attach the file if it exists.
+        const local = toLocalPath(String(msg.path ?? ""));
+        const files = local ? this.attachments.fromPaths([local]) : [];
+        this.view?.webview.postMessage({ type: "attachments", files });
+        break;
+      }
     }
   }
 

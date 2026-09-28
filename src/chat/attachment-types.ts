@@ -7,4 +7,6 @@ export interface AttachmentInfo {
   isImage: boolean;
   /** Inline data URI for a clipboard image (no file on disk). */
   dataUri?: string;
+  /** Inline text for a clipboard text file (no file on disk). */
+  content?: string;
 }
