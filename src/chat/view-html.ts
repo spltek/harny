@@ -585,6 +585,9 @@ ${renderViewConfig(deps)}
       font-size: var(--fs-sm); color: var(--fg);
     }
     .attach-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 12rem; }
+    /* Thumbnail preview of a pasted clipboard image in its attachment chip. */
+    .attach-thumb { width: 22px; height: 22px; object-fit: cover; border-radius: 3px; border: 1px solid var(--border); }
+    .msg-attach-thumb { width: 16px; height: 16px; object-fit: cover; border-radius: 3px; }
     .attach-size { color: #888; }
     #input-area .attach-remove {
       height: 1.15rem; min-height: 0; min-width: 1.15rem; padding: 0;

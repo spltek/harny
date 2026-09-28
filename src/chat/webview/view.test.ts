@@ -547,6 +547,10 @@ describe("view webview client", () => {
     const chips = document.getElementById("attachment-chips") as HTMLDivElement;
     expect(chips.querySelectorAll(".attach-chip").length).toBe(1);
     expect(chips.querySelector(".attach-name")?.textContent).toBe("shot.png");
+    // The pasted image shows a preview thumbnail (its inline data URI).
+    const thumb = chips.querySelector(".attach-thumb") as HTMLImageElement;
+    expect(thumb).toBeTruthy();
+    expect(thumb.src).toContain("data:image/png");
 
     // Sending carries the inline data URI (no path on disk).
     input.value = "look at this";

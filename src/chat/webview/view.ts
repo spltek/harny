@@ -354,7 +354,11 @@ messagesEl.addEventListener("scroll", () => {
   autoScroll = nearBottom;
 });
 
-function addMessage(role: string, content: string, attachments?: { name: string; size: number }[]): HTMLDivElement {
+function addMessage(
+  role: string,
+  content: string,
+  attachments?: { name: string; size: number; dataUri?: string }[],
+): HTMLDivElement {
   const div = document.createElement("div");
   div.className = "msg " + role;
   if (role === "assistant" || role === "tool") {
@@ -392,14 +396,25 @@ function addSwitchToBuildBanner(): void {
 }
 
 /** "Sent with these files" chips shown inside a user bubble (name only). */
-function messageAttachmentRow(attachments: { name: string; size: number }[]): HTMLDivElement {
+function messageAttachmentRow(attachments: { name: string; size: number; dataUri?: string }[]): HTMLDivElement {
   const row = document.createElement("div");
   row.className = "msg-attachments";
   for (const file of attachments) {
     const chip = document.createElement("span");
     chip.className = "msg-attach";
-    chip.textContent = `📎 ${file.name}`;
     chip.title = file.size > 0 ? `${file.name} · ${formatBytes(file.size)}` : file.name;
+    if (file.dataUri) {
+      const img = document.createElement("img");
+      img.className = "msg-attach-thumb";
+      img.src = file.dataUri;
+      img.alt = file.name;
+      chip.appendChild(img);
+      const label = document.createElement("span");
+      label.textContent = file.name;
+      chip.appendChild(label);
+    } else {
+      chip.textContent = `📎 ${file.name}`;
+    }
     row.appendChild(chip);
   }
   return row;
@@ -1029,6 +1044,15 @@ function renderAttachmentChips(): void {
     const chip = document.createElement("span");
     chip.className = "attach-chip";
     chip.title = file.path || file.name;
+
+    // Pasted images carry their data URI: show a small preview thumbnail.
+    if (file.dataUri) {
+      const thumb = document.createElement("img");
+      thumb.className = "attach-thumb";
+      thumb.src = file.dataUri;
+      thumb.alt = file.name;
+      chip.appendChild(thumb);
+    }
 
     const name = document.createElement("span");
     name.className = "attach-name";
