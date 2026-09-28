@@ -76,6 +76,10 @@ describe("HttpModelListProvider", () => {
             { id: "vllm/y", max_model_len: 32768 },
             { id: "llamacpp/z", meta: { n_ctx_train: 8192 } },
             { id: "nested", top_provider: { context_length: 200000 } },
+            // models.dev schema — what OpenCode Go / Zen uses: `limit.context`.
+            { id: "opencode-go/deepseek", limit: { context: 128000, output: 8192 } },
+            { id: "modelsdev", limits: { context: 262144 } },
+            { id: "camel", contextWindow: 64000 },
             { id: "plain" },
           ],
         }),
@@ -86,6 +90,9 @@ describe("HttpModelListProvider", () => {
     expect(infos.find((m) => m.id === "vllm/y")?.contextLength).toBe(32768);
     expect(infos.find((m) => m.id === "llamacpp/z")?.contextLength).toBe(8192);
     expect(infos.find((m) => m.id === "nested")?.contextLength).toBe(200000);
+    expect(infos.find((m) => m.id === "opencode-go/deepseek")?.contextLength).toBe(128000);
+    expect(infos.find((m) => m.id === "modelsdev")?.contextLength).toBe(262144);
+    expect(infos.find((m) => m.id === "camel")?.contextLength).toBe(64000);
     expect(infos.find((m) => m.id === "plain")?.contextLength).toBeUndefined();
   });
 
@@ -94,6 +101,8 @@ describe("HttpModelListProvider", () => {
     expect(extractContextLength({ context_length: 0 })).toBeUndefined();
     expect(extractContextLength({ context_length: -5 })).toBeUndefined();
     expect(extractContextLength(null)).toBeUndefined();
+    expect(extractContextLength({ limit: { context: 128000 } })).toBe(128000);
+    expect(extractContextLength({ limits: { context: "200000" } })).toBe(200000);
   });
 
   it("accepts a bare array body", async () => {

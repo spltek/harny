@@ -34,26 +34,54 @@ export interface ModelListProvider {
   fetchModelInfos?(opts: ModelListOptions): Promise<ModelInfo[]>;
 }
 
-/** Best-effort context length from the common `/models` response shapes. */
+/** Keys that carry a model's context window across the known `/models` shapes
+ * (OpenRouter, vLLM, llama.cpp, OpenAI-compatible hosts, models.dev — the
+ * schema OpenCode Go / Zen uses, where it is `limit.context`). */
+const CONTEXT_KEYS = [
+  "context_length",
+  "context_window",
+  "contextWindow",
+  "context",
+  "context_size",
+  "context_tokens",
+  "max_context_length",
+  "max_model_len",
+  "max_input_tokens",
+  "input_tokens",
+  "n_ctx",
+  "n_ctx_train",
+] as const;
+
+/** Nested objects that may hold the context window. */
+const CONTEXT_CONTAINERS = ["limit", "limits", "metadata", "meta", "top_provider", "architecture"] as const;
+
+function toPositiveInt(value: unknown): number | undefined {
+  const n = typeof value === "string" ? Number(value) : value;
+  return typeof n === "number" && Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+}
+
+function pickContext(o: Record<string, unknown>): number | undefined {
+  for (const key of CONTEXT_KEYS) {
+    const n = toPositiveInt(o[key]);
+    if (n) return n;
+  }
+  return undefined;
+}
+
+/** Best-effort context length from the common `/models` response shapes
+ * (top-level fields, or nested under `limit`/`limits`/`metadata`/`meta`/
+ * `top_provider`/`architecture` — e.g. models.dev's `limit.context`). */
 export function extractContextLength(model: unknown): number | undefined {
   if (!model || typeof model !== "object") return undefined;
   const o = model as Record<string, unknown>;
-  const meta = o.meta as Record<string, unknown> | undefined;
-  const top = o.top_provider as Record<string, unknown> | undefined;
-  const candidates = [
-    o.context_length,
-    o.context_window,
-    o.max_context_length,
-    o.max_model_len,
-    o.n_ctx,
-    o.context_size,
-    top?.context_length,
-    meta?.n_ctx_train,
-    meta?.n_ctx,
-  ];
-  for (const c of candidates) {
-    const n = typeof c === "string" ? Number(c) : c;
-    if (typeof n === "number" && Number.isFinite(n) && n > 0) return Math.floor(n);
+  const direct = pickContext(o);
+  if (direct) return direct;
+  for (const container of CONTEXT_CONTAINERS) {
+    const child = o[container];
+    if (child && typeof child === "object") {
+      const n = pickContext(child as Record<string, unknown>);
+      if (n) return n;
+    }
   }
   return undefined;
 }

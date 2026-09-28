@@ -349,7 +349,7 @@ For providers that expose their model list (OpenAI, OpenRouter, opencode-go, lla
 - The choice is **saved to the config file** (top-level `model`, and `provider` if you switch provider), preserving comments and formatting.
 - On reopen Harny verifies the saved model still exists in the host list: if it was removed it reports it (invalid highlighted option + warning) and invites you to pick a new one.
 - If the server is unreachable (e.g. llama.cpp is off) a "host models unavailable" warning appears instead of an empty dropdown.
-- When the host reports each model's **context window** (OpenRouter `context_length`, vLLM `max_model_len`, llama.cpp `meta.n_ctx_train`, …) it is shown next to the model in the dropdown (`model · 128k`) and **adopted as the session's context window** on selection, so the compaction ceiling follows the real model size.
+- When the host reports each model's **context window** (OpenRouter `context_length`, vLLM `max_model_len`, llama.cpp `meta.n_ctx_train`, models.dev/OpenCode Go `limit.context`, …) it is shown next to the model in the dropdown (`model · 128k`) and **adopted as the session's context window** on selection, so the compaction ceiling follows the real model size.
 
 
 
