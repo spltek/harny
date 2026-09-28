@@ -408,6 +408,11 @@ function messageAttachmentRow(attachments: { name: string; size: number; dataUri
       img.className = "msg-attach-thumb";
       img.src = file.dataUri;
       img.alt = file.name;
+      img.title = "Click to enlarge";
+      img.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openImageLightbox(file.dataUri as string, file.name);
+      });
       chip.appendChild(img);
       const label = document.createElement("span");
       label.textContent = file.name;
@@ -418,6 +423,40 @@ function messageAttachmentRow(attachments: { name: string; size: number; dataUri
     row.appendChild(chip);
   }
   return row;
+}
+
+// ── Full-size image lightbox: click a thumbnail to view it large. ──
+let lightboxEl: HTMLDivElement | null = null;
+
+function ensureLightbox(): HTMLDivElement {
+  if (lightboxEl) return lightboxEl;
+  const overlay = document.createElement("div");
+  overlay.className = "img-lightbox hidden";
+  const img = document.createElement("img");
+  img.className = "img-lightbox-img";
+  overlay.appendChild(img);
+  overlay.addEventListener("click", () => closeImageLightbox());
+  document.body.appendChild(overlay);
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && lightboxEl && !lightboxEl.classList.contains("hidden")) {
+      e.preventDefault();
+      closeImageLightbox();
+    }
+  });
+  lightboxEl = overlay;
+  return overlay;
+}
+
+function openImageLightbox(src: string, alt: string): void {
+  const overlay = ensureLightbox();
+  const img = overlay.querySelector("img") as HTMLImageElement;
+  img.src = src;
+  img.alt = alt;
+  overlay.classList.remove("hidden");
+}
+
+function closeImageLightbox(): void {
+  lightboxEl?.classList.add("hidden");
 }
 
 function addThinkingBlock(text: string, beforeEl?: HTMLElement | null, opts?: { pulse?: boolean }): HTMLDivElement {
@@ -1045,12 +1084,17 @@ function renderAttachmentChips(): void {
     chip.className = "attach-chip";
     chip.title = file.path || file.name;
 
-    // Pasted images carry their data URI: show a small preview thumbnail.
+    // Pasted/picked images carry their data URI: show a clickable thumbnail.
     if (file.dataUri) {
       const thumb = document.createElement("img");
       thumb.className = "attach-thumb";
       thumb.src = file.dataUri;
       thumb.alt = file.name;
+      thumb.title = "Click to enlarge";
+      thumb.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openImageLightbox(file.dataUri as string, file.name);
+      });
       chip.appendChild(thumb);
     }
 

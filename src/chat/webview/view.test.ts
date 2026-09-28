@@ -585,6 +585,27 @@ describe("view webview client", () => {
     expect(atts[0].content).toContain("# hello");
   });
 
+  it("opens a full-size lightbox when a thumbnail is clicked", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    const file = new File([new Uint8Array([1, 2, 3, 4])], "shot.png", { type: "image/png" });
+    const ev = new Event("paste", { cancelable: true }) as unknown as ClipboardEvent & { clipboardData: unknown };
+    (ev as unknown as { clipboardData: unknown }).clipboardData = {
+      items: [{ kind: "file", type: "image/png", getAsFile: () => file }],
+    };
+    input.dispatchEvent(ev);
+    await new Promise((r) => setTimeout(r, 20));
+
+    (document.querySelector(".attach-thumb") as HTMLImageElement).click();
+    const lightbox = document.querySelector(".img-lightbox") as HTMLElement;
+    expect(lightbox).toBeTruthy();
+    expect(lightbox.classList.contains("hidden")).toBe(false);
+    expect((lightbox.querySelector("img") as HTMLImageElement).src).toContain("data:image/png");
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(lightbox.classList.contains("hidden")).toBe(true);
+  });
+
   it("attaches a pasted absolute path via the host", async () => {
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;

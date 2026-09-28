@@ -586,8 +586,12 @@ ${renderViewConfig(deps)}
     }
     .attach-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 12rem; }
     /* Thumbnail preview of a pasted clipboard image in its attachment chip. */
-    .attach-thumb { width: 22px; height: 22px; object-fit: cover; border-radius: 3px; border: 1px solid var(--border); }
-    .msg-attach-thumb { width: 16px; height: 16px; object-fit: cover; border-radius: 3px; }
+    .attach-thumb { width: 22px; height: 22px; object-fit: cover; border-radius: 3px; border: 1px solid var(--border); cursor: zoom-in; }
+    .msg-attach-thumb { width: 16px; height: 16px; object-fit: cover; border-radius: 3px; cursor: zoom-in; }
+    /* Full-size image lightbox: click a thumbnail to view it large. */
+    .img-lightbox { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(0, 0, 0, 0.82); cursor: zoom-out; }
+    .img-lightbox.hidden { display: none; }
+    .img-lightbox-img { max-width: 92vw; max-height: 92vh; object-fit: contain; border-radius: 6px; box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6); }
     .attach-size { color: #888; }
     #input-area .attach-remove {
       height: 1.15rem; min-height: 0; min-width: 1.15rem; padding: 0;

@@ -46,12 +46,14 @@ export class AttachmentService {
     return paths
       .map((p) => (typeof p === "string" ? p.trim() : ""))
       .filter((p) => p.length > 0 && this.fs.exists(p))
-      .map((path) => ({
-        name: basename(path),
-        path,
-        size: this.fs.size(path),
-        isImage: isImagePath(path),
-      }));
+      .map((path) => {
+        const size = this.fs.size(path);
+        const isImage = isImagePath(path);
+        // Images carry an inline data URI so the webview can preview them
+        // (thumbnail + lightbox) without any host round-trip.
+        const dataUri = isImage ? this.imageDataUri(path, size) : undefined;
+        return { name: basename(path), path, size, isImage, ...(dataUri ? { dataUri } : {}) };
+      });
   }
 
   async buildContext(files: AttachmentInfo[]): Promise<AttachmentContext> {

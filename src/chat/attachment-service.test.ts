@@ -98,6 +98,17 @@ describe("AttachmentService", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("fromPaths includes an inline data URI for image files (for previews)", () => {
+    dir = mkdtempSync(join(tmpdir(), "harny-att-"));
+    const png = join(dir, "image.png");
+    writeFileSync(png, "png-bytes");
+    const service = makeService(async () => []);
+    const files = service.fromPaths([png]);
+    expect(files[0].isImage).toBe(true);
+    expect(String(files[0].dataUri)).toMatch(/^data:image\/png;base64,/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("truncates very large files", async () => {
     dir = mkdtempSync(join(tmpdir(), "harny-att-"));
     const big = join(dir, "big.txt");
