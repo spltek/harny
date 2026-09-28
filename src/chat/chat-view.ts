@@ -685,10 +685,15 @@ export class ChatViewProvider implements WebviewViewProvider {
         }
         break;
       case "attachPath": {
-        // A pasted absolute path or file:// URI: attach the file if it exists.
+        // A pasted/dropped absolute path or file:// URI: attach it if it exists.
         const local = toLocalPath(String(msg.path ?? ""));
         const files = local ? this.attachments.fromPaths([local]) : [];
         this.view?.webview.postMessage({ type: "attachments", files });
+        break;
+      }
+      case "dragDebug": {
+        // Diagnostics: what a drag & drop actually delivered (Output > Harny).
+        infoLog("webview drop:", JSON.stringify(msg.detail ?? {}));
         break;
       }
     }

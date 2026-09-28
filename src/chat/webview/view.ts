@@ -1241,21 +1241,99 @@ async function attachPastedFile(file: File, source: "clipboard" | "drop" = "clip
   attachedFiles.push({ name: file.name || "file", path: "", size: file.size, isImage: false, content });
 }
 
-/** Drag & drop: files (reusing the paste pipeline) or a dropped path/URI. */
+/** Drag & drop: VS Code explorer drags arrive as text/uri-list; OS drags as
+ * File objects (which may expose a non-standard `path`). Both are handled. */
 async function handleDrop(e: DragEvent): Promise<void> {
   const dt = e.dataTransfer;
-  const files = dt ? Array.from(dt.files) : [];
-  if (files.length > 0) {
-    for (const f of files) await attachPastedFile(f, "drop");
-    renderAttachmentChips();
-    return;
-  }
-  const uri = dt?.getData("text/uri-list") || dt?.getData("text/plain") || "";
-  const path = uri
+  // Diagnostic (logged to Output > Harny) so a non-working drop is diagnosable.
+  vscode.postMessage({
+    type: "dragDebug",
+    detail: {
+      types: dt && dt.types ? Array.from(dt.types) : [],
+      files: dt ? dt.files.length : 0,
+      uris: dt?.getData("text/uri-list")?.slice(0, 300) ?? "",
+      text: dt?.getData("text/plain")?.slice(0, 300) ?? "",
+    },
+  });
+
+  // 1) Paths from a VS Code drag (text/uri-list), e.g. the Explorer.
+  const uriList = (dt?.getData("text/uri-list") || "")
     .split(/\r?\n/)
     .map((l) => l.trim())
-    .find((l) => l.length > 0 && !l.startsWith("#"));
-  if (path && looksLikePath(path)) vscode.postMessage({ type: "attachPath", path });
+    .filter((l) => l.length > 0 && !l.startsWith("#"));
+  let attached = false;
+  for (const uri of uriList) {
+    vscode.postMessage({ type: "attachPath", path: uri });
+    attached = true;
+  }
+
+  // 2) File objects (OS drag): prefer an Electron `path`, else the content.
+  const files = dt ? Array.from(dt.files) : [];
+  const fromItems =
+    files.length === 0 && dt && dt.items
+      ? Array.from(dt.items)
+          .filter((i) => i.kind === "file")
+          .map((i) => i.getAsFile())
+          .filter((f): f is File => !!f)
+      : files;
+  for (const f of fromItems) {
+    const p = (f as unknown as { path?: string }).path;
+    if (p && looksLikePath(p)) vscode.postMessage({ type: "attachPath", path: p });
+    else await attachPastedFile(f, "drop");
+    attached = true;
+  }
+
+  // 3) A plain-text path.
+  const plain = (dt?.getData("text/plain") || "").split(/\r?\n/).map((l) => l.trim())[0] ?? "";
+  if (!attached && plain && looksLikePath(plain)) {
+    vscode.postMessage({ type: "attachPath", path: plain });
+    attached = true;
+  }
+
+  if (fromItems.length > 0) renderAttachmentChips();
+  if (!attached) {
+    addMessage("assistant", "⚠️ Drop received, but VS Code provided no file path or content.").classList.add("loop");
+  }
+}
+
+/** Install window-capture drag & drop handlers (works over the whole panel). */
+function installDragAndDrop(): void {
+  let depth = 0;
+  window.addEventListener(
+    "dragover",
+    (e) => {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    },
+    true,
+  );
+  window.addEventListener(
+    "dragenter",
+    (e) => {
+      e.preventDefault();
+      depth++;
+      document.body.classList.add("drag-over");
+    },
+    true,
+  );
+  window.addEventListener(
+    "dragleave",
+    () => {
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) document.body.classList.remove("drag-over");
+    },
+    true,
+  );
+  window.addEventListener(
+    "drop",
+    (e) => {
+      e.preventDefault();
+      depth = 0;
+      document.body.classList.remove("drag-over");
+      void handleDrop(e);
+    },
+    true,
+  );
 }
 
 /**
@@ -1293,24 +1371,7 @@ inputEl.addEventListener("paste", (e) => {
   void handlePaste(e);
 });
 
-// Drag & drop of files/paths anywhere on the panel.
-let dragDepth = 0;
-document.body.addEventListener("dragover", (e) => e.preventDefault());
-document.body.addEventListener("dragenter", (e) => {
-  e.preventDefault();
-  dragDepth++;
-  document.body.classList.add("drag-over");
-});
-document.body.addEventListener("dragleave", () => {
-  dragDepth = Math.max(0, dragDepth - 1);
-  if (dragDepth === 0) document.body.classList.remove("drag-over");
-});
-document.body.addEventListener("drop", (e) => {
-  e.preventDefault();
-  dragDepth = 0;
-  document.body.classList.remove("drag-over");
-  void handleDrop(e);
-});
+installDragAndDrop();
 inputEl.addEventListener("input", resizeInput);
 // Recompute the height when the input's width changes (panel/window resize),
 // because line wrapping depends on width. Guarded ResizeObserver avoids loops.
