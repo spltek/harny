@@ -76,6 +76,21 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     expect(listSection).toContain("- Write:");
   });
 
+  it("pre-delegation (only Delegate advertised) forbids every other tool by name", () => {
+    const delegateOnly: Tool[] = [
+      {
+        name: DELEGATE_TOOL_NAME,
+        definition: { name: DELEGATE_TOOL_NAME, description: "Delegate a sub-task.", parameters: { type: "object", properties: {} } },
+        execute: async () => ({ content: "ok", isError: false }),
+      },
+    ];
+    const builder = new DefaultSystemPromptBuilder((m) => toolDefinitionsForMode(delegateOnly, m), () => "/w");
+    const prompt = builder.build("agent");
+    expect(prompt).toContain("ONLY tool you may call is Delegate");
+    expect(prompt).toContain("Do NOT call TodoWrite");
+    expect(prompt).toContain("any such call is refused");
+  });
+
   it("adds orchestration rules only when the Delegate tool is available", () => {
     const withDelegate = new DefaultSystemPromptBuilder(
       (mode) => toolDefinitionsForMode(toolsWithDelegate(), mode),

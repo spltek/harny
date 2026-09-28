@@ -53,8 +53,15 @@ READ-ONLY MODE (Analyze) — PREVIEW RULES:
     // (i.e. when the "Parallel" toggle is ON). It is deliberately DIRECTIVE:
     // the agent must act as an orchestrator and actually use sub-agents.
     const hasDelegate = definitions.some((d) => d.name === DELEGATE_TOOL_NAME);
+    // "Pre-delegation" turn: only the Delegate tool is advertised. Spell out the
+    // tools the model must NOT call, or weak/local models hallucinate one
+    // (e.g. TodoWrite) and get blocked instead of delegating straight away.
+    const delegateOnly = hasDelegate && definitions.length === 1;
     const orchestratorIntro = hasDelegate
-      ? `\nORCHESTRATION MODE (MANDATORY): the "Parallel" toggle is ON. You are the ORCHESTRATOR. Your FIRST action on EVERY request is to DELEGATE: first think about how to split the work, then call Delegate. Until you have delegated, the ONLY tool available to you is Delegate — do not plan searches/reads/edits, plan the DELEGATION. You MUST run at least one sub-task per request; never answer directly.`
+      ? `\nORCHESTRATION MODE (MANDATORY): the "Parallel" toggle is ON. You are the ORCHESTRATOR. Your FIRST action on EVERY request is to DELEGATE: first think about how to split the work, then call Delegate. You MUST run at least one sub-task per request; never answer directly.` +
+        (delegateOnly
+          ? `\nRIGHT NOW the ONLY tool you may call is Delegate. Do NOT call TodoWrite, WebSearch, WebFetch, Read, Grep, Glob, Shell, Edit, Write, StrReplace, Delete or ReadLints before your Delegate call(s): they are NOT available yet and any such call is refused.`
+          : "")
       : "";
     const delegateRules = hasDelegate
       ? `
@@ -96,7 +103,7 @@ Guidelines:
 - Edit: surgical, atomic multi-edits. Each edit's oldText must match a UNIQUE region exactly (trailing-space/Unicode tolerated). The result shows the applied diff — always re-check it. StrReplace is the strict single-edit variant.
 - Use Shell for running commands (tests, builds, git operations).
 - Use Grep/Glob to search and explore the codebase.
-- Use TodoWrite to track progress on complex multi-step tasks.
+- Use TodoWrite to track progress on complex multi-step tasks (with Parallel ON, only AFTER you have delegated).
 - Use ReadLints only on files you've edited or are about to edit.
 - When broadly exploring the codebase, prefer Grep and Glob over Shell find/grep.
 - Never repeat the same tool call with identical arguments: if it failed or returned nothing, change approach (Glob/Grep/Read or different arguments) instead of retrying it.${delegateRules}${analyzeRules}`;
