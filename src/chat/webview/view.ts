@@ -1201,22 +1201,30 @@ function looksLikePath(text: string): boolean {
   return /^(file:\/\/|\/|[A-Za-z]:[\\/]|\\\\)/.test(text.trim());
 }
 
-/** Attach one pasted File: images inline as a data URI, text files inline as
- * text; binary files (e.g. PDF) are attached with a clear "not readable" note. */
-async function attachPastedFile(file: File): Promise<void> {
+/** A unique "Image from clipboard" label (numbering extra ones). */
+function uniqueClipboardImageName(): string {
+  const base = "Image from clipboard";
+  const used = new Set(attachedFiles.map((f) => f.name));
+  if (!used.has(base)) return base;
+  let n = 2;
+  while (used.has(`${base} ${n}`)) n++;
+  return `${base} ${n}`;
+}
+
+/** Attach one pasted/dropped File: images inline as a data URI, text files
+ * inline as text; binary files (e.g. PDF) are attached with a clear note. */
+async function attachPastedFile(file: File, source: "clipboard" | "drop" = "clipboard"): Promise<void> {
   if (file.size > MAX_PASTE_IMAGE_BYTES) {
-    addMessage("assistant", `⚠️ Pasted file is too large (${formatBytes(file.size)}); max 15 MB.`).classList.add("loop");
+    addMessage("assistant", `⚠️ File is too large (${formatBytes(file.size)}); max 15 MB.`).classList.add("loop");
     return;
   }
   if (file.type.startsWith("image/")) {
+    // Clipboard images have no meaningful file name: call them
+    // "Image from clipboard". Dropped images keep their real name.
+    const name =
+      source === "clipboard" ? uniqueClipboardImageName() : file.name || `image.${extFromMime(file.type)}`;
     try {
-      attachedFiles.push({
-        name: file.name || `pasted-image.${extFromMime(file.type)}`,
-        path: "",
-        size: file.size,
-        isImage: true,
-        dataUri: await readAsDataUrl(file),
-      });
+      attachedFiles.push({ name, path: "", size: file.size, isImage: true, dataUri: await readAsDataUrl(file) });
     } catch {
       /* unreadable image */
     }
@@ -1230,7 +1238,24 @@ async function attachPastedFile(file: File): Promise<void> {
       /* ignore */
     }
   }
-  attachedFiles.push({ name: file.name || "pasted-file", path: "", size: file.size, isImage: false, content });
+  attachedFiles.push({ name: file.name || "file", path: "", size: file.size, isImage: false, content });
+}
+
+/** Drag & drop: files (reusing the paste pipeline) or a dropped path/URI. */
+async function handleDrop(e: DragEvent): Promise<void> {
+  const dt = e.dataTransfer;
+  const files = dt ? Array.from(dt.files) : [];
+  if (files.length > 0) {
+    for (const f of files) await attachPastedFile(f, "drop");
+    renderAttachmentChips();
+    return;
+  }
+  const uri = dt?.getData("text/uri-list") || dt?.getData("text/plain") || "";
+  const path = uri
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .find((l) => l.length > 0 && !l.startsWith("#"));
+  if (path && looksLikePath(path)) vscode.postMessage({ type: "attachPath", path });
 }
 
 /**
@@ -1250,7 +1275,7 @@ async function handlePaste(e: ClipboardEvent): Promise<void> {
     e.preventDefault();
     for (const item of fileItems) {
       const file = item.getAsFile();
-      if (file) await attachPastedFile(file);
+      if (file) await attachPastedFile(file, "clipboard");
     }
     renderAttachmentChips();
     return;
@@ -1266,6 +1291,25 @@ async function handlePaste(e: ClipboardEvent): Promise<void> {
 
 inputEl.addEventListener("paste", (e) => {
   void handlePaste(e);
+});
+
+// Drag & drop of files/paths anywhere on the panel.
+let dragDepth = 0;
+document.body.addEventListener("dragover", (e) => e.preventDefault());
+document.body.addEventListener("dragenter", (e) => {
+  e.preventDefault();
+  dragDepth++;
+  document.body.classList.add("drag-over");
+});
+document.body.addEventListener("dragleave", () => {
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) document.body.classList.remove("drag-over");
+});
+document.body.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dragDepth = 0;
+  document.body.classList.remove("drag-over");
+  void handleDrop(e);
 });
 inputEl.addEventListener("input", resizeInput);
 // Recompute the height when the input's width changes (panel/window resize),

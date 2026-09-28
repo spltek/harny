@@ -546,7 +546,7 @@ describe("view webview client", () => {
 
     const chips = document.getElementById("attachment-chips") as HTMLDivElement;
     expect(chips.querySelectorAll(".attach-chip").length).toBe(1);
-    expect(chips.querySelector(".attach-name")?.textContent).toBe("shot.png");
+    expect(chips.querySelector(".attach-name")?.textContent).toBe("Image from clipboard");
     // The pasted image shows a preview thumbnail (its inline data URI).
     const thumb = chips.querySelector(".attach-thumb") as HTMLImageElement;
     expect(thumb).toBeTruthy();
@@ -583,6 +583,49 @@ describe("view webview client", () => {
     const sendMsg = posted.find((m) => (m as { type?: string }).type === "send") as Record<string, unknown>;
     const atts = sendMsg.attachments as Array<Record<string, unknown>>;
     expect(atts[0].content).toContain("# hello");
+  });
+
+  it("names a second clipboard image 'Image from clipboard 2'", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    const paste = (): void => {
+      const file = new File([new Uint8Array([1])], "x.png", { type: "image/png" });
+      const ev = new Event("paste", { cancelable: true }) as unknown as ClipboardEvent & { clipboardData: unknown };
+      (ev as unknown as { clipboardData: unknown }).clipboardData = {
+        items: [{ kind: "file", type: "image/png", getAsFile: () => file }],
+      };
+      input.dispatchEvent(ev);
+    };
+    paste();
+    await new Promise((r) => setTimeout(r, 20));
+    paste();
+    await new Promise((r) => setTimeout(r, 20));
+    const names = [...document.querySelectorAll(".attach-name")].map((e) => e.textContent);
+    expect(names).toEqual(["Image from clipboard", "Image from clipboard 2"]);
+  });
+
+  it("attaches a file dropped onto the panel", async () => {
+    await loadView();
+    const file = new File([new Uint8Array([1, 2, 3])], "dropped.png", { type: "image/png" });
+    const ev = new Event("drop", { cancelable: true }) as unknown as DragEvent & { dataTransfer: unknown };
+    (ev as unknown as { dataTransfer: unknown }).dataTransfer = { files: [file], getData: () => "" };
+    document.body.dispatchEvent(ev);
+    await new Promise((r) => setTimeout(r, 20));
+    const chip = document.querySelector(".attach-chip") as HTMLElement;
+    expect(chip).toBeTruthy();
+    expect(chip.querySelector(".attach-name")?.textContent).toBe("dropped.png");
+  });
+
+  it("attaches a path dropped as text/uri-list", async () => {
+    await loadView();
+    const ev = new Event("drop", { cancelable: true }) as unknown as DragEvent & { dataTransfer: unknown };
+    (ev as unknown as { dataTransfer: unknown }).dataTransfer = {
+      files: [],
+      getData: (t: string) => (t === "text/uri-list" ? "file:///Users/x/report.pdf" : ""),
+    };
+    posted.length = 0;
+    document.body.dispatchEvent(ev);
+    expect(posted).toContainEqual({ type: "attachPath", path: "file:///Users/x/report.pdf" });
   });
 
   it("opens a full-size lightbox when a thumbnail is clicked", async () => {
