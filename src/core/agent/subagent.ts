@@ -126,7 +126,10 @@ export class SubAgentRunner {
     };
     signal?.addEventListener("abort", onParentAbort);
     try {
-      await agent.send(buildSubAgentTask(spec));
+      // Forward the attachments the orchestrator selected for this sub-task.
+      const task =
+        buildSubAgentTask(spec) + (spec.attachmentText ? `\n\n${spec.attachmentText}` : "");
+      await agent.send(task, { images: spec.images });
       if (this.abortedAgents.has(agent) || signal?.aborted) {
         return { content: formatSubAgentInterrupted(spec), isError: true };
       }

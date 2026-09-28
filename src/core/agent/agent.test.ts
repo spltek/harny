@@ -1539,6 +1539,102 @@ describe("Orchestration (Delegate)", () => {
     expect(history.all().some((m) => m.role === "user" && /MANDATORY/.test(m.content))).toBe(false);
   });
 
+  it("forwards ONLY the attachments the Delegate selects to each sub-agent", async () => {
+    const seen: DelegateSpec[] = [];
+    const factory = fakeFactory(
+      delegateTurn([{ id: "a", goal: "describe doc 2", access: "read", resources: ["."], attachments: [2] }]),
+      [{ type: "text", content: "done" }],
+    );
+    const tools = new ToolRegistry([makeTool("Delegate"), makeTool("Read")]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history: new InMemoryChatHistory(),
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      spawnSubAgent: async (spec) => {
+        seen.push(spec);
+        return { content: "report", isError: false };
+      },
+    });
+    agent.setMode("agent");
+    agent.setDelegation(true);
+
+    await agent.send("describe the docs", {
+      attachmentParts: [
+        { name: "doc1.txt", isImage: false, text: "CONTENT ONE" },
+        { name: "doc2.txt", isImage: false, text: "CONTENT TWO" },
+      ],
+    });
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].attachmentText).toContain("CONTENT TWO");
+    expect(seen[0].attachmentText).not.toContain("CONTENT ONE");
+  });
+
+  it("forwards ALL attachments when the Delegate selects none", async () => {
+    const seen: DelegateSpec[] = [];
+    const factory = fakeFactory(
+      delegateTurn([{ id: "a", goal: "describe docs", access: "read", resources: ["."] }]),
+      [{ type: "text", content: "done" }],
+    );
+    const tools = new ToolRegistry([makeTool("Delegate"), makeTool("Read")]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history: new InMemoryChatHistory(),
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      spawnSubAgent: async (spec) => {
+        seen.push(spec);
+        return { content: "report", isError: false };
+      },
+    });
+    agent.setMode("agent");
+    agent.setDelegation(true);
+
+    await agent.send("describe the docs", {
+      attachmentParts: [
+        { name: "doc1.txt", isImage: false, text: "CONTENT ONE" },
+        { name: "doc2.txt", isImage: false, text: "CONTENT TWO" },
+      ],
+    });
+
+    expect(seen[0].attachmentText).toContain("CONTENT ONE");
+    expect(seen[0].attachmentText).toContain("CONTENT TWO");
+  });
+
+  it("forwards a selected image attachment as multimodal data URI", async () => {
+    const seen: DelegateSpec[] = [];
+    const factory = fakeFactory(
+      delegateTurn([{ id: "a", goal: "read image", access: "read", resources: ["."], attachments: [1] }]),
+      [{ type: "text", content: "done" }],
+    );
+    const tools = new ToolRegistry([makeTool("Delegate"), makeTool("Read")]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history: new InMemoryChatHistory(),
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      spawnSubAgent: async (spec) => {
+        seen.push(spec);
+        return { content: "report", isError: false };
+      },
+    });
+    agent.setMode("agent");
+    agent.setDelegation(true);
+
+    await agent.send("look", {
+      attachmentParts: [{ name: "img.png", isImage: true, dataUri: "data:image/png;base64,ZZZ" }],
+    });
+
+    expect(seen[0].images).toEqual(["data:image/png;base64,ZZZ"]);
+  });
+
   it("runs parallel read-delegates concurrently (both start before either ends)", async () => {
     const order: string[] = [];
     const spawn = async (spec: DelegateSpec): Promise<ToolResult> => {

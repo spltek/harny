@@ -207,6 +207,38 @@ describe("SubAgentRunner", () => {
     expect(res.content).not.toContain("Nothing has been applied");
   });
 
+  it("forwards the delegate's resolved attachments to the sub-agent (text + images)", async () => {
+    const seen: LLMMessage[][] = [];
+    const captureFactory: LLMProviderFactory = {
+      create() {
+        return {
+          protocol: "chat" as const,
+          async *stream(messages: LLMMessage[]) {
+            seen.push(messages);
+            yield { type: "text", content: "report" };
+          },
+        };
+      },
+    };
+    const runner = new SubAgentRunner({
+      config: new StaticConfigProvider(CONFIG),
+      llmFactory: captureFactory,
+      tools: new ToolRegistry([]),
+      cwd: () => "/workspace",
+    });
+    const withAttachments: DelegateSpec = {
+      ...spec({ access: "read" }),
+      images: ["data:image/png;base64,AAA"],
+      attachmentText: 'Attached file "d.txt":\n```\nHELLO\n```',
+    };
+
+    await runner.run(withAttachments);
+
+    const userMsg = seen[0].find((m) => m.role === "user");
+    expect(String(userMsg?.content)).toContain("HELLO");
+    expect(userMsg?.images).toEqual(["data:image/png;base64,AAA"]);
+  });
+
   it("forwards its live events to the caller (nested streaming)", async () => {
     const runner = buildRunner(
       factory([[{ type: "thinking", content: "hmm" }], [{ type: "text", content: "report" }]]),

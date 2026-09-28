@@ -10,3 +10,15 @@ export interface AttachmentInfo {
   /** Inline text for a clipboard text file (no file on disk). */
   content?: string;
 }
+
+/** One user attachment resolved for forwarding to a sub-agent. The order in a
+ * request's `AttachmentPart[]` matches the numbered `[User attachments]` list
+ * the orchestrator sees, so it can pick per-sub-task. */
+export interface AttachmentPart {
+  name: string;
+  isImage: boolean;
+  /** Inline data URI (images). */
+  dataUri?: string;
+  /** Inline text (text files). */
+  text?: string;
+}

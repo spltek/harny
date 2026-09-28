@@ -24,6 +24,13 @@ export interface DelegateSpec {
   parallel?: boolean;
   /** Ids of sibling sub-tasks that must finish first. */
   after: string[];
+  /** Numbers (1-based) of the user's attachments this sub-task needs. Omitted
+   * = ALL of the current message's attachments are forwarded. */
+  attachments?: number[];
+  /** Runtime-only: image data URIs resolved by the host for the sub-agent. */
+  images?: string[];
+  /** Runtime-only: inline text of the resolved text attachments. */
+  attachmentText?: string;
 }
 
 /** Parse + validate the raw Delegate tool arguments. */
@@ -55,8 +62,23 @@ export function parseDelegateSpec(args: Record<string, unknown>): { spec?: Deleg
   const after = Array.isArray(args.after)
     ? args.after.filter((a): a is string => typeof a === "string" && a.trim().length > 0).map((a) => a.trim())
     : [];
+  const attachments = Array.isArray(args.attachments)
+    ? args.attachments.filter((n): n is number => typeof n === "number" && Number.isInteger(n) && n > 0)
+    : undefined;
 
-  return { spec: { id, goal, context, role, access, resources, parallel, after } };
+  return {
+    spec: {
+      id,
+      goal,
+      context,
+      role,
+      access,
+      resources,
+      parallel,
+      after,
+      ...(attachments && attachments.length > 0 ? { attachments } : {}),
+    },
+  };
 }
 
 function normalizePath(p: string): string {

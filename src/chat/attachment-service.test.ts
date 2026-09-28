@@ -71,6 +71,20 @@ describe("AttachmentService", () => {
     expect(ctx.text).toContain("pasted from clipboard");
   });
 
+  it("returns numbered parts for per-sub-agent attachment forwarding", async () => {
+    const service = makeService(async () => []);
+    const ctx = await service.buildContext([
+      { name: "a.txt", path: "", size: 3, isImage: false, content: "AAA" },
+      { name: "img.png", path: "", size: 4, isImage: true, dataUri: "data:image/png;base64,AAAA" },
+    ]);
+    expect(ctx.text).toContain("[User attachments");
+    expect(ctx.text).toContain('1. "a.txt" (text)');
+    expect(ctx.text).toContain('2. "img.png" (image)');
+    expect(ctx.parts).toHaveLength(2);
+    expect(ctx.parts[0]).toMatchObject({ name: "a.txt", isImage: false, text: "AAA" });
+    expect(ctx.parts[1]).toMatchObject({ name: "img.png", isImage: true, dataUri: "data:image/png;base64,AAAA" });
+  });
+
   it("inlines a pasted text file's content (no path)", async () => {
     const service = makeService(async () => []);
     const ctx = await service.buildContext([

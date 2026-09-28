@@ -78,6 +78,13 @@ export class DelegateTool implements Tool {
           items: { type: "string" },
           description: "Ids of sibling sub-tasks that must complete first.",
         },
+        attachments: {
+          type: "array",
+          items: { type: "number" },
+          description:
+            'Numbers of the user attachments (the numbered [User attachments] list) this sub-task needs, ' +
+            'e.g. [1] or [2]. Give each sub-task ONLY the attachments it needs. Omit to forward ALL of them.',
+        },
       },
       required: ["goal", "access", "resources"],
     },

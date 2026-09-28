@@ -1,4 +1,5 @@
 import type { ChatMessage, MessageAttachment } from "../history/types";
+import type { AttachmentPart } from "../../chat/attachment-types";
 import type { AgentEvent } from "./types";
 import type { ChatMode } from "../tools/mode-policy";
 
@@ -10,6 +11,9 @@ export interface SendOptions {
   attachments?: MessageAttachment[];
   /** Text to show in the UI when the LLM `content` differs (file contents inlined). */
   displayText?: string;
+  /** Per-attachment parts, so a Delegate can hand each sub-agent only the
+   * attachments its sub-task needs (indices in the numbered list). */
+  attachmentParts?: AttachmentPart[];
 }
 
 /**

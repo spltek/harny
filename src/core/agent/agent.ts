@@ -28,6 +28,7 @@ import {
   type PlannedCall,
 } from "./orchestration";
 import { BUILD_SWITCH_HINT, type SystemPromptBuilder } from "./system-prompt";
+import type { AttachmentPart } from "../../chat/attachment-types";
 import { LoopGuard, type LoopDecision } from "./loop-guard";
 import { ToolCallAccumulator } from "./tool-call-accumulator";
 import { ThinkingTagParser } from "./thinking-parser";
@@ -110,6 +111,8 @@ export class Agent implements ChatController {
   private forcedDelegationNudge = false;
   /** The user message that started the current run (goal for the forced sub-agent). */
   private runGoal = "";
+  /** Per-attachment parts of the CURRENT user message, forwarded to sub-agents. */
+  private currentAttachmentParts: AttachmentPart[] = [];
   /** Whether the forced final-report turn already ran (turn-budget exhausted). */
   private forcedFinalReport = false;
   /** Cap: may this agent EVER delegate? Sub-agents pass false (depth 1). */
@@ -174,6 +177,7 @@ export class Agent implements ChatController {
       timestamp: Date.now(),
     });
     this.runGoal = userMessage.trim() || options.displayText?.trim() || "";
+    this.currentAttachmentParts = options.attachmentParts ?? [];
 
     const config = this.deps.config.get();
     if (requiresApiKey(config)) {
@@ -939,6 +943,10 @@ export class Agent implements ChatController {
         isError: true,
       };
     }
+    // Forward to the sub-agent the attachments its sub-task needs (by number),
+    // defaulting to ALL of them when the orchestrator did not specify any.
+    const forwarded = this.resolveAttachments(spec.attachments);
+    const resolvedSpec: DelegateSpec = { ...spec, images: forwarded.images, attachmentText: forwarded.text };
     try {
       // Signal the UI that this sub-agent is STARTING now (queued → running):
       // with a concurrency cap, several delegates may be queued behind others.
@@ -946,9 +954,30 @@ export class Agent implements ChatController {
       // Forward the sub-agent's live events into its bubble (nested streaming).
       const onEvent = (event: import("./types").SubAgentEvent) =>
         this.deps.events.emit({ type: "subagent_event", toolCallId: tc.id, event });
-      return await this.deps.spawnSubAgent(spec, onEvent, this.abortController?.signal);
+      return await this.deps.spawnSubAgent(resolvedSpec, onEvent, this.abortController?.signal);
     } catch (err: any) {
-      return { content: formatSubAgentError(spec, err?.message || String(err)), isError: true };
+      return { content: formatSubAgentError(resolvedSpec, err?.message || String(err)), isError: true };
     }
+  }
+
+  /**
+   * Resolve a Delegate's `attachments` selection to the actual data to forward
+   * to the sub-agent: image data URIs (multimodal) + inline text. No selection
+   * (or an empty one) means ALL of the current user message's attachments.
+   */
+  private resolveAttachments(indices?: number[]): { images: string[]; text: string } {
+    const parts = this.currentAttachmentParts;
+    if (parts.length === 0) return { images: [], text: "" };
+    const chosen =
+      indices && indices.length > 0
+        ? indices.map((n) => parts[n - 1]).filter((p): p is AttachmentPart => !!p)
+        : parts;
+    const effective = chosen.length > 0 ? chosen : parts;
+    const images = effective.filter((p) => p.isImage && p.dataUri).map((p) => p.dataUri as string);
+    const text = effective
+      .filter((p) => !p.isImage && p.text)
+      .map((p) => `Attached file "${p.name}":\n\`\`\`\n${p.text}\n\`\`\``)
+      .join("\n\n");
+    return { images, text };
   }
 }

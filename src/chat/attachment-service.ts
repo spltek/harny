@@ -2,7 +2,7 @@ import { basename, extname } from "node:path";
 import { readFileSync } from "node:fs";
 import type { FileSystem } from "../core/tools/file-system";
 import { formatSize, isImagePath } from "../core/tools/path-utils";
-import type { AttachmentInfo } from "./attachment-types";
+import type { AttachmentInfo, AttachmentPart } from "./attachment-types";
 
 const MAX_ATTACHMENT_CHARS = 30000;
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
@@ -21,6 +21,9 @@ export interface AttachmentContext {
   text: string;
   /** Data URIs of attached images, sent as multimodal content to the LLM. */
   images: string[];
+  /** Per-attachment parts, indexed to match the numbered list in `text`, so a
+   * sub-agent can be given only the attachments its sub-task needs. */
+  parts: AttachmentPart[];
 }
 
 /**
@@ -59,6 +62,7 @@ export class AttachmentService {
   async buildContext(files: AttachmentInfo[]): Promise<AttachmentContext> {
     const textParts: string[] = [];
     const images: string[] = [];
+    const parts: AttachmentPart[] = [];
 
     for (const f of files) {
       if (f.isImage) {
@@ -67,6 +71,7 @@ export class AttachmentService {
         // Clipboard images arrive as a data URI (no file on disk); file images
         // are read from their path.
         const dataUri = f.dataUri ?? this.imageDataUri(f.path, f.size);
+        parts.push({ name: f.name, isImage: true, ...(dataUri ? { dataUri } : {}) });
         if (dataUri) {
           images.push(dataUri);
           textParts.push(note);
@@ -79,6 +84,7 @@ export class AttachmentService {
       let content: string | undefined = f.content;
       if (content === undefined) {
         if (!f.path) {
+          parts.push({ name: f.name, isImage: false });
           textParts.push(
             `[Attached file "${f.name}" (${formatSize(f.size)}) could not be included: its content is not ` +
               "available (binary file or unsupported over the chat protocol)]",
@@ -88,6 +94,7 @@ export class AttachmentService {
         try {
           content = this.fs.readText(f.path);
         } catch {
+          parts.push({ name: f.name, isImage: false });
           textParts.push(`[Could not read file: ${f.name}]`);
           continue;
         }
@@ -95,10 +102,20 @@ export class AttachmentService {
       if (content.length > MAX_ATTACHMENT_CHARS) {
         content = content.slice(0, MAX_ATTACHMENT_CHARS) + "\n\n[Content truncated...]";
       }
+      parts.push({ name: f.name, isImage: false, text: content });
       textParts.push(`Attached file "${f.name}":\n\`\`\`\n${content}\n\`\`\``);
     }
 
-    return { text: textParts.join("\n\n"), images };
+    // Numbered list so the orchestrator can reference attachments per sub-task
+    // (`Delegate.attachments: [n]`); the order matches `parts`.
+    const header =
+      files.length > 0
+        ? `[User attachments — reference them by number in Delegate "attachments"]\n` +
+          files.map((f, i) => `${i + 1}. "${f.name}" (${f.isImage ? "image" : "text"})`).join("\n") +
+          "\n\n"
+        : "";
+
+    return { text: header + textParts.join("\n\n"), images, parts };
   }
 
   private imageDataUri(path: string, size: number): string | undefined {

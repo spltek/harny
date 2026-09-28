@@ -11,7 +11,7 @@ import type { SessionSettingsPatch, SessionSummary } from "../core/sessions/type
 import type { SessionRegistry, SessionRuntime } from "./session-registry";
 import { StreamTee } from "./stream-tee";
 import type { AttachmentService } from "./attachment-service";
-import type { AttachmentInfo } from "./attachment-types";
+import type { AttachmentInfo, AttachmentPart } from "./attachment-types";
 import { debugLog, infoLog } from "../logger";
 import { renderViewHtml } from "./view-html";
 import { toTemperature, toTopP } from "./temperature";
@@ -832,6 +832,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     let images: string[] | undefined;
     let displayText: string | undefined;
     let attachmentMeta: { name: string; path: string; size: number }[] | undefined;
+    let attachmentParts: AttachmentPart[] | undefined;
     if (attached.length > 0) {
       const ctx = await this.attachments.buildContext(attached);
       text = ctx.text ? `${ctx.text}\n\n${rawText}` : rawText;
@@ -839,6 +840,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       // Keep the files as metadata for the bubble, and show ONLY the typed
       // prompt (possibly empty) — never the inlined file contents.
       attachmentMeta = attached.map((a) => ({ name: a.name, path: a.path, size: a.size }));
+      attachmentParts = ctx.parts;
       displayText = rawText;
     }
     if (images && images.length > 0) {
@@ -864,7 +866,12 @@ export class ChatViewProvider implements WebviewViewProvider {
     // send() sets _streaming synchronously on invocation: start it first, THEN
     // push the status — otherwise workingIds() is still empty and the session
     // row never locks (branch/rename/delete stay hoverable during the work).
-    const sending = rt.agent.send(text, { images, attachments: attachmentMeta, displayText });
+    const sending = rt.agent.send(text, {
+      images,
+      attachments: attachmentMeta,
+      displayText,
+      attachmentParts: attachmentParts,
+    });
     this.postStatus(true);
     let hadError = false;
     const unsub = rt.agent.onEvent((e) => {

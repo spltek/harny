@@ -56,7 +56,7 @@ npm test          # run all unit tests (vitest)
 npm run coverage  # with coverage report
 ```
 
-832 unit tests cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (JSONL store, manager, registry, compactor), the OpenAI-compatible LLM provider (streaming, tool calls, `finish_reason`), host-model fetching, all 13 tools (including the Analyze dry-run preview), the mode policy, the agent loop (fake LLM, abort, max turns), the **loop guard** (reasoning/empty/tool-failure/error-streak/tool-repeat detection, tool-call dedup), orchestration/sub-agents, markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code).
+837 unit tests cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (JSONL store, manager, registry, compactor), the OpenAI-compatible LLM provider (streaming, tool calls, `finish_reason`), host-model fetching, all 13 tools (including the Analyze dry-run preview), the mode policy, the agent loop (fake LLM, abort, max turns), the **loop guard** (reasoning/empty/tool-failure/error-streak/tool-repeat detection, tool-call dedup), orchestration/sub-agents, markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code).
 
 ## Features
 
@@ -100,7 +100,7 @@ The **Parallel** toggle enables the `Delegate` tool: the main agent becomes an *
 
 1. **Analyze conflicts** — think how to separate the work so sub-tasks do not clash on resources (not only file paths: directories, generated files, configs, build outputs, read/write on the same path…).
 2. **Expose the plan** — write a short plan for the user *before* the tool calls: the sub-tasks, what each does, what runs in parallel vs ordered, and why the split avoids conflicts.
-3. **Launch named sub-tasks** — one `Delegate` per sub-task, all independent ones in the same turn, each with a **meaningful name** (`frontend`, `api-tests`, …) and declared `resources` + `access`.
+3. **Launch named sub-tasks** — one `Delegate` per sub-task, all independent ones in the same turn, each with a **meaningful name** (`frontend`, `api-tests`, …), declared `resources` + `access`, and — when the user attached files — `attachments: [n]` selecting **only the attachments that sub-task needs** (each sub-agent gets all-and-only its attachments; omit to forward all).
 4. **Collect** the sub-agent reports (tool results) without launching duplicates.
 5. **Answer** — synthesize one final answer from the reports (what was done, results, files, blockers).
 
