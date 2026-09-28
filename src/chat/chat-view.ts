@@ -1199,10 +1199,16 @@ export class ChatViewProvider implements WebviewViewProvider {
     const key = `${name}|${entry.baseUrl}|${entry.apiKey ?? ""}`;
     const cached = this.hostCache.get(key);
     if (cached && Date.now() - cached.at < ChatViewProvider.HOST_CACHE_TTL) return cached.models;
-    const models = this.modelList.fetchModelInfos
+    const models: ModelInfo[] = this.modelList.fetchModelInfos
       ? await this.modelList.fetchModelInfos({ baseUrl: entry.baseUrl, apiKey: entry.apiKey })
       : (await this.modelList.fetchModels({ baseUrl: entry.baseUrl, apiKey: entry.apiKey })).map((id) => ({ id }));
     this.hostCache.set(key, { at: Date.now(), models });
+    // Diagnostics: how many models reported a context window (Output > Harny).
+    const withCtx = models.filter((m) => m.contextLength);
+    infoLog(
+      `[models] ${name}: ${models.length} model(s), ${withCtx.length} with a context window` +
+        (withCtx[0] ? ` (e.g. ${withCtx[0].id} = ${withCtx[0].contextLength})` : ""),
+    );
     return models;
   }
 

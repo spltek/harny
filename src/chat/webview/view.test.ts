@@ -2376,6 +2376,17 @@ it("the shared sampler input accepts digits and ONE decimal separator only", asy
     expect(input.value).toBe("12."); // letters stripped, a single trailing dot kept
   });
 
+  it("updates the context-window control from the host-pushed (adopted) value", async () => {
+    await loadView();
+    const ctx = document.getElementById("ctx-input") as HTMLInputElement;
+    expect(ctx.value).toBe("128000");
+    hostMessage({
+      type: "config",
+      config: { provider: "openai", model: "m", hasKey: true, models: [], providerModels: [], contextWindow: 131072 },
+    });
+    expect(ctx.value).toBe("131072");
+  });
+
   it("context window and output tokens accept integers only", async () => {
     await loadView();
     const ctx = document.getElementById("ctx-input") as HTMLInputElement;

@@ -1388,13 +1388,18 @@ describe("ChatViewProvider compaction", () => {
         { id: "openrouter/plain" },
       ],
     });
-    const { handler } = resolveWith(provider);
+    const { view, handler } = resolveWith(provider);
     await provider.createNew(); // s1
     const rt = registry.get("s1")!;
 
     await handler({ type: "setModel", model: "openrouter/x", provider: "openrouter" });
     expect(rt.contextWindow).toBe(131072);
     expect(store.saveSettings).toHaveBeenCalledWith("s1", expect.objectContaining({ contextWindow: 131072 }));
+    // ...and the host PUSHES the adopted value so the UI control updates.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "config", config: expect.objectContaining({ contextWindow: 131072 }) }),
+    );
 
     // A model WITHOUT a reported window keeps the current one.
     await handler({ type: "setModel", model: "openrouter/plain", provider: "openrouter" });
