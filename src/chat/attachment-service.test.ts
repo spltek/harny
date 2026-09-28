@@ -60,6 +60,17 @@ describe("AttachmentService", () => {
     expect(ctx.text).toContain("[Image attached: image.png (2.0KB)");
   });
 
+  it("uses a clipboard image's data URI directly (no file on disk)", async () => {
+    const service = makeService(async () => []);
+    const dataUri = "data:image/png;base64,AAAA";
+    const ctx = await service.buildContext([
+      { name: "pasted-image.png", path: "", size: 4, isImage: true, dataUri },
+    ]);
+
+    expect(ctx.images).toEqual([dataUri]);
+    expect(ctx.text).toContain("pasted from clipboard");
+  });
+
   it("truncates very large files", async () => {
     dir = mkdtempSync(join(tmpdir(), "harny-att-"));
     const big = join(dir, "big.txt");

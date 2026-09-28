@@ -51,8 +51,11 @@ export class AttachmentService {
 
     for (const f of files) {
       if (f.isImage) {
-        const note = `[Image attached: ${f.name} (${formatSize(f.size)}) at ${f.path}]`;
-        const dataUri = this.imageDataUri(f.path, f.size);
+        const where = f.path ? ` at ${f.path}` : " (pasted from clipboard)";
+        const note = `[Image attached: ${f.name} (${formatSize(f.size)})${where}]`;
+        // Clipboard images arrive as a data URI (no file on disk); file images
+        // are read from their path.
+        const dataUri = f.dataUri ?? this.imageDataUri(f.path, f.size);
         if (dataUri) {
           images.push(dataUri);
           textParts.push(note);

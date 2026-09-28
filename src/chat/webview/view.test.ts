@@ -531,6 +531,46 @@ describe("view webview client", () => {
     expect(chips.querySelectorAll(".attach-chip").length).toBe(2);
   });
 
+  it("pastes a clipboard image as an attachment and sends its data URI", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    const file = new File([new Uint8Array([1, 2, 3, 4])], "shot.png", { type: "image/png" });
+    const ev = new Event("paste", { cancelable: true }) as unknown as ClipboardEvent & { clipboardData: unknown };
+    (ev as unknown as { clipboardData: unknown }).clipboardData = {
+      items: [{ kind: "file", type: "image/png", getAsFile: () => file }],
+    };
+    input.dispatchEvent(ev);
+
+    // FileReader is async: give it a tick.
+    await new Promise((r) => setTimeout(r, 20));
+
+    const chips = document.getElementById("attachment-chips") as HTMLDivElement;
+    expect(chips.querySelectorAll(".attach-chip").length).toBe(1);
+    expect(chips.querySelector(".attach-name")?.textContent).toContain("pasted-image");
+
+    // Sending carries the inline data URI (no path on disk).
+    input.value = "look at this";
+    posted.length = 0;
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    const sendMsg = posted.find((m) => (m as { type?: string }).type === "send") as Record<string, unknown>;
+    const atts = sendMsg.attachments as Array<Record<string, unknown>>;
+    expect(atts).toHaveLength(1);
+    expect(String(atts[0].dataUri)).toContain("data:image/png");
+    expect(atts[0].path).toBe("");
+  });
+
+  it("ignores a plain-text paste (keeps default behaviour)", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    const ev = new Event("paste", { cancelable: true }) as unknown as ClipboardEvent & { clipboardData: unknown };
+    (ev as unknown as { clipboardData: unknown }).clipboardData = {
+      items: [{ kind: "string", type: "text/plain", getAsFile: () => null }],
+    };
+    input.dispatchEvent(ev);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(document.querySelectorAll(".attach-chip").length).toBe(0);
+  });
+
   it("disables the attach button while working", async () => {
     await loadView();
     const btn = document.getElementById("attach-btn") as HTMLButtonElement;

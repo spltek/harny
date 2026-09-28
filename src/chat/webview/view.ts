@@ -166,8 +166,11 @@ const pendingToolCalls = new Map<string, HTMLDivElement>();
 
 // ── Pending attachments: files picked via the "+" button and queued for the
 // next send. Transient (never persisted); cleared on send or session switch. ──
-interface AttachedFile { name: string; path: string; size: number; isImage: boolean; }
+interface AttachedFile { name: string; path: string; size: number; isImage: boolean; dataUri?: string; }
 let attachedFiles: AttachedFile[] = [];
+
+/** Max size of a clipboard image pasted into the chat (matches the host cap). */
+const MAX_PASTE_IMAGE_BYTES = 15 * 1024 * 1024;
 
 // ── Throttled markdown rendering for LONG streaming text ──
 // Re-rendering markdown on every delta janks the panel with long outputs
@@ -1025,7 +1028,7 @@ function renderAttachmentChips(): void {
   attachedFiles.forEach((file, index) => {
     const chip = document.createElement("span");
     chip.className = "attach-chip";
-    chip.title = file.path;
+    chip.title = file.path || file.name;
 
     const name = document.createElement("span");
     name.className = "attach-name";
@@ -1084,6 +1087,65 @@ function send(): void {
 
 sendBtn.addEventListener("click", send);
 attachBtn.addEventListener("click", () => vscode.postMessage({ type: "pickFiles" }));
+
+/** Read a dragged/pasted File as a base64 data URL. */
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function extFromMime(mime: string): string {
+  const map: Record<string, string> = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "image/bmp": "bmp",
+  };
+  return map[mime] ?? "png";
+}
+
+/**
+ * Paste images from the clipboard straight into the chat (screenshots, copied
+ * images). Plain text keeps its default paste behaviour. OS FILES copied in
+ * Finder/Explorer cannot be attached this way: the VS Code webview does not
+ * expose their path (use the "+" button instead).
+ */
+async function handlePaste(e: ClipboardEvent): Promise<void> {
+  const items = e.clipboardData ? Array.from(e.clipboardData.items) : [];
+  const imageItems = items.filter((i) => i.kind === "file" && i.type.startsWith("image/"));
+  if (imageItems.length === 0) return; // normal text paste
+  e.preventDefault();
+  for (const item of imageItems) {
+    const file = item.getAsFile();
+    if (!file) continue;
+    if (file.size > MAX_PASTE_IMAGE_BYTES) {
+      addMessage("assistant", `⚠️ Pasted image is too large (${formatBytes(file.size)}); max 15 MB.`).classList.add("loop");
+      continue;
+    }
+    try {
+      const dataUri = await readAsDataUrl(file);
+      attachedFiles.push({
+        name: `pasted-image.${extFromMime(file.type)}`,
+        path: "",
+        size: file.size,
+        isImage: true,
+        dataUri,
+      });
+    } catch {
+      /* unreadable clipboard image: ignore */
+    }
+  }
+  renderAttachmentChips();
+}
+
+inputEl.addEventListener("paste", (e) => {
+  void handlePaste(e);
+});
 inputEl.addEventListener("input", resizeInput);
 // Recompute the height when the input's width changes (panel/window resize),
 // because line wrapping depends on width. Guarded ResizeObserver avoids loops.
@@ -2120,7 +2182,7 @@ window.addEventListener("message", (e) => {
       // accumulate), de-duplicated by path, shown as chips and sent together.
       const files = Array.isArray(msg.files) ? (msg.files as AttachedFile[]) : [];
       if (files.length > 0) {
-        const seen = new Set(attachedFiles.map((f) => f.path));
+        const seen = new Set(attachedFiles.map((f) => f.path || f.name));
         for (const file of files) {
           if (seen.has(file.path)) continue;
           attachedFiles.push(file);

@@ -56,13 +56,14 @@ npm test          # run all unit tests (vitest)
 npm run coverage  # with coverage report
 ```
 
-819 unit tests cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (JSONL store, manager, registry, compactor), the OpenAI-compatible LLM provider (streaming, tool calls, `finish_reason`), host-model fetching, all 13 tools (including the Analyze dry-run preview), the mode policy, the agent loop (fake LLM, abort, max turns), the **loop guard** (reasoning/empty/tool-failure/error-streak/tool-repeat detection, tool-call dedup), orchestration/sub-agents, markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code).
+822 unit tests cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (JSONL store, manager, registry, compactor), the OpenAI-compatible LLM provider (streaming, tool calls, `finish_reason`), host-model fetching, all 13 tools (including the Analyze dry-run preview), the mode policy, the agent loop (fake LLM, abort, max turns), the **loop guard** (reasoning/empty/tool-failure/error-streak/tool-repeat detection, tool-call dedup), orchestration/sub-agents, markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code).
 
 ## Features
 
 - **Chat Completions protocol** (`/v1/chat/completions`)
 - **Streaming**: Real-time SSE streaming for responsive UX
 - **13 tools**: Read, Write, StrReplace, Edit, Delete, Shell, Grep, Glob, TodoWrite, WebSearch, WebFetch, ReadLints, Delegate
+- **Attachments**: add files/images with the **+** button, or **paste an image from the clipboard** (screenshot or copied image) straight into the prompt — it is attached inline as a data URI and sent as multimodal content. Text files become code blocks (truncated at 30k chars). OS files copied in Finder/Explorer must use the **+** button: a webview cannot read their path.
 - **Plain tool outputs + three-section tool bubbles**: tool outputs are never colorized by line-prefix heuristics (a `ls -la` listing stays plain text); when Edit/Write/StrReplace/Delete touch a file, the tool bubble gets a third **Diff** section (Input / Output / Diff, collapsed with the bubble) showing the unified diff — a new file as all `+` additions, a deleted file as all `−` removals, modifications/string replacements as a mixed diff — with the **target file path in azure right after the tool name** and `+N/−M` counts in the Diff header
 - **Syntax highlighting in tool Diff sections**: code lines get editor-style syntax colors (Prism, one-dark palette) for TypeScript, JavaScript, Python, Rust, C#, HTML, CSS, JSON, Markdown, Bash, SQL and Go — unknown extensions fall back to plain diff coloring. The webview bundle is minified
 - **Agent loop**: Automatic tool execution, multi-turn continuation, no bounded turn count (Stop button only) — a `maxTurns` cap exists behind the scenes for tests/future config
