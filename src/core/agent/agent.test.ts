@@ -1294,6 +1294,46 @@ describe("Orchestration (Delegate)", () => {
     expect(history.all().some((m) => m.role === "user" && /MANDATORY/.test(m.content))).toBe(true);
   });
 
+  it("Parallel ON: the FIRST turn advertises ONLY the Delegate tool", async () => {
+    const seenDefs: ToolDefinition[][] = [];
+    let call = 0;
+    const factory: LLMProviderFactory = {
+      create() {
+        return {
+          protocol: "chat" as const,
+          async *stream(_m: LLMMessage[], _s?: AbortSignal, defs?: ToolDefinition[]) {
+            if (defs) seenDefs.push(defs);
+            call++;
+            if (call === 1) {
+              yield* delegateTurn([{ id: "web", goal: "g", access: "read", resources: ["."] }]);
+            } else {
+              yield { type: "text", content: "done" };
+            }
+          },
+        };
+      },
+    };
+    const tools = new ToolRegistry([makeTool("Delegate"), makeTool("Read"), makeTool("WebSearch")]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history: new InMemoryChatHistory(),
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      spawnSubAgent: async () => ({ content: "r", isError: false }),
+    });
+    agent.setMode("agent");
+    agent.setDelegation(true);
+
+    await agent.send("x");
+
+    // First turn: ONLY Delegate is advertised (no way to search/read first).
+    expect(seenDefs[0].map((d) => d.name)).toEqual(["Delegate"]);
+    // After delegating, the full tool set is available again.
+    expect(seenDefs[1].map((d) => d.name).sort()).toEqual(["Delegate", "Read", "WebSearch"].sort());
+  });
+
   it("Parallel ON hard fallback: the HOST dispatches a sub-agent if the model never delegates", async () => {
     const spawned: DelegateSpec[] = [];
     const history = new InMemoryChatHistory();

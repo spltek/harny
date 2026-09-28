@@ -642,11 +642,17 @@ export class Agent implements ChatController {
     // the model cannot even attempt a write (the execution side below is the
     // second layer of defense). An explicit [] (forced final report) makes the
     // turn tool-less.
+    const modeDefs = toolDefinitionsForMode(this.deps.tools.getAll(), this._mode, {
+      exclude: this.delegationEnabled ? [] : [DELEGATE_TOOL_NAME],
+    });
+    // Parallel ON and not delegated yet: advertise ONLY the Delegate tool, so
+    // the orchestrator CANNOT start with WebSearch/Read/Shell/etc. — its first
+    // action is forced to be delegation, with no block/reaction needed. The
+    // full tool set returns as soon as it has delegated.
+    const pendingDelegation = this.delegationEnabled && !this.delegatedThisRun;
     const toolDefinitions: ToolDefinition[] =
       toolDefinitionsOverride ??
-      toolDefinitionsForMode(this.deps.tools.getAll(), this._mode, {
-        exclude: this.delegationEnabled ? [] : [DELEGATE_TOOL_NAME],
-      });
+      (pendingDelegation ? modeDefs.filter((d) => d.name === DELEGATE_TOOL_NAME) : modeDefs);
 
     const messages: LLMMessage[] = [
       { role: "system", content: `${this.stateLine()}\n\n${this.deps.systemPrompt.build(this._mode, toolDefinitions)}` },

@@ -70,7 +70,7 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     expect(prompt).toContain("READ-ONLY MODE (Analyze)");
     expect(prompt).toContain("they MUST be read-only");
     expect(prompt).toContain("ORCHESTRATION");
-    expect(prompt).toContain("SUB-AGENTS");
+    expect(prompt).toContain("sub-agent");
     // Read-only preview: writers are advertised (they run as previews).
     const listSection = prompt.slice(prompt.indexOf("You have access to these tools:"), prompt.indexOf("\nGuidelines:"));
     expect(listSection).toContain("- Write:");

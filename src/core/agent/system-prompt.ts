@@ -54,7 +54,7 @@ READ-ONLY MODE (Analyze) — PREVIEW RULES:
     // the agent must act as an orchestrator and actually use sub-agents.
     const hasDelegate = definitions.some((d) => d.name === DELEGATE_TOOL_NAME);
     const orchestratorIntro = hasDelegate
-      ? `\nORCHESTRATION MODE (MANDATORY): the "Parallel" toggle is ON. You are the ORCHESTRATOR: coordinate SUB-AGENTS through the Delegate tool. You MUST delegate at least one sub-task on every request — do NOT answer directly.`
+      ? `\nORCHESTRATION MODE (MANDATORY): the "Parallel" toggle is ON. You are the ORCHESTRATOR. Your FIRST action on EVERY request is to DELEGATE: first think about how to split the work, then call Delegate. Until you have delegated, the ONLY tool available to you is Delegate — do not plan searches/reads/edits, plan the DELEGATION. You MUST run at least one sub-task per request; never answer directly.`
       : "";
     const delegateRules = hasDelegate
       ? `

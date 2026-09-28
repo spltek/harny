@@ -95,7 +95,7 @@ The Shell tool is read-only in Analyze (commands that would modify the filesyste
 
 The **Parallel** toggle enables the `Delegate` tool: the main agent becomes an **orchestrator** that decomposes a task into independent sub-tasks and runs them as **sub-agents** — each a separate `Agent` with its own ephemeral history (unbounded by default, like the orchestrator), with orchestration depth capped at 1. Sub-tasks that touch disjoint files run **in parallel**; overlapping writers (or a writer and a reader of the same resource) are **serialized** automatically. A configurable cap limits how many run at once. Each sub-agent streams live inside its own bubble and returns a report.
 
-**With Parallel ON, delegation is the FIRST action** — the orchestrator must not call any other tool (WebSearch, Read, Shell, …) before delegating; a pre-delegation tool call is **blocked by the host** and the model is corrected. It then follows a mandatory 5-step protocol on every request:
+**With Parallel ON, delegation is the FIRST action** — until it has delegated, the orchestrator's first turn advertises **only the Delegate tool** (so it literally cannot start with WebSearch/Read/Shell), and any pre-delegation tool call is additionally blocked by the host. It then follows a mandatory 5-step protocol on every request:
 
 1. **Analyze conflicts** — think how to separate the work so sub-tasks do not clash on resources (not only file paths: directories, generated files, configs, build outputs, read/write on the same path…).
 2. **Expose the plan** — write a short plan for the user *before* the tool calls: the sub-tasks, what each does, what runs in parallel vs ordered, and why the split avoids conflicts.
