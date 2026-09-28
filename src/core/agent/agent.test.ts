@@ -1583,14 +1583,15 @@ describe("Orchestration (Delegate)", () => {
 
     agent.setDelegation(false);
     await agent.send("now");
-    const off = seen[0].map((m) => m.content ?? "").join("|");
-    expect(off).not.toContain("Delegate");
-    expect(off).not.toContain("report");
+    const offTools = seen[0].flatMap((m) => (m.toolCalls ?? []).map((t) => t.name)).join("|");
+    const offContent = seen[0].map((m) => m.content ?? "").join("|");
+    expect(offTools).not.toContain("Delegate");
+    expect(offContent).not.toContain("report");
 
     agent.setDelegation(true);
     await agent.send("now2");
-    const on = seen[1].map((m) => m.content ?? "").join("|");
-    expect(on).toContain("Delegate");
+    const onTools = seen[1].flatMap((m) => (m.toolCalls ?? []).map((t) => t.name)).join("|");
+    expect(onTools).toContain("Delegate");
   });
 
   it("emits subagent_start when each delegate actually begins (cap visible)", async () => {

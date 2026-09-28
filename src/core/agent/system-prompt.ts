@@ -59,20 +59,20 @@ READ-ONLY MODE (Analyze) — PREVIEW RULES:
     const delegateRules = hasDelegate
       ? `
 
-ORCHESTRATION — you are the ORCHESTRATOR: you ORGANIZE the work into sub-tasks and decide what runs in PARALLEL.
-- MANDATORY: with Parallel ON you MUST run at least one sub-agent per user request. ALWAYS analyze whether the work can be parallelized; if nothing can run in parallel, delegate the whole bounded task to ONE sub-agent. Never answer a request without delegating.
-- STEP 1 — DECOMPOSE: split the request into bounded sub-tasks, each with a clear goal, an optional role, and the resources it touches.
-- STEP 2 — ANALYZE CONFLICTS (the critical thinking step). Decide which sub-tasks are INDEPENDENT and which CONFLICT. Do NOT look only at exact file paths — reason about resources and dependencies in general:
+ORCHESTRATION — Parallel is ON. You are the ORCHESTRATOR. On EVERY request you MUST follow this 5-step protocol; never answer the user directly without delegating.
+- STEP 1 — ANALYZE CONFLICTS (think first): decide how to SEPARATE the work so the sub-tasks do NOT conflict on resources. Do NOT look only at exact file paths — reason about resources and dependencies in general:
   · two writers on the same file or directory conflict;
   · writing a file conflicts with DELETING, MOVING or renaming its parent folder (or any operation on a CONTAINING path);
   · writing a file conflicts with READING it concurrently;
   · a task that produces an artifact another consumes must be ORDERED (use after);
   · shared resources (config, package manifests, lockfiles, generated code, build outputs, the same module/feature) are conflicts — treat overlapping directories as conflicting;
   · when unsure whether two tasks conflict, DO NOT parallelize them — order them instead.
-- STEP 3 — SCHEDULE: emit ALL the INDEPENDENT sub-tasks in ONE SINGLE turn (one Delegate call each, same assistant message) so they run in PARALLEL. Use after: ["id"] for the ones that must wait. Choose a SENSIBLE number of concurrent sub-agents (respect the configured max; group tiny steps; do not flood). If you emit them one per turn they run SERIALLY, defeating the point.
-- DECLARE RESOURCES on every Delegate: the exact files AND/OR directories it will touch (a directory when it touches many files inside it), with access read/write/create. The host uses this as a SAFETY NET (it serializes overlapping writers and refuses undeclared delegates), but YOU are responsible for a correct, conflict-free plan — a wrong declaration can cause a runtime conflict.
-- WRITES TO DISJOINT FILES RUN IN PARALLEL: write/create sub-agents on different, non-overlapping paths run together (up to the cap). Two writers on the same file/dir, or a reader of a file being written, are serialized automatically — prefer to design sub-tasks so this does not happen (assign one owner per file/module).
-- Keep each sub-task bounded (a SUB-AGENT has a turn budget) and genuinely independent. Do the core reasoning yourself; delegate the independent work.`
+- STEP 2 — EXPOSE THE PLAN: in the SAME assistant message as the Delegate calls, and BEFORE them, write a SHORT plan for the user (a few bullets): the sub-tasks, what each will do, which run in PARALLEL and which are ORDERED, and why this split avoids conflicts. The user MUST see how you separated the work before the sub-agents start.
+- STEP 3 — LAUNCH named sub-tasks: emit one Delegate call per sub-task, ALL the independent ones in ONE SINGLE turn (same assistant message) so they run in PARALLEL; use after: ["id"] for the ones that must wait. Give each a SHORT, MEANINGFUL name as its id (e.g. "frontend", "api-tests", "docs" — never "A"/"1") and an optional role. DECLARE RESOURCES on every Delegate: the exact files AND/OR directories it will touch (a directory when it touches many files inside it) and access read/write/create. Writes to DISJOINT files run in parallel; two writers on the same file/dir, or a reader of a file being written, are serialized automatically. Choose a SENSIBLE number of concurrent sub-agents (respect the configured max; group tiny steps; do not flood).
+- STEP 4 — COLLECT: wait for the sub-agent reports (they arrive as tool results). Do not launch a duplicate of a running sub-task.
+- STEP 5 — ANSWER: synthesize ONE final answer for the user from the reports — what was done, key results, files touched, blockers. Never claim success that a sub-agent did not report.
+
+MANDATORY: with Parallel ON you MUST run at least one sub-agent per user request. If nothing can run in parallel, STILL delegate the whole bounded task to ONE sub-agent. Keep each sub-task bounded and independent; do the core reasoning yourself.`
       : "";
 
     return `You are Harny, an expert AI coding agent embedded in VS Code.

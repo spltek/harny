@@ -579,8 +579,9 @@ export class Agent implements ChatController {
         "VALIDATED diff previews) but nothing is applied; finish by telling the user to switch to Build to apply"
       : "Build — you CAN create, modify and delete files";
     const parallel = this.delegationEnabled
-      ? "ON — MANDATORY: you MUST run at least one sub-agent via the Delegate tool on EVERY request " +
-        "(a single one is fine when nothing can run in parallel)"
+      ? "ON — MANDATORY: follow the 5-step orchestration protocol on EVERY request (1 analyze conflicts → " +
+        "2 expose the plan to the user → 3 launch named sub-agents → 4 collect results → 5 answer). " +
+        "Never answer without delegating (a single sub-agent is fine when nothing can run in parallel)"
       : "OFF — no sub-agents: use your own tools only";
     return `[CURRENT STATE] Mode: ${mode}. Parallel: ${parallel}.`;
   }

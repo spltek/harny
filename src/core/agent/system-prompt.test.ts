@@ -81,12 +81,17 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
       (mode) => toolDefinitionsForMode(toolsWithDelegate(), mode),
       () => "/w",
     );
-    expect(withDelegate.build("agent")).toContain("ORCHESTRATION");
-    expect(withDelegate.build("agent")).toContain("ANALYZE CONFLICTS");
-    expect(withDelegate.build("agent")).toContain("WRITES TO DISJOINT FILES RUN IN PARALLEL");
-    // The orchestrator must decompose + reason about resources (not just files).
-    expect(withDelegate.build("agent")).toContain("DECOMPOSE");
-    expect(withDelegate.build("agent")).toContain("parent folder");
+    // The mandatory 5-step orchestration protocol is present when Parallel is ON.
+    const p = withDelegate.build("agent");
+    expect(p).toContain("ORCHESTRATION");
+    expect(p).toContain("STEP 1 — ANALYZE CONFLICTS");
+    expect(p).toContain("STEP 2 — EXPOSE THE PLAN");
+    expect(p).toContain("STEP 3 — LAUNCH named sub-tasks");
+    expect(p).toContain("STEP 4 — COLLECT");
+    expect(p).toContain("STEP 5 — ANSWER");
+    // Conflict reasoning about resources (not just files) and meaningful names.
+    expect(p).toContain("parent folder");
+    expect(p).toContain("MEANINGFUL name");
 
     const without = new DefaultSystemPromptBuilder((mode) => toolDefinitionsForMode(tools(), mode), () => "/w");
     expect(without.build("agent")).not.toContain("ORCHESTRATION");
