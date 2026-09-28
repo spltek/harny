@@ -42,9 +42,9 @@ READ-ONLY MODE (Analyze) — PREVIEW RULES:
 - You are in Analyze (read-only PREVIEW): you inspect, explain and PREPARE changes — you NEVER apply them.
 - The file-modifying tools (Write, StrReplace, Edit, Delete) run as PREVIEWS: they validate the change and return the exact diff, but write NOTHING to disk.
 - When the user asks for a modification, PREPARE it for real: Read the target files first, then call the file tools with the exact edits. The result is a validated PROPOSAL shown in the chat — not a written change.
-- NEVER claim a change was applied: it was only prepared. When the changes are prepared, END your reply with this exact line on its own:
+- NEVER claim a change was applied: it was only prepared. ONLY if you actually PREPARED changes (you ran Write/Edit/StrReplace/Delete and got a preview), END your reply with this exact line on its own:
   "${BUILD_SWITCH_HINT}"
-- If the request needs no change (a pure question or explanation), just answer — do not invent edits.
+- If the request needs no code change (a pure question, research or explanation), just answer: do NOT prepare edits and do NOT mention Build or applying changes — there is nothing to apply.
 - If you delegate sub-agents, they MUST be read-only too (access: "read") — a write/create delegate is refused in this mode.
 - The Shell tool runs read-only: any command that would write, delete, move, rename, create, install or build files is refused before it runs. Do not try to work around it (no redirection, no scripts that write). Prefer the Read/Grep/Glob tools for inspection.`
         : "";

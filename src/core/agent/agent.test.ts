@@ -1168,6 +1168,40 @@ describe("Analyze (read-only) mode", () => {
     expect(final?.content).toBe("Applied the change.");
   });
 
+  it("drops a superfluous 'switch to Build' line when NO changes were prepared", async () => {
+    const { agent, history } = capturingHarness(
+      [makeTool("Read")],
+      [
+        [
+          {
+            type: "text",
+            content: "Here is the comparison table.\n\nSwitch to Build to apply any changes if needed.",
+          },
+        ],
+      ],
+      "analyze",
+    );
+
+    await agent.send("compare these models");
+
+    const final = history.all().filter((m) => m.role === "assistant").at(-1);
+    expect(final?.content).toContain("Here is the comparison table.");
+    expect(final?.content).not.toMatch(/switch to\s*\**build\**/i);
+  });
+
+  it("drops the switch line in Build mode too (it is never useful there)", async () => {
+    const { agent, history } = capturingHarness(
+      [makeTool("Read")],
+      [[{ type: "text", content: "Answer.\n\nSwitch to **Build** to apply the changes." }]],
+      "agent",
+    );
+
+    await agent.send("x");
+
+    const final = history.all().filter((m) => m.role === "assistant").at(-1);
+    expect(final?.content).toBe("Answer.");
+  });
+
   it("sends a read-only system prompt in analyze and a full one after setMode('agent')", async () => {
     const { agent, seenSystemPrompts } = capturingHarness([makeTool("Read")]);
 

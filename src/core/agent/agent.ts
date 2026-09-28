@@ -814,9 +814,22 @@ export class Agent implements ChatController {
     // a sub-agent's report is consumed by the orchestrator, so the notice there
     // is noise.
     if (!this.mayDelegate) return content;
-    if (!this.preparedPreviews || !isAnalyzeMode(this._mode)) return content;
-    // Do not duplicate the hint if the model already included it.
-    if (/switch to\s*\**build\**/i.test(content)) return content;
+    const hasSwitchLine = /switch to\s*\**build\**/i.test(content);
+    // No preview was prepared (or not in Analyze): a "switch to Build / apply"
+    // note is superfluous — the model often adds it on its own. DROP it so a
+    // pure question/analysis answer does not end with a bogus call to action.
+    if (!this.preparedPreviews || !isAnalyzeMode(this._mode)) {
+      if (!hasSwitchLine) return content;
+      return content
+        .split("\n")
+        .filter((line) => !/switch to\s*\**build\**/i.test(line))
+        .join("\n")
+        .replace(/\n+(?:-{3,}\s*)$/, "")
+        .trimEnd();
+    }
+    // Changes WERE prepared: guarantee the explicit "nothing applied" footer,
+    // without duplicating the hint if the model already included it.
+    if (hasSwitchLine) return content;
     return (
       `${content}\n\n---\n⚠️ Nothing has been applied: the changes above were prepared as **previews** ` +
       `and are NOT on disk. ${BUILD_SWITCH_HINT}`
