@@ -85,6 +85,14 @@ describe("AttachmentService", () => {
     expect(ctx.parts[1]).toMatchObject({ name: "img.png", isImage: true, dataUri: "data:image/png;base64,AAAA" });
   });
 
+  it("omits the numbered header and parts when there are no attachments", async () => {
+    const service = makeService(async () => []);
+    const ctx = await service.buildContext([]);
+    expect(ctx.text).toBe("");
+    expect(ctx.parts).toEqual([]);
+    expect(ctx.images).toEqual([]);
+  });
+
   it("inlines a pasted text file's content (no path)", async () => {
     const service = makeService(async () => []);
     const ctx = await service.buildContext([

@@ -1286,6 +1286,27 @@ describe("Orchestration (Delegate)", () => {
     return out;
   }
 
+  /** Agent with a capturing spawnSubAgent (records every Delegate spec it gets). */
+  function capturingAgent(chunks: StreamChunk[][], sink: DelegateSpec[]): Agent {
+    const factory = fakeFactory(...chunks);
+    const tools = new ToolRegistry([makeTool("Delegate"), makeTool("Read")]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history: new InMemoryChatHistory(),
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      spawnSubAgent: async (spec) => {
+        sink.push(spec);
+        return { content: "r", isError: false };
+      },
+    });
+    agent.setMode("agent");
+    agent.setDelegation(true);
+    return agent;
+  }
+
   function build(opts: {
     calls: Array<Record<string, unknown>>;
     mode?: "analyze" | "agent";
@@ -1633,6 +1654,93 @@ describe("Orchestration (Delegate)", () => {
     });
 
     expect(seen[0].images).toEqual(["data:image/png;base64,ZZZ"]);
+  });
+
+  it("Parallel: 2 docs → 2 sub-agents, each gets ONLY its own attachment", async () => {
+    const seen: DelegateSpec[] = [];
+    const agent = capturingAgent(
+      [
+        delegateTurn([
+          { id: "doc1", goal: "describe doc 1", access: "read", resources: ["./"], attachments: [1] },
+          { id: "doc2", goal: "describe doc 2", access: "read", resources: ["./"], attachments: [2] },
+        ]),
+        [{ type: "text", content: "done" }],
+      ],
+      seen,
+    );
+
+    await agent.send("describe the 2 docs", {
+      attachmentParts: [
+        { name: "doc1.txt", isImage: false, text: "CONTENT ONE" },
+        { name: "doc2.txt", isImage: false, text: "CONTENT TWO" },
+      ],
+    });
+
+    const byId = Object.fromEntries(seen.map((s) => [s.id, s]));
+    expect(byId["doc1"].attachmentText).toContain("CONTENT ONE");
+    expect(byId["doc1"].attachmentText).not.toContain("CONTENT TWO");
+    expect(byId["doc2"].attachmentText).toContain("CONTENT TWO");
+    expect(byId["doc2"].attachmentText).not.toContain("CONTENT ONE");
+  });
+
+  it("does not leak the previous message's attachments into the next send", async () => {
+    const seen: DelegateSpec[] = [];
+    const agent = capturingAgent(
+      [
+        delegateTurn([{ id: "a", goal: "g", access: "read", resources: ["./"] }]),
+        [{ type: "text", content: "done" }],
+        delegateTurn([{ id: "b", goal: "g2", access: "read", resources: ["./"] }]),
+        [{ type: "text", content: "done2" }],
+      ],
+      seen,
+    );
+
+    await agent.send("first", { attachmentParts: [{ name: "secret.txt", isImage: false, text: "SECRET" }] });
+    await agent.send("second"); // no attachments this time
+
+    expect(seen[0].id).toBe("a");
+    expect(seen[0].attachmentText).toContain("SECRET");
+    expect(seen[1].id).toBe("b");
+    expect(seen[1].attachmentText ?? "").not.toContain("SECRET");
+  });
+
+  it("falls back to ALL attachments when the Delegate selects invalid numbers", async () => {
+    const seen: DelegateSpec[] = [];
+    const agent = capturingAgent(
+      [
+        delegateTurn([{ id: "a", goal: "g", access: "read", resources: ["./"], attachments: [99] }]),
+        [{ type: "text", content: "done" }],
+      ],
+      seen,
+    );
+
+    await agent.send("x", {
+      attachmentParts: [
+        { name: "doc1.txt", isImage: false, text: "ONE" },
+        { name: "doc2.txt", isImage: false, text: "TWO" },
+      ],
+    });
+
+    expect(seen[0].attachmentText).toContain("ONE");
+    expect(seen[0].attachmentText).toContain("TWO");
+  });
+
+  it("forwards attachments on an attachment-only send (no text)", async () => {
+    const seen: DelegateSpec[] = [];
+    const agent = capturingAgent(
+      [
+        delegateTurn([{ id: "a", goal: "analyze", access: "read", resources: ["./"] }]),
+        [{ type: "text", content: "done" }],
+      ],
+      seen,
+    );
+
+    await agent.send("", {
+      displayText: "look at this",
+      attachmentParts: [{ name: "d.txt", isImage: false, text: "HELLO" }],
+    });
+
+    expect(seen[0].attachmentText).toContain("HELLO");
   });
 
   it("runs parallel read-delegates concurrently (both start before either ends)", async () => {
