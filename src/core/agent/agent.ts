@@ -101,8 +101,9 @@ export class Agent implements ChatController {
   private _mode: ChatMode = DEFAULT_CHAT_MODE;
   /** Loop detection/breaking state (reset per run). */
   private readonly guard = new LoopGuard();
-  /** Analyze mode: at least one change was PREPARED as a dry-run preview. */
-  private preparedPreviews = false;
+  /** Analyze mode: changes PREPARED as dry-run previews, keyed by path (so the
+   * "switch to Build" notice can say exactly WHAT still needs Build). */
+  private readonly preparedChanges = new Map<string, string>();
   /** Parallel ON: at least one Delegate call was emitted for this user message. */
   private delegatedThisRun = false;
   /** Parallel ON: the "you must delegate" corrective was already injected. */
@@ -190,7 +191,7 @@ export class Agent implements ChatController {
     this._streaming = true;
     this.log(`send: mode=${this._mode} parallel=${this.delegationEnabled ? "ON" : "OFF"}`);
     this.guard.reset();
-    this.preparedPreviews = false;
+    this.preparedChanges.clear();
     this.delegatedThisRun = false;
     this.forcedDelegationNudge = false;
     this.forcedFinalReport = false;
@@ -808,7 +809,10 @@ export class Agent implements ChatController {
       const result = await tool.execute(tc.arguments, dryRun ? { dryRun: true } : undefined);
       // Remember that a preview was prepared so the final answer can be made
       // unambiguous (the model may still claim it "applied" the change).
-      if (dryRun && !result.isError) this.preparedPreviews = true;
+      if (dryRun && !result.isError) {
+        const path = String(tc.arguments.path ?? "").trim() || "(unknown)";
+        if (!this.preparedChanges.has(path)) this.preparedChanges.set(path, tc.name);
+      }
       return result;
     } catch (err: any) {
       return { content: `Tool error (${tc.name}): ${err.message || String(err)}`, isError: true };
@@ -829,7 +833,8 @@ export class Agent implements ChatController {
     // No preview was prepared (or not in Analyze): a "switch to Build / apply"
     // note is superfluous — the model often adds it on its own. DROP it so a
     // pure question/analysis answer does not end with a bogus call to action.
-    if (!this.preparedPreviews || !isAnalyzeMode(this._mode)) {
+    const prepared = this.preparedChanges.size > 0;
+    if (!prepared || !isAnalyzeMode(this._mode)) {
       if (!hasSwitchLine) return content;
       return content
         .split("\n")
@@ -841,9 +846,10 @@ export class Agent implements ChatController {
     // Changes WERE prepared: guarantee the explicit "nothing applied" footer,
     // without duplicating the hint if the model already included it.
     if (hasSwitchLine) return content;
+    const list = [...this.preparedChanges.entries()].map(([path, name]) => `- ${name} \`${path}\``).join("\n");
     return (
-      `${content}\n\n---\n⚠️ Nothing has been applied: the changes above were prepared as **previews** ` +
-      `and are NOT on disk. ${BUILD_SWITCH_HINT}`
+      `${content}\n\n---\n⚠️ Nothing has been applied: these changes were prepared as **previews** ` +
+      `and are NOT on disk:\n${list}\n${BUILD_SWITCH_HINT}`
     );
   }
 

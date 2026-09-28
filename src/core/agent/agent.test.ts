@@ -1162,6 +1162,25 @@ describe("Analyze (read-only) mode", () => {
     expect(final?.content).toContain("Switch to **Build**");
   });
 
+  it("lists WHAT needs Build in the preview footer", async () => {
+    const { agent, history } = capturingHarness(
+      [makeTool("Edit"), makeTool("Write")],
+      [
+        toolCallChunks("Edit", '{"path":"src/a.ts","edits":[]}'),
+        toolCallChunks("Write", '{"path":"src/b.ts","contents":"x"}'),
+        [{ type: "text", content: "Prepared the changes." }],
+      ],
+      "analyze",
+    );
+
+    await agent.send("do it");
+
+    const final = history.all().filter((m) => m.role === "assistant").at(-1);
+    expect(final?.content).toContain("Edit `src/a.ts`");
+    expect(final?.content).toContain("Write `src/b.ts`");
+    expect(final?.content).toContain("Switch to **Build**");
+  });
+
   it("does not duplicate the footer when the model already told the user to switch", async () => {
     const { agent, history } = capturingHarness(
       [makeTool("Edit")],
