@@ -377,6 +377,44 @@ export class Agent implements ChatController {
       return;
     }
 
+    // Parallel ON: delegation comes FIRST. If the model tries to use ANY other
+    // tool before it has delegated (e.g. it starts with WebSearch/Read), BLOCK
+    // those calls and force it to delegate first — otherwise it does the work
+    // itself and then re-does it via sub-agents (duplicated effort).
+    if (
+      this.delegationEnabled &&
+      !this.delegatedThisRun &&
+      !toolCalls.some((tc) => tc.name === DELEGATE_TOOL_NAME)
+    ) {
+      const names = toolCalls.map((t) => t.name).join(", ");
+      this.log(`parallel ON: blocked ${toolCalls.length} non-Delegate call(s) before delegation (${names})`);
+      for (const tc of toolCalls) {
+        const content =
+          "⛔ Blocked: Parallel is ON and you have NOT delegated yet. Delegate FIRST — analyze how to " +
+          "separate the work (resource conflicts) and emit the Delegate call(s) before using any other tool.";
+        this.deps.events.emit({
+          type: "tool_result",
+          toolResult: { toolCallId: tc.id, output: content, isError: true },
+        });
+        this.deps.history.add({ role: "tool", content, toolCallId: tc.id, timestamp: Date.now() });
+      }
+      if (!this.forcedDelegationNudge && turn + 1 < maxTurns) {
+        this.forcedDelegationNudge = true;
+        this.deps.history.add({
+          role: "user",
+          content:
+            "STOP. Parallel is ON: your FIRST action MUST be to DELEGATE, before calling any other tool. " +
+            "Analyze how to separate the work to avoid resource conflicts, expose the plan, then emit the " +
+            "Delegate call(s). Do not call WebSearch/Read/Shell/etc. until you have delegated.",
+          timestamp: Date.now(),
+        });
+        return this.runTurns(turn + 1);
+      }
+      // Already nudged once and still no delegation: the HOST delegates.
+      await this.forceDelegate(turn);
+      return;
+    }
+
     // Track tool outcomes for loop classification.
     const toolResults: { name: string; args: Record<string, unknown>; isError: boolean; content: string }[] = [];
 
@@ -579,9 +617,10 @@ export class Agent implements ChatController {
         "VALIDATED diff previews) but nothing is applied; finish by telling the user to switch to Build to apply"
       : "Build — you CAN create, modify and delete files";
     const parallel = this.delegationEnabled
-      ? "ON — MANDATORY: follow the 5-step orchestration protocol on EVERY request (1 analyze conflicts → " +
-        "2 expose the plan to the user → 3 launch named sub-agents → 4 collect results → 5 answer). " +
-        "Never answer without delegating (a single sub-agent is fine when nothing can run in parallel)"
+      ? "ON — MANDATORY: DELEGATION IS YOUR FIRST ACTION. Before calling ANY other tool (WebSearch, Read, " +
+        "Shell, …) you MUST delegate, following the 5-step orchestration protocol (1 analyze conflicts → " +
+        "2 expose the plan → 3 launch named sub-agents → 4 collect → 5 answer). Never answer without delegating " +
+        "(a single sub-agent is fine when nothing can run in parallel)"
       : "OFF — no sub-agents: use your own tools only";
     return `[CURRENT STATE] Mode: ${mode}. Parallel: ${parallel}.`;
   }

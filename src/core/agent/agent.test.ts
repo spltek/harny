@@ -1327,6 +1327,79 @@ describe("Orchestration (Delegate)", () => {
     ).toBe(true);
   });
 
+  it("Parallel ON: blocks non-Delegate tools until the model delegates FIRST", async () => {
+    const web = makeTool("WebSearch", { content: "search result", isError: false });
+    const spawned: DelegateSpec[] = [];
+    const history = new InMemoryChatHistory();
+    const webCall: StreamChunk[] = [
+      { type: "tool_call_start", index: 0, id: "w1", name: "WebSearch" },
+      { type: "tool_call_delta", index: 0, delta: '{"query":"q"}' },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const factory = fakeFactory(
+      webCall,
+      delegateTurn([{ id: "web", goal: "search the models", access: "read", resources: ["./"] }]),
+      [{ type: "text", content: "final" }],
+    );
+    const tools = new ToolRegistry([web]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history,
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      spawnSubAgent: async (spec) => {
+        spawned.push(spec);
+        return { content: "report", isError: false };
+      },
+    });
+    agent.setMode("agent");
+    agent.setDelegation(true);
+
+    await agent.send("dammi dati su 3 modelli");
+
+    // The pre-delegation WebSearch was BLOCKED (never executed) and corrected.
+    expect(web.called).toBe(false);
+    expect(history.all().some((m) => m.role === "tool" && /Blocked: Parallel is ON/.test(m.content))).toBe(true);
+    expect(history.all().some((m) => m.role === "user" && /FIRST action MUST be to DELEGATE/.test(m.content))).toBe(true);
+    // After the correction the model delegated and the sub-agent ran.
+    expect(spawned).toHaveLength(1);
+  });
+
+  it("Parallel ON: if the model keeps using other tools, the HOST delegates", async () => {
+    const web = makeTool("WebSearch", { content: "search result", isError: false });
+    const spawned: DelegateSpec[] = [];
+    const history = new InMemoryChatHistory();
+    const webCall = (): StreamChunk[] => [
+      { type: "tool_call_start", index: 0, id: "w1", name: "WebSearch" },
+      { type: "tool_call_delta", index: 0, delta: '{"query":"q"}' },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const factory = fakeFactory(webCall(), webCall(), [{ type: "text", content: "final" }]);
+    const tools = new ToolRegistry([web]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history,
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      spawnSubAgent: async (spec) => {
+        spawned.push(spec);
+        return { content: "report", isError: false };
+      },
+    });
+    agent.setMode("agent");
+    agent.setDelegation(true);
+
+    await agent.send("x");
+
+    expect(web.called).toBe(false);
+    // Nudge once, then the host dispatches one sub-agent itself.
+    expect(spawned).toHaveLength(1);
+  });
+
   it("Parallel OFF: no mandatory-delegation nudge", async () => {
     const history = new InMemoryChatHistory();
     const factory = fakeFactory([{ type: "text", content: "answer" }]);
