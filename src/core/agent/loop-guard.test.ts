@@ -147,6 +147,49 @@ describe("LoopGuard turn classification + escalation", () => {
     expect(g.observeTurn(obs).kind).toBe("stop"); // 5th → stop
   });
 
+  it("escalates an ALTERNATING tool-call loop (A/B/A/B) that never repeats consecutively", () => {
+    const g = new LoopGuard(2);
+    const turn = (url: string) => ({
+      content: "Let me try a few more sources.",
+      thinking: "",
+      toolCalls: [toolCall("WebFetch", { url })],
+      toolResults: [outcome("WebFetch", { url }, false)],
+    });
+    expect(g.observeTurn(turn("a")).kind).toBe("continue"); // A (1st)
+    expect(g.observeTurn(turn("b")).kind).toBe("continue"); // B (1st)
+    expect(g.observeTurn(turn("a")).kind).toBe("continue"); // A (2nd)
+    expect(g.observeTurn(turn("b")).kind).toBe("continue"); // B (2nd)
+    const fifth = g.observeTurn(turn("a")); // A (3rd) — the alternating loop
+    expect(fifth.kind).toBe("react");
+    if (fifth.kind === "react") expect(fifth.type).toBe("tool-repeat");
+  });
+
+  it("escalates a period-3 cycle (A/B/C/A/B/C)", () => {
+    const g = new LoopGuard(2);
+    const turn = (url: string) => ({
+      content: "still looking",
+      thinking: "",
+      toolCalls: [toolCall("WebFetch", { url })],
+      toolResults: [outcome("WebFetch", { url }, false)],
+    });
+    const kinds = ["a", "b", "c", "a", "b", "c", "a"].map((u) => g.observeTurn(turn(u)).kind);
+    expect(kinds.slice(0, 6)).toEqual(["continue", "continue", "continue", "continue", "continue", "continue"]);
+    expect(kinds[6]).toBe("react");
+  });
+
+  it("does NOT flag repeated calls with DIFFERENT arguments (real progress)", () => {
+    const g = new LoopGuard(2);
+    const turn = (path: string) => ({
+      content: "",
+      thinking: "",
+      toolCalls: [toolCall("Read", { path })],
+      toolResults: [outcome("Read", { path }, false)],
+    });
+    for (const p of ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]) {
+      expect(g.observeTurn(turn(p)).kind).toBe("continue");
+    }
+  });
+
   it("escalates an error streak of DIFFERENT failing calls", () => {
     const g = new LoopGuard(2);
     const turn = (path: string) => ({

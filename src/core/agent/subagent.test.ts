@@ -276,6 +276,50 @@ describe("SubAgentRunner", () => {
     expect(res.content).not.toContain("Loop detected");
   });
 
+  it("breaks an ALTERNATING web loop (A/B/A/B) instead of looping forever", async () => {
+    const fetched: string[] = [];
+    const web: Tool = {
+      name: "WebFetch",
+      definition: { name: "WebFetch", description: "fetch", parameters: { type: "object", properties: {} } },
+      execute: (args: Record<string, unknown>): ToolResult => {
+        const url = String(args.url);
+        fetched.push(url);
+        return { content: `page ${url}`, isError: false };
+      },
+    };
+    const webCall = (id: string, url: string): StreamChunk[] => [
+      { type: "tool_call_start", index: 0, id, name: "WebFetch" },
+      { type: "tool_call_delta", index: 0, delta: JSON.stringify({ url }) },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const logs: string[] = [];
+    const runner = new SubAgentRunner({
+      config: new StaticConfigProvider(CONFIG),
+      llmFactory: factory([
+        // Two URLs alternating: never the same call twice in a row, so the old
+        // consecutive-only detector could NEVER break this (the reported bug).
+        webCall("a1", "https://a"),
+        webCall("b1", "https://b"),
+        webCall("a2", "https://a"),
+        webCall("b2", "https://b"),
+        webCall("a3", "https://a"), // 3rd identical call in the window → loop guard
+        [{ type: "text", content: "current weather report" }],
+      ]),
+      tools: new ToolRegistry([web]),
+      cwd: () => "/workspace",
+      log: (m) => logs.push(m),
+    });
+
+    const res = await runner.run(spec({ access: "read" }));
+
+    expect(res.isError).toBe(false);
+    expect(res.content).toContain("current weather report");
+    expect(res.content).not.toContain("Loop not resolved");
+    // The window detector fired on the alternation, before any endless refetch.
+    expect(logs.some((l) => /loop-guard \[tool-repeat\] level 1/.test(l))).toBe(true);
+    expect(fetched.length).toBeLessThanOrEqual(5);
+  });
+
   it("write sub-agents can use Write (full agent mode)", async () => {
     const write = makeWriteTool();
     const runner = buildRunner(factory([writeCall(), [{ type: "text", content: "done writing" }]]), [write]);

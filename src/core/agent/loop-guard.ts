@@ -48,18 +48,30 @@ interface ReactionMessages {
 
 /**
  * One-shot corrective prompt injected when the model repeats the SAME tool call
- * (name + arguments) 3 turns in a row. The usual cause is retrying an
- * identical Shell command instead of switching tools — so point it at
- * Glob/Grep/Read and tell it to change approach or conclude.
+ * (name + arguments) 3+ times. The usual cause is retrying an identical Shell
+ * command instead of switching tools — so point it at Glob/Grep/Read and tell
+ * it to change approach or conclude.
  */
 export function repeatedCallNudge(name?: string): string {
   return (
-    `You called the SAME tool ("${name ?? "?"}") with identical arguments 3 times in a row and made no progress. ` +
+    `You called the SAME tool ("${name ?? "?"}") with identical arguments 3+ times without making progress. ` +
     "STOP repeating it. Change approach NOW: use Glob to locate files, Grep to search and Read to inspect — " +
     "prefer these over Shell. If a command failed or returned nothing, do not run it verbatim again: use different " +
     "arguments or a different tool, or conclude. Then write your final report."
   );
 }
+
+/**
+ * Rolling window of recent per-turn tool-call signatures. The consecutive
+ * counter (`signatureRepeats`) only sees A/A/A; a cycle like A/B/A/B — two
+ * identical WebFetch calls alternating, the classic sub-agent web loop — never
+ * repeats back-to-back and would slip through. Counting occurrences inside a
+ * window catches both shapes. Signatures include the full arguments, so
+ * legitimate repeated *work* (different files/commands) never matches.
+ */
+export const SIGNATURE_WINDOW = 16;
+/** How many times the same signature may recur in the window before it is a loop. */
+export const SIGNATURE_REPEAT_LIMIT = 3;
 
 /** Deterministic JSON stringify (sorted keys) so identical calls share a key. */
 export function stableArgs(value: unknown): string {
@@ -128,12 +140,16 @@ export function thinkingSimilarity(a: string, b: string): number {
  *    separated by progress never accumulate;
  *  · tool-call repetition is broken at the SOURCE (cached successful read-only
  *    results are reused, identical failing calls are not re-run) instead of
- *    merely nudging after the fact.
+ *    merely nudging after the fact;
+ *  · repetition is detected BOTH consecutively (A/A/A) and inside a rolling
+ *    window, so alternating cycles (A/B/A/B, A/B/C/A/B/C) are caught too.
  */
 export class LoopGuard {
   private readonly levels = new Map<LoopType, number>();
   private lastSignature: string | null = null;
   private signatureRepeats = 0;
+  /** Recent per-turn signatures (oldest first), for cyclic-loop detection. */
+  private readonly recentSignatures: string[] = [];
   private errorStreak = 0;
   private prevThinking = "";
 
@@ -154,6 +170,7 @@ export class LoopGuard {
     this.levels.clear();
     this.lastSignature = null;
     this.signatureRepeats = 0;
+    this.recentSignatures.length = 0;
     this.errorStreak = 0;
     this.prevThinking = "";
     this.readCache.clear();
@@ -277,9 +294,12 @@ export class LoopGuard {
         this.lastSignature = signature;
         this.signatureRepeats = 1;
       }
+      this.recentSignatures.push(signature);
+      if (this.recentSignatures.length > SIGNATURE_WINDOW) this.recentSignatures.shift();
     } else {
       this.lastSignature = null;
       this.signatureRepeats = 0;
+      this.recentSignatures.length = 0;
     }
 
     if (allFailed) this.errorStreak++;
@@ -316,7 +336,7 @@ export class LoopGuard {
         note: `error streak (${this.errorStreak} turns of failures) — the model was asked to change strategy.`,
         stop: `The model could not recover after ${this.errorStreak} consecutive turns of tool errors (${names}).`,
       };
-    } else if (!allFailed && this.signatureRepeats >= 3) {
+    } else if (!allFailed && (this.signatureRepeats >= 3 || this.signatureFrequency() >= SIGNATURE_REPEAT_LIMIT)) {
       active = "tool-repeat";
       messages = {
         nudge: repeatedCallNudge(obs.toolCalls[0]?.name),
@@ -344,6 +364,19 @@ export class LoopGuard {
 
     if (!active || !messages) return { kind: "continue" };
     return this.escalate(active, messages);
+  }
+
+  /** Highest number of times any single turn-signature recurs in the window.
+   * Catches non-consecutive cycles (A/B/A/B) that `signatureRepeats` cannot. */
+  private signatureFrequency(): number {
+    const counts = new Map<string, number>();
+    let max = 0;
+    for (const sig of this.recentSignatures) {
+      const n = (counts.get(sig) ?? 0) + 1;
+      counts.set(sig, n);
+      if (n > max) max = n;
+    }
+    return max;
   }
 
   private escalate(type: LoopType, m: ReactionMessages): LoopDecision {
