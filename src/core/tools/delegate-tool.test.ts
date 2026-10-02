@@ -21,6 +21,10 @@ describe("DelegateTool", () => {
     expect(d.description).toContain("WRITE/CREATE sub-agents on DIFFERENT files");
     expect(d.description).toContain("MANDATORY FIRST STEP");
     expect(d.description).toContain("resources");
+    // With Parallel ON, orchestration is the ONLY goal — even a single task
+    // must be delegated (never answer/work yourself).
+    expect(d.description).toContain("ONLY job is orchestration");
+    expect(d.description).toContain("delegate on EVERY request");
   });
 
   it("refuses direct execution (only the agent loop runs it)", () => {

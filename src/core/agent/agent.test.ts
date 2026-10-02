@@ -1507,7 +1507,7 @@ describe("Orchestration (Delegate)", () => {
     // The pre-delegation WebSearch was BLOCKED (never executed) and corrected.
     expect(web.called).toBe(false);
     expect(history.all().some((m) => m.role === "tool" && /Blocked: Parallel is ON/.test(m.content))).toBe(true);
-    expect(history.all().some((m) => m.role === "user" && /FIRST action MUST be to DELEGATE/.test(m.content))).toBe(true);
+    expect(history.all().some((m) => m.role === "user" && /ONLY move now is the Delegate/.test(m.content))).toBe(true);
     // After the correction the model delegated and the sub-agent ran.
     expect(spawned).toHaveLength(1);
   });
@@ -2662,10 +2662,11 @@ describe("Orchestration (Delegate)", () => {
     expect(seen[0]).not.toContain("- Delegate:");
     expect(seen[0]).not.toContain("ORCHESTRATION");
 
-    // Parallel ON: Delegate + orchestration rules appear.
+    // Parallel ON: the pre-delegation turn uses the FOCUSED DELEGATION TURN
+    // prompt (only Delegate is available), so no general tool list appears.
     agent.setDelegation(true);
     await agent.send("on");
-    expect(seen[1]).toContain("- Delegate:");
+    expect(seen[1]).toContain("DELEGATION TURN");
     expect(seen[1]).toContain("ORCHESTRATION");
   });
 });

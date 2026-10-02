@@ -394,9 +394,10 @@ export class Agent implements ChatController {
           this.deps.history.add({
             role: "user",
             content:
-              "Parallel is ON but you did NOT delegate. This is MANDATORY: emit at least one Delegate call NOW. " +
-              "Decompose the request and run its independent sub-tasks as sub-agents; if nothing can run in parallel, " +
-              "delegate the single bounded sub-task to ONE sub-agent. Do not answer directly.",
+              "Parallel is ON but you did NOT delegate. This is MANDATORY: do NOT answer directly. Think how to " +
+              "split the request into 1..N independent sub-tasks (N ≥ 1), then emit the Delegate call(s) NOW — all " +
+              "independent ones in the same turn. If nothing can run in parallel, still delegate the whole bounded " +
+              "task to ONE sub-agent.",
             timestamp: Date.now(),
           });
           return this.runTurns(turn + 1);
@@ -428,8 +429,9 @@ export class Agent implements ChatController {
       this.log(`parallel ON: blocked ${toolCalls.length} non-Delegate call(s) before delegation (${names})`);
       for (const tc of toolCalls) {
         const content =
-          "⛔ Blocked: Parallel is ON and you have NOT delegated yet. Delegate FIRST — analyze how to " +
-          "separate the work (resource conflicts) and emit the Delegate call(s) before using any other tool.";
+          "⛔ Blocked: Parallel is ON and you have NOT delegated yet. Your FIRST move must be the Delegate " +
+          "call(s): split the request into 1..N independent sub-tasks (check resource conflicts) and emit them " +
+          "in this turn — before any other tool.";
         this.deps.events.emit({
           type: "tool_result",
           toolResult: { toolCallId: tc.id, output: content, isError: true },
@@ -441,9 +443,9 @@ export class Agent implements ChatController {
         this.deps.history.add({
           role: "user",
           content:
-            "STOP. Parallel is ON: your FIRST action MUST be to DELEGATE, before calling any other tool. " +
-            "Analyze how to separate the work to avoid resource conflicts, expose the plan, then emit the " +
-            "Delegate call(s). Do not call WebSearch/Read/Shell/etc. until you have delegated.",
+            "STOP. Parallel is ON: do NOT answer and do NOT call any other tool. Your ONLY move now is the " +
+            "Delegate call(s): split the request into 1..N independent sub-tasks (check resource conflicts), " +
+            "expose a SHORT plan, then emit the Delegate call(s) in this turn.",
           timestamp: Date.now(),
         });
         return this.runTurns(turn + 1);
@@ -655,10 +657,10 @@ export class Agent implements ChatController {
         "VALIDATED diff previews) but nothing is applied; finish by telling the user to switch to Build to apply"
       : "Build — you CAN create, modify and delete files";
     const parallel = this.delegationEnabled
-      ? "ON — MANDATORY: DELEGATION IS YOUR FIRST ACTION. Before calling ANY other tool (TodoWrite, WebSearch, " +
-        "Read, Shell, …) you MUST delegate, following the 5-step orchestration protocol (1 analyze conflicts → " +
-        "2 expose the plan → 3 launch named sub-agents → 4 collect → 5 answer). Never answer without delegating " +
-        "(a single sub-agent is fine when nothing can run in parallel)"
+      ? "ON — ORCHESTRATOR: do NOT answer and do NOT call any other tool first. Think ONLY about delegation " +
+        "(do NOT start solving the task): split the request into 1..N independent sub-tasks, then emit the Delegate " +
+        "call(s) — all independent ones in the SAME turn (N ≥ 1; NEVER 0 — even a single whole or trivial task goes " +
+        "to ONE sub-agent). You never do the work yourself; answer only after the sub-agents report"
       : "OFF — no sub-agents: use your own tools only";
     return `[CURRENT STATE] Mode: ${mode}. Parallel: ${parallel}.`;
   }

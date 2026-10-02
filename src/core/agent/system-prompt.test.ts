@@ -70,6 +70,9 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     expect(prompt).toContain("READ-ONLY MODE (Analyze)");
     expect(prompt).toContain("they MUST be read-only");
     expect(prompt).toContain("ORCHESTRATION");
+    // The SAME 3-step orchestration flow applies in Analyze too (Parallel ON).
+    expect(prompt).toContain("STEP 1 — THINK, DO NOT ANSWER");
+    expect(prompt).toContain("STEP 2 — PLAN + LAUNCH");
     expect(prompt).toContain("sub-agent");
     // Read-only preview: writers are advertised (they run as previews).
     const listSection = prompt.slice(prompt.indexOf("You have access to these tools:"), prompt.indexOf("\nGuidelines:"));
@@ -86,27 +89,36 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     ];
     const builder = new DefaultSystemPromptBuilder((m) => toolDefinitionsForMode(delegateOnly, m), () => "/w");
     const prompt = builder.build("agent");
+    expect(prompt).toContain("DELEGATION TURN");
     expect(prompt).toContain("ONLY tool you may call is Delegate");
     expect(prompt).toContain("Do NOT call TodoWrite");
     expect(prompt).toContain("any such call is refused");
+    // The reasoning is SCOPED to delegation on this turn: the model must not
+    // start solving the task in its thinking.
+    expect(prompt).toContain("Think ONLY about how to orchestrate");
+    expect(prompt).toContain("Do NOT start solving");
+    // The focused prompt does not drag the general guidelines in.
+    expect(prompt).not.toContain("Guidelines:");
   });
 
-  it("adds orchestration rules only when the Delegate tool is available", () => {
+  it("adds the same 3-step orchestration rules when Parallel is ON, in BOTH modes", () => {
     const withDelegate = new DefaultSystemPromptBuilder(
       (mode) => toolDefinitionsForMode(toolsWithDelegate(), mode),
       () => "/w",
     );
-    // The mandatory 5-step orchestration protocol is present when Parallel is ON.
-    const p = withDelegate.build("agent");
-    expect(p).toContain("ORCHESTRATION");
-    expect(p).toContain("STEP 1 — ANALYZE CONFLICTS");
-    expect(p).toContain("STEP 2 — EXPOSE THE PLAN");
-    expect(p).toContain("STEP 3 — LAUNCH named sub-tasks");
-    expect(p).toContain("STEP 4 — COLLECT");
-    expect(p).toContain("STEP 5 — ANSWER");
-    // Conflict reasoning about resources (not just files) and meaningful names.
-    expect(p).toContain("parent folder");
-    expect(p).toContain("MEANINGFUL name");
+    // The delegation flow is IDENTICAL in Analyze and Build: don't answer →
+    // think how to split into 1..N sub-tasks → launch the Delegate call(s).
+    for (const mode of ["analyze", "agent"] as const) {
+      const p = withDelegate.build(mode);
+      expect(p).toContain("ORCHESTRATION MODE (PARALLEL ON)");
+      expect(p).toContain("Do NOT answer");
+      expect(p).toContain("STEP 1 — THINK, DO NOT ANSWER");
+      expect(p).toContain("STEP 2 — PLAN + LAUNCH");
+      expect(p).toContain("STEP 3 — COLLECT + ANSWER");
+      // Conflict reasoning about resources (not just files) + meaningful ids.
+      expect(p).toContain("containing folder");
+      expect(p).toContain("MEANINGFUL id");
+    }
 
     const without = new DefaultSystemPromptBuilder((mode) => toolDefinitionsForMode(tools(), mode), () => "/w");
     expect(without.build("agent")).not.toContain("ORCHESTRATION");

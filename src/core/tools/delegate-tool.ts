@@ -14,8 +14,9 @@ export class DelegateTool implements Tool {
   readonly definition: ToolDefinition = {
     name: "Delegate",
     description:
-      "Launch a sub-agent to work on ONE independent sub-task and return its report. " +
-      "You are the ORCHESTRATOR: prefer delegating independent sub-tasks to SUB-AGENTS over doing everything yourself. " +
+      "Launch a sub-agent to work on ONE sub-task and return its report. " +
+      "You are the ORCHESTRATOR: with Parallel ON your ONLY job is orchestration — you NEVER do the work yourself. " +
+      "EVERY request MUST run as sub-agent(s), even a single, whole or trivial task (delegate it to ONE sub-agent). " +
       "The sub-agent runs its own agent loop with the full tool set on the SAME working directory.\n\n" +
       "DECLARE EXACTLY what the sub-agent will touch so the system can parallelize safely:\n" +
       "- resources: the files/dirs it will read or write (paths relative to the working directory).\n" +
@@ -36,7 +37,8 @@ export class DelegateTool implements Tool {
       "- Emit ALL independent Delegate calls in the SAME turn so they run in parallel (up to the configured max); " +
       "use after for dependencies. Do not flood: group tiny steps. WRITE/CREATE sub-agents on DIFFERENT files " +
       "run in parallel too.\n" +
-      "- Do NOT delegate the core reasoning or trivial work; delegate independent, bounded sub-tasks.",
+      "- MANDATORY: delegate on EVERY request (never 0). Even if the task is monolithic, single or trivial, delegate " +
+      "it WHOLE to ONE sub-agent — do NOT answer or work yourself.",
     parameters: {
       type: "object",
       properties: {
