@@ -97,6 +97,9 @@ function setupDom(
         <button id="provider-delete" class="secondary">Delete</button>
         <button id="provider-add" class="secondary">+ New</button>
         <div id="provider-test-result" class="hidden"></div>
+        <button id="providers-export" class="secondary">Export</button>
+        <button id="providers-import" class="secondary">Import</button>
+        <span id="providers-io-result" class="providers-io"></span>
         <button id="providers-save">Save</button>
         <button id="providers-cancel" class="secondary">Cancel</button>
       </div>
@@ -2185,6 +2188,20 @@ describe("view webview client", () => {
     expect(data["llamacpp-2"]).toBeTruthy();
     expect(data.llamacpp).toBeUndefined();
     expect(data["llamacpp-2"]!.thinking).toBeUndefined(); // "unspecified" → omitted
+  });
+
+  it("posts exportProviders / importProviders from the editor and shows the result", async () => {
+    await loadView();
+    posted.length = 0;
+    (document.getElementById("providers-export") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "exportProviders" });
+    (document.getElementById("providers-import") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "importProviders" });
+
+    hostMessage({ type: "providersExported", ok: true, path: "/tmp/p.json" });
+    expect(document.getElementById("providers-io-result")?.textContent).toContain("Exported");
+    hostMessage({ type: "providersImported", ok: false, error: "bad file" });
+    expect(document.getElementById("providers-io-result")?.textContent).toContain("Import failed");
   });
 
   it("carries unmanaged provider keys through save and rename (lossless)", async () => {

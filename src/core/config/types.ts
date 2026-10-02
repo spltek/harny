@@ -170,4 +170,16 @@ export interface ProviderCatalog extends NamedProvidersSource, ModelSelectionSav
   readProvidersEditor(): ProviderEditorData;
   /** Replace the config's provider map + active provider, preserving other keys. */
   saveProvidersEditor(data: ProviderEditorData): boolean;
+  /** Raw providers section (config-file shape) for export. */
+  exportProviders(): ProviderExport;
+  /** Merge (or replace) the providers section from an exported file. */
+  importProviders(raw: unknown, mode?: "merge" | "replace"): boolean;
+}
+
+/** Portable snapshot of the provider/model configuration (export/import). */
+export interface ProviderExport {
+  providers: Record<string, unknown>;
+  /** Active provider name (written as `provider` in the config file). */
+  provider?: string;
+  maxParallelSubAgents?: number;
 }

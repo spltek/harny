@@ -27,6 +27,10 @@ const state = vi.hoisted(() => ({
   alertOk: true as boolean | undefined,
   // VS Code dialogs exercised by the manage-sessions form.
   showOpenDialog: vi.fn(),
+  showSaveDialog: vi.fn(),
+  // VS Code filesystem used by provider export/import.
+  fsWriteFile: vi.fn(async () => {}),
+  fsReadFile: vi.fn(async () => new Uint8Array()),
 }));
 
 vi.mock("vscode", () => ({
@@ -36,12 +40,14 @@ vi.mock("vscode", () => ({
     showErrorMessage: state.showErrorMessage,
     showInformationMessage: state.showInformationMessage,
     showOpenDialog: state.showOpenDialog,
+    showSaveDialog: state.showSaveDialog,
   },
   workspace: {
     getConfiguration: () => ({ get: (key: string) => (key === "fontSize" ? 14 : undefined) }),
     onDidChangeConfiguration: () => ({ dispose: () => {} }),
+    fs: { writeFile: state.fsWriteFile, readFile: state.fsReadFile },
   },
-  Uri: { joinPath: () => ({}) },
+  Uri: { joinPath: () => ({}), file: (p: string) => ({ fsPath: p }) },
 }));
 
 const CONFIG: HarnyConfig = {
@@ -1118,6 +1124,64 @@ describe("ChatViewProvider", () => {
     const { handler, view } = resolveWith(provider);
     await handler({ type: "saveProviders", data: { providers: {} } });
     expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "providersSaved", ok: false }));
+  });
+
+  it("exportProviders writes the config to the chosen file", async () => {
+    const exportProviders = vi.fn(() => ({ providers: { a: { baseUrl: "http://a/v1" } }, provider: "a" }));
+    const { provider } = buildHarness({
+      providers: { getProvider: vi.fn(), saveModelSelection: vi.fn(), exportProviders } as unknown as ProviderCatalog,
+    });
+    const { handler, view } = resolveWith(provider);
+    state.showSaveDialog.mockResolvedValue({ fsPath: "/tmp/out.json" });
+    state.fsWriteFile.mockClear();
+    await handler({ type: "exportProviders" });
+    expect(exportProviders).toHaveBeenCalled();
+    expect(state.fsWriteFile).toHaveBeenCalled();
+    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "providersExported", ok: true }));
+  });
+
+  it("exportProviders cancelled writes nothing", async () => {
+    const exportProviders = vi.fn(() => ({ providers: { a: { baseUrl: "http://a/v1" } } }));
+    const { provider } = buildHarness({
+      providers: { getProvider: vi.fn(), saveModelSelection: vi.fn(), exportProviders } as unknown as ProviderCatalog,
+    });
+    const { handler } = resolveWith(provider);
+    state.showSaveDialog.mockResolvedValue(undefined);
+    state.fsWriteFile.mockClear();
+    await handler({ type: "exportProviders" });
+    expect(state.fsWriteFile).not.toHaveBeenCalled();
+  });
+
+  it("importProviders reads the file and MERGES it into the config", async () => {
+    const importProviders = vi.fn(() => true);
+    const readProvidersEditor = vi.fn(() => ({ providers: { a: { baseUrl: "http://a/v1" } } }));
+    const { provider } = buildHarness({
+      providers: { getProvider: vi.fn(), saveModelSelection: vi.fn(), importProviders, readProvidersEditor } as unknown as ProviderCatalog,
+    });
+    const { handler, view } = resolveWith(provider);
+    state.showOpenDialog.mockResolvedValue([{ fsPath: "/tmp/in.json" }]);
+    state.fsReadFile.mockResolvedValue(new TextEncoder().encode('{"providers":{"a":{"baseUrl":"http://a/v1"}}}'));
+    await handler({ type: "importProviders" });
+    expect(importProviders).toHaveBeenCalledWith(expect.anything(), "merge");
+    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "providersImported", ok: true }));
+    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "providersEditor" }));
+  });
+
+  it("importProviders reports an invalid file", async () => {
+    const importProviders = vi.fn(() => false);
+    const { provider } = buildHarness({
+      providers: {
+        getProvider: vi.fn(),
+        saveModelSelection: vi.fn(),
+        importProviders,
+        readProvidersEditor: vi.fn(() => ({ providers: {} })),
+      } as unknown as ProviderCatalog,
+    });
+    const { handler, view } = resolveWith(provider);
+    state.showOpenDialog.mockResolvedValue([{ fsPath: "/tmp/in.json" }]);
+    state.fsReadFile.mockResolvedValue(new TextEncoder().encode('{"nope":true}'));
+    await handler({ type: "importProviders" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "providersImported", ok: false }));
   });
 
   it("testProvider fetches live models and posts the outcome", async () => {

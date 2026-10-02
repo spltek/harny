@@ -1715,6 +1715,9 @@ const providerAddBtn = document.getElementById("provider-add") as HTMLButtonElem
 const providerTestResult = document.getElementById("provider-test-result") as HTMLDivElement;
 const providersSaveBtn = document.getElementById("providers-save") as HTMLButtonElement;
 const providersCancelBtn = document.getElementById("providers-cancel") as HTMLButtonElement;
+const providersExportBtn = document.getElementById("providers-export") as HTMLButtonElement;
+const providersImportBtn = document.getElementById("providers-import") as HTMLButtonElement;
+const providersIoResult = document.getElementById("providers-io-result") as HTMLSpanElement;
 const gearBtn = document.getElementById("gear-btn") as HTMLButtonElement;
 
 let providerEditorData: { providers: Record<string, { baseUrl?: string; apiKey?: string; thinking?: string; thinkingLevel?: string; sessionHeader?: string; headers?: Record<string, string>; maxTokens?: number; extra?: Record<string, unknown> }> } = {
@@ -1807,8 +1810,18 @@ function closeProvidersEditor(): void {
 }
 
 gearBtn.addEventListener("click", () => {
+  providersIoResult.textContent = "";
+  providersIoResult.className = "providers-io";
   vscode.postMessage({ type: "getProvidersEditor" });
 });
+
+// Export / import the providers config as a portable JSON file.
+function showProvidersIo(text: string, ok: boolean): void {
+  providersIoResult.textContent = text;
+  providersIoResult.className = "providers-io " + (ok ? "ok" : "err");
+}
+providersExportBtn.addEventListener("click", () => vscode.postMessage({ type: "exportProviders" }));
+providersImportBtn.addEventListener("click", () => vscode.postMessage({ type: "importProviders" }));
 
 providerSelect.addEventListener("change", () => {
   const name = providerSelect.value;
@@ -2814,6 +2827,18 @@ window.addEventListener("message", (e) => {
         providerTestResult.textContent = "❌ Could not write the config file.";
         providerTestResult.className = "err";
       }
+      break;
+    case "providersExported":
+      showProvidersIo(
+        msg.ok ? "Exported to " + (msg.path || "file") : "Export failed" + (msg.error ? ": " + msg.error : ""),
+        !!msg.ok,
+      );
+      break;
+    case "providersImported":
+      showProvidersIo(
+        msg.ok ? "Imported from " + (msg.path || "file") : "Import failed" + (msg.error ? ": " + msg.error : ""),
+        !!msg.ok,
+      );
       break;
   }
 });

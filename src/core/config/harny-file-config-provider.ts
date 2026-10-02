@@ -8,12 +8,33 @@ import type {
   ProviderCatalog,
   ProviderEditorData,
   ProviderEditorEntry,
+  ProviderExport,
   ResolvedNamedProvider,
 } from "./types";
 
 /** True for a positive integer (a valid concurrency cap / count). */
 function isPositiveInt(v: unknown): v is number {
   return typeof v === "number" && Number.isInteger(v) && v > 0;
+}
+
+/** Validate + normalize an exported providers payload (accepts the config
+ * shape AND the editor shape — only `providers` is required). */
+export function parseProviderExport(
+  raw: unknown,
+): { providers: Record<string, unknown>; provider?: string; maxParallelSubAgents?: number } | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const obj = raw as Record<string, unknown>;
+  const provRaw = obj.providers;
+  if (!provRaw || typeof provRaw !== "object" || Array.isArray(provRaw)) return undefined;
+  const providers: Record<string, unknown> = {};
+  for (const [name, entry] of Object.entries(provRaw as Record<string, unknown>)) {
+    if (!name.trim() || !entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    providers[name] = entry;
+  }
+  if (Object.keys(providers).length === 0) return undefined;
+  const provider = typeof obj.provider === "string" && obj.provider.trim() ? obj.provider : undefined;
+  const maxParallelSubAgents = isPositiveInt(obj.maxParallelSubAgents) ? obj.maxParallelSubAgents : undefined;
+  return { providers, provider, maxParallelSubAgents };
 }
 
 interface NamedProviderEntry {
@@ -255,6 +276,50 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
     }
   }
 
+
+  /**
+   * Raw providers section (exactly the config-file shape: baseUrl, apiKey,
+   * api, models, thinking, …) for EXPORT. Lossless and portable.
+   */
+  exportProviders(): ProviderExport {
+    const data = this.parseFile() ?? {};
+    const map = (this.asProviderMap(data) ?? {}) as Record<string, unknown>;
+    return {
+      providers: map,
+      ...(typeof data.provider === "string" && data.provider.trim() ? { provider: data.provider } : {}),
+      ...(isPositiveInt(data.maxParallelSubAgents) ? { maxParallelSubAgents: data.maxParallelSubAgents } : {}),
+    };
+  }
+
+  /**
+   * Merge (default) or replace the providers section from an exported file,
+   * preserving every other config key. Returns false on an invalid payload or
+   * a write failure.
+   */
+  importProviders(raw: unknown, mode: "merge" | "replace" = "merge"): boolean {
+    const incoming = parseProviderExport(raw);
+    if (!incoming) return false;
+    try {
+      const base = this.dir();
+      if (!base) return false;
+      const jsonPath = join(base, "config.json");
+      const jsoncPath = join(base, "config.jsonc");
+      const jsonExists = this.fs.exists(jsonPath);
+      const jsoncExists = this.fs.exists(jsoncPath);
+      const path = jsonExists ? jsonPath : jsoncExists ? jsoncPath : jsonPath;
+      const data: Record<string, unknown> = jsonExists || jsoncExists ? this.parseFile() ?? {} : {};
+      const current = (this.asProviderMap(data) ?? {}) as Record<string, unknown>;
+      const providers = mode === "merge" ? { ...current, ...incoming.providers } : incoming.providers;
+      data.providers = providers;
+      if (incoming.provider && providers[incoming.provider]) data.provider = incoming.provider;
+      if (isPositiveInt(incoming.maxParallelSubAgents)) data.maxParallelSubAgents = incoming.maxParallelSubAgents;
+      this.fs.mkdirRecursive(base);
+      this.fs.writeText(path, JSON.stringify(data, null, 2) + "\n");
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   private parseFile(): Record<string, unknown> | undefined {
     const base = this.dir();

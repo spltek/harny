@@ -762,3 +762,71 @@ describe("HarnyFileConfigProvider opencode session header fields", () => {
     expect(provider.read().sessionHeader).toBe("x-opencode-session");
   });
 });
+
+describe("exportProviders / importProviders", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "harny-io-"));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const readRaw = (): Record<string, unknown> =>
+    JSON.parse(require("node:fs").readFileSync(join(dir, "config.json"), "utf8"));
+
+  it("exports the RAW providers section (lossless: api/models kept) + active provider", () => {
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        provider: "a",
+        maxParallelSubAgents: 3,
+        providers: {
+          a: { baseUrl: "http://x/v1", apiKey: "k", api: "openai-completions", models: ["m1"] },
+          b: { baseUrl: "http://y/v1" },
+        },
+      }),
+    );
+    const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+    const out = provider.exportProviders();
+    expect(out.provider).toBe("a");
+    expect(out.maxParallelSubAgents).toBe(3);
+    expect(out.providers).toMatchObject({
+      a: { baseUrl: "http://x/v1", api: "openai-completions", models: ["m1"] },
+      b: { baseUrl: "http://y/v1" },
+    });
+  });
+
+  it("imports with MERGE: same name overridden, others kept, unknown keys preserved", () => {
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        keep: "yes",
+        provider: "a",
+        providers: { a: { baseUrl: "http://old/v1" }, b: { baseUrl: "http://b/v1" } },
+      }),
+    );
+    const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+    expect(provider.importProviders({ providers: { a: { baseUrl: "http://new/v1" }, c: { baseUrl: "http://c/v1" } } })).toBe(true);
+    const raw = readRaw();
+    expect(raw.keep).toBe("yes");
+    const providers = raw.providers as Record<string, { baseUrl: string }>;
+    expect(providers.a.baseUrl).toBe("http://new/v1");
+    expect(providers.b.baseUrl).toBe("http://b/v1");
+    expect(providers.c.baseUrl).toBe("http://c/v1");
+  });
+
+  it("imports with REPLACE: only the incoming providers remain", () => {
+    writeFileSync(join(dir, "config.json"), JSON.stringify({ providers: { a: { baseUrl: "http://a/v1" } } }));
+    const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+    expect(provider.importProviders({ providers: { z: { baseUrl: "http://z/v1" } } }, "replace")).toBe(true);
+    expect(Object.keys(readRaw().providers as Record<string, unknown>)).toEqual(["z"]);
+  });
+
+  it("rejects an invalid payload (no usable providers) and writes nothing", () => {
+    const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+    expect(provider.importProviders({ nope: true })).toBe(false);
+    expect(provider.importProviders(null)).toBe(false);
+    expect(provider.importProviders({ providers: {} })).toBe(false);
+    expect(provider.importProviders({ providers: { bad: 42 } })).toBe(false);
+    expect(require("node:fs").existsSync(join(dir, "config.json"))).toBe(false);
+  });
+});

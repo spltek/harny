@@ -1,5 +1,5 @@
 import type { ExtensionContext, WebviewView, WebviewViewProvider, WebviewViewResolveContext } from "vscode";
-import { Uri, workspace } from "vscode";
+import { Uri, window, workspace } from "vscode";
 import * as fs from "fs";
 import type { ConfigProvider, HarnyConfig, ProviderCatalog, ProviderEditorData, ThinkingLevel } from "../core/config/types";
 import { isThinkingLevel } from "../core/config/types";
@@ -14,6 +14,7 @@ import { StreamTee } from "./stream-tee";
 import type { AttachmentService } from "./attachment-service";
 import type { AttachmentInfo, AttachmentPart } from "./attachment-types";
 import { debugLog, infoLog } from "../logger";
+import { preprocessJsonc } from "../core/config/jsonc";
 import { renderViewHtml } from "./view-html";
 import { toTemperature, toTopP } from "./temperature";
 import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, toContextWindow, toOutputTokens } from "./context-window";
@@ -539,6 +540,46 @@ export class ChatViewProvider implements WebviewViewProvider {
           void this.pushConfig();
         }
         this.view?.webview.postMessage({ type: "providersSaved", ok });
+        break;
+      }
+      case "exportProviders": {
+        const data = this.providers.exportProviders();
+        const payload = JSON.stringify({ harny: 1, ...data }, null, 2) + "\n";
+        const target = await window.showSaveDialog({
+          saveLabel: "Export",
+          filters: { "Harny providers": ["json"] },
+          defaultUri: Uri.file("harny-providers.json"),
+        });
+        if (!target) break;
+        try {
+          await workspace.fs.writeFile(target, Buffer.from(payload, "utf8"));
+          this.view?.webview.postMessage({ type: "providersExported", ok: true, path: target.fsPath });
+        } catch (e) {
+          this.view?.webview.postMessage({ type: "providersExported", ok: false, error: (e as Error)?.message });
+        }
+        break;
+      }
+      case "importProviders": {
+        const picked = await window.showOpenDialog({
+          canSelectMany: false,
+          openLabel: "Import",
+          filters: { "Harny providers": ["json", "jsonc"] },
+        });
+        const uri = picked?.[0];
+        if (!uri) break;
+        try {
+          const text = Buffer.from(await workspace.fs.readFile(uri)).toString("utf8");
+          const parsed = JSON.parse(preprocessJsonc(text));
+          const ok = this.providers.importProviders(parsed, "merge");
+          this.view?.webview.postMessage({ type: "providersImported", ok, path: uri.fsPath });
+          if (ok) {
+            // Reload the editor with the merged providers + refresh the picker.
+            this.view?.webview.postMessage({ type: "providersEditor", data: this.providers.readProvidersEditor() });
+            void this.pushConfig();
+          }
+        } catch (e) {
+          this.view?.webview.postMessage({ type: "providersImported", ok: false, error: (e as Error)?.message });
+        }
         break;
       }
       case "testProvider": {

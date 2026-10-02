@@ -1054,6 +1054,9 @@ ${renderViewConfig(deps)}
     .provider-actions .danger { color: var(--error, #f05555); }
     .providers-actions { display: flex; justify-content: flex-end; gap: 10px; }
     .providers-actions button { font-size: var(--fs-lg); padding: 6px 14px; border-radius: 6px; }
+    .providers-io { margin-right: auto; align-self: center; font-size: var(--fs-sm); color: var(--muted, #999); }
+    .providers-io.ok { color: #4ec9b0; }
+    .providers-io.err { color: var(--error, #f05555); }
     /* Bottom settings row: a flag + a numeric stepper (max parallel sub-agents). */
     .providers-settings {
       display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
@@ -1518,6 +1521,9 @@ ${renderViewConfig(deps)}
         </div>
       </div>
       <div class="providers-actions">
+        <button id="providers-export" class="secondary" title="Export the providers config to a JSON file">Export</button>
+        <button id="providers-import" class="secondary" title="Import providers from a JSON file (merged into the current config)">Import</button>
+        <span id="providers-io-result" class="providers-io"></span>
         <button id="providers-cancel" class="secondary">Cancel</button>
         <button id="providers-save">Save</button>
       </div>
