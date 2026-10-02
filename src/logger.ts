@@ -1,7 +1,10 @@
 import * as fs from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { window, type OutputChannel } from "vscode";
 
-const LOG_FILE = "/tmp/harny-debug.log";
+/** Temp debug log path — cross-platform (never hardcode /tmp). */
+const LOG_FILE = join(tmpdir(), "harny-debug.log");
 const enabled = !!process.env.HARNY_DEBUG;
 
 let outputChannel: OutputChannel | undefined;

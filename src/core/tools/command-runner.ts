@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { defaultShell } from "../platform";
 
 export interface CommandResult {
   stdout: string;
@@ -21,7 +22,7 @@ export class NodeCommandRunner implements CommandRunner {
       encoding: "utf-8",
       maxBuffer: options.maxBuffer ?? 50 * 1024 * 1024,
       timeout: options.timeoutMs,
-      shell: process.env.SHELL || "/bin/bash",
+      shell: defaultShell(),
       killSignal: "SIGKILL",
     });
     return {

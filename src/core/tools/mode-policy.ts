@@ -81,12 +81,13 @@ export const FILE_PREVIEW_NOTE =
 export const SHELL_READ_ONLY_NOTE =
   "\n\nREAD-ONLY MODE: commands run with NO ability to modify the filesystem. " +
   "Any command that writes, deletes, moves, renames, creates, or installs is refused before running. " +
-  "Only read-only inspection is allowed (ls, cat, find, grep, git status/diff/log, ...). " +
+  "Only read-only inspection is allowed (POSIX: ls, cat, find, grep; Windows: dir, type, where, findstr; either: git status/diff/log). " +
   "Prefer the Read/Grep/Glob tools for file inspection.";
 
 export const ANALYZE_BLOCKED_SHELL_MESSAGE = (command: string): string =>
   `⛔ Analyze mode is READ-ONLY: the command "${command}" could modify the filesystem and was refused without running. ` +
-  "Only read-only commands are allowed (e.g. ls, cat, find, git status/diff/log). Prefer the Read/Grep/Glob tools for inspection.";
+  "Only read-only commands are allowed (POSIX: ls, cat, find; Windows: dir, type, where, findstr; either: git status/diff/log). " +
+  "Prefer the Read/Grep/Glob tools for inspection.";
 
 /**
  * Heuristic "does this shell command modify the filesystem?" check used to
@@ -101,8 +102,9 @@ export function isWriteCommand(command: string): boolean {
   if (!cmd) return false;
 
   // File redirection / truncation / append (write or capture-to-file), except
-  // /dev/* sinks which are not real files.
-  if (/>(?!\s*\/dev\/)/.test(cmd)) return true;
+  // the POSIX `> /dev/…` sinks AND the Windows `>nul` / `> NUL` null device,
+  // which are not real files.
+  if (/>(?!\s*(?:\/dev\/|nul\b))/i.test(cmd)) return true;
 
   // Mutating file verbs.
   if (
@@ -112,6 +114,21 @@ export function isWriteCommand(command: string): boolean {
     /\b(?:sed|perl)\s+-i\b/.test(cmd) ||
     /\bawk\s+-i\s+(?:inplace|in-place)\b/.test(cmd) ||
     /\btee\b/.test(cmd)
+  ) {
+    return true;
+  }
+
+  // Windows (cmd.exe) and PowerShell mutating verbs. Bare 2-letter commands
+  // (`md`, `rd`) are deliberately NOT matched: they false-positive on paths
+  // like `notes.md`. Quoted PowerShell cmdlets (Remove-Item) and their `-OutFile`
+  // variants are covered too.
+  if (
+    /\b(?:del|erase|copy|xcopy|robocopy|move|ren|rename|rmdir|mklink|attrib|icacls|takeown|cacls)\b/i.test(cmd) ||
+    /\b(?:remove-item|new-item|set-content|add-content|clear-content|out-file|move-item|copy-item|rename-item|set-itemproperty|new-itemproperty|remove-itemproperty|invoke-expression|clear-item)\b/i.test(
+      cmd,
+    ) ||
+    /\breg\s+(?:add|delete|import|copy|save|restore)\b/i.test(cmd) ||
+    /-outfile\b/i.test(cmd)
   ) {
     return true;
   }

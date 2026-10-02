@@ -43,7 +43,7 @@ const EXT_LANGS: Record<string, string> = {
  * Makefile, .mdx, binary extensions…) — the caller then skips highlighting.
  */
 export function langIdForPath(path: string): string | undefined {
-  const base = path.split("/").pop() ?? path;
+  const base = path.split(/[\\/]/).pop() ?? path;
   const dot = base.lastIndexOf(".");
   // no extension, hidden dotfile (.env), or trailing dot
   if (dot <= 0 || dot === base.length - 1) return undefined;

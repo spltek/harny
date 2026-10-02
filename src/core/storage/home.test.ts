@@ -32,6 +32,18 @@ describe("sanitizeWorkspaceKey", () => {
     expect(sanitizeWorkspaceKey("/")).toBe("--global--");
     expect(sanitizeWorkspaceKey("  ")).toBe("--global--");
   });
+
+  it("turns a WINDOWS cwd into a valid folder key (no backslash or colon)", () => {
+    const key = sanitizeWorkspaceKey("C:\\Users\\test\\MyProject");
+    expect(key).toBe("--C--Users-test-MyProject--");
+    expect(key).not.toMatch(/[\\:]/);
+  });
+
+  it("sanitizes a UNC path and every Windows-illegal character", () => {
+    expect(sanitizeWorkspaceKey("\\\\server\\share\\proj")).toBe("--server-share-proj--");
+    expect(sanitizeWorkspaceKey("C:\\a<b>c|d?e*f")).toBe("--C--a-b-c-d-e-f--");
+    expect(sanitizeWorkspaceKey("C:\\")).toBe("--C--");
+  });
 });
 
 describe("sessionsDirFor (central storage)", () => {

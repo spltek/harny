@@ -6,6 +6,11 @@ import { sseLines } from "./sse";
 import { toChatToolDefinitions, toOpenAIMessages } from "./message-converter";
 import type { LLMMessage, LLMProvider, StreamChunk } from "./types";
 import * as fs from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+/** Temp debug log path — cross-platform (never hardcode /tmp). */
+const DEBUG_LOG_FILE = join(tmpdir(), "harny-debug.log");
 
 /**
  * OpenAI Chat Completions provider (POST /v1/chat/completions, SSE streaming).
@@ -149,7 +154,7 @@ export class OpenAIChatProvider implements LLMProvider {
           : undefined,
       })}\n`;
       try {
-        fs.appendFileSync("/tmp/harny-debug.log", line);
+        fs.appendFileSync(DEBUG_LOG_FILE, line);
       } catch {
         /* best effort */
       }

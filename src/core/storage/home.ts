@@ -17,9 +17,16 @@ export interface ResolveHomeOptions {
 /**
  * pi-style workspace key: `/Users/x/proj` → `--Users-x-proj--` (safe as a
  * folder name). Sessions are grouped per workspace under this key in home.
+ * BOTH separators and every Windows-illegal filename character (`\ : * ? " <
+ * > |`) are collapsed to `-`, so a Windows cwd like `C:\Users\x\proj` yields
+ * a VALID folder name. POSIX output is unchanged (`/` already became `-`).
  */
 export function sanitizeWorkspaceKey(cwd: string): string {
-  const clean = cwd.trim().replaceAll("/", "-").replace(/^[-]+|[-]+$/g, "");
+  const clean = cwd
+    .trim()
+    .replace(/[\\/]+/g, "-")
+    .replace(/[<>:"|?*\u0000-\u001f]+/g, "-")
+    .replace(/^[-]+|[-]+$/g, "");
   return clean ? `--${clean}--` : "--global--";
 }
 

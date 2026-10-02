@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { formatSize, isImagePath, resolvePath } from "./path-utils";
 
 describe("resolvePath", () => {
@@ -11,8 +13,19 @@ describe("resolvePath", () => {
     expect(resolvePath("/tmp/a.txt", "/workspace")).toBe("/tmp/a.txt");
   });
 
+  it("accepts Windows absolute paths (drive letter and UNC) on ANY platform", () => {
+    expect(resolvePath("C:\\proj\\a.ts", "C:\\ws")).toBe("C:\\proj\\a.ts");
+    expect(resolvePath("C:/proj/a.ts", "C:\\ws")).toBe("C:/proj/a.ts");
+    expect(resolvePath("\\\\server\\share\\a.ts", "C:\\ws")).toBe("\\\\server\\share\\a.ts");
+  });
+
   it("resolves relative paths against the cwd", () => {
     expect(resolvePath("src/main.ts", "/workspace")).toBe("/workspace/src/main.ts");
+  });
+
+  it("expands ~ to the home directory", () => {
+    expect(resolvePath("~", "/workspace")).toBe(homedir());
+    expect(resolvePath("~/a/b.ts", "/workspace")).toBe(join(homedir(), "a/b.ts"));
   });
 });
 

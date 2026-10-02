@@ -1,10 +1,19 @@
+import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { isAbsoluteAnyPlatform } from "../platform";
 
-/** Resolve a possibly-relative path against the workspace root. */
+/** Resolve a possibly-relative path against the workspace root. Accepts
+ * absolute paths in ANY platform style (POSIX `/…`, Windows `C:\` / `C:/`,
+ * UNC `\\server\share`) and `~` home shorthand, so model-emitted paths work
+ * everywhere. */
 export function resolvePath(input: string | undefined, cwd: string): string {
   if (!input) return cwd;
-  if (input.startsWith("/") || input.match(/^[A-Z]:\\/)) return input;
-  return resolve(cwd, input);
+  const trimmed = input.trim();
+  if (trimmed === "~" || trimmed.startsWith("~/") || trimmed.startsWith("~\\")) {
+    return resolve(homedir(), trimmed.slice(2));
+  }
+  if (isAbsoluteAnyPlatform(trimmed)) return trimmed;
+  return resolve(cwd, trimmed);
 }
 
 export function isImagePath(path: string): boolean {

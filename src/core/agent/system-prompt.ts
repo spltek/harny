@@ -1,6 +1,7 @@
 import type { ToolDefinition } from "../tools/tool";
 import type { ChatMode } from "../tools/mode-policy";
 import { isAnalyzeMode } from "../tools/mode-policy";
+import { defaultShell, isWindows } from "../platform";
 import { DELEGATE_TOOL_NAME } from "./orchestration";
 
 /** The sentence the model must end with after preparing changes in Analyze
@@ -109,7 +110,8 @@ ORCHESTRATION — Parallel is ON. You are the ORCHESTRATOR. Repeat these 3 steps
       : "";
 
     return `You are Harny, an expert AI coding agent embedded in VS Code.
-Working directory: ${cwd}${orchestratorIntro}
+Working directory: ${cwd}
+Platform: ${isWindows ? "Windows" : process.platform === "darwin" ? "macOS" : "Linux"}. The Shell tool runs commands with the native shell (${isWindows ? "cmd.exe/PowerShell" : defaultShell()}); use THIS OS's commands and syntax (e.g. ${isWindows ? "dir/type/where instead of ls/cat/which; \" and drive letters in paths" : "ls/cat/which; / in paths"}).${orchestratorIntro}
 
 File paths:
 - All file tools (Read, Write, StrReplace, Delete, Glob, Grep) accept paths that are absolute OR relative to the working directory. Prefer relative paths (e.g. "index.html").

@@ -96,6 +96,41 @@ describe("mode policy", () => {
     }
   });
 
+  it("isWriteCommand refuses Windows cmd / PowerShell mutating verbs", () => {
+    const writeCommands = [
+      "del file.txt",
+      "erase file.txt",
+      "copy a.txt b.txt",
+      "xcopy /E src dst",
+      "robocopy src dst /MIR",
+      "move a.txt b.txt",
+      "ren a.txt b.txt",
+      "rmdir /s /q dist",
+      "mklink link target",
+      "icacls file /grant user:F",
+      "Remove-Item -Recurse dist",
+      "New-Item -ItemType Directory src",
+      "Set-Content out.txt hello",
+      "Add-Content log.txt hello",
+      "Out-File -FilePath out.txt",
+      "Move-Item a b",
+      "Copy-Item a b",
+      "Rename-Item a b",
+      "Invoke-WebRequest https://x -OutFile out.bin",
+      "reg add HKLM\\Software\\X /v y",
+    ];
+    for (const cmd of writeCommands) {
+      expect(isWriteCommand(cmd), `should refuse: ${cmd}`).toBe(true);
+    }
+  });
+
+  it("isWriteCommand allows Windows read-only inspection (no false positive on .md/.rd paths)", () => {
+    const readCommands = ["dir", "dir /b", "type notes.md", "where node", "findstr /s foo *.ts", "git diff", "notes.rd"];
+    for (const cmd of readCommands) {
+      expect(isWriteCommand(cmd), `should allow: ${cmd}`).toBe(false);
+    }
+  });
+
   it("isWriteCommand allows read-only inspection commands", () => {
     const readCommands = [
       "ls -la",
@@ -114,6 +149,9 @@ describe("mode policy", () => {
       // /dev/* sinks are not real files: allowed even with redirection.
       "echo hello > /dev/null",
       "cat foo 2>/dev/null",
+      // Windows null device (`>nul`) is also not a real file.
+      "dir nonexistent 2>nul",
+      "tool --check >NUL",
       // package-manager RUN (not install): allowed (e.g. node server, bun run test)
       "npm run test",
       "bun run index.ts",

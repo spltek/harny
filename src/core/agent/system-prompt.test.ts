@@ -61,6 +61,13 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     expect(builder.build("agent")).toContain("Never repeat the same tool call");
   });
 
+  it("states the platform + native shell so the model uses the right commands", () => {
+    const builder = new DefaultSystemPromptBuilder((mode) => toolDefinitionsForMode(tools(), mode), () => "/w");
+    const prompt = builder.build("agent");
+    expect(prompt).toMatch(/Platform: (Windows|macOS|Linux)/);
+    expect(prompt).toMatch(/Shell tool runs commands with the native shell/);
+  });
+
   it("analyze mode + Delegate: read-only rules AND orchestration rules together", () => {
     const builder = new DefaultSystemPromptBuilder(
       (mode) => toolDefinitionsForMode(toolsWithDelegate(), mode),
