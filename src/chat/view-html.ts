@@ -131,14 +131,8 @@ ${renderViewConfig(deps)}
       border-radius: 4px; transition: background-color 0.12s;
     }
     #session-head button:hover { background: rgba(255, 255, 255, 0.08); }
-    /* Manage-all-sessions gear: default (muted) color like the other gear, so
-       it does not compete with the accent-colored +; accent only on hover.
-       Specificity: must beat the header's accent-colored button rule, hence
-       the doubled ID. */
-    #session-head #sessions-gear-btn { color: var(--muted); }
-    /* Hover touches ONLY the icon: neutralise the header buttons' tinted
-       background pill (it reads as a button border lighting up). */
-    #session-head #sessions-gear-btn:hover:not(:disabled) { color: var(--accent); background: transparent; }
+    /* The gear keys share ONE look and size across every card (sessions head,
+       model row, compaction metrics): see the shared .gear-btn rule below. */
     #sessions { overflow-y: auto; max-height: 40vh; padding: 4px 0 6px; }
     #sessions.hidden { display: none; }
     .srow {
@@ -442,10 +436,12 @@ ${renderViewConfig(deps)}
     .subagent-status.done { color: #98c379; border-color: rgba(152, 195, 121, 0.5); }
     .subagent-status.failed { color: var(--error); border-color: rgba(244, 71, 71, 0.5); }
     .subagent-status.aborted { color: #999; border-color: var(--border); }
-    /* Per-sub-agent abort: stop ONLY this sub-agent, not the whole run. */
+    /* Per-sub-agent abort: stop ONLY this sub-agent, not the whole run. SQUARE
+       form factor (the global button min-height would otherwise stretch it into
+       a rectangle), so override min-width/min-height too. */
     .subagent-abort {
-      flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
-      width: 1.15rem; height: 1.15rem; padding: 0; cursor: pointer;
+      flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+      width: 1.15rem; height: 1.15rem; min-width: 1.15rem; min-height: 1.15rem; padding: 0; cursor: pointer;
       color: #a98dff; background: transparent; border: 1px solid rgba(124, 92, 255, 0.45);
       border-radius: 4px; transition: background-color 0.12s, color 0.12s;
     }
@@ -918,29 +914,8 @@ ${renderViewConfig(deps)}
       transform: translateY(1px);
       box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
     }
-    /* Gear next to Compact (same visual family, narrower): opens the
-       auto-compaction threshold form. Kept after the flex-auto margin so the
-       pair hugs the right edge of the stats row. */
-    #compact-settings-btn {
-      flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
-      width: 26px; height: 26px; padding: 0;
-      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.02)),
-        var(--tool-bg, transparent);
-      border: 1px solid var(--border); color: var(--fg);
-      border-radius: 6px; cursor: pointer;
-      box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.18),
-        inset 0 -1px 0 rgba(0, 0, 0, 0.18),
-        0 1px 2px rgba(0, 0, 0, 0.28);
-      transition: color 0.12s, border-color 0.12s, box-shadow 0.12s, transform 0.08s;
-    }
-    #compact-settings-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
-    #compact-settings-btn:active:not(:disabled) {
-      transform: translateY(1px);
-      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
-    }
-    #compact-settings-btn:disabled { opacity: 0.5; cursor: default; }
-    /* Threshold label between Compact and its gear: muted, same row. */
+    /* The gear keys are styled by the shared .gear-btn rule (same graphic and
+       size everywhere) — see below. */
     #compact-threshold-label {
       flex: 0 0 auto; white-space: nowrap;
       font-size: var(--fs-sm); color: #9a9a9a;
@@ -997,16 +972,21 @@ ${renderViewConfig(deps)}
       transform: translateY(1px);
       box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
     }
-    /* Gear button next to the model dropdown. */
-    .icon-btn {
-      flex: none;
-      width: 1.5rem; height: 1.5rem; padding: 0;
-      background: transparent; border: 1px solid var(--border);
-      border-radius: 4px; color: var(--muted, #999);
-      display: inline-flex; align-items: center; justify-content: center;
-      cursor: pointer;
+    /* ONE gear action across the cards (sessions head, model row, compaction
+       metrics): identical graphic and size everywhere — a bare, muted icon
+       (14×14 SVG) that turns accent on hover. The #session-head .gear-btn
+       selector beats the header's accent-colored button rule by specificity. */
+    .gear-btn, #session-head .gear-btn {
+      flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+      width: 1.6rem; height: 1.6rem; padding: 0;
+      background: transparent; border: none; border-radius: 4px;
+      color: var(--muted); font-size: inherit; line-height: 1; cursor: pointer;
+      transition: color 0.12s, background-color 0.12s;
     }
-    .icon-btn:hover:not(:disabled) { color: var(--accent); }
+    .gear-btn:hover:not(:disabled), #session-head .gear-btn:hover:not(:disabled) {
+      color: var(--accent); background: rgba(255, 255, 255, 0.08);
+    }
+    .gear-btn:disabled, #session-head .gear-btn:disabled { opacity: 0.5; cursor: default; }
     /* Providers & Models modal (gear editor). */
     #providers-modal { position: fixed; inset: 0; z-index: 50; }
     #providers-modal.hidden { display: none; }
@@ -1252,7 +1232,7 @@ ${renderViewConfig(deps)}
       <span class="toggle">▼</span><span>Sessions</span>
       <span class="spacer"></span>
       <button id="new-session" title="New session"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
-      <button id="sessions-gear-btn" title="Manage all sessions (every folder)"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
+      <button id="sessions-gear-btn" class="gear-btn" title="Manage all sessions (every folder)"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
     </div>
     <div id="sessions"></div>
   </div>
@@ -1312,7 +1292,7 @@ ${renderViewConfig(deps)}
       </button>
       <span class="model-label">AI Model:</span>
       <select id="model-select" title="Switch model"></select>
-      <button id="gear-btn" class="icon-btn" title="Configure providers & models"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
+      <button id="gear-btn" class="gear-btn" title="Configure providers & models"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
     </div>
     <div id="attach-row">
       <div id="attachment-chips" class="hidden"></div>
@@ -1393,7 +1373,7 @@ ${renderViewConfig(deps)}
       <span class="met" id="met-cache" title="Input tokens served from prompt cache"></span>
       <button id="compact-btn" title="Compact the conversation context">Compact</button>
       <span id="compact-threshold-label" title="Context fill % that triggers auto-compaction (set via the gear)">Auto Compact threshold: 80%</span>
-      <button id="compact-settings-btn" title="Set the context fill % that auto-compacts"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
+      <button id="compact-settings-btn" class="gear-btn" title="Set the context fill % that auto-compacts"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
     </div>
     <div id="ctx-bar-wrap"><div id="ctx-bar"></div></div>
   </div>

@@ -33,6 +33,35 @@ describe("renderViewHtml", () => {
     expect(html).toContain(`<script src="${base.scriptUri}"></script>`);
   });
 
+  it("uses ONE gear graphic + size across the cards (sessions, model, compaction)", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    // All three gear keys share the class and the SAME 14×14 icon.
+    expect((html.match(/class="gear-btn"/g) ?? []).length).toBe(3);
+    expect(html).toMatch(/id="sessions-gear-btn" class="gear-btn"[^>]*><svg width="14" height="14"/);
+    expect(html).toMatch(/id="gear-btn" class="gear-btn"[^>]*><svg width="14" height="14"/);
+    expect(html).toMatch(/id="compact-settings-btn" class="gear-btn"[^>]*><svg width="14" height="14"/);
+    // One shared rule sizes them; the old one-off (big/small) styles are gone.
+    expect(html).toMatch(/\.gear-btn, #session-head \.gear-btn\s*\{/);
+    expect(html).not.toMatch(/#compact-settings-btn\s*\{/);
+    expect(html).not.toContain("icon-btn");
+  });
+
+  it("keeps the per-sub-agent abort button SQUARE (overrides the global button min-height)", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    const block = html.match(/\.subagent-abort\s*\{([^}]*)\}/s);
+    expect(block).toBeTruthy();
+    const css = block![1];
+    expect(css).toMatch(/width:\s*1\.15rem/);
+    expect(css).toMatch(/height:\s*1\.15rem/);
+    expect(css).toMatch(/min-height:\s*1\.15rem/);
+  });
+
   it("injects sessions, open ids, active id and messages into the init payload", () => {
     const html = renderViewHtml({
       ...base,
