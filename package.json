@@ -149,7 +149,7 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "bun run build",
+    "vscode:prepublish": "npm run build",
     "build": "node scripts/build-extension.mjs && node scripts/build-webview.mjs",
     "typecheck": "npx tsc --noEmit && npx tsc -p tsconfig.webview.json",
     "watch": "npx tsc -p tsconfig.json --watch",
