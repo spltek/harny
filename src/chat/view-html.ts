@@ -427,8 +427,17 @@ ${renderViewConfig(deps)}
     }
     .subagent-status.done { color: #98c379; border-color: rgba(152, 195, 121, 0.5); }
     .subagent-status.failed { color: var(--error); border-color: rgba(244, 71, 71, 0.5); }
-    .subagent-status.interrupted { color: #e5c07b; border-color: rgba(229, 192, 123, 0.5); }
     .subagent-status.aborted { color: #999; border-color: var(--border); }
+    /* Per-sub-agent abort: stop ONLY this sub-agent, not the whole run. */
+    .subagent-abort {
+      flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+      width: 1.15rem; height: 1.15rem; padding: 0; cursor: pointer;
+      color: #a98dff; background: transparent; border: 1px solid rgba(124, 92, 255, 0.45);
+      border-radius: 4px; transition: background-color 0.12s, color 0.12s;
+    }
+    .subagent-abort:hover:not(:disabled) { background: rgba(124, 92, 255, 0.18); color: #fff; }
+    .subagent-abort:disabled { opacity: 0.5; cursor: default; }
+    .subagent-abort[hidden] { display: none; }
     .subagent-goal { padding: 0 8px 4px 22px; color: var(--fg); font-style: italic; font-size: var(--fs-md); }
     /* The bubble body (goal + nested stream + report) is collapsed by default. */
     .subagent-body.collapsed { display: none; }

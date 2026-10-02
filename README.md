@@ -95,7 +95,7 @@ The Shell tool is read-only in Analyze (commands that would modify the filesyste
 
 ## Parallel: sub-agents (orchestration)
 
-The **Parallel** toggle enables the `Delegate` tool: the main agent becomes an **orchestrator** that decomposes a task into independent sub-tasks and runs them as **sub-agents** — each a separate `Agent` with its own ephemeral history (unbounded by default, like the orchestrator), with orchestration depth capped at 1. Sub-tasks that touch disjoint files run **in parallel**; overlapping writers (or a writer and a reader of the same resource) are **serialized** automatically. A configurable cap limits how many run at once. Each sub-agent streams live inside its own bubble and returns a report.
+The **Parallel** toggle enables the `Delegate` tool: the main agent becomes an **orchestrator** that decomposes a task into independent sub-tasks and runs them as **sub-agents** — each a separate `Agent` with its own ephemeral history (unbounded by default, like the orchestrator), with orchestration depth capped at 1. Sub-tasks that touch disjoint files run **in parallel**; overlapping writers (or a writer and a reader of the same resource) are **serialized** automatically. A configurable cap limits how many run at once. Each sub-agent streams live inside its own bubble and returns a report — and each bubble has its own **⏹ abort** button.
 
 **With Parallel ON, delegation is the FIRST action** — until it has delegated, the orchestrator's first turn advertises **only the Delegate tool** (so it literally cannot start with WebSearch/Read/Shell), and any pre-delegation tool call is additionally blocked by the host. It then follows a mandatory 5-step protocol on every request:
 
@@ -105,7 +105,9 @@ The **Parallel** toggle enables the `Delegate` tool: the main agent becomes an *
 4. **Collect** the sub-agent reports (tool results) without launching duplicates.
 5. **Answer** — synthesize one final answer from the reports (what was done, results, files, blockers).
 
-This is a hard guarantee: if the model tries to answer directly it is first nudged to delegate, and if it still refuses the **host dispatches a single sub-agent itself** (recorded as a Delegate call, with its own bubble and report). Sub-agents share all tools (except `Delegate`) and the loop guard, and are stopped together with the parent.
+This is a hard guarantee: if the model tries to answer directly it is first nudged to delegate, and if it still refuses the **host dispatches a single sub-agent itself** (recorded as a Delegate call, with its own bubble and report). Sub-agents share all tools (except `Delegate`) and the loop guard.
+
+**Stop vs per-sub-task abort.** The global **Stop** aborts the whole run (every sub-agent together). The **⏹ abort** button on a single sub-agent bubble stops **only that one** — running or still queued behind the concurrency cap — and leaves the run alive. Either way a stopped sub-agent is reported as `aborted`: the orchestrator still receives that Delegate's tool result, marked `aborted` so it KNOWS the sub-task did not finish and can continue with the remaining work (never treating it as a completed report).
 
 ## Loop guard
 

@@ -1313,7 +1313,13 @@ describe("Orchestration (Delegate)", () => {
     allowDelegation?: boolean;
     maxParallel?: number;
     delegate?: boolean;
-    spawn?: (spec: DelegateSpec, onEvent?: (e: SubAgentEvent) => void) => Promise<ToolResult>;
+    spawn?: (
+      spec: DelegateSpec,
+      onEvent?: (e: SubAgentEvent) => void,
+      signal?: AbortSignal,
+      toolCallId?: string,
+    ) => Promise<ToolResult>;
+    abortSubAgent?: (toolCallId: string) => void;
   }): { agent: Agent; history: InMemoryChatHistory; eventLog: AgentEvent[] } {
     const config = new StaticConfigProvider(
       opts.maxParallel ? { ...VALID_CONFIG, maxParallelSubAgents: opts.maxParallel } : VALID_CONFIG,
@@ -1334,6 +1340,7 @@ describe("Orchestration (Delegate)", () => {
       systemPrompt,
       allowDelegation: opts.allowDelegation,
       spawnSubAgent: opts.spawn ?? (async () => ({ content: "default report", isError: false })),
+      abortSubAgent: opts.abortSubAgent,
     });
     agent.setMode(opts.mode ?? "agent");
     agent.setDelegation(opts.delegate !== false); // orchestration tests: ON by default
@@ -2294,7 +2301,7 @@ describe("Orchestration (Delegate)", () => {
     expect(max).toBe(2);
   });
 
-  it("REAL runner on abort: running -> interrupted, queued -> aborted", async () => {
+  it("REAL runner on abort: running and queued sub-agents both report aborted", async () => {
     const started: string[] = [];
     let agentRef: Agent;
     // A sub-agent hangs until aborted (so B stays queued behind cap 1).
@@ -2341,8 +2348,119 @@ describe("Orchestration (Delegate)", () => {
     const outputs = eventLog
       .filter((e) => e.type === "tool_result")
       .map((e) => (e as { toolResult: { output: string } }).toolResult.output);
-    expect(outputs.some((o) => /interrupted/i.test(o))).toBe(true); // A (running)
-    expect(outputs.some((o) => /aborted/i.test(o))).toBe(true); // B (queued)
+    expect(outputs.some((o) => /Sub-agent "A" aborted/i.test(o))).toBe(true); // A (running)
+    expect(outputs.some((o) => /aborted before running/i.test(o))).toBe(true); // B (queued)
+  });
+
+  it("abortSubAgent stops ONE running sub-agent; the orchestrator is told it was interrupted", async () => {
+    const started: string[] = [];
+    let agentRef: Agent;
+    // Each sub-agent runs until aborted (or a short delay), then reports.
+    const subFactory: LLMProviderFactory = {
+      create() {
+        return {
+          protocol: "chat" as const,
+          async *stream(_m: LLMMessage[], signal?: AbortSignal) {
+            await new Promise<void>((resolve) => {
+              const t = setTimeout(resolve, 30);
+              signal?.addEventListener("abort", () => {
+                clearTimeout(t);
+                resolve();
+              });
+            });
+            if (signal?.aborted) return;
+            yield { type: "text", content: "sub report" };
+          },
+        };
+      },
+    };
+    const runner = new SubAgentRunner({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: subFactory,
+      tools: new ToolRegistry([makeTool("Read")]),
+      cwd: () => "/w",
+    });
+    const calls = [
+      { id: "A", goal: "A", access: "read", resources: ["a.ts"] },
+      { id: "B", goal: "B", access: "read", resources: ["b.ts"] },
+    ];
+    const { agent, eventLog, history } = build({
+      calls,
+      maxParallel: 2,
+      abortSubAgent: (id) => runner.abort(id),
+      spawn: (spec, onEvent, signal, toolCallId) => {
+        started.push(spec.id);
+        if (spec.id === "A") setTimeout(() => agentRef.abortSubAgent(toolCallId!), 5);
+        return runner.run(spec, onEvent, signal, toolCallId);
+      },
+    });
+    agentRef = agent;
+
+    await agent.send("go");
+
+    expect(started).toEqual(["A", "B"]);
+    const outputs = eventLog
+      .filter((e) => e.type === "tool_result")
+      .map((e) => (e as { toolResult: { output: string } }).toolResult.output);
+    // A was aborted, B finished normally.
+    expect(outputs.some((o) => /Sub-agent "A" aborted/.test(o))).toBe(true);
+    expect(outputs.some((o) => /Sub-agent "B" report/.test(o))).toBe(true);
+    // The run continued to its final answer (it did NOT abort the whole run).
+    expect(history.all().some((m) => m.role === "assistant" && m.content === "done")).toBe(true);
+  });
+
+  it("abortSubAgent on a still-QUEUED sub-agent skips it when its turn comes", async () => {
+    const spawned: string[] = [];
+    const release: (() => void)[] = [];
+    let agentRef: Agent;
+    const subFactory: LLMProviderFactory = {
+      create() {
+        return {
+          protocol: "chat" as const,
+          async *stream(_m: LLMMessage[], signal?: AbortSignal) {
+            await new Promise<void>((resolve) => {
+              release.push(resolve);
+              signal?.addEventListener("abort", () => resolve());
+            });
+            if (signal?.aborted) return;
+            yield { type: "text", content: "sub report" };
+          },
+        };
+      },
+    };
+    const runner = new SubAgentRunner({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: subFactory,
+      tools: new ToolRegistry([makeTool("Read")]),
+      cwd: () => "/w",
+    });
+    const calls = [
+      { id: "A", goal: "A", access: "read", resources: ["a.ts"] },
+      { id: "B", goal: "B", access: "read", resources: ["b.ts"] },
+    ];
+    const { agent, eventLog } = build({
+      calls,
+      maxParallel: 1, // cap 1: B stays QUEUED behind A
+      abortSubAgent: (id) => runner.abort(id),
+      spawn: (spec, onEvent, signal, toolCallId) => {
+        spawned.push(spec.id);
+        return runner.run(spec, onEvent, signal, toolCallId);
+      },
+    });
+    agentRef = agent;
+
+    const send = agent.send("go");
+    // Let A take the single slot, then abort the still-QUEUED B (tool call "d1").
+    for (let i = 0; i < 50 && spawned.length < 1; i++) await new Promise((r) => setTimeout(r, 2));
+    agentRef.abortSubAgent("d1");
+    release.forEach((r) => r()); // let A finish and free the slot
+    await send;
+
+    expect(spawned).toEqual(["A"]); // B was never started
+    const outputs = eventLog
+      .filter((e) => e.type === "tool_result")
+      .map((e) => (e as { toolResult: { output: string } }).toolResult.output);
+    expect(outputs.some((o) => /Sub-agent "B" aborted/.test(o))).toBe(true);
   });
 
   it("rejects invalid delegate args (missing resources) without spawning", async () => {

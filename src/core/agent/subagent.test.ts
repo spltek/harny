@@ -372,9 +372,44 @@ describe("SubAgentRunner", () => {
     const res = await pending;
     expect(aborted).toBe(true);
     expect(runner.activeCount).toBe(0);
-    // An aborted run is INTERRUPTED (an error result), never a plain report.
+    // A stopped run is ABORTED (an error result), never a plain report.
     expect(res.isError).toBe(true);
-    expect(res.content).toContain("interrupted");
+    expect(res.content).toContain("aborted");
+  });
+
+  it("abort(toolCallId) aborts the matching sub-agent; unknown ids are a no-op", async () => {
+    let aborted = false;
+    const hanging: LLMProviderFactory = {
+      create() {
+        return {
+          protocol: "chat" as const,
+          async *stream(_m: LLMMessage[], signal?: AbortSignal): AsyncGenerator<StreamChunk> {
+            await new Promise<void>((resolve) => {
+              if (signal?.aborted) return resolve();
+              signal?.addEventListener("abort", () => {
+                aborted = true;
+                resolve();
+              });
+            });
+          },
+        };
+      },
+    };
+    const runner = buildRunner(hanging);
+    const pending = runner.run(spec(), undefined, undefined, "tc-1");
+    await Promise.resolve();
+    expect(runner.activeCount).toBe(1);
+
+    runner.abort("nope"); // unknown id: never touches the running sub-agent
+    expect(runner.activeCount).toBe(1);
+
+    runner.abort("tc-1");
+    const res = await pending;
+    expect(aborted).toBe(true);
+    expect(runner.activeCount).toBe(0);
+    expect(res.isError).toBe(true);
+    expect(res.content).toContain("aborted");
+    expect(res.content).not.toContain("interrupted");
   });
 });
 

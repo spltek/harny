@@ -129,8 +129,9 @@ export function activate(context: ExtensionContext) {
       events: new InMemoryEventBus<AgentEvent>(),
       systemPrompt,
       allowDelegation: true,
-      spawnSubAgent: (spec, onEvent, signal) => subAgents.run(spec, onEvent, signal),
+      spawnSubAgent: (spec, onEvent, signal, toolCallId) => subAgents.run(spec, onEvent, signal, toolCallId),
       onAbort: () => subAgents.abortAll(),
+      abortSubAgent: (toolCallId) => subAgents.abort(toolCallId),
       log: (m) => infoLog(`[agent] ${m}`),
       onTurnBoundary: () => midRunCompact?.(sessionId),
     });

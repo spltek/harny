@@ -700,6 +700,12 @@ export class ChatViewProvider implements WebviewViewProvider {
           });
         }
         break;
+      case "abortSubAgent":
+        // Stop ONE sub-agent (its Delegate bubble), leaving the run alive. The
+        // orchestrator still receives that Delegate's tool result (interrupted)
+        // so it can continue with the remaining work.
+        if (rt && typeof msg.toolCallId === "string") rt.agent.abortSubAgent(msg.toolCallId);
+        break;
       case "pickFiles":
         if (this.view) {
           const files = await this.attachments.pick();

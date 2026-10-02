@@ -20,6 +20,7 @@ import type { ToolDefinition } from "../tools/tool";
 import type { ChatController } from "./chat-controller";
 import {
   DELEGATE_TOOL_NAME,
+  formatSubAgentAborted,
   formatSubAgentError,
   parseDelegateSpec,
   planToolExecution,
@@ -74,9 +75,15 @@ export interface AgentDeps {
     /** Parent abort signal: lets the runner abort a sub-agent that starts
      * AFTER Stop (closes the start/abort race). */
     signal?: AbortSignal,
+    /** The Delegate tool-call id: registers the sub-agent so the host can abort
+     * JUST this one from its UI bubble. */
+    toolCallId?: string,
   ) => Promise<ToolResult>;
   /** Called by abort() so the parent can cascade Stop to active sub-agents. */
   onAbort?: () => void;
+  /** Abort ONE running sub-agent by its Delegate tool-call id (per-sub-task
+   * Stop). No-op when that sub-agent is not running. */
+  abortSubAgent?: (toolCallId: string) => void;
   /** When the turn budget is exhausted, run ONE final tool-less turn that asks
    * the model for its report, instead of stopping with a bare "turn limit"
    * note. Sub-agents set this so the caller always gets a usable report. */
@@ -113,6 +120,11 @@ export class Agent implements ChatController {
   private runGoal = "";
   /** Per-attachment parts of the CURRENT user message, forwarded to sub-agents. */
   private currentAttachmentParts: AttachmentPart[] = [];
+  /** Delegate tool-call ids the user aborted from the UI. A running one is
+   * aborted through `abortSubAgent`; a QUEUED one is recorded here so it is
+   * skipped when its turn comes and reported to the orchestrator as
+   * aborted. Cleared per run. */
+  private readonly abortedDelegates = new Set<string>();
   /** Whether the forced final-report turn already ran (turn-budget exhausted). */
   private forcedFinalReport = false;
   /** Cap: may this agent EVER delegate? Sub-agents pass false (depth 1). */
@@ -166,6 +178,15 @@ export class Agent implements ChatController {
     // Otherwise a new send() can start before the previous one's cleanup finishes.
   }
 
+  /** Abort ONE sub-agent (Delegate bubble) without stopping the whole run. The
+   * orchestrator still receives that Delegate's tool result ("aborted") and
+   * continues. A QUEUED sub-agent is skipped when its turn comes. */
+  abortSubAgent(toolCallId: string): void {
+    if (!toolCallId) return;
+    this.abortedDelegates.add(toolCallId);
+    this.deps.abortSubAgent?.(toolCallId);
+  }
+
   async send(userMessage: string, options: import("./chat-controller").SendOptions = {}): Promise<void> {
     const images = options.images;
     this.deps.history.add({
@@ -199,6 +220,7 @@ export class Agent implements ChatController {
     this.delegatedThisRun = false;
     this.forcedDelegationNudge = false;
     this.forcedFinalReport = false;
+    this.abortedDelegates.clear();
     try {
       await this.runTurns(0);
       this.deps.events.emit({ type: "done" });
@@ -894,13 +916,18 @@ export class Agent implements ChatController {
       toolCall: { id: toolCallId, name: DELEGATE_TOOL_NAME, arguments: args },
     });
     let result: ToolResult;
-    try {
-      this.deps.events.emit({ type: "subagent_start", toolCallId });
-      const onEvent = (event: SubAgentEvent) =>
-        this.deps.events.emit({ type: "subagent_event", toolCallId, event });
-      result = await this.deps.spawnSubAgent(spec, onEvent, this.abortController?.signal);
-    } catch (err: any) {
-      result = { content: formatSubAgentError(spec, err?.message || String(err)), isError: true };
+    if (this.abortedDelegates.has(toolCallId)) {
+      // The host-dispatched sub-agent was aborted before it started.
+      result = { content: formatSubAgentAborted(spec), isError: true };
+    } else {
+      try {
+        this.deps.events.emit({ type: "subagent_start", toolCallId });
+        const onEvent = (event: SubAgentEvent) =>
+          this.deps.events.emit({ type: "subagent_event", toolCallId, event });
+        result = await this.deps.spawnSubAgent(spec, onEvent, this.abortController?.signal, toolCallId);
+      } catch (err: any) {
+        result = { content: formatSubAgentError(spec, err?.message || String(err)), isError: true };
+      }
     }
     this.deps.events.emit({
       type: "tool_result",
@@ -935,6 +962,12 @@ export class Agent implements ChatController {
     const parsed = parseDelegateSpec(tc.arguments);
     const spec = parsed.spec;
     if (!spec) return { content: parsed.error ?? "Invalid Delegate call.", isError: true };
+    // The user aborted THIS sub-task from its bubble: never start it (covers a
+    // sub-agent still QUEUED behind the concurrency cap) and tell the
+    // orchestrator it was aborted so it can adjust its plan.
+    if (this.abortedDelegates.has(tc.id)) {
+      return { content: formatSubAgentAborted(spec), isError: true };
+    }
     // Read-only (Analyze) mode must never delegate a WRITER: that would
     // bypass the read-only guarantee.
     if (isAnalyzeMode(this._mode) && spec.access !== "read") {
@@ -954,7 +987,7 @@ export class Agent implements ChatController {
       // Forward the sub-agent's live events into its bubble (nested streaming).
       const onEvent = (event: import("./types").SubAgentEvent) =>
         this.deps.events.emit({ type: "subagent_event", toolCallId: tc.id, event });
-      return await this.deps.spawnSubAgent(resolvedSpec, onEvent, this.abortController?.signal);
+      return await this.deps.spawnSubAgent(resolvedSpec, onEvent, this.abortController?.signal, tc.id);
     } catch (err: any) {
       return { content: formatSubAgentError(resolvedSpec, err?.message || String(err)), isError: true };
     }

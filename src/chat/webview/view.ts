@@ -564,13 +564,22 @@ function wireCollapsible(div: HTMLElement): void {
 /** Update a sub-agent bubble's status chip. */
 function setSubAgentStatus(
   el: HTMLElement,
-  status: "queued" | "running" | "done" | "failed" | "interrupted" | "aborted",
+  status: "queued" | "running" | "done" | "failed" | "aborted",
 ): void {
   const chip = el.querySelector(".subagent-status");
   if (!chip) return;
   chip.className = "subagent-status " + status;
   chip.textContent =
     status === "running" ? "running…" : status === "queued" ? "queued…" : status;
+  // The per-sub-agent abort button is only actionable while queued/running (a
+  // queued one is aborted by skipping it when its turn comes). Hidden once the
+  // sub-agent reaches a terminal state.
+  const abort = el.querySelector(".subagent-abort") as HTMLButtonElement | null;
+  if (abort) {
+    const terminal = status === "done" || status === "failed" || status === "aborted";
+    abort.hidden = terminal;
+    abort.disabled = terminal || el.dataset.aborting === "1";
+  }
 }
 
 /**
@@ -616,6 +625,9 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
     "</span>" +
     (role ? '<span class="subagent-role">' + escapeHtml(role) + "</span>" : "") +
     '<span class="subagent-status queued">queued…</span>' +
+    '<button class="subagent-abort" type="button" title="Abort this sub-agent" aria-label="Abort this sub-agent">' +
+    '<svg width="10" height="10" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>' +
+    "</button>" +
     "</div>" +
     '<div class="subagent-body collapsed">' +
     (goal ? '<div class="subagent-goal">' + escapeHtml(goal) + "</div>" : "") +
@@ -635,6 +647,19 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
     if (!body || !tog) return;
     const collapsed = body.classList.toggle("collapsed");
     tog.textContent = collapsed ? "▶" : "▼";
+  });
+  // Per-sub-agent abort: stop ONLY this sub-agent. The host forwards it to the
+  // runner; the orchestrator still receives this Delegate's tool result
+  // ("aborted") and keeps going with the remaining work.
+  const abortBtn = div.querySelector(".subagent-abort") as HTMLButtonElement | null;
+  abortBtn?.addEventListener("click", (e) => {
+    e.stopPropagation(); // never toggle the body
+    const tcId = div.dataset.toolCallId;
+    if (!tcId || abortBtn.disabled) return;
+    div.dataset.aborting = "1";
+    abortBtn.disabled = true;
+    abortBtn.classList.add("pending");
+    vscode.postMessage({ type: "abortSubAgent", toolCallId: tcId });
   });
   messagesEl.appendChild(div);
   scrollDown();
@@ -716,7 +741,7 @@ function handleSubAgentEvent(parentId: string, event: SubAgentStreamEvent): void
     }
   } else if (event.type === "done") {
     // Only a queued/running sub-agent can become done — never override a
-    // terminal status (done/interrupted/aborted/failed).
+    // terminal status (done/failed/aborted).
     const chip = el.querySelector(".subagent-status");
     if (chip && (chip.classList.contains("queued") || chip.classList.contains("running"))) {
       setSubAgentStatus(el, "done");
@@ -879,6 +904,7 @@ function renderMessages(msgs: ChatMsg[]): boolean {
           const id = tc.id ?? tc.name;
           const el = tc.name === "Delegate" ? addSubAgentCall(tc.arguments) : addToolCall(tc.name, tc.arguments);
           el.classList.remove("tool-call-pending");
+          el.dataset.toolCallId = id;
           const out = el.querySelector(".tool-result");
           if (out) {
             const text = outputs.get(id);
@@ -889,13 +915,13 @@ function renderMessages(msgs: ChatMsg[]): boolean {
             const report = outputs.get(id) ?? "";
             setSubAgentStatus(
               el,
-              /interrupted/i.test(report)
-                ? "interrupted"
-                : /aborted/i.test(report)
-                  ? "aborted"
-                  : report.includes(" failed:")
-                    ? "failed"
-                    : "done",
+              // Legacy transcripts may say "interrupted": sub-agents have ONE
+              // terminal stop state, so both map to "aborted".
+              /aborted/i.test(report) || /interrupted/i.test(report)
+                ? "aborted"
+                : report.includes(" failed:")
+                  ? "failed"
+                  : "done",
             );
           }
         }
@@ -2486,6 +2512,7 @@ window.addEventListener("message", (e) => {
       // only caused a race that rendered it as a plain tool.
       const toolEl = msg.name === "Delegate" ? addSubAgentCall(msg.arguments) : addToolCall(msg.name, msg.arguments);
       pendingToolCalls.set(msg.id, toolEl);
+      toolEl.dataset.toolCallId = msg.id;
       if (workingEl) {
         workingEl.innerHTML =
           msg.name === "Delegate"
@@ -2519,13 +2546,7 @@ window.addEventListener("message", (e) => {
           const out = String(msg.output);
           setSubAgentStatus(
             el,
-            !msg.isError
-              ? "done"
-              : /interrupted/i.test(out)
-                ? "interrupted"
-                : /aborted/i.test(out)
-                  ? "aborted"
-                  : "failed",
+            !msg.isError ? "done" : /aborted/i.test(out) || /interrupted/i.test(out) ? "aborted" : "failed",
           );
         }
         const resultEl = el.querySelector(".tool-result");

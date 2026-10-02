@@ -132,6 +132,7 @@ function buildHarness(opts: Record<string, unknown> = {}) {
         agent.streaming = true;
       }),
       abort: vi.fn(),
+      abortSubAgent: vi.fn(),
       setMode: vi.fn(),
       setDelegation: vi.fn(),
       onEvent: vi.fn((fn: (e: any) => void) => {
@@ -1085,6 +1086,27 @@ describe("ChatViewProvider", () => {
     await handler({ type: "abort" });
     expect(rt.agent.abort).not.toHaveBeenCalled();
     expect(view.webview.postMessage).not.toHaveBeenCalledWith({ type: "interrupted" });
+  });
+
+  it("abortSubAgent routes to the active agent with the sub-agent's tool-call id", async () => {
+    const { registry, provider } = buildHarness();
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    await handler({ type: "abortSubAgent", toolCallId: "d1" });
+    // Targets ONE sub-agent; the whole run is left alone.
+    expect(rt.agent.abortSubAgent).toHaveBeenCalledWith("d1");
+    expect(rt.agent.abort).not.toHaveBeenCalled();
+  });
+
+  it("abortSubAgent ignores a missing/non-string tool-call id", async () => {
+    const { registry, provider } = buildHarness();
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    await handler({ type: "abortSubAgent" });
+    await handler({ type: "abortSubAgent", toolCallId: 42 });
+    expect(rt.agent.abortSubAgent).not.toHaveBeenCalled();
   });
 
   it("blocks send when the active session has no model", async () => {

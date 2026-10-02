@@ -28,6 +28,11 @@ export interface ChatController {
   load(messages: ChatMessage[]): void;
   send(text: string, options?: SendOptions): Promise<void>;
   abort(): void;
+  /** Abort ONE running sub-agent (Delegate bubble) without stopping the whole
+   * run. The orchestrator still receives that Delegate's tool result
+   * ("aborted"), so it can continue with the remaining work. No-op when the
+   * given tool-call id is not a live sub-agent. */
+  abortSubAgent(toolCallId: string): void;
   onEvent(handler: (event: AgentEvent) => void): () => void;
   /** Queue a user message without starting the agent loop (used by context-menu commands). */
   addUserMessage(content: string): void;

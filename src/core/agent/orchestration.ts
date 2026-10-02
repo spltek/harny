@@ -175,10 +175,18 @@ export function formatSubAgentError(spec: DelegateSpec, message: string): string
   return `🔁 Sub-agent${label} failed: ${message}`;
 }
 
-/** Marker/result for a sub-agent that was STOPPED by the user (not failed). */
-export function formatSubAgentInterrupted(spec: DelegateSpec): string {
+/** Marker/result for a sub-agent the user stopped — either the whole-run Stop
+ * or a per-sub-task abort. Always labelled "aborted": the UI has ONE terminal
+ * stop state for sub-agents. It is an ERROR result on purpose: the orchestrator
+ * must KNOW the sub-task did not finish and account for the gap, not treat it as
+ * a successful report. */
+export function formatSubAgentAborted(spec: DelegateSpec): string {
   const label = spec.id ? ` "${spec.id}"` : "";
-  return `⏹ Sub-agent${label} interrupted.`;
+  return (
+    `⏹ Sub-agent${label} aborted by the user.` +
+    " It did NOT finish and its work is incomplete: do not retry it unless asked;" +
+    " continue with the remaining work and account for its missing result."
+  );
 }
 
 export type { ToolResult };

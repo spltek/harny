@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSubAgentTask,
+  formatSubAgentAborted,
   formatSubAgentError,
-  formatSubAgentInterrupted,
   formatSubAgentReport,
   haveWriteConflict,
   parseDelegateSpec,
@@ -168,6 +168,13 @@ describe("sub-agent messaging", () => {
     expect(buildSubAgentTask(s)).toContain("Context provided by the calling agent:");
     expect(formatSubAgentReport(s, "done")).toBe('🔁 Sub-agent "A" [implementer] report:\ndone');
     expect(formatSubAgentError(s, "boom")).toBe('🔁 Sub-agent "A" failed: boom');
-    expect(formatSubAgentInterrupted(s)).toBe('⏹ Sub-agent "A" interrupted.');
+    // The aborted result must INFORM the orchestrator: the sub-task did NOT
+    // finish, so it is not a report to trust/summarize as done. Sub-agents have
+    // ONE terminal stop state ("aborted", whatever the stop came from).
+    const aborted = formatSubAgentAborted(s);
+    expect(aborted).toContain('⏹ Sub-agent "A" aborted');
+    expect(aborted).not.toMatch(/interrupted/i);
+    expect(aborted).toMatch(/did NOT finish/i);
+    expect(aborted).toMatch(/remaining work/i);
   });
 });

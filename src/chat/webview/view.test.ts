@@ -1764,14 +1764,51 @@ describe("view webview client", () => {
     expect(a.textContent!.length).toBeGreaterThan(3000);
   });
 
-  it("marks a stopped sub-agent as interrupted (not done)", async () => {
+  it("maps a stopped sub-agent to the single terminal 'aborted' state (legacy 'interrupted' too)", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
     hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
     hostMessage({ type: "subagentStart", toolCallId: "s1" });
     hostMessage({ type: "toolResult", toolCallId: "s1", output: '⏹ Sub-agent "A" interrupted.', isError: true });
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
-    expect(bubble.querySelector(".subagent-status")?.classList.contains("interrupted")).toBe(true);
+    expect(bubble.querySelector(".subagent-status")?.classList.contains("aborted")).toBe(true);
+  });
+
+  it("marks an INDIVIDUALLY aborted sub-agent as aborted (not interrupted)", async () => {
+    await loadView();
+    hostMessage(PARALLEL_ON);
+    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({ type: "subagentStart", toolCallId: "s1" });
+    hostMessage({ type: "toolResult", toolCallId: "s1", output: '⏹ Sub-agent "A" aborted by the user.', isError: true });
+    const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
+    expect(bubble.querySelector(".subagent-status")?.classList.contains("aborted")).toBe(true);
+  });
+
+  it("abort button on a running sub-agent posts abortSubAgent with its tool-call id", async () => {
+    await loadView();
+    hostMessage(PARALLEL_ON);
+    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({ type: "subagentStart", toolCallId: "s1" });
+    const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
+    const body = bubble.querySelector(".subagent-body") as HTMLElement;
+    const btn = bubble.querySelector(".subagent-abort") as HTMLButtonElement;
+    expect(btn.hidden).toBe(false);
+    expect(body.classList.contains("collapsed")).toBe(true);
+    btn.click();
+    // Targets this sub-agent only, and does NOT toggle the collapsible body.
+    expect(posted).toContainEqual({ type: "abortSubAgent", toolCallId: "s1" });
+    expect(body.classList.contains("collapsed")).toBe(true);
+    expect(btn.disabled).toBe(true);
+  });
+
+  it("hides the abort button once the sub-agent reaches a terminal state", async () => {
+    await loadView();
+    hostMessage(PARALLEL_ON);
+    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({ type: "subagentStart", toolCallId: "s1" });
+    hostMessage({ type: "toolResult", toolCallId: "s1", output: '🔁 Sub-agent "A" report:\ndone', isError: false });
+    const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
+    expect((bubble.querySelector(".subagent-abort") as HTMLButtonElement).hidden).toBe(true);
   });
 
   it("marks a queued (never-started) sub-agent as aborted", async () => {
@@ -1784,7 +1821,7 @@ describe("view webview client", () => {
     expect(bubble.querySelector(".subagent-status")?.classList.contains("aborted")).toBe(true);
   });
 
-  it("after Stop: finished -> done, running -> interrupted, queued -> aborted", async () => {
+  it("after Stop: finished -> done, running/queued -> aborted", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
     for (const id of ["s1", "s2", "s3"]) {
@@ -1799,7 +1836,7 @@ describe("view webview client", () => {
 
     const bubbles = document.querySelectorAll(".msg.tool.subagent");
     expect(bubbles[0].querySelector(".subagent-status")?.classList.contains("done")).toBe(true);
-    expect(bubbles[1].querySelector(".subagent-status")?.classList.contains("interrupted")).toBe(true);
+    expect(bubbles[1].querySelector(".subagent-status")?.classList.contains("aborted")).toBe(true);
     expect(bubbles[2].querySelector(".subagent-status")?.classList.contains("aborted")).toBe(true);
   });
 

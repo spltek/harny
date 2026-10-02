@@ -11,8 +11,8 @@ import type { AgentEvent, SubAgentEvent } from "./types";
 import {
   DELEGATE_TOOL_NAME,
   buildSubAgentTask,
+  formatSubAgentAborted,
   formatSubAgentError,
-  formatSubAgentInterrupted,
   formatSubAgentReport,
   type DelegateSpec,
 } from "./orchestration";
@@ -45,19 +45,35 @@ export interface SubAgentRunnerDeps {
  * sub-agents so the parent's Stop aborts them all (cascade).
  */
 export class SubAgentRunner {
-  private active = new Set<ChatController>();
-  /** Sub-agents aborted by the parent (Stop): their run is INTERRUPTED, not done. */
+  /** Running sub-agents keyed by the Delegate tool-call id, so ONE can be
+   * aborted from its UI bubble without touching its siblings. */
+  private active = new Map<string, ChatController>();
+  /** Sub-agents the user stopped (whole-run Stop OR per-sub-task abort): their
+   * run is reported as ABORTED, not done. */
   private abortedAgents = new WeakSet<ChatController>();
+  /** Fallback key counter for runs without a tool-call id (direct/test calls). */
+  private nextKey = 0;
 
   constructor(private deps: SubAgentRunnerDeps) {}
 
   /** Abort every in-flight sub-agent (called when the parent run is aborted). */
   abortAll(): void {
-    for (const agent of this.active) {
+    for (const agent of this.active.values()) {
       this.abortedAgents.add(agent);
       agent.abort();
     }
     this.active.clear();
+  }
+
+  /** Abort ONE running sub-agent by its Delegate tool-call id. No-op when it is
+   * not running (already finished, or still QUEUED — the Agent skips a queued
+   * one via its own pending-abort set). */
+  abort(toolCallId: string): void {
+    const agent = this.active.get(toolCallId);
+    if (!agent) return;
+    this.abortedAgents.add(agent);
+    agent.abort();
+    this.active.delete(toolCallId);
   }
 
   get activeCount(): number {
@@ -71,9 +87,13 @@ export class SubAgentRunner {
     spec: DelegateSpec,
     onEvent?: (event: SubAgentEvent) => void,
     signal?: AbortSignal,
+    /** The Delegate tool-call id: the key that lets the host abort THIS
+     * sub-agent from its UI bubble. Absent for direct/test calls. */
+    toolCallId?: string,
   ): Promise<ToolResult> {
     // Stop arrived BEFORE this sub-agent started: never start it (queued -> aborted).
-    if (signal?.aborted) return { content: formatSubAgentInterrupted(spec), isError: true };
+    if (signal?.aborted) return { content: formatSubAgentAborted(spec), isError: true };
+    const key = toolCallId ?? `sub-${this.nextKey++}`;
     // Analyze-style read-only sub-agent, or a full agent for writers.
     const mode: ChatMode = spec.access === "read" ? "analyze" : "agent";
     const history = new InMemoryChatHistory();
@@ -107,8 +127,8 @@ export class SubAgentRunner {
 
     // Forward the sub-agent's live activity (thinking / text / tools) to the
     // caller, tagged by the Delegate tool call — nested streaming in the UI.
-    // On abort we DROP the sub-agent's own "done" (it was interrupted, not
-    // finished) so the UI can mark it interrupted instead of done.
+    // On abort we DROP the sub-agent's own "done" (it was aborted, not
+    // finished) so the UI can mark it aborted instead of done.
     if (onEvent) {
       events.subscribe((e) => {
         if (e.type === "done" && this.abortedAgents.has(agent)) return;
@@ -117,7 +137,7 @@ export class SubAgentRunner {
       });
     }
 
-    this.active.add(agent);
+    this.active.set(key, agent);
     // Link the parent abort signal so a sub-agent that starts JUST as the user
     // presses Stop is aborted too (closes the start/abort race).
     const onParentAbort = (): void => {
@@ -130,15 +150,17 @@ export class SubAgentRunner {
       const task =
         buildSubAgentTask(spec) + (spec.attachmentText ? `\n\n${spec.attachmentText}` : "");
       await agent.send(task, { images: spec.images });
+      // Any user stop (whole-run Stop or a per-sub-task abort) is reported as
+      // ABORTED — sub-agents have a single terminal stop state.
       if (this.abortedAgents.has(agent) || signal?.aborted) {
-        return { content: formatSubAgentInterrupted(spec), isError: true };
+        return { content: formatSubAgentAborted(spec), isError: true };
       }
       return { content: formatSubAgentReport(spec, lastAssistantReport(agent.getMessages())), isError: false };
     } catch (e) {
       return { content: formatSubAgentError(spec, e instanceof Error ? e.message : String(e)), isError: true };
     } finally {
       signal?.removeEventListener("abort", onParentAbort);
-      this.active.delete(agent);
+      this.active.delete(key);
     }
   }
 }
