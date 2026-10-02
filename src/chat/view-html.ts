@@ -944,6 +944,11 @@ ${renderViewConfig(deps)}
       color: #9a9a9a;
     }
     .empty-hero .empty-icon { font-size: var(--fs-hero); }
+    /* Brand mark in place of the emoji: sized to match the old glyph, muted
+       like the rest of the hero, accent on hover for a touch of life. */
+    .empty-hero .empty-logo svg { width: 2.4rem; height: 2.4rem; display: block; }
+    .empty-hero .empty-logo { color: var(--muted); }
+    .empty-hero .empty-logo:hover { color: var(--accent); }
     .empty-hero h2 { margin: 0; font-size: var(--fs-xl); color: var(--fg-strong); font-weight: 700; }
     .empty-hero p { margin: 0; font-size: var(--fs-md); line-height: 1.5; }
     .empty-hero .empty-hint { font-size: var(--fs-sm); }

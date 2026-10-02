@@ -810,6 +810,15 @@ function workspaceLocked(config: { workspaceReady?: boolean }): boolean {
   return config.workspaceReady === false;
 }
 
+/** Harny mark (same artwork as media/icon.svg), inlined so it inherits the
+ * hero's color and needs no asset URI plumbing or CSP exception. */
+const HARNY_LOGO_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" ' +
+  'stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+  'stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>' +
+  "</svg>";
+
 /**
  * Empty shell: NO open session. The control stack (input, status, metrics)
  * is hidden via the `no-session` body class and a hero takes over the chat
@@ -821,7 +830,7 @@ function renderEmptyShell(): void {
   const hero = document.createElement("div");
   hero.className = "empty-hero";
   hero.innerHTML =
-    '<div class="empty-icon">✨</div>' +
+    '<div class="empty-icon empty-logo">' + HARNY_LOGO_SVG + "</div>" +
     "<h2>Harny</h2>" +
     "<p>No session is open right now.</p>" +
     '<p class="empty-hint">Pick one from the list above,<br>start a new conversation,<br>or branch an existing session.</p>' +
