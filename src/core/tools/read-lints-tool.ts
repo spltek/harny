@@ -1,7 +1,18 @@
 import { relative } from "node:path";
+import { isWindows } from "../platform";
 import type { DiagnosticsProvider } from "./diagnostics-provider";
 import { resolvePath } from "./path-utils";
 import type { Tool, ToolDefinition, ToolResult } from "./tool";
+
+/** Normalize a path for comparison: `/` separators, no trailing slash; on
+ * Windows also drop the drive letter and lower-case (paths are
+ * case-insensitive there). This makes the path filter work identically on
+ * macOS, Linux and Windows. */
+function normPath(p: string): string {
+  let s = p.replace(/\\/g, "/").replace(/\/+$/, "");
+  if (isWindows) s = s.replace(/^[a-z]:/i, "").toLowerCase();
+  return s;
+}
 
 export class ReadLintsTool implements Tool {
   readonly name = "ReadLints";
@@ -37,10 +48,10 @@ export class ReadLintsTool implements Tool {
 
     let entries = all;
     if (paths && paths.length > 0) {
-      const resolved = paths.map((p) => resolvePath(p, cwd));
+      const resolved = paths.map((p) => normPath(resolvePath(p, cwd)));
       entries = all.filter(({ uri }) => {
-        const uriPath = uri;
-        return resolved.some((rp) => uriPath === rp || uriPath.startsWith(rp + "/") || uriPath.startsWith(rp + "\\"));
+        const uriPath = normPath(uri);
+        return resolved.some((rp) => uriPath === rp || uriPath.startsWith(rp + "/"));
       });
     }
 

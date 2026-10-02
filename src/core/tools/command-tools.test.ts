@@ -25,7 +25,7 @@ const cwd = () => "/workspace";
  * from the file paths, so Glob/Grep can be tested WITHOUT a real disk (and
  * therefore identically on every OS). */
 function memFs(files: Record<string, string>, mtimes: Record<string, number> = {}): FileSystem {
-  const norm = (p: string): string => p.replace(/\\/g, "/");
+  const norm = (p: string): string => p.replace(/^[A-Za-z]:/, "").replace(/\\/g, "/");
   const dirs = new Set<string>();
   for (const p of Object.keys(files)) {
     const parts = p.split("/");
@@ -423,12 +423,12 @@ describe("GrepTool (pure Node, cross-platform)", () => {
       const grep = new GrepTool(nodeFileSystem, () => dir);
 
       const globbed = await glob.execute({ glob_pattern: "*.ts" });
-      expect(globbed.content).toContain(join("src", "a.ts"));
+      expect(globbed.content).toContain("src/a.ts");
       expect(globbed.content).not.toContain("b.md");
 
       const grepped = await grep.execute({ pattern: "foo", glob: "*.ts" });
       expect(grepped.content).toContain("foo");
-      expect(grepped.content).toContain(join("src", "a.ts"));
+      expect(grepped.content).toContain("src/a.ts");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

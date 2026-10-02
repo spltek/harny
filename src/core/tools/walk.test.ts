@@ -4,7 +4,7 @@ import { walkFiles } from "./walk";
 
 /** In-memory FS: `{ "/w/a.ts": "content" }`; directories derived from paths. */
 function memFs(files: Record<string, string>): FileSystem {
-  const norm = (p: string): string => p.replace(/\\/g, "/");
+  const norm = (p: string): string => p.replace(/^[A-Za-z]:/, "").replace(/\\/g, "/");
   const dirs = new Set<string>();
   for (const p of Object.keys(files)) {
     const parts = p.split("/");
