@@ -278,6 +278,7 @@ export class Agent implements ChatController {
         this.forcedFinalReport = true;
         this.deps.history.add({
           role: "user",
+          harness: true,
           content:
             "Tool budget exhausted. Do NOT call any more tools. Reply NOW with your final report " +
             "(what you did, key findings/results, files touched, blockers).",
@@ -393,6 +394,7 @@ export class Agent implements ChatController {
           this.log(`parallel ON but no Delegate call — nudging the model to delegate`);
           this.deps.history.add({
             role: "user",
+            harness: true,
             content:
               "Parallel is ON but you did NOT delegate. This is MANDATORY: do NOT answer directly. Think how to " +
               "split the request into 1..N independent sub-tasks (N ≥ 1), then emit the Delegate call(s) NOW — all " +
@@ -442,6 +444,7 @@ export class Agent implements ChatController {
         this.forcedDelegationNudge = true;
         this.deps.history.add({
           role: "user",
+          harness: true,
           content:
             "STOP. Parallel is ON: do NOT answer and do NOT call any other tool. Your ONLY move now is the " +
             "Delegate call(s): split the request into 1..N independent sub-tasks (check resource conflicts), " +
@@ -576,7 +579,7 @@ export class Agent implements ChatController {
       level: decision.level,
       message: decision.note,
     });
-    this.deps.history.add({ role: "user", content: decision.nudge, timestamp: Date.now() });
+    this.deps.history.add({ role: "user", harness: true, content: decision.nudge, timestamp: Date.now() });
     return true;
   }
 

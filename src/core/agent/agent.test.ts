@@ -1396,7 +1396,7 @@ describe("Orchestration (Delegate)", () => {
     await agent.send("do the thing");
 
     expect(spawned).toHaveLength(1);
-    expect(history.all().some((m) => m.role === "user" && /MANDATORY/.test(m.content))).toBe(true);
+    expect(history.all().some((m) => m.role === "user" && m.harness === true && /MANDATORY/.test(m.content))).toBe(true);
   });
 
   it("Parallel ON: the FIRST turn advertises ONLY the Delegate tool", async () => {

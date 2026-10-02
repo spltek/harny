@@ -28,6 +28,8 @@ interface ChatMsg {
   attachments?: { name: string; size: number }[];
   /** UI text when it differs from the LLM `content` (file contents inlined). */
   displayText?: string;
+  /** Harness-injected prompt (loop guard / delegation): render with the robot. */
+  harness?: boolean;
 }
 interface SessionInfo {
   id: string;
@@ -353,6 +355,25 @@ messagesEl.addEventListener("scroll", () => {
     messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < SCROLL_BOTTOM_TOLERANCE;
   autoScroll = nearBottom;
 });
+
+/** Label shown on HARNESS-injected prompts (loop guard / delegation / budget),
+ * so they read as SYSTEM messages rather than something the user typed. */
+const HARNESS_LABEL = "Nudge";
+
+/** A HARNESS-injected prompt (loop guard / delegation / budget): a light-blue
+ * bubble with a label and Markdown content (unlike normal user bubbles), so it
+ * reads as a SYSTEM message and can't be confused with the user's own. */
+function addHarnessMessage(content: string): HTMLDivElement {
+  const div = document.createElement("div");
+  div.className = "msg user harness";
+  div.title = "Inserted by Harny (system) — not typed by you";
+  div.innerHTML =
+    '<div class="harness-label">' + HARNESS_LABEL + "</div>" +
+    '<div class="harness-md">' + renderMarkdown(content || "") + "</div>";
+  messagesEl.appendChild(div);
+  scrollDown();
+  return div;
+}
 
 function addMessage(
   role: string,
@@ -926,6 +947,9 @@ function renderMessages(msgs: ChatMsg[]): boolean {
           }
         }
       }
+    } else if (m.role === "user" && m.harness) {
+      // Harness-injected prompt: robot icon + markdown, no ✂ cut key.
+      addHarnessMessage(m.displayText ?? (m.content || ""));
     } else {
       const el = addMessage(m.role, m.displayText ?? (m.content || ""), m.attachments);
       // The ✂ cut-from-here lives on the USER prompt bubbles: cutting removes

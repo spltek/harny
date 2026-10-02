@@ -2449,6 +2449,34 @@ describe("cut from user prompt bubble", () => {
   });
 });
 
+describe("harness-injected prompts", () => {
+  beforeEach(() => { posted.length = 0; setupDom(); });
+
+  it("renders ONLY the non-typed (harness) messages as light-blue 'Nudge' bubbles", async () => {
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "user", harness: true, content: "**Parallel is ON** but you did NOT delegate.", timestamp: 1 },
+        { role: "user", content: "a normal message I typed", timestamp: 2 },
+      ],
+    });
+    const harnessEl = document.querySelector(".msg.user.harness") as HTMLElement;
+    expect(harnessEl).toBeTruthy();
+    expect(harnessEl.querySelector(".harness-robot")).toBeNull();
+    expect(harnessEl.querySelector(".harness-label")?.textContent).toBe("Nudge");
+    // Markdown is rendered (not plain text) and there is NO ✂ cut key.
+    expect(harnessEl.querySelector(".harness-md strong")?.textContent).toContain("Parallel is ON");
+    expect(harnessEl.querySelector(".harness-md")?.textContent).toContain("did NOT delegate");
+    expect(harnessEl.querySelector(".truncate-at")).toBeNull();
+    // The typed message keeps the NORMAL orange bubble (no harness marker).
+    const typed = document.querySelector(".msg.user:not(.harness)") as HTMLElement;
+    expect(typed).toBeTruthy();
+    expect(typed.querySelector(".harness-label")).toBeNull();
+    expect(document.querySelectorAll(".msg.user.harness").length).toBe(1);
+  });
+});
+
 describe("in-panel alert modal", () => {
   beforeEach(() => { posted.length = 0; setupDom(); });
 

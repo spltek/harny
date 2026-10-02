@@ -15,6 +15,9 @@ export interface ChatMessage {
   timestamp: number;
   /** Messages marked uiOnly are shown in the chat UI but excluded from LLM context. */
   uiOnly?: boolean;
+  /** A HARNESS-injected prompt (loop guard / delegation / budget), NOT the user
+   * typing: rendered with the Harny robot at the start. */
+  harness?: boolean;
   /** Reasoning/thinking text for assistant messages (shown as a collapsible block). */
   thinking?: string;
   /**

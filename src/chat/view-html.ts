@@ -226,6 +226,29 @@ ${renderViewConfig(deps)}
        (assistant/tool) use breaks:true and white-space normal to avoid the
        ghost blank lines produced by markdown's structural newlines. */
     .msg.user { align-self: flex-end; background: var(--user-msg); color: #fff; white-space: pre-wrap; position: relative; }
+    /* Harness-injected prompts (loop guard / delegation / budget): a LIGHT-BLUE
+       bubble with a "Nudge" label, so they read as SYSTEM messages and can't be
+       confused with the user's orange bubbles. Rendered as Markdown. */
+    .msg.user.harness {
+      align-self: stretch; max-width: 100%; white-space: normal;
+      background: rgba(97, 175, 239, 0.12);
+      border: 1px solid rgba(97, 175, 239, 0.45);
+      color: #dbeafe;
+    }
+    .msg.user.harness .harness-label {
+      font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; color: #61afef; margin-bottom: 4px;
+    }
+    .msg.user.harness .harness-md { min-width: 0; }
+    .msg.user.harness .harness-md p { margin: 4px 0; }
+    .msg.user.harness .harness-md > :first-child { margin-top: 0; }
+    .msg.user.harness .harness-md > :last-child { margin-bottom: 0; }
+    .msg.user.harness .harness-md ul, .msg.user.harness .harness-md ol { margin: 4px 0; padding-left: 1.4em; }
+    .msg.user.harness .harness-md li { margin: 2px 0; }
+    .msg.user.harness .harness-md code { background: rgba(0, 0, 0, 0.28); border-radius: 3px; padding: 0 3px; }
+    .msg.user.harness .harness-md pre { background: rgba(0, 0, 0, 0.28); border-radius: 5px; padding: 6px 8px; overflow-x: auto; margin: 6px 0; }
+    .msg.user.harness .harness-md a { color: #fff; text-decoration: underline; }
+    .msg.user.harness .harness-md strong { font-weight: 600; }
     /* "Sent with these files" chips inside a user bubble: the message keeps the
        typed prompt; the attached documents are shown as a compact indicator
        (their contents live in the LLM context, not in the transcript). */
