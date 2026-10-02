@@ -445,6 +445,82 @@ describe("SubAgentRunner", () => {
   });
 });
 
+describe("SubAgentRunner — loop guard parity", () => {
+  function makeReadTool(): Tool & { calls: number } {
+    const tool = {
+      name: "Read",
+      definition: { name: "Read", description: "read", parameters: { type: "object", properties: {} } },
+      calls: 0,
+      execute: (): ToolResult => {
+        tool.calls++;
+        return { content: "CONTENT", isError: false };
+      },
+    };
+    return tool;
+  }
+
+  it("applies the EMPTY-turn guard (sub-agent cannot stall forever)", async () => {
+    const logs: string[] = [];
+    const empty = (): StreamChunk[] => [];
+    const runner = new SubAgentRunner({
+      config: new StaticConfigProvider(CONFIG),
+      llmFactory: factory([empty(), empty(), empty()]),
+      tools: new ToolRegistry([]),
+      cwd: () => "/workspace",
+      log: (m) => logs.push(m),
+    });
+
+    const res = await runner.run(spec({ id: "E" }));
+
+    // Same guard as the orchestrator: react, react, then stop loudly.
+    expect(logs.some((l) => /loop-guard \[empty\] level 1/.test(l))).toBe(true);
+    expect(logs.some((l) => /loop-stop \[empty\]/.test(l))).toBe(true);
+    expect(res.content.length).toBeGreaterThan(0);
+  });
+
+  it("cuts a WITHIN-sub-agent reasoning loop mid-stream", async () => {
+    const logs: string[] = [];
+    const loopText = "Let me check the CSS and the controls again. ".repeat(30);
+    const runner = new SubAgentRunner({
+      config: new StaticConfigProvider(CONFIG),
+      llmFactory: factory([
+        [{ type: "thinking", content: loopText }],
+        [{ type: "text", content: "report after loop" }],
+      ]),
+      tools: new ToolRegistry([]),
+      cwd: () => "/workspace",
+      log: (m) => logs.push(m),
+    });
+
+    const res = await runner.run(spec({ id: "R" }));
+
+    expect(logs.some((l) => /loop-guard \[reasoning\] level 1/.test(l))).toBe(true);
+    expect(res.content).toContain("report after loop");
+  });
+
+  it("reuses an identical read-only call INSIDE a sub-agent (source dedup)", async () => {
+    const read = makeReadTool();
+    const readCall = (id: string): StreamChunk[] => [
+      { type: "tool_call_start", index: 0, id, name: "Read" },
+      { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts"}' },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const runner = buildRunner(
+      factory([readCall("r1"), readCall("r2"), [{ type: "text", content: "report" }]]),
+      [read],
+    );
+    const outputs: string[] = [];
+    const res = await runner.run(spec({ id: "D" }), (e) => {
+      if (e.type === "tool_result") outputs.push(e.toolResult.output);
+    });
+
+    expect(res.content).toContain("report");
+    // The second identical Read was served from the guard's cache, not run again.
+    expect(read.calls).toBe(1);
+    expect(outputs.some((o) => /reused the cached result/.test(o))).toBe(true);
+  });
+});
+
 describe("toSubAgentEvent", () => {
   it("keeps live events and drops usage / raw chunks", () => {
     expect(toSubAgentEvent({ type: "text_delta", content: "x" })).toEqual({ type: "text_delta", content: "x" });
