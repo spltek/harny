@@ -59,6 +59,9 @@ function matchesType(file: string, exts: readonly string[]): boolean {
   return exts.some((t) => (t.startsWith(".") ? ext === t.toLowerCase() : base === t));
 }
 
+/** Output paths with `/` on every OS: same result on macOS/Linux/Windows. */
+const outPath = (p: string): string => p.replace(/\\/g, "/");
+
 /**
  * Content search tool. The filesystem walk is pure Node (identical on every
  * OS) and the REGEX runs in a worker thread with a hard timeout, so a
@@ -206,13 +209,13 @@ export class GrepTool implements Tool {
       if (multiline) {
         if (r.at === undefined || r.at < 0) continue;
         if (outputMode === "files_with_matches") {
-          matchedFiles.push(item.path);
+          matchedFiles.push(outPath(item.path));
         } else if (outputMode === "count") {
-          counts.push(`${item.path}:1`);
+          counts.push(`${outPath(item.path)}:1`);
         } else {
           const lineNo = item.text.slice(0, r.at).split(/\r?\n/).length;
           const line = item.text.split(/\r?\n/)[lineNo - 1] ?? "";
-          contentLines.push(`${item.path}:${lineNo}:${line}`);
+          contentLines.push(`${outPath(item.path)}:${lineNo}:${line}`);
         }
         continue;
       }
@@ -221,11 +224,11 @@ export class GrepTool implements Tool {
       if (hit.length === 0) continue;
 
       if (outputMode === "files_with_matches") {
-        matchedFiles.push(item.path);
+        matchedFiles.push(outPath(item.path));
         continue;
       }
       if (outputMode === "count") {
-        counts.push(`${item.path}:${hit.length}`);
+        counts.push(`${outPath(item.path)}:${hit.length}`);
         continue;
       }
 
@@ -242,7 +245,7 @@ export class GrepTool implements Tool {
           emitted.add(j);
           lastPrinted = j;
           const sep = hitSet.has(j) ? ":" : "-";
-          contentLines.push(`${item.path}${sep}${j + 1}${sep}${lines[j]}`);
+          contentLines.push(`${outPath(item.path)}${sep}${j + 1}${sep}${lines[j]}`);
         }
       }
     }

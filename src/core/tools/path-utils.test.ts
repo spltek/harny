@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { formatSize, isImagePath, resolvePath } from "./path-utils";
 
 describe("resolvePath", () => {
@@ -20,7 +20,7 @@ describe("resolvePath", () => {
   });
 
   it("resolves relative paths against the cwd", () => {
-    expect(resolvePath("src/main.ts", "/workspace")).toBe("/workspace/src/main.ts");
+    expect(resolvePath("src/main.ts", "/workspace")).toBe(resolve("/workspace", "src/main.ts"));
   });
 
   it("expands ~ to the home directory", () => {

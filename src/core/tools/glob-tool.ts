@@ -118,7 +118,8 @@ export class GlobTool implements Tool {
       .map((f) => ({ path: f, mtime: this.fs.exists(f) ? this.fs.mtimeMs(f) : 0 }))
       .sort((a, b) => b.mtime - a.mtime)
       .slice(0, 100)
-      .map((f) => f.path);
+      // Output paths with `/` on every OS: same result on macOS/Linux/Windows.
+      .map((f) => f.path.replace(/\\/g, "/"));
 
     return { content: sorted.join("\n"), isError: false };
   }

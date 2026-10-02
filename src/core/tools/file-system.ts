@@ -10,6 +10,11 @@ import {
   writeFileSync,
 } from "node:fs";
 
+/** Synchronous sleep (used only for the short atomic-rename retries). */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 export interface FileSystem {
   readText(path: string): string;
   writeText(path: string, content: string): void;
@@ -29,19 +34,34 @@ export interface FileSystem {
 export const nodeFileSystem: FileSystem = {
   readText: (p) => readFileSync(p, "utf-8"),
   // ATOMIC write: write a sibling temp file then rename over the target, so a
-  // crash/power-loss never leaves a half-written session/config file.
+  // crash/power-loss never leaves a half-written session/config file. On
+  // Windows the rename can be refused while the target is briefly locked (AV,
+  // indexer, another reader): retry, then fall back to a plain overwrite so a
+  // save never fails.
   writeText: (p, c) => {
     const tmp = `${p}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
-    try {
-      writeFileSync(tmp, c, "utf-8");
-      renameSync(tmp, p);
-    } catch (e) {
+    writeFileSync(tmp, c, "utf-8");
+    for (let attempt = 0; ; attempt++) {
       try {
-        unlinkSync(tmp);
-      } catch {
-        /* best effort cleanup */
+        renameSync(tmp, p);
+        return;
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        const transient = code === "EPERM" || code === "EBUSY" || code === "EACCES";
+        if (!transient || attempt >= 5) {
+          try {
+            unlinkSync(tmp);
+          } catch {
+            /* ignore */
+          }
+          if (transient) {
+            writeFileSync(p, c, "utf-8"); // last resort: never lose the save
+            return;
+          }
+          throw e;
+        }
+        sleepSync(15 * (attempt + 1));
       }
-      throw e;
     }
   },
   exists: (p) => existsSync(p),

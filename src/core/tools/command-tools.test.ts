@@ -25,6 +25,7 @@ const cwd = () => "/workspace";
  * from the file paths, so Glob/Grep can be tested WITHOUT a real disk (and
  * therefore identically on every OS). */
 function memFs(files: Record<string, string>, mtimes: Record<string, number> = {}): FileSystem {
+  const norm = (p: string): string => p.replace(/\\/g, "/");
   const dirs = new Set<string>();
   for (const p of Object.keys(files)) {
     const parts = p.split("/");
@@ -32,16 +33,21 @@ function memFs(files: Record<string, string>, mtimes: Record<string, number> = {
   }
   return {
     readText: (p) => {
-      if (!(p in files)) throw new Error(`ENOENT: ${p}`);
-      return files[p];
+      const k = norm(p);
+      if (!(k in files)) throw new Error(`ENOENT: ${k}`);
+      return files[k];
     },
     writeText: () => {},
-    exists: (p) => p in files || dirs.has(p),
-    isDirectory: (p) => dirs.has(p),
+    exists: (p) => {
+      const k = norm(p);
+      return k in files || dirs.has(k);
+    },
+    isDirectory: (p) => dirs.has(norm(p)),
     realpath: (p) => p,
     list: (d) => {
-      if (!dirs.has(d)) return [];
-      const prefix = d.endsWith("/") ? d : d + "/";
+      const k = norm(d);
+      if (!dirs.has(k)) return [];
+      const prefix = k.endsWith("/") ? k : k + "/";
       const out = new Set<string>();
       for (const p of [...Object.keys(files), ...dirs]) {
         if (!p.startsWith(prefix)) continue;
@@ -50,8 +56,8 @@ function memFs(files: Record<string, string>, mtimes: Record<string, number> = {
       }
       return [...out];
     },
-    size: (p) => (files[p] ?? "").length,
-    mtimeMs: (p) => mtimes[p] ?? 0,
+    size: (p) => (files[norm(p)] ?? "").length,
+    mtimeMs: (p) => mtimes[norm(p)] ?? 0,
     mkdirRecursive: () => {},
     delete: () => {},
   };

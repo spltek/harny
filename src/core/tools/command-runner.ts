@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { defaultShell } from "../platform";
+import { defaultShell, isWindows } from "../platform";
 
 export interface CommandResult {
   stdout: string;
@@ -17,7 +17,10 @@ export interface CommandRunner {
  */
 export class NodeCommandRunner implements CommandRunner {
   run(command: string, options: { cwd: string; timeoutMs: number; maxBuffer?: number }): CommandResult {
-    const res = spawnSync(command, {
+    // Windows console programs often emit in the OEM code page; force UTF-8 so
+    // non-ASCII output is decoded correctly (Node reads it as UTF-8).
+    const cmd = isWindows ? `chcp 65001>nul&&${command}` : command;
+    const res = spawnSync(cmd, {
       cwd: options.cwd,
       encoding: "utf-8",
       maxBuffer: options.maxBuffer ?? 50 * 1024 * 1024,
