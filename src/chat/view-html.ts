@@ -28,6 +28,8 @@ export interface ViewState {
   activeId?: string;
   messages: ChatMessage[];
   config: ViewConfigState;
+  /** Extension version, shown in the main screen (header + empty hero). */
+  version?: string;
   /** Session ids whose agent is streaming (disabled delete buttons in the list). */
   workingIds: string[];
   /** Whether the active session is mid-stream (initial lock + live restore). */
@@ -125,6 +127,7 @@ ${renderViewConfig(deps)}
     }
     #session-head .toggle { font-size: var(--fs-xs); width: 12px; color: #888; }
     #session-head .spacer { flex: 1; }
+    #session-head .harny-version { font-size: var(--fs-xs); color: #888; margin-right: 4px; }
     #session-head button {
       background: transparent; border: none; color: var(--accent);
       font-size: var(--fs-xl); cursor: pointer; padding: 0 4px;
@@ -971,6 +974,7 @@ ${renderViewConfig(deps)}
     .empty-hero .empty-logo { color: var(--muted); }
     .empty-hero .empty-logo:hover { color: var(--accent); }
     .empty-hero h2 { margin: 0; font-size: var(--fs-xl); color: var(--fg-strong); font-weight: 700; }
+    .empty-hero .empty-version { font-size: var(--fs-sm); color: #888; margin-top: -2px; }
     .empty-hero p { margin: 0; font-size: var(--fs-md); line-height: 1.5; }
     .empty-hero .empty-hint { font-size: var(--fs-sm); }
     .empty-hero .empty-cta { margin-top: 12px; padding: 6px 20px; font-size: var(--fs-lg); border-radius: 6px; }
@@ -1254,6 +1258,7 @@ ${renderViewConfig(deps)}
     <div id="session-head">
       <span class="toggle">▼</span><span>Sessions</span>
       <span class="spacer"></span>
+      ${deps.state.version ? '<span class="harny-version" title="Harny version">v' + deps.state.version + "</span>" : ""}
       <button id="new-session" title="New session"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
       <button id="sessions-gear-btn" class="gear-btn" title="Manage all sessions (every folder)"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
     </div>

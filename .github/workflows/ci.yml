@@ -1,10 +1,10 @@
 name: CI
 
 on:
-  # Automatico solo su main/master; per tutto il resto si usa il bottone
+  # Automatico SOLO sui commit in main; per il resto si usa il bottone
   # "Run workflow" (workflow_dispatch).
   push:
-    branches: [main, master]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -41,6 +41,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      # This build is NOT a tagged release: stamp a `-dev.<run>` version so it is
+      # clearly distinguishable from the versioned release artifacts.
+      - name: Dev version (not a tagged release)
+        run: |
+          base=$(node -p "require('./package.json').version")
+          npm version "${base}-dev.${GITHUB_RUN_NUMBER}" --no-git-tag-version
       - run: npm run package
       # The .vsix is universal (pure JS, no native deps): the same file
       # installs on Windows, Linux and macOS.

@@ -84,6 +84,8 @@ interface InitState {
   streaming?: boolean;
   liveThinking?: string;
   liveAnswer?: string;
+  /** Extension version (shown in the empty hero). */
+  version?: string;
 }
 
 const sessionsEl = document.getElementById("sessions") as HTMLDivElement;
@@ -845,6 +847,7 @@ function renderWorkspaceShell(): void {
   hero.innerHTML =
     '<div class="empty-icon">📁</div>' +
     "<h2>Harny</h2>" +
+    (init.version ? '<div class="empty-version">v' + escapeHtml(init.version) + "</div>" : "") +
     "<p>Harny needs a single open folder.</p>" +
     '<p class="empty-hint">Open one folder (File → Open Folder) to start sessions and chat.<br>' +
     "Multi-root workspaces are not supported yet.</p>";
@@ -878,6 +881,7 @@ function renderEmptyShell(): void {
   hero.innerHTML =
     '<div class="empty-icon empty-logo">' + HARNY_LOGO_SVG + "</div>" +
     "<h2>Harny</h2>" +
+    (init.version ? '<div class="empty-version">v' + escapeHtml(init.version) + "</div>" : "") +
     "<p>No session is open right now.</p>" +
     '<p class="empty-hint">Pick one from the list above,<br>start a new conversation,<br>or branch an existing session.</p>' +
     '<button id="empty-new-session" class="empty-cta" title="Create a new session">New session</button>';

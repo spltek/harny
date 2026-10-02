@@ -1334,6 +1334,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         activeId: this.activeId,
         messages,
         config,
+        version: (this.context?.extension as { packageJSON?: { version?: string } } | undefined)?.packageJSON?.version,
         workingIds: this.workingIds(),
         streaming: !!active?.agent.streaming,
         liveThinking: live?.thinking ?? "",

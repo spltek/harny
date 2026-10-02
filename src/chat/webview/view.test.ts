@@ -2477,6 +2477,22 @@ describe("harness-injected prompts", () => {
   });
 });
 
+describe("version in the main screen", () => {
+  beforeEach(() => { posted.length = 0; setupDom(); });
+
+  it("shows the version in the empty hero", async () => {
+    setupDom({ openIds: [], activeId: undefined, messages: [], version: "0.1.0" });
+    await loadView();
+    expect(document.querySelector(".empty-hero .empty-version")?.textContent).toBe("v0.1.0");
+  });
+
+  it("omits the version line when unknown", async () => {
+    setupDom({ openIds: [], activeId: undefined, messages: [] });
+    await loadView();
+    expect(document.querySelector(".empty-hero .empty-version")).toBeNull();
+  });
+});
+
 describe("in-panel alert modal", () => {
   beforeEach(() => { posted.length = 0; setupDom(); });
 

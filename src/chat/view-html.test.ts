@@ -33,6 +33,14 @@ describe("renderViewHtml", () => {
     expect(html).toContain(`<script src="${base.scriptUri}"></script>`);
   });
 
+  it("shows the extension version in the sessions header (omitted when unknown)", () => {
+    const state = { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } };
+    const withV = renderViewHtml({ ...base, state: { ...state, version: "0.1.0" } });
+    expect(withV).toContain('<span class="harny-version" title="Harny version">v0.1.0</span>');
+    const without = renderViewHtml({ ...base, state });
+    expect(without).not.toContain('class="harny-version"');
+  });
+
   it("uses ONE gear graphic + size across the cards (sessions, model, compaction)", () => {
     const html = renderViewHtml({
       ...base,

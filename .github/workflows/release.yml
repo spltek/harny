@@ -1,7 +1,10 @@
 name: Release
 
 on:
-  # Solo manuale: si scegle il tag da rilasciare e si preme "Run workflow".
+  # Automatico quando pushi un tag di versione (v0.1.0, v1.2.3, ...): crea una
+  # release con l'artefatto VERSIONATO. In alternativa, manuale dal bottone.
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
@@ -14,24 +17,29 @@ permissions:
 
 jobs:
   release:
-    name: release ${{ inputs.tag }}
+    name: release ${{ github.event.inputs.tag || github.ref_name }}
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
       - run: npm ci
+      # Version the extension from the tag (v0.2.0 -> 0.2.0) so the shipped
+      # .vsix is named and carries that exact version.
+      - name: Set the version from the tag
+        run: npm version "${TAG#v}" --no-git-tag-version
       - run: npm run build
       - run: npm run package
       - name: Publish the .vsix to the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag }}
         run: |
           if gh release view "${TAG}" >/dev/null 2>&1; then
             gh release upload "${TAG}" ./*.vsix --clobber
