@@ -1,0 +1,40 @@
+name: Release
+
+on:
+  # Solo manuale: si scegle il tag da rilasciare e si preme "Run workflow".
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag da rilasciare (deve esistere già, es. v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: release ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run package
+      - name: Publish the .vsix to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" ./*.vsix --clobber
+          else
+            gh release create "${TAG}" --title "${TAG}" --generate-notes ./*.vsix
+          fi

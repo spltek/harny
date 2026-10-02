@@ -1,10 +1,15 @@
 name: CI
 
 on:
+  # Automatico solo su main/master; per tutto il resto si usa il bottone
+  # "Run workflow" (workflow_dispatch).
   push:
-    branches: [main]
-    tags: ["*"]
-  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -44,24 +49,3 @@ jobs:
           name: harny-vsix
           path: "*.vsix"
           if-no-files-found: error
-
-  release:
-    name: release (vsix)
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: [test, package]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - run: npm run package
-      - name: Publish the .vsix to the GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes *.vsix
