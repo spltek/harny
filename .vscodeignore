@@ -1,9 +1,23 @@
-.vscode/**
+# Sources & tooling — the shipped runtime is the bundled dist/extension.js
 src/**
-node_modules/**
-.gitignore
-tsconfig.json
-.eslintrc.json
-**/*.ts
-!dist/**
+scripts/**
+coverage/**
 docs/**
+.github/**
+.vscode/**
+node_modules/**
+**/*.ts
+
+# Keep the built host bundle (excluded above by nothing, but be explicit)
+!dist/**
+
+# Repo/tooling files not needed at runtime
+tsconfig.json
+tsconfig.webview.json
+vitest.config.mts
+.eslintrc.json
+.gitignore
+.env.example
+config.example.jsonc
+*.vsix
+.DS_Store

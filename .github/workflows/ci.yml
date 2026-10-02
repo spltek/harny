@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["*"]
   pull_request:
 
 jobs:
@@ -23,3 +24,44 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  package:
+    name: package (vsix)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run package
+      # The .vsix is universal (pure JS, no native deps): the same file
+      # installs on Windows, Linux and macOS.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harny-vsix
+          path: "*.vsix"
+          if-no-files-found: error
+
+  release:
+    name: release (vsix)
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [test, package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run package
+      - name: Publish the .vsix to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes *.vsix
