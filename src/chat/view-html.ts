@@ -210,6 +210,9 @@ ${renderViewConfig(deps)}
       transition: color 0.12s, background-color 0.12s;
     }
     .tab .close:hover { color: var(--error); background: rgba(244, 71, 71, 0.14); }
+    /* A WORKING session's tab cannot be closed: its × is inert (switching the
+       tab stays allowed). */
+    .tab .close.disabled { opacity: 0.35; pointer-events: none; }
 
     /* Chat */
     /* scrollbar-gutter: stable reserves the scrollbar slot even when no

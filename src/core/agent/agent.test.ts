@@ -565,11 +565,14 @@ describe("Agent", () => {
     expect(factory.calls).toBe(2);
     const intervention = events.find((e) => e.type === "loop_intervention");
     expect(intervention && intervention.type === "loop_intervention" ? intervention.loopType : "").toBe("reasoning");
+    // The corrective prompt is also surfaced LIVE (light-blue "Nudge" bubble).
+    expect(events.some((e) => e.type === "harness_nudge")).toBe(true);
     expect(history.all().some((m) => m.role === "assistant" && /Loop guard/.test(m.content))).toBe(true);
     expect(history.all().some((m) => m.role === "assistant" && m.content === "final answer after loop")).toBe(true);
     // The broken reasoning was NOT stored as a normal assistant answer.
     expect(history.all().some((m) => m.role === "assistant" && m.content.includes(loopText))).toBe(false);
   });
+
 
   it("reuses a cached read-only result instead of re-running an identical read", async () => {
     let runs = 0;
@@ -1378,12 +1381,15 @@ describe("Orchestration (Delegate)", () => {
       [{ type: "text", content: "done" }],
     );
     const tools = new ToolRegistry([makeTool("Read")]);
+    const events = new InMemoryEventBus<AgentEvent>();
+    const eventLog: AgentEvent[] = [];
+    events.subscribe((e) => eventLog.push(e));
     const agent = new Agent({
       config: new StaticConfigProvider(VALID_CONFIG),
       llmFactory: factory,
       tools,
       history,
-      events: new InMemoryEventBus<AgentEvent>(),
+      events,
       systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
       spawnSubAgent: async (spec) => {
         spawned.push(spec);
@@ -1397,6 +1403,8 @@ describe("Orchestration (Delegate)", () => {
 
     expect(spawned).toHaveLength(1);
     expect(history.all().some((m) => m.role === "user" && m.harness === true && /MANDATORY/.test(m.content))).toBe(true);
+    // The nudge is surfaced LIVE (light-blue bubble), not only on refresh.
+    expect(eventLog.some((e) => e.type === "harness_nudge")).toBe(true);
   });
 
   it("Parallel ON: the FIRST turn advertises ONLY the Delegate tool", async () => {

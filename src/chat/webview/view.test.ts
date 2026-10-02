@@ -1009,27 +1009,21 @@ describe("view webview client", () => {
     expect(body.querySelector("li")?.textContent).toBe("item one");
   });
 
-  it("throttles thinking renders (leading edge) and flushes the LATEST text on the trailing timer", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(1000);
-    try {
-      await loadView();
-      hostMessage({ type: "thinkingDelta", content: "**bold**" });
-      const body = document.querySelector(".thinking-body") as HTMLElement;
-      // Leading edge: the first delta renders immediately.
-      expect(body.querySelector("strong")?.textContent).toBe("bold");
+  it("coalesces rapid renders to the next frame and flushes the LATEST text", async () => {
+    await loadView();
+    hostMessage({ type: "thinkingDelta", content: "**bold**" });
+    const body = document.querySelector(".thinking-body") as HTMLElement;
+    // Leading edge: the first delta renders immediately.
+    expect(body.querySelector("strong")?.textContent).toBe("bold");
 
-      // Rapid deltas within the window: the trailing timer must render the
-      // LATEST accumulated text (getText closure), not a stale snapshot.
-      hostMessage({ type: "thinkingDelta", content: " part" });
-      hostMessage({ type: "thinkingDelta", content: " **two**" });
-      expect(body.textContent).toContain("bold"); // still the leading snapshot
-      vi.advanceTimersByTime(200);
-      expect(body.querySelectorAll("strong").length).toBe(2);
-      expect(body.querySelector("strong:last-child")?.textContent).toBe("two");
-    } finally {
-      vi.useRealTimers();
-    }
+    // Rapid deltas: they coalesce into ONE paint on the next animation frame,
+    // which must render the LATEST accumulated text (getText closure).
+    hostMessage({ type: "thinkingDelta", content: " part" });
+    hostMessage({ type: "thinkingDelta", content: " **two**" });
+    expect(body.textContent).toContain("bold"); // still the leading snapshot
+    await new Promise((r) => setTimeout(r, 60));
+    expect(body.querySelectorAll("strong").length).toBe(2);
+    expect(body.querySelector("strong:last-child")?.textContent).toBe("two");
   });
 
   it("opens the in-panel name modal, submits and closes", async () => {
@@ -2349,6 +2343,33 @@ describe("view webview client", () => {
     expect(select.value).toBe("");
   });
 
+  it("disables the tab × of a WORKING session (switching stays allowed)", async () => {
+    await loadView();
+    hostMessage({ type: "status", active: true, workingIds: ["b"] });
+    const tabB = document.querySelector('.tab[data-id="b"]') as HTMLElement;
+    const closeB = tabB.querySelector(".close") as HTMLElement;
+    expect(closeB.classList.contains("disabled")).toBe(true);
+    posted.length = 0;
+    closeB.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(posted.some((m) => (m as { type?: string }).type === "closeTab")).toBe(false);
+    // Switching the working tab is still allowed.
+    tabB.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(posted).toContainEqual({ type: "switchTab", id: "b" });
+    // A non-working tab can still be closed.
+    const tabA = document.querySelector('.tab[data-id="a"]') as HTMLElement;
+    (tabA.querySelector(".close") as HTMLElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(posted).toContainEqual({ type: "closeTab", id: "a" });
+  });
+
+  it("re-enables the tab × once the session stops working", async () => {
+    await loadView();
+    hostMessage({ type: "status", active: true, workingIds: ["b"] });
+    const closeB = document.querySelector('.tab[data-id="b"] .close') as HTMLElement;
+    expect(closeB.classList.contains("disabled")).toBe(true);
+    hostMessage({ type: "status", active: false, workingIds: [] });
+    expect(closeB.classList.contains("disabled")).toBe(false);
+  });
+
   it("posts send / switchTab / newSession / rename / delete / closeTab", async () => {
     await loadView();
     (document.getElementById("new-session") as HTMLButtonElement).click();
@@ -2491,6 +2512,15 @@ describe("harness-injected prompts", () => {
     expect(typed).toBeTruthy();
     expect(typed.querySelector(".harness-label")).toBeNull();
     expect(document.querySelectorAll(".msg.user.harness").length).toBe(1);
+  });
+
+  it("renders a harness nudge LIVE from the harnessNudge message", async () => {
+    await loadView();
+    hostMessage({ type: "harnessNudge", content: "**Stop** repeating and act." });
+    const el = document.querySelector(".msg.user.harness") as HTMLElement;
+    expect(el).toBeTruthy();
+    expect(el.querySelector(".harness-label")?.textContent).toBe("Nudge");
+    expect(el.querySelector(".harness-md strong")?.textContent).toContain("Stop");
   });
 });
 

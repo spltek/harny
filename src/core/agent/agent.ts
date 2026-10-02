@@ -276,14 +276,10 @@ export class Agent implements ChatController {
       // otherwise every heavy sub-agent would return a raw "turn limit" note.
       if (this.deps.forceFinalReportOnLimit && !this.forcedFinalReport) {
         this.forcedFinalReport = true;
-        this.deps.history.add({
-          role: "user",
-          harness: true,
-          content:
-            "Tool budget exhausted. Do NOT call any more tools. Reply NOW with your final report " +
+        this.addHarnessNudge(
+          "Tool budget exhausted. Do NOT call any more tools. Reply NOW with your final report " +
             "(what you did, key findings/results, files touched, blockers).",
-          timestamp: Date.now(),
-        });
+        );
         const final = await this.runLlmTurn([]);
         // Never let the synthetic tool label leak into a stored report either.
         const finalText = isSyntheticToolSummary(final.content) ? "" : final.content.trim();
@@ -392,16 +388,12 @@ export class Agent implements ChatController {
         if (!this.forcedDelegationNudge && turn + 1 < maxTurns) {
           this.forcedDelegationNudge = true;
           this.log(`parallel ON but no Delegate call — nudging the model to delegate`);
-          this.deps.history.add({
-            role: "user",
-            harness: true,
-            content:
-              "Parallel is ON but you did NOT delegate. This is MANDATORY: do NOT answer directly. Think how to " +
+          this.addHarnessNudge(
+            "Parallel is ON but you did NOT delegate. This is MANDATORY: do NOT answer directly. Think how to " +
               "split the request into 1..N independent sub-tasks (N ≥ 1), then emit the Delegate call(s) NOW — all " +
               "independent ones in the same turn. If nothing can run in parallel, still delegate the whole bounded " +
               "task to ONE sub-agent.",
-            timestamp: Date.now(),
-          });
+          );
           return this.runTurns(turn + 1);
         }
         // 2) The model ignored the nudge: the HOST dispatches one sub-agent.
@@ -442,15 +434,11 @@ export class Agent implements ChatController {
       }
       if (!this.forcedDelegationNudge && turn + 1 < maxTurns) {
         this.forcedDelegationNudge = true;
-        this.deps.history.add({
-          role: "user",
-          harness: true,
-          content:
-            "STOP. Parallel is ON: do NOT answer and do NOT call any other tool. Your ONLY move now is the " +
+        this.addHarnessNudge(
+          "STOP. Parallel is ON: do NOT answer and do NOT call any other tool. Your ONLY move now is the " +
             "Delegate call(s): split the request into 1..N independent sub-tasks (check resource conflicts), " +
             "expose a SHORT plan, then emit the Delegate call(s) in this turn.",
-          timestamp: Date.now(),
-        });
+        );
         return this.runTurns(turn + 1);
       }
       // Already nudged once and still no delegation: the HOST delegates.
@@ -579,8 +567,17 @@ export class Agent implements ChatController {
       level: decision.level,
       message: decision.note,
     });
-    this.deps.history.add({ role: "user", harness: true, content: decision.nudge, timestamp: Date.now() });
+    this.addHarnessNudge(decision.nudge);
     return true;
+  }
+
+  /** Add a corrective HARNESS prompt (user role, marked `harness`) AND surface
+   * it LIVE, so the UI shows the light-blue "Nudge" bubble immediately — not
+   * only on the end-of-run refresh (which is skipped when the run stops with an
+   * error). */
+  private addHarnessNudge(content: string): void {
+    this.deps.history.add({ role: "user", harness: true, content, timestamp: Date.now() });
+    this.deps.events.emit({ type: "harness_nudge", content });
   }
 
   /** Human-readable note for a response truncated at the output-token limit. */

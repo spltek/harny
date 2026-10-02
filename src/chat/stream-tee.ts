@@ -77,6 +77,12 @@ export class StreamTee {
           if (active)
             post({ type: "loopIntervention", loopType: event.loopType, level: event.level, message: event.message });
           break;
+        case "harness_nudge":
+          // A corrective HARNESS prompt: surface it LIVE (light-blue bubble).
+          live.thinking = "";
+          live.answer = "";
+          if (active) post({ type: "harnessNudge", content: event.content });
+          break;
         case "done":
           live.thinking = "";
           live.answer = "";

@@ -180,58 +180,80 @@ const MAX_PASTE_IMAGE_BYTES = 15 * 1024 * 1024;
 // Re-rendering markdown on every delta janks the panel with long outputs
 // (Qwen3.8-style thinking, verbose answers). Render at most once per window
 // (leading edge) with a trailing flush, so a section always catches up.
-function makeThrottledMd(windowMs = 120) {
+/**
+ * Coalesce streaming renders to the ANIMATION FRAME (≤ ~60/s) instead of a
+ * fixed 120 ms window, so text appears smoothly. The FIRST chunk of a segment
+ * (leading edge) still paints synchronously so a bubble never waits a frame;
+ * the rest coalesce into one paint per frame ("render a chunk", not per char).
+ */
+function makeThrottledMd(minIntervalMs = 16) {
+  let raf: number | undefined;
   let last = 0;
-  let timer: number | undefined;
+  let el: Element | null = null;
+  let getText: (() => string) | null = null;
+  const paint = (e: Element, g: () => string): void => {
+    last = performance.now();
+    e.innerHTML = renderMarkdown(g());
+    // The render grows the section BELOW the current scroll anchor: re-pin to
+    // the bottom (auto-scroll guarded) or streaming appears below the fold.
+    scrollDown();
+  };
+  const tick = (): void => {
+    raf = undefined;
+    const e = el;
+    const g = getText;
+    el = null;
+    getText = null;
+    if (!e || !g) return;
+    // Too soon after the last paint: keep coalescing into the next frame.
+    if (performance.now() - last < minIntervalMs) {
+      el = e;
+      getText = g;
+      raf = window.requestAnimationFrame(tick);
+      return;
+    }
+    paint(e, g);
+  };
   return {
-    /** Schedule a render of getText() into el (leading edge + trailing flush). */
-    push(el: Element, getText: () => string): void {
-      const now = Date.now();
-      if (now - last >= windowMs) {
-        if (timer !== undefined) {
-          window.clearTimeout(timer);
-          timer = undefined;
-        }
-        last = now;
-        el.innerHTML = renderMarkdown(getText());
-        // The render grows the section BELOW the current scroll anchor: re-pin
-        // to the bottom (auto-scroll guarded) or streaming appears below the fold.
-        scrollDown();
+    /** Schedule a render of getText() into el (leading edge + per-frame flush). */
+    push(e: Element, g: () => string): void {
+      el = e;
+      getText = g;
+      // Leading edge: the first chunk (or one after a quiet gap) paints NOW.
+      if (raf === undefined && performance.now() - last >= minIntervalMs) {
+        const ee = el;
+        const gg = getText;
+        el = null;
+        getText = null;
+        if (ee && gg) paint(ee, gg);
         return;
       }
-      // Trailing flush: even a slow final chunk eventually gets rendered.
-      if (timer === undefined) {
-        timer = window.setTimeout(() => {
-          timer = undefined;
-          last = Date.now();
-          el.innerHTML = renderMarkdown(getText());
-          scrollDown();
-        }, windowMs);
-      }
+      if (raf === undefined) raf = window.requestAnimationFrame(tick);
     },
     /** Render the final text immediately (done/error/interrupt/refresh). */
-    flush(el: Element | null, getText: () => string): void {
-      if (timer !== undefined) {
-        window.clearTimeout(timer);
-        timer = undefined;
+    flush(e: Element | null, g: () => string): void {
+      if (raf !== undefined) {
+        window.cancelAnimationFrame(raf);
+        raf = undefined;
       }
-      if (el) {
-        el.innerHTML = renderMarkdown(getText());
-        scrollDown();
-      }
+      el = null;
+      getText = null;
+      if (e) paint(e, g);
     },
     reset(): void {
-      if (timer !== undefined) {
-        window.clearTimeout(timer);
-        timer = undefined;
+      if (raf !== undefined) {
+        window.cancelAnimationFrame(raf);
+        raf = undefined;
       }
+      el = null;
+      getText = null;
       last = 0;
     },
   };
 }
 
-const thinkingMd = makeThrottledMd(120);
-const answerMd = makeThrottledMd(120);
+const thinkingMd = makeThrottledMd();
+const answerMd = makeThrottledMd();
 
 function flushStreamingMd(): void {
   const tb = currentThinkingBlock?.querySelector(".thinking-body") ?? null;
@@ -330,6 +352,8 @@ function renderTabs(sessions: SessionInfo[]): void {
     close.innerHTML = icon("i-x", 11);
     close.addEventListener("click", (e) => {
       e.stopPropagation();
+      // A WORKING session's tab cannot be closed: stop it first.
+      if (workingIds.has(id)) return;
       vscode.postMessage({ type: "closeTab", id });
     });
     tab.appendChild(label);
@@ -338,6 +362,20 @@ function renderTabs(sessions: SessionInfo[]): void {
     tab.addEventListener("click", () => {
       if (id !== activeId) vscode.postMessage({ type: "switchTab", id });
     });
+  }
+  applyTabLocks();
+}
+
+/** Disable the × of every WORKING session's tab (switching stays allowed). */
+function applyTabLocks(): void {
+  for (const tab of tabsEl.querySelectorAll<HTMLElement>(".tab")) {
+    const w = workingIds.has(tab.dataset.id ?? "");
+    tab.classList.toggle("is-working", w);
+    const close = tab.querySelector<HTMLElement>(".close");
+    if (close) {
+      close.classList.toggle("disabled", w);
+      close.title = w ? "Session is working — stop it before closing the tab" : "Close tab";
+    }
   }
 }
 
@@ -2678,6 +2716,15 @@ window.addEventListener("message", (e) => {
       scrollDown();
       break;
     }
+    case "harnessNudge": {
+      // A corrective HARNESS prompt: show the light-blue "Nudge" bubble LIVE
+      // (not only on the end-of-run refresh, which an error stop skips).
+      flushStreamingMd();
+      clearStreamingBubble();
+      addHarnessMessage(String(msg.content || ""));
+      scrollDown();
+      break;
+    }
     case "done":
       flushStreamingMd();
       finishStream();
@@ -2763,6 +2810,8 @@ window.addEventListener("message", (e) => {
         row.classList.toggle("is-working", w);
         for (const b of row.querySelectorAll("button")) b.disabled = w;
       }
+      // Same lock for the tab × (a working session cannot be closed).
+      applyTabLocks();
       // While ANY session works, the two setup gears go inert (manage
       // sessions / configure providers): no modal mid-stream.
       applyWorkingLock();

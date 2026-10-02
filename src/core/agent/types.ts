@@ -27,6 +27,10 @@ export type AgentEvent =
   /** The loop guard detected a degenerate loop and REACTED (broke it and told
    * the model how to recover). Surfaced as an amber notice in the transcript. */
   | { type: "loop_intervention"; loopType: string; level: number; message: string }
+  /** A HARNESS-injected corrective prompt (loop guard / delegation / budget) was
+   * added to the conversation: surfaced LIVE as a light-blue "Nudge" bubble so
+   * it appears immediately, not only on the end-of-run refresh. */
+  | { type: "harness_nudge"; content: string }
   /** Analyze finished with prepared changes that are NOT applied: the UI
    * shows a highlighted "Switch to Build" call to action. */
   | { type: "preview_ready" }

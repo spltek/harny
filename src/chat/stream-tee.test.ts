@@ -82,6 +82,20 @@ describe("StreamTee", () => {
     expect(tee.liveOf("a")?.thinking).toBe("");
   });
 
+  it("forwards harness_nudge to the view and resets the live buffer", () => {
+    const { tee, deps } = makeTee();
+    const a = fakeRuntime("a");
+    tee.attach(a.rt);
+
+    a.emit({ type: "thinking_delta", content: "thinking" });
+    a.emit({ type: "text_delta", content: "answer" });
+    a.emit({ type: "harness_nudge", content: "**Stop** repeating." });
+
+    expect(deps.onPost).toHaveBeenCalledWith({ type: "harnessNudge", content: "**Stop** repeating." });
+    expect(tee.liveOf("a")?.thinking).toBe("");
+    expect(tee.liveOf("a")?.answer).toBe("");
+  });
+
   it("forwards preview_ready to the view when the session is active", () => {
     const { tee, deps } = makeTee();
     const a = fakeRuntime("a");
