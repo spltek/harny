@@ -1,9 +1,12 @@
 import { describe, it, expect } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { CommandResult, CommandRunner } from "./command-runner";
 import { ShellTool } from "./shell-tool";
 import { GrepTool } from "./grep-tool";
 import { GlobTool, globstarToRegex } from "./glob-tool";
-import type { FileSystem } from "./file-system";
+import { nodeFileSystem, type FileSystem } from "./file-system";
 
 function fakeRunner(results: CommandResult[]): CommandRunner {
   const calls: Array<{ command: string; options: { cwd: string; timeoutMs: number } }> = [];
@@ -17,6 +20,42 @@ function fakeRunner(results: CommandResult[]): CommandRunner {
 }
 
 const cwd = () => "/workspace";
+
+/** In-memory FileSystem: `{ "/w/a.ts": "content" }`. Directories are derived
+ * from the file paths, so Glob/Grep can be tested WITHOUT a real disk (and
+ * therefore identically on every OS). */
+function memFs(files: Record<string, string>, mtimes: Record<string, number> = {}): FileSystem {
+  const dirs = new Set<string>();
+  for (const p of Object.keys(files)) {
+    const parts = p.split("/");
+    for (let i = 1; i < parts.length; i++) dirs.add(parts.slice(0, i).join("/"));
+  }
+  return {
+    readText: (p) => {
+      if (!(p in files)) throw new Error(`ENOENT: ${p}`);
+      return files[p];
+    },
+    writeText: () => {},
+    exists: (p) => p in files || dirs.has(p),
+    isDirectory: (p) => dirs.has(p),
+    realpath: (p) => p,
+    list: (d) => {
+      if (!dirs.has(d)) return [];
+      const prefix = d.endsWith("/") ? d : d + "/";
+      const out = new Set<string>();
+      for (const p of [...Object.keys(files), ...dirs]) {
+        if (!p.startsWith(prefix)) continue;
+        const rest = p.slice(prefix.length);
+        if (rest) out.add(rest.split("/")[0]);
+      }
+      return [...out];
+    },
+    size: (p) => (files[p] ?? "").length,
+    mtimeMs: (p) => mtimes[p] ?? 0,
+    mkdirRecursive: () => {},
+    delete: () => {},
+  };
+}
 
 describe("ShellTool", () => {
   it("returns stdout on success", () => {
@@ -95,150 +134,405 @@ describe("ShellTool", () => {
   });
 });
 
-describe("GrepTool", () => {
-  // fs that reports the search path as existing (the tool pre-checks it now)
-  const existingFs = { ...fakeFs(), exists: () => true };
+describe("GrepTool (pure Node, cross-platform)", () => {
+  it("returns matches as path:line:text", async () => {
+    const fs = memFs({ "/w/a.ts": "a\nb\nfoo\n", "/w/b.ts": "foo\n", "/w/c.txt": "bar\n" });
+    const tool = new GrepTool(fs, cwd);
 
-  it("builds an rg command and returns matches", () => {
-    const runner = fakeRunner([{ stdout: "/w/a.ts:3:foo\n/w/b.ts:1:foo", stderr: "", code: 0, timedOut: false }]);
-    const tool = new GrepTool(runner, existingFs, cwd);
-
-    const result = tool.execute({ pattern: "foo", path: "/w", output_mode: "content" });
+    const result = await tool.execute({ pattern: "foo", path: "/w", output_mode: "content" });
 
     expect(result.isError).toBe(false);
     expect(result.content).toContain("/w/a.ts:3:foo");
-    expect(runner.calls[0].command).toContain("rg -n \"foo\" \"/w\"");
+    expect(result.content).toContain("/w/b.ts:1:foo");
+    expect(result.content).not.toContain("/w/c.txt");
   });
 
-  it("treats exit code 1 as 'no matches'", () => {
-    const runner = fakeRunner([{ stdout: "", stderr: "", code: 1, timedOut: false }]);
-    const tool = new GrepTool(runner, fakeFs(), cwd);
+  it("treats a missing match as 'No matches found'", async () => {
+    const fs = memFs({ "/w/a.ts": "hello\n" });
+    const tool = new GrepTool(fs, cwd);
 
-    const result = tool.execute({ pattern: "zzz" });
+    const result = await tool.execute({ pattern: "zzz", path: "/w" });
 
     expect(result.isError).toBe(false);
     expect(result.content).toBe("No matches found");
   });
 
-  it("hints when hidden entries were skipped by a zero-match DIRECTORY search", () => {
-    const fs: FileSystem = { ...fakeFs(), exists: () => true, list: () => ["file.txt", ".hidden", ".config"] };
-    const runner = fakeRunner([{ stdout: "", stderr: "", code: 1, timedOut: false }]);
-    const tool = new GrepTool(runner, fs, cwd);
+  it("hints when hidden entries were skipped by a zero-match DIRECTORY search", async () => {
+    const fs = memFs({ "/w/file.txt": "nothing\n", "/w/.hidden": "x\n", "/w/.config": "y\n" });
+    const tool = new GrepTool(fs, cwd);
 
-    const result = tool.execute({ pattern: "hidden", path: "/w" });
+    const result = await tool.execute({ pattern: "hidden", path: "/w" });
 
     expect(result.content).toContain("No matches found");
     expect(result.content).toContain("2 hidden entries");
     expect(result.content).toContain('"hidden": true');
   });
 
-  it("stays clean ('No matches found') when a directory has NO hidden entries", () => {
-    const fs: FileSystem = { ...fakeFs(), exists: () => true, list: () => ["file.txt", "src"] };
-    const runner = fakeRunner([{ stdout: "", stderr: "", code: 1, timedOut: false }]);
-    const tool = new GrepTool(runner, fs, cwd);
+  it("stays clean ('No matches found') when a directory has NO hidden entries", async () => {
+    const fs = memFs({ "/w/file.txt": "nothing\n", "/w/src/main.ts": "nothing\n" });
+    const tool = new GrepTool(fs, cwd);
 
-    const result = tool.execute({ pattern: "hidden", path: "/w" });
+    const result = await tool.execute({ pattern: "hidden", path: "/w" });
 
     expect(result.content).toBe("No matches found");
   });
 
-  it("passes --hidden when hidden: true is requested", () => {
-    const runner = fakeRunner([{ stdout: "", stderr: "", code: 0, timedOut: false }]);
-    const tool = new GrepTool(runner, existingFs, cwd);
+  it("searches hidden files when hidden: true", async () => {
+    const fs = memFs({ "/w/.hidden": "x\n" });
+    const tool = new GrepTool(fs, cwd);
 
-    tool.execute({ pattern: "x", path: "/w", hidden: true });
+    const result = await tool.execute({ pattern: "x", path: "/w", hidden: true });
 
-    expect(runner.calls[0].command).toContain("--hidden");
+    expect(result.content).toContain("/w/.hidden:1:x");
   });
 
-  it("errors explicitly when the target path does not exist", () => {
-    const fs: FileSystem = { ...fakeFs(), exists: () => false };
-    const tool = new GrepTool(fakeRunner([]), fs, cwd);
+  it("errors explicitly when the target path does not exist", async () => {
+    const fs = memFs({ "/w/a.ts": "x\n" });
+    const tool = new GrepTool(fs, cwd);
 
-    const result = tool.execute({ pattern: "foo", path: "/nope/missing" });
+    const result = await tool.execute({ pattern: "foo", path: "/nope/missing" });
 
     expect(result.isError).toBe(true);
     expect(result.content).toContain("Path not found");
   });
 
-  it("skips a single binary file explicitly (no fake 'No matches')", () => {
-    const fs: FileSystem = { ...fakeFs(), exists: () => true, readText: () => "abc\u0000\u0001\u0002def" };
-    const tool = new GrepTool(fakeRunner([]), fs, cwd);
+  it("skips a single binary file explicitly (no fake 'No matches')", async () => {
+    const fs = memFs({ "/w/bin": "abc\u0000\u0001\u0002def" });
+    const tool = new GrepTool(fs, cwd);
 
-    const result = tool.execute({ pattern: "x", path: "/w/bin" });
+    const result = await tool.execute({ pattern: "x", path: "/w/bin" });
 
     expect(result.isError).toBe(false);
     expect(result.content).toContain("skipped binary file");
   });
 
-  it("surfaces real rg errors (exit code 2) instead of 'no matches'", () => {
-    const runner = fakeRunner([{ stdout: "rg: error parsing regex: unexpected '('", stderr: "", code: 2, timedOut: false }]);
-    const tool = new GrepTool(runner, existingFs, cwd);
+  it("surfaces a bad regex as an error instead of 'no matches'", async () => {
+    const fs = memFs({ "/w/a.ts": "x\n" });
+    const tool = new GrepTool(fs, cwd);
 
-    const result = tool.execute({ pattern: "(", path: "/w" });
+    const result = await tool.execute({ pattern: "(", path: "/w" });
 
     expect(result.isError).toBe(true);
     expect(result.content).toContain("error parsing regex");
   });
 
-  it("quotes the glob filter (no shell word-splitting/expansion)", () => {
-    const runner = fakeRunner([{ stdout: "a.txt:1:riga", stderr: "", code: 0, timedOut: false }]);
-    const tool = new GrepTool(runner, existingFs, cwd);
+  it("filters files by glob", async () => {
+    const fs = memFs({ "/w/a.txt": "riga\n", "/w/b.ts": "riga\n" });
+    const tool = new GrepTool(fs, cwd);
 
-    tool.execute({ pattern: "riga", path: "/w", glob: "*.txt" });
+    const result = await tool.execute({ pattern: "riga", path: "/w", glob: "*.txt" });
 
-    expect(runner.calls[0].command).toContain('--glob="*.txt"');
+    expect(result.content).toContain("/w/a.txt:1:riga");
+    expect(result.content).not.toContain("b.ts");
   });
 
-  it("applies head_limit and offset", () => {
-    const runner = fakeRunner([{ stdout: "1\n2\n3\n4", stderr: "", code: 0, timedOut: false }]);
-    const tool = new GrepTool(runner, fakeFs(), cwd);
+  it("filters files by type", async () => {
+    const fs = memFs({ "/w/a.ts": "TODO\n", "/w/b.py": "TODO\n" });
+    const tool = new GrepTool(fs, cwd);
 
-    const result = tool.execute({ pattern: "x", offset: 1, head_limit: 2 });
+    const result = await tool.execute({ pattern: "TODO", path: "/w", type: "ts" });
 
-    expect(result.content).toBe("2\n3\n\n[Showing 2-3 of at least 4 matches]");
+    expect(result.content).toContain("a.ts");
+    expect(result.content).not.toContain("b.py");
   });
 
-  it("errors when the pattern is missing", () => {
-    const tool = new GrepTool(fakeRunner([]), fakeFs(), cwd);
-    expect(tool.execute({}).isError).toBe(true);
+  it("is case-insensitive with -i", async () => {
+    const fs = memFs({ "/w/a.ts": "Foo\n" });
+    const tool = new GrepTool(fs, cwd);
+
+    expect((await tool.execute({ pattern: "foo", path: "/w", "-i": true })).content).toContain("Foo");
+    expect((await tool.execute({ pattern: "foo", path: "/w" })).content).toBe("No matches found");
+  });
+
+  it("lists matching files in files_with_matches mode", async () => {
+    const fs = memFs({ "/w/a.ts": "foo\nfoo\n", "/w/b.ts": "bar\n" });
+    const tool = new GrepTool(fs, cwd);
+
+    const result = await tool.execute({ pattern: "foo", path: "/w", output_mode: "files_with_matches" });
+
+    expect(result.content).toBe("/w/a.ts");
+  });
+
+  it("counts per file in count mode", async () => {
+    const fs = memFs({ "/w/a.ts": "foo\nfoo\nbar\nfoo\n", "/w/b.ts": "foo\n" });
+    const tool = new GrepTool(fs, cwd);
+
+    const result = await tool.execute({ pattern: "foo", path: "/w", output_mode: "count" });
+
+    expect(result.content).toContain("/w/a.ts:3");
+    expect(result.content).toContain("/w/b.ts:1");
+  });
+
+  it("shows context lines with -C", async () => {
+    const fs = memFs({ "/w/a.ts": "l1\nl2\nfoo\nl4\nl5\n" });
+    const tool = new GrepTool(fs, cwd);
+
+    const result = await tool.execute({ pattern: "foo", path: "/w", "-C": 1 });
+
+    expect(result.content).toContain("/w/a.ts:3:foo");
+    expect(result.content).toContain("/w/a.ts-2-l2"); // before, '-' separator
+    expect(result.content).toContain("/w/a.ts-4-l4"); // after
+  });
+
+  it("applies head_limit and offset", async () => {
+    const fs = memFs({ "/w/a.ts": "m1\nm2\nm3\nm4\n" });
+    const tool = new GrepTool(fs, cwd);
+
+    const result = await tool.execute({ pattern: "m", path: "/w", offset: 1, head_limit: 2 });
+
+    expect(result.content).toContain("[Showing 2-3 of at least 4 matches]");
+    expect(result.content).toContain("/w/a.ts:2:m2");
+    expect(result.content).not.toContain("m1");
+    expect(result.content).not.toContain("m4");
+  });
+
+  it("uses ':' for a match line even when reached as another match's context, and '-' for context", async () => {
+    const fs = memFs({ "/w/a.ts": "x\nm2\nm3\n" });
+    const tool = new GrepTool(fs, cwd);
+
+    const result = await tool.execute({ pattern: "m", path: "/w", "-C": 1 });
+
+    expect(result.content).toContain("/w/a.ts:2:m2");
+    expect(result.content).toContain("/w/a.ts:3:m3"); // match → ':' (not '-')
+    expect(result.content).toContain("/w/a.ts-1-x"); // context → '-'
+    expect(result.content).not.toContain("/w/a.ts-3-m3");
+  });
+
+  it("inserts a '--' separator between non-adjacent context groups", async () => {
+    const fs = memFs({ "/w/a.ts": "m1\nx\nx\nx\nm5\n" });
+    const tool = new GrepTool(fs, cwd);
+
+    const result = await tool.execute({ pattern: "m", path: "/w", "-C": 1 });
+
+    expect(result.content).toContain("--");
+    expect(result.content).toContain("/w/a.ts:5:m5");
+  });
+
+  it("supports -A and -B independently", async () => {
+    const fs = memFs({ "/w/a.ts": "a\nfoo\nb\n" });
+    const tool = new GrepTool(fs, cwd);
+
+    expect((await tool.execute({ pattern: "foo", path: "/w", "-A": 1 })).content).toContain("/w/a.ts-3-b");
+    expect((await tool.execute({ pattern: "foo", path: "/w", "-B": 1 })).content).toContain("/w/a.ts-1-a");
+  });
+
+  it("matches across lines ONLY in multiline mode", async () => {
+    const fs = memFs({ "/w/a.ts": "foo\nbar\n" });
+    const tool = new GrepTool(fs, cwd);
+
+    expect((await tool.execute({ pattern: "foo\\nbar", path: "/w" })).content).toBe("No matches found");
+    expect((await tool.execute({ pattern: "foo\\nbar", path: "/w", multiline: true })).content).toContain("a.ts:1");
+  });
+
+  it("handles CRLF files (line numbers and matches)", async () => {
+    const fs = memFs({ "/w/a.ts": "l1\r\nfoo\r\nl3\r\n" });
+    const tool = new GrepTool(fs, cwd);
+
+    expect((await tool.execute({ pattern: "foo", path: "/w" })).content).toContain("/w/a.ts:2:foo");
+  });
+
+  it("supports regex alternation and anchors on empty lines", async () => {
+    const fs = memFs({ "/w/a.ts": "foo\nbar\n\nbaz\n" });
+    const tool = new GrepTool(fs, cwd);
+
+    expect((await tool.execute({ pattern: "foo|baz", path: "/w" })).content).toContain("a.ts:1:foo");
+    expect((await tool.execute({ pattern: "foo|baz", path: "/w" })).content).toContain("a.ts:4:baz");
+    expect((await tool.execute({ pattern: "^$", path: "/w" })).content).toContain("/w/a.ts:3:");
+  });
+
+  it("skips node_modules and other heavy dirs while walking", async () => {
+    const fs = memFs({ "/w/node_modules/x.ts": "foo\n", "/w/src/y.ts": "foo\n" });
+    const tool = new GrepTool(fs, cwd);
+
+    const result = await tool.execute({ pattern: "foo", path: "/w" });
+
+    expect(result.content).toContain("src/y.ts");
+    expect(result.content).not.toContain("node_modules");
+  });
+
+  it("expands brace globs {ts,tsx}", async () => {
+    const fs = memFs({ "/w/a.ts": "foo\n", "/w/b.tsx": "foo\n", "/w/c.md": "foo\n" });
+    const tool = new GrepTool(fs, cwd);
+
+    const result = await tool.execute({ pattern: "foo", path: "/w", glob: "*.{ts,tsx}" });
+
+    expect(result.content).toContain("a.ts");
+    expect(result.content).toContain("b.tsx");
+    expect(result.content).not.toContain("c.md");
+  });
+
+  it("errors on an unknown --type", async () => {
+    const tool = new GrepTool(memFs({ "/w/a.ts": "x\n" }), cwd);
+    expect((await tool.execute({ pattern: "x", path: "/w", type: "nope" })).isError).toBe(true);
+  });
+
+  it("reports 'No matches found' for files_with_matches / count with zero hits", async () => {
+    const fs = memFs({ "/w/a.ts": "bar\n" });
+    const tool = new GrepTool(fs, cwd);
+
+    expect((await tool.execute({ pattern: "zzz", path: "/w", output_mode: "files_with_matches" })).content).toBe("No matches found");
+    expect((await tool.execute({ pattern: "zzz", path: "/w", output_mode: "count" })).content).toBe("No matches found");
+  });
+
+  it("head_limit 0 says nothing was shown instead of '[Showing 1-0 …]'", async () => {
+    const fs = memFs({ "/w/a.ts": "m\n" });
+    const tool = new GrepTool(fs, cwd);
+
+    const result = await tool.execute({ pattern: "m", path: "/w", head_limit: 0 });
+
+    expect(result.content).toContain("Showing 0 of at least 1");
+  });
+
+  it("searches a single FILE target and reports its path", async () => {
+    const fs = memFs({ "/w/a.ts": "one\ntwo\n" });
+    const tool = new GrepTool(fs, cwd);
+
+    const result = await tool.execute({ pattern: "two", path: "/w/a.ts" });
+
+    expect(result.content).toContain("/w/a.ts:2:two");
+  });
+
+  it("skips binary files encountered during a directory walk", async () => {
+    const fs = memFs({ "/w/a.ts": "foo\n", "/w/bin.dat": "a\u0000foo" });
+    const tool = new GrepTool(fs, cwd);
+
+    const result = await tool.execute({ pattern: "foo", path: "/w" });
+
+    expect(result.content).toContain("a.ts");
+    expect(result.content).not.toContain("bin.dat");
+  });
+
+  it("errors when the pattern is missing", async () => {
+    const tool = new GrepTool(memFs({}), cwd);
+    expect((await tool.execute({})).isError).toBe(true);
+  });
+
+  it("works against the REAL filesystem (validates isDirectory + walk)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harny-globgrep-"));
+    try {
+      mkdirSync(join(dir, "src"), { recursive: true });
+      writeFileSync(join(dir, "src", "a.ts"), "hello\nfoo\n");
+      writeFileSync(join(dir, "b.md"), "foo\n");
+      const glob = new GlobTool(nodeFileSystem, () => dir);
+      const grep = new GrepTool(nodeFileSystem, () => dir);
+
+      const globbed = await glob.execute({ glob_pattern: "*.ts" });
+      expect(globbed.content).toContain(join("src", "a.ts"));
+      expect(globbed.content).not.toContain("b.md");
+
+      const grepped = await grep.execute({ pattern: "foo", glob: "*.ts" });
+      expect(grepped.content).toContain("foo");
+      expect(grepped.content).toContain(join("src", "a.ts"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
-describe("GlobTool", () => {
-  it("auto-prepends **/ to non-glob patterns and matches full paths", () => {
-    const runner = fakeRunner([{ stdout: "", stderr: "", code: 0, timedOut: false }]);
-    const tool = new GlobTool(runner, fakeFs(), cwd);
+describe("GlobTool (pure Node, cross-platform)", () => {
+  it("auto-prepends **/ and matches relative-to-root paths", () => {
+    const fs = memFs({ "/workspace/src/main.ts": "", "/workspace/readme.md": "" });
+    const tool = new GlobTool(fs, cwd);
 
-    tool.execute({ glob_pattern: "*.ts" });
+    const result = tool.execute({ glob_pattern: "*.ts" });
 
-    expect(runner.calls[0].command).toContain('--glob --full-path "**/*.ts"');
-    // find fallback must not rely on find -path (no globstar)
-    expect(runner.calls[0].command).toContain("grep -E");
+    expect(result.content).toContain("main.ts");
+    expect(result.content).not.toContain("readme.md");
   });
 
-  it("sorts results by modification time", () => {
-    const fs: FileSystem = {
-      ...fakeFs(),
-      exists: () => true,
-      mtimeMs: (p) => (p.includes("old") ? 100 : 200),
-    };
-    const runner = fakeRunner([{ stdout: "old.ts\nnew.ts", stderr: "", code: 0, timedOut: false }]);
-    const tool = new GlobTool(runner, fs, cwd);
+  it("sorts results by modification time (newest first)", () => {
+    const fs = memFs(
+      { "/workspace/old.ts": "", "/workspace/new.ts": "" },
+      { "/workspace/old.ts": 100, "/workspace/new.ts": 200 },
+    );
+    const tool = new GlobTool(fs, cwd);
 
     const result = tool.execute({ glob_pattern: "**/*.ts" });
 
-    expect(result.content).toBe("new.ts\nold.ts");
+    expect(result.content).toBe("/workspace/new.ts\n/workspace/old.ts");
   });
 
-  it("returns 'No files found' on empty output", () => {
-    const runner = fakeRunner([{ stdout: "", stderr: "", code: 0, timedOut: false }]);
-    const tool = new GlobTool(runner, fakeFs(), cwd);
+  it("returns 'No files found' on no match", () => {
+    const fs = memFs({ "/workspace/a.md": "" });
+    const tool = new GlobTool(fs, cwd);
 
     const result = tool.execute({ glob_pattern: "*.ts" });
 
     expect(result.isError).toBe(false);
     expect(result.content).toBe("No files found");
+  });
+
+  it("skips hidden files by default (fd/rg default)", () => {
+    const fs = memFs({ "/workspace/.hidden.ts": "", "/workspace/a.ts": "" });
+    const tool = new GlobTool(fs, cwd);
+
+    const result = tool.execute({ glob_pattern: "*.ts" });
+
+    expect(result.content).toContain("a.ts");
+    expect(result.content).not.toContain(".hidden.ts");
+  });
+
+  it("skips node_modules and other heavy dirs", () => {
+    const fs = memFs({ "/workspace/node_modules/x.ts": "", "/workspace/src/y.ts": "" });
+    const tool = new GlobTool(fs, cwd);
+
+    const result = tool.execute({ glob_pattern: "**/*.ts" });
+
+    expect(result.content).toContain("src/y.ts");
+    expect(result.content).not.toContain("node_modules");
+  });
+
+  it("honours target_directory (relative to the working directory)", () => {
+    const fs = memFs({ "/workspace/src/a.ts": "", "/workspace/b.ts": "" });
+    const tool = new GlobTool(fs, cwd);
+
+    const result = tool.execute({ glob_pattern: "*.ts", target_directory: "src" });
+
+    expect(result.content).toContain("src/a.ts");
+    expect(result.content).not.toContain("/workspace/b.ts");
+  });
+
+  it("expands brace alternation in the pattern", () => {
+    const fs = memFs({ "/workspace/a.ts": "", "/workspace/b.tsx": "", "/workspace/c.md": "" });
+    const tool = new GlobTool(fs, cwd);
+
+    const result = tool.execute({ glob_pattern: "*.{ts,tsx}" });
+
+    expect(result.content).toContain("a.ts");
+    expect(result.content).toContain("b.tsx");
+    expect(result.content).not.toContain("c.md");
+  });
+
+  it("anchors a leading '/' pattern to the FULL path (no substring match)", () => {
+    const fs = memFs({ "/workspace/a.ts": "", "/workspace/src/a.ts": "" });
+    const tool = new GlobTool(fs, cwd);
+
+    const result = tool.execute({ glob_pattern: "/workspace/a.ts" });
+
+    expect(result.content).toContain("/workspace/a.ts");
+    expect(result.content).not.toContain("/workspace/src/a.ts");
+  });
+
+  it("does not loop forever on a symlink cycle (realpath guard)", () => {
+    // /r/loop resolves (realpath) back to /r — a classic infinite loop.
+    const dirs = new Set(["/r", "/r/loop"]);
+    const fs: FileSystem = {
+      readText: (p) => (p === "/r/a.ts" ? "" : (() => { throw new Error("ENOENT"); })()),
+      writeText: () => {},
+      exists: (p) => p === "/r/a.ts" || dirs.has(p),
+      isDirectory: (p) => dirs.has(p),
+      realpath: (p) => (p.startsWith("/r/loop") ? "/r" : p),
+      list: (d) => (d === "/r" || d === "/r/loop" ? ["a.ts", "loop"] : []),
+      size: () => 0,
+      mtimeMs: () => 0,
+      mkdirRecursive: () => {},
+      delete: () => {},
+    };
+    const tool = new GlobTool(fs, () => "/r");
+
+    const result = tool.execute({ glob_pattern: "**/*.ts" });
+
+    expect(result.content).toContain("/r/a.ts");
   });
 
   describe("globstarToRegex", () => {
@@ -291,15 +585,3 @@ describe("GlobTool", () => {
     });
   });
 });
-
-function fakeFs(): FileSystem {
-  return {
-    readText: () => "",
-    writeText: () => {},
-    exists: () => false,
-    size: () => 0,
-    mtimeMs: () => 0,
-    mkdirRecursive: () => {},
-    delete: () => {},
-  };
-}

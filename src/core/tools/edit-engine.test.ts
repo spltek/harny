@@ -13,6 +13,21 @@ describe("edit-engine.applyEdits", () => {
     expect(r.applied).toBe(2);
   });
 
+  it("PRESERVES CRLF line endings when inserting a multi-line replacement", () => {
+    const r = applyEdits("a\r\nb\r\nc\r\n", [{ oldText: "b", newText: "B1\nB2" }]);
+    expect(r.failed).toEqual([]);
+    expect(r.content).toBe("a\r\nB1\r\nB2\r\nc\r\n");
+    // No bare LF was introduced anywhere.
+    expect(r.content).not.toMatch(/[^\r]\n/);
+  });
+
+  it("PRESERVES LF line endings when the replacement carries CRLF", () => {
+    const r = applyEdits("a\nb\nc\n", [{ oldText: "b", newText: "B1\r\nB2" }]);
+    expect(r.failed).toEqual([]);
+    expect(r.content).toBe("a\nB1\nB2\nc\n");
+    expect(r.content).not.toContain("\r");
+  });
+
   it("handles an edit whose match shifts after an earlier one", () => {
     const r = applyEdits("xxxx\nfoo\nbar", [
       { oldText: "xxxx", newText: "yyyyyy" },

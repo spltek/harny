@@ -1,6 +1,6 @@
-import type { CommandRunner } from "./command-runner";
 import type { FileSystem } from "./file-system";
 import { resolvePath } from "./path-utils";
+import { walkFiles } from "./walk";
 import type { Tool, ToolDefinition, ToolResult } from "./tool";
 
 /**
@@ -80,7 +80,6 @@ export class GlobTool implements Tool {
   };
 
   constructor(
-    private runner: CommandRunner,
     private fs: FileSystem,
     private cwd: () => string,
   ) {}
@@ -101,25 +100,24 @@ export class GlobTool implements Tool {
       pattern = `**/${pattern}`;
     }
 
-    // fd is the primary engine: --full-path makes it match the RELATIVE path
-    // (not the basename), which is what makes directory globs + globstar `**`
-    // work — `a/**/b` matches `a/b`, `a/x/b`, ... (verified with fd 10.x).
-    const fdCmd = `fd --type f --max-results=100 --glob --full-path "${pattern}" "${dir}" 2>/dev/null`;
-    // find/grep fallback when fd is absent. find -path cannot express
-    // globstar, so translate the glob to an ERE with the correct zero-or-more
-    // directory semantics and filter the find listing with grep. The `$`
-    // anchor keeps it a FULL-path match (no substring false positives).
+    // Pure-Node match: the same ERE the old find/grep fallback used, applied to
+    // the path with `/` separators so it works on Windows too (where fs paths
+    // use `\`). The `**` translator gives zero-or-more directory levels.
     const ere = (pattern.startsWith("/") ? "^" : ".*") + globstarToRegex(pattern) + "$";
-    const fallback = `find "${dir}" -type f -maxdepth 8 2>/dev/null | grep -E "${ere}" | head -100`;
-    const cmd = `${fdCmd} || ${fallback} || echo "No files found"`;
-    const result = this.runner.run(cmd, { cwd: dir, timeoutMs: 10000, maxBuffer: 5 * 1024 * 1024 });
+    let re: RegExp;
+    try {
+      re = new RegExp(ere);
+    } catch (e) {
+      return { content: `Glob error: invalid pattern "${globPattern}": ${(e as Error).message}`, isError: true };
+    }
 
-    const files = result.stdout.trim().split("\n").filter(Boolean);
+    const files = walkFiles(this.fs, dir, { maxFiles: 5000 }).filter((f) => re.test(f.replace(/\\/g, "/")));
     if (files.length === 0) return { content: "No files found", isError: false };
 
     const sorted = files
       .map((f) => ({ path: f, mtime: this.fs.exists(f) ? this.fs.mtimeMs(f) : 0 }))
       .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, 100)
       .map((f) => f.path);
 
     return { content: sorted.join("\n"), isError: false };

@@ -48,8 +48,24 @@ export function applyEdits(content: string, edits: EditOp[]): EditResult {
       failed.push({ index: i, reason: r.reason, detail: r.detail, anchor: op.oldText ?? op.beforeText ?? op.afterText });
     }
   });
+  // Preserve the file's line endings: replacements/insertions are authored with
+  // `\n` (the model and our joins), but a CRLF file must stay CRLF on Windows.
+  if (applied > 0) cur = normalizeEol(cur, detectEol(content));
   const diff = applied > 0 && failed.length === 0 ? buildDiff(content, cur) : undefined;
   return { content: cur, failed, applied, modes, diff };
+}
+
+/** Dominant end-of-line of a text: CRLF when it has at least as many `\r\n`
+ * as bare `\n` (and at least one), else LF. */
+function detectEol(text: string): "\r\n" | "\n" {
+  const crlf = (text.match(/\r\n/g) ?? []).length;
+  const lf = (text.match(/(?<!\r)\n/g) ?? []).length;
+  return crlf > 0 && crlf >= lf ? "\r\n" : "\n";
+}
+
+/** Force every newline in `text` to the given EOL (idempotent). */
+function normalizeEol(text: string, eol: "\r\n" | "\n"): string {
+  return eol === "\r\n" ? text.replace(/(?<!\r)\n/g, "\r\n") : text.replace(/\r\n/g, "\n");
 }
 
 interface OneResult {
