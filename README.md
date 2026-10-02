@@ -144,6 +144,7 @@ Harny keeps **persistent sessions** in a **central home bucket** (`<home>/sessio
 - **Tab bar**: the names of all **open sessions** as tabs laid out **one after another**.
 - **Overlapped chats**: chats are **stacked**, not side by side — only **one chat is visible at a time**, the one of the selected tab. Switching tabs shows the corresponding chat.
 - **Branch**: each session row has a ⎇ button that **copies the session at its current state** (full transcript + per-session settings) into a new session and opens it. The dialog defaults to the original name. Hovering any **assistant reply** shows a ⎇ to branch the session **up to and including that reply** (same naming dialog, same uniqueness rules).
+- **Cut / sanitize**: hovering a **user prompt** bubble shows a ✂ — it **truncates the current session IN PLACE** from that prompt downward (that message and everything after it are removed), after a confirmation. The removed tail is **not** kept, so branch first to preserve it; this is for "sanitizing" a conversation that took a bad turn and continuing from the clean point.
 - **Unique names**: two sessions of the same workspace **cannot share a name** — the naming dialog validates live (create, rename and branch) and blocks duplicates (case-insensitive).
 - **In-panel alerts**: all confirmations and notices (delete, compact, name conflicts, “session is working”) appear as in-panel modals inside the Harny area — same design family as the naming dialog, no native VS Code popups.
 

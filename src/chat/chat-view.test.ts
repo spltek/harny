@@ -760,6 +760,97 @@ describe("ChatViewProvider", () => {
     expect(store.create).toHaveBeenCalledTimes(1);
   });
 
+  it("truncateAt cuts the transcript from the reply downward and persists it", async () => {
+    const { store, registry, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1 (active)
+    const msgs = [
+      { role: "user", content: "q1", timestamp: 1 },
+      { role: "assistant", content: "a1", timestamp: 2 },
+      { role: "user", content: "q2", timestamp: 3 },
+      { role: "assistant", content: "a2", timestamp: 4 },
+    ];
+    const rt = registry.get("s1")!;
+    rt.history.replace(msgs);
+
+    await handler({ type: "truncateAt", index: 2 }); // cut the q2 prompt -> [q1, a1]
+
+    const kept = [msgs[0], msgs[1]];
+    expect(store.saveMessages).toHaveBeenCalledWith("s1", kept);
+    expect(rt.history.all()).toEqual(kept);
+    expect(rt.agent.getMessages()).toEqual(kept);
+    // Asked for confirmation (danger) and re-rendered the cut conversation.
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "modal", kind: "alert", alertKind: "confirm", danger: true }),
+    );
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "refresh", messages: kept });
+  });
+
+  it("truncateAt does nothing when the confirmation is cancelled", async () => {
+    const { store, registry, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const msgs = [
+      { role: "user", content: "q", timestamp: 1 },
+      { role: "assistant", content: "a", timestamp: 2 },
+    ];
+    const rt = registry.get("s1")!;
+    rt.history.replace(msgs);
+    state.noAutoAlert = true;
+    try {
+      const p = handler({ type: "truncateAt", index: 1 });
+      const modal = view.webview.postMessage.mock.calls
+        .map((c) => c[0] as any)
+        .find((m) => m.type === "modal" && m.kind === "alert");
+      await handler({ type: "modalResponse", id: modal.modalId, value: false });
+      await p;
+    } finally {
+      state.noAutoAlert = false;
+    }
+    expect(store.saveMessages).not.toHaveBeenCalled();
+    expect(rt.history.all()).toEqual(msgs);
+  });
+
+  it("truncateAt can cut the whole conversation down to empty (index 0)", async () => {
+    const { store, registry, provider } = buildHarness();
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.history.replace([{ role: "user", content: "q", timestamp: 1 }, { role: "assistant", content: "a", timestamp: 2 }]);
+
+    await handler({ type: "truncateAt", index: 0 });
+
+    expect(store.saveMessages).toHaveBeenCalledWith("s1", []);
+    expect(rt.history.all()).toEqual([]);
+  });
+
+  it("refuses to cut while the session is working", async () => {
+    const { store, registry, provider } = buildHarness();
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.history.replace([{ role: "user", content: "q", timestamp: 1 }, { role: "assistant", content: "a", timestamp: 2 }]);
+    (rt.agent as { streaming: boolean }).streaming = true;
+
+    await handler({ type: "truncateAt", index: 1 });
+
+    expect(store.saveMessages).not.toHaveBeenCalled();
+  });
+
+  it("truncateAt ignores out-of-range or invalid indexes", async () => {
+    const { store, registry, provider } = buildHarness();
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.history.replace([{ role: "user", content: "q", timestamp: 1 }, { role: "assistant", content: "a", timestamp: 2 }]);
+
+    await handler({ type: "truncateAt", index: 99 }); // stale bubble
+    await handler({ type: "truncateAt", index: -1 });
+    await handler({ type: "truncateAt", index: "x" });
+
+    expect(store.saveMessages).not.toHaveBeenCalled();
+  });
+
   it("refuses to branch with a name already in use", async () => {
     const { store, provider } = buildHarness();
     const { handler, view } = resolveWith(provider);

@@ -143,7 +143,15 @@ describe("renderViewHtml", () => {
     // above (toggle margin-top; the chat scroller adds no bottom padding of
     // its own anymore) and the same 8px below (the ask card's margin-top).
     expect(html).toMatch(/#ctl-toggle\s*\{[^}]*margin: 8px 10px 0/s);
-    expect(html).toMatch(/#messages\s*\{[^}]*padding: 10px 0 0 10px/s);
+    // The extra top padding leaves room for the action tabs (⎇/✂) that slide
+    // UP out of the first bubble on hover; too little clips them.
+    expect(html).toMatch(/#messages\s*\{[^}]*padding: 24px 0 0 10px/s);
+    // The branch/cut keys are TOP-RIGHT "tabs" that slide UP out of the bubble
+    // on hover (visible instead of blending into the text).
+    expect(html).toMatch(/\.branch-at,\s*\.truncate-at\s*\{[^}]*top:\s*0[^}]*right:\s*8px/s);
+    // The ✂ tab on the orange user bubble uses the bubble's own orange.
+    expect(html).toMatch(/\.truncate-at\s*\{[^}]*background:\s*var\(--user-msg\)/s);
+    expect(html).toMatch(/translateY\(-100%\)/);
     // The AI Model row (label + select + gear) lives INSIDE the ask box, just
     // below the prompt (after #input-main, before the chips row) — no longer
     // part of the collapsible block.

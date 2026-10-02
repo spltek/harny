@@ -2400,6 +2400,55 @@ describe("branch from assistant bubble", () => {
   });
 });
 
+describe("cut from user prompt bubble", () => {
+  beforeEach(() => { posted.length = 0; setupDom(); });
+
+  it("adds a ✂ key to every USER prompt bubble and posts truncateAt with its index", async () => {
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "user", content: "q1", timestamp: 1 },
+        { role: "assistant", content: "a1", timestamp: 2 },
+        { role: "user", content: "q2", timestamp: 3 },
+        { role: "assistant", content: "a2", timestamp: 4 },
+      ],
+    });
+    const keys = document.querySelectorAll(".msg.user .truncate-at");
+    // The prompt bubbles: q1 at index 0, q2 at index 2.
+    expect(keys.length).toBe(2);
+    expect(keys[0].querySelector("svg")).toBeTruthy(); // inline scissors icon
+    // Assistant replies keep the ⎇ but must NOT carry the ✂.
+    expect(document.querySelector(".msg.assistant .truncate-at")).toBeNull();
+    (keys[0] as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "truncateAt", index: 0 });
+    (keys[1] as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "truncateAt", index: 2 });
+  });
+
+  it("does not add the ✂ key to assistant loop notices (system annotations)", async () => {
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [{ role: "assistant", content: "🔁 **Loop guard** [empty] — empty turn nudged.", timestamp: 1, uiOnly: true }],
+    });
+    const el = document.querySelector(".msg.assistant.loop") as HTMLElement;
+    expect(el).toBeTruthy();
+    expect(el.querySelector(".truncate-at")).toBeNull();
+  });
+
+  it("disables the ✂ key while the session is working", async () => {
+    await loadView();
+    hostMessage({ type: "refresh", messages: [{ role: "user", content: "q", timestamp: 1 }, { role: "assistant", content: "a", timestamp: 2 }] });
+    const key = document.querySelector(".msg.user .truncate-at") as HTMLButtonElement;
+    expect(key.disabled).toBe(false);
+    hostMessage({ type: "status", active: true });
+    expect(key.disabled).toBe(true);
+    hostMessage({ type: "status", active: false });
+    expect(key.disabled).toBe(false);
+  });
+});
+
 describe("in-panel alert modal", () => {
   beforeEach(() => { posted.length = 0; setupDom(); });
 

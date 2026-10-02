@@ -222,14 +222,16 @@ ${renderViewConfig(deps)}
        (same width, symmetric 10px gaps: paddings left 10 / gutter 10 right). */
     #messages {
       flex: 1; overflow-y: auto; scrollbar-gutter: stable;
-      padding: 10px 0 0 10px;
+      /* Top padding leaves room for the action tabs that slide UP out of the
+         first bubble (see .branch-at/.truncate-at); too little clips them. */
+      padding: 24px 0 0 10px;
       display: flex; flex-direction: column; gap: 6px;
     }
     .msg { padding: 8px 10px; border-radius: 8px; max-width: 92%; word-wrap: break-word; word-break: break-word; overflow-wrap: break-word; line-height: 1.4; font-size: var(--fs-lg); }
     /* pre-wrap only for plain-text bubbles (user messages); markdown bubbles
        (assistant/tool) use breaks:true and white-space normal to avoid the
        ghost blank lines produced by markdown's structural newlines. */
-    .msg.user { align-self: flex-end; background: var(--user-msg); color: #fff; white-space: pre-wrap; }
+    .msg.user { align-self: flex-end; background: var(--user-msg); color: #fff; white-space: pre-wrap; position: relative; }
     /* "Sent with these files" chips inside a user bubble: the message keeps the
        typed prompt; the attached documents are shown as a compact indicator
        (their contents live in the LLM context, not in the transcript). */
@@ -243,20 +245,32 @@ ${renderViewConfig(deps)}
     }
     .msg.assistant, .msg.tool { width: 100%; max-width: 100%; }
     .msg.assistant { align-self: flex-start; background: var(--assistant-msg); min-width: 0; position: relative; font-size: var(--fs-lg); }
-    /* Branch-from-this-point: a small ⎇ key on assistant replies, revealed on
-       hover (top-right), mirroring the sessions-list branch action. */
-    .branch-at {
-      position: absolute; top: 4px; right: 6px; z-index: 3;
-      background: rgba(255, 255, 255, 0.06); border: 1px solid var(--border);
-      border-radius: 5px; color: #9a9a9a; font-size: var(--fs-sm); line-height: 1;
-      padding: 3px 6px; cursor: pointer;
-      opacity: 0; pointer-events: none;
-      transition: opacity 0.12s, color 0.12s, border-color 0.12s, background-color 0.12s;
+    /* Bubble action tabs: the ⎇ branch key on assistant replies and the ✂ cut
+       key on user prompts become little "linguette" anchored to the bubble's
+       TOP-RIGHT. On hover they SLIDE UP out of the bubble (same fade/reveal as
+       before) so they stay clearly visible instead of blending into the text. */
+    .branch-at, .truncate-at {
+      position: absolute; top: 0; right: 8px; z-index: 4;
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 20px; min-width: 24px; padding: 0 6px;
+      background: var(--surface-2); border: 1px solid rgba(255, 255, 255, 0.16);
+      border-bottom: none; border-radius: 6px 6px 0 0;
+      color: #cfcfcf; line-height: 1;
+      cursor: pointer; opacity: 0; pointer-events: none;
+      transform: translateY(6px);
+      transition: opacity 0.14s ease, transform 0.14s ease,
+                  color 0.12s, border-color 0.12s, background-color 0.12s;
     }
-    .msg.assistant:hover .branch-at { opacity: 1; pointer-events: auto; }
+    /* The ✂ tab sits on an ORANGE user bubble: use the SAME orange as the
+       bubble so it reads as a tab made of the same material. */
+    .truncate-at { background: var(--user-msg); border-color: rgba(255, 255, 255, 0.28); color: #fff; }
+    .msg.assistant:hover .branch-at,
+    .msg.user:hover .truncate-at { opacity: 1; pointer-events: auto; transform: translateY(-100%); }
     /* Disabled (session working): fully inert — no hover reaction, hidden. */
-    .msg.assistant:hover .branch-at:disabled { opacity: 0; pointer-events: none; }
-    .branch-at:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); background: rgba(255, 255, 255, 0.1); }
+    .msg.assistant:hover .branch-at:disabled,
+    .msg.user:hover .truncate-at:disabled { opacity: 0; pointer-events: none; }
+    .branch-at:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); background: #2c241f; }
+    .truncate-at:hover:not(:disabled) { color: #fff; border-color: #fff; background: var(--accent-strong); }
     .msg.assistant.error { background: rgba(244, 71, 71, 0.15); border: 1px solid var(--error); }
     .msg.assistant.loop { background: rgba(245, 166, 35, 0.12); border: 1px solid #f5a623; }
     /* Prominent "Switch to Build" call to action (Analyze prepared previews). */

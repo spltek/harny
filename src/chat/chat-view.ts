@@ -255,6 +255,50 @@ export class ChatViewProvider implements WebviewViewProvider {
     await this.createBranch(rt.sessionId, name, loaded.messages.slice(0, index + 1));
   }
 
+  /**
+   * Cut the ACTIVE session's transcript from the message at `index` (a USER
+   * prompt bubble) DOWNWARD: that message and everything after it are removed,
+   * IN PLACE, after a confirmation. The destructive companion to
+   * {@link branchAt}, used to "sanitize" a conversation that took a bad turn and
+   * continue from a clean point. The removed tail is NOT kept — branch first to
+   * preserve it.
+   */
+  private async truncateAt(index: number): Promise<void> {
+    const rt = this.activeRuntime();
+    if (!rt) return;
+    // The ✂ keys are DISABLED while the session works (silent guard).
+    if (rt.agent.streaming) return;
+    if (!Number.isInteger(index) || index < 0) return;
+    // Slice the SAME array the UI rendered (the agent's in-memory history), so
+    // the bubble index matches exactly.
+    const messages = rt.agent.getMessages();
+    if (index >= messages.length) return; // stale bubble, treat as gone
+    // Keeping [0, index) drops that message and the whole tail, so a tool-call
+    // is never left without its tool results.
+    const kept = messages.slice(0, index);
+    const removed = messages.length - kept.length;
+    const ok = await this.inPanelAlert({
+      kind: "confirm",
+      title: "Cut the conversation here?",
+      message:
+        `This permanently removes ${removed} message${removed === 1 ? "" : "s"} from this session ` +
+        `(this message and everything after it). The removed part is NOT kept — branch this session ` +
+        `first if you want to preserve it.`,
+      confirmText: "Cut",
+      danger: true,
+    });
+    if (!ok) return;
+    rt.history.replace(kept);
+    this.sessions.saveMessages(rt.sessionId, kept);
+    // The transcript is shorter now: reset the fill metrics so the bars do not
+    // lie, then re-render the cut conversation.
+    rt.contextTokens = 0;
+    rt.cachedTokens = 0;
+    rt.cachedWriteTokens = 0;
+    void this.pushConfig();
+    this.view?.webview.postMessage({ type: "refresh", messages: rt.agent.getMessages() });
+  }
+
   /** Shared branch core: new session + slicing done by the caller. */
   private async createBranch(
     sourceId: string,
@@ -459,6 +503,9 @@ export class ChatViewProvider implements WebviewViewProvider {
         break;
       case "branchAt":
         await this.branchAt(Number(msg.index));
+        break;
+      case "truncateAt":
+        await this.truncateAt(Number(msg.index));
         break;
       case "deleteSession":
         if (typeof msg.id === "string") await this.deleteSession(msg.id);

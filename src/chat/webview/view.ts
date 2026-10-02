@@ -927,7 +927,10 @@ function renderMessages(msgs: ChatMsg[]): boolean {
         }
       }
     } else {
-      addMessage(m.role, m.displayText ?? (m.content || ""), m.attachments);
+      const el = addMessage(m.role, m.displayText ?? (m.content || ""), m.attachments);
+      // The ✂ cut-from-here lives on the USER prompt bubbles: cutting removes
+      // the prompt and everything after it, so you can retype a cleaner one.
+      if (m.role === "user") attachTruncateAt(el, i);
     }
   }
   return hasVisible;
@@ -937,7 +940,7 @@ function icon(id: keyof typeof ICON_GLYPHS, size = 14): string {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true">${ICON_GLYPHS[id]}</svg>`;
 }
 
-const ICON_GLYPHS: Record<string, string> = {"i-play":"<path d=\"M8 5v14l11-7z\" fill=\"currentColor\"/>","i-stop":"<rect x=\"6\" y=\"6\" width=\"12\" height=\"12\" rx=\"2\" fill=\"currentColor\"/>","i-plus":"<path d=\"M12 5v14M5 12h14\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" fill=\"none\"/>","i-minus":"<path d=\"M5 12h14\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" fill=\"none\"/>","i-x":"<path d=\"M18 6 6 18M6 6l12 12\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" fill=\"none\"/>","i-pencil":"<path d=\"M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linejoin=\"round\" fill=\"none\"/>","i-trash":"<path d=\"M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" fill=\"none\"/>","i-branch":"<path d=\"M6 3v12\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" fill=\"none\"/><circle cx=\"18\" cy=\"6\" r=\"3\" fill=\"currentColor\"/><circle cx=\"6\" cy=\"18\" r=\"3\" fill=\"currentColor\"/><path d=\"M18 9a9 9 0 0 1-9 9\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" fill=\"none\"/>"};
+const ICON_GLYPHS: Record<string, string> = {"i-play":"<path d=\"M8 5v14l11-7z\" fill=\"currentColor\"/>","i-stop":"<rect x=\"6\" y=\"6\" width=\"12\" height=\"12\" rx=\"2\" fill=\"currentColor\"/>","i-plus":"<path d=\"M12 5v14M5 12h14\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" fill=\"none\"/>","i-minus":"<path d=\"M5 12h14\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" fill=\"none\"/>","i-x":"<path d=\"M18 6 6 18M6 6l12 12\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" fill=\"none\"/>","i-pencil":"<path d=\"M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linejoin=\"round\" fill=\"none\"/>","i-trash":"<path d=\"M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" fill=\"none\"/>","i-branch":"<path d=\"M6 3v12\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" fill=\"none\"/><circle cx=\"18\" cy=\"6\" r=\"3\" fill=\"currentColor\"/><circle cx=\"6\" cy=\"18\" r=\"3\" fill=\"currentColor\"/><path d=\"M18 9a9 9 0 0 1-9 9\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" fill=\"none\"/>","i-scissors":"<circle cx=\"6\" cy=\"6\" r=\"3\" stroke=\"currentColor\" stroke-width=\"2\" fill=\"none\"/><circle cx=\"6\" cy=\"18\" r=\"3\" stroke=\"currentColor\" stroke-width=\"2\" fill=\"none\"/><path d=\"M20 4 8.12 15.88M14.47 14.48 20 20M8.12 8.12 12 12\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" fill=\"none\"/>"};
 
 /**
  * Small ⎇ key on an assistant reply: branches the session UP TO AND
@@ -952,6 +955,25 @@ function attachBranchAt(el: HTMLElement, index: number): void {
   b.addEventListener("click", (e) => {
     e.stopPropagation();
     vscode.postMessage({ type: "branchAt", index });
+  });
+  el.appendChild(b);
+}
+
+/**
+ * Small ✂ key on a USER prompt bubble: cuts THIS session from that prompt
+ * DOWNWARD — the prompt and everything after it are removed, in place, after a
+ * confirmation. The destructive companion to branch, used to "sanitize" a
+ * conversation that took a bad turn and continue from a clean point. Revealed
+ * on hover; disabled while working.
+ */
+function attachTruncateAt(el: HTMLElement, index: number): void {
+  const b = document.createElement("button");
+  b.className = "truncate-at";
+  b.title = "Cut the conversation from here down (removes this message and everything after it)";
+  b.innerHTML = icon("i-scissors", 12);
+  b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    vscode.postMessage({ type: "truncateAt", index });
   });
   el.appendChild(b);
 }
@@ -1970,8 +1992,8 @@ function setStreaming(active: boolean): void {
   if (active && !modeMenu.classList.contains("hidden")) closeModeMenu();
   modeBtn.disabled = active;
   parallelBtn.disabled = active;
-  // Branch keys on assistant bubbles follow the same lock.
-  for (const b of document.querySelectorAll<HTMLButtonElement>(".branch-at")) {
+  // Branch/cut keys on assistant bubbles follow the same lock.
+  for (const b of document.querySelectorAll<HTMLButtonElement>(".branch-at, .truncate-at")) {
     b.disabled = active;
   }
 }
