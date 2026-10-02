@@ -411,6 +411,38 @@ describe("SubAgentRunner", () => {
     expect(res.content).toContain("aborted");
     expect(res.content).not.toContain("interrupted");
   });
+
+  it("aborting the PARENT signal aborts the in-flight sub-agent (start/abort race)", async () => {
+    let aborted = false;
+    const hanging: LLMProviderFactory = {
+      create() {
+        return {
+          protocol: "chat" as const,
+          async *stream(_m: LLMMessage[], signal?: AbortSignal): AsyncGenerator<StreamChunk> {
+            await new Promise<void>((resolve) => {
+              if (signal?.aborted) return resolve();
+              signal?.addEventListener("abort", () => {
+                aborted = true;
+                resolve();
+              });
+            });
+          },
+        };
+      },
+    };
+    const runner = buildRunner(hanging);
+    const ac = new AbortController();
+    const pending = runner.run(spec(), undefined, ac.signal, "tc-signal");
+    await Promise.resolve();
+    expect(runner.activeCount).toBe(1);
+
+    ac.abort(); // whole-run Stop cascades through the parent signal
+    const res = await pending;
+    expect(aborted).toBe(true);
+    expect(runner.activeCount).toBe(0);
+    expect(res.isError).toBe(true);
+    expect(res.content).toContain("aborted");
+  });
 });
 
 describe("toSubAgentEvent", () => {

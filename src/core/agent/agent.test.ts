@@ -2463,6 +2463,81 @@ describe("Orchestration (Delegate)", () => {
     expect(outputs.some((o) => /Sub-agent "B" aborted/.test(o))).toBe(true);
   });
 
+  it("clears pending per-sub-task aborts between runs (a late abort does not leak)", async () => {
+    let spawned = 0;
+    const tools = new ToolRegistry([makeTool("Read")]);
+    const del = delegateTurn([{ id: "A", goal: "x", access: "read", resources: ["a.ts"] }]);
+    const factory = fakeFactory(del, [{ type: "text", content: "done" }], del, [{ type: "text", content: "done" }]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history: new InMemoryChatHistory(),
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      spawnSubAgent: async () => {
+        spawned++;
+        return { content: "report", isError: false };
+      },
+    });
+    agent.setMode("agent");
+    agent.setDelegation(true);
+
+    await agent.send("one");
+    agent.abortSubAgent("d0"); // stray/late abort recorded AFTER run 1 ended
+    await agent.send("two");
+
+    // Run 2's Delegate "d0" still ran: the pending-abort set is per run.
+    expect(spawned).toBe(2);
+  });
+
+  it("abortSubAgent with an empty id is a no-op and never skips the delegate", async () => {
+    const spawned: string[] = [];
+    const { agent } = build({
+      calls: [{ id: "A", goal: "A", access: "read", resources: ["a.ts"] }],
+      spawn: async (spec) => {
+        spawned.push(spec.id);
+        return { content: "report", isError: false };
+      },
+    });
+    agent.abortSubAgent(""); // ignored
+    await agent.send("go");
+    expect(spawned).toEqual(["A"]);
+  });
+
+  it("aborts the HOST-dispatched sub-agent if aborted before it starts", async () => {
+    const spawned: number[] = [];
+    const answer = (): StreamChunk[] => [{ type: "text", content: "direct answer" }];
+    const tools = new ToolRegistry([makeTool("Read")]);
+    const events = new InMemoryEventBus<AgentEvent>();
+    const history = new InMemoryChatHistory();
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: fakeFactory(answer(), answer(), answer()),
+      tools,
+      history,
+      events,
+      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      spawnSubAgent: async () => {
+        spawned.push(1);
+        return { content: "report", isError: false };
+      },
+    });
+    agent.setMode("agent");
+    agent.setDelegation(true);
+    // The host announces the forced delegate, then checks the abort set: abort
+    // it in the announcement so it is skipped BEFORE it ever starts.
+    events.subscribe((e) => {
+      if (e.type === "tool_call" && e.toolCall.id === "auto-delegate") agent.abortSubAgent("auto-delegate");
+    });
+
+    await agent.send("do it");
+
+    expect(spawned).toHaveLength(0);
+    const toolMsgs = history.all().filter((m) => m.role === "tool").map((m) => m.content ?? "");
+    expect(toolMsgs.some((c) => /Sub-agent "auto" aborted/i.test(c))).toBe(true);
+  });
+
   it("rejects invalid delegate args (missing resources) without spawning", async () => {
     let spawned = 0;
     const { agent, history } = build({

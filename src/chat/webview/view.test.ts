@@ -1811,6 +1811,18 @@ describe("view webview client", () => {
     expect((bubble.querySelector(".subagent-abort") as HTMLButtonElement).hidden).toBe(true);
   });
 
+  it("shows the abort button while a sub-agent is still queued (before it starts)", async () => {
+    await loadView();
+    hostMessage(PARALLEL_ON);
+    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
+    const btn = bubble.querySelector(".subagent-abort") as HTMLButtonElement;
+    expect(bubble.querySelector(".subagent-status")?.classList.contains("queued")).toBe(true);
+    expect(btn.hidden).toBe(false);
+    btn.click();
+    expect(posted).toContainEqual({ type: "abortSubAgent", toolCallId: "s1" });
+  });
+
   it("marks a queued (never-started) sub-agent as aborted", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
@@ -1880,6 +1892,26 @@ describe("view webview client", () => {
     expect(bubble).toBeTruthy();
     expect(bubble.querySelector(".subagent-status")?.classList.contains("done")).toBe(true);
     expect(bubble.querySelector(".tool-result")?.textContent).toContain("done");
+  });
+
+  it("hides the abort button when replaying a finished sub-agent from the transcript", async () => {
+    await loadView();
+    hostMessage(PARALLEL_ON);
+    hostMessage({
+      type: "refresh",
+      messages: [
+        {
+          role: "assistant",
+          content: "🔧 Tools: Delegate",
+          timestamp: 1,
+          toolCalls: [{ id: "s1", name: "Delegate", arguments: { id: "A", goal: "do it", access: "read", resources: ["a.ts"] } }],
+        },
+        { role: "tool", toolCallId: "s1", content: '🔁 Sub-agent "A" report:\ndone', timestamp: 2 },
+      ],
+    });
+    const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
+    expect(bubble.querySelector(".subagent-status")?.classList.contains("done")).toBe(true);
+    expect((bubble.querySelector(".subagent-abort") as HTMLButtonElement).hidden).toBe(true);
   });
 
   it("renders a model dropdown grouped by provider and posts setModel on change", async () => {
