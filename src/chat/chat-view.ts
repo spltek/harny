@@ -20,6 +20,8 @@ import { toTemperature, toTopP } from "./temperature";
 import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, toContextWindow, toOutputTokens } from "./context-window";
 import { PanelModalQueue } from "./panel-modal-queue";
 import { Compactor, DEFAULT_COMPACTION, CompactionSettings, planManualCompaction, shouldCompact, estimateTokens, serializeConversation, toCompactionThresholdPercent } from "../core/sessions/compactor";
+import { normalizeLoopGuardSensitivity, resolveLoopGuardOptions } from "../core/agent/loop-guard";
+import { DEFAULT_MAX_PARALLEL_SUB_AGENTS } from "../core/agent/agent";
 
 /**
  * Single side-view (webview view) hosting: a hideable sessions list, a tab bar
@@ -317,6 +319,9 @@ export class ChatViewProvider implements WebviewViewProvider {
       ...(existing?.contextWindow ? { contextWindow: existing.contextWindow } : {}),
       ...(existing?.outputTokens ? { outputTokens: existing.outputTokens } : {}),
       ...(existing?.temperature !== undefined ? { temperature: existing.temperature } : {}),
+      ...(existing?.maxParallelSubAgents !== undefined ? { maxParallelSubAgents: existing.maxParallelSubAgents } : {}),
+      ...(existing?.loopGuard ? { loopGuard: existing.loopGuard } : {}),
+      ...(existing?.loopGuardResponse !== undefined ? { loopGuardResponse: existing.loopGuardResponse } : {}),
     };
     if (Object.keys(settings).length > 0) this.sessions.saveSettings(created.id, settings);
     await this.setActive(created.id);
@@ -534,7 +539,14 @@ export class ChatViewProvider implements WebviewViewProvider {
       case "saveProviders": {
         const data = msg.data;
         if (!data || typeof data !== "object") break;
-        const ok = this.providers.saveProvidersEditor(data as ProviderEditorData);
+        // The modal no longer edits the legacy global cap: carry the existing
+        // config value through so a providers save never wipes it.
+        const merged: ProviderEditorData = {
+          ...(data as ProviderEditorData),
+          maxParallelSubAgents:
+            (data as ProviderEditorData).maxParallelSubAgents ?? this.config.get().maxParallelSubAgents,
+        };
+        const ok = this.providers.saveProvidersEditor(merged);
         if (ok) {
           // Refresh the dropdown/thinking state from the new config immediately.
           void this.pushConfig();
@@ -671,6 +683,43 @@ export class ChatViewProvider implements WebviewViewProvider {
         this.parallelEnabled = msg.parallel;
         this.activeRuntime()?.agent.setDelegation(this.parallelEnabled);
         void this.pushConfig();
+        break;
+      }
+
+      case "setMaxParallelSubAgents": {
+        const rt = this.activeRuntime();
+        if (!rt) break;
+        // Per-session cap: a number >= 0 (0 = explicitly no cap); anything else
+        // clears the override so the config default (then 4) applies.
+        const value =
+          typeof msg.value === "number" && Number.isFinite(msg.value) && msg.value >= 0
+            ? Math.trunc(msg.value)
+            : undefined;
+        rt.maxParallelSubAgents = value;
+        rt.agent.setMaxParallelSubAgents(value);
+        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { maxParallelSubAgents: value }), false);
+        break;
+      }
+
+      case "setLoopGuard": {
+        const rt = this.activeRuntime();
+        if (!rt) break;
+        // Per-session Loop Guard sensitivity; undefined clears the override (= normal).
+        const level = normalizeLoopGuardSensitivity(msg.value);
+        rt.loopGuard = level;
+        rt.agent.setLoopGuardOptions(resolveLoopGuardOptions(level, rt.loopGuardResponse));
+        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { loopGuard: level }), false);
+        break;
+      }
+
+      case "setLoopGuardResponse": {
+        const rt = this.activeRuntime();
+        if (!rt) break;
+        // Opt-in final-answer guard: a boolean persisted on the session.
+        const value = msg.value === true;
+        rt.loopGuardResponse = value;
+        rt.agent.setLoopGuardOptions(resolveLoopGuardOptions(rt.loopGuard, value));
+        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { loopGuardResponse: value }), false);
         break;
       }
 
@@ -927,6 +976,8 @@ export class ChatViewProvider implements WebviewViewProvider {
     // stale mode/parallel state.
     rt.agent.setMode(rt.mode ?? "analyze");
     rt.agent.setDelegation(this.parallelEnabled);
+    rt.agent.setMaxParallelSubAgents(rt.maxParallelSubAgents);
+    rt.agent.setLoopGuardOptions(resolveLoopGuardOptions(rt.loopGuard, rt.loopGuardResponse));
     const rawText = typeof msg.text === "string" ? msg.text : "";
     const attached = (msg.attachments as AttachmentInfo[] | undefined) ?? [];
     // A message may carry text, attachments, or both — an attachment-only send
@@ -1186,6 +1237,15 @@ export class ChatViewProvider implements WebviewViewProvider {
     this.streamTee.attachAll(runtimes);
   }
 
+  /** The concurrent sub-agent cap actually used for the active session: the
+   * per-session override wins, then the config default, then 4. */
+  private effectiveParallelCap(): number {
+    const rt = this.activeRuntime();
+    if (rt?.maxParallelSubAgents !== undefined) return rt.maxParallelSubAgents;
+    const cfgCap = this.config.get().maxParallelSubAgents;
+    return typeof cfgCap === "number" && cfgCap > 0 ? cfgCap : DEFAULT_MAX_PARALLEL_SUB_AGENTS;
+  }
+
   private async buildConfig(): Promise<{
     provider: string;
     activeProvider?: string;
@@ -1202,6 +1262,9 @@ export class ChatViewProvider implements WebviewViewProvider {
     thinkingLevel?: "off" | "low" | "medium" | "high";
     mode?: "analyze" | "agent";
     parallel?: boolean;
+    maxParallelSubAgents: number;
+    loopGuard?: "low" | "normal" | "high";
+    loopGuardResponse?: boolean;
     contextWindow: number;
     compactionThresholdPercent?: number;
     outputTokens: number;
@@ -1276,6 +1339,10 @@ export class ChatViewProvider implements WebviewViewProvider {
       // always mirrors what the agent actually enforces (no stale read-only).
       mode: this.activeRuntime()?.mode ?? "analyze",
       parallel: this.parallelEnabled,
+      // The EFFECTIVE cap the agent will use (session override > config > 4).
+      maxParallelSubAgents: this.effectiveParallelCap(),
+      loopGuard: this.activeRuntime()?.loopGuard,
+      loopGuardResponse: this.activeRuntime()?.loopGuardResponse,
       contextWindow: this.activeRuntime()?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
       // Only the session override, so the UI can show "Auto" (undefined) vs
       // an explicit value. Config-file defaults stay effective but hidden.

@@ -68,6 +68,12 @@ interface ConfigState {
   frequencyPenalty?: number;
   topP?: number;
   sampler?: "temperature" | "topP";
+  /** Effective concurrent sub-agent cap for the active session (0 = no cap). */
+  maxParallelSubAgents?: number;
+  /** Per-session Loop Guard sensitivity; undefined = the "normal" preset. */
+  loopGuard?: "low" | "normal" | "high";
+  /** Also guard the visible final answer (opt-in; undefined = off). */
+  loopGuardResponse?: boolean;
   contextTokens?: number;
   cachedTokens?: number;
   cachedWrite?: number;
@@ -1506,6 +1512,30 @@ inputEl.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   if (e.key === "Escape") vscode.postMessage({ type: "abort" });
 });
+// GLOBAL Esc = Stop. The textarea is DISABLED while working, so its own
+// keydown never fires — yet Esc must still stop the run. Modals/overlays take
+// precedence: if one is open, Esc closes it (its own handler) and must NOT
+// abort the run.
+window.addEventListener("keydown", (e) => {
+  // Ignore stale handlers (a re-imported module in tests leaves its listener on
+  // the shared window) and any detached button: only the live view acts.
+  if (e.key !== "Escape" || !abortBtn.isConnected || abortBtn.disabled) return;
+  // Do NOT hijack an Escape that is closing a native control (an open <select>,
+  // a focused input/button): that is the user dismissing something, not Stop.
+  const target = e.target as HTMLElement | null;
+  if (target?.closest?.("input, textarea, select, button, [contenteditable='true']")) return;
+  const overlay =
+    !nameModal.classList.contains("hidden") ||
+    !alertModal.classList.contains("hidden") ||
+    !providersModal.classList.contains("hidden") ||
+    !sessionsModal.classList.contains("hidden") ||
+    !compactSettingsModal.classList.contains("hidden") ||
+    !modeMenu.classList.contains("hidden") ||
+    (lightboxEl !== null && !lightboxEl.classList.contains("hidden"));
+  if (overlay) return;
+  e.preventDefault();
+  vscode.postMessage({ type: "abort" });
+});
 abortBtn.addEventListener("click", () => vscode.postMessage({ type: "abort" }));
 // Collapse/expand the control stack (model, window, sampling, metrics).
 ctlToggle.addEventListener("click", () => {
@@ -1743,10 +1773,6 @@ const peBaseUrl = document.getElementById("pe-baseurl") as HTMLInputElement;
 const peApiKey = document.getElementById("pe-apikey") as HTMLInputElement;
 const peThinking = document.getElementById("pe-thinking") as HTMLSelectElement;
 const peSessionHeader = document.getElementById("pe-session-header") as HTMLInputElement;
-const peMaxParallelEnabled = document.getElementById("pe-maxparallel-enabled") as HTMLInputElement;
-const peMaxParallelInput = document.getElementById("pe-maxparallel-input") as HTMLInputElement;
-const peMaxParallelMinus = document.getElementById("pe-maxparallel-minus") as HTMLButtonElement;
-const peMaxParallelPlus = document.getElementById("pe-maxparallel-plus") as HTMLButtonElement;
 const providerTestBtn = document.getElementById("provider-test") as HTMLButtonElement;
 const providerDeleteBtn = document.getElementById("provider-delete") as HTMLButtonElement;
 const providerAddBtn = document.getElementById("provider-add") as HTMLButtonElement;
@@ -1810,15 +1836,8 @@ function loadProviderIntoForm(name: string): void {
 
 function openProvidersEditor(data: {
   providers: Record<string, { baseUrl?: string; apiKey?: string; thinking?: string; thinkingLevel?: string; extra?: Record<string, unknown> }>;
-  maxParallelSubAgents?: number;
 }): void {
   providerEditorData = { providers: JSON.parse(JSON.stringify(data.providers ?? {})) };
-  // Bottom settings: max parallel sub-agents flag + value.
-  const cap = data.maxParallelSubAgents;
-  const hasCap = typeof cap === "number" && Number.isInteger(cap) && cap > 0;
-  peMaxParallelEnabled.checked = hasCap;
-  peMaxParallelInput.value = String(hasCap ? cap : DEFAULT_MAX_PARALLEL);
-  syncMaxParallelUi();
   const names = Object.keys(providerEditorData.providers);
   providerEditorSelected = names.length > 0 ? names[0] : "";
   refreshProviderList();
@@ -1949,44 +1968,78 @@ providersSaveBtn.addEventListener("click", () => {
     thinking: peThinking.value === "unspecified" ? undefined : peThinking.value,
     ...(peSessionHeader.value.trim() ? { sessionHeader: peSessionHeader.value.trim() } : {}),
   };
-  vscode.postMessage({
-    type: "saveProviders",
-    data: {
-      ...providerEditorData,
-      maxParallelSubAgents: peMaxParallelEnabled.checked
-        ? clampMaxParallel(Number(peMaxParallelInput.value))
-        : undefined,
-    },
-  });
+  vscode.postMessage({ type: "saveProviders", data: { ...providerEditorData } });
   providersSaveBtn.disabled = true;
 });
 
-// ── Max parallel sub-agents stepper (bottom settings row) ──
-const DEFAULT_MAX_PARALLEL = 3;
+// ── Guardrails card: per-session parallel cap + Loop Guard sensitivity ──
+// Both are persisted ON THE SESSION (not the config file): they tune how THIS
+// conversation runs. Undefined loopGuard = the "normal" preset.
+const parEnabled = document.getElementById("par-enabled") as HTMLInputElement;
+const parInput = document.getElementById("par-input") as HTMLInputElement;
+const parMinus = document.getElementById("par-minus") as HTMLButtonElement;
+const parPlus = document.getElementById("par-plus") as HTMLButtonElement;
+const lgRadios = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="lg-level"]'));
+const lgResponse = document.getElementById("lg-response") as HTMLInputElement;
 
-function clampMaxParallel(v: number): number {
-  if (!Number.isFinite(v)) return DEFAULT_MAX_PARALLEL;
+const DEFAULT_PARALLEL = 4;
+
+type LoopGuardLevel = "low" | "normal" | "high";
+
+function clampParallel(v: number): number {
+  if (!Number.isFinite(v)) return DEFAULT_PARALLEL;
   return Math.min(99, Math.max(1, Math.trunc(v)));
 }
 
-function syncMaxParallelUi(): void {
-  const on = peMaxParallelEnabled.checked;
-  peMaxParallelInput.disabled = !on;
-  peMaxParallelMinus.disabled = !on;
-  peMaxParallelPlus.disabled = !on;
+function syncParUi(): void {
+  const on = parEnabled.checked;
+  parInput.disabled = !on || streamingActive;
+  parMinus.disabled = !on || streamingActive;
+  parPlus.disabled = !on || streamingActive;
 }
 
-peMaxParallelEnabled.addEventListener("change", syncMaxParallelUi);
-peMaxParallelMinus.addEventListener("click", () => {
-  peMaxParallelInput.value = String(clampMaxParallel(Number(peMaxParallelInput.value) - 1));
+function sendParallel(): void {
+  parInput.value = String(clampParallel(Number(parInput.value)));
+  // Off is stored as 0 (explicitly no cap); on as the clamped number.
+  vscode.postMessage({ type: "setMaxParallelSubAgents", value: parEnabled.checked ? clampParallel(Number(parInput.value)) : 0 });
+}
+
+function sendLoopGuard(): void {
+  const level = (lgRadios.find((r) => r.checked)?.value ?? "normal") as LoopGuardLevel;
+  vscode.postMessage({ type: "setLoopGuard", value: level });
+}
+
+function sendLoopGuardResponse(): void {
+  vscode.postMessage({ type: "setLoopGuardResponse", value: lgResponse.checked });
+}
+
+function renderControl(config: ConfigState): void {
+  const cap = config.maxParallelSubAgents;
+  const hasCap = typeof cap === "number" && cap > 0;
+  parEnabled.checked = hasCap;
+  parInput.value = String(hasCap ? cap : DEFAULT_PARALLEL);
+  syncParUi();
+  const level: LoopGuardLevel = config.loopGuard === "high" || config.loopGuard === "low" ? config.loopGuard : "normal";
+  for (const r of lgRadios) r.checked = r.value === level;
+  lgResponse.checked = config.loopGuardResponse === true;
+}
+
+parEnabled.addEventListener("change", () => {
+  syncParUi();
+  sendParallel();
 });
-peMaxParallelPlus.addEventListener("click", () => {
-  peMaxParallelInput.value = String(clampMaxParallel(Number(peMaxParallelInput.value) + 1));
+parMinus.addEventListener("click", () => {
+  parInput.value = String(clampParallel(Number(parInput.value) - 1));
+  sendParallel();
 });
-bindIntegerInput(peMaxParallelInput);
-peMaxParallelInput.addEventListener("change", () => {
-  peMaxParallelInput.value = String(clampMaxParallel(Number(peMaxParallelInput.value)));
+parPlus.addEventListener("click", () => {
+  parInput.value = String(clampParallel(Number(parInput.value) + 1));
+  sendParallel();
 });
+bindIntegerInput(parInput);
+parInput.addEventListener("change", sendParallel);
+for (const r of lgRadios) r.addEventListener("change", sendLoopGuard);
+lgResponse.addEventListener("change", sendLoopGuardResponse);
 
 providersCancelBtn.addEventListener("click", closeProvidersEditor);
 providersModal.querySelector(".providers-backdrop")?.addEventListener("click", closeProvidersEditor);
@@ -2065,6 +2118,11 @@ function setStreaming(active: boolean): void {
   freqMinus.disabled = active;
   freqPlus.disabled = active;
   freqAuto.disabled = active;
+  // Guardrails card (parallel cap + Loop Guard) follows the same lock.
+  parEnabled.disabled = active;
+  for (const r of lgRadios) r.disabled = active;
+  lgResponse.disabled = active;
+  syncParUi();
   inputEl.disabled = active;
   // Mode button follows the same lock (no switching mid-stream); a dropdown
   // left open gets closed so the disabled state is obvious.
@@ -2845,6 +2903,7 @@ window.addEventListener("message", (e) => {
       ctxInput.value = String(clampContextWindow((msg.config && msg.config.contextWindow) || DEFAULT_CONTEXT_WINDOW));
       renderOutputTokens(msg.config || {});
       renderSamplerControl(msg.config || {});
+      renderControl((msg.config || {}) as ConfigState);
       presenceControl.render(msg.config && msg.config.presencePenalty);
       freqControl.render(msg.config && msg.config.frequencyPenalty);
       compactionThresholdPct = (msg.config && msg.config.compactionThresholdPercent) ?? 80;
@@ -2936,6 +2995,7 @@ function renderViewState(state: {
   ctxInput.value = String(clampContextWindow((state.config && state.config.contextWindow) || DEFAULT_CONTEXT_WINDOW));
   renderOutputTokens(state.config || {});
   renderSamplerControl(state.config || {});
+  renderControl(state.config || {});
   presenceControl.render(state.config && state.config.presencePenalty);
   freqControl.render(state.config && state.config.frequencyPenalty);
   compactionThresholdPct = (state.config && state.config.compactionThresholdPercent) ?? 80;

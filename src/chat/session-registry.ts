@@ -2,6 +2,7 @@ import type { ChatController } from "../core/agent/chat-controller";
 import type { ChatHistory } from "../core/history/chat-history";
 import { PersistentChatHistory } from "../core/history/persistent-chat-history";
 import type { ThinkingLevel } from "../core/config/types";
+import type { LoopGuardSensitivity } from "../core/agent/loop-guard";
 import type { SessionStore } from "../core/sessions/types";
 import type { SessionManager } from "../core/sessions/session-manager";
 
@@ -32,6 +33,12 @@ export interface SessionRuntime {
   topP?: number;
   /** Active sampler: only its value is sent ("temperature" | "topP"). */
   sampler?: "temperature" | "topP";
+  /** Per-session concurrent sub-agent cap (undefined = inherit; 0 = no cap). */
+  maxParallelSubAgents?: number;
+  /** Per-session Loop Guard sensitivity; undefined = "normal". */
+  loopGuard?: LoopGuardSensitivity;
+  /** Also guard the visible final answer (opt-in; undefined = off). */
+  loopGuardResponse?: boolean;
   /** Chat mode chosen in this session (in-memory; default "analyze"). */
   mode?: "analyze" | "agent";
   /** Current context tokens in use (fill metric). */
@@ -91,6 +98,9 @@ export class SessionRegistry {
     rt.frequencyPenalty = loaded.summary.frequencyPenalty;
     rt.topP = loaded.summary.topP;
     rt.sampler = loaded.summary.sampler;
+    rt.maxParallelSubAgents = loaded.summary.maxParallelSubAgents;
+    rt.loopGuard = loaded.summary.loopGuard;
+    rt.loopGuardResponse = loaded.summary.loopGuardResponse;
     rt.contextTokens = loaded.summary.contextTokens;
     return rt;
   }

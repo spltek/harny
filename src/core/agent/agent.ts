@@ -30,7 +30,7 @@ import {
 } from "./orchestration";
 import { BUILD_SWITCH_HINT, type SystemPromptBuilder } from "./system-prompt";
 import type { AttachmentPart } from "../../chat/attachment-types";
-import { LoopGuard, type LoopDecision } from "./loop-guard";
+import { LoopGuard, DEFAULT_LOOP_GUARD_OPTIONS, type LoopDecision, type LoopGuardOptions } from "./loop-guard";
 import { ToolCallAccumulator } from "./tool-call-accumulator";
 import { ThinkingTagParser } from "./thinking-parser";
 import type { AgentEvent, SubAgentEvent } from "./types";
@@ -48,6 +48,10 @@ const TOOL_SUMMARY_RE = /^🔧 (?:Tool|Tools):/;
 /** Marker of the host-added "nothing applied" footer (used to trigger the
  * highlighted "Switch to Build" call to action in the UI). */
 const PREVIEW_FOOTER_MARKER = "Nothing has been applied";
+
+/** Default cap on concurrently-running sub-agents when neither the session nor
+ * the config sets one (the "Parallel sub-agents" control defaults to ON/4). */
+export const DEFAULT_MAX_PARALLEL_SUB_AGENTS = 4;
 
 function isSyntheticToolSummary(content: string): boolean {
   return TOOL_SUMMARY_RE.test(content);
@@ -92,6 +96,9 @@ export interface AgentDeps {
    * line per turn + one per loop/stop decision, so a run can be diagnosed
    * after the fact without the in-memory raw stream. Never throws. */
   log?: (message: string) => void;
+  /** Optional per-session Loop Guard options (resolved from the session's three
+   * knobs). Undefined = the "normal" preset. */
+  loopGuard?: LoopGuardOptions;
   /** Called (and awaited) at the START of every turn, before the LLM request.
    * The host uses it to auto-compact MID-RUN when the context threshold is
    * exceeded: it compacts at a step boundary, then the run continues. */
@@ -108,7 +115,10 @@ export class Agent implements ChatController {
   /** Chat mode: "analyze" (read-only) by default — see setMode(). */
   private _mode: ChatMode = DEFAULT_CHAT_MODE;
   /** Loop detection/breaking state (reset per run). */
-  private readonly guard = new LoopGuard();
+  private readonly guard: LoopGuard;
+  /** Per-session concurrent sub-agent cap: undefined = fall back to the config
+   * default (then DEFAULT_MAX_PARALLEL_SUB_AGENTS); 0 = explicitly no cap. */
+  private parallelCap: number | undefined;
   /** Analyze mode: changes PREPARED as dry-run previews, keyed by path (so the
    * "switch to Build" notice can say exactly WHAT still needs Build). */
   private readonly preparedChanges = new Map<string, string>();
@@ -134,11 +144,23 @@ export class Agent implements ChatController {
 
   constructor(private deps: AgentDeps) {
     this.mayDelegate = deps.allowDelegation !== false;
+    this.guard = new LoopGuard(deps.loopGuard ?? DEFAULT_LOOP_GUARD_OPTIONS);
   }
 
   /** Enable/disable orchestration (sub-agents) — the "Parallel" toggle. */
   setDelegation(enabled: boolean): void {
     this.delegationEnabled = enabled && this.mayDelegate;
+  }
+
+  /** Apply the per-session concurrent sub-agent cap (undefined = inherit the
+   * config default; 0 = no cap). Re-asserted by the host before each run. */
+  setMaxParallelSubAgents(cap: number | undefined): void {
+    this.parallelCap = cap;
+  }
+
+  /** Apply the per-session Loop Guard options (the three resolved knobs). */
+  setLoopGuardOptions(options: LoopGuardOptions): void {
+    this.guard.setOptions(options);
   }
 
   /** Switch chat mode: "analyze" (read-only) or "agent" (full tools). */
@@ -310,11 +332,12 @@ export class Agent implements ChatController {
     // guard nudges the model to actually act/answer instead of ending the run.
     const echoedLabel = isSyntheticToolSummary(turnResult.content);
     const content = echoedLabel ? "" : turnResult.content;
-    const { toolCalls, thinking, reasoningDetails, finishReason, reasoningLoop } = turnResult;
+    const { toolCalls, thinking, reasoningDetails, finishReason, reasoningLoop, answerLoop } = turnResult;
     this.log(
       `turn ${turn}: finish=${finishReason ?? "-"} content=${content.length}c thinking=${thinking.length}c ` +
         `tools=[${toolCalls.map((t) => t.name).join(",")}]` +
         (reasoningLoop ? " reasoningLoop" : "") +
+        (answerLoop ? " answerLoop" : "") +
         (echoedLabel ? " discardedEchoedLabel" : ""),
     );
     const toolSummary =
@@ -327,6 +350,12 @@ export class Agent implements ChatController {
     // half-emitted tool call is untrustworthy. Break the loop and nudge.
     if (reasoningLoop) {
       if (!this.handleLoop(this.guard.noteReasoningLoop(), turn + 1 < maxTurns)) return;
+      return this.runTurns(turn + 1);
+    }
+
+    // The opt-in response guard cut the answer mid-stream: nudge and continue.
+    if (answerLoop) {
+      if (!this.handleLoop(this.guard.noteAnswerLoop(), turn + 1 < maxTurns)) return;
       return this.runTurns(turn + 1);
     }
 
@@ -468,9 +497,12 @@ export class Agent implements ChatController {
         toolResult: { toolCallId: toolCalls[index].id, output: result.content, isError: result.isError },
       });
     };
-    // Global cap on concurrently-running sub-agents (gear setting). Undefined
-    // or invalid = no cap (the whole parallel batch waits together).
-    const capRaw = this.deps.config.get().maxParallelSubAgents;
+    // Cap on concurrently-running sub-agents: the per-session setting wins,
+    // then the config default, then DEFAULT_MAX_PARALLEL_SUB_AGENTS. 0 = no cap.
+    const capRaw =
+      this.parallelCap !== undefined
+        ? this.parallelCap
+        : (this.deps.config.get().maxParallelSubAgents ?? DEFAULT_MAX_PARALLEL_SUB_AGENTS);
     const parallelCap =
       typeof capRaw === "number" && Number.isInteger(capRaw) && capRaw > 0 ? capRaw : Infinity;
     // Stop launching MORE work once the run is aborted (queued sub-agents must
@@ -675,6 +707,9 @@ export class Agent implements ChatController {
     /** True when the loop guard cut this turn short because the reasoning
      * repeated itself; the caller must nudge instead of executing tools. */
     reasoningLoop?: boolean;
+    /** True when the opt-in RESPONSE guard cut the visible answer short because
+     * it repeated itself; the caller must nudge instead of executing tools. */
+    answerLoop?: boolean;
   }> {
     const config = this.deps.config.get();
     const provider = this.deps.llmFactory.create(config);
@@ -714,6 +749,7 @@ export class Agent implements ChatController {
     let reasoningDetails: unknown[] | undefined;
     let finishReason: string | undefined;
     let reasoningLoop = false;
+    let answerLoop = false;
     const toolCalls: ToolCall[] = [];
 
     // Thinking tag parser: some models (Qwen, local LLMs) emit reasoning
@@ -785,11 +821,18 @@ export class Agent implements ChatController {
           turnAbort.abort();
           break;
         }
+
+        // Within-turn RESPONSE loop (opt-in): cut the visible answer and nudge.
+        if (!answerLoop && this.guard.observeAnswer(content)) {
+          answerLoop = true;
+          turnAbort.abort();
+          break;
+        }
       }
     } catch (err) {
       // A real user Stop must propagate; a guard-initiated cut must not.
       if (this.abortController!.signal.aborted) throw err;
-      if (!reasoningLoop) throw err;
+      if (!reasoningLoop && !answerLoop) throw err;
     } finally {
       this.abortController!.signal.removeEventListener("abort", linkMainAbort);
     }
@@ -802,7 +845,7 @@ export class Agent implements ChatController {
       throw abortErr;
     }
 
-    return { content, toolCalls, thinking, reasoningDetails, finishReason, reasoningLoop };
+    return { content, toolCalls, thinking, reasoningDetails, finishReason, reasoningLoop, answerLoop };
   }
 
   private async executeToolSafely(tc: ToolCall): Promise<ToolResult> {

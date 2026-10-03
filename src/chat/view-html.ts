@@ -699,13 +699,28 @@ ${renderViewConfig(deps)}
        relative: on zoom-in the columns stack gracefully (responsive to both
        panel width and font size). */
     .ctl-cards {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 8px;
     }
     .ctl-card {
       display: flex; flex-direction: column; gap: 8px;
       border-radius: 8px; padding: 8px 10px;
       background: var(--input-bg);
+    }
+    /* The Guardrails card spans the full row (prompt width) instead of one grid
+       column: it holds the per-session run controls (parallel cap + Loop Guard). */
+    .ctl-card-wide { grid-column: 1 / -1; }
+    /* Guardrails card: parallel cap + Loop Guard on ONE row. The grid MIRRORS
+       #ctl-cards (same 2 columns + 8px gap) so the fields line up VERTICALLY
+       with the cards above: column 1 under Window, column 2 under Sampling.
+       The negative margin cancels the card's 10px padding; each field re-adds
+       it so its label starts exactly where the upper cards' labels do. */
+    .ctl-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0 -10px; }
+    .ctl-controls > .field { padding: 0 10px; min-width: 0; }
+    #lg-toggle { flex-wrap: wrap; min-height: 1.85rem; align-items: center; }
+    .ctl-inline { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .ctl-inline input[type="checkbox"] {
+      flex: 0 0 auto; width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer;
     }
     /* The AI Model card keeps the ORIGINAL proportions: one full-width row
        with the label inline and the select stretching (card chrome only). */
@@ -867,13 +882,13 @@ ${renderViewConfig(deps)}
     #status .model-label,
     #input-area .model-label { color: #999; }
     /* The stepper fills its card field; the −/+ keys stay a tight unit inside. */
-    #ctx-window, #out-window, #samp-window, #presence-window, #freq-window { display: inline-flex; align-items: center; gap: 2px; width: 100%; }
-    #ctx-input, #out-input, #samp-input, #presence-input, #freq-input {
+    #ctx-window, #out-window, #samp-window, #presence-window, #freq-window, #par-window { display: inline-flex; align-items: center; gap: 2px; width: 100%; }
+    #ctx-input, #out-input, #samp-input, #presence-input, #freq-input, #par-input {
       flex: 1; min-width: 2.5rem; width: auto; height: 1.85rem; background: var(--input-bg); color: var(--fg);
       border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px;
       font-size: var(--fs-md); text-align: right;
     }
-    #ctx-input:focus, #out-input:focus, #samp-input:focus, #presence-input:focus, #freq-input:focus { border-color: var(--accent); outline: none; }
+    #ctx-input:focus, #out-input:focus, #samp-input:focus, #presence-input:focus, #freq-input:focus, #par-input:focus { border-color: var(--accent); outline: none; }
     /* Empty float input = Auto (not sent): neutral italic hint. */
     #samp-input::placeholder, #presence-input::placeholder, #freq-input::placeholder { color: #777; font-style: italic; }
     /* Sampler selector: native radios on ONE slim row occupying the same
@@ -887,6 +902,10 @@ ${renderViewConfig(deps)}
     }
     .sampler-opt input[type="radio"] {
       accent-color: var(--accent); margin: 0; width: 9px; height: 9px; cursor: pointer;
+    }
+    /* The Loop Guard "Include response" flag shares the sampler row styling. */
+    .sampler-opt input[type="checkbox"] {
+      accent-color: var(--accent); margin: 0; width: 11px; height: 11px; cursor: pointer;
     }
     .sampler-opt:hover { color: var(--fg); }
     .sampler-opt:has(input:checked) { color: var(--accent); font-weight: 600; }
@@ -1060,24 +1079,6 @@ ${renderViewConfig(deps)}
     .providers-io { margin-right: auto; align-self: center; font-size: var(--fs-sm); color: var(--muted, #999); }
     .providers-io.ok { color: #4ec9b0; }
     .providers-io.err { color: var(--error, #f05555); }
-    /* Bottom settings row: a flag + a numeric stepper (max parallel sub-agents). */
-    .providers-settings {
-      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-      padding-top: 10px; border-top: 1px solid var(--border);
-    }
-    .ps-flag {
-      display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
-      font-size: var(--fs-lg); color: var(--fg); user-select: none;
-    }
-    .ps-flag input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
-    .ps-hint { font-size: var(--fs-sm); color: var(--muted, #999); }
-    .ps-stepper { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; }
-    .ps-stepper input {
-      width: 4.2rem; text-align: center; font-size: var(--fs-lg);
-      padding: 4px 6px; border-radius: 6px; color: var(--fg);
-      background: var(--input-bg, #252526); border: 1px solid var(--border);
-    }
-    .ps-stepper input:disabled { opacity: 0.4; }
     #provider-test-result {
       font-size: var(--fs-md); line-height: 1.5; border-radius: 6px; padding: 8px 10px;
       background: rgba(255, 255, 255, 0.05); word-break: break-all;
@@ -1395,6 +1396,31 @@ ${renderViewConfig(deps)}
           </div>
         </div>
       </div>
+      <div class="ctl-card ctl-card-wide">
+        <span class="card-title">Guardrails</span>
+        <div class="ctl-controls">
+        <div class="field">
+          <label class="field-label" for="par-input">Max parallel sub-agents</label>
+          <div class="ctl-inline">
+            <input type="checkbox" id="par-enabled" title="Cap how many read-only sub-agents run at once (edits are never parallel). Off = no limit." aria-label="Enable the parallel sub-agent cap" />
+            <div id="par-window">
+              <button id="par-minus" class="ctx-btn" title="Decrease"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
+              <input id="par-input" type="text" inputmode="numeric" autocomplete="off" value="4" title="Max concurrent sub-agents (1–99)" />
+              <button id="par-plus" class="ctx-btn" title="Increase"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
+            </div>
+          </div>
+        </div>
+        <div class="field">
+          <span class="field-label">Loop Guard</span>
+          <div class="sampler-toggle" id="lg-toggle" role="radiogroup" aria-label="Loop Guard sensitivity">
+            <label class="sampler-opt" title="Aggressive: flags loops sooner (more nudges, lower thresholds)"><input type="radio" name="lg-level" id="lg-high" value="high" />High</label>
+            <label class="sampler-opt" title="Balanced: the default preset"><input type="radio" name="lg-level" id="lg-normal" value="normal" checked />Normal</label>
+            <label class="sampler-opt" title="Permissive: only clear, sustained loops are flagged"><input type="radio" name="lg-level" id="lg-low" value="low" />Low</label>
+            <label class="sampler-opt" title="Also apply the Loop Guard to the final answer text (detects the model repeating the same response). Default off."><input type="checkbox" id="lg-response" />Include response</label>
+          </div>
+        </div>
+        </div>
+      </div>
     </div>
   </div>
   <div id="metrics">
@@ -1509,18 +1535,6 @@ ${renderViewConfig(deps)}
             <button id="provider-delete" class="secondary danger" title="Remove this provider">Delete</button>
           </div>
           <div id="provider-test-result" class="hidden"></div>
-        </div>
-      </div>
-      <div class="providers-settings">
-        <label class="ps-flag" for="pe-maxparallel-enabled">
-          <input type="checkbox" id="pe-maxparallel-enabled" />
-          <span>Set max parallel sub-agents</span>
-        </label>
-        <span class="ps-hint">Cap how many read-only sub-agents run at the same time (edits are never parallel). Off = no limit.</span>
-        <div class="ps-stepper">
-          <button id="pe-maxparallel-minus" class="ctx-btn" type="button" title="Decrease" aria-label="Decrease max parallel sub-agents"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
-          <input id="pe-maxparallel-input" type="text" inputmode="numeric" autocomplete="off" value="3" disabled aria-label="Max parallel sub-agents" />
-          <button id="pe-maxparallel-plus" class="ctx-btn" type="button" title="Increase" aria-label="Increase max parallel sub-agents"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
         </div>
       </div>
       <div class="providers-actions">

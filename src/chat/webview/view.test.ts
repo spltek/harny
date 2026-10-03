@@ -63,6 +63,7 @@ function setupDom(
       </div>
     </div>
     <div id="status">AI Model: <select id="model-select"></select><button id="gear-btn">⚙</button><button id="ctx-minus">−</button><input id="ctx-input" type="text" value="128000"><button id="ctx-plus">+</button><button id="out-minus">−</button><input id="out-input" type="text" value="8192"><button id="out-plus">+</button><input id="sampler-temp" type="radio" name="sampler" checked><input id="sampler-topp" type="radio" name="sampler"><button id="samp-minus">−</button><input id="samp-input" type="text" placeholder="Auto"><button id="samp-plus">+</button><button id="samp-auto">Auto</button><button id="presence-minus">−</button><input id="presence-input" type="text" placeholder="Auto"><button id="presence-plus">+</button><button id="presence-auto">Auto</button><button id="freq-minus">−</button><input id="freq-input" type="text" placeholder="Auto"><button id="freq-plus">+</button><button id="freq-auto">Auto</button></div>
+    <div id="ctl-cards"><input type="checkbox" id="par-enabled" /><input id="par-input" type="text" value="4" /><button id="par-minus"></button><button id="par-plus"></button><button id="lg-reset"></button><input type="radio" name="lg-level" id="lg-high" value="high" /><input type="radio" name="lg-level" id="lg-normal" value="normal" checked /><input type="radio" name="lg-level" id="lg-low" value="low" /><input type="checkbox" id="lg-response" /></div>
     <div id="metrics"><select id="thinking-select"><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button><span id="compact-threshold-label"></span><button id="compact-settings-btn">⚙</button></div>
     <div id="compact-settings-modal" class="hidden">
       <div class="cs-backdrop"></div>
@@ -89,10 +90,6 @@ function setupDom(
         <input id="pe-apikey" type="text" />
         <select id="pe-thinking"><option value="effort">Effort</option><option value="bool">Bool</option><option value="unspecified">Unspecified</option></select>
         <input id="pe-session-header" type="text" />
-        <input type="checkbox" id="pe-maxparallel-enabled" />
-        <button id="pe-maxparallel-minus"></button>
-        <input id="pe-maxparallel-input" type="text" value="3" />
-        <button id="pe-maxparallel-plus"></button>
         <button id="provider-test" class="secondary">Test</button>
         <button id="provider-delete" class="secondary">Delete</button>
         <button id="provider-add" class="secondary">+ New</button>
@@ -650,6 +647,30 @@ describe("view webview client", () => {
 
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(lightbox.classList.contains("hidden")).toBe(true);
+  });
+
+  it("Esc stops the run while working (the textarea is disabled)", async () => {
+    await loadView();
+    hostMessage({ type: "status", active: true, workingIds: [] });
+    posted.length = 0;
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(posted).toContainEqual({ type: "abort" });
+  });
+
+  it("Esc does NOT abort when idle, nor when an overlay is open", async () => {
+    await loadView();
+    // Idle: the Stop button is disabled → Esc is inert.
+    posted.length = 0;
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(posted).not.toContainEqual({ type: "abort" });
+
+    // Working (Stop enabled) BUT an alert modal is open: Esc closes the modal,
+    // it must not abort the run.
+    hostMessage({ type: "status", active: true, workingIds: [] });
+    hostMessage({ type: "modal", modalId: 7, kind: "alert", alertKind: "info", title: "t", message: "m" });
+    posted.length = 0;
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(posted).not.toContainEqual({ type: "abort" });
   });
 
   it("attaches a pasted absolute path via the host", async () => {
@@ -2090,54 +2111,104 @@ describe("view webview client", () => {
     expect(result.className).toContain("err");
   });
 
-  it("max parallel sub-agents: flag + stepper, and the value is posted on save", async () => {
+  it("Guardrails card: parallel cap renders and posts setMaxParallelSubAgents", async () => {
     await loadView();
-    hostMessage({
-      type: "providersEditor",
-      data: { providers: { llamacpp: { baseUrl: "http://localhost:8090/v1" } }, maxParallelSubAgents: 4 },
-    });
-    const flag = document.getElementById("pe-maxparallel-enabled") as HTMLInputElement;
-    const input = document.getElementById("pe-maxparallel-input") as HTMLInputElement;
-    const plus = document.getElementById("pe-maxparallel-plus") as HTMLButtonElement;
-    const minus = document.getElementById("pe-maxparallel-minus") as HTMLButtonElement;
-    // A saved cap turns the flag on and populates the value.
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, maxParallelSubAgents: 6 } });
+    const flag = document.getElementById("par-enabled") as HTMLInputElement;
+    const input = document.getElementById("par-input") as HTMLInputElement;
+    const plus = document.getElementById("par-plus") as HTMLButtonElement;
+    const minus = document.getElementById("par-minus") as HTMLButtonElement;
     expect(flag.checked).toBe(true);
-    expect(input.value).toBe("4");
+    expect(input.value).toBe("6");
     expect(input.disabled).toBe(false);
 
-    plus.click();
-    expect(input.value).toBe("5");
-    minus.click();
-    minus.click();
-    expect(input.value).toBe("3");
-
     posted.length = 0;
-    (document.getElementById("providers-save") as HTMLButtonElement).click();
-    const saveMsg = posted.find((m) => (m as { type?: string }).type === "saveProviders") as Record<string, unknown>;
-    expect((saveMsg.data as { maxParallelSubAgents?: number }).maxParallelSubAgents).toBe(3);
+    plus.click();
+    expect(input.value).toBe("7");
+    const msg = posted.at(-1) as { type: string; value: number };
+    expect(msg.type).toBe("setMaxParallelSubAgents");
+    expect(msg.value).toBe(7);
+    minus.click();
+    minus.click();
+    expect(input.value).toBe("5");
   });
 
-  it("max parallel sub-agents: flag off disables the field and saves undefined", async () => {
+  it("Guardrails card: parallel flag off posts 0 (no cap) and disables the field", async () => {
     await loadView();
-    hostMessage({
-      type: "providersEditor",
-      data: { providers: { llamacpp: { baseUrl: "http://localhost:8090/v1" } } },
-    });
-    const flag = document.getElementById("pe-maxparallel-enabled") as HTMLInputElement;
-    const input = document.getElementById("pe-maxparallel-input") as HTMLInputElement;
-    // No cap saved → flag off, field disabled.
-    expect(flag.checked).toBe(false);
-    expect(input.disabled).toBe(true);
-
-    flag.checked = true;
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, maxParallelSubAgents: 4 } });
+    const flag = document.getElementById("par-enabled") as HTMLInputElement;
+    const input = document.getElementById("par-input") as HTMLInputElement;
+    expect(flag.checked).toBe(true);
+    flag.checked = false;
+    posted.length = 0;
     flag.dispatchEvent(new Event("change"));
-    expect(input.disabled).toBe(false);
+    expect(input.disabled).toBe(true);
+    const msg = posted.find((m) => (m as { type?: string }).type === "setMaxParallelSubAgents") as { value: number };
+    expect(msg.value).toBe(0);
+  });
+
+  it("Guardrails card: Loop Guard level radios post setLoopGuard and reflect the config", async () => {
+    await loadView();
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, loopGuard: "high" } });
+    const high = document.getElementById("lg-high") as HTMLInputElement;
+    const normal = document.getElementById("lg-normal") as HTMLInputElement;
+    const low = document.getElementById("lg-low") as HTMLInputElement;
+    expect(high.checked).toBe(true);
+    expect(normal.checked).toBe(false);
 
     posted.length = 0;
-    (document.getElementById("providers-save") as HTMLButtonElement).click();
-    const saveMsg = posted.find((m) => (m as { type?: string }).type === "saveProviders") as Record<string, unknown>;
-    // With the flag on, the default value (3) is sent.
-    expect((saveMsg.data as { maxParallelSubAgents?: number }).maxParallelSubAgents).toBe(3);
+    low.checked = true;
+    low.dispatchEvent(new Event("change"));
+    const msg = posted.at(-1) as { type: string; value: string };
+    expect(msg.type).toBe("setLoopGuard");
+    expect(msg.value).toBe("low");
+
+    // The "Include response" flag posts its own message.
+    posted.length = 0;
+    const response = document.getElementById("lg-response") as HTMLInputElement;
+    expect(response.checked).toBe(false); // off by default
+    response.checked = true;
+    response.dispatchEvent(new Event("change"));
+    const respMsg = posted.at(-1) as { type: string; value: boolean };
+    expect(respMsg.type).toBe("setLoopGuardResponse");
+    expect(respMsg.value).toBe(true);
+
+    // An undefined config (no override) selects the normal preset.
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000 } });
+    expect(normal.checked).toBe(true);
+    expect(response.checked).toBe(false);
+  });
+
+  it("Guardrails card reflects the initial session config on load (no config push)", async () => {
+    setupDom({
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+        maxParallelSubAgents: 7,
+        loopGuard: "low",
+        loopGuardResponse: true,
+      },
+    });
+    await loadView();
+    expect((document.getElementById("par-enabled") as HTMLInputElement).checked).toBe(true);
+    expect((document.getElementById("par-input") as HTMLInputElement).value).toBe("7");
+    expect((document.getElementById("lg-low") as HTMLInputElement).checked).toBe(true);
+    expect((document.getElementById("lg-response") as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("Guardrails card locks its controls while the session is working", async () => {
+    await loadView();
+    hostMessage({ type: "status", active: true });
+    expect((document.getElementById("par-enabled") as HTMLInputElement).disabled).toBe(true);
+    expect((document.getElementById("lg-high") as HTMLInputElement).disabled).toBe(true);
+    expect((document.getElementById("lg-response") as HTMLInputElement).disabled).toBe(true);
+    hostMessage({ type: "status", active: false });
+    expect((document.getElementById("lg-high") as HTMLInputElement).disabled).toBe(false);
+    expect((document.getElementById("lg-response") as HTMLInputElement).disabled).toBe(false);
   });
 
   it("adds a new provider with + New and keeps a complete URL untouched", async () => {

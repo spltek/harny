@@ -9,7 +9,8 @@ export type LoopType =
   | "empty"
   | "tool-failure"
   | "error-streak"
-  | "tool-repeat";
+  | "tool-repeat"
+  | "response";
 
 export const LOOP_TYPES: readonly LoopType[] = [
   "reasoning",
@@ -17,7 +18,119 @@ export const LOOP_TYPES: readonly LoopType[] = [
   "tool-failure",
   "error-streak",
   "tool-repeat",
+  "response",
 ];
+
+/**
+ * Loop Guard sensitivity preset, persisted per session. `undefined` = "normal".
+ * Each level maps to a FULL, hard-coded option set (see the presets below), so
+ * the user picks one of three behaviours instead of tuning raw thresholds.
+ */
+export type LoopGuardSensitivity = "low" | "normal" | "high";
+
+export const LOOP_GUARD_SENSITIVITIES: readonly LoopGuardSensitivity[] = ["low", "normal", "high"];
+export const DEFAULT_LOOP_GUARD_SENSITIVITY: LoopGuardSensitivity = "normal";
+
+/** Fully-resolved internal options: every guard parameter the loop detectors
+ * read. Produced from a sensitivity preset by {@link resolveLoopGuardOptions}. */
+export interface LoopGuardOptions {
+  /** Reactive nudges before a type's escalation stops the run. */
+  maxNudges: number;
+  reasoningThreshold: number;
+  reasoningMinTokens: number;
+  crossTurnSimilarity: number;
+  crossTurnMinLength: number;
+  toolFailureRepeats: number;
+  errorStreakTurns: number;
+  toolRepeatConsecutive: number;
+  toolRepeatWindow: number;
+  toolRepeatWindowThreshold: number;
+  /** Opt-in: also guard the VISIBLE final answer for repetition. */
+  guardResponse: boolean;
+  /** Trigram-duplication threshold for the answer guard. */
+  answerThreshold: number;
+  /** Minimum answer tokens before the answer guard runs. */
+  answerMinTokens: number;
+}
+
+/**
+ * The three presets, with every value hard-coded:
+ *  · high   — aggressive: flags loops sooner (more nudges, lower thresholds).
+ *  · normal — the historical defaults.
+ *  · low    — permissive: only clear, sustained loops are flagged.
+ */
+const LOOP_GUARD_PRESETS: Record<LoopGuardSensitivity, LoopGuardOptions> = {
+  normal: {
+    maxNudges: 2,
+    reasoningThreshold: 0.5,
+    reasoningMinTokens: 60,
+    crossTurnSimilarity: 0.85,
+    crossTurnMinLength: 120,
+    toolFailureRepeats: 2,
+    errorStreakTurns: 3,
+    toolRepeatConsecutive: 3,
+    toolRepeatWindow: 16,
+    toolRepeatWindowThreshold: 3,
+    guardResponse: false,
+    answerThreshold: 0.6,
+    answerMinTokens: 300,
+  },
+  high: {
+    maxNudges: 3,
+    reasoningThreshold: 0.45,
+    reasoningMinTokens: 50,
+    crossTurnSimilarity: 0.75,
+    crossTurnMinLength: 120,
+    toolFailureRepeats: 2,
+    errorStreakTurns: 2,
+    toolRepeatConsecutive: 2,
+    toolRepeatWindow: 10,
+    toolRepeatWindowThreshold: 2,
+    guardResponse: false,
+    answerThreshold: 0.5,
+    answerMinTokens: 200,
+  },
+  low: {
+    maxNudges: 2,
+    reasoningThreshold: 0.65,
+    reasoningMinTokens: 120,
+    crossTurnSimilarity: 0.92,
+    crossTurnMinLength: 120,
+    toolFailureRepeats: 2,
+    errorStreakTurns: 5,
+    toolRepeatConsecutive: 4,
+    toolRepeatWindow: 20,
+    toolRepeatWindowThreshold: 4,
+    guardResponse: false,
+    answerThreshold: 0.7,
+    answerMinTokens: 400,
+  },
+};
+
+/** Whether an untrusted value is a valid sensitivity level. */
+export function isLoopGuardSensitivity(value: unknown): value is LoopGuardSensitivity {
+  return value === "low" || value === "normal" || value === "high";
+}
+
+/** Resolve a sensitivity level (or `undefined` = normal) into the full option
+ * set. An unknown value falls back to "normal". `includeResponse` enables the
+ * opt-in final-answer guard (default off). */
+export function resolveLoopGuardOptions(
+  level?: LoopGuardSensitivity | null,
+  includeResponse = false,
+): LoopGuardOptions {
+  const base = level === "low" || level === "high" ? LOOP_GUARD_PRESETS[level] : LOOP_GUARD_PRESETS.normal;
+  return base.guardResponse === includeResponse ? base : { ...base, guardResponse: includeResponse };
+}
+
+/** Validate an untrusted value (e.g. a persisted session field) into a level,
+ * or `undefined` (= normal). */
+export function normalizeLoopGuardSensitivity(value: unknown): LoopGuardSensitivity | undefined {
+  return isLoopGuardSensitivity(value) ? value : undefined;
+}
+
+/** The full resolved option set for the "normal" preset (the guard default). */
+export const DEFAULT_LOOP_GUARD_OPTIONS: LoopGuardOptions = LOOP_GUARD_PRESETS.normal;
 
 export interface ToolOutcome {
   name: string;
@@ -134,8 +247,8 @@ export function thinkingSimilarity(a: string, b: string): number {
  * the Agent feeds it observations and applies the returned `LoopDecision`.
  *
  * Design:
- *  · every loop type escalates INDEPENDENTLY (up to `maxLevel` reactive nudges,
- *    then a final stop);
+ *  · every loop type escalates INDEPENDENTLY (up to `options.maxNudges` reactive
+ *    nudges, then a final stop);
  *  · a type whose condition is no longer met is reset, so legitimate repeats
  *    separated by progress never accumulate;
  *  · tool-call repetition is broken at the SOURCE (cached successful read-only
@@ -162,8 +275,17 @@ export class LoopGuard {
 
   private lastThinkingCheck = 0;
   private reasoningBroken = false;
+  /** Response (final answer) guard state — only active when `guardResponse`. */
+  private lastAnswerCheck = 0;
+  private responseBroken = false;
 
-  constructor(private readonly maxLevel = 2) {}
+  constructor(private options: LoopGuardOptions = DEFAULT_LOOP_GUARD_OPTIONS) {}
+
+  /** Re-configure the guard (per-session settings changed). State is NOT reset:
+   * the caller resets per run anyway. */
+  setOptions(options: LoopGuardOptions): void {
+    this.options = options;
+  }
 
   /** Reset the whole guard (a new user message starts a fresh run). */
   reset(): void {
@@ -178,12 +300,16 @@ export class LoopGuard {
     this.inFlight.clear();
     this.lastThinkingCheck = 0;
     this.reasoningBroken = false;
+    this.lastAnswerCheck = 0;
+    this.responseBroken = false;
   }
 
   /** Reset the per-turn reasoning detector (keeps the escalation levels). */
   beginTurn(): void {
     this.lastThinkingCheck = 0;
     this.reasoningBroken = false;
+    this.lastAnswerCheck = 0;
+    this.responseBroken = false;
   }
 
   // ── Mid-stream reasoning loop ─────────────────────────────────────────
@@ -199,7 +325,7 @@ export class LoopGuard {
     if (fullText.length < 200) return false;
     if (fullText.length - this.lastThinkingCheck < 200) return false;
     this.lastThinkingCheck = fullText.length;
-    if (isRepetitiveThinking(fullText)) {
+    if (isRepetitiveThinking(fullText, this.options.reasoningThreshold, this.options.reasoningMinTokens)) {
       this.reasoningBroken = true;
       return true;
     }
@@ -214,6 +340,36 @@ export class LoopGuard {
         "STOP reasoning now. Either call the next tool, or write your final answer to the user.",
       note: "reasoning loop detected — the reasoning was cut short and the model was told to act.",
       stop: "Reasoning loop not resolved after repeated interventions.",
+    });
+  }
+
+  // ── Mid-stream response (final answer) loop — opt-in ───────────────
+
+  /**
+   * Feed the accumulated VISIBLE answer text. Returns true ONCE when a response
+   * loop is detected, so the caller can cut the stream and nudge. Disabled
+   * unless `options.guardResponse` is set. Amortised: re-checks every 200 chars.
+   */
+  observeAnswer(fullText: string): boolean {
+    if (!this.options.guardResponse || this.responseBroken) return false;
+    if (fullText.length < 200) return false;
+    if (fullText.length - this.lastAnswerCheck < 200) return false;
+    this.lastAnswerCheck = fullText.length;
+    if (isRepetitiveThinking(fullText, this.options.answerThreshold, this.options.answerMinTokens)) {
+      this.responseBroken = true;
+      return true;
+    }
+    return false;
+  }
+
+  /** Escalate a response loop detected mid-stream. */
+  noteAnswerLoop(): LoopDecision {
+    return this.escalate("response", {
+      nudge:
+        "Your final answer is LOOPING: the same content is repeating over and over without progress. " +
+        "STOP repeating it. Finish the answer concisely, or call the next tool if more work is needed.",
+      note: "response loop detected — the answer was cut short and the model was told to stop repeating.",
+      stop: "Response loop not resolved after repeated interventions.",
     });
   }
 
@@ -295,7 +451,7 @@ export class LoopGuard {
         this.signatureRepeats = 1;
       }
       this.recentSignatures.push(signature);
-      if (this.recentSignatures.length > SIGNATURE_WINDOW) this.recentSignatures.shift();
+      if (this.recentSignatures.length > this.options.toolRepeatWindow) this.recentSignatures.shift();
     } else {
       this.lastSignature = null;
       this.signatureRepeats = 0;
@@ -317,7 +473,7 @@ export class LoopGuard {
         note: "empty turn (no text, no tool call) — the model was nudged to continue.",
         stop: "The model kept producing empty turns with no text and no tool call.",
       };
-    } else if (allFailed && this.signatureRepeats >= 2) {
+    } else if (allFailed && this.signatureRepeats >= this.options.toolFailureRepeats) {
       active = "tool-failure";
       messages = {
         nudge:
@@ -326,7 +482,7 @@ export class LoopGuard {
         note: "the same failing tool call repeated — it was not re-run and a corrective was injected.",
         stop: "The model kept repeating the same failing tool call.",
       };
-    } else if (allFailed && this.errorStreak >= 3) {
+    } else if (allFailed && this.errorStreak >= this.options.errorStreakTurns) {
       active = "error-streak";
       const names = obs.toolResults.map((r) => r.name).join(", ");
       messages = {
@@ -336,16 +492,31 @@ export class LoopGuard {
         note: `error streak (${this.errorStreak} turns of failures) — the model was asked to change strategy.`,
         stop: `The model could not recover after ${this.errorStreak} consecutive turns of tool errors (${names}).`,
       };
-    } else if (!allFailed && (this.signatureRepeats >= 3 || this.signatureFrequency() >= SIGNATURE_REPEAT_LIMIT)) {
+    } else if (
+      !allFailed &&
+      (this.signatureRepeats >= this.options.toolRepeatConsecutive ||
+        this.signatureFrequency() >= this.options.toolRepeatWindowThreshold)
+    ) {
       active = "tool-repeat";
       messages = {
         nudge: repeatedCallNudge(obs.toolCalls[0]?.name),
         note: "identical successful tool call repeated three times — the model was told to change approach.",
         stop: `The model called "${obs.toolCalls[0]?.name ?? "?"}" with identical arguments without making progress.`,
       };
+    } else if (
+      this.options.guardResponse &&
+      isRepetitiveThinking(obs.content, this.options.answerThreshold, this.options.answerMinTokens)
+    ) {
+      active = "response";
+      messages = {
+        nudge:
+          "Your previous answer repeated itself. Do NOT repeat it: give a concise, complete answer or take the next action.",
+        note: "response loop detected in the answer — the model was told to stop repeating.",
+        stop: "The model kept repeating the same answer.",
+      };
     } else {
       const similarity = thinkingSimilarity(this.prevThinking, obs.thinking);
-      if (obs.thinking.trim().length > 120 && similarity >= 0.85) {
+      if (obs.thinking.trim().length > this.options.crossTurnMinLength && similarity >= this.options.crossTurnSimilarity) {
         active = "reasoning";
         messages = {
           nudge:
@@ -382,7 +553,7 @@ export class LoopGuard {
   private escalate(type: LoopType, m: ReactionMessages): LoopDecision {
     const level = (this.levels.get(type) ?? 0) + 1;
     this.levels.set(type, level);
-    if (level > this.maxLevel) {
+    if (level > this.options.maxNudges) {
       return { kind: "stop", type, level, message: m.stop, note: m.note };
     }
     return { kind: "react", type, level, nudge: m.nudge, note: m.note };

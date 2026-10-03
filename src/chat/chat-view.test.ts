@@ -141,6 +141,8 @@ function buildHarness(opts: Record<string, unknown> = {}) {
       abortSubAgent: vi.fn(),
       setMode: vi.fn(),
       setDelegation: vi.fn(),
+      setMaxParallelSubAgents: vi.fn(),
+      setLoopGuardOptions: vi.fn(),
       onEvent: vi.fn((fn: (e: any) => void) => {
         handlers.push(fn);
         return () => {
@@ -623,6 +625,81 @@ describe("ChatViewProvider", () => {
     expect(cfg.frequencyPenalty).toBe(0.5);
   });
 
+  it("setMaxParallelSubAgents persists on the session, applies to the agent, and pushes the effective cap", async () => {
+    const { store, provider, registry } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setMaxParallelSubAgents", value: 6 });
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { maxParallelSubAgents: 6 });
+    expect(registry.get("s1")!.agent.setMaxParallelSubAgents).toHaveBeenCalledWith(6);
+    const configPosts = view.webview.postMessage.mock.calls
+      .map((c) => c[0] as any)
+      .filter((m) => m.type === "config");
+    expect(configPosts[configPosts.length - 1].config.maxParallelSubAgents).toBe(6);
+
+    // Off = 0 (explicitly no cap), still persisted as a number.
+    await handler({ type: "setMaxParallelSubAgents", value: 0 });
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { maxParallelSubAgents: 0 });
+    await vi.waitFor(() => {
+      const posts = view.webview.postMessage.mock.calls
+        .map((c) => c[0] as any)
+        .filter((m) => m.type === "config");
+      expect(posts[posts.length - 1].config.maxParallelSubAgents).toBe(0);
+    });
+  });
+
+  it("setLoopGuard persists the knobs, applies them to the agent, and undefined clears", async () => {
+    const { store, provider, registry } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setLoopGuard", value: "high" });
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { loopGuard: "high" });
+    expect(registry.get("s1")!.agent.setLoopGuardOptions).toHaveBeenCalled();
+    const configPosts = view.webview.postMessage.mock.calls
+      .map((c) => c[0] as any)
+      .filter((m) => m.type === "config");
+    expect(configPosts[configPosts.length - 1].config.loopGuard).toBe("high");
+
+    await handler({ type: "setLoopGuard", value: undefined });
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { loopGuard: undefined });
+  });
+
+  it("setLoopGuardResponse persists the opt-in flag and applies it to the agent", async () => {
+    const { store, provider, registry } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setLoopGuardResponse", value: true });
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { loopGuardResponse: true });
+    expect(registry.get("s1")!.agent.setLoopGuardOptions).toHaveBeenCalled();
+    await vi.waitFor(() => {
+      const posts = view.webview.postMessage.mock.calls
+        .map((c) => c[0] as any)
+        .filter((m) => m.type === "config");
+      expect(posts[posts.length - 1].config.loopGuardResponse).toBe(true);
+    });
+  });
+
+  it("send re-asserts the per-session cap + Loop Guard on the agent", async () => {
+    const { provider, registry } = buildHarness();
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "gpt-4o", provider: undefined });
+    await handler({ type: "setMaxParallelSubAgents", value: 3 });
+    await handler({ type: "setLoopGuard", value: "low" });
+    await handler({ type: "setLoopGuardResponse", value: true });
+    const agent = registry.get("s1")!.agent;
+    (agent.setMaxParallelSubAgents as ReturnType<typeof vi.fn>).mockClear();
+    (agent.setLoopGuardOptions as ReturnType<typeof vi.fn>).mockClear();
+
+    await handler({ type: "send", text: "hi" });
+
+    expect(agent.setMaxParallelSubAgents).toHaveBeenCalledWith(3);
+    // The response guard flag is folded into the resolved options at send time.
+    expect(agent.setLoopGuardOptions).toHaveBeenCalledWith(
+      expect.objectContaining({ guardResponse: true, reasoningThreshold: 0.65 }),
+    );
+  });
+
   it("sampler value persists on the active field and switching mode clears both to Auto", async () => {
     const { store, provider, modelSelector } = buildHarness();
     const { handler, view } = resolveWith(provider);
@@ -692,12 +769,12 @@ describe("ChatViewProvider", () => {
     await handler({ type: "setModel", model: "gpt-4o", provider: undefined });
     await handler({ type: "setOutputTokens", value: 16384 });
     (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
-      { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 2, model: "gpt-4o", outputTokens: 16384 },
+      { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 2, model: "gpt-4o", outputTokens: 16384, maxParallelSubAgents: 6, loopGuard: "high", loopGuardResponse: true },
     ]);
     (store.load as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
       id === "s1"
         ? {
-            summary: { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 2, model: "gpt-4o", outputTokens: 16384 },
+            summary: { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 2, model: "gpt-4o", outputTokens: 16384, maxParallelSubAgents: 6, loopGuard: "high", loopGuardResponse: true },
             messages: [
               { role: "user", content: "hi", timestamp: 1 },
               { role: "assistant", content: "hello", timestamp: 2 },
@@ -714,7 +791,14 @@ describe("ChatViewProvider", () => {
       { role: "user", content: "hi", timestamp: 1 },
       { role: "assistant", content: "hello", timestamp: 2 },
     ]);
-    expect(store.saveSettings).toHaveBeenCalledWith("s2", { model: "gpt-4o", outputTokens: 16384 });
+    // Every per-session setting is copied, including the Control-card ones.
+    expect(store.saveSettings).toHaveBeenCalledWith("s2", {
+      model: "gpt-4o",
+      outputTokens: 16384,
+      maxParallelSubAgents: 6,
+      loopGuard: "high",
+      loopGuardResponse: true,
+    });
     const switchPosts = view.webview.postMessage.mock.calls
       .map((c) => c[0] as any)
       .filter((m) => m.type === "switchView");

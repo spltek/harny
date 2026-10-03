@@ -375,3 +375,73 @@ describe("JsonlSessionStore saveSettings", () => {
     expect(store.load("s1").summary.compactionThresholdPercent).toBe(65);
   });
 });
+
+describe("JsonlSessionStore control settings (parallel cap + Loop Guard)", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "harny-sessions-control-")); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  it("persists the parallel cap and the Loop Guard knobs, carried across writes", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    store.saveSettings("s1", {
+      maxParallelSubAgents: 6,
+      loopGuard: "high",
+    });
+
+    const loaded = store.load("s1").summary;
+    expect(loaded.maxParallelSubAgents).toBe(6);
+    expect(loaded.loopGuard).toBe("high");
+
+    // A later message write / rename must NOT drop them.
+    store.saveMessages("s1", [msg({ content: "x" })]);
+    store.rename("s1", "Renamed");
+    const reloaded = store.load("s1").summary;
+    expect(reloaded.maxParallelSubAgents).toBe(6);
+    expect(reloaded.loopGuard).toBe("high");
+
+    // A fresh store instance still sees them (header round-trip).
+    const store2 = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s9" });
+    expect(store2.load("s1").summary.loopGuard).toBe("high");
+  });
+
+  it("keeps 0 as 'no cap' (not unset) and clears the override when the key is undefined", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    store.saveSettings("s1", { maxParallelSubAgents: 0 });
+    expect(store.load("s1").summary.maxParallelSubAgents).toBe(0);
+
+    store.saveSettings("s1", { maxParallelSubAgents: undefined });
+    expect(store.load("s1").summary.maxParallelSubAgents).toBeUndefined();
+  });
+
+  it("keeps a valid Loop Guard level and clears/ignores an invalid one", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    store.saveSettings("s1", { loopGuard: "low" });
+    expect(store.load("s1").summary.loopGuard).toBe("low");
+
+    // An invalid level is dropped (no override stored).
+    store.saveSettings("s1", { loopGuard: "bogus" as never });
+    expect(store.load("s1").summary.loopGuard).toBeUndefined();
+
+    // An explicit undefined clears it back to the default.
+    store.saveSettings("s1", { loopGuard: "high" });
+    store.saveSettings("s1", { loopGuard: undefined });
+    expect(store.load("s1").summary.loopGuard).toBeUndefined();
+  });
+
+  it("persists the Include-response flag and carries it across writes", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    store.saveSettings("s1", { loopGuard: "high", loopGuardResponse: true });
+    expect(store.load("s1").summary.loopGuardResponse).toBe(true);
+
+    store.saveMessages("s1", [msg({ content: "x" })]);
+    expect(store.load("s1").summary.loopGuardResponse).toBe(true);
+
+    // false (or undefined) clears the flag.
+    store.saveSettings("s1", { loopGuardResponse: false });
+    expect(store.load("s1").summary.loopGuardResponse).toBeUndefined();
+  });
+});

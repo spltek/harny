@@ -3,7 +3,15 @@ import { join } from "node:path";
 import type { FileSystem } from "../tools/file-system";
 import type { ChatMessage } from "../history/types";
 import { isThinkingLevel, type ThinkingLevel } from "../config/types";
+import { normalizeLoopGuardSensitivity } from "../agent/loop-guard";
 import type { LoadedSession, SessionSettingsPatch, SessionStore, SessionSummary } from "./types";
+
+/** Clamp a persisted parallel cap: a finite integer >= 0 (0 = no cap). */
+function toMaxParallelSubAgents(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const n = Math.trunc(value);
+  return n < 0 ? undefined : n;
+}
 
 interface SessionMeta {
   type: "session";
@@ -24,6 +32,9 @@ interface SessionMeta {
   frequencyPenalty?: number;
   topP?: number;
   sampler?: "temperature" | "topP";
+  maxParallelSubAgents?: number;
+  loopGuard?: string;
+  loopGuardResponse?: boolean;
 }
 
 /**
@@ -101,6 +112,9 @@ export class JsonlSessionStore implements SessionStore {
       // top_p/sampler >= 0 semantics: `!== undefined` (0 top_p is a valid value).
       ...(existing?.topP !== undefined ? { topP: existing.topP } : {}),
       ...(existing?.sampler ? { sampler: existing.sampler } : {}),
+      ...(existing?.maxParallelSubAgents !== undefined ? { maxParallelSubAgents: existing.maxParallelSubAgents } : {}),
+      ...(existing?.loopGuard ? { loopGuard: existing.loopGuard } : {}),
+      ...(existing?.loopGuardResponse ? { loopGuardResponse: existing.loopGuardResponse } : {}),
       ...extra,
     };
   }
@@ -150,6 +164,9 @@ export class JsonlSessionStore implements SessionStore {
     if ("frequencyPenalty" in patch) out.frequencyPenalty = patch.frequencyPenalty;
     if ("topP" in patch) out.topP = patch.topP;
     if ("sampler" in patch) out.sampler = patch.sampler;
+    if ("maxParallelSubAgents" in patch) out.maxParallelSubAgents = toMaxParallelSubAgents(patch.maxParallelSubAgents);
+    if ("loopGuard" in patch) out.loopGuard = normalizeLoopGuardSensitivity(patch.loopGuard);
+    if ("loopGuardResponse" in patch) out.loopGuardResponse = patch.loopGuardResponse === true ? true : undefined;
     return out;
   }
 
@@ -222,6 +239,8 @@ export class JsonlSessionStore implements SessionStore {
       if (obj && typeof obj === "object") {
         const rec = obj as Record<string, unknown>;
         if (rec.type === "session") {
+          const lg = normalizeLoopGuardSensitivity(rec.loopGuard);
+          const cap = toMaxParallelSubAgents(rec.maxParallelSubAgents);
           summary = {
             id: String(rec.id ?? id),
             name: String(rec.name ?? "Session"),
@@ -245,6 +264,9 @@ export class JsonlSessionStore implements SessionStore {
             ...(typeof rec.frequencyPenalty === "number" ? { frequencyPenalty: rec.frequencyPenalty } : {}),
             ...(typeof rec.topP === "number" ? { topP: rec.topP } : {}),
             ...(rec.sampler === "temperature" || rec.sampler === "topP" ? { sampler: rec.sampler } : {}),
+            ...(cap !== undefined ? { maxParallelSubAgents: cap } : {}),
+            ...(lg ? { loopGuard: lg } : {}),
+            ...(rec.loopGuardResponse === true ? { loopGuardResponse: true } : {}),
           };
         } else if (typeof rec.role === "string") {
           messages.push(rec as unknown as ChatMessage);
@@ -288,6 +310,9 @@ export class JsonlSessionStore implements SessionStore {
       ...(existing?.frequencyPenalty !== undefined ? { frequencyPenalty: existing.frequencyPenalty } : {}),
       ...(existing?.topP !== undefined ? { topP: existing.topP } : {}),
       ...(existing?.sampler ? { sampler: existing.sampler } : {}),
+      ...(existing?.maxParallelSubAgents !== undefined ? { maxParallelSubAgents: existing.maxParallelSubAgents } : {}),
+      ...(existing?.loopGuard ? { loopGuard: existing.loopGuard } : {}),
+      ...(existing?.loopGuardResponse ? { loopGuardResponse: existing.loopGuardResponse } : {}),
     };
     const messages = this.fs.exists(this.path(id)) ? this.load(id).messages : [];
     this.fs.writeText(this.path(id), this.serialize(summary, messages));
@@ -320,6 +345,7 @@ export class JsonlSessionStore implements SessionStore {
     const rec = meta as Record<string, unknown>;
     if (rec.type !== "session") return undefined;
     const total = lines.filter((l) => l.trim()).length;
+    const loopGuard = normalizeLoopGuardSensitivity(rec.loopGuard);
     return {
       id: String(rec.id),
       name: String(rec.name ?? "Session"),
@@ -343,6 +369,11 @@ export class JsonlSessionStore implements SessionStore {
       ...(typeof rec.frequencyPenalty === "number" ? { frequencyPenalty: rec.frequencyPenalty } : {}),
       ...(typeof rec.topP === "number" ? { topP: rec.topP } : {}),
       ...(rec.sampler === "temperature" || rec.sampler === "topP" ? { sampler: rec.sampler } : {}),
+      ...(toMaxParallelSubAgents(rec.maxParallelSubAgents) !== undefined
+        ? { maxParallelSubAgents: toMaxParallelSubAgents(rec.maxParallelSubAgents) }
+        : {}),
+      ...(loopGuard ? { loopGuard } : {}),
+      ...(rec.loopGuardResponse === true ? { loopGuardResponse: true } : {}),
     };
   }
 
@@ -366,6 +397,9 @@ export class JsonlSessionStore implements SessionStore {
       ...(summary.frequencyPenalty !== undefined ? { frequencyPenalty: summary.frequencyPenalty } : {}),
       ...(summary.topP !== undefined ? { topP: summary.topP } : {}),
       ...(summary.sampler ? { sampler: summary.sampler } : {}),
+      ...(summary.maxParallelSubAgents !== undefined ? { maxParallelSubAgents: summary.maxParallelSubAgents } : {}),
+      ...(summary.loopGuard ? { loopGuard: summary.loopGuard } : {}),
+      ...(summary.loopGuardResponse ? { loopGuardResponse: summary.loopGuardResponse } : {}),
     };
     const lines = [JSON.stringify(header), ...messages.map((m) => JSON.stringify(m))];
     return lines.join("\n") + "\n";

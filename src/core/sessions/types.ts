@@ -1,4 +1,5 @@
 import type { ChatMessage } from "../history/types";
+import type { LoopGuardSensitivity } from "../agent/loop-guard";
 
 /** Lightweight metadata shown in the session picker UI. */
 export interface SessionSummary {
@@ -42,6 +43,13 @@ export interface SessionSummary {
   topP?: number;
   /** Active sampler ("temperature" | "topP"); only its value is sent. */
   sampler?: "temperature" | "topP";
+  /** Per-session cap on concurrently-running sub-agents. Positive = cap; 0 =
+   * explicitly NO cap; undefined = inherit the config default (then 4). */
+  maxParallelSubAgents?: number;
+  /** Per-session Loop Guard sensitivity; undefined = "normal". */
+  loopGuard?: LoopGuardSensitivity;
+  /** Also guard the visible final answer for repetition (opt-in; undefined = off). */
+  loopGuardResponse?: boolean;
 }
 
 /** A session file plus its loaded messages. */
@@ -65,6 +73,9 @@ export type SessionSettings = Pick<
   | "frequencyPenalty"
   | "topP"
   | "sampler"
+  | "maxParallelSubAgents"
+  | "loopGuard"
+  | "loopGuardResponse"
   | "folder"
 >;
 

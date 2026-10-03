@@ -2,6 +2,7 @@ import type { ChatMessage, MessageAttachment } from "../history/types";
 import type { AttachmentPart } from "../../chat/attachment-types";
 import type { AgentEvent } from "./types";
 import type { ChatMode } from "../tools/mode-policy";
+import type { LoopGuardOptions } from "./loop-guard";
 
 /** Optional payload for {@link ChatController.send}. */
 export interface SendOptions {
@@ -46,4 +47,9 @@ export interface ChatController {
    * When off, the Delegate tool is hidden and refused.
    */
   setDelegation(enabled: boolean): void;
+  /** Apply the per-session concurrent sub-agent cap (undefined = inherit the
+   * config default; 0 = explicitly no cap). */
+  setMaxParallelSubAgents(cap: number | undefined): void;
+  /** Apply the per-session Loop Guard options (resolved from the three knobs). */
+  setLoopGuardOptions(options: LoopGuardOptions): void;
 }

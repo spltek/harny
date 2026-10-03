@@ -14,6 +14,7 @@ import { toolDefinitionsForMode } from "../tools/mode-policy";
 import type { DelegateSpec } from "./orchestration";
 import { SubAgentRunner } from "./subagent";
 import type { AgentEvent, SubAgentEvent } from "./types";
+import { resolveLoopGuardOptions, type LoopGuardOptions } from "./loop-guard";
 
 const VALID_CONFIG: HarnyConfig = {
   provider: "openai",
@@ -77,6 +78,7 @@ function buildHarness(
     maxTurns?: number;
     log?: (message: string) => void;
     onTurnBoundary?: () => Promise<void> | void;
+    loopGuard?: LoopGuardOptions;
   } = {},
 ): Harness {
   const config = new StaticConfigProvider(opts.config ?? VALID_CONFIG);
@@ -98,6 +100,7 @@ function buildHarness(
     maxTurns: opts.maxTurns,
     log: opts.log,
     onTurnBoundary: opts.onTurnBoundary,
+    loopGuard: opts.loopGuard,
   });
   return { agent, factory, events: eventsLog, history };
 }
@@ -571,6 +574,29 @@ describe("Agent", () => {
     expect(history.all().some((m) => m.role === "assistant" && m.content === "final answer after loop")).toBe(true);
     // The broken reasoning was NOT stored as a normal assistant answer.
     expect(history.all().some((m) => m.role === "assistant" && m.content.includes(loopText))).toBe(false);
+  });
+
+  it("breaks a within-turn RESPONSE loop only when the opt-in guard is enabled", async () => {
+    const loopText = "Let me explain the same thing over and over again. ".repeat(30);
+    const chunks = [
+      // Turn 0: a runaway repetitive VISIBLE answer.
+      [{ type: "text", content: loopText }, { type: "finish", reason: "stop" }],
+      // Turn 1: the model recovers with a concise answer.
+      [{ type: "text", content: "concise final answer" }],
+    ];
+
+    // OFF (default): the repetitive answer is stored as-is, no intervention.
+    const off = buildHarness({ chunks });
+    await off.agent.send("x");
+    expect(off.events.some((e) => e.type === "loop_intervention" && e.loopType === "response")).toBe(false);
+
+    // ON: the answer is cut mid-stream, a "response" intervention is emitted,
+    // and the model gets a chance to recover.
+    const on = buildHarness({ chunks, loopGuard: resolveLoopGuardOptions("normal", true) });
+    await on.agent.send("x");
+    const intervention = on.events.find((e) => e.type === "loop_intervention");
+    expect(intervention && intervention.type === "loop_intervention" ? intervention.loopType : "").toBe("response");
+    expect(on.history.all().some((m) => m.role === "assistant" && m.content === "concise final answer")).toBe(true);
   });
 
 
@@ -2173,6 +2199,63 @@ describe("Orchestration (Delegate)", () => {
     await agent.send("go");
 
     expect(max).toBe(2);
+  });
+
+  it("a per-session cap overrides the config default (setMaxParallelSubAgents)", async () => {
+    let running = 0;
+    let max = 0;
+    const spawn = async (): Promise<ToolResult> => {
+      running++;
+      max = Math.max(max, running);
+      await new Promise((r) => setTimeout(r, 5));
+      running--;
+      return { content: "r", isError: false };
+    };
+    const calls = ["A", "B", "C"].map((id, i) => ({ id, goal: id, access: "read", resources: [`${i}.ts`], parallel: "yes" }));
+    // Config says 2, but the session override serializes to 1.
+    const { agent } = build({ calls, maxParallel: 2, spawn });
+    agent.setMaxParallelSubAgents(1);
+
+    await agent.send("go");
+
+    expect(max).toBe(1);
+  });
+
+  it("defaults to a cap of 4 when neither the session nor the config sets one", async () => {
+    let running = 0;
+    let max = 0;
+    const spawn = async (): Promise<ToolResult> => {
+      running++;
+      max = Math.max(max, running);
+      await new Promise((r) => setTimeout(r, 5));
+      running--;
+      return { content: "r", isError: false };
+    };
+    const calls = ["A", "B", "C", "D", "E", "F"].map((id, i) => ({ id, goal: id, access: "read", resources: [`${i}.ts`], parallel: "yes" }));
+    const { agent } = build({ calls, spawn }); // no maxParallel in the config
+
+    await agent.send("go");
+
+    expect(max).toBe(4);
+  });
+
+  it("a per-session cap of 0 removes the limit", async () => {
+    let running = 0;
+    let max = 0;
+    const spawn = async (): Promise<ToolResult> => {
+      running++;
+      max = Math.max(max, running);
+      await new Promise((r) => setTimeout(r, 5));
+      running--;
+      return { content: "r", isError: false };
+    };
+    const calls = ["A", "B", "C", "D", "E", "F"].map((id, i) => ({ id, goal: id, access: "read", resources: [`${i}.ts`], parallel: "yes" }));
+    const { agent } = build({ calls, maxParallel: 2, spawn });
+    agent.setMaxParallelSubAgents(0); // explicit no cap
+
+    await agent.send("go");
+
+    expect(max).toBe(6);
   });
 
   it("abort stops launching queued sub-agents and ends the turn", async () => {

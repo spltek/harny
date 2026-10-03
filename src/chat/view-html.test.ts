@@ -150,15 +150,31 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/\.sa-tool\.ok\s*\{/);
   });
 
-  it("renders the max-parallel sub-agents flag + stepper in the providers form", () => {
+  it("renders the Guardrails card (parallel cap + Loop Guard) in the control stack", () => {
     const html = renderViewHtml({
       ...base,
       state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
     });
-    expect(html).toMatch(/<input type="checkbox" id="pe-maxparallel-enabled"/);
-    expect(html).toMatch(/id="pe-maxparallel-minus"[\s\S]*?id="pe-maxparallel-input"[\s\S]*?id="pe-maxparallel-plus"/);
-    expect(html).toMatch(/id="pe-maxparallel-input"[\s\S]*?disabled/);
-    expect(html).toMatch(/\.providers-settings\s*\{/);
+    // The Guardrails card lives inside the collapsible stack and spans full width.
+    expect(html).toContain('<span class="card-title">Guardrails</span>');
+    expect(html).toContain('class="ctl-card ctl-card-wide"');
+    expect(html).toMatch(/id="par-enabled"[\s\S]*?id="par-input"[\s\S]*?id="par-plus"/);
+    expect(html).toMatch(/name="lg-level"[\s\S]*?id="lg-high"[\s\S]*?id="lg-normal"[\s\S]*?id="lg-low"/);
+    expect(html).toContain('id="lg-response"');
+    // Parallel cap + Loop Guard share one row, mirroring #ctl-cards columns.
+    expect(html).toContain('class="ctl-controls"');
+    expect(html).toMatch(/\.ctl-controls\s*\{[^}]*display:\s*grid[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+    // The grid mirrors #ctl-cards so the fields line up vertically with the
+    // cards above (negative margin cancels the card padding; fields re-add it).
+    expect(html).toMatch(/\.ctl-controls\s*\{[^}]*margin:\s*0 -10px/);
+    expect(html).toMatch(/\.ctl-controls\s*>\s*\.field\s*\{[^}]*padding:\s*0 10px/);
+    // The radio group matches the text box height so the labels line up.
+    expect(html).toMatch(/#lg-toggle\s*\{[^}]*min-height:\s*1\.85rem[^}]*align-items:\s*center/);
+    expect(html).toMatch(/\.ctl-card-wide\s*\{\s*grid-column: 1 \/ -1/);
+    // Window + Sampling share the row 50/50 (responsive to resize).
+    expect(html).toMatch(/\.ctl-cards\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+    // The old providers-form flag is gone (moved to the per-session Guardrails card).
+    expect(html).not.toContain("pe-maxparallel");
   });
 
   it("collapsing the control stack hides only the Window/Sampling cards", () => {

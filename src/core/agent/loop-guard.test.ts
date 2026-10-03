@@ -6,6 +6,9 @@ import {
   trigramDuplication,
   isRepetitiveThinking,
   thinkingSimilarity,
+  resolveLoopGuardOptions,
+  normalizeLoopGuardSensitivity,
+  isLoopGuardSensitivity,
   type ToolOutcome,
 } from "./loop-guard";
 import type { ToolCall } from "../tools/tool";
@@ -123,7 +126,7 @@ describe("LoopGuard turn classification + escalation", () => {
   const empty = { content: "", thinking: "", toolCalls: [], toolResults: [] };
 
   it("escalates empty turns: react, react, stop", () => {
-    const g = new LoopGuard(2);
+    const g = new LoopGuard();
     expect(g.observeTurn(empty).kind).toBe("react");
     expect(g.observeTurn(empty).kind).toBe("react");
     const stop = g.observeTurn(empty);
@@ -132,7 +135,7 @@ describe("LoopGuard turn classification + escalation", () => {
   });
 
   it("escalates a repeated successful tool call", () => {
-    const g = new LoopGuard(2);
+    const g = new LoopGuard();
     const tc = toolCall("Shell", { command: "ls" });
     const obs = { content: "", thinking: "", toolCalls: [tc], toolResults: [outcome("Shell", { command: "ls" }, false)] };
     expect(g.observeTurn(obs).kind).toBe("continue"); // 1st
@@ -148,7 +151,7 @@ describe("LoopGuard turn classification + escalation", () => {
   });
 
   it("escalates an ALTERNATING tool-call loop (A/B/A/B) that never repeats consecutively", () => {
-    const g = new LoopGuard(2);
+    const g = new LoopGuard();
     const turn = (url: string) => ({
       content: "Let me try a few more sources.",
       thinking: "",
@@ -165,7 +168,7 @@ describe("LoopGuard turn classification + escalation", () => {
   });
 
   it("escalates a period-3 cycle (A/B/C/A/B/C)", () => {
-    const g = new LoopGuard(2);
+    const g = new LoopGuard();
     const turn = (url: string) => ({
       content: "still looking",
       thinking: "",
@@ -178,7 +181,7 @@ describe("LoopGuard turn classification + escalation", () => {
   });
 
   it("does NOT flag repeated calls with DIFFERENT arguments (real progress)", () => {
-    const g = new LoopGuard(2);
+    const g = new LoopGuard();
     const turn = (path: string) => ({
       content: "",
       thinking: "",
@@ -191,7 +194,7 @@ describe("LoopGuard turn classification + escalation", () => {
   });
 
   it("escalates an error streak of DIFFERENT failing calls", () => {
-    const g = new LoopGuard(2);
+    const g = new LoopGuard();
     const turn = (path: string) => ({
       content: "",
       thinking: "",
@@ -206,7 +209,7 @@ describe("LoopGuard turn classification + escalation", () => {
   });
 
   it("classifies a repeated FAILING call as tool-failure", () => {
-    const g = new LoopGuard(2);
+    const g = new LoopGuard();
     const tc = toolCall("Read", { path: "a" });
     const obs = { content: "", thinking: "", toolCalls: [tc], toolResults: [outcome("Read", { path: "a" }, true, "err")] };
     expect(g.observeTurn(obs).kind).toBe("continue"); // 1st failure
@@ -216,7 +219,7 @@ describe("LoopGuard turn classification + escalation", () => {
   });
 
   it("resets a type's escalation when its condition clears (progress)", () => {
-    const g = new LoopGuard(2);
+    const g = new LoopGuard();
     const progress = {
       content: "an answer",
       thinking: "",
@@ -230,7 +233,7 @@ describe("LoopGuard turn classification + escalation", () => {
   });
 
   it("detects a cross-turn reasoning loop", () => {
-    const g = new LoopGuard(2);
+    const g = new LoopGuard();
     const text =
       "I should inspect the configuration module and then look at how providers are created, because the " +
       "issue could be in the base URL handling or in the model resolution logic of the model factory itself.";
@@ -244,5 +247,119 @@ describe("LoopGuard turn classification + escalation", () => {
     const second = g.observeTurn(obs);
     expect(second.kind).toBe("react");
     if (second.kind === "react") expect(second.type).toBe("reasoning");
+  });
+});
+
+describe("Loop Guard sensitivity presets", () => {
+  it("normal is the default and matches the historical values", () => {
+    const o = resolveLoopGuardOptions();
+    expect(o).toEqual(resolveLoopGuardOptions("normal"));
+    expect(o.maxNudges).toBe(2);
+    expect(o.reasoningThreshold).toBe(0.5);
+    expect(o.reasoningMinTokens).toBe(60);
+    expect(o.crossTurnSimilarity).toBe(0.85);
+    expect(o.errorStreakTurns).toBe(3);
+    expect(o.toolRepeatConsecutive).toBe(3);
+    expect(o.toolRepeatWindow).toBe(16);
+    expect(o.toolRepeatWindowThreshold).toBe(3);
+  });
+
+  it("high is aggressive and low is permissive (hard-coded values)", () => {
+    const high = resolveLoopGuardOptions("high");
+    expect(high.maxNudges).toBe(3);
+    expect(high.reasoningThreshold).toBe(0.45);
+    expect(high.reasoningMinTokens).toBe(50);
+    expect(high.crossTurnSimilarity).toBe(0.75);
+    expect(high.errorStreakTurns).toBe(2);
+    expect(high.toolRepeatConsecutive).toBe(2);
+    expect(high.toolRepeatWindow).toBe(10);
+    expect(high.toolRepeatWindowThreshold).toBe(2);
+
+    const low = resolveLoopGuardOptions("low");
+    expect(low.maxNudges).toBe(2);
+    expect(low.reasoningThreshold).toBe(0.65);
+    expect(low.reasoningMinTokens).toBe(120);
+    expect(low.crossTurnSimilarity).toBe(0.92);
+    expect(low.errorStreakTurns).toBe(5);
+    expect(low.toolRepeatConsecutive).toBe(4);
+    expect(low.toolRepeatWindow).toBe(20);
+    expect(low.toolRepeatWindowThreshold).toBe(4);
+  });
+
+  it("an unknown level falls back to normal", () => {
+    expect(resolveLoopGuardOptions("bogus" as never)).toEqual(resolveLoopGuardOptions("normal"));
+  });
+
+  it("normalizeLoopGuardSensitivity validates persisted values", () => {
+    expect(normalizeLoopGuardSensitivity(undefined)).toBeUndefined();
+    expect(normalizeLoopGuardSensitivity("high")).toBe("high");
+    expect(normalizeLoopGuardSensitivity("low")).toBe("low");
+    expect(normalizeLoopGuardSensitivity("normal")).toBe("normal");
+    expect(normalizeLoopGuardSensitivity("bogus")).toBeUndefined();
+    expect(normalizeLoopGuardSensitivity(3)).toBeUndefined();
+    expect(isLoopGuardSensitivity("high")).toBe(true);
+  });
+
+  it("high flags an error streak sooner than low", () => {
+    const turn = (path: string) => ({
+      content: "",
+      thinking: "",
+      toolCalls: [toolCall("Read", { path })],
+      toolResults: [outcome("Read", { path }, true, "err")],
+    });
+    const high = new LoopGuard(resolveLoopGuardOptions("high"));
+    expect(high.observeTurn(turn("a")).kind).toBe("continue");
+    const highSecond = high.observeTurn(turn("b"));
+    expect(highSecond.kind).toBe("react"); // high errorStreak=2
+    if (highSecond.kind === "react") expect(highSecond.type).toBe("error-streak");
+
+    const low = new LoopGuard(resolveLoopGuardOptions("low"));
+    for (let i = 0; i < 4; i++) expect(low.observeTurn(turn(`p${i}`)).kind).toBe("continue"); // low errorStreak=5
+    const lowFifth = low.observeTurn(turn("p4"));
+    expect(lowFifth.kind).toBe("react");
+  });
+
+  it("high flags a tool loop sooner than low", () => {
+    const tc = toolCall("Shell", { command: "ls" });
+    const obs = { content: "", thinking: "", toolCalls: [tc], toolResults: [outcome("Shell", { command: "ls" }, false)] };
+    const high = new LoopGuard(resolveLoopGuardOptions("high"));
+    expect(high.observeTurn(obs).kind).toBe("continue"); // 1st
+    const highSecond = high.observeTurn(obs);
+    expect(highSecond.kind).toBe("react"); // high consec=2
+    if (highSecond.kind === "react") expect(highSecond.type).toBe("tool-repeat");
+
+    const low = new LoopGuard(resolveLoopGuardOptions("low"));
+    expect(low.observeTurn(obs).kind).toBe("continue"); // 1st
+    expect(low.observeTurn(obs).kind).toBe("continue"); // 2nd
+    expect(low.observeTurn(obs).kind).toBe("continue"); // 3rd
+    const lowFourth = low.observeTurn(obs);
+    expect(lowFourth.kind).toBe("react"); // low consec=4
+  });
+
+  it("the response guard is off by default and opt-in", () => {
+    expect(resolveLoopGuardOptions("normal").guardResponse).toBe(false);
+    expect(resolveLoopGuardOptions("normal", true).guardResponse).toBe(true);
+    const text = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu ".repeat(30);
+    const off = new LoopGuard(resolveLoopGuardOptions("normal"));
+    expect(off.observeAnswer(text)).toBe(false);
+
+    const on = new LoopGuard(resolveLoopGuardOptions("normal", true));
+    expect(on.observeAnswer(text)).toBe(true);
+    // Once flagged, it does not fire again for the same turn.
+    expect(on.observeAnswer(text)).toBe(false);
+    const decision = on.noteAnswerLoop();
+    expect(decision.kind).toBe("react");
+    if (decision.kind === "react") expect(decision.type).toBe("response");
+  });
+
+  it("guards the final answer per turn only when enabled", () => {
+    const text = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu ".repeat(30);
+    const obs = { content: text, thinking: "", toolCalls: [], toolResults: [] };
+    const off = new LoopGuard(resolveLoopGuardOptions("normal"));
+    expect(off.observeTurn(obs).kind).toBe("continue");
+    const on = new LoopGuard(resolveLoopGuardOptions("normal", true));
+    const decision = on.observeTurn(obs);
+    expect(decision.kind).toBe("react");
+    if (decision.kind === "react") expect(decision.type).toBe("response");
   });
 });
