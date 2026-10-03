@@ -2,27 +2,34 @@ import { describe, it, expect } from "vitest";
 import { parseSkillMd, loadSkill, discoverSkills } from "./skill-loader";
 import type { FileSystem } from "../tools/file-system";
 
-/** Tiny in-memory FileSystem keyed by absolute path. */
+/** Tiny in-memory FileSystem keyed by absolute path. Separator-agnostic: keys
+ * and query paths are normalised to `/`, so it works on Windows too (where
+ * `path.join` yields `\\`). */
 function memFs(files: Record<string, string>): FileSystem {
+  const norm = (p: string) => p.replace(/\\/g, "/");
+  const map: Record<string, string> = {};
+  for (const [k, v] of Object.entries(files)) map[norm(k)] = v;
   const dirs = new Set<string>();
-  for (const p of Object.keys(files)) {
+  for (const p of Object.keys(map)) {
     const parts = p.split("/");
     for (let i = 1; i < parts.length; i++) dirs.add(parts.slice(0, i).join("/") || "/");
   }
   return {
     readText: (p) => {
-      if (p in files) return files[p];
+      const k = norm(p);
+      if (k in map) return map[k];
       throw new Error("ENOENT " + p);
     },
     writeText: () => {},
-    exists: (p) => p in files,
-    isDirectory: (p) => dirs.has(p),
+    exists: (p) => norm(p) in map,
+    isDirectory: (p) => dirs.has(norm(p)),
     realpath: (p) => p,
     list: (d) => {
+      const base = norm(d);
       const out = new Set<string>();
-      for (const k of Object.keys(files)) {
-        if (!k.startsWith(d + "/")) continue;
-        out.add(k.slice(d.length + 1).split("/")[0]);
+      for (const k of Object.keys(map)) {
+        if (!k.startsWith(base + "/")) continue;
+        out.add(k.slice(base.length + 1).split("/")[0]);
       }
       return [...out];
     },
