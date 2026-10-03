@@ -68,6 +68,28 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     expect(prompt).toMatch(/Shell tool runs commands with the native shell/);
   });
 
+  it("lists installed skills under ## Skills (and omits the section when there are none)", () => {
+    const withSkills = new DefaultSystemPromptBuilder(
+      (mode) => toolDefinitionsForMode(tools(), mode),
+      () => "/w",
+      () => [
+        { name: "pdf", description: "Extract PDF text", dir: "/w/.agents/skills/pdf", path: "/w/.agents/skills/pdf/SKILL.md" },
+        { name: "code-review", description: "Review a diff", dir: "/w/.agents/skills/code-review", path: "/w/.agents/skills/code-review/SKILL.md" },
+        { name: "grill-me", description: "Interview", dir: "/w/.agents/skills/grill-me", path: "/w/.agents/skills/grill-me/SKILL.md", disableModelInvocation: true },
+      ],
+    );
+    const prompt = withSkills.build("agent");
+    expect(prompt).toContain("## Skills");
+    expect(prompt).toContain("- pdf: Extract PDF text");
+    expect(prompt).toContain("- code-review: Review a diff");
+    expect(prompt).toContain("Skill tool");
+    // disable-model-invocation skills are NOT offered to the model.
+    expect(prompt).not.toContain("- grill-me:");
+
+    const without = new DefaultSystemPromptBuilder((mode) => toolDefinitionsForMode(tools(), mode), () => "/w");
+    expect(without.build("agent")).not.toContain("## Skills");
+  });
+
   it("analyze mode + Delegate: read-only rules AND orchestration rules together", () => {
     const builder = new DefaultSystemPromptBuilder(
       (mode) => toolDefinitionsForMode(toolsWithDelegate(), mode),

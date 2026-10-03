@@ -320,6 +320,23 @@ describe("SubAgentRunner", () => {
     expect(fetched.length).toBeLessThanOrEqual(5);
   });
 
+  it("logs a sub-agent's lifecycle (start + end with duration)", async () => {
+    const logs: string[] = [];
+    const runner = new SubAgentRunner({
+      config: new StaticConfigProvider(CONFIG),
+      llmFactory: factory([[{ type: "text", content: "report" }]]),
+      tools: new ToolRegistry([makeWriteTool()]),
+      cwd: () => "/workspace",
+      log: (m) => logs.push(m),
+    });
+
+    const res = await runner.run(spec({ access: "read" }), undefined, undefined, "tc1");
+
+    expect(res.isError).toBe(false);
+    expect(logs.some((l) => /^subagent "A" start: access=read resources=1/.test(l))).toBe(true);
+    expect(logs.some((l) => /^subagent "A" end in \d+ms$/.test(l))).toBe(true);
+  });
+
   it("write sub-agents can use Write (full agent mode)", async () => {
     const write = makeWriteTool();
     const runner = buildRunner(factory([writeCall(), [{ type: "text", content: "done writing" }]]), [write]);

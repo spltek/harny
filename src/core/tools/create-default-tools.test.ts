@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createDefaultTools } from "./create-default-tools";
+import { SkillRegistry } from "../skills/skill-registry";
 import { FakeHttpClient } from "../llm/http-client.test-utils";
 import type { CommandRunner } from "./command-runner";
 import type { DiagnosticsProvider } from "./diagnostics-provider";
@@ -20,6 +21,7 @@ const fakeRunner: CommandRunner = {
   run: () => ({ stdout: "", stderr: "", code: 0, timedOut: false }),
 };
 const fakeDiagnostics: DiagnosticsProvider = { getDiagnostics: () => [] };
+const fakeSkills = new SkillRegistry(fakeFs, () => []);
 
 describe("createDefaultTools", () => {
   it("registers the standard tool set in a stable order", () => {
@@ -29,6 +31,7 @@ describe("createDefaultTools", () => {
       http: new FakeHttpClient(),
       diagnostics: fakeDiagnostics,
       cwd: () => "/workspace",
+      skills: fakeSkills,
     });
 
     expect(tools.map((t) => t.name)).toEqual([
@@ -41,6 +44,7 @@ describe("createDefaultTools", () => {
       "Shell",
       "Grep",
       "Glob",
+      "Skill",
       "TodoWrite",
       "WebSearch",
       "WebFetch",
@@ -55,6 +59,7 @@ describe("createDefaultTools", () => {
       http: new FakeHttpClient(),
       diagnostics: fakeDiagnostics,
       cwd: () => "/workspace",
+      skills: fakeSkills,
     });
 
     for (const t of tools) {

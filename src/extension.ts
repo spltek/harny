@@ -1,6 +1,7 @@
 import { window, workspace, commands } from "vscode";
 import type { ExtensionContext } from "vscode";
 import { mkdirSync, watch } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { Agent } from "./core/agent/agent";
 import { SubAgentRunner } from "./core/agent/subagent";
@@ -29,6 +30,7 @@ import {
   VscodeDiagnosticsProvider,
 } from "./core/tools";
 import { toolDefinitionsForMode } from "./core/tools/mode-policy";
+import { SkillRegistry, defaultSkillRoots } from "./core/skills";
 import { ChatViewProvider } from "./chat/chat-view";
 import { SessionRegistry } from "./chat/session-registry";
 import { AttachmentService } from "./chat/attachment-service";
@@ -80,6 +82,11 @@ export function activate(context: ExtensionContext) {
   const config = new CompositeConfigProvider(new VscodeConfigProvider(), [fileConfig, runtimeOverrides]);
 
   const cwd = () => root ?? process.cwd();
+  // Agent Skills: discovered from the standard ecosystem dirs (skills.sh / pi /
+  // Claude / Cursor …): project `.agents|.claude|.pi/skills`, then the user-level
+  // equivalents. Project skills shadow user skills of the same name.
+  const skillRoots = (): string[] => defaultSkillRoots(cwd(), homedir());
+  const skills = new SkillRegistry(nodeFileSystem, skillRoots);
   const tools = new ToolRegistry(
     createDefaultTools({
       fs: nodeFileSystem,
@@ -87,6 +94,7 @@ export function activate(context: ExtensionContext) {
       http: nodeHttpClient,
       diagnostics: new VscodeDiagnosticsProvider(),
       cwd,
+      skills,
     }),
   );
   const llmFactory = new DefaultLlmProviderFactory(nodeHttpClient, tools.definitions());
@@ -96,6 +104,7 @@ export function activate(context: ExtensionContext) {
   const systemPrompt = new DefaultSystemPromptBuilder(
     (mode) => toolDefinitionsForMode(tools.getAll(), mode),
     cwd,
+    () => skills.list(),
   );
   const compactor = new Compactor(llmFactory, () => config.get());
 
@@ -155,6 +164,8 @@ export function activate(context: ExtensionContext) {
       configHome: resolved.home,
       // Fallback context window for hosts that don't report it (OpenCode Go).
       modelsDev: new ModelsDevCatalog(nodeHttpClient),
+      // Agent Skills: catalog for the Skills card + manual `/skill` activation.
+      skills,
     },
   );
   viewProvider.setContext(context);

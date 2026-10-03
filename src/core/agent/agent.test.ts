@@ -733,6 +733,65 @@ describe("Agent", () => {
     expect(logs.some((l) => /loop-guard \[tool-repeat\] level 1/.test(l))).toBe(true);
   });
 
+  it("logs stream start/end and per-tool timing (to diagnose a stall)", async () => {
+    const logs: string[] = [];
+    const call = (): StreamChunk[] => [
+      { type: "tool_call_start", index: 0, id: "c", name: "FakeTool" },
+      { type: "tool_call_delta", index: 0, delta: "{}" },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const { agent } = buildHarness({
+      tools: [makeTool("FakeTool")],
+      chunks: [call(), [{ type: "text", content: "done" }]],
+      log: (m) => logs.push(m),
+    });
+
+    await agent.send("x");
+
+    expect(logs.some((l) => /^stream: start model=/.test(l))).toBe(true);
+    expect(logs.some((l) => /^stream: end after \d+s chunks=\d+/.test(l))).toBe(true);
+    expect(logs.some((l) => /^tool: FakeTool start$/.test(l))).toBe(true);
+    expect(logs.some((l) => /^tool: FakeTool ok in \d+ms$/.test(l))).toBe(true);
+  });
+
+  it("logs a periodic stream heartbeat while the provider stalls (watchdog)", async () => {
+    vi.useFakeTimers();
+    try {
+      const logs: string[] = [];
+      // A stream that yields NOTHING until the turn is aborted: it simulates a
+      // provider that went silent, the exact "hung" case we want to diagnose.
+      const factory = {
+        create: () => ({
+          async *stream(_m: unknown, signal?: AbortSignal) {
+            await new Promise<void>((resolve) => {
+              if (signal?.aborted) return resolve();
+              signal?.addEventListener("abort", () => resolve());
+            });
+          },
+        }),
+      } as unknown as LLMProviderFactory;
+      const tools = new ToolRegistry([makeTool("FakeTool")]);
+      const agent = new Agent({
+        config: new StaticConfigProvider(VALID_CONFIG),
+        llmFactory: factory,
+        tools,
+        history: new InMemoryChatHistory(),
+        events: new InMemoryEventBus<AgentEvent>(),
+        systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+        log: (m) => logs.push(m),
+      });
+
+      const sendPromise = agent.send("x").catch(() => {});
+      await vi.advanceTimersByTimeAsync(15000);
+      expect(logs.some((l) => /^stream: waiting 1[0-9]s/.test(l))).toBe(true);
+
+      agent.abort();
+      await sendPromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("logs a stop line when it gives up on a loop", async () => {
     const logs: string[] = [];
     const empty: StreamChunk[] = [];

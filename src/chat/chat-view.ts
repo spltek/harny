@@ -20,6 +20,7 @@ import { toTemperature, toTopP } from "./temperature";
 import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, toContextWindow, toOutputTokens } from "./context-window";
 import { PanelModalQueue } from "./panel-modal-queue";
 import { Compactor, DEFAULT_COMPACTION, CompactionSettings, planManualCompaction, shouldCompact, estimateTokens, serializeConversation, toCompactionThresholdPercent } from "../core/sessions/compactor";
+import type { SkillRegistry } from "../core/skills/skill-registry";
 import { normalizeLoopGuardSensitivity, resolveLoopGuardOptions } from "../core/agent/loop-guard";
 import { DEFAULT_MAX_PARALLEL_SUB_AGENTS } from "../core/agent/agent";
 
@@ -87,6 +88,8 @@ export class ChatViewProvider implements WebviewViewProvider {
       /** Optional models.dev catalog: fallback context window for hosts that
        * do not report it in `/models` (e.g. OpenCode Go). */
       modelsDev?: { getContext(modelId: string, providerCandidates: readonly string[]): Promise<number | undefined> };
+      /** Agent Skills registry: catalog for the UI + manual `/skill` activation. */
+      skills?: SkillRegistry;
     } = {},
   ) {
     this.modals = new PanelModalQueue((msg) => this.view?.webview.postMessage(msg));
@@ -299,7 +302,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     rt.cachedTokens = 0;
     rt.cachedWriteTokens = 0;
     void this.pushConfig();
-    this.view?.webview.postMessage({ type: "refresh", messages: rt.agent.getMessages() });
+    this.view?.webview.postMessage({ type: "refresh", messages: rt.agent.getMessages(), skills: this.skillCatalog() });
   }
 
   /** Shared branch core: new session + slicing done by the caller. */
@@ -529,6 +532,11 @@ export class ChatViewProvider implements WebviewViewProvider {
       }
       case "getConfig":
         await this.pushConfig();
+        break;
+      case "getSkills":
+        // Lightweight (no network): the webview re-reads the installed skills
+        // when the control stack is expanded, so an install shows up at once.
+        this.view?.webview.postMessage({ type: "skills", skills: this.skillCatalog() });
         break;
       case "getProvidersEditor":
         this.view?.webview.postMessage({
@@ -1018,6 +1026,37 @@ export class ChatViewProvider implements WebviewViewProvider {
         return;
       }
     }
+    // MANUAL SKILL ACTIVATION (bypasses the model's own activation decision):
+    //   /skill <name> [task] → inject that skill's instructions into the request
+    //   /skills              → list the installed skills
+    const skillCmd = /^\/(skill|skills)\b([\s\S]*)$/i.exec(rawText.trim());
+    if (skillCmd) {
+      const registry = this.options.skills;
+      const installed = registry?.list() ?? [];
+      const isList = skillCmd[1].toLowerCase() === "skills" || !skillCmd[2].trim();
+      const name = isList ? "" : skillCmd[2].trim().split(/\s+/)[0];
+      const skill = isList ? undefined : registry?.get(name);
+      if (isList || !skill) {
+        const content = isList
+          ? `🧩 **Skills**\n${
+              installed.length
+                ? installed.map((s) => `- \`${s.name}\`: ${s.description}`).join("\n")
+                : "No skills installed. Install one with `npx skills add <repo> --skill <name> -a universal`."
+            }`
+          : `❌ Unknown skill \`${name}\`. Installed: ${installed.map((s) => s.name).join(", ") || "(none)"}.`;
+        rt.history.add({ role: "user", content: rawText.trim(), timestamp: Date.now() });
+        rt.history.add({ role: "assistant", content, timestamp: Date.now() });
+        this.sessions.saveMessages(rt.sessionId, rt.agent.getMessages());
+        this.view?.webview.postMessage({ type: "refresh", messages: rt.agent.getMessages(), skills: this.skillCatalog() });
+        return;
+      }
+      const task = skillCmd[2].trim().slice(name.length).trim() || "Apply this skill to the current task.";
+      const injected =
+        `Use the following skill instructions.\n\n<skill name="${skill.name}" dir="${skill.dir}">\n${skill.body}\n</skill>\n\n${task}`;
+      // Keep any inlined attachment context, but make the skill the leading task.
+      text = text && text !== rawText ? `${injected}\n\n${text}` : injected;
+      displayText = rawText.trim();
+    }
     // Auto-compaction before the request when already over the threshold:
     // runs the EXACT same routine as the manual Compact button. BEST-EFFORT:
     // if the summarizer errors (network), the user's request must still run —
@@ -1053,7 +1092,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       // (parallel work), and their refresh/status must not clobber it.
       if (this.activeId === rt.sessionId) {
         this.postStatus(false);
-        if (!hadError) this.view?.webview.postMessage({ type: "refresh", messages: rt.agent.getMessages() });
+        if (!hadError) this.view?.webview.postMessage({ type: "refresh", messages: rt.agent.getMessages(), skills: this.skillCatalog() });
       }
     }
     // Post-response auto-compaction: evaluate the CURRENT fill right after
@@ -1237,6 +1276,11 @@ export class ChatViewProvider implements WebviewViewProvider {
     this.streamTee.attachAll(runtimes);
   }
 
+  /** The installed-skills catalog for the UI (Skills card). */
+  private skillCatalog(): { name: string; description: string }[] {
+    return (this.options.skills?.list() ?? []).map((s) => ({ name: s.name, description: s.description }));
+  }
+
   /** The concurrent sub-agent cap actually used for the active session: the
    * per-session override wins, then the config default, then 4. */
   private effectiveParallelCap(): number {
@@ -1265,6 +1309,8 @@ export class ChatViewProvider implements WebviewViewProvider {
     maxParallelSubAgents: number;
     loopGuard?: "low" | "normal" | "high";
     loopGuardResponse?: boolean;
+    /** Installed Agent Skills (catalog for the Skills card). */
+    skills: { name: string; description: string }[];
     contextWindow: number;
     compactionThresholdPercent?: number;
     outputTokens: number;
@@ -1343,6 +1389,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       maxParallelSubAgents: this.effectiveParallelCap(),
       loopGuard: this.activeRuntime()?.loopGuard,
       loopGuardResponse: this.activeRuntime()?.loopGuardResponse,
+      skills: this.skillCatalog(),
       contextWindow: this.activeRuntime()?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
       // Only the session override, so the UI can show "Auto" (undefined) vs
       // an explicit value. Config-file defaults stay effective but hidden.

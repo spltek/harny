@@ -517,9 +517,13 @@ export class Agent implements ChatController {
       const decision = this.guard.beforeToolCall(tc, readOnly);
       let r: ToolResult;
       if (decision.mode === "run") {
+        const t0 = Date.now();
+        this.log(`tool: ${tc.name} start`);
         r = await this.executeToolSafely(tc);
+        this.log(`tool: ${tc.name} ${r.isError ? "error" : "ok"} in ${Date.now() - t0}ms`);
         this.guard.afterToolCall(tc, r.isError, r.content, readOnly);
       } else {
+        this.log(`tool: ${tc.name} skipped (${decision.mode})`);
         r = { content: decision.content, isError: decision.mode === "refuse" };
       }
       results[index] = r;
@@ -766,8 +770,29 @@ export class Agent implements ChatController {
     if (this.abortController!.signal.aborted) turnAbort.abort();
     this.abortController!.signal.addEventListener("abort", linkMainAbort);
 
+    // Stream watchdog: log the start plus a periodic heartbeat, so a STALLED
+    // provider stream is visible after the fact (Output > Harny; persisted to a
+    // file when HARNY_DEBUG=1). If a sub-agent "hangs", the last heartbeat shows
+    // whether the model stopped emitting, a tool never returned, etc.
+    const streamStart = Date.now();
+    let chunkCount = 0;
+    let lastChunkAt = streamStart;
+    this.log(`stream: start model=${config.model} msgs=${messages.length} tools=${toolDefinitions.length}`);
+    const heartbeat = this.deps.log
+      ? setInterval(() => {
+          const elapsed = Math.round((Date.now() - streamStart) / 1000);
+          const since = Math.round((Date.now() - lastChunkAt) / 1000);
+          this.log(
+            `stream: waiting ${elapsed}s (${since}s since last chunk) chunks=${chunkCount} ` +
+              `content=${content.length}c thinking=${thinking.length}c tools=${toolCalls.length}`,
+          );
+        }, 15000)
+      : undefined;
+
     try {
       for await (const chunk of provider.stream(messages, turnAbort.signal, toolDefinitions)) {
+        chunkCount++;
+        lastChunkAt = Date.now();
         if (chunk.type === "text") {
           // Emit raw chunk for stream log
           this.deps.events.emit({ type: "raw_chunk", chunk: chunk.content, kind: "text" });
@@ -834,6 +859,7 @@ export class Agent implements ChatController {
       if (this.abortController!.signal.aborted) throw err;
       if (!reasoningLoop && !answerLoop) throw err;
     } finally {
+      if (heartbeat) clearInterval(heartbeat);
       this.abortController!.signal.removeEventListener("abort", linkMainAbort);
     }
 
@@ -845,6 +871,10 @@ export class Agent implements ChatController {
       throw abortErr;
     }
 
+    this.log(
+      `stream: end after ${Math.round((Date.now() - streamStart) / 1000)}s chunks=${chunkCount} ` +
+        `content=${content.length}c thinking=${thinking.length}c tools=${toolCalls.length} finish=${finishReason ?? "-"}`,
+    );
     return { content, toolCalls, thinking, reasoningDetails, finishReason, reasoningLoop, answerLoop };
   }
 

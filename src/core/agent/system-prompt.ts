@@ -1,6 +1,8 @@
 import type { ToolDefinition } from "../tools/tool";
 import type { ChatMode } from "../tools/mode-policy";
 import { isAnalyzeMode } from "../tools/mode-policy";
+import type { SkillMeta } from "../skills/types";
+import { SKILL_TOOL_NAME } from "../tools/skill-tool";
 import { defaultShell, isWindows } from "../platform";
 import { DELEGATE_TOOL_NAME } from "./orchestration";
 
@@ -29,12 +31,23 @@ export class DefaultSystemPromptBuilder implements SystemPromptBuilder {
   constructor(
     private toolDefinitions: (mode: ChatMode) => ToolDefinition[],
     private cwd: () => string,
+    /** Installed Agent Skills (catalog only; bodies load on activation). */
+    private skills: () => readonly SkillMeta[] = () => [],
   ) {}
 
   build(mode: ChatMode = "analyze", effective?: readonly ToolDefinition[]): string {
     const cwd = this.cwd();
     const definitions = effective ? [...effective] : this.toolDefinitions(mode);
     const toolList = definitions.map((d) => `- ${d.name}: ${this.summarize(d.description)}`).join("\n");
+    // Skills catalog (progressive disclosure): only name + description here; the
+    // Skill tool loads the full instructions on demand. Skills marked
+    // `disable-model-invocation` are EXCLUDED (manual activation only).
+    const installedSkills = this.skills().filter((s) => !s.disableModelInvocation);
+    const skillsSection =
+      installedSkills.length > 0
+        ? `\n\n## Skills\nWhen the task matches one of these skills, ACTIVATE it first by calling the ${SKILL_TOOL_NAME} tool with its exact name, then follow the returned instructions:\n` +
+          installedSkills.map((s) => `- ${s.name}: ${s.description}`).join("\n")
+        : "";
     const analyzeRules =
       isAnalyzeMode(mode)
         ? `
@@ -133,7 +146,7 @@ Guidelines:
 - Use TodoWrite to track progress on complex multi-step tasks (with Parallel ON, only AFTER you have delegated).
 - Use ReadLints only on files you've edited or are about to edit.
 - When broadly exploring the codebase, prefer Grep and Glob over Shell find/grep.
-- Never repeat the same tool call with identical arguments: if it failed or returned nothing, change approach (Glob/Grep/Read or different arguments) instead of retrying it.${delegateRules}${analyzeRules}`;
+- Never repeat the same tool call with identical arguments: if it failed or returned nothing, change approach (Glob/Grep/Read or different arguments) instead of retrying it.${delegateRules}${analyzeRules}${skillsSection}`;
   }
 
   private summarize(description: string): string {

@@ -118,6 +118,22 @@ function makeView() {
   return { view, onDidReceiveMessage, postMessage };
 }
 
+/** Stub SkillRegistry for the manual-activation tests. */
+function fakeSkillRegistry(skills: { name: string; description: string; body?: string }[] = []) {
+  const loaded = skills.map((s) => ({
+    name: s.name,
+    description: s.description,
+    dir: `/w/.agents/skills/${s.name}`,
+    path: `/w/.agents/skills/${s.name}/SKILL.md`,
+    body: s.body ?? `BODY ${s.name}`,
+  }));
+  return {
+    list: () => loaded,
+    get: (n: string) => loaded.find((s) => s.name === n),
+    invalidate: () => {},
+  } as any;
+}
+
 function buildHarness(opts: Record<string, unknown> = {}) {
   // New sessions are named via a native prompt; default the mock so createNew
   // resolves unless a specific test overrides it.
@@ -679,6 +695,65 @@ describe("ChatViewProvider", () => {
     });
   });
 
+  it("buildConfig pushes the installed skills catalog", async () => {
+    const { provider } = buildHarness({ skills: fakeSkillRegistry([{ name: "pdf", description: "PDFs" }]) });
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew();
+    await handler({ type: "getConfig" });
+    const posts = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
+    expect(posts[posts.length - 1].config.skills).toEqual([{ name: "pdf", description: "PDFs" }]);
+  });
+
+  it("getSkills replies with the installed skills catalog (no network)", async () => {
+    const { provider } = buildHarness({ skills: fakeSkillRegistry([{ name: "pdf", description: "PDFs" }]) });
+    const { handler, view } = resolveWith(provider);
+    await handler({ type: "getSkills" });
+    const msg = view.webview.postMessage.mock.calls.map((c) => c[0] as any).find((m) => m.type === "skills");
+    expect(msg.skills).toEqual([{ name: "pdf", description: "PDFs" }]);
+  });
+
+  it("/skill <name> injects the skill instructions and keeps the command as display text", async () => {
+    const { provider, registry } = buildHarness({
+      skills: fakeSkillRegistry([{ name: "pdf", description: "PDFs", body: "USE PDFTOTEXT" }]),
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "gpt-4o", provider: undefined });
+
+    await handler({ type: "send", text: "/skill pdf extract the table" });
+
+    const agent = registry.get("s1")!.agent as any;
+    const [text, opts] = agent.send.mock.calls[0];
+    expect(text).toContain("USE PDFTOTEXT");
+    expect(text).toContain("extract the table");
+    expect(opts.displayText).toBe("/skill pdf extract the table");
+  });
+
+  it("/skills lists the installed skills as an assistant bubble", async () => {
+    const { provider, registry } = buildHarness({ skills: fakeSkillRegistry([{ name: "pdf", description: "PDFs" }]) });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "gpt-4o", provider: undefined });
+
+    await handler({ type: "send", text: "/skills" });
+
+    const msgs = registry.get("s1")!.agent.getMessages();
+    expect(msgs.some((m: any) => m.role === "assistant" && /Skills/.test(m.content) && m.content.includes("pdf"))).toBe(true);
+  });
+
+  it("/skill with an unknown name answers with the installed list (no agent run)", async () => {
+    const { provider, registry } = buildHarness({ skills: fakeSkillRegistry([{ name: "pdf", description: "PDFs" }]) });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "gpt-4o", provider: undefined });
+
+    await handler({ type: "send", text: "/skill nope" });
+
+    const msgs = registry.get("s1")!.agent.getMessages();
+    expect(msgs.some((m: any) => m.role === "assistant" && /Unknown skill/.test(m.content))).toBe(true);
+    expect((registry.get("s1")!.agent as any).send).not.toHaveBeenCalled();
+  });
+
   it("send re-asserts the per-session cap + Loop Guard on the agent", async () => {
     const { provider, registry } = buildHarness();
     const { handler } = resolveWith(provider);
@@ -873,7 +948,7 @@ describe("ChatViewProvider", () => {
     expect(view.webview.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: "modal", kind: "alert", alertKind: "confirm", danger: true }),
     );
-    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "refresh", messages: kept });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "refresh", messages: kept }));
   });
 
   it("truncateAt does nothing when the confirmation is cancelled", async () => {

@@ -37,7 +37,7 @@ export function isFileMutatingTool(name: string): boolean {
  * for an identical call (loop guard cache). Deliberately excludes Shell
  * (arbitrary side effects), Delegate (nested run) and WebSearch/WebFetch
  * (external, time-varying) and TodoWrite (mutates todo state). */
-const READ_ONLY_TOOLS = new Set(["Read", "Grep", "Glob", "ReadLints"]);
+const READ_ONLY_TOOLS = new Set(["Read", "Grep", "Glob", "ReadLints", "Skill"]);
 
 export function isReadOnlyTool(name: string): boolean {
   return READ_ONLY_TOOLS.has(name);

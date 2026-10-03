@@ -63,7 +63,7 @@ function setupDom(
       </div>
     </div>
     <div id="status">AI Model: <select id="model-select"></select><button id="gear-btn">⚙</button><button id="ctx-minus">−</button><input id="ctx-input" type="text" value="128000"><button id="ctx-plus">+</button><button id="out-minus">−</button><input id="out-input" type="text" value="8192"><button id="out-plus">+</button><input id="sampler-temp" type="radio" name="sampler" checked><input id="sampler-topp" type="radio" name="sampler"><button id="samp-minus">−</button><input id="samp-input" type="text" placeholder="Auto"><button id="samp-plus">+</button><button id="samp-auto">Auto</button><button id="presence-minus">−</button><input id="presence-input" type="text" placeholder="Auto"><button id="presence-plus">+</button><button id="presence-auto">Auto</button><button id="freq-minus">−</button><input id="freq-input" type="text" placeholder="Auto"><button id="freq-plus">+</button><button id="freq-auto">Auto</button></div>
-    <div id="ctl-cards"><input type="checkbox" id="par-enabled" /><input id="par-input" type="text" value="4" /><button id="par-minus"></button><button id="par-plus"></button><button id="lg-reset"></button><input type="radio" name="lg-level" id="lg-high" value="high" /><input type="radio" name="lg-level" id="lg-normal" value="normal" checked /><input type="radio" name="lg-level" id="lg-low" value="low" /><input type="checkbox" id="lg-response" /></div>
+    <div id="ctl-cards"><input type="checkbox" id="par-enabled" /><input id="par-input" type="text" value="4" /><button id="par-minus"></button><button id="par-plus"></button><button id="lg-reset"></button><input type="radio" name="lg-level" id="lg-high" value="high" /><input type="radio" name="lg-level" id="lg-normal" value="normal" checked /><input type="radio" name="lg-level" id="lg-low" value="low" /><input type="checkbox" id="lg-response" /><div id="skills-card" class="hidden"><div id="skills-list"></div></div></div>
     <div id="metrics"><select id="thinking-select"><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button><span id="compact-threshold-label"></span><button id="compact-settings-btn">⚙</button></div>
     <div id="compact-settings-modal" class="hidden">
       <div class="cs-backdrop"></div>
@@ -1347,6 +1347,44 @@ describe("view webview client", () => {
     expect(document.activeElement).toBe(input);
   });
 
+  it("returns focus to the prompt after a Stop (interrupted)", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    hostMessage({ type: "interrupted" });
+
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("focuses the prompt when opening/switching a session (switchView)", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).not.toBe(input);
+
+    hostMessage({ type: "switchView", activeId: "b", openIds: ["a", "b"], sessions: [], messages: [], config: {}, workingIds: [] });
+
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("focuses the prompt on initial load when a session is active", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("returns focus to the prompt after a transcript refresh (e.g. a cut)", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).not.toBe(input);
+
+    hostMessage({ type: "refresh", messages: [{ role: "user", content: "hi", timestamp: 1 }] });
+
+    expect(document.activeElement).toBe(input);
+  });
+
   it("creates a NEW blue bubble per emission segment, in chronological order (never moves)", async () => {
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
@@ -1625,9 +1663,17 @@ describe("view webview client", () => {
 
     hostMessage({ type: "subagentStart", toolCallId: "s1" });
     expect(bubble.querySelector(".subagent-status")?.classList.contains("running")).toBe(true);
+    // The BUBBLE pulses while running (phase-locked to the shared clock), not
+    // the status chip.
+    expect(bubble.classList.contains("subagent-running")).toBe(true);
+    expect(bubble.style.animationDelay).not.toBe("");
 
     hostMessage({ type: "toolResult", toolCallId: "s1", output: '🔁 Sub-agent "A" report:\nfindings', isError: false });
     expect(bubble.querySelector(".subagent-status")?.classList.contains("done")).toBe(true);
+    // Pulse settled: no longer running, fading back to its resting edge.
+    expect(bubble.classList.contains("subagent-running")).toBe(false);
+    expect(bubble.classList.contains("subagent-settling")).toBe(true);
+    expect(bubble.style.animationDelay).toBe("");
     expect(bubble.querySelector(".tool-result")?.textContent).toContain("findings");
   });
 
@@ -1729,6 +1775,35 @@ describe("view webview client", () => {
     expect(bubble.querySelector(".subagent-status")?.classList.contains("failed")).toBe(true);
   });
 
+  it("pulses a running sub-agent's bubble (phase-locked) and settles it on a terminal state", async () => {
+    vi.useFakeTimers();
+    try {
+      await loadView();
+      hostMessage(PARALLEL_ON);
+      hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+      const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
+      // Queued: the bubble does NOT pulse yet.
+      expect(bubble.classList.contains("subagent-running")).toBe(false);
+      expect(bubble.classList.contains("subagent-settling")).toBe(false);
+
+      hostMessage({ type: "subagentStart", toolCallId: "s1" });
+      expect(bubble.classList.contains("subagent-running")).toBe(true);
+      expect(bubble.style.animationDelay).not.toBe(""); // phase-locked to the shared clock
+
+      // A terminal state (here: its own error) settles the pulse.
+      hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "error", error: "boom" } });
+      expect(bubble.classList.contains("subagent-running")).toBe(false);
+      expect(bubble.classList.contains("subagent-settling")).toBe(true);
+      expect(bubble.style.animationDelay).toBe("");
+
+      // The settling class is removed once the ~0.7s fade is over.
+      vi.advanceTimersByTime(750);
+      expect(bubble.classList.contains("subagent-settling")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("renders markdown inside the sub-agent live stream (thinking + answer)", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
@@ -1790,6 +1865,9 @@ describe("view webview client", () => {
     hostMessage({ type: "toolResult", toolCallId: "s1", output: '⏹ Sub-agent "A" interrupted.', isError: true });
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
     expect(bubble.querySelector(".subagent-status")?.classList.contains("aborted")).toBe(true);
+    // Terminal states settle the pulse too (it was running before the stop).
+    expect(bubble.classList.contains("subagent-running")).toBe(false);
+    expect(bubble.classList.contains("subagent-settling")).toBe(true);
   });
 
   it("marks an INDIVIDUALLY aborted sub-agent as aborted (not interrupted)", async () => {
@@ -2209,6 +2287,62 @@ describe("view webview client", () => {
     hostMessage({ type: "status", active: false });
     expect((document.getElementById("lg-high") as HTMLInputElement).disabled).toBe(false);
     expect((document.getElementById("lg-response") as HTMLInputElement).disabled).toBe(false);
+  });
+
+  it("Skills card lists installed skills; a chip click fills the prompt with /skill <name>", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        contextWindow: 128000,
+        skills: [
+          { name: "pdf", description: "PDFs" },
+          { name: "code-review", description: "Review a diff" },
+        ],
+      },
+    });
+    const card = document.getElementById("skills-card") as HTMLElement;
+    const list = document.getElementById("skills-list") as HTMLElement;
+    expect(card.classList.contains("hidden")).toBe(false);
+    const chips = list.querySelectorAll<HTMLButtonElement>(".skill-chip");
+    expect(chips.length).toBe(2);
+    expect(chips[0].textContent).toContain("pdf");
+
+    chips[0].click();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    expect(input.value).toBe("/skill pdf ");
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("Skills card is hidden when no skills are installed", async () => {
+    await loadView();
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, skills: [] } });
+    expect((document.getElementById("skills-card") as HTMLElement).classList.contains("hidden")).toBe(true);
+  });
+
+  it("a transcript refresh carrying skills re-renders the Skills card", async () => {
+    await loadView();
+    hostMessage({ type: "refresh", messages: [], skills: [{ name: "pdf", description: "PDFs" }] });
+    const card = document.getElementById("skills-card") as HTMLElement;
+    expect(card.classList.contains("hidden")).toBe(false);
+    expect(document.querySelectorAll("#skills-list .skill-chip").length).toBe(1);
+  });
+
+  it("a `skills` message re-renders the Skills card", async () => {
+    await loadView();
+    hostMessage({ type: "skills", skills: [{ name: "pdf", description: "PDFs" }] });
+    expect((document.getElementById("skills-card") as HTMLElement).classList.contains("hidden")).toBe(false);
+    expect(document.querySelectorAll("#skills-list .skill-chip").length).toBe(1);
+  });
+
+  it("expanding the control stack requests a fresh skills list", async () => {
+    await loadView();
+    posted.length = 0;
+    (document.getElementById("ctl-toggle") as HTMLElement).click(); // default collapsed → expands
+    expect(posted.some((m) => (m as { type?: string }).type === "getSkills")).toBe(true);
   });
 
   it("adds a new provider with + New and keeps a complete URL untouched", async () => {

@@ -1,4 +1,5 @@
 import type { HttpClient } from "../llm/http-client";
+import type { SkillRegistry } from "../skills/skill-registry";
 import type { CommandRunner } from "./command-runner";
 import { DelegateTool } from "./delegate-tool";
 import { DeleteTool } from "./delete-tool";
@@ -10,6 +11,7 @@ import { GrepTool } from "./grep-tool";
 import { ReadLintsTool } from "./read-lints-tool";
 import { ReadTool } from "./read-tool";
 import { ShellTool } from "./shell-tool";
+import { SkillTool } from "./skill-tool";
 import { StrReplaceTool } from "./str-replace-tool";
 import { TodoTool } from "./todo-tool";
 import type { Tool } from "./tool";
@@ -23,6 +25,8 @@ export interface DefaultToolsDeps {
   http: HttpClient;
   diagnostics: DiagnosticsProvider;
   cwd: () => string;
+  /** Agent Skills registry (discovery + activation via the Skill tool). */
+  skills: SkillRegistry;
 }
 
 /** Builds the standard set of tools with injected dependencies. */
@@ -37,6 +41,7 @@ export function createDefaultTools(deps: DefaultToolsDeps): Tool[] {
     new ShellTool(deps.runner, deps.cwd),
     new GrepTool(deps.fs, deps.cwd),
     new GlobTool(deps.fs, deps.cwd),
+    new SkillTool(deps.skills),
     new TodoTool(),
     new WebSearchTool(deps.http),
     new WebFetchTool(deps.http),

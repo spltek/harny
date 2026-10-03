@@ -28,7 +28,7 @@ export interface ViewState {
   activeId?: string;
   messages: ChatMessage[];
   config: ViewConfigState;
-  /** Extension version, shown in the main screen (header + empty hero). */
+  /** Extension version, shown in the empty hero (main screen). */
   version?: string;
   /** Session ids whose agent is streaming (disabled delete buttons in the list). */
   workingIds: string[];
@@ -127,7 +127,6 @@ ${renderViewConfig(deps)}
     }
     #session-head .toggle { font-size: var(--fs-xs); width: 12px; color: #888; }
     #session-head .spacer { flex: 1; }
-    #session-head .harny-version { font-size: var(--fs-xs); color: #888; margin-right: 4px; }
     #session-head button {
       background: transparent; border: none; color: var(--accent);
       font-size: var(--fs-xl); cursor: pointer; padding: 0 4px;
@@ -227,7 +226,7 @@ ${renderViewConfig(deps)}
       padding: 24px 0 0 10px;
       display: flex; flex-direction: column; gap: 6px;
     }
-    .msg { padding: 8px 10px; border-radius: 8px; max-width: 92%; word-wrap: break-word; word-break: break-word; overflow-wrap: break-word; line-height: 1.4; font-size: var(--fs-lg); }
+    .msg { padding: 8px 10px; border-radius: 8px; max-width: 92%; min-width: 0; word-wrap: break-word; word-break: break-word; overflow-wrap: break-word; line-height: 1.4; font-size: var(--fs-lg); }
     /* pre-wrap only for plain-text bubbles (user messages); markdown bubbles
        (assistant/tool) use breaks:true and white-space normal to avoid the
        ghost blank lines produced by markdown's structural newlines. */
@@ -378,6 +377,12 @@ ${renderViewConfig(deps)}
       0%, 100% { border-color: #d95f27; box-shadow: 0 0 14px 1px rgba(217, 95, 39, 0.45); }
       50% { border-color: rgba(217, 95, 39, 0.4); box-shadow: 0 0 4px 0 rgba(217, 95, 39, 0.15); }
     }
+    /* Same cadence/phase as stream-border-pulse, but in the SUB-AGENT violet so
+       a running sub-agent glows with a halo close to its own border color. */
+    @keyframes stream-border-pulse-violet {
+      0%, 100% { border-color: #7c5cff; box-shadow: 0 0 14px 1px rgba(124, 92, 255, 0.5); }
+      50% { border-color: rgba(124, 92, 255, 0.4); box-shadow: 0 0 4px 0 rgba(124, 92, 255, 0.15); }
+    }
     .msg.assistant.streaming {
       border: 2px solid rgba(217, 95, 39, 0.4);
       animation: stream-border-pulse 1.2s ease-in-out infinite;
@@ -414,6 +419,16 @@ ${renderViewConfig(deps)}
     .tool-details.collapsed { display: none; }
     .tool-label { display: block; color: #888; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.4px; margin: 6px 0 2px; }
     .tool-details pre { background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 4px; padding: 5px 7px; white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow-y: auto; font-size: var(--fs-md); line-height: 1.4; }
+    /* The Task/Input arguments block is a <pre>: WRAP it at the bubble width
+       (the sub-agent "Task" lives OUTSIDE .tool-details, so it needs its own
+       rule) and GROW vertically with the wrapped content — no max-height /
+       scrollbar (the bubble simply gets taller). */
+    .tool-args {
+      background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 4px;
+      padding: 5px 7px; margin: 0;
+      white-space: pre-wrap; word-break: break-all;
+      font-family: var(--font-mono); font-size: var(--fs-md); line-height: 1.4;
+    }
     .tool-result-error { color: var(--error); }
     /* Diff section INSIDE the tool bubble (third section: Input / Output /
        Diff). Replaces the previous separate .msg.file-diff bubble: the diff
@@ -448,36 +463,51 @@ ${renderViewConfig(deps)}
        declared resources/access it may touch. Tinted violet to stand out from
        ordinary tool calls. */
     .msg.tool.subagent { border-color: rgba(124, 92, 255, 0.45); background: rgba(124, 92, 255, 0.06); }
-    .subagent-header { gap: 6px; }
+    /* While THIS sub-agent runs, its bubble pulses with the SAME cadence/phase
+       as the thinking/answer bubbles but in its OWN violet (halo matching the
+       border), phase-locked to the shared clock (phaseLockPulse) so every
+       working area beats together. */
+    .msg.tool.subagent.subagent-running { animation: stream-border-pulse-violet 1.2s ease-in-out infinite; }
+    /* Graceful end: settle back to the resting violet edge (~0.7s fade). */
+    .msg.tool.subagent.subagent-settling {
+      animation: none;
+      transition: border-color 0.7s ease, box-shadow 0.7s ease;
+      border-color: rgba(124, 92, 255, 0.45);
+      box-shadow: none;
+    }
+    .subagent-header { gap: 6px; --sa-chip-h: 1.3rem; }
     .subagent-header .subagent-icon { color: #a98dff; vertical-align: -2px; }
     #working-bar .subagent-icon { vertical-align: -2px; }
     .subagent-role { color: #a98dff; font-weight: 500; }
     .subagent-status {
       margin-left: auto; flex-shrink: 0;
+      display: inline-flex; align-items: center;
+      height: var(--sa-chip-h); box-sizing: border-box;
       font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
-      padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); color: #999;
+      padding: 0 7px; border-radius: 999px; border: 1px solid var(--border); color: #999;
     }
     .subagent-status.queued { color: #999; border-color: var(--border); }
-    .subagent-status.running {
-      color: #a98dff; border-color: rgba(124, 92, 255, 0.5);
-      animation: harny-pulse 1.2s ease-in-out infinite;
-    }
+    /* The "running…" chip is STATIC: the bubble itself carries the pulsing
+       border while this sub-agent works (see .subagent-running above). */
+    .subagent-status.running { color: #a98dff; border-color: rgba(124, 92, 255, 0.5); }
     .subagent-status.done { color: #98c379; border-color: rgba(152, 195, 121, 0.5); }
     .subagent-status.failed { color: var(--error); border-color: rgba(244, 71, 71, 0.5); }
     .subagent-status.aborted { color: #999; border-color: var(--border); }
     /* Per-sub-agent abort: stop ONLY this sub-agent, not the whole run. SQUARE
-       form factor (the global button min-height would otherwise stretch it into
-       a rectangle), so override min-width/min-height too. */
+       and exactly as tall as the "running" chip's border box (shared
+       --sa-chip-h); the global button min-height would otherwise stretch it
+       into a rectangle. */
     .subagent-abort {
       flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
-      width: 1.15rem; height: 1.15rem; min-width: 1.15rem; min-height: 1.15rem; padding: 0; cursor: pointer;
+      width: var(--sa-chip-h); height: var(--sa-chip-h); min-width: var(--sa-chip-h); min-height: var(--sa-chip-h);
+      padding: 0; cursor: pointer;
       color: #a98dff; background: transparent; border: 1px solid rgba(124, 92, 255, 0.45);
       border-radius: 4px; transition: background-color 0.12s, color 0.12s;
     }
     .subagent-abort:hover:not(:disabled) { background: rgba(124, 92, 255, 0.18); color: #fff; }
     .subagent-abort:disabled { opacity: 0.5; cursor: default; }
     .subagent-abort[hidden] { display: none; }
-    .subagent-goal { padding: 0 8px 4px 22px; color: var(--fg); font-style: italic; font-size: var(--fs-md); }
+    .subagent-goal { padding: 0 8px 4px 22px; color: var(--fg); font-style: italic; font-size: var(--fs-md); overflow-wrap: anywhere; word-break: break-word; }
     /* The bubble body (goal + nested stream + report) is collapsed by default. */
     .subagent-body.collapsed { display: none; }
     /* Nested live stream inside a running sub-agent bubble. */
@@ -519,6 +549,7 @@ ${renderViewConfig(deps)}
     .subagent-meta { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 2px; }
     .subagent-chip {
       display: inline-flex; align-items: center; padding: 0 6px; border-radius: 999px;
+      max-width: 100%; overflow-wrap: anywhere;
       background: var(--tool-bg); border: 1px solid var(--border); color: #9a9a9a; font-size: var(--fs-xs);
     }
     .subagent-chip.access-read { color: #61afef; border-color: rgba(97, 175, 239, 0.4); }
@@ -617,8 +648,8 @@ ${renderViewConfig(deps)}
       justify-content: center;
     }
 
-    /* Chips row under the input: queued files only — the "+" picker lives at
-       the head of the text box (first key in #input-main). An empty row must
+    /* Chips row under the input: queued files only — the paperclip picker lives
+       at the head of the text box (first key in #input-main). An empty row must
        not leave a phantom gap at the bottom of the ask box: hide it entirely. */
     #attach-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
     #attach-row:has(#attachment-chips.hidden) { display: none; }
@@ -717,6 +748,16 @@ ${renderViewConfig(deps)}
        it so its label starts exactly where the upper cards' labels do. */
     .ctl-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0 -10px; }
     .ctl-controls > .field { padding: 0 10px; min-width: 0; }
+    /* Skills card: one clickable chip per installed Agent Skill; a click fills
+       the prompt with "/skill <name> " (manual activation). */
+    #skills-list { display: flex; flex-wrap: wrap; gap: 6px; }
+    .skill-chip {
+      display: inline-flex; align-items: center; gap: 5px; max-width: 100%; overflow-wrap: anywhere;
+      padding: 2px 8px; border-radius: 999px; cursor: pointer;
+      background: var(--tool-bg); border: 1px solid var(--border); color: var(--fg); font-size: var(--fs-sm);
+    }
+    .skill-chip:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+    .skill-chip:disabled { opacity: 0.5; cursor: default; }
     #lg-toggle { flex-wrap: wrap; min-height: 1.85rem; align-items: center; }
     .ctl-inline { display: flex; align-items: center; gap: 8px; min-width: 0; }
     .ctl-inline input[type="checkbox"] {
@@ -1265,7 +1306,6 @@ ${renderViewConfig(deps)}
     <div id="session-head">
       <span class="toggle">▼</span><span>Sessions</span>
       <span class="spacer"></span>
-      ${deps.state.version ? '<span class="harny-version" title="Harny version">v' + deps.state.version + "</span>" : ""}
       <button id="new-session" title="New session"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
       <button id="sessions-gear-btn" class="gear-btn" title="Manage all sessions (every folder)"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
     </div>
@@ -1285,7 +1325,7 @@ ${renderViewConfig(deps)}
   </div>
   <div id="input-area">
     <div id="input-main">
-      <button id="attach-btn" class="secondary" title="Attach files" aria-label="Attach files">+</button>
+      <button id="attach-btn" class="secondary" title="Attach files" aria-label="Attach files"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
       <textarea id="user-input" rows="1" placeholder="Ask Harny... (Enter to send, Esc to abort)"></textarea>
       <button id="send-btn" aria-label="Send"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg></button>
       <button id="abort-btn" class="secondary" disabled aria-label="Abort"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg></button>
@@ -1420,6 +1460,10 @@ ${renderViewConfig(deps)}
           </div>
         </div>
         </div>
+      </div>
+      <div class="ctl-card ctl-card-wide hidden" id="skills-card">
+        <span class="card-title">Skills</span>
+        <div id="skills-list"></div>
       </div>
     </div>
   </div>

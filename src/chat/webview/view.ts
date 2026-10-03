@@ -74,6 +74,8 @@ interface ConfigState {
   loopGuard?: "low" | "normal" | "high";
   /** Also guard the visible final answer (opt-in; undefined = off). */
   loopGuardResponse?: boolean;
+  /** Installed Agent Skills (catalog for the Skills card). */
+  skills?: { name: string; description: string }[];
   contextTokens?: number;
   cachedTokens?: number;
   cachedWrite?: number;
@@ -638,12 +640,25 @@ function setSubAgentStatus(
   chip.className = "subagent-status " + status;
   chip.textContent =
     status === "running" ? "running…" : status === "queued" ? "queued…" : status;
+  const terminal = status === "done" || status === "failed" || status === "aborted";
+  // Pulse the BUBBLE (not the chip) while this sub-agent works, phase-locked to
+  // the shared clock so it beats in sync with the thinking/answer bubbles; on a
+  // terminal state, settle the border back to its resting violet edge.
+  if (status === "running") {
+    el.classList.remove("subagent-settling");
+    el.classList.add("subagent-running");
+    phaseLockPulse(el);
+  } else if (terminal) {
+    el.classList.remove("subagent-running");
+    el.classList.add("subagent-settling");
+    el.style.animationDelay = "";
+    window.setTimeout(() => el.classList.remove("subagent-settling"), 700);
+  }
   // The per-sub-agent abort button is only actionable while queued/running (a
   // queued one is aborted by skipping it when its turn comes). Hidden once the
   // sub-agent reaches a terminal state.
   const abort = el.querySelector(".subagent-abort") as HTMLButtonElement | null;
   if (abort) {
-    const terminal = status === "done" || status === "failed" || status === "aborted";
     abort.hidden = terminal;
     abort.disabled = terminal || el.dataset.aborting === "1";
   }
@@ -1543,6 +1558,8 @@ ctlToggle.addEventListener("click", () => {
   ctlToggle.setAttribute("aria-expanded", String(!collapsed));
   const prev = vscode.getState() as object | undefined;
   vscode.setState({ ...(prev ?? {}), controlsCollapsed: collapsed });
+  // Re-read the installed skills when the stack is shown (fresh after an install).
+  if (!collapsed) vscode.postMessage({ type: "getSkills" });
 });
 newSessionBtn.addEventListener("click", () => vscode.postMessage({ type: "newSession" }));
 sessionHead.addEventListener("click", () => {
@@ -1981,6 +1998,8 @@ const parMinus = document.getElementById("par-minus") as HTMLButtonElement;
 const parPlus = document.getElementById("par-plus") as HTMLButtonElement;
 const lgRadios = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="lg-level"]'));
 const lgResponse = document.getElementById("lg-response") as HTMLInputElement;
+const skillsCard = document.getElementById("skills-card") as HTMLDivElement;
+const skillsList = document.getElementById("skills-list") as HTMLDivElement;
 
 const DEFAULT_PARALLEL = 4;
 
@@ -2022,6 +2041,29 @@ function renderControl(config: ConfigState): void {
   const level: LoopGuardLevel = config.loopGuard === "high" || config.loopGuard === "low" ? config.loopGuard : "normal";
   for (const r of lgRadios) r.checked = r.value === level;
   lgResponse.checked = config.loopGuardResponse === true;
+  renderSkills(config.skills ?? []);
+}
+
+/** One chip per installed skill; clicking fills the prompt with `/skill <name> `
+ * so the host can activate it deterministically (bypassing the model's choice). */
+function renderSkills(skills: { name: string; description: string }[]): void {
+  skillsCard.classList.toggle("hidden", skills.length === 0);
+  skillsList.innerHTML = "";
+  for (const s of skills) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "skill-chip";
+    chip.textContent = "🧩 " + s.name;
+    chip.title = s.description || s.name;
+    chip.disabled = streamingActive;
+    chip.addEventListener("click", () => {
+      inputEl.value = `/skill ${s.name} `;
+      inputEl.style.height = "auto";
+      inputEl.dispatchEvent(new Event("input"));
+      focusPrompt();
+    });
+    skillsList.appendChild(chip);
+  }
 }
 
 parEnabled.addEventListener("change", () => {
@@ -2122,6 +2164,7 @@ function setStreaming(active: boolean): void {
   parEnabled.disabled = active;
   for (const r of lgRadios) r.disabled = active;
   lgResponse.disabled = active;
+  for (const chip of skillsList.querySelectorAll<HTMLButtonElement>(".skill-chip")) chip.disabled = active;
   syncParUi();
   inputEl.disabled = active;
   // Mode button follows the same lock (no switching mid-stream); a dropdown
@@ -2823,6 +2866,10 @@ window.addEventListener("message", (e) => {
       } else if (!renderMessages(msg.messages || [])) {
         addWelcome();
       }
+      // A refresh (e.g. after a ✂ cut) rebuilds the transcript: return the caret
+      // to the prompt so the user can keep typing from the clean point.
+      if (Array.isArray(msg.skills)) renderSkills(msg.skills);
+      focusPrompt();
       break;
     }
     case "renameSession": {
@@ -2889,8 +2936,14 @@ window.addEventListener("message", (e) => {
       });
       restoreLiveStream(msg); // replay the in-flight thinking/answer
       setStreaming(!!msg.streaming);
+      // Opening/switching a session always lands the caret in the prompt, so
+      // the user can type immediately (no-op while the prompt is disabled).
+      focusPrompt();
       break;
     }
+    case "skills":
+      renderSkills((msg.skills as { name: string; description: string }[]) || []);
+      break;
     case "config":
       renderModelSelect(msg.config || {});
       renderThinkingSelect(msg.config || {});
@@ -3091,5 +3144,7 @@ renderViewState({
 restoreLiveStream(init);
 setStreaming(!!init.streaming);
 if (activeId) vscode.postMessage({ type: "getConfig" });
+// Opening the panel on a session lands the caret in the prompt.
+if (activeId) focusPrompt();
 
 export {};

@@ -18,10 +18,13 @@ describe("renderViewHtml", () => {
     expect(html).toContain('id="user-input"');
     expect(html).toContain('id="attach-btn"');
     expect(html).toContain('id="attachment-chips"');
-    // The "+" file picker is the HEAD key of the input row (before the
+    // The paperclip file picker is the HEAD key of the input row (before the
     // textarea, same row as send/abort) and shares their exact size rule.
     expect(html).toMatch(/id="input-main"[\s\S]*?<button id="attach-btn"/);
     expect(html).toMatch(/<button id="attach-btn"[\s\S]*?id="user-input"/);
+    // It shows a PAPERCLIP glyph (attachment), not a bare "+".
+    expect(html).toMatch(/<button id="attach-btn"[^>]*>\s*<svg[\s\S]*?<\/svg>\s*<\/button>/);
+    expect(html).not.toMatch(/<button id="attach-btn"[^>]*>\s*\+\s*<\/button>/);
     expect(html).toMatch(/#input-main button\s*\{[^}]*height: 2\.31rem;[\s\S]*?min-width: 2\.77rem/s);
     // The Compact key sits in the stats row, right after the cache indicator.
     expect(html).toMatch(/id="met-cache"[\s\S]*?<button id="compact-btn"/);
@@ -33,12 +36,12 @@ describe("renderViewHtml", () => {
     expect(html).toContain(`<script src="${base.scriptUri}"></script>`);
   });
 
-  it("shows the extension version in the sessions header (omitted when unknown)", () => {
+  it("does NOT show the version in the sessions header (kept only in the empty hero)", () => {
     const state = { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } };
     const withV = renderViewHtml({ ...base, state: { ...state, version: "0.1.0" } });
-    expect(withV).toContain('<span class="harny-version" title="Harny version">v0.1.0</span>');
-    const without = renderViewHtml({ ...base, state });
-    expect(without).not.toContain('class="harny-version"');
+    expect(withV).not.toContain("harny-version");
+    // The version still reaches the webview via the init payload (empty hero).
+    expect(withV).toContain('"version":"0.1.0"');
   });
 
   it("uses ONE gear graphic + size across the cards (sessions, model, compaction)", () => {
@@ -57,7 +60,7 @@ describe("renderViewHtml", () => {
     expect(html).not.toContain("icon-btn");
   });
 
-  it("keeps the per-sub-agent abort button SQUARE (overrides the global button min-height)", () => {
+  it("keeps the per-sub-agent abort button SQUARE and as tall as the status chip", () => {
     const html = renderViewHtml({
       ...base,
       state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
@@ -65,9 +68,13 @@ describe("renderViewHtml", () => {
     const block = html.match(/\.subagent-abort\s*\{([^}]*)\}/s);
     expect(block).toBeTruthy();
     const css = block![1];
-    expect(css).toMatch(/width:\s*1\.15rem/);
-    expect(css).toMatch(/height:\s*1\.15rem/);
-    expect(css).toMatch(/min-height:\s*1\.15rem/);
+    expect(css).toMatch(/width:\s*var\(--sa-chip-h\)/);
+    expect(css).toMatch(/height:\s*var\(--sa-chip-h\)/);
+    expect(css).toMatch(/min-height:\s*var\(--sa-chip-h\)/);
+    // Shared height variable defined on the header, used by BOTH the chip
+    // (border-box) and the square button so their heights match exactly.
+    expect(html).toMatch(/\.subagent-header\s*\{[^}]*--sa-chip-h:\s*1\.3rem/);
+    expect(html).toMatch(/\.subagent-status\s*\{[^}]*height:\s*var\(--sa-chip-h\)[^}]*box-sizing:\s*border-box/s);
   });
 
   it("injects sessions, open ids, active id and messages into the init payload", () => {
@@ -136,7 +143,11 @@ describe("renderViewHtml", () => {
       state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
     });
     expect(html).toMatch(/\.msg\.tool\.subagent\s*\{/);
-    expect(html).toMatch(/\.subagent-status\.running\s*\{[^}]*animation:\s*harny-pulse/s);
+    // The status chip is STATIC; the BUBBLE carries the synchronized pulse.
+    expect(html).not.toMatch(/\.subagent-status\.running\s*\{[^}]*animation/s);
+    expect(html).toMatch(/\.msg\.tool\.subagent\.subagent-running\s*\{[^}]*animation:\s*stream-border-pulse-violet/s);
+    expect(html).toMatch(/@keyframes stream-border-pulse-violet\s*\{[^}]*rgba\(124, 92, 255/s);
+    expect(html).toMatch(/\.msg\.tool\.subagent\.subagent-settling\s*\{/);
     expect(html).toMatch(/\.subagent-status\.done\s*\{/);
     expect(html).toMatch(/\.subagent-status\.failed\s*\{/);
     expect(html).toMatch(/\.subagent-goal\s*\{/);
@@ -148,6 +159,14 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/\.sa-answer pre/);
     expect(html).toMatch(/\.subagent-report\s*\{/);
     expect(html).toMatch(/\.sa-tool\.ok\s*\{/);
+    // Long content WRAPS at the bubble width instead of overflowing it.
+    expect(html).toMatch(/\.msg\s*\{[^}]*min-width:\s*0/s);
+    expect(html).toMatch(/\.subagent-goal\s*\{[^}]*overflow-wrap:\s*anywhere/s);
+    expect(html).toMatch(/\.tool-args\s*\{[^}]*white-space:\s*pre-wrap[^}]*word-break:\s*break-all/s);
+    // The Task/Input block GROWS with the wrapped content (no scrollbar).
+    expect(html).not.toMatch(/\.tool-args\s*\{[^}]*max-height/s);
+    expect(html).not.toMatch(/\.tool-args\s*\{[^}]*overflow-y/s);
+    expect(html).toMatch(/\.subagent-chip\s*\{[^}]*max-width:\s*100%/s);
   });
 
   it("renders the Guardrails card (parallel cap + Loop Guard) in the control stack", () => {
@@ -161,6 +180,10 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/id="par-enabled"[\s\S]*?id="par-input"[\s\S]*?id="par-plus"/);
     expect(html).toMatch(/name="lg-level"[\s\S]*?id="lg-high"[\s\S]*?id="lg-normal"[\s\S]*?id="lg-low"/);
     expect(html).toContain('id="lg-response"');
+    // Skills card: a full-width, initially-hidden card with a chips list.
+    expect(html).toMatch(/class="ctl-card ctl-card-wide hidden" id="skills-card"/);
+    expect(html).toContain('id="skills-list"');
+    expect(html).toMatch(/\.skill-chip\s*\{/);
     // Parallel cap + Loop Guard share one row, mirroring #ctl-cards columns.
     expect(html).toContain('class="ctl-controls"');
     expect(html).toMatch(/\.ctl-controls\s*\{[^}]*display:\s*grid[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);

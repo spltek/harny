@@ -145,6 +145,13 @@ export class SubAgentRunner {
       agent.abort();
     };
     signal?.addEventListener("abort", onParentAbort);
+    // Lifecycle log: start + end (with duration and outcome) so a sub-agent that
+    // "hangs" is visible after the fact (Output > Harny; file with HARNY_DEBUG=1).
+    const startedAt = Date.now();
+    this.deps.log?.(
+      `subagent "${spec.id}" start: access=${spec.access} resources=${spec.resources.length} ` +
+        `maxTurns=${maxTurns ?? "\u221e"} key=${key}`,
+    );
     try {
       // Forward the attachments the orchestrator selected for this sub-task.
       const task =
@@ -157,8 +164,10 @@ export class SubAgentRunner {
       }
       return { content: formatSubAgentReport(spec, lastAssistantReport(agent.getMessages())), isError: false };
     } catch (e) {
+      this.deps.log?.(`subagent "${spec.id}" error in ${Date.now() - startedAt}ms: ${e instanceof Error ? e.message : String(e)}`);
       return { content: formatSubAgentError(spec, e instanceof Error ? e.message : String(e)), isError: true };
     } finally {
+      this.deps.log?.(`subagent "${spec.id}" end in ${Date.now() - startedAt}ms`);
       signal?.removeEventListener("abort", onParentAbort);
       this.active.delete(key);
     }
