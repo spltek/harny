@@ -1067,7 +1067,7 @@ function renderMessages(msgs: ChatMsg[]): boolean {
         if (content.startsWith("❌")) el.classList.add("error");
         else if (content.startsWith("🔁")) el.classList.add("loop");
         // Loop notices are system annotations, not branchable messages.
-        if (!content.startsWith("🔁") && !m.synthetic) attachBranchAt(el, i);
+        if (!content.startsWith("🔁")) attachBranchAt(el, i);
         // Prepared-but-not-applied changes: re-render the highlighted CTA.
         if (content.includes("Nothing has been applied")) addSwitchToBuildBanner();
       }
@@ -1110,8 +1110,7 @@ function renderMessages(msgs: ChatMsg[]): boolean {
       }
       // The ✂ cut-from-here lives on the USER prompt bubbles: cutting removes
       // the prompt and everything after it, so you can retype a cleaner one.
-      // The synthetic compacted prompt is NOT a real user turn: no cut key.
-      if (m.role === "user" && !m.synthetic) attachTruncateAt(el, i);
+      if (m.role === "user") attachTruncateAt(el, i);
     }
   }
   return hasVisible;

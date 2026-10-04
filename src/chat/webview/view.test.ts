@@ -1551,7 +1551,7 @@ describe("view webview client", () => {
     expect(document.querySelector(".msg.user .truncate-at")).toBeTruthy();
   });
 
-  it("synthetic compacted messages get NO ✂ cut / ⎇ branch key", async () => {
+  it("synthetic compacted messages keep their ✂ cut / ⎇ branch key", async () => {
     await loadView();
     hostMessage({
       type: "refresh",
@@ -1562,11 +1562,12 @@ describe("view webview client", () => {
     });
     const userBubble = document.querySelector(".msg.user") as HTMLElement;
     expect(userBubble.textContent).toContain("Summary of past interactions");
-    expect(userBubble.querySelector(".truncate-at")).toBeNull();
     // A recognizable icon precedes the synthetic marker.
     expect(userBubble.querySelector(".synthetic-icon")).toBeTruthy();
+    // The bubbles behave like normal ones: ✂ cut and ⎇ branch are present.
+    expect(userBubble.querySelector(".truncate-at")).toBeTruthy();
     const assistantBubble = document.querySelector(".msg.assistant") as HTMLElement;
-    expect(assistantBubble.querySelector(".branch-at")).toBeNull();
+    expect(assistantBubble.querySelector(".branch-at")).toBeTruthy();
   });
 
   it("Esc closes the slash menu without posting abort", async () => {
