@@ -535,7 +535,9 @@ export class ChatViewProvider implements WebviewViewProvider {
         break;
       case "getSkills":
         // Lightweight (no network): the webview re-reads the installed skills
-        // when the control stack is expanded, so an install shows up at once.
+        // when the control stack is expanded or the panel regains focus, so an
+        // install/REMOVE shows up at once. Invalidate the cache to force a scan.
+        this.options.skills?.invalidate();
         this.view?.webview.postMessage({ type: "skills", skills: this.skillCatalog() });
         break;
       case "getProvidersEditor":

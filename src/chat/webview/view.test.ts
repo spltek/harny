@@ -2345,6 +2345,13 @@ describe("view webview client", () => {
     expect(posted.some((m) => (m as { type?: string }).type === "getSkills")).toBe(true);
   });
 
+  it("regaining focus re-reads the skills list (install/remove shows up)", async () => {
+    await loadView();
+    posted.length = 0;
+    window.dispatchEvent(new Event("focus"));
+    expect(posted.some((m) => (m as { type?: string }).type === "getSkills")).toBe(true);
+  });
+
   it("adds a new provider with + New and keeps a complete URL untouched", async () => {
     await loadView();
     hostMessage({

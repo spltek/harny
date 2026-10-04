@@ -1561,6 +1561,10 @@ ctlToggle.addEventListener("click", () => {
   // Re-read the installed skills when the stack is shown (fresh after an install).
   if (!collapsed) vscode.postMessage({ type: "getSkills" });
 });
+// The skills list can change at any time (npx skills add/remove): re-read it
+// whenever the panel regains focus, so a removal/install shows up without a
+// manual reload.
+window.addEventListener("focus", () => vscode.postMessage({ type: "getSkills" }));
 newSessionBtn.addEventListener("click", () => vscode.postMessage({ type: "newSession" }));
 sessionHead.addEventListener("click", () => {
   sessionsEl.classList.toggle("hidden");
