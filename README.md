@@ -22,8 +22,10 @@ harny/
 │   │   │                         #   ThinkingTagParser, SystemPrompt, orchestration + sub-agents
 │   │   ├── sessions/             # SessionStore <- JsonlSessionStore, SessionManager, Compactor
 │   │   │                         #   + one runtime (dedicated Agent) per open session
+│   │   ├── skills/               # Agent Skills (skills.sh): SKILL.md discovery + registry
+│   │   ├── mcp/                  # Model Context Protocol: stdio + HTTP clients, manager, tools
 │   │   ├── storage/              # Cross-platform path resolution (context.globalStorageUri)
-│   │   └── tools/                # Tool interface + ToolRegistry + 13 tools (one file each)
+│   │   └── tools/                # Tool interface + ToolRegistry + 14 tools (one file each)
 │   │                             #   mode-policy (Analyze preview / Build), FileSystem /
 │   │                             #   CommandRunner / HttpClient abstractions
 │   ├── chat/
@@ -56,13 +58,19 @@ npm test          # run all unit tests (vitest)
 npm run coverage  # with coverage report
 ```
 
-852 unit tests cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (JSONL store, manager, registry, compactor), the OpenAI-compatible LLM provider (streaming, tool calls, `finish_reason`), host-model fetching, all 13 tools (including the Analyze dry-run preview), the mode policy, the agent loop (fake LLM, abort, max turns), the **loop guard** (reasoning/empty/tool-failure/error-streak/tool-repeat detection, tool-call dedup), orchestration/sub-agents, markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code).
+1076 unit tests cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (JSONL store, manager, registry, compactor), the OpenAI-compatible LLM provider (streaming, tool calls, `finish_reason`), host-model fetching, all 14 tools (including the Analyze dry-run preview), the mode policy, the agent loop (fake LLM, abort, max turns), the **loop guard** (reasoning/empty/tool-failure/error-streak/tool-repeat detection, tool-call dedup, sensitivity presets), orchestration/sub-agents, **Agent Skills** (SKILL.md parsing + discovery), **MCP** (stdio + Streamable HTTP clients, tool wrapper, manager), markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code).
 
 ## Features
 
 - **Chat Completions protocol** (`/v1/chat/completions`)
 - **Streaming**: Real-time SSE streaming for responsive UX
-- **13 tools**: Read, Write, StrReplace, Edit, Delete, Shell, Grep, Glob, TodoWrite, WebSearch, WebFetch, ReadLints, Delegate
+- **14 tools**: Read, Write, StrReplace, Edit, Delete, Shell, Grep, Glob, Skill, TodoWrite, WebSearch, WebFetch, ReadLints, Delegate (plus the dynamic `mcp__<server>__<tool>` from any MCP server)
+- **Agent Skills** (skills.sh): Harny discovers installed skills (`SKILL.md` in `.agents`/`.claude`/`.pi` dirs) and offers a compact catalog; the model activates one on demand via the `Skill` tool (progressive disclosure), or you activate it manually with `/skill <name>` / the **Skills** card. `disable-model-invocation: true` skills stay manual-only
+- **Slash menu**: typing `/` at the START of the prompt opens a picker with the installed skills (`/skill <name>`, `/skills`) — arrows/Enter select, Esc closes
+- **MCP servers** (Model Context Protocol): connect external tool servers over **stdio** or **Streamable HTTP** (stateless or session-based, JSON or SSE); their tools appear as `mcp__<server>__<tool>`. A per-server **enable/disable** (click the name in the card), a **tool-list popover** on `(N tools)`, and an editor in the panel (add/edit/delete + Test)
+- **Guardrails (per session)**: a card to cap **parallel sub-agents** and pick the **Loop Guard** sensitivity (`high`/`normal`/`low`, plus an opt-in **Include response** flag) — all persisted per session
+- **Esc to stop**: press Esc while a run is working (the prompt is disabled then) to stop it — modals/overlays and native controls keep Esc for themselves
+- **Focus always on the prompt**: the caret returns to the input after opening/switching a session, finishing a run, a cut, and after mode/parallel/model/attach interactions
 - **Attachments**: add files/images with the **+** button, **paste from the clipboard** into the prompt, or **drag & drop** them onto the panel — images (screenshots/copied images, named "Image from clipboard") are attached inline as a data URI (with a **thumbnail preview** in the chip, clickable to open a **full-size lightbox**) and sent as multimodal content, text files as inline code blocks, and a pasted/dropped absolute path / `file://` URI attaches that file. Binary files (e.g. a PDF) copied in Finder/Explorer usually reach the webview only as their **name** (text), so use the **+** button; even attached, a binary PDF cannot be read over the Chat Completions protocol.
 - **Drag & drop**: hold **Shift** while dropping (VS Code's "drop into editor" behaviour otherwise intercepts OS file drops); paste and the **+** button need no modifier.
 - **Plain tool outputs + three-section tool bubbles**: tool outputs are never colorized by line-prefix heuristics (a `ls -la` listing stays plain text); when Edit/Write/StrReplace/Delete touch a file, the tool bubble gets a third **Diff** section (Input / Output / Diff, collapsed with the bubble) showing the unified diff — a new file as all `+` additions, a deleted file as all `−` removals, modifications/string replacements as a mixed diff — with the **target file path in azure right after the tool name** and `+N/−M` counts in the Diff header
@@ -121,6 +129,53 @@ Degenerate loops are detected and **broken** instead of silently stopping the ru
 | **tool-repeat** | identical successful read-only calls are served from cache; a corrective is injected |
 
 Each type escalates independently (up to two interventions, then a final `❌ Loop not resolved […]`). Every intervention is logged in the transcript as an amber **"Loop guard"** notice stating the type and how the system reacted.
+
+### Guardrails (per session)
+
+A **Guardrails** card sits below the prompt (collapsible with the other controls) and is persisted **per session**:
+
+- **Max parallel sub-agents** — the concurrency cap (default **on/4**; off = no limit). The legacy global `maxParallelSubAgents` in the config file is used as the default for new sessions.
+- **Loop Guard sensitivity** — `high` (aggressive) / `normal` (default) / `low` (permissive), each mapping the loop-guard thresholds:
+
+  | | maxNudges | reasoning thr/tok | similarity | errorStreak | toolRepeat consec/window/thr |
+  |---|---|---|---|---|---|
+  | **High** | 3 | 0.45 / 50 | 0.75 | 2 | 2 / 10 / 2 |
+  | **Normal** | 2 | 0.5 / 60 | 0.85 | 3 | 3 / 16 / 3 |
+  | **Low** | 2 | 0.65 / 120 | 0.92 | 5 | 4 / 20 / 4 |
+
+- **Include response** (default off) — also guard the **visible final answer** for repetition (mid-stream cut + a per-turn backstop), on top of the reasoning/tool guards.
+
+## Agent Skills (skills.sh)
+
+Harny is compatible with the **Agent Skills** ecosystem (skills.sh). A skill is a folder with a `SKILL.md` (YAML frontmatter `name` + `description`), installed with the official CLI:
+
+```bash
+npx skills add https://github.com/anthropics/skills --skill pptx -a pi -g -y
+```
+
+Harny scans the standard per-agent directories — project `.agents|.claude|.pi/skills`, then user `~/.agents`, `~/.config/agents`, `~/.pi/agent`, `~/.claude`, `~/.cursor`, `~/.gemini`, `~/.copilot`. A project skill shadows a user one of the same name.
+
+- **Progressive disclosure**: the system prompt lists only `name: description`; the **`Skill` tool** loads the full `SKILL.md` on demand. The model activates a skill itself, or you force it with `/skill <name> [task]` (bypasses the model's choice).
+- **Skills card** (in the controls) lists the installed skills as clickable text; a click fills the prompt with `/skill <name> `. `/skills` lists them.
+- **`disable-model-invocation: true`** skills are hidden from the model and can only be activated manually.
+
+## MCP servers
+
+Harny speaks the **Model Context Protocol**, so it can use external tool servers. Configure them in `~/.harny/config.json` (Claude/Cursor-compatible) or from the panel:
+
+```json
+{
+  "mcpServers": {
+    "sqlite": { "command": "npx", "args": ["-y", "mcp-sqlite", "/path/db.sqlite"] },
+    "remote": { "url": "https://example.com/mcp", "headers": { "Authorization": "Bearer …" } }
+  }
+}
+```
+
+- **Transports**: **stdio** (a spawned process) and **Streamable HTTP** (POST; JSON or `text/event-stream` responses; **stateless** by default, **stateful** via `Mcp-Session-Id`).
+- **Tools** are exposed to the model as `mcp__<server>__<tool>` (input schema = the server's).
+- **UI**: an **MCP** card lists the servers with a live status; **click the server name to enable/disable** it (a disabled server is kept in the config but not connected, so its tools are not exposed), and **`(N tools)`** opens a popover with each tool + description. A gear opens an editor to add/edit/delete servers and **Test** them.
+- Diagnostic logs at the critical points (`[mcp]` / `[mcp-http]`) in **Output > Harny**.
 
 ## Diagnostics
 
