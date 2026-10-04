@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, rmSync, writeFileSync, mkdtempSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync, readFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HarnyFileConfigProvider } from "./harny-file-config-provider";
@@ -828,5 +828,67 @@ describe("exportProviders / importProviders", () => {
     expect(provider.importProviders({ providers: {} })).toBe(false);
     expect(provider.importProviders({ providers: { bad: 42 } })).toBe(false);
     expect(require("node:fs").existsSync(join(dir, "config.json"))).toBe(false);
+  });
+});
+
+describe("HarnyFileConfigProvider MCP servers", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "harny-mcp-")); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  it("reads + normalizes mcpServers (stdio and http, dropping malformed)", () => {
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        providers: { p: { baseUrl: "http://x" } },
+        mcpServers: {
+          github: { command: "npx", args: ["-y", "server-github"], env: { TOKEN: "t" } },
+          remote: { url: "https://example.com/mcp", headers: { "X-A": "1" } },
+          blank: { command: "   " },
+          bad: 42,
+        },
+      }),
+    );
+    const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+    expect(provider.readMcpServers()).toEqual({
+      github: { command: "npx", args: ["-y", "server-github"], env: { TOKEN: "t" } },
+      remote: { url: "https://example.com/mcp", headers: { "X-A": "1" } },
+    });
+  });
+
+  it("keeps the per-server enabled flag", () => {
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        mcpServers: {
+          on: { command: "node" },
+          off: { command: "node", enabled: false },
+        },
+      }),
+    );
+    const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+    expect(provider.readMcpServers()).toEqual({
+      on: { command: "node" },
+      off: { command: "node", enabled: false },
+    });
+  });
+
+  it("returns {} when the config file is missing", () => {
+    const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+    expect(provider.readMcpServers()).toEqual({});
+  });
+
+  it("saves mcpServers losslessly (preserving other keys) and removes the key when empty", () => {
+    writeFileSync(join(dir, "config.json"), JSON.stringify({ provider: "p", providers: { p: { baseUrl: "http://x" } } }));
+    const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+
+    expect(provider.saveMcpServers({ test: { command: "node", args: ["server.js"] } })).toBe(true);
+    const raw = JSON.parse(readFileSync(join(dir, "config.json"), "utf8"));
+    expect(raw.mcpServers).toEqual({ test: { command: "node", args: ["server.js"] } });
+    expect(raw.providers).toEqual({ p: { baseUrl: "http://x" } }); // preserved
+    expect(provider.readMcpServers()).toEqual({ test: { command: "node", args: ["server.js"] } });
+
+    expect(provider.saveMcpServers({})).toBe(true);
+    expect("mcpServers" in JSON.parse(readFileSync(join(dir, "config.json"), "utf8"))).toBe(false);
   });
 });

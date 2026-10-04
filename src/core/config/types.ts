@@ -174,7 +174,27 @@ export interface ProviderCatalog extends NamedProvidersSource, ModelSelectionSav
   exportProviders(): ProviderExport;
   /** Merge (or replace) the providers section from an exported file. */
   importProviders(raw: unknown, mode?: "merge" | "replace"): boolean;
+  /** MCP servers section from the config file (name → server). */
+  readMcpServers(): Record<string, McpServerConfig>;
+  /** Replace the MCP servers section, preserving every other config key. */
+  saveMcpServers(servers: Record<string, McpServerConfig>): boolean;
 }
+
+/** One MCP server: stdio (command) — HTTP (url) is accepted but not yet run. */
+export interface McpStdioServerConfig {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  /** false = disabled (kept in config, NOT connected, tools not exposed). */
+  enabled?: boolean;
+}
+export interface McpHttpServerConfig {
+  url: string;
+  headers?: Record<string, string>;
+  /** false = disabled (kept in config, NOT connected, tools not exposed). */
+  enabled?: boolean;
+}
+export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig;
 
 /** Portable snapshot of the provider/model configuration (export/import). */
 export interface ProviderExport {

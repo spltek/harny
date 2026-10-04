@@ -76,6 +76,11 @@ interface ConfigState {
   loopGuardResponse?: boolean;
   /** Installed Agent Skills (catalog for the Skills card). */
   skills?: { name: string; description: string }[];
+  /** MCP servers + status (MCP card). */
+  mcp?: {
+    servers: Record<string, { command?: string; args?: string[]; env?: Record<string, string>; url?: string; headers?: Record<string, string> }>;
+    statuses: { name: string; ok: boolean; enabled: boolean; error?: string; toolCount: number; tools?: { name: string; description?: string }[] }[];
+  };
   contextTokens?: number;
   cachedTokens?: number;
   cachedWrite?: number;
@@ -106,6 +111,11 @@ const messagesEl = document.getElementById("messages") as HTMLDivElement;
 // a bubble in the flow), shown/hidden instead of being appended/removed.
 const workingBar = document.getElementById("working-bar") as HTMLDivElement;
 const inputEl = document.getElementById("user-input") as HTMLTextAreaElement;
+const slashMenu = document.getElementById("slash-menu") as HTMLDivElement;
+/** Installed skills (kept for the slash menu; set by renderSkills). */
+let currentSkills: { name: string; description: string }[] = [];
+let slashItems: { cmd: string; description: string }[] = [];
+let slashIndex = 0;
 const ctlToggle = document.getElementById("ctl-toggle") as HTMLDivElement;
 const modeSelectEl = document.getElementById("mode-select") as HTMLDivElement;
 const modeBtn = document.getElementById("mode-btn") as HTMLButtonElement;
@@ -1258,6 +1268,7 @@ function renderAttachmentChips(): void {
     remove.addEventListener("click", () => {
       attachedFiles.splice(index, 1);
       renderAttachmentChips();
+      focusPrompt();
     });
 
     chip.append(name, size, remove);
@@ -1517,6 +1528,7 @@ inputEl.addEventListener("paste", (e) => {
 
 installDragAndDrop();
 inputEl.addEventListener("input", resizeInput);
+inputEl.addEventListener("input", updateSlashMenu);
 // Recompute the height when the input's width changes (panel/window resize),
 // because line wrapping depends on width. Guarded ResizeObserver avoids loops.
 if (typeof ResizeObserver !== "undefined") {
@@ -1524,6 +1536,13 @@ if (typeof ResizeObserver !== "undefined") {
 }
 window.addEventListener("resize", resizeInput);
 inputEl.addEventListener("keydown", (e) => {
+  // The slash menu captures navigation/selection keys while it is open.
+  if (!slashMenu.classList.contains("hidden")) {
+    if (e.key === "ArrowDown") { e.preventDefault(); slashMove(1); return; }
+    if (e.key === "ArrowUp") { e.preventDefault(); slashMove(-1); return; }
+    if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); selectSlashItem(); return; }
+    if (e.key === "Escape") { e.preventDefault(); hideSlashMenu(); return; }
+  }
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   if (e.key === "Escape") vscode.postMessage({ type: "abort" });
 });
@@ -1534,7 +1553,8 @@ inputEl.addEventListener("keydown", (e) => {
 window.addEventListener("keydown", (e) => {
   // Ignore stale handlers (a re-imported module in tests leaves its listener on
   // the shared window) and any detached button: only the live view acts.
-  if (e.key !== "Escape" || !abortBtn.isConnected || abortBtn.disabled) return;
+  // The slash menu owns Esc while it is open (it closes the menu).
+  if (e.key !== "Escape" || !abortBtn.isConnected || abortBtn.disabled || !slashMenu.classList.contains("hidden")) return;
   // Do NOT hijack an Escape that is closing a native control (an open <select>,
   // a focused input/button): that is the user dismissing something, not Stop.
   const target = e.target as HTMLElement | null;
@@ -2004,6 +2024,28 @@ const lgRadios = Array.from(document.querySelectorAll<HTMLInputElement>('input[n
 const lgResponse = document.getElementById("lg-response") as HTMLInputElement;
 const skillsCard = document.getElementById("skills-card") as HTMLDivElement;
 const skillsList = document.getElementById("skills-list") as HTMLDivElement;
+const mcpCard = document.getElementById("mcp-card") as HTMLDivElement;
+const mcpList = document.getElementById("mcp-list") as HTMLDivElement;
+const mcpToolsPopover = document.getElementById("mcp-tools-popover") as HTMLDivElement;
+const mcpConfigure = document.getElementById("mcp-configure") as HTMLButtonElement;
+const mcpModal = document.getElementById("mcp-modal") as HTMLDivElement;
+const mcpSelect = document.getElementById("mcp-select") as HTMLSelectElement;
+const mcpName = document.getElementById("mcp-name") as HTMLInputElement;
+const mcpCommand = document.getElementById("mcp-command") as HTMLInputElement;
+const mcpArgs = document.getElementById("mcp-args") as HTMLTextAreaElement;
+const mcpEnv = document.getElementById("mcp-env") as HTMLTextAreaElement;
+const mcpEnabled = document.getElementById("mcp-enabled") as HTMLInputElement;
+const mcpTest = document.getElementById("mcp-test") as HTMLButtonElement;
+const mcpTestResult = document.getElementById("mcp-test-result") as HTMLSpanElement;
+const mcpAdd = document.getElementById("mcp-add") as HTMLButtonElement;
+const mcpDelete = document.getElementById("mcp-delete") as HTMLButtonElement;
+const mcpSave = document.getElementById("mcp-save") as HTMLButtonElement;
+const mcpCancel = document.getElementById("mcp-cancel") as HTMLButtonElement;
+
+type McpEditorServer = { command?: string; args?: string[]; env?: Record<string, string>; url?: string; headers?: Record<string, string>; enabled?: boolean };
+let mcpEditorServers: Record<string, McpEditorServer> = {};
+let mcpEditorSelected = "";
+let mcpStatuses: { name: string; ok: boolean; enabled: boolean; error?: string; toolCount: number; tools?: { name: string; description?: string }[] }[] = [];
 
 const DEFAULT_PARALLEL = 4;
 
@@ -2046,29 +2088,338 @@ function renderControl(config: ConfigState): void {
   for (const r of lgRadios) r.checked = r.value === level;
   lgResponse.checked = config.loopGuardResponse === true;
   renderSkills(config.skills ?? []);
+  renderMcp(config.mcp);
 }
 
 /** One chip per installed skill; clicking fills the prompt with `/skill <name> `
  * so the host can activate it deterministically (bypassing the model's choice). */
 function renderSkills(skills: { name: string; description: string }[]): void {
+  currentSkills = skills;
   skillsCard.classList.toggle("hidden", skills.length === 0);
   skillsList.innerHTML = "";
   for (const s of skills) {
-    const chip = document.createElement("button");
-    chip.type = "button";
-    chip.className = "skill-chip";
-    chip.textContent = "🧩 " + s.name;
-    chip.title = s.description || s.name;
-    chip.disabled = streamingActive;
-    chip.addEventListener("click", () => {
+    const item = document.createElement("span");
+    item.className = "skill-item";
+    item.textContent = "🧩 " + s.name;
+    item.title = s.description || s.name;
+    item.addEventListener("click", () => {
       inputEl.value = `/skill ${s.name} `;
       inputEl.style.height = "auto";
       inputEl.dispatchEvent(new Event("input"));
       focusPrompt();
     });
-    skillsList.appendChild(chip);
+    skillsList.appendChild(item);
   }
 }
+
+function renderMcp(mcp: ConfigState["mcp"]): void {
+  mcpStatuses = mcp?.statuses ?? [];
+  const names = Object.keys(mcp?.servers ?? {});
+  mcpCard.classList.toggle("hidden", names.length === 0);
+  mcpList.innerHTML = "";
+  for (const name of names) {
+    const st = mcpStatuses.find((s) => s.name === name);
+    const enabled = st?.enabled !== false;
+    const row = document.createElement("div");
+    row.className = "mcp-status " + (!enabled ? "off" : st?.ok ? "ok" : "err");
+
+    // The name IS the toggle: click to enable/disable (colored ↔ gray).
+    const nameEl = document.createElement("span");
+    nameEl.className = "mcp-name";
+    nameEl.textContent = `● ${name}`;
+    nameEl.title = enabled ? "Click to disable this server" : "Click to enable this server";
+    nameEl.addEventListener("click", () =>
+      vscode.postMessage({ type: "toggleMcpServer", name, enabled: !enabled }),
+    );
+    row.appendChild(nameEl);
+    row.appendChild(document.createTextNode(" "));
+
+    if (!enabled) {
+      const detail = document.createElement("span");
+      detail.className = "mcp-detail";
+      detail.textContent = "off";
+      row.appendChild(detail);
+    } else if (st?.ok) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "mcp-tools-btn";
+      btn.textContent = `(${st.toolCount} tools)`;
+      btn.title = "Show the tools this server exposes";
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        showMcpToolsPopover(btn, name, st.tools ?? []);
+      });
+      row.appendChild(btn);
+    } else {
+      const detail = document.createElement("span");
+      detail.className = "mcp-detail";
+      detail.textContent = st?.error ?? "not connected";
+      row.appendChild(detail);
+    }
+    mcpList.appendChild(row);
+  }
+}
+
+function hideMcpToolsPopover(): void {
+  mcpToolsPopover.classList.add("hidden");
+  mcpToolsPopover.dataset.server = "";
+}
+
+function showMcpToolsPopover(anchor: HTMLElement, server: string, tools: { name: string; description?: string }[]): void {
+  mcpToolsPopover.innerHTML = "";
+  const title = document.createElement("div");
+  title.className = "mcp-pop-title";
+  title.textContent = `🧩 ${server}`;
+  mcpToolsPopover.appendChild(title);
+  if (tools.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "mcp-pop-empty";
+    empty.textContent = "(no tools)";
+    mcpToolsPopover.appendChild(empty);
+  }
+  for (const t of tools) {
+    const item = document.createElement("div");
+    item.className = "mcp-pop-item";
+    const name = document.createElement("div");
+    name.className = "mcp-pop-name";
+    name.textContent = t.name;
+    item.appendChild(name);
+    if (t.description) {
+      const desc = document.createElement("div");
+      desc.className = "mcp-pop-desc";
+      desc.textContent = t.description;
+      item.appendChild(desc);
+    }
+    mcpToolsPopover.appendChild(item);
+  }
+  mcpToolsPopover.dataset.server = server;
+  mcpToolsPopover.classList.remove("hidden");
+  // Anchor below-left of the key, clamped to the viewport.
+  const rect = anchor.getBoundingClientRect();
+  const w = mcpToolsPopover.offsetWidth;
+  const h = mcpToolsPopover.offsetHeight;
+  let left = rect.left;
+  let top = rect.bottom + 4;
+  if (left + w > window.innerWidth - 8) left = window.innerWidth - w - 8;
+  if (top + h > window.innerHeight - 8) top = rect.top - h - 4;
+  mcpToolsPopover.style.left = Math.max(8, left) + "px";
+  mcpToolsPopover.style.top = Math.max(8, top) + "px";
+}
+
+document.addEventListener("click", (e) => {
+  if (mcpToolsPopover.classList.contains("hidden")) return;
+  if (e.target instanceof Node && mcpToolsPopover.contains(e.target)) return;
+  hideMcpToolsPopover();
+});
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") hideMcpToolsPopover();
+});
+
+// ── Slash menu: skill autocomplete (only when the prompt STARTS with "/") ──
+function hideSlashMenu(): void {
+  slashMenu.classList.add("hidden");
+  slashItems = [];
+  slashIndex = 0;
+}
+
+function renderSlashMenu(): void {
+  slashMenu.innerHTML = "";
+  slashItems.forEach((it, i) => {
+    const el = document.createElement("div");
+    el.className = "slash-item" + (i === slashIndex ? " active" : "");
+    el.setAttribute("role", "option");
+    const cmd = document.createElement("div");
+    cmd.className = "slash-cmd";
+    cmd.textContent = it.cmd;
+    el.appendChild(cmd);
+    if (it.description) {
+      const desc = document.createElement("div");
+      desc.className = "slash-desc";
+      desc.textContent = it.description;
+      el.appendChild(desc);
+    }
+    // mousedown (not click) + preventDefault keeps the textarea focused.
+    el.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      slashIndex = i;
+      selectSlashItem();
+    });
+    slashMenu.appendChild(el);
+  });
+  slashMenu.classList.remove("hidden");
+  const rect = inputEl.getBoundingClientRect();
+  const h = slashMenu.offsetHeight;
+  slashMenu.style.left = rect.left + "px";
+  slashMenu.style.width = Math.max(200, rect.width) + "px";
+  slashMenu.style.top = Math.max(8, rect.top - h - 6) + "px";
+}
+
+/** Show/refresh the menu: only for the FIRST token of a "/"-led prompt. */
+function updateSlashMenu(): void {
+  const value = inputEl.value;
+  if (!value.startsWith("/") || /\s/.test(value)) {
+    hideSlashMenu();
+    return;
+  }
+  const q = value.slice(1).toLowerCase();
+  const all = [
+    { cmd: "/skills", description: "List installed skills" },
+    ...currentSkills.map((s) => ({ cmd: `/skill ${s.name}`, description: s.description })),
+  ];
+  slashItems = all.filter((it) => {
+    const c = it.cmd.slice(1).toLowerCase();
+    return c.startsWith(q) || c.includes(q);
+  });
+  if (slashItems.length === 0) {
+    hideSlashMenu();
+    return;
+  }
+  slashIndex = Math.min(slashIndex, slashItems.length - 1);
+  renderSlashMenu();
+}
+
+function slashMove(delta: number): void {
+  if (slashItems.length === 0) return;
+  slashIndex = (slashIndex + delta + slashItems.length) % slashItems.length;
+  renderSlashMenu();
+}
+
+function selectSlashItem(): void {
+  const it = slashItems[slashIndex];
+  if (!it) return;
+  inputEl.value = it.cmd + " ";
+  hideSlashMenu();
+  resizeInput();
+  inputEl.focus();
+}
+
+function refreshMcpSelect(): void {
+  mcpSelect.innerHTML = "";
+  for (const name of Object.keys(mcpEditorServers)) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    mcpSelect.appendChild(opt);
+  }
+  mcpSelect.value = mcpEditorSelected;
+}
+
+function loadMcpIntoForm(name: string): void {
+  mcpEditorSelected = name;
+  const s = mcpEditorServers[name] ?? {};
+  mcpName.value = name;
+  mcpCommand.value = s.command ?? "";
+  mcpArgs.value = (s.args ?? []).join("\n");
+  mcpEnv.value = Object.entries(s.env ?? {}).map(([k, v]) => `${k}=${v}`).join("\n");
+  mcpEnabled.checked = s.enabled !== false;
+  mcpTestResult.textContent = "";
+  mcpTestResult.className = "mcp-io";
+}
+
+function clearMcpForm(): void {
+  mcpEditorSelected = "";
+  mcpName.value = "";
+  mcpCommand.value = "";
+  mcpArgs.value = "";
+  mcpEnv.value = "";
+  mcpEnabled.checked = true;
+}
+
+/** Read the form into a stdio server config (args one per line, env KEY=VALUE). */
+function mcpFormServer(): McpEditorServer {
+  const env: Record<string, string> = {};
+  for (const line of mcpEnv.value.split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    const i = t.indexOf("=");
+    if (i <= 0) continue;
+    env[t.slice(0, i).trim()] = t.slice(i + 1).trim();
+  }
+  return {
+    command: mcpCommand.value.trim(),
+    args: mcpArgs.value.split("\n").map((l) => l.trim()).filter(Boolean),
+    enabled: mcpEnabled.checked,
+    ...(Object.keys(env).length > 0 ? { env } : {}),
+  };
+}
+
+function openMcpEditor(): void {
+  mcpTestResult.textContent = "";
+  mcpTestResult.className = "mcp-io";
+  vscode.postMessage({ type: "getMcpServers" });
+}
+
+function renderMcpEditor(data: ConfigState["mcp"], open: boolean): void {
+  mcpEditorServers = data?.servers ?? {};
+  mcpStatuses = data?.statuses ?? [];
+  if (open) {
+    const names = Object.keys(mcpEditorServers);
+    mcpEditorSelected = names[0] ?? "";
+    refreshMcpSelect();
+    if (mcpEditorSelected) loadMcpIntoForm(mcpEditorSelected);
+    else clearMcpForm();
+    mcpModal.classList.remove("hidden");
+  } else if (!mcpModal.classList.contains("hidden")) {
+    // A background change (e.g. the card toggle): refresh the open editor list.
+    refreshMcpSelect();
+  }
+}
+
+function closeMcpEditor(): void {
+  mcpModal.classList.add("hidden");
+}
+
+mcpConfigure.addEventListener("click", openMcpEditor);
+mcpCancel.addEventListener("click", closeMcpEditor);
+mcpModal.querySelector(".mcp-backdrop")?.addEventListener("click", closeMcpEditor);
+mcpSelect.addEventListener("change", () => {
+  if (mcpEditorServers[mcpSelect.value]) loadMcpIntoForm(mcpSelect.value);
+});
+mcpAdd.addEventListener("click", () => {
+  let name = "server";
+  let i = 1;
+  while (mcpEditorServers[name]) name = `server-${++i}`;
+  mcpEditorServers[name] = { command: "npx", args: [] };
+  mcpEditorSelected = name;
+  refreshMcpSelect();
+  loadMcpIntoForm(name);
+  mcpName.focus();
+  mcpName.select();
+});
+mcpDelete.addEventListener("click", () => {
+  const name = mcpEditorSelected;
+  if (!name) return;
+  delete mcpEditorServers[name];
+  mcpEditorSelected = Object.keys(mcpEditorServers)[0] ?? "";
+  refreshMcpSelect();
+  if (mcpEditorSelected) loadMcpIntoForm(mcpEditorSelected);
+  else clearMcpForm();
+});
+mcpTest.addEventListener("click", () => {
+  const s = mcpFormServer();
+  if (!s.command) {
+    mcpTestResult.textContent = "Enter a command first";
+    mcpTestResult.className = "mcp-io err";
+    return;
+  }
+  mcpTestResult.textContent = "Testing…";
+  mcpTestResult.className = "mcp-io";
+  vscode.postMessage({ type: "testMcpServer", server: s });
+});
+mcpSave.addEventListener("click", () => {
+  const old = mcpEditorSelected;
+  const name = mcpName.value.trim() || old;
+  if (old && name !== old) delete mcpEditorServers[old];
+  if (name) mcpEditorServers[name] = mcpFormServer();
+  mcpEditorSelected = name;
+  vscode.postMessage({ type: "saveMcpServers", servers: mcpEditorServers });
+});
+window.addEventListener("keydown", (e) => {
+  if (!mcpModal.classList.contains("hidden") && e.key === "Escape") {
+    e.preventDefault();
+    closeMcpEditor();
+  }
+});
 
 parEnabled.addEventListener("change", () => {
   syncParUi();
@@ -2168,7 +2519,6 @@ function setStreaming(active: boolean): void {
   parEnabled.disabled = active;
   for (const r of lgRadios) r.disabled = active;
   lgResponse.disabled = active;
-  for (const chip of skillsList.querySelectorAll<HTMLButtonElement>(".skill-chip")) chip.disabled = active;
   syncParUi();
   inputEl.disabled = active;
   // Mode button follows the same lock (no switching mid-stream); a dropdown
@@ -2239,6 +2589,7 @@ for (const item of modeItems) {
     if (!isChatMode(m)) return;
     if (m === currentMode) return;
     applyMode(m, { notify: true });
+    focusPrompt();
   });
 }
 
@@ -2247,14 +2598,15 @@ for (const item of modeItems) {
 document.addEventListener("click", (e) => {
   if (!modeMenu.classList.contains("hidden") && !modeSelectEl.contains(e.target as Node)) {
     closeModeMenu();
+    focusPrompt();
   }
 });
-// Esc closes the dropdown and returns focus to the button.
+// Esc closes the dropdown and returns focus to the prompt.
 window.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !modeMenu.classList.contains("hidden")) {
     e.preventDefault();
     closeModeMenu();
-    modeBtn.focus();
+    focusPrompt();
   }
 });
 
@@ -2274,6 +2626,7 @@ function applyParallel(on: boolean, opts?: { notify?: boolean }): void {
 parallelBtn.addEventListener("click", () => {
   if (parallelBtn.disabled) return;
   applyParallel(!parallelOn, { notify: true });
+  focusPrompt();
 });
 
 // ── Model dropdown (all providers, declared or detected from the host) ──
@@ -2388,6 +2741,27 @@ modelSelect.addEventListener("change", () => {
   const message: Record<string, unknown> = { type: "setModel", model: opt.value };
   if (opt.dataset.provider) message.provider = opt.dataset.provider;
   vscode.postMessage(message);
+  focusPrompt();
+});
+// Leaving the dropdown (blur) also returns the caret to the prompt.
+modelSelect.addEventListener("blur", () => focusPrompt());
+// A native <select> fires NO `change` when the SAME option is picked again, and
+// it keeps focus after the popup closes. Return the caret when the dropdown
+// interaction ends: a mouseup well after the popup opened (so the opening click
+// is ignored) with the select still focused.
+let modelPopupOpenedAt = 0;
+modelSelect.addEventListener("mousedown", () => {
+  modelPopupOpenedAt = Date.now();
+});
+document.addEventListener("mouseup", () => {
+  if (modelPopupOpenedAt && Date.now() - modelPopupOpenedAt > 250) {
+    modelPopupOpenedAt = 0;
+    if (document.activeElement === modelSelect) focusPrompt();
+  }
+});
+// Esc closes the popup keeping the same value: return the caret too.
+modelSelect.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") focusPrompt();
 });
 // Refresh the provider list every time the dropdown is opened, so a host that
 // came up after the panel loaded (e.g. llama.cpp started later) shows up.
@@ -2666,6 +3040,8 @@ window.addEventListener("message", (e) => {
         }
         renderAttachmentChips();
       }
+      // The picker closed (files chosen OR cancelled): caret back to the prompt.
+      focusPrompt();
       break;
     }
     case "textDelta": {
@@ -2947,6 +3323,18 @@ window.addEventListener("message", (e) => {
     }
     case "skills":
       renderSkills((msg.skills as { name: string; description: string }[]) || []);
+      break;
+    case "mcpServers":
+      renderMcpEditor((msg.data || {}) as ConfigState["mcp"], msg.open === true);
+      break;
+    case "mcpSaved":
+      if (msg.ok) closeMcpEditor();
+      break;
+    case "mcpTested":
+      mcpTestResult.className = "mcp-io " + (msg.ok ? "ok" : "err");
+      mcpTestResult.textContent = msg.ok
+        ? `✅ Connected — ${msg.toolCount} tool(s)${Array.isArray(msg.tools) && msg.tools.length > 0 ? ": " + (msg.tools as string[]).slice(0, 6).join(", ") : ""}`
+        : `❌ ${msg.error ?? "failed"}`;
       break;
     case "config":
       renderModelSelect(msg.config || {});

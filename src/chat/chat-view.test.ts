@@ -188,6 +188,8 @@ function buildHarness(opts: Record<string, unknown> = {}) {
     saveModelSelection: vi.fn(),
     readProvidersEditor: vi.fn(() => ({ providers: {} })),
     saveProvidersEditor: vi.fn(() => true),
+    readMcpServers: vi.fn(() => (opts.mcpServers as Record<string, unknown> | undefined) ?? {}),
+    saveMcpServers: vi.fn(() => (opts.mcpSaveOk as boolean | undefined) ?? true),
   } as unknown as ProviderCatalog;
   const modelList = {
     fetchModels: vi.fn(opts.fetchModels ?? (async () => [])),
@@ -710,6 +712,49 @@ describe("ChatViewProvider", () => {
     await handler({ type: "getSkills" });
     const msg = view.webview.postMessage.mock.calls.map((c) => c[0] as any).find((m) => m.type === "skills");
     expect(msg.skills).toEqual([{ name: "pdf", description: "PDFs" }]);
+  });
+
+  it("getMcpServers replies with the configured MCP servers + statuses", async () => {
+    const { provider } = buildHarness({ mcpServers: { test: { command: "node" } } });
+    const { handler, view } = resolveWith(provider);
+    await handler({ type: "getMcpServers" });
+    const msg = view.webview.postMessage.mock.calls.map((c) => c[0] as any).find((m) => m.type === "mcpServers");
+    expect(msg.data.servers).toEqual({ test: { command: "node" } });
+    expect(msg.data.statuses).toEqual([]);
+  });
+
+  it("saveMcpServers persists and replies mcpSaved (ok / failure)", async () => {
+    const ok = buildHarness({ mcpSaveOk: true });
+    const a = resolveWith(ok.provider);
+    await a.handler({ type: "saveMcpServers", servers: { test: { command: "node" } } });
+    expect(a.view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "mcpSaved", ok: true }));
+
+    const bad = buildHarness({ mcpSaveOk: false });
+    const b = resolveWith(bad.provider);
+    await b.handler({ type: "saveMcpServers", servers: {} });
+    expect(b.view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "mcpSaved", ok: false }));
+  });
+
+  it("toggleMcpServer persists the enabled flag and reconnects", async () => {
+    const saveMcpServers = vi.fn(() => true);
+    const { provider } = buildHarness({
+      providers: {
+        getProvider: vi.fn(),
+        saveModelSelection: vi.fn(),
+        readMcpServers: vi.fn(() => ({ test: { command: "node" } })),
+        saveMcpServers,
+      } as unknown as ProviderCatalog,
+    });
+    const { handler } = resolveWith(provider);
+    await handler({ type: "toggleMcpServer", name: "test", enabled: false });
+    expect(saveMcpServers).toHaveBeenCalledWith({ test: { command: "node", enabled: false } });
+  });
+
+  it("testMcpServer rejects a server with neither command nor url", async () => {
+    const { provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await handler({ type: "testMcpServer", server: {} });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "mcpTested", ok: false }));
   });
 
   it("/skill <name> injects the skill instructions and keeps the command as display text", async () => {

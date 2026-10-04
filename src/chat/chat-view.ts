@@ -21,6 +21,9 @@ import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, toContextWindow, toOutpu
 import { PanelModalQueue } from "./panel-modal-queue";
 import { Compactor, DEFAULT_COMPACTION, CompactionSettings, planManualCompaction, shouldCompact, estimateTokens, serializeConversation, toCompactionThresholdPercent } from "../core/sessions/compactor";
 import type { SkillRegistry } from "../core/skills/skill-registry";
+import type { McpManager } from "../core/mcp";
+import { McpStdioClient, McpHttpClient, type McpClient } from "../core/mcp";
+import type { McpServerConfig, McpStdioServerConfig, McpHttpServerConfig } from "../core/config/types";
 import { normalizeLoopGuardSensitivity, resolveLoopGuardOptions } from "../core/agent/loop-guard";
 import { DEFAULT_MAX_PARALLEL_SUB_AGENTS } from "../core/agent/agent";
 
@@ -90,6 +93,8 @@ export class ChatViewProvider implements WebviewViewProvider {
       modelsDev?: { getContext(modelId: string, providerCandidates: readonly string[]): Promise<number | undefined> };
       /** Agent Skills registry: catalog for the UI + manual `/skill` activation. */
       skills?: SkillRegistry;
+      /** MCP manager: status for the MCP card + reconnect after a save. */
+      mcp?: McpManager;
     } = {},
   ) {
     this.modals = new PanelModalQueue((msg) => this.view?.webview.postMessage(msg));
@@ -540,6 +545,78 @@ export class ChatViewProvider implements WebviewViewProvider {
         this.options.skills?.invalidate();
         this.view?.webview.postMessage({ type: "skills", skills: this.skillCatalog() });
         break;
+      case "getMcpServers":
+        this.view?.webview.postMessage({ type: "mcpServers", data: this.mcpEditorData(), open: true });
+        break;
+      case "toggleMcpServer": {
+        // Enable/disable ONE server from the card: persisted with the config,
+        // then reconnect (a disabled server is not connected and exposes no tools).
+        const name = typeof msg.name === "string" ? msg.name : "";
+        const enabled = msg.enabled === true;
+        const servers = this.providers.readMcpServers?.() ?? {};
+        if (!name || !servers[name]) break;
+        servers[name] = { ...servers[name], enabled };
+        const ok = this.providers.saveMcpServers?.(servers) ?? false;
+        if (ok) {
+          await this.options.mcp?.connect();
+          this.view?.webview.postMessage({ type: "mcpServers", data: this.mcpEditorData() });
+          void this.pushConfig();
+        }
+        break;
+      }
+      case "saveMcpServers": {
+        const servers =
+          msg.servers && typeof msg.servers === "object" ? (msg.servers as Record<string, McpServerConfig>) : {};
+        const ok = this.providers.saveMcpServers?.(servers) ?? false;
+        if (ok) {
+          // Reconnect + re-register the MCP tools, then refresh the card/modal.
+          await this.options.mcp?.connect();
+          this.view?.webview.postMessage({ type: "mcpServers", data: this.mcpEditorData() });
+          void this.pushConfig();
+        }
+        this.view?.webview.postMessage({ type: "mcpSaved", ok });
+        break;
+      }
+      case "testMcpServer": {
+        const cfg = msg.server as McpServerConfig | undefined;
+        const isStdio = !!cfg && typeof cfg === "object" && "command" in cfg && !!cfg.command;
+        const isHttp = !!cfg && typeof cfg === "object" && "url" in cfg && !!cfg.url;
+        if (!isStdio && !isHttp) {
+          this.view?.webview.postMessage({
+            type: "mcpTested",
+            ok: false,
+            error: "A server needs 'command' (stdio) or 'url' (http).",
+          });
+          break;
+        }
+        const client: McpClient = isStdio
+          ? new McpStdioClient({
+              command: (cfg as McpStdioServerConfig).command,
+              args: (cfg as McpStdioServerConfig).args,
+              env: (cfg as McpStdioServerConfig).env,
+              timeoutMs: 15000,
+            })
+          : new McpHttpClient({
+              url: (cfg as McpHttpServerConfig).url,
+              headers: (cfg as McpHttpServerConfig).headers,
+              timeoutMs: 15000,
+            });
+        try {
+          await client.start();
+          const infos = await client.listTools();
+          this.view?.webview.postMessage({
+            type: "mcpTested",
+            ok: true,
+            toolCount: infos.length,
+            tools: infos.map((t) => t.name),
+          });
+        } catch (e) {
+          this.view?.webview.postMessage({ type: "mcpTested", ok: false, error: e instanceof Error ? e.message : String(e) });
+        } finally {
+          client.close();
+        }
+        break;
+      }
       case "getProvidersEditor":
         this.view?.webview.postMessage({
           type: "providersEditor",
@@ -1283,6 +1360,11 @@ export class ChatViewProvider implements WebviewViewProvider {
     return (this.options.skills?.list() ?? []).map((s) => ({ name: s.name, description: s.description }));
   }
 
+  /** MCP servers (config) + their live status, for the MCP card/editor. */
+  private mcpEditorData(): { servers: Record<string, McpServerConfig>; statuses: { name: string; ok: boolean; error?: string; toolCount: number }[] } {
+    return { servers: this.providers.readMcpServers?.() ?? {}, statuses: this.options.mcp?.getStatuses() ?? [] };
+  }
+
   /** The concurrent sub-agent cap actually used for the active session: the
    * per-session override wins, then the config default, then 4. */
   private effectiveParallelCap(): number {
@@ -1313,6 +1395,8 @@ export class ChatViewProvider implements WebviewViewProvider {
     loopGuardResponse?: boolean;
     /** Installed Agent Skills (catalog for the Skills card). */
     skills: { name: string; description: string }[];
+    /** MCP servers + their connection status (MCP card). */
+    mcp?: { servers: Record<string, McpServerConfig>; statuses: { name: string; ok: boolean; error?: string; toolCount: number }[] };
     contextWindow: number;
     compactionThresholdPercent?: number;
     outputTokens: number;
@@ -1392,6 +1476,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       loopGuard: this.activeRuntime()?.loopGuard,
       loopGuardResponse: this.activeRuntime()?.loopGuardResponse,
       skills: this.skillCatalog(),
+      mcp: { servers: this.providers.readMcpServers?.() ?? {}, statuses: this.options.mcp?.getStatuses() ?? [] },
       contextWindow: this.activeRuntime()?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
       // Only the session override, so the UI can show "Auto" (undefined) vs
       // an explicit value. Config-file defaults stay effective but hidden.

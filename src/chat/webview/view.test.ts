@@ -63,7 +63,7 @@ function setupDom(
       </div>
     </div>
     <div id="status">AI Model: <select id="model-select"></select><button id="gear-btn">⚙</button><button id="ctx-minus">−</button><input id="ctx-input" type="text" value="128000"><button id="ctx-plus">+</button><button id="out-minus">−</button><input id="out-input" type="text" value="8192"><button id="out-plus">+</button><input id="sampler-temp" type="radio" name="sampler" checked><input id="sampler-topp" type="radio" name="sampler"><button id="samp-minus">−</button><input id="samp-input" type="text" placeholder="Auto"><button id="samp-plus">+</button><button id="samp-auto">Auto</button><button id="presence-minus">−</button><input id="presence-input" type="text" placeholder="Auto"><button id="presence-plus">+</button><button id="presence-auto">Auto</button><button id="freq-minus">−</button><input id="freq-input" type="text" placeholder="Auto"><button id="freq-plus">+</button><button id="freq-auto">Auto</button></div>
-    <div id="ctl-cards"><input type="checkbox" id="par-enabled" /><input id="par-input" type="text" value="4" /><button id="par-minus"></button><button id="par-plus"></button><button id="lg-reset"></button><input type="radio" name="lg-level" id="lg-high" value="high" /><input type="radio" name="lg-level" id="lg-normal" value="normal" checked /><input type="radio" name="lg-level" id="lg-low" value="low" /><input type="checkbox" id="lg-response" /><div id="skills-card" class="hidden"><div id="skills-list"></div></div></div>
+    <div id="ctl-cards"><input type="checkbox" id="par-enabled" /><input id="par-input" type="text" value="4" /><button id="par-minus"></button><button id="par-plus"></button><button id="lg-reset"></button><input type="radio" name="lg-level" id="lg-high" value="high" /><input type="radio" name="lg-level" id="lg-normal" value="normal" checked /><input type="radio" name="lg-level" id="lg-low" value="low" /><input type="checkbox" id="lg-response" /><div id="skills-card" class="hidden"><div id="skills-list"></div></div><div id="mcp-card" class="hidden"><div id="mcp-list"></div><button id="mcp-configure"></button></div></div>
     <div id="metrics"><select id="thinking-select"><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button><span id="compact-threshold-label"></span><button id="compact-settings-btn">⚙</button></div>
     <div id="compact-settings-modal" class="hidden">
       <div class="cs-backdrop"></div>
@@ -102,6 +102,20 @@ function setupDom(
       </div>
     </div>
     <div id="ctl-toggle"><button id="ctl-toggle-btn"></button></div>
+    <div id="mcp-modal" class="hidden">
+      <div class="mcp-backdrop"></div>
+      <select id="mcp-select"></select>
+      <input id="mcp-name" type="text" />
+      <input id="mcp-command" type="text" />
+      <textarea id="mcp-args"></textarea>
+      <textarea id="mcp-env"></textarea>
+      <input type="checkbox" id="mcp-enabled" />
+      <button id="mcp-test"></button><span id="mcp-test-result"></span>
+      <button id="mcp-add"></button><button id="mcp-delete"></button>
+      <button id="mcp-save"></button><button id="mcp-cancel"></button>
+    </div>
+    <div id="mcp-tools-popover" class="hidden"></div>
+    <div id="slash-menu" class="hidden"></div>
     <div id="name-modal" class="hidden">
       <div class="name-modal-backdrop"></div>
       <div class="name-modal-card">
@@ -1374,6 +1388,117 @@ describe("view webview client", () => {
     expect(document.activeElement).toBe(input);
   });
 
+  it("returns focus to the prompt after mode / parallel / model / attach flows", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    const blur = () => (document.activeElement as HTMLElement | null)?.blur();
+
+    // Analyze/Build change
+    blur();
+    (document.querySelector('.mode-item[data-mode="agent"]') as HTMLElement).click();
+    expect(document.activeElement).toBe(input);
+
+    // Parallel toggle
+    blur();
+    (document.getElementById("parallel-btn") as HTMLButtonElement).click();
+    expect(document.activeElement).toBe(input);
+
+    // Model dropdown selection
+    blur();
+    const sel = document.getElementById("model-select") as HTMLSelectElement;
+    const opt = document.createElement("option");
+    opt.value = "m1";
+    sel.appendChild(opt);
+    sel.value = "m1";
+    sel.dispatchEvent(new Event("change"));
+    expect(document.activeElement).toBe(input);
+
+    // Attach flow finished (picker closed / cancelled)
+    blur();
+    hostMessage({ type: "attachments", files: [] });
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("returns focus when the SAME model is re-selected, or Esc closes the dropdown", async () => {
+    vi.useFakeTimers();
+    try {
+      await loadView();
+      const input = document.getElementById("user-input") as HTMLTextAreaElement;
+      const sel = document.getElementById("model-select") as HTMLSelectElement;
+
+      // (a) popup closed by picking the SAME model (no `change` event).
+      (document.activeElement as HTMLElement | null)?.blur();
+      sel.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      vi.advanceTimersByTime(400);
+      sel.focus();
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      expect(document.activeElement).toBe(input);
+
+      // (b) Esc keeps the same selection.
+      (document.activeElement as HTMLElement | null)?.blur();
+      sel.focus();
+      sel.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      expect(document.activeElement).toBe(input);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaving the model dropdown (blur) returns focus to the prompt", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    const sel = document.getElementById("model-select") as HTMLSelectElement;
+    (document.activeElement as HTMLElement | null)?.blur();
+    sel.focus();
+    sel.blur();
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("closing the mode menu (Esc / outside click) returns focus to the prompt", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    const btn = document.getElementById("mode-btn") as HTMLButtonElement;
+    const menu = document.getElementById("mode-menu") as HTMLElement;
+
+    (document.activeElement as HTMLElement | null)?.blur();
+    btn.click();
+    expect(menu.classList.contains("hidden")).toBe(false);
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(menu.classList.contains("hidden")).toBe(true);
+    expect(document.activeElement).toBe(input);
+
+    (document.activeElement as HTMLElement | null)?.blur();
+    btn.click();
+    document.body.click();
+    expect(menu.classList.contains("hidden")).toBe(true);
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("removing an attachment returns focus to the prompt", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    hostMessage({ type: "attachments", files: [{ name: "a.txt", path: "/a.txt", size: 3 }] });
+    const remove = document.querySelector(".attach-remove") as HTMLButtonElement;
+    expect(remove).toBeTruthy();
+    (document.activeElement as HTMLElement | null)?.blur();
+    remove.click();
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("Esc closes the slash menu without posting abort", async () => {
+    await loadView();
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, skills: [{ name: "pptx", description: "d" }] } });
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "/";
+    input.dispatchEvent(new Event("input"));
+    const menu = document.getElementById("slash-menu") as HTMLElement;
+    expect(menu.classList.contains("hidden")).toBe(false);
+    posted.length = 0;
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(menu.classList.contains("hidden")).toBe(true);
+    expect(posted.some((m) => (m as { type?: string }).type === "abort")).toBe(false);
+  });
+
   it("returns focus to the prompt after a transcript refresh (e.g. a cut)", async () => {
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
@@ -2307,7 +2432,7 @@ describe("view webview client", () => {
     const card = document.getElementById("skills-card") as HTMLElement;
     const list = document.getElementById("skills-list") as HTMLElement;
     expect(card.classList.contains("hidden")).toBe(false);
-    const chips = list.querySelectorAll<HTMLButtonElement>(".skill-chip");
+    const chips = list.querySelectorAll<HTMLElement>(".skill-item");
     expect(chips.length).toBe(2);
     expect(chips[0].textContent).toContain("pdf");
 
@@ -2328,14 +2453,14 @@ describe("view webview client", () => {
     hostMessage({ type: "refresh", messages: [], skills: [{ name: "pdf", description: "PDFs" }] });
     const card = document.getElementById("skills-card") as HTMLElement;
     expect(card.classList.contains("hidden")).toBe(false);
-    expect(document.querySelectorAll("#skills-list .skill-chip").length).toBe(1);
+    expect(document.querySelectorAll("#skills-list .skill-item").length).toBe(1);
   });
 
   it("a `skills` message re-renders the Skills card", async () => {
     await loadView();
     hostMessage({ type: "skills", skills: [{ name: "pdf", description: "PDFs" }] });
     expect((document.getElementById("skills-card") as HTMLElement).classList.contains("hidden")).toBe(false);
-    expect(document.querySelectorAll("#skills-list .skill-chip").length).toBe(1);
+    expect(document.querySelectorAll("#skills-list .skill-item").length).toBe(1);
   });
 
   it("expanding the control stack requests a fresh skills list", async () => {
@@ -2350,6 +2475,194 @@ describe("view webview client", () => {
     posted.length = 0;
     window.dispatchEvent(new Event("focus"));
     expect(posted.some((m) => (m as { type?: string }).type === "getSkills")).toBe(true);
+  });
+
+  it("the MCP editor is hidden until Configure… is clicked", async () => {
+    await loadView();
+    expect((document.getElementById("mcp-modal") as HTMLElement).classList.contains("hidden")).toBe(true);
+    (document.getElementById("mcp-configure") as HTMLButtonElement).click();
+    hostMessage({ type: "mcpServers", data: { servers: {}, statuses: [] }, open: true });
+    expect((document.getElementById("mcp-modal") as HTMLElement).classList.contains("hidden")).toBe(false);
+    (document.getElementById("mcp-cancel") as HTMLButtonElement).click();
+    expect((document.getElementById("mcp-modal") as HTMLElement).classList.contains("hidden")).toBe(true);
+  });
+
+  it("MCP card lists configured servers with their status", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        contextWindow: 128000,
+        mcp: { servers: { test: { command: "node" } }, statuses: [{ name: "test", ok: true, toolCount: 2 }] },
+      },
+    });
+    const card = document.getElementById("mcp-card") as HTMLElement;
+    expect(card.classList.contains("hidden")).toBe(false);
+    expect(document.getElementById("mcp-list")!.textContent).toContain("test");
+    expect(document.getElementById("mcp-list")!.textContent).toContain("2 tools");
+  });
+
+  it("the MCP card: clicking the server name toggles it (posts toggleMcpServer)", async () => {
+    await loadView();
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, mcp: { servers: { test: { command: "node" } }, statuses: [{ name: "test", ok: true, enabled: true, toolCount: 2 }] } } });
+    const nameEl = document.querySelector(".mcp-name") as HTMLElement;
+    expect(nameEl.textContent).toContain("test");
+    posted.length = 0;
+    nameEl.click();
+    const msg = posted.find((m) => (m as { type?: string }).type === "toggleMcpServer") as any;
+    expect(msg.name).toBe("test");
+    expect(msg.enabled).toBe(false);
+  });
+
+  it("a disabled MCP server shows an 'off' state (no tools button)", async () => {
+    await loadView();
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, mcp: { servers: { off: { command: "node", enabled: false } }, statuses: [{ name: "off", ok: true, enabled: false, toolCount: 0 }] } } });
+    expect(document.querySelector(".mcp-tools-btn")).toBeNull();
+    expect(document.querySelector(".mcp-status.off")).toBeTruthy();
+    expect(document.getElementById("mcp-list")!.textContent).toContain("off");
+  });
+
+  it("the MCP modal shows the enabled flag, aligned with the config", async () => {
+    await loadView();
+    hostMessage({ type: "mcpServers", data: { servers: { off: { command: "node", enabled: false } }, statuses: [] }, open: true });
+    expect((document.getElementById("mcp-enabled") as HTMLInputElement).checked).toBe(false);
+    posted.length = 0;
+    (document.getElementById("mcp-save") as HTMLButtonElement).click();
+    const saved = posted.find((m) => (m as { type?: string }).type === "saveMcpServers") as any;
+    expect(saved.servers.off.enabled).toBe(false);
+  });
+
+  it("Configure… requests the MCP servers and opens the editor", async () => {
+    await loadView();
+    posted.length = 0;
+    (document.getElementById("mcp-configure") as HTMLButtonElement).click();
+    expect(posted.some((m) => (m as { type?: string }).type === "getMcpServers")).toBe(true);
+
+    hostMessage({ type: "mcpServers", data: { servers: { test: { command: "node", args: ["s.js"] } }, statuses: [] }, open: true });
+    expect((document.getElementById("mcp-modal") as HTMLElement).classList.contains("hidden")).toBe(false);
+    expect((document.getElementById("mcp-name") as HTMLInputElement).value).toBe("test");
+    expect((document.getElementById("mcp-command") as HTMLInputElement).value).toBe("node");
+    expect((document.getElementById("mcp-args") as HTMLTextAreaElement).value).toBe("s.js");
+  });
+
+  it("saving the MCP editor posts saveMcpServers and closes on success", async () => {
+    await loadView();
+    hostMessage({ type: "mcpServers", data: { servers: { test: { command: "node" } }, statuses: [] }, open: true });
+    posted.length = 0;
+    (document.getElementById("mcp-save") as HTMLButtonElement).click();
+    const msg = posted.find((m) => (m as { type?: string }).type === "saveMcpServers") as any;
+    expect(msg.servers.test.command).toBe("node");
+    hostMessage({ type: "mcpSaved", ok: true });
+    expect((document.getElementById("mcp-modal") as HTMLElement).classList.contains("hidden")).toBe(true);
+  });
+
+  it("mcpTested shows the connection result", async () => {
+    await loadView();
+    hostMessage({ type: "mcpServers", data: { servers: { test: { command: "node" } }, statuses: [] } });
+    hostMessage({ type: "mcpTested", ok: true, toolCount: 3, tools: ["a", "b", "c"] });
+    const res = document.getElementById("mcp-test-result") as HTMLElement;
+    expect(res.textContent).toContain("3 tool");
+    expect(res.className).toContain("ok");
+  });
+
+  it("mcpTested shows a failure with the error", async () => {
+    await loadView();
+    hostMessage({ type: "mcpServers", data: { servers: { test: { command: "node" } }, statuses: [] } });
+    hostMessage({ type: "mcpTested", ok: false, error: "boom" });
+    const res = document.getElementById("mcp-test-result") as HTMLElement;
+    expect(res.textContent).toContain("boom");
+    expect(res.className).toContain("err");
+  });
+
+  it("the MCP card is hidden when no servers are configured", async () => {
+    await loadView();
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, mcp: { servers: {}, statuses: [] } } });
+    expect((document.getElementById("mcp-card") as HTMLElement).classList.contains("hidden")).toBe(true);
+  });
+
+  it("clicking (N tools) opens a popover with the tool names + descriptions", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        contextWindow: 128000,
+        mcp: {
+          servers: { test: { command: "node" } },
+          statuses: [{ name: "test", ok: true, toolCount: 2, tools: [{ name: "echo", description: "Echo text" }, { name: "ping" }] }],
+        },
+      },
+    });
+    const btn = document.querySelector(".mcp-tools-btn") as HTMLButtonElement;
+    expect(btn.textContent).toBe("(2 tools)");
+    btn.click();
+    const pop = document.getElementById("mcp-tools-popover") as HTMLElement;
+    expect(pop.classList.contains("hidden")).toBe(false);
+    expect(pop.textContent).toContain("echo");
+    expect(pop.textContent).toContain("Echo text");
+    expect(pop.textContent).toContain("ping");
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(pop.classList.contains("hidden")).toBe(true);
+  });
+
+  it("typing '/' at the start of the prompt shows the skill list", async () => {
+    await loadView();
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, skills: [{ name: "pptx", description: "Make decks" }] } });
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "/";
+    input.dispatchEvent(new Event("input"));
+    const menu = document.getElementById("slash-menu") as HTMLElement;
+    expect(menu.classList.contains("hidden")).toBe(false);
+    expect(menu.textContent).toContain("/skill pptx");
+    expect(menu.textContent).toContain("/skills");
+
+    const items = [...menu.querySelectorAll(".slash-item")] as HTMLElement[];
+    const pptxItem = items.find((el) => el.textContent?.includes("pptx"))!;
+    pptxItem.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(input.value).toBe("/skill pptx ");
+    expect(menu.classList.contains("hidden")).toBe(true);
+  });
+
+  it("the slash menu only triggers at the START and with no spaces", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    const menu = document.getElementById("slash-menu") as HTMLElement;
+    input.value = "see /path"; // "/" mid-text → no menu
+    input.dispatchEvent(new Event("input"));
+    expect(menu.classList.contains("hidden")).toBe(true);
+    input.value = "/skill pptx done"; // space → no menu
+    input.dispatchEvent(new Event("input"));
+    expect(menu.classList.contains("hidden")).toBe(true);
+  });
+
+  it("Enter picks the highlighted slash item instead of sending", async () => {
+    await loadView();
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, skills: [{ name: "pptx", description: "d" }] } });
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "/";
+    input.dispatchEvent(new Event("input"));
+    posted.length = 0;
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(input.value).toBe("/skills "); // first item
+    expect(posted.some((m) => (m as { type?: string }).type === "send")).toBe(false);
+  });
+
+  it("MCP editor: + New adds a server that is then saved", async () => {
+    await loadView();
+    hostMessage({ type: "mcpServers", data: { servers: {}, statuses: [] }, open: true });
+    (document.getElementById("mcp-add") as HTMLButtonElement).click();
+    expect((document.getElementById("mcp-name") as HTMLInputElement).value).toBe("server");
+    (document.getElementById("mcp-name") as HTMLInputElement).value = "mine";
+    posted.length = 0;
+    (document.getElementById("mcp-save") as HTMLButtonElement).click();
+    const saved = posted.find((m) => (m as { type?: string }).type === "saveMcpServers") as any;
+    expect(saved.servers.mine.command).toBe("npx");
   });
 
   it("adds a new provider with + New and keeps a complete URL untouched", async () => {

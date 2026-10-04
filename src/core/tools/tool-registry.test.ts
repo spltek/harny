@@ -29,4 +29,19 @@ describe("ToolRegistry", () => {
   it("rejects duplicate tool names", () => {
     expect(() => new ToolRegistry([makeTool("Read"), makeTool("Read")])).toThrow();
   });
+
+  it("adds tools at runtime, idempotent by name", () => {
+    const registry = new ToolRegistry([makeTool("Read")]);
+    registry.add([makeTool("mcp__x__y"), makeTool("Read")]); // Read is a dup → ignored
+    expect(registry.getAll().map((t) => t.name)).toEqual(["Read", "mcp__x__y"]);
+    expect(registry.get("mcp__x__y")).toBeDefined();
+  });
+
+  it("removes tools by prefix (MCP reconnect cleanup)", () => {
+    const registry = new ToolRegistry([makeTool("Read"), makeTool("mcp__a__1"), makeTool("mcp__b__2")]);
+    registry.removeByPrefix("mcp__");
+    expect(registry.getAll().map((t) => t.name)).toEqual(["Read"]);
+    expect(registry.get("mcp__a__1")).toBeUndefined();
+    expect(registry.definitions().map((d) => d.name)).toEqual(["Read"]);
+  });
 });

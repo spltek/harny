@@ -748,16 +748,79 @@ ${renderViewConfig(deps)}
        it so its label starts exactly where the upper cards' labels do. */
     .ctl-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0 -10px; }
     .ctl-controls > .field { padding: 0 10px; min-width: 0; }
-    /* Skills card: one clickable chip per installed Agent Skill; a click fills
-       the prompt with "/skill <name> " (manual activation). */
-    #skills-list { display: flex; flex-wrap: wrap; gap: 6px; }
-    .skill-chip {
-      display: inline-flex; align-items: center; gap: 5px; max-width: 100%; overflow-wrap: anywhere;
-      padding: 2px 8px; border-radius: 999px; cursor: pointer;
-      background: var(--tool-bg); border: 1px solid var(--border); color: var(--fg); font-size: var(--fs-sm);
+    /* Skills card: one clickable TEXT per installed skill (no button chrome);
+       a click fills the prompt with "/skill <name> ". */
+    #skills-list { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+    .skill-item {
+      cursor: pointer; color: var(--accent); font-size: var(--fs-sm);
+      max-width: 100%; overflow-wrap: anywhere;
     }
-    .skill-chip:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-    .skill-chip:disabled { opacity: 0.5; cursor: default; }
+    .skill-item:hover { text-decoration: underline; }
+    /* MCP card + editor modal (mirrors the providers editor). */
+    #mcp-list { display: flex; flex-direction: column; gap: 3px; }
+    .mcp-status { font-size: var(--fs-sm); }
+    .mcp-status.ok { color: #98c379; }
+    .mcp-status.err { color: var(--error, #f05555); }
+    .mcp-status .mcp-name { cursor: pointer; }
+    .mcp-status .mcp-detail { color: #9a9a9a; }
+    .mcp-tools-btn {
+      background: transparent; border: none; padding: 0; cursor: pointer;
+      color: var(--accent); font-size: var(--fs-sm); text-decoration: underline;
+    }
+    .mcp-tools-btn:hover { color: var(--accent-strong, var(--accent)); }
+    /* Tool-list popover: a small floating card anchored to the (N tools) key. */
+    #mcp-tools-popover {
+      position: fixed; z-index: 60; max-width: min(30rem, 90vw); max-height: 60vh; overflow: auto;
+      background: var(--bg, #1e1e1e); border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px 10px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+    }
+    #mcp-tools-popover.hidden { display: none; }
+    .mcp-pop-title { font-weight: 600; margin-bottom: 6px; }
+    .mcp-pop-empty { color: #9a9a9a; font-size: var(--fs-sm); }
+    .mcp-pop-item { padding: 4px 0; border-top: 1px solid var(--border); }
+    .mcp-pop-item:first-of-type { border-top: none; }
+    .mcp-pop-name { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--fg); }
+    .mcp-pop-desc { font-size: var(--fs-sm); color: #9a9a9a; white-space: pre-wrap; overflow-wrap: anywhere; }
+    /* Slash menu: skill autocomplete above the prompt. Only shown when the
+       prompt STARTS with "/" and has no whitespace yet. */
+    #slash-menu {
+      position: fixed; z-index: 40; max-height: 40vh; overflow: auto;
+      background: var(--bg, #1e1e1e); border: 1px solid var(--border); border-radius: 8px;
+      padding: 4px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+    }
+    #slash-menu.hidden { display: none; }
+    .slash-item { display: flex; flex-direction: column; gap: 1px; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
+    .slash-item.active, .slash-item:hover { background: rgba(255, 255, 255, 0.08); }
+    .slash-cmd { font-family: var(--font-mono); font-size: var(--fs-md); color: var(--fg); }
+    .slash-desc { font-size: var(--fs-sm); color: #9a9a9a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+    #mcp-modal { position: fixed; inset: 0; z-index: 50; }
+    #mcp-modal.hidden { display: none; }
+    .mcp-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5); }
+    .mcp-card {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      width: min(46rem, 94vw); max-height: 88vh; overflow: auto;
+      background: var(--bg, #1e1e1e); border: 1px solid var(--border); border-radius: 10px; padding: 14px;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .mcp-head h3 { margin: 0 0 2px; }
+    .mcp-hint { font-size: var(--fs-sm); color: #9a9a9a; }
+    .mcp-body { display: flex; gap: 12px; align-items: flex-start; }
+    .mcp-list-col { display: flex; flex-direction: column; gap: 6px; min-width: 11rem; }
+    #mcp-select { min-height: 9rem; background: var(--input-bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 4px; }
+    .mcp-list-actions { display: flex; gap: 6px; }
+    .mcp-form-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+    .mcp-form-col input[type="text"], .mcp-form-col textarea { background: var(--input-bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; font-size: var(--fs-md); }
+    .mcp-form-col textarea { font-family: var(--font-mono); resize: vertical; }
+    .mcp-form-actions { display: flex; align-items: center; gap: 8px; }
+    .mcp-enabled-row { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: #9a9a9a; cursor: pointer; }
+    .mcp-enabled-row input { accent-color: var(--accent); }
+    /* A disabled server is grayed out (name + detail). */
+    .mcp-status.off, .mcp-status.off .mcp-name, .mcp-status.off .mcp-detail { color: #777; }
+    .mcp-io { font-size: var(--fs-sm); color: #9a9a9a; }
+    .mcp-io.ok { color: #98c379; }
+    .mcp-io.err { color: var(--error, #f05555); }
+    .mcp-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    body.no-session #mcp-card, body.no-workspace #mcp-card { display: none; }
     #lg-toggle { flex-wrap: wrap; min-height: 1.85rem; align-items: center; }
     .ctl-inline { display: flex; align-items: center; gap: 8px; min-width: 0; }
     .ctl-inline input[type="checkbox"] {
@@ -1465,6 +1528,13 @@ ${renderViewConfig(deps)}
         <span class="card-title">Skills</span>
         <div id="skills-list"></div>
       </div>
+      <div class="ctl-card ctl-card-wide hidden" id="mcp-card">
+        <div class="ctl-inline" style="justify-content: space-between;">
+          <span class="card-title">MCP</span>
+          <button id="mcp-configure" class="gear-btn" title="Configure MCP servers" aria-label="Configure MCP servers"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
+        </div>
+        <div id="mcp-list"></div>
+      </div>
     </div>
   </div>
   <div id="metrics">
@@ -1590,6 +1660,41 @@ ${renderViewConfig(deps)}
       </div>
     </div>
   </div>
+  <div id="mcp-modal" class="hidden">
+    <div class="mcp-backdrop"></div>
+    <div class="mcp-card">
+      <div class="mcp-head">
+        <h3>MCP servers</h3>
+        <span class="mcp-hint">Model Context Protocol (stdio or HTTP). Their tools appear as mcp__&lt;server&gt;__&lt;tool&gt;.</span>
+      </div>
+      <div class="mcp-body">
+        <div class="mcp-list-col">
+          <select id="mcp-select" size="7" aria-label="MCP servers"></select>
+          <div class="mcp-list-actions">
+            <button id="mcp-add" class="secondary" type="button">+ New</button>
+            <button id="mcp-delete" class="secondary danger" type="button">Delete</button>
+          </div>
+        </div>
+        <div class="mcp-form-col">
+          <div class="field"><label class="field-label" for="mcp-name">Name</label><input id="mcp-name" type="text" spellcheck="false" /></div>
+          <div class="field"><label class="field-label" for="mcp-command">Command</label><input id="mcp-command" type="text" spellcheck="false" placeholder="e.g. npx" /></div>
+          <div class="field"><label class="field-label" for="mcp-args">Args (one per line)</label><textarea id="mcp-args" rows="3" spellcheck="false"></textarea></div>
+          <div class="field"><label class="field-label" for="mcp-env">Env (KEY=VALUE, one per line)</label><textarea id="mcp-env" rows="3" spellcheck="false"></textarea></div>
+          <label class="mcp-enabled-row"><input type="checkbox" id="mcp-enabled" /> Enabled (disabled servers are kept but not connected)</label>
+          <div class="mcp-form-actions">
+            <button id="mcp-test" class="secondary" type="button">Test</button>
+            <span id="mcp-test-result" class="mcp-io"></span>
+          </div>
+        </div>
+      </div>
+      <div class="mcp-actions">
+        <button id="mcp-cancel" class="secondary">Cancel</button>
+        <button id="mcp-save">Save</button>
+      </div>
+    </div>
+  </div>
+  <div id="mcp-tools-popover" class="hidden"></div>
+  <div id="slash-menu" class="hidden" role="listbox" aria-label="Commands"></div>
   <script id="harny-view-init" type="application/json">${jsonInit(deps.state)}</script>
   <script src="${scriptUri}"></script>
 </body>

@@ -5,12 +5,47 @@ import type { PartialConfigProvider } from "./partial-config-provider";
 import { isThinkingLevel, isThinkingMode } from "./types";
 import type {
   HarnyConfig,
+  McpServerConfig,
   ProviderCatalog,
   ProviderEditorData,
   ProviderEditorEntry,
   ProviderExport,
   ResolvedNamedProvider,
 } from "./types";
+
+/** Validate + normalise a raw `mcpServers` object into the typed shape. */
+function normalizeMcpServers(raw: unknown): Record<string, McpServerConfig> {
+  if (!raw || typeof raw !== "object") return {};
+  const out: Record<string, McpServerConfig> = {};
+  for (const [name, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!v || typeof v !== "object") continue;
+    const rec = v as Record<string, unknown>;
+    const enabled = typeof rec.enabled === "boolean" ? { enabled: rec.enabled } : {};
+    if (typeof rec.command === "string" && rec.command.trim()) {
+      const args = Array.isArray(rec.args) ? rec.args.filter((a): a is string => typeof a === "string") : undefined;
+      const env = normalizeStringMap(rec.env);
+      out[name] = {
+        command: rec.command.trim(),
+        ...(args && args.length > 0 ? { args } : {}),
+        ...(env ? { env } : {}),
+        ...enabled,
+      };
+    } else if (typeof rec.url === "string" && rec.url.trim()) {
+      const headers = normalizeStringMap(rec.headers);
+      out[name] = { url: rec.url.trim(), ...(headers ? { headers } : {}), ...enabled };
+    }
+  }
+  return out;
+}
+
+function normalizeStringMap(v: unknown): Record<string, string> | undefined {
+  if (!v || typeof v !== "object") return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    if (typeof val === "string") out[k] = val;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
 
 /** True for a positive integer (a valid concurrency cap / count). */
 function isPositiveInt(v: unknown): v is number {
@@ -315,6 +350,34 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
       if (isPositiveInt(incoming.maxParallelSubAgents)) data.maxParallelSubAgents = incoming.maxParallelSubAgents;
       this.fs.mkdirRecursive(base);
       this.fs.writeText(path, JSON.stringify(data, null, 2) + "\n");
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** MCP servers section from the config file (validated). */
+  readMcpServers(): Record<string, McpServerConfig> {
+    const data = this.parseFile();
+    return data ? normalizeMcpServers(data.mcpServers) : {};
+  }
+
+  /** Replace the MCP servers section, preserving every other config key. */
+  saveMcpServers(servers: Record<string, McpServerConfig>): boolean {
+    try {
+      const base = this.dir();
+      if (!base) return false;
+      const jsonPath = join(base, "config.json");
+      const jsoncPath = join(base, "config.jsonc");
+      const jsonExists = this.fs.exists(jsonPath);
+      const jsoncExists = this.fs.exists(jsoncPath);
+      const path = jsonExists ? jsonPath : jsoncExists ? jsoncPath : jsonPath;
+      const parsed: Record<string, unknown> = jsonExists || jsoncExists ? this.parseFile() ?? {} : {};
+      const clean = normalizeMcpServers(servers);
+      if (Object.keys(clean).length > 0) parsed.mcpServers = clean;
+      else delete parsed.mcpServers;
+      this.fs.mkdirRecursive(base);
+      this.fs.writeText(path, JSON.stringify(parsed, null, 2) + "\n");
       return true;
     } catch {
       return false;

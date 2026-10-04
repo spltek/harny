@@ -44,16 +44,17 @@ describe("renderViewHtml", () => {
     expect(withV).toContain('"version":"0.1.0"');
   });
 
-  it("uses ONE gear graphic + size across the cards (sessions, model, compaction)", () => {
+  it("uses ONE gear graphic + size across the cards (sessions, model, compaction, MCP)", () => {
     const html = renderViewHtml({
       ...base,
       state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
     });
-    // All three gear keys share the class and the SAME 14×14 icon.
-    expect((html.match(/class="gear-btn"/g) ?? []).length).toBe(3);
+    // All four gear keys share the class and the SAME 14×14 icon.
+    expect((html.match(/class="gear-btn"/g) ?? []).length).toBe(4);
     expect(html).toMatch(/id="sessions-gear-btn" class="gear-btn"[^>]*><svg width="14" height="14"/);
     expect(html).toMatch(/id="gear-btn" class="gear-btn"[^>]*><svg width="14" height="14"/);
     expect(html).toMatch(/id="compact-settings-btn" class="gear-btn"[^>]*><svg width="14" height="14"/);
+    expect(html).toMatch(/id="mcp-configure" class="gear-btn"[^>]*><svg width="14" height="14"/);
     // One shared rule sizes them; the old one-off (big/small) styles are gone.
     expect(html).toMatch(/\.gear-btn, #session-head \.gear-btn\s*\{/);
     expect(html).not.toMatch(/#compact-settings-btn\s*\{/);
@@ -183,7 +184,21 @@ describe("renderViewHtml", () => {
     // Skills card: a full-width, initially-hidden card with a chips list.
     expect(html).toMatch(/class="ctl-card ctl-card-wide hidden" id="skills-card"/);
     expect(html).toContain('id="skills-list"');
-    expect(html).toMatch(/\.skill-chip\s*\{/);
+    expect(html).toMatch(/\.skill-item\s*\{/);
+    // MCP card + editor modal.
+    expect(html).toMatch(/class="ctl-card ctl-card-wide hidden" id="mcp-card"/);
+    expect(html).toMatch(/<button id="mcp-configure" class="gear-btn"/);
+    expect(html).toContain('id="mcp-modal"');
+    expect(html).toContain('id="mcp-command"');
+    expect(html).toMatch(/\.mcp-card\s*\{/);
+    // Tool-list popover.
+    expect(html).toContain('id="mcp-tools-popover"');
+    expect(html).toMatch(/#mcp-tools-popover\.hidden\s*\{\s*display:\s*none/);
+    // Slash menu (skill autocomplete).
+    expect(html).toContain('id="slash-menu"');
+    expect(html).toMatch(/#slash-menu\.hidden\s*\{\s*display:\s*none/);
+    // The MCP editor modal starts hidden (it must not open on load).
+    expect(html).toMatch(/#mcp-modal\.hidden\s*\{\s*display:\s*none/);
     // Parallel cap + Loop Guard share one row, mirroring #ctl-cards columns.
     expect(html).toContain('class="ctl-controls"');
     expect(html).toMatch(/\.ctl-controls\s*\{[^}]*display:\s*grid[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);

@@ -15,6 +15,7 @@ import type { DelegateSpec } from "./orchestration";
 import { SubAgentRunner } from "./subagent";
 import type { AgentEvent, SubAgentEvent } from "./types";
 import { resolveLoopGuardOptions, type LoopGuardOptions } from "./loop-guard";
+import { McpTool } from "../mcp/mcp-tool";
 
 const VALID_CONFIG: HarnyConfig = {
   provider: "openai",
@@ -752,6 +753,30 @@ describe("Agent", () => {
     expect(logs.some((l) => /^stream: end after \d+s chunks=\d+/.test(l))).toBe(true);
     expect(logs.some((l) => /^tool: FakeTool start$/.test(l))).toBe(true);
     expect(logs.some((l) => /^tool: FakeTool ok in \d+ms$/.test(l))).toBe(true);
+  });
+
+  it("an MCP tool registered in the registry is callable by the agent", async () => {
+    let called: Record<string, unknown> | undefined;
+    const client = {
+      callTool: async (_name: string, args: Record<string, unknown>) => {
+        called = args;
+        return { text: "mcp-ok", isError: false };
+      },
+    } as unknown as import("../mcp/mcp-client").McpStdioClient;
+    const call: StreamChunk[] = [
+      { type: "tool_call_start", index: 0, id: "m", name: "mcp__test__echo" },
+      { type: "tool_call_delta", index: 0, delta: JSON.stringify({ text: "hi" }) },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const { agent, history } = buildHarness({
+      tools: [new McpTool("test", { name: "echo" }, client)],
+      chunks: [call, [{ type: "text", content: "done" }]],
+    });
+
+    await agent.send("x");
+
+    expect(called).toEqual({ text: "hi" });
+    expect(history.all().some((m) => m.role === "tool" && /mcp-ok/.test(m.content))).toBe(true);
   });
 
   it("logs a periodic stream heartbeat while the provider stalls (watchdog)", async () => {

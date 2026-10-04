@@ -31,6 +31,7 @@ import {
 } from "./core/tools";
 import { toolDefinitionsForMode } from "./core/tools/mode-policy";
 import { SkillRegistry, defaultSkillRoots } from "./core/skills";
+import { McpManager } from "./core/mcp";
 import { ChatViewProvider } from "./chat/chat-view";
 import { SessionRegistry } from "./chat/session-registry";
 import { AttachmentService } from "./chat/attachment-service";
@@ -98,6 +99,18 @@ export function activate(context: ExtensionContext) {
     }),
   );
   const llmFactory = new DefaultLlmProviderFactory(nodeHttpClient, tools.definitions());
+  // MCP servers (Model Context Protocol): connect on activation and register
+  // their tools as mcp__<server>__<tool>. Reconnect is driven by the UI save.
+  const mcp = new McpManager({
+    servers: () => fileConfig.readMcpServers(),
+    log: (m) => infoLog(m),
+    onToolsChanged: () => {
+      tools.removeByPrefix("mcp__");
+      tools.add(mcp.getTools());
+    },
+  });
+  void mcp.connect();
+  context.subscriptions.push({ dispose: () => mcp.dispose() });
   // The tool list the system prompt advertises follows the chat mode
   // (Analyze advertises the read-only set), so the prompt never mentions
   // tools the model cannot use in the current mode.
@@ -166,6 +179,8 @@ export function activate(context: ExtensionContext) {
       modelsDev: new ModelsDevCatalog(nodeHttpClient),
       // Agent Skills: catalog for the Skills card + manual `/skill` activation.
       skills,
+      // MCP: status for the MCP card + reconnect after a config save.
+      mcp,
     },
   );
   viewProvider.setContext(context);
