@@ -58,7 +58,7 @@ npm test          # run all unit tests (vitest)
 npm run coverage  # with coverage report
 ```
 
-1076 unit tests cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (JSONL store, manager, registry, compactor), the OpenAI-compatible LLM provider (streaming, tool calls, `finish_reason`), host-model fetching, all 14 tools (including the Analyze dry-run preview), the mode policy, the agent loop (fake LLM, abort, max turns), the **loop guard** (reasoning/empty/tool-failure/error-streak/tool-repeat detection, tool-call dedup, sensitivity presets), orchestration/sub-agents, **Agent Skills** (SKILL.md parsing + discovery), **MCP** (stdio + Streamable HTTP clients, tool wrapper, manager), markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code).
+1091 unit tests cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (JSONL store, manager, registry, compactor, the per-session control settings incl. the Loop Guard parameters), the OpenAI-compatible LLM provider (streaming, tool calls, `finish_reason`), host-model fetching, all 14 tools (including the Analyze dry-run preview), the mode policy, the agent loop (fake LLM, abort, max turns), the **loop guard** (reasoning/empty/tool-failure/error-streak/tool-repeat detection, tool-call dedup, sensitivity presets, the editable parameter ranges + their clamping), orchestration/sub-agents, **Agent Skills** (SKILL.md parsing + discovery), **MCP** (stdio + Streamable HTTP clients, tool wrapper, manager), markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code, incl. the control-stack wiring: sliders, Auto defaults, the collapsible Loop Guard parameters and the responsive layout).
 
 ## Features
 
@@ -68,10 +68,10 @@ npm run coverage  # with coverage report
 - **Agent Skills** (skills.sh): Harny discovers installed skills (`SKILL.md` in `.agents`/`.claude`/`.pi` dirs) and offers a compact catalog; the model activates one on demand via the `Skill` tool (progressive disclosure), or you activate it manually with `/skill <name>` / the **Skills** card. `disable-model-invocation: true` skills stay manual-only
 - **Slash menu**: typing `/` at the START of the prompt opens a picker with the installed skills (`/skill <name>`, `/skills`) — arrows/Enter select, Esc closes
 - **MCP servers** (Model Context Protocol): connect external tool servers over **stdio** or **Streamable HTTP** (stateless or session-based, JSON or SSE); their tools appear as `mcp__<server>__<tool>`. A per-server **enable/disable** (click the name in the card), a **tool-list popover** on `(N tools)`, and an editor in the panel (add/edit/delete + Test)
-- **Guardrails (per session)**: a card to cap **parallel sub-agents** and pick the **Loop Guard** sensitivity (`high`/`normal`/`low`, plus an opt-in **Include response** flag) — all persisted per session
+- **Guardrails (per session)**: TWO cards below the prompt — **Parallel** (a **0–100 slider** for the concurrent sub-agent cap; `0` = **"Off"** = no cap) and **Loop Guard** (sensitivity `High`/`Normal`/`Low` + an opt-in **Include response** flag, plus a **collapsible section of 12 tunable parameter sliders**). Everything is persisted per session
 - **Esc to stop**: press Esc while a run is working (the prompt is disabled then) to stop it — modals/overlays and native controls keep Esc for themselves
 - **Focus always on the prompt**: the caret returns to the input after opening/switching a session, finishing a run, a cut, and after mode/parallel/model/attach interactions
-- **Attachments**: add files/images with the **+** button, **paste from the clipboard** into the prompt, or **drag & drop** them onto the panel — images (screenshots/copied images, named "Image from clipboard") are attached inline as a data URI (with a **thumbnail preview** in the chip, clickable to open a **full-size lightbox**) and sent as multimodal content, text files as inline code blocks, and a pasted/dropped absolute path / `file://` URI attaches that file. Binary files (e.g. a PDF) copied in Finder/Explorer usually reach the webview only as their **name** (text), so use the **+** button; even attached, a binary PDF cannot be read over the Chat Completions protocol.
+- **Attachments**: add files/images with the **+** button, **paste from the clipboard** into the prompt, or **drag & drop** them onto the panel — images (screenshots/copied images, named "Image from clipboard") are attached inline as a data URI and sent as multimodal content, text files as inline code blocks, and a pasted/dropped absolute path / `file://` URI attaches that file. **In the transcript** every attachment is rendered for real: images appear **large** (a third of the chat width, **resizable** by dragging the corner, stacked, click to open a **full-size lightbox**) and are **persisted with the message** (so they survive a reload without duplication); other files become a **card with a large per-type icon** (PDF / code / Markdown / JSON / sheet / archive, tinted by category) plus the file name and size. **Under the prompt** the pending attachments show the **same icon, small**, next to the name, size and a ✕. Binary files (e.g. a PDF) copied in Finder/Explorer usually reach the webview only as their **name** (text), so use the **+** button; even attached, a binary PDF cannot be read over the Chat Completions protocol.
 - **Drag & drop**: hold **Shift** while dropping (VS Code's "drop into editor" behaviour otherwise intercepts OS file drops); paste and the **+** button need no modifier.
 - **Plain tool outputs + three-section tool bubbles**: tool outputs are never colorized by line-prefix heuristics (a `ls -la` listing stays plain text); when Edit/Write/StrReplace/Delete touch a file, the tool bubble gets a third **Diff** section (Input / Output / Diff, collapsed with the bubble) showing the unified diff — a new file as all `+` additions, a deleted file as all `−` removals, modifications/string replacements as a mixed diff — with the **target file path in azure right after the tool name** and `+N/−M` counts in the Diff header
 - **Syntax highlighting in tool Diff sections**: code lines get editor-style syntax colors (Prism, one-dark palette) for TypeScript, JavaScript, Python, Rust, C#, HTML, CSS, JSON, Markdown, Bash, SQL and Go — unknown extensions fall back to plain diff coloring. The webview bundle is minified
@@ -81,7 +81,8 @@ npm run coverage  # with coverage report
 - **Loop guard**: reasoning, empty, failing-tool, error-streak and repeated-tool loops are **broken, not just stopped** — the host interrupts the degenerate behaviour, tells the model how to recover and keeps going; identical read-only calls are served from cache and identical failing calls are not re-run
 - **Output-token-limit handling**: the provider's `finish_reason` is propagated; a truncated response is surfaced explicitly ("raise `harny.maxTokens`") instead of failing silently
 - **Diagnostics**: one line per turn (finish reason, content/thinking sizes, tool names, loop-guard decisions) in **Output > Harny**; an optional full request file log with `HARNY_DEBUG=1`
-- **Per-session controls**: context window, output tokens and temperature are editable in the panel, persisted **per session** (JSONL header) and restored on reopen; output tokens/temperature win over the provider defaults
+- **Per-session controls**: context window, output tokens, sampler value, presence/frequency penalties, thinking level and every Loop Guard parameter are edited with **sliders** (each with a read-only value label; **Auto** snaps back to the knob's default) and persisted **per session** (JSONL header), restored on reopen; they win over the provider defaults
+- **Responsive control stack**: the cards lay out **1 / 2 / 4 per row** as the panel widens, all share ONE row height so the left and right columns' controls **line up**, and the whole stack **scrolls vertically** once it would take more than 75% of the panel height (the prompt and the metrics are the last to give way)
 - **Empty shell**: with no open session the control stack is hidden and a hero invites you to pick a session from the list or create a new one
 - **Sessions**: Persistent per-workspace sessions (JSONL), one agent per session, right-side view with tabs
 - **Sessions in a central home** (pi/Cursor style): stored in `<home>/sessions/<workspace-key>/` (JSONL) — out of the project folder, so the agent tools can never read or modify transcripts, and cleaning the repo never deletes chat history. Grouped per workspace; the panel shows only the current folder's sessions
@@ -128,22 +129,72 @@ Degenerate loops are detected and **broken** instead of silently stopping the ru
 | **error-streak** | a summary of the failures + "change strategy" |
 | **tool-repeat** | identical successful read-only calls are served from cache; a corrective is injected |
 
-Each type escalates independently (up to two interventions, then a final `❌ Loop not resolved […]`). Every intervention is logged in the transcript as an amber **"Loop guard"** notice stating the type and how the system reacted.
+Each type escalates independently (up to `maxNudges` interventions — 2 by default, see the parameters below — then a final `❌ Loop not resolved […]`). Every intervention is logged in the transcript as a light-blue **"Nudge"** bubble stating the type and how the system reacted.
 
 ### Guardrails (per session)
 
-A **Guardrails** card sits below the prompt (collapsible with the other controls) and is persisted **per session**:
+Below the prompt sit **two cards**, both persisted **per session** (in the session's JSONL header) — never in the config file:
 
-- **Max parallel sub-agents** — the concurrency cap (default **on/4**; off = no limit). The legacy global `maxParallelSubAgents` in the config file is used as the default for new sessions.
-- **Loop Guard sensitivity** — `high` (aggressive) / `normal` (default) / `low` (permissive), each mapping the loop-guard thresholds:
+- **Parallel** — a **0–100 slider** for the concurrent sub-agent cap. `0` shows **"Off"** = **no cap** (unlimited); `1–100` is the cap. The legacy global `maxParallelSubAgents` in the config file is only the default for **new** sessions.
+- **Loop Guard** — a **Sensitivity** radio group (`High` / `Normal` / `Low`), the **Include response** flag, and a **collapsible parameter section** (chevron on the *Include response* line, **collapsed by default**) with one **slider per parameter**.
 
-  | | maxNudges | reasoning thr/tok | similarity | errorStreak | toolRepeat consec/window/thr |
-  |---|---|---|---|---|---|
-  | **High** | 3 | 0.45 / 50 | 0.75 | 2 | 2 / 10 / 2 |
-  | **Normal** | 2 | 0.5 / 60 | 0.85 | 3 | 3 / 16 / 3 |
-  | **Low** | 2 | 0.65 / 120 | 0.92 | 5 | 4 / 20 / 4 |
+Picking a sensitivity level loads that **preset** into the parameter sliders; moving a slider stores the **custom** value on the session (clamped to its editable range). Changing the level **resets** the custom values to the new preset (the preset is the new baseline).
 
-- **Include response** (default off) — also guard the **visible final answer** for repetition (mid-stream cut + a per-turn backstop), on top of the reasoning/tool guards.
+#### Sensitivity presets
+
+| | **High** (aggressive) | **Normal** (default) | **Low** (permissive) |
+|---|---|---|---|
+| `maxNudges` | 3 | 2 | 2 |
+| `reasoningThreshold` | 0.45 | 0.5 | 0.65 |
+| `reasoningMinTokens` | 50 | 60 | 120 |
+| `crossTurnSimilarity` | 0.75 | 0.85 | 0.92 |
+| `crossTurnMinLength` | 120 | 120 | 120 |
+| `toolFailureRepeats` | 2 | 2 | 2 |
+| `errorStreakTurns` | 2 | 3 | 5 |
+| `toolRepeatConsecutive` | 2 | 3 | 4 |
+| `toolRepeatWindow` | 10 | 16 | 20 |
+| `toolRepeatWindowThreshold` | 2 | 3 | 4 |
+| `answerThreshold` | 0.5 | 0.6 | 0.7 |
+| `answerMinTokens` | 200 | 300 | 400 |
+
+`High` = *flag loops sooner* (more nudges, lower thresholds); `Low` = *only clear, sustained loops*. The ranges below are the single source of truth shared by the panel and the host, and every value is **clamped again on load**, so a hand-edited session file can never put the guard out of bounds.
+
+#### Every parameter
+
+**Escalation**
+
+| Parameter | Range (step) | What it does |
+|---|---|---|
+| `maxNudges` | 1–10 (1) | Reactive **nudges** a loop type gets before its escalation **stops the run**. Each loop type escalates independently, and the final stop is the loud `❌ Loop not resolved […]` notice. Higher = more patience before giving up. |
+| `guardResponse` | on/off | **Include response**: also guard the **visible final answer** for repetition (mid-stream cut + a per-turn backstop), on top of the reasoning/tool guards. Off by default. |
+
+**Reasoning loops**
+
+| Parameter | Range (step) | What it does |
+|---|---|---|
+| `reasoningThreshold` | 0.05–1.00 (0.05) | **Within a turn**: the trigram-duplication ratio of the reasoning block that flags a loop (**lower = flags sooner**). On a hit the stream is cut and the model is told to stop reasoning and act. |
+| `reasoningMinTokens` | 10–500 (10) | Minimum reasoning tokens before that check runs, so a short thought is never flagged. |
+| `crossTurnSimilarity` | 0.05–1.00 (0.05) | **Across turns**: the Jaccard similarity of two turns' reasoning that flags a loop (**lower = flags sooner**) → a corrective nudge is injected. |
+| `crossTurnMinLength` | 0–1000 (10) | Minimum reasoning characters before the across-turn check runs. |
+
+**Tool loops**
+
+| Parameter | Range (step) | What it does |
+|---|---|---|
+| `toolFailureRepeats` | 1–10 (1) | How many **identical failing** tool calls are re-run before they are refused: the recorded failure is returned instead and a corrective is injected. |
+| `errorStreakTurns` | 1–10 (1) | Consecutive turns containing tool errors before the host injects a summary of the failures + "change strategy". |
+| `toolRepeatConsecutive` | 1–10 (1) | Consecutive **identical successful** calls that flag a repeat loop → the call is served from cache and a corrective is injected. |
+| `toolRepeatWindow` | 1–50 (1) | Size of the sliding window (in calls) used to count repeated call signatures. |
+| `toolRepeatWindowThreshold` | 1–10 (1) | Repeats of the **same** signature inside that window that flag a loop. |
+
+**Answer loops** (only when **Include response** is on)
+
+| Parameter | Range (step) | What it does |
+|---|---|---|
+| `answerThreshold` | 0.05–1.00 (0.05) | Trigram-duplication ratio of the **final answer** that flags a repetition (**lower = flags sooner**). |
+| `answerMinTokens` | 10–1000 (10) | Minimum answer tokens before the check runs. |
+
+Every intervention is logged in the transcript as a light-blue **"Nudge"** bubble (and a line in **Output > Harny**) stating the loop type and how the system reacted.
 
 ## Agent Skills (skills.sh)
 
@@ -247,7 +298,7 @@ The `api` field is `openai-completions` (chat, the only supported protocol).
 #### Provider entry examples — `thinking` per provider
 
 The `thinking` field declares how the reasoning phase is expressed in the
-request; combine it with `thinkingLevel` (the dropdown default, overridable
+request; combine it with `thinkingLevel` (the default level, overridable
 per session — `off`/`low`/`medium`/`high`).
 
 **1. Local llama.cpp / MLX with a Jinja template** — `thinking: "bool"` sends
@@ -260,7 +311,7 @@ Thinking, …):
   "api": "openai-completions",
   "apiKey": "lamacpp",
   "thinking": "bool",
-  "thinkingLevel": "medium",          // dropdown default for this provider
+  "thinkingLevel": "medium",          // default level for this provider
   "models": [
     { "id": "Qwen3.8-27B-Q6_K.gguf", "input": ["text"] }
   ]
@@ -268,7 +319,7 @@ Thinking, …):
 ```
 
 **2. OpenAI-style host (OpenAI)** — `thinking: "effort"`
-sends top-level `reasoning_effort`; with no `models` the dropdown auto-fills
+sends top-level `reasoning_effort`; with no `models` the model dropdown auto-fills
 from `GET /v1/models`:
 
 ```jsonc
@@ -318,14 +369,14 @@ reliable; `deepseek-v4-flash` is flaky regardless of the field):
 ```
 
 **3. Host you don't want to touch** — omit `thinking` (or set `"unspecified"`): Harny
-sends nothing and the Thinking dropdown stays disabled:
+sends nothing and the Thinking radio group stays disabled:
 
 ```jsonc
 "ollama": {
   "baseUrl": "http://localhost:11434/v1",
   "api": "openai-completions",
   "apiKey": "ollama"
-  // no "thinking": nothing sent, dropdown disabled — provider default only
+  // no "thinking": nothing sent, radio group disabled — provider default only
 }
 ```
 
@@ -343,8 +394,8 @@ sends nothing and the Thinking dropdown stays disabled:
 
 #### Thinking / reasoning level (per session)
 
-A **Thinking** dropdown sits in the chat header (Off / Low / Medium / High) and
-is **generalized across providers**. Each provider entry declares how it
+A **Thinking** radio group sits in the **Window** card (Off / Low / Medium /
+High) and is **generalized across providers**. Each provider entry declares how it
 controls the reasoning phase with `thinking`:
 
 | `thinking` | What Harny sends | Typical providers |
@@ -359,9 +410,9 @@ controls the reasoning phase with `thinking`:
   (`low`/`medium`/`high`) in both modes; `enable_thinking` is only the
   llama.cpp on/off toggle.
 
-- `thinkingLevel` on a provider entry sets its **default**; the dropdown lets you
+- `thinkingLevel` on a provider entry sets its **default**; the radio group lets you
   override it **per session** (the choice is persisted with the session).
-- The dropdown is **enabled only for providers that declare** `thinking: "bool"`,
+- The radio group is **enabled only for providers that declare** `thinking: "bool"`,
   `"effort"`, `"type"` or `"reasoning"` (see the config example) — otherwise it stays disabled at the
   provider default and Harny sends nothing.
 - `Off` disables the phase where the provider allows it: `enable_thinking: false`
@@ -382,12 +433,13 @@ With the multi-provider format the model dropdown shows **all** models from **al
 
 #### Window & sampling controls (per session)
 
-Below the model dropdown, two cards let you tune the session. The **Window** card holds the **context window**, the **output tokens** and the **thinking** level; the **Sampling** card holds **temperature**, **presence penalty** and **frequency penalty** (0.0–2.0, `− / + / Auto` steps). All are persisted with the session and restored on reopen:
+Below the model dropdown, two cards let you tune the session. Every numeric control is a **slider with a read-only value label** (the slider is the only control; the label always shows the exact value). The **Window** card holds the **context window**, the **output tokens** and the **thinking** level; the **Sampling** card holds the **sampler value**, the **presence penalty** and the **frequency penalty**. All are persisted with the session and restored on reopen:
 
-- **Context window** (default `128000`): the compaction ceiling — lower it to trigger auto-compaction earlier and keep the model fresh (avoids context rot), or raise it up to the model's maximum. Auto-compaction runs **before a request**, **mid-run at every agent turn boundary** (it compacts the finished step, then the working continues), and **after the response**.
-- **Output tokens** (default `8192`): `max_tokens` sent per request; raise it for long edits/answers, lower it for quick chats. The session value wins over the provider's declared default.
-- **Temperature / Top-P** (Auto by default): a compact **segmented toggle** (Temperature | Top-P) chooses which sampler is active — temperature `0.0–2.0` or top-p `0.0–1.0` — and a **single shared stepper** below whose scale follows the toggle. Only the active sampler is sent; **switching the toggle resets the shared value to Auto** (never a number on the wrong scale). The toggle choice AND the value (when ≠ Auto) are persisted per session.
-- **Presence / Frequency penalty** (Auto by default): `0.0–2.0`. Presence pushes toward new topics; frequency reduces repetition. Sent only when set (same strict-provider rule).
+- **Context window** (default `128000`): slider **32 000 → 2 000 000**, step 1000 — the compaction ceiling. Lower it to trigger auto-compaction earlier and keep the model fresh (avoids context rot), or raise it up to the model's maximum. The label keeps the **exact** host-pushed value (e.g. `131072`) while the slider sits on the nearest step. Auto-compaction runs **before a request**, **mid-run at every agent turn boundary** (it compacts the finished step, then the working continues), and **after the response**.
+- **Output tokens** (default `8192`): slider **256 → 65 536**, step 256 — `max_tokens` sent per request; raise it for long edits/answers, lower it for quick chats. The session value wins over the provider's declared default.
+- **Temperature / Top-P** (Auto by default): a compact **segmented toggle** (Temperature | Top-P) chooses which sampler is active — temperature `0.0–2.0` or top-p `0.0–1.0`, step 0.1 — and the **slider below** follows that scale. Only the active sampler is sent; **switching the toggle resets the value to Auto** (never a number on the wrong scale). The toggle choice AND the value (when ≠ Auto) are persisted per session.
+- **Presence / Frequency penalty** (Auto by default): sliders `0.0–2.0`, step 0.1. Presence pushes toward new topics; frequency reduces repetition. Sent only when set (same strict-provider rule).
+- **Auto** is the *not sent* state: pressing it clears the value (`null`) **and snaps the slider to the knob's default** — `1.0` for Temperature/Top-P, `0` for the penalties — so the control visibly shows what the provider will use.
 
 #### Dynamic models from the host (`GET /v1/models`)
 
@@ -420,8 +472,8 @@ For providers that expose their model list (OpenAI, OpenRouter, opencode-go, lla
 | `harny.maxTokens` | `8192` | Max tokens per response |
 | `harny.subagentMaxTurns` | unset | Optional cap on a sub-agent's tool turns (also `subagentMaxTurns` in the config file). Unset/0 = **no cap**: sub-agents run until they finish or you press Stop, exactly like the orchestrator |
 | `harny.temperature` | not set | Sampling temperature (omitted when unset; required by strict models) |
-| `harny.thinkingMode` | not set | How the reasoning phase is expressed (`bool`, `effort`, `type`, `reasoning`, `unspecified`); the provider's `thinking` field and the per-session dropdown override it — see the Thinking section |
-| `harny.thinkingLevel` | `medium` | Default thinking level (`off`/`low`/`medium`/`high`); per provider entry you can also set `thinkingLevel` — the dropdown only unlocks for providers that declare `thinking` |
+| `harny.thinkingMode` | not set | How the reasoning phase is expressed (`bool`, `effort`, `type`, `reasoning`, `unspecified`); the provider's `thinking` field and the per-session radio group override it — see the Thinking section |
+| `harny.thinkingLevel` | `medium` | Default thinking level (`off`/`low`/`medium`/`high`); per provider entry you can also set `thinkingLevel` — the radio group only unlocks for providers that declare `thinking` |
 | `harny.contextFiles` | `true` | Auto-include project files as context |
 | `harny.autoApprove` | `false` | Auto-approve tool calls |
 | `harny.autoOpen` | `false` | Open the chat panel on startup |
