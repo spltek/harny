@@ -232,6 +232,14 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/\.ctl-card-wide\s*\{\s*grid-column: 1 \/ -1/);
     // Window + Sampling share the row 50/50 (responsive to resize).
     expect(html).toMatch(/\.ctl-cards\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+    // The stack scrolls only past 75% of the panel height, and never so tall
+    // that it squeezes the prompt/model/metrics out (the bottom goes last).
+    expect(html).toMatch(/\.ctl-cards\s*\{[^}]*max-height:\s*clamp\(6rem, calc\(100vh - 20rem\), 75vh\)[^}]*overflow-y:\s*auto/);
+    expect(html).toMatch(/#status\s*\{[^}]*min-height:\s*0/);
+    // Narrow panel: ONE column, in DOM order (Window, Sampling, Parallel, Loop Guard).
+    expect(html).toMatch(/@media \(max-width: 22rem\)\s*\{\s*\.ctl-cards\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\)/);
+    // Wide panel: all four cards on ONE line.
+    expect(html).toMatch(/@media \(min-width: 48rem\)\s*\{\s*\.ctl-cards\s*\{\s*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/);
     // The old providers-form flag is gone (moved to the per-session Parallel card).
     expect(html).not.toContain("pe-maxparallel");
   });

@@ -3303,6 +3303,8 @@ it("presence/frequency sliders render, post on drag and reset to Auto", async ()
     (document.getElementById("freq-auto") as HTMLButtonElement).click();
     expect(posted).toContainEqual({ type: "setFrequencyPenalty", value: null });
     expect(fv.textContent).toBe("Auto");
+    // Auto SNAPS the slider to the knob's default (0 for a penalty).
+    expect((document.getElementById("freq-range") as HTMLInputElement).value).toBe("0");
   });
 
 function messagesElLastContent(): string {
@@ -3459,6 +3461,8 @@ describe("sampler (radio + slider)", () => {
     const label = document.getElementById("samp-value") as HTMLElement;
     // Temperature by default, no value -> Auto.
     expect(label.textContent).toBe("Auto");
+    // Auto snaps the slider to the default (1.0).
+    expect(range.value).toBe("1");
     expect((document.getElementById("sampler-temp") as HTMLInputElement).checked).toBe(true);
 
     hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], temperature: 0.7 } });
@@ -3493,6 +3497,8 @@ describe("sampler (radio + slider)", () => {
     auto.click();
     expect(posted).toContainEqual({ type: "setSamplerValue", value: null });
     expect(label.textContent).toBe("Auto");
+    // Auto SNAPS the slider to the sampler default (1.0).
+    expect(range.value).toBe("1");
   });
 });
 describe("empty shell (no open session)", () => {

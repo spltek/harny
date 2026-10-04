@@ -3096,20 +3096,29 @@ function createFloatControl(
   refs: { range: string; value: string; auto: string },
   sendType: "setSamplerValue" | "setPresencePenalty" | "setFrequencyPenalty",
   clamp: (v: number) => number | undefined = clampTemperature,
+  /** The provider's default for this knob: where the slider snaps on Auto. */
+  defaultValue = 1,
 ): FloatControl {
   const range = document.getElementById(refs.range) as HTMLInputElement;
   const label = document.getElementById(refs.value) as HTMLSpanElement;
   const auto = document.getElementById(refs.auto) as HTMLButtonElement;
 
+  // Auto = the value is NOT sent; the slider still snaps to the default so the
+  // control visibly shows what the provider will use.
+  const showAuto = (): void => {
+    label.textContent = "Auto";
+    range.value = String(defaultValue);
+  };
+
   const send = (value: number | null): void => {
     if (value === null) {
-      label.textContent = "Auto";
+      showAuto();
       vscode.postMessage({ type: sendType, value: null });
       return;
     }
     const v = clamp(value);
     if (v === undefined) {
-      label.textContent = "Auto";
+      showAuto();
       vscode.postMessage({ type: sendType, value: null });
       return;
     }
@@ -3128,7 +3137,7 @@ function createFloatControl(
     render: (value: unknown) => {
       const v = typeof value === "number" && Number.isFinite(value) ? Math.round(value * 10) / 10 : undefined;
       if (v === undefined) {
-        label.textContent = "Auto";
+        showAuto();
         return;
       }
       range.value = String(v);
@@ -3157,8 +3166,8 @@ function renderSamplerControl(c: ConfigState): void {
 samplerTemp.addEventListener("change", () => vscode.postMessage({ type: "setSamplerMode", mode: "temperature" }));
 samplerTopp.addEventListener("change", () => vscode.postMessage({ type: "setSamplerMode", mode: "topP" }));
 
-const presenceControl = createFloatControl({ range: "presence-range", value: "presence-value", auto: "presence-auto" }, "setPresencePenalty");
-const freqControl = createFloatControl({ range: "freq-range", value: "freq-value", auto: "freq-auto" }, "setFrequencyPenalty");
+const presenceControl = createFloatControl({ range: "presence-range", value: "presence-value", auto: "presence-auto" }, "setPresencePenalty", clampTemperature, 0);
+const freqControl = createFloatControl({ range: "freq-range", value: "freq-value", auto: "freq-auto" }, "setFrequencyPenalty", clampTemperature, 0);
 
 /** Compact token counts: 12345 -> "12.3k", 2000000 -> "2M". */
 function fmtTokens(n: number): string {

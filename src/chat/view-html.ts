@@ -739,7 +739,7 @@ ${renderViewConfig(deps)}
     /* Symmetric padding (8px top/bottom) so the gap above and below the
        status block is identical — in the collapsed form the 3 visible cards
        (ask / AI Model / metrics) are then evenly spaced. */
-    #status { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px; font-size: var(--fs-md); }
+    #status { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px; font-size: var(--fs-md); min-height: 0; }
     #status .warn { color: var(--error); }
     .ctl-row { display: flex; align-items: center; gap: 6px; }
     /* Provider whose host model list failed to fetch: still VISIBLE in the
@@ -757,6 +757,34 @@ ${renderViewConfig(deps)}
     .ctl-cards {
       display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 8px;
+      /* Scrolls VERTICALLY only once it would take more than 75% of the panel
+         height — and never more than what still leaves the prompt, model row
+         and metrics their room, so the BOTTOM is the last thing to go. */
+      max-height: clamp(6rem, calc(100vh - 20rem), 75vh);
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+    }
+    .ctl-cards::-webkit-scrollbar { width: 8px; }
+    .ctl-cards::-webkit-scrollbar-track { background: transparent; }
+    .ctl-cards::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.22); border-radius: 4px; }
+    .ctl-cards::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.36); }
+    /* Narrow panel: stack the cards in ONE column, in DOM order (Window,
+       Sampling, Parallel, Loop Guard), so nothing is squeezed or split
+       mid-pair. The Loop Guard parameter fields collapse with it. */
+    @media (max-width: 22rem) {
+      .ctl-cards { grid-template-columns: minmax(0, 1fr); }
+      .lg-fields { grid-template-columns: minmax(0, 1fr); }
+    }
+    /* Wide panel: all FOUR cards on ONE line (Window, Sampling, Parallel,
+       Loop Guard). The parameter fields go single-column so they stay legible
+       in the narrower card. */
+    @media (min-width: 48rem) {
+      .ctl-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .lg-fields { grid-template-columns: minmax(0, 1fr); }
     }
     .ctl-card {
       display: flex; flex-direction: column; gap: 8px;
