@@ -2517,6 +2517,16 @@ describe("view webview client", () => {
     expect(msg.enabled).toBe(false);
   });
 
+  it("the MCP name toggle is inert while the session is working", async () => {
+    await loadView();
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, mcp: { servers: { test: { command: "node" } }, statuses: [{ name: "test", ok: true, enabled: true, toolCount: 1 }] } } });
+    hostMessage({ type: "status", active: true });
+    const nameEl = document.querySelector(".mcp-name") as HTMLElement;
+    posted.length = 0;
+    nameEl.click();
+    expect(posted.some((m) => (m as { type?: string }).type === "toggleMcpServer")).toBe(false);
+  });
+
   it("a disabled MCP server shows an 'off' state (no tools button)", async () => {
     await loadView();
     hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, mcp: { servers: { off: { command: "node", enabled: false } }, statuses: [{ name: "off", ok: true, enabled: false, toolCount: 0 }] } } });

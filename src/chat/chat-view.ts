@@ -555,6 +555,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         const enabled = msg.enabled === true;
         const servers = this.providers.readMcpServers?.() ?? {};
         if (!name || !servers[name]) break;
+        infoLog(`[mcp] toggle "${name}" enabled=${enabled}`);
         servers[name] = { ...servers[name], enabled };
         const ok = this.providers.saveMcpServers?.(servers) ?? false;
         if (ok) {

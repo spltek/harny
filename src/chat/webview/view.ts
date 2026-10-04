@@ -2128,9 +2128,12 @@ function renderMcp(mcp: ConfigState["mcp"]): void {
     nameEl.className = "mcp-name";
     nameEl.textContent = `● ${name}`;
     nameEl.title = enabled ? "Click to disable this server" : "Click to enable this server";
-    nameEl.addEventListener("click", () =>
-      vscode.postMessage({ type: "toggleMcpServer", name, enabled: !enabled }),
-    );
+    nameEl.addEventListener("click", () => {
+      // Not while the session is working: the current run's tool list is already
+      // fixed, so a mid-run disable would only take effect on the NEXT turn.
+      if (streamingActive) return;
+      vscode.postMessage({ type: "toggleMcpServer", name, enabled: !enabled });
+    });
     row.appendChild(nameEl);
     row.appendChild(document.createTextNode(" "));
 

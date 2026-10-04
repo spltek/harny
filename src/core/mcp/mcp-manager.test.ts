@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { McpManager } from "./mcp-manager";
+import { HarnyFileConfigProvider } from "../config/harny-file-config-provider";
+import { nodeFileSystem } from "../tools/file-system";
+import { ToolRegistry } from "../tools/tool-registry";
 
 /** A tiny MCP server (stdio, newline JSON-RPC) spawned via `node -e`. */
 const SERVER = `
@@ -99,5 +105,37 @@ describe("McpManager", () => {
     await manager.connect(); // idempotent reconnect
     expect(manager.getTools().length).toBe(first);
     manager.dispose();
+  });
+
+  it("INTEGRATION: disabling a server removes its tools from the registry", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harny-mcp-int-"));
+    try {
+      const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+      expect(provider.saveMcpServers({ srv: { command: process.execPath, args: ["-e", SERVER] } })).toBe(true);
+
+      const tools = new ToolRegistry([]);
+      const manager = new McpManager({
+        servers: () => provider.readMcpServers(),
+        onToolsChanged: () => {
+          tools.removeByPrefix("mcp__");
+          tools.add(manager.getTools());
+        },
+      });
+      await manager.connect();
+      expect(tools.get("mcp__srv__echo")).toBeDefined();
+
+      // Toggle OFF exactly like the host handler: read → set enabled:false → save → reconnect.
+      const servers = provider.readMcpServers();
+      servers.srv = { ...servers.srv, enabled: false };
+      expect(provider.saveMcpServers(servers)).toBe(true);
+      await manager.connect();
+
+      expect(tools.get("mcp__srv__echo")).toBeUndefined();
+      expect(tools.getAll().some((t) => t.name.startsWith("mcp__"))).toBe(false);
+      expect(provider.readMcpServers().srv.enabled).toBe(false);
+      manager.dispose();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
