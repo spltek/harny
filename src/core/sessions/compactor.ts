@@ -91,17 +91,30 @@ export function planManualCompaction(messages: ChatMessage[], keepRecentFraction
   return { toSummarize: visible.filter((m) => !keptSet.has(m)), kept, tokensBefore };
 }
 
-const SUMMARY_PROMPT = `You are summarizing an old part of a coding session. Reply ONLY with a structured Markdown summary covering:
-## Goal
-## Constraints & Preferences
-## Progress (Done / In Progress / Blocked)
-## Key Decisions
-## Next Steps
-## Critical Context
-Keep it concise. Do not invent details absent from the transcript.
+const SUMMARY_PROMPT = `You are summarizing an old part of a coding session. The summary will REPLACE the transcript, so it must stand alone. Reply with EXACTLY TWO blocks separated by a line containing only "---" (three dashes):
+
+BLOCK 1 — ONLY the fixed phrase "Summary of past interactions", TRANSLATED into the SAME language as the transcript. Output that phrase alone, nothing else (no punctuation, no extra words).
+BLOCK 2 — a Markdown summary covering: Goal, Progress (Done / In Progress / Blocked), Key Decisions, Next Steps, Critical Context. Write it in the SAME language as the transcript. Be concise.
+
+Do not invent details absent from the transcript.
 
 <transcript>
 `;
+
+/** Split the summarizer output into the synthetic USER prompt and the synthetic
+ * ASSISTANT response (the two messages that replace the summarized span). When
+ * the model omits the `---` separator, the whole text becomes the response and
+ * a short generic prompt is used, so the transcript still starts with an orange
+ * user bubble. */
+export function splitSummary(text: string): { prompt: string; response: string } {
+  const trimmed = text.trim();
+  const m = /^([\s\S]*?)\r?\n\s*-{3,}\s*\r?\n([\s\S]*)$/.exec(trimmed);
+  if (m && m[1].trim() && m[2].trim()) return { prompt: m[1].trim(), response: m[2].trim() };
+  return {
+    prompt: "Continue the work from the summarized context below.",
+    response: trimmed || "## Progress\nNo details available.",
+  };
+}
 
 /** Builds the one-shot summary request (optionally passing the previous summary). */
 export function buildSummaryMessages(
@@ -134,7 +147,7 @@ export class Compactor {
     const trimmed = out.trim();
     if (!trimmed) {
       const first = toSummarize.find((m) => m.role === "user")?.content ?? "";
-      return `## Goal\n${fallbackTitle(first)}\n## Progress\nNo details available.\n`;
+      return `Summary of past interactions\n---\n## Goal\n${fallbackTitle(first)}\n## Progress\nNo details available.\n`;
     }
     return trimmed;
   }

@@ -448,7 +448,7 @@ describe("ChatViewProvider", () => {
     expect(agent.send).toHaveBeenCalledWith(
       expect.stringContaining("Attached file"),
       expect.objectContaining({
-        attachments: [{ name: "a.txt", path: "/tmp/a.txt", size: 2 }],
+        attachments: [{ name: "a.txt", path: "/tmp/a.txt", size: 2, isImage: false }],
         displayText: "",
       }),
     );
@@ -1697,13 +1697,13 @@ describe("ChatViewProvider compaction", () => {
     await handler({ type: "compact" });
 
     const conv = registry.get("s1")!.history.conversation();
-    expect(conv[0].role).toBe("system"); // the summary was injected
-    expect(String(conv[0].content)).toContain("## Goal");
+    expect(conv[0].role).toBe("user"); // the summary was injected
+    expect(String(conv[1].content)).toContain("## Goal");
     expect((store.saveSettings as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
     // stale cache hits from the pre-compaction turn are reset (no >100% ratio)
     expect(rt.cachedTokens).toBe(0);
     // final bubble posted (the UI shows completion, no toast needed)
-    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactDone" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "refresh" }));
   });
 
   it("auto-compacts right after a response when the reply crossed the threshold", async () => {
@@ -1735,8 +1735,8 @@ describe("ChatViewProvider compaction", () => {
     // The response landed and the fill crossed the threshold -> the history
     // was compacted immediately after, WITHOUT the user asking for it.
     const conv = registry.get("s1")!.history.conversation();
-    expect(conv[0].role).toBe("system");
-    expect(String(conv[0].content)).toContain("## Goal");
+    expect(conv[0].role).toBe("user");
+    expect(String(conv[1].content)).toContain("## Goal");
     expect((store.saveSettings as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ contextTokens: expect.any(Number) }),
@@ -1747,7 +1747,7 @@ describe("ChatViewProvider compaction", () => {
     expect(view.webview.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: "status", active: true, message: "Compacting…" }),
     );
-    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactDone" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "refresh" }));
     expect(view.webview.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: "status", active: false }),
     );
@@ -1755,7 +1755,7 @@ describe("ChatViewProvider compaction", () => {
     const seq = (view.webview.postMessage as ReturnType<typeof vi.fn>)
       .mock.calls.map((c: unknown[]) => (c[0] as { type: string }).type);
     const startAt = seq.indexOf("compactStart");
-    const doneAt = seq.indexOf("compactDone");
+    const doneAt = seq.lastIndexOf("refresh");
     expect(seq[startAt + 1]).toBe("status");
     expect(seq[doneAt + 1]).toBe("status");
     expect(startAt).toBeLessThan(doneAt);
@@ -1867,9 +1867,9 @@ describe("ChatViewProvider compaction", () => {
       rt.contextTokens = 140000;
     });
     await handler({ type: "send", text: "more" });
-    expect(registry.get("s1")!.history.conversation()[0].role).toBe("system");
+    expect(registry.get("s1")!.history.conversation()[0].role).toBe("user");
     expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactStart" });
-    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactDone" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "refresh" }));
   });
 
   it("auto-compacts before the request when already over the threshold", async () => {
@@ -1896,8 +1896,8 @@ describe("ChatViewProvider compaction", () => {
 
     // The conversation was compacted BEFORE the in-flight turn was sent.
     const conv = registry.get("s1")!.history.conversation();
-    expect(conv[0].role).toBe("system");
-    expect(String(conv[0].content)).toContain("## Goal");
+    expect(conv[0].role).toBe("user");
+    expect(String(conv[1].content)).toContain("## Goal");
     expect(send).toHaveBeenCalled(); // the request still went out afterwards
     // Visible feedback identical to the manual button: bubble, blocking status
     // while running, then note + release.
@@ -1905,7 +1905,7 @@ describe("ChatViewProvider compaction", () => {
     expect(view.webview.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: "status", active: true, message: "Compacting…" }),
     );
-    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactDone" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "refresh" }));
     expect(view.webview.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: "status", active: false }),
     );
@@ -1963,8 +1963,10 @@ describe("ChatViewProvider compaction", () => {
 
     await provider.maybeCompactDuringRun("s1");
 
-    expect(registry.get("s1")!.history.conversation()[0].role).toBe("system");
+    expect(registry.get("s1")!.history.conversation()[0].role).toBe("user");
     expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactStart" });
+    // Mid-run: the transcript is NOT re-rendered (the run is still streaming),
+    // so the compacted span is shown as a quiet block, not a refresh.
     expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactDone" });
     // The run is still going: NO status message may turn the working bar off.
     expect(view.webview.postMessage).not.toHaveBeenCalledWith(
@@ -2010,12 +2012,12 @@ describe("ChatViewProvider compaction", () => {
     await handler({ type: "send", text: "more" });
 
     const conv = registry.get("s1")!.history.conversation();
-    expect(conv[0].role).toBe("system"); // REALLY compacted (manual plan)
-    expect(String(conv[0].content)).toContain("## Goal");
+    expect(conv[0].role).toBe("user"); // REALLY compacted (manual plan)
+    expect(String(conv[1].content)).toContain("## Goal");
     expect((store.saveSettings as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
     // Exactly the button's visible flow: bubble -> block -> note -> release.
     expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactStart" });
-    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactDone" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "refresh" }));
     expect(view.webview.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: "status", active: true, message: "Compacting…" }),
     );
@@ -2086,7 +2088,7 @@ describe("ChatViewProvider compaction", () => {
     await sendPromise;
 
     // The history IS compacted...
-    expect(registry.get("s1")!.history.conversation()[0].role).toBe("system");
+    expect(registry.get("s1")!.history.conversation()[0].role).toBe("user");
     // ...but the view got NO compaction feedback (it belongs to the active tab).
     expect(view.webview.postMessage).not.toHaveBeenCalledWith({ type: "compactStart" });
   });
@@ -2117,8 +2119,8 @@ describe("ChatViewProvider compaction", () => {
     await handler({ type: "send", text: "more" });
 
     const conv = registry.get("s1")!.history.conversation();
-    expect(conv[0].role).toBe("system"); // compacted despite no contextWindow
+    expect(conv[0].role).toBe("user"); // compacted despite no contextWindow
     expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactStart" });
-    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactDone" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "refresh" }));
   });
 });

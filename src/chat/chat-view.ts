@@ -19,7 +19,7 @@ import { renderViewHtml } from "./view-html";
 import { toTemperature, toTopP } from "./temperature";
 import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, toContextWindow, toOutputTokens } from "./context-window";
 import { PanelModalQueue } from "./panel-modal-queue";
-import { Compactor, DEFAULT_COMPACTION, CompactionSettings, planManualCompaction, shouldCompact, estimateTokens, serializeConversation, toCompactionThresholdPercent } from "../core/sessions/compactor";
+import { Compactor, DEFAULT_COMPACTION, CompactionSettings, planManualCompaction, shouldCompact, estimateTokens, serializeConversation, splitSummary, toCompactionThresholdPercent } from "../core/sessions/compactor";
 import type { SkillRegistry } from "../core/skills/skill-registry";
 import type { McpManager } from "../core/mcp";
 import { McpStdioClient, McpHttpClient, type McpClient } from "../core/mcp";
@@ -974,8 +974,9 @@ export class ChatViewProvider implements WebviewViewProvider {
     } finally {
       this.compacting = false;
       if (isActive) {
-        // Finalize the bubble into a persistent "compacted" message.
-        this.view?.webview.postMessage({ type: "compactDone" });
+        // Re-render the transcript so the SYNTHETIC user prompt (orange) +
+        // assistant response that replaced the summarized span are visible.
+        this.view?.webview.postMessage({ type: "refresh", messages: rt.agent.getMessages() });
         this.view?.webview.postMessage({ type: "status", active: false });
       }
     }
@@ -1086,7 +1087,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     let text = rawText;
     let images: string[] | undefined;
     let displayText: string | undefined;
-    let attachmentMeta: { name: string; path: string; size: number }[] | undefined;
+    let attachmentMeta: { name: string; path: string; size: number; isImage: boolean }[] | undefined;
     let attachmentParts: AttachmentPart[] | undefined;
     if (attached.length > 0) {
       const ctx = await this.attachments.buildContext(attached);
@@ -1094,7 +1095,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       images = ctx.images.length > 0 ? ctx.images : undefined;
       // Keep the files as metadata for the bubble, and show ONLY the typed
       // prompt (possibly empty) — never the inlined file contents.
-      attachmentMeta = attached.map((a) => ({ name: a.name, path: a.path, size: a.size }));
+      attachmentMeta = attached.map((a) => ({ name: a.name, path: a.path, size: a.size, isImage: a.isImage }));
       attachmentParts = ctx.parts;
       displayText = rawText;
     }
@@ -1311,14 +1312,20 @@ export class ChatViewProvider implements WebviewViewProvider {
     const plan = planManualCompaction(messages, this.options.manualKeepFraction ?? 0.6);
     if (plan.toSummarize.length === 0) return;
     const summary = await compactor.summarize(plan.toSummarize);
+    // Represent the summarized span as a synthetic USER prompt + ASSISTANT
+    // response, so the transcript ALWAYS starts with an orange user bubble.
+    const { prompt: synthPrompt, response: synthResponse } = splitSummary(summary);
+    const now = Date.now();
     const newHistory = [
-      { role: "system" as const, content: summary, timestamp: Date.now() },
+      { role: "user" as const, content: synthPrompt, timestamp: now, synthetic: true },
+      { role: "assistant" as const, content: synthResponse, timestamp: now + 1, synthetic: true },
       ...plan.kept,
     ];
     rt.history.replace(newHistory);
     this.sessions.saveMessages(rt.sessionId, newHistory);
     const next =
-      estimateTokens(summary) +
+      estimateTokens(synthPrompt) +
+      estimateTokens(synthResponse) +
       plan.kept.reduce((acc, m) => acc + estimateTokens(m.content), 0);
     rt.contextTokens = next;
     this.sessions.saveSettings(rt.sessionId, { contextTokens: next });

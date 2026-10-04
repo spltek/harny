@@ -761,7 +761,7 @@ describe("view webview client", () => {
     const bubble = document.querySelector(".msg.user") as HTMLElement;
     expect(bubble.textContent).toContain("look");
     expect(bubble.textContent).not.toContain("SECRET");
-    expect(bubble.querySelector(".msg-attach")?.textContent).toContain("a.txt");
+    expect(bubble.querySelector(".msg-attach-file-name")?.textContent).toContain("a.txt");
   });
 
   it("attachment-only bubble shows just the file chip, never the content", async () => {
@@ -774,7 +774,7 @@ describe("view webview client", () => {
     });
     const bubble = document.querySelector(".msg.user") as HTMLElement;
     expect(bubble.textContent).not.toContain("SECRET");
-    expect(bubble.querySelector(".msg-attach")?.textContent).toBe("📎 a.txt");
+    expect(bubble.querySelector(".msg-attach-file-name")?.textContent).toBe("a.txt");
   });
 
   it("blinks the PLAY button while working and stops after", async () => {
@@ -1474,6 +1474,14 @@ describe("view webview client", () => {
     expect(document.activeElement).toBe(input);
   });
 
+  it("attachment chips under the prompt show the SMALL per-type icon", async () => {
+    await loadView();
+    hostMessage({ type: "attachments", files: [{ name: "a.pdf", path: "/a.pdf", size: 10, isImage: false }] });
+    const chip = document.querySelector(".attach-chip") as HTMLElement;
+    expect(chip.querySelector(".attach-icon svg")).toBeTruthy();
+    expect(chip.querySelector(".attach-name")?.textContent).toBe("a.pdf");
+  });
+
   it("removing an attachment returns focus to the prompt", async () => {
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
@@ -1483,6 +1491,82 @@ describe("view webview client", () => {
     (document.activeElement as HTMLElement | null)?.blur();
     remove.click();
     expect(document.activeElement).toBe(input);
+  });
+
+  it("attached images render large (half the chat), stacked, with a resize handle", async () => {
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [
+        {
+          role: "user",
+          content: "look",
+          timestamp: 1,
+          attachments: [
+            { name: "a.png", size: 1, dataUri: "data:image/png;base64,AAAA" },
+            { name: "b.png", size: 1, dataUri: "data:image/png;base64,BBBB" },
+          ],
+        },
+      ],
+    });
+    const boxes = document.querySelectorAll(".msg-attach-img");
+    expect(boxes.length).toBe(2);
+    expect((boxes[0] as HTMLElement).querySelector("img")).toBeTruthy();
+    // Sized in px (half the chat) so it can be resized; the container stacks them.
+    expect((boxes[0] as HTMLElement).style.width).toMatch(/^\d+px$/);
+    expect((document.querySelector(".msg-attachments") as HTMLElement)).toBeTruthy();
+  });
+
+  it("the LIVE user bubble also gets the ✂ cut key (not only after a refresh)", async () => {
+    await loadView();
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000 } });
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "hi";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    const bubble = document.querySelector(".msg.user") as HTMLElement;
+    expect(bubble).toBeTruthy();
+    expect(bubble.querySelector(".truncate-at")).toBeTruthy();
+  });
+
+  it("attached images PERSIST across a refresh (rendered from the message images)", async () => {
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [
+        {
+          role: "user",
+          content: "look",
+          timestamp: 1,
+          attachments: [{ name: "a.png", path: "", size: 1, isImage: true }],
+          images: ["data:image/png;base64,AAAA"],
+        },
+      ],
+    });
+    const boxes = document.querySelectorAll(".msg-attach-img");
+    expect(boxes.length).toBe(1);
+    expect((boxes[0] as HTMLElement).querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,AAAA");
+    // The image attachment is NOT also rendered as a file card.
+    expect(document.querySelectorAll(".msg-attach-file").length).toBe(0);
+    // The ✂ cut tab must be present on the user bubble.
+    expect(document.querySelector(".msg.user .truncate-at")).toBeTruthy();
+  });
+
+  it("synthetic compacted messages get NO ✂ cut / ⎇ branch key", async () => {
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "user", content: "Summary of past interactions", timestamp: 1, synthetic: true },
+        { role: "assistant", content: "## Goal\nDid X", timestamp: 2, synthetic: true },
+      ],
+    });
+    const userBubble = document.querySelector(".msg.user") as HTMLElement;
+    expect(userBubble.textContent).toContain("Summary of past interactions");
+    expect(userBubble.querySelector(".truncate-at")).toBeNull();
+    // A recognizable icon precedes the synthetic marker.
+    expect(userBubble.querySelector(".synthetic-icon")).toBeTruthy();
+    const assistantBubble = document.querySelector(".msg.assistant") as HTMLElement;
+    expect(assistantBubble.querySelector(".branch-at")).toBeNull();
   });
 
   it("Esc closes the slash menu without posting abort", async () => {

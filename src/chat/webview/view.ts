@@ -24,12 +24,16 @@ interface ChatMsg {
   thinking?: string;
   toolCalls?: ToolCallView[];
   toolCallId?: string;
-  /** Files attached to a user message (shown as chips in its bubble). */
-  attachments?: { name: string; size: number }[];
+  /** Files attached to a user message (shown as chips / large images). */
+  attachments?: { name: string; size: number; isImage?: boolean; dataUri?: string }[];
+  /** Inline data URIs of the attached images (persisted; re-rendered on load). */
+  images?: string[];
   /** UI text when it differs from the LLM `content` (file contents inlined). */
   displayText?: string;
   /** Harness-injected prompt (loop guard / delegation): render with the robot. */
   harness?: boolean;
+  /** Synthetic compacted prompt/response pair: no ✂ cut / ⎇ branch key. */
+  synthetic?: boolean;
 }
 interface SessionInfo {
   id: string;
@@ -190,6 +194,9 @@ const pendingToolCalls = new Map<string, HTMLDivElement>();
 // next send. Transient (never persisted); cleared on send or session switch. ──
 interface AttachedFile { name: string; path: string; size: number; isImage: boolean; dataUri?: string; content?: string; }
 let attachedFiles: AttachedFile[] = [];
+/** History length at the last full render; the LIVE user bubble's index for the
+ * ✂ cut key is this value (the new message is appended at that position). */
+let historyLength = 0;
 
 /** Max size of a clipboard image pasted into the chat (matches the host cap). */
 const MAX_PASTE_IMAGE_BYTES = 15 * 1024 * 1024;
@@ -436,7 +443,8 @@ function addHarnessMessage(content: string): HTMLDivElement {
 function addMessage(
   role: string,
   content: string,
-  attachments?: { name: string; size: number; dataUri?: string }[],
+  attachments?: { name: string; size: number; isImage?: boolean; dataUri?: string }[],
+  images?: string[],
 ): HTMLDivElement {
   const div = document.createElement("div");
   div.className = "msg " + role;
@@ -445,7 +453,7 @@ function addMessage(
   } else {
     div.textContent = content || "";
     if (role === "user" && attachments && attachments.length > 0) {
-      div.appendChild(messageAttachmentRow(attachments));
+      div.appendChild(messageAttachmentRow(attachments, images));
     }
   }
   messagesEl.appendChild(div);
@@ -474,32 +482,92 @@ function addSwitchToBuildBanner(): void {
   scrollDown();
 }
 
-/** "Sent with these files" chips shown inside a user bubble (name only). */
-function messageAttachmentRow(attachments: { name: string; size: number; dataUri?: string }[]): HTMLDivElement {
+/** Large, per-type icon for a non-image attachment (document shape + the
+ * extension, tinted by category). Pure SVG, no dependency. */
+function attachmentIcon(name: string, size = 44): string {
+  const ext = (name.split(".").pop() ?? "").toLowerCase();
+  const code = ["js","jsx","ts","tsx","py","rb","go","rs","java","c","cc","cpp","h","hpp","cs","php","swift","kt","sh","bash","zsh","sql","html","css","scss","vue","svelte"];
+  const sheet = ["csv","tsv","xls","xlsx","ods"];
+  const archive = ["zip","tar","gz","tgz","rar","7z","bz2"];
+  const data = ["json","jsonc","yaml","yml","toml","xml"];
+  let color = "#9a9a9a";
+  let label = ext ? ext.toUpperCase().slice(0, 3) : "FILE";
+  if (ext === "pdf") color = "#e06c75";
+  else if (ext === "md") { color = "#a98dff"; label = "MD"; }
+  else if (code.includes(ext)) color = "#61afef";
+  else if (sheet.includes(ext)) color = "#98c379";
+  else if (archive.includes(ext)) color = "#e5c07b";
+  else if (data.includes(ext)) color = "#e5c07b";
+  else if (["png","jpg","jpeg","gif","webp","bmp","svg"].includes(ext)) color = "#56b6c2";
+  return (
+    `<svg width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true">` +
+    `<path d="M6 2h8l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" fill="none" stroke="${color}" stroke-width="1.5"/>` +
+    `<path d="M14 2v5h5" fill="none" stroke="${color}" stroke-width="1.5"/>` +
+    `<text x="11" y="17" text-anchor="middle" font-size="5" font-family="monospace" font-weight="700" fill="${color}">${label}</text>` +
+    `</svg>`
+  );
+}
+
+function messageAttachmentRow(
+  attachments: { name: string; size: number; isImage?: boolean; dataUri?: string }[],
+  images?: string[],
+): HTMLDivElement {
   const row = document.createElement("div");
   row.className = "msg-attachments";
-  for (const file of attachments) {
-    const chip = document.createElement("span");
-    chip.className = "msg-attach";
-    chip.title = file.size > 0 ? `${file.name} · ${formatBytes(file.size)}` : file.name;
-    if (file.dataUri) {
-      const img = document.createElement("img");
-      img.className = "msg-attach-thumb";
-      img.src = file.dataUri;
-      img.alt = file.name;
-      img.title = "Click to enlarge";
-      img.addEventListener("click", (e) => {
-        e.stopPropagation();
-        openImageLightbox(file.dataUri as string, file.name);
-      });
-      chip.appendChild(img);
-      const label = document.createElement("span");
-      label.textContent = file.name;
-      chip.appendChild(label);
-    } else {
-      chip.textContent = `📎 ${file.name}`;
+
+  const files = attachments.filter((f) => !f.isImage && typeof f.dataUri !== "string");
+  if (files.length > 0) {
+    const cards = document.createElement("div");
+    cards.className = "msg-attach-files";
+    for (const file of files) {
+      const card = document.createElement("div");
+      card.className = "msg-attach-file";
+      card.title = file.size > 0 ? `${file.name} · ${formatBytes(file.size)}` : file.name;
+      const icon = document.createElement("div");
+      icon.className = "msg-attach-file-icon";
+      icon.innerHTML = attachmentIcon(file.name);
+      const name = document.createElement("div");
+      name.className = "msg-attach-file-name";
+      name.textContent = file.name;
+      card.append(icon, name);
+      if (file.size > 0) {
+        const size = document.createElement("div");
+        size.className = "msg-attach-file-size";
+        size.textContent = formatBytes(file.size);
+        card.appendChild(size);
+      }
+      cards.appendChild(card);
     }
-    row.appendChild(chip);
+    row.appendChild(cards);
+  }
+
+  let imgIndex = 0;
+  for (const file of attachments) {
+    const isImg = file.isImage === true || typeof file.dataUri === "string";
+    if (!isImg) continue;
+    // Live send: the attachment carries its data URI. Re-render: the message's
+    // persisted `images` hold the data URIs, in order.
+    const dataUri = file.dataUri ?? images?.[imgIndex];
+    imgIndex++;
+    if (!dataUri) continue;
+    const box = document.createElement("div");
+    box.className = "msg-attach-img";
+    // A THIRD of the CHAT width (not the bubble); drag the handle to resize.
+    const width = Math.max(120, Math.round(messagesEl.clientWidth / 3));
+    box.style.width = width + "px";
+    const img = document.createElement("img");
+    img.src = dataUri;
+    img.alt = file.name;
+    img.title = "Click to enlarge";
+    img.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openImageLightbox(dataUri, file.name);
+    });
+    const cap = document.createElement("div");
+    cap.className = "msg-attach-cap";
+    cap.textContent = file.name;
+    box.append(img, cap);
+    row.appendChild(box);
   }
   return row;
 }
@@ -680,6 +748,15 @@ function setSubAgentStatus(
  * clear text, and the declared resources/access (what it may touch) in the
  * collapsed details together with the final report.
  */
+/** Recognizable "history/clock" icon shown before the synthetic
+ * "Summary of past interactions" prompt that replaces a compacted span. */
+const SYNTHETIC_SUMMARY_ICON =
+  '<svg class="synthetic-icon" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">' +
+  '<path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>' +
+  '<path d="M3.5 4.5V9H8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
+  '<path d="M12 8v4.2l2.8 1.7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>' +
+  "</svg>";
+
 /** A small robot glyph for sub-agent bubbles (SVG, currentColor). */
 const SUBAGENT_ICON =
   '<svg class="subagent-icon" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">' +
@@ -965,6 +1042,7 @@ function renderEmptyShell(): void {
 }
 
 function renderMessages(msgs: ChatMsg[]): boolean {
+  historyLength = msgs.length;
   const outputs = new Map<string, string>();
   for (const m of msgs) {
     if (m.role === "tool" && m.toolCallId && m.content) outputs.set(m.toolCallId, m.content);
@@ -989,7 +1067,7 @@ function renderMessages(msgs: ChatMsg[]): boolean {
         if (content.startsWith("❌")) el.classList.add("error");
         else if (content.startsWith("🔁")) el.classList.add("loop");
         // Loop notices are system annotations, not branchable messages.
-        if (!content.startsWith("🔁")) attachBranchAt(el, i);
+        if (!content.startsWith("🔁") && !m.synthetic) attachBranchAt(el, i);
         // Prepared-but-not-applied changes: re-render the highlighted CTA.
         if (content.includes("Nothing has been applied")) addSwitchToBuildBanner();
       }
@@ -1024,10 +1102,16 @@ function renderMessages(msgs: ChatMsg[]): boolean {
       // Harness-injected prompt: robot icon + markdown, no ✂ cut key.
       addHarnessMessage(m.displayText ?? (m.content || ""));
     } else {
-      const el = addMessage(m.role, m.displayText ?? (m.content || ""), m.attachments);
+      const el = addMessage(m.role, m.displayText ?? (m.content || ""), m.attachments, m.images);
+      // The synthetic compacted prompt gets a recognizable "history" icon.
+      if (m.role === "user" && m.synthetic) {
+        el.classList.add("synthetic-summary");
+        el.insertAdjacentHTML("afterbegin", SYNTHETIC_SUMMARY_ICON);
+      }
       // The ✂ cut-from-here lives on the USER prompt bubbles: cutting removes
       // the prompt and everything after it, so you can retype a cleaner one.
-      if (m.role === "user") attachTruncateAt(el, i);
+      // The synthetic compacted prompt is NOT a real user turn: no cut key.
+      if (m.role === "user" && !m.synthetic) attachTruncateAt(el, i);
     }
   }
   return hasVisible;
@@ -1255,6 +1339,13 @@ function renderAttachmentChips(): void {
     const name = document.createElement("span");
     name.className = "attach-name";
     name.textContent = file.name;
+    // Non-image files get the SAME per-type icon as the message cards, small.
+    if (!file.dataUri) {
+      const icon = document.createElement("span");
+      icon.className = "attach-icon";
+      icon.innerHTML = attachmentIcon(file.name, 16);
+      chip.appendChild(icon);
+    }
 
     const size = document.createElement("span");
     size.className = "attach-size";
@@ -1298,7 +1389,11 @@ function send(): void {
   pendingToolCalls.clear();
   // Show the user's message immediately (don't wait for the turn to finish).
   // Attachments render as chips; the bubble text is just the typed prompt.
-  addMessage("user", text, attachments);
+  const userEl = addMessage("user", text, attachments);
+  // The ✂ cut key also on the LIVE bubble (disabled while working, like the
+  // others); its index is the position the host is about to append it at.
+  attachTruncateAt(userEl, historyLength);
+  historyLength += 1;
   workingEl = addWorking();
   scrollDown();
   vscode.postMessage({ type: "send", text, ...(attachments.length > 0 ? { attachments } : {}) });

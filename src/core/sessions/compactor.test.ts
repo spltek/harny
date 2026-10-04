@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { Compactor, DEFAULT_COMPACTION, estimateTokens, planManualCompaction, shouldCompact, serializeConversation, clampCompactionThresholdPercent, toCompactionThresholdPercent } from "./compactor";
+import { Compactor, DEFAULT_COMPACTION, estimateTokens, planManualCompaction, shouldCompact, serializeConversation, splitSummary, clampCompactionThresholdPercent, toCompactionThresholdPercent } from "./compactor";
 import type { LLMProviderFactory } from "../llm/types";
 import type { HarnyConfig } from "../config/types";
 import type { ChatMessage } from "../history/types";
@@ -117,5 +117,26 @@ describe("planManualCompaction", () => {
     const plan = planManualCompaction(msgs, 0.6);
     expect(plan.toSummarize.length).toBe(2);
     expect(plan.kept.length).toBe(2);
+  });
+});
+
+describe("splitSummary", () => {
+  it("splits the summarizer output into a synthetic prompt + response", () => {
+    expect(splitSummary("I asked for X.\n---\n## Goal\nDid Y.")).toEqual({
+      prompt: "I asked for X.",
+      response: "## Goal\nDid Y.",
+    });
+  });
+
+  it("falls back to a generic prompt (still an orange bubble) without the separator", () => {
+    const r = splitSummary("just a summary");
+    expect(r.prompt).toMatch(/Continue/);
+    expect(r.response).toBe("just a summary");
+  });
+
+  it("handles an empty summary", () => {
+    const r = splitSummary("");
+    expect(r.prompt.length).toBeGreaterThan(0);
+    expect(r.response.length).toBeGreaterThan(0);
   });
 });

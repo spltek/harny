@@ -257,7 +257,20 @@ ${renderViewConfig(deps)}
     /* "Sent with these files" chips inside a user bubble: the message keeps the
        typed prompt; the attached documents are shown as a compact indicator
        (their contents live in the LLM context, not in the transcript). */
-    .msg-attachments { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+    /* Synthetic compacted prompt: a recognizable icon before the marker. */
+    .msg.user.synthetic-summary .synthetic-icon { vertical-align: -2px; margin-right: 5px; }
+    .msg-attachments { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 6px; max-width: 100%; }
+    .msg-attach-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+    /* Non-image attachments: a large per-type icon + name + size. */
+    .msg-attach-files { display: flex; flex-wrap: wrap; gap: 8px; }
+    .msg-attach-file {
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+      padding: 8px 12px; border-radius: 8px; min-width: 5.5rem; max-width: 12rem;
+      background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.14);
+    }
+    .msg-attach-file-icon { line-height: 0; }
+    .msg-attach-file-name { font-size: var(--fs-sm); color: #e8e8e8; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .msg-attach-file-size { font-size: var(--fs-xs); color: #9a9a9a; }
     .msg-attach {
       display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
       padding: 1px 7px; border-radius: 999px; font-size: var(--fs-sm);
@@ -664,9 +677,21 @@ ${renderViewConfig(deps)}
       font-size: var(--fs-sm); color: var(--fg);
     }
     .attach-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 12rem; }
+    .attach-icon { display: inline-flex; align-items: center; line-height: 0; flex: 0 0 auto; }
     /* Thumbnail preview of a pasted clipboard image in its attachment chip. */
     .attach-thumb { width: 22px; height: 22px; object-fit: cover; border-radius: 3px; border: 1px solid var(--border); cursor: zoom-in; }
-    .msg-attach-thumb { width: 16px; height: 16px; object-fit: cover; border-radius: 3px; cursor: zoom-in; }
+    /* Attached IMAGE: half the chat width by default, NEVER deformed (height
+       follows the image), resizable via the bottom-right handle. */
+    .msg-attach-img {
+      display: block; max-width: 100%; min-width: 4rem;
+      resize: horizontal; overflow: hidden;
+      border-radius: 6px; border: 1px solid var(--border); background: rgba(0, 0, 0, 0.25);
+    }
+    .msg-attach-img img { display: block; width: 100%; height: auto; cursor: zoom-in; }
+    .msg-attach-img .msg-attach-cap {
+      font-size: var(--fs-sm); color: #d0d0d0; padding: 2px 6px; line-height: 1.3;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
     /* Full-size image lightbox: click a thumbnail to view it large. */
     .img-lightbox { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(0, 0, 0, 0.82); cursor: zoom-out; }
     .img-lightbox.hidden { display: none; }

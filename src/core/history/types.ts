@@ -5,6 +5,9 @@ export interface MessageAttachment {
   name: string;
   path: string;
   size: number;
+  /** True for image attachments (rendered large in the bubble). The data URI
+   * lives in the message's `images` field (persisted), so it is not duplicated. */
+  isImage?: boolean;
 }
 
 export interface ChatMessage {
@@ -15,6 +18,10 @@ export interface ChatMessage {
   timestamp: number;
   /** Messages marked uiOnly are shown in the chat UI but excluded from LLM context. */
   uiOnly?: boolean;
+  /** True for the SYNTHETIC prompt/response pair that replaces a compacted span:
+   * rendered as an orange bubble + an assistant reply, but NOT a real user turn
+   * (so it gets no ✂ cut / ⎇ branch key). */
+  synthetic?: boolean;
   /** A HARNESS-injected prompt (loop guard / delegation / budget), NOT the user
    * typing: rendered with the Harny robot at the start. */
   harness?: boolean;
