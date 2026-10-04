@@ -2,8 +2,8 @@ import { renderMarkdown } from "./markdown";
 import { splitDiffFence, countDiff } from "./diff-fence";
 import Prism from "./prism";
 import { langIdForPath } from "./lang-map";
-import { clampContextWindow, clampOutputTokens, CONTEXT_STEP, DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, OUTPUT_STEP } from "../context-window";
-import { clampTemperature, clampTopP, TEMPERATURE_STEP } from "../temperature";
+import { clampContextWindow, clampOutputTokens, DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS } from "../context-window";
+import { clampTemperature, clampTopP } from "../temperature";
 
 declare function acquireVsCodeApi(): {
   postMessage(message: unknown): void;
@@ -78,6 +78,12 @@ interface ConfigState {
   loopGuard?: "low" | "normal" | "high";
   /** Also guard the visible final answer (opt-in; undefined = off). */
   loopGuardResponse?: boolean;
+  /** Preset VALUES per sensitivity level (single source: the core). */
+  loopGuardPresets?: Record<string, Record<string, number | boolean>>;
+  /** The SAVED per-session field values (absent keys fall back to the preset). */
+  loopGuardParams?: Record<string, number>;
+  /** Editable RANGES for the Loop Guard fields (single source: the core). */
+  loopGuardRanges?: { key: string; min: number; max: number; step: number; integer: boolean }[];
   /** Installed Agent Skills (catalog for the Skills card). */
   skills?: { name: string; description: string }[];
   /** MCP servers + status (MCP card). */
@@ -134,26 +140,18 @@ const abortBtn = document.getElementById("abort-btn") as HTMLButtonElement;
 const attachBtn = document.getElementById("attach-btn") as HTMLButtonElement;
 const attachmentChips = document.getElementById("attachment-chips") as HTMLDivElement;
 const modelSelect = document.getElementById("model-select") as HTMLSelectElement;
-const thinkingSelect = document.getElementById("thinking-select") as HTMLSelectElement;
-const ctxInput = document.getElementById("ctx-input") as HTMLInputElement;
-const ctxMinus = document.getElementById("ctx-minus") as HTMLButtonElement;
-const ctxPlus = document.getElementById("ctx-plus") as HTMLButtonElement;
-const outInput = document.getElementById("out-input") as HTMLInputElement;
-const outMinus = document.getElementById("out-minus") as HTMLButtonElement;
-const outPlus = document.getElementById("out-plus") as HTMLButtonElement;
-const sampInput = document.getElementById("samp-input") as HTMLInputElement;
-const sampMinus = document.getElementById("samp-minus") as HTMLButtonElement;
-const sampPlus = document.getElementById("samp-plus") as HTMLButtonElement;
+const thinkingRadios = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="thinking-level"]'));
+const ctxRange = document.getElementById("ctx-range") as HTMLInputElement;
+const ctxValue = document.getElementById("ctx-value") as HTMLSpanElement;
+const outRange = document.getElementById("out-range") as HTMLInputElement;
+const outValue = document.getElementById("out-value") as HTMLSpanElement;
+const sampRange = document.getElementById("samp-range") as HTMLInputElement;
 const sampAuto = document.getElementById("samp-auto") as HTMLButtonElement;
 const samplerTemp = document.getElementById("sampler-temp") as HTMLInputElement;
 const samplerTopp = document.getElementById("sampler-topp") as HTMLInputElement;
-const presenceInput = document.getElementById("presence-input") as HTMLInputElement;
-const presenceMinus = document.getElementById("presence-minus") as HTMLButtonElement;
-const presencePlus = document.getElementById("presence-plus") as HTMLButtonElement;
+const presenceRange = document.getElementById("presence-range") as HTMLInputElement;
 const presenceAuto = document.getElementById("presence-auto") as HTMLButtonElement;
-const freqInput = document.getElementById("freq-input") as HTMLInputElement;
-const freqMinus = document.getElementById("freq-minus") as HTMLButtonElement;
-const freqPlus = document.getElementById("freq-plus") as HTMLButtonElement;
+const freqRange = document.getElementById("freq-range") as HTMLInputElement;
 const freqAuto = document.getElementById("freq-auto") as HTMLButtonElement;
 const metTokens = document.getElementById("met-tokens") as HTMLSpanElement;
 const metCtx = document.getElementById("met-ctx") as HTMLSpanElement;
@@ -2110,12 +2108,12 @@ providersSaveBtn.addEventListener("click", () => {
 // ── Guardrails card: per-session parallel cap + Loop Guard sensitivity ──
 // Both are persisted ON THE SESSION (not the config file): they tune how THIS
 // conversation runs. Undefined loopGuard = the "normal" preset.
-const parEnabled = document.getElementById("par-enabled") as HTMLInputElement;
-const parInput = document.getElementById("par-input") as HTMLInputElement;
-const parMinus = document.getElementById("par-minus") as HTMLButtonElement;
-const parPlus = document.getElementById("par-plus") as HTMLButtonElement;
+const parRange = document.getElementById("par-range") as HTMLInputElement;
+const parValue = document.getElementById("par-value") as HTMLSpanElement;
 const lgRadios = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="lg-level"]'));
 const lgResponse = document.getElementById("lg-response") as HTMLInputElement;
+const lgCollapse = document.getElementById("lg-collapse") as HTMLButtonElement;
+const lgParamsField = document.getElementById("lg-params-field") as HTMLDivElement;
 const skillsCard = document.getElementById("skills-card") as HTMLDivElement;
 const skillsList = document.getElementById("skills-list") as HTMLDivElement;
 const mcpCard = document.getElementById("mcp-card") as HTMLDivElement;
@@ -2145,22 +2143,23 @@ const DEFAULT_PARALLEL = 4;
 
 type LoopGuardLevel = "low" | "normal" | "high";
 
+/** 0 = no cap; 1–100 = the cap. */
 function clampParallel(v: number): number {
   if (!Number.isFinite(v)) return DEFAULT_PARALLEL;
-  return Math.min(99, Math.max(1, Math.trunc(v)));
+  return Math.min(100, Math.max(0, Math.trunc(v)));
 }
 
-function syncParUi(): void {
-  const on = parEnabled.checked;
-  parInput.disabled = !on || streamingActive;
-  parMinus.disabled = !on || streamingActive;
-  parPlus.disabled = !on || streamingActive;
+/** "Off" for 0 (no cap), the number otherwise. */
+function parLabel(v: number): string {
+  return v <= 0 ? "Off" : String(v);
 }
 
 function sendParallel(): void {
-  parInput.value = String(clampParallel(Number(parInput.value)));
-  // Off is stored as 0 (explicitly no cap); on as the clamped number.
-  vscode.postMessage({ type: "setMaxParallelSubAgents", value: parEnabled.checked ? clampParallel(Number(parInput.value)) : 0 });
+  const v = clampParallel(Number(parRange.value));
+  parRange.value = String(v);
+  parValue.textContent = parLabel(v);
+  // 0 = explicitly NO cap; 1–100 = the cap.
+  vscode.postMessage({ type: "setMaxParallelSubAgents", value: v });
 }
 
 function sendLoopGuard(): void {
@@ -2172,15 +2171,178 @@ function sendLoopGuardResponse(): void {
   vscode.postMessage({ type: "setLoopGuardResponse", value: lgResponse.checked });
 }
 
+// The Loop Guard FIELDS (below the sensitivity row): the preset values exposed
+// as editable numbers. The host sends the ranges + preset values, so this panel
+// never duplicates them. Editing a field tunes the LIVE guard only: the values
+// are deliberately NOT saved (neither on the session nor in the config file),
+// so experimenting with the thresholds is throw-away. Picking a sensitivity
+// level resets the fields to that preset (the new baseline).
+type LgRange = { key: string; min: number; max: number; step: number; integer: boolean };
+const LG_LABELS: Record<string, string> = {
+  maxNudges: "Nudges",
+  reasoningThreshold: "Reasoning θ",
+  reasoningMinTokens: "Reasoning tok",
+  crossTurnSimilarity: "Turn sim",
+  crossTurnMinLength: "Turn len",
+  toolFailureRepeats: "Tool fail",
+  errorStreakTurns: "Err streak",
+  toolRepeatConsecutive: "Repeat run",
+  toolRepeatWindow: "Rep window",
+  toolRepeatWindowThreshold: "Rep win thr",
+  answerThreshold: "Answer θ",
+  answerMinTokens: "Answer tok",
+};
+let lgRanges: LgRange[] = [];
+let lgPresets: Record<string, Record<string, number | boolean>> = {};
+/** The SAVED per-session field values (overlaid on the preset). */
+let lgParams: Record<string, number> = {};
+let lgFieldsBuilt = false;
+let lgLastLevel: string | null = null;
+let lgLastSession: string | undefined;
+
+/** Build the editable fields once, from the host-provided ranges: each is a
+ * slider (the ONLY control) with the value shown as a read-only label. */
+function buildLgFields(): void {
+  const wrap = document.getElementById("lg-fields") as HTMLDivElement | null;
+  if (!wrap || lgRanges.length === 0) return;
+  wrap.innerHTML = "";
+  for (const r of lgRanges) {
+    const label = LG_LABELS[r.key] ?? r.key;
+    const cell = document.createElement("label");
+    cell.className = "lg-field";
+    cell.title = `${label}: ${r.min}–${r.max}`;
+    const name = document.createElement("span");
+    name.className = "lg-name";
+    name.textContent = label;
+    const value = document.createElement("span");
+    value.className = "lg-value";
+    value.id = `lgv-${r.key}`;
+    const range = document.createElement("input");
+    range.type = "range";
+    range.className = "lg-range";
+    range.id = `lgr-${r.key}`;
+    range.min = String(r.min);
+    range.max = String(r.max);
+    range.step = String(r.step);
+    range.setAttribute("aria-label", label);
+    // Live drag: mirror the value into its label and push (rAF-throttled).
+    range.addEventListener("input", () => {
+      value.textContent = range.value;
+      sendLoopGuardOverridesThrottled();
+    });
+    range.addEventListener("change", sendLoopGuardOverrides);
+    cell.append(name, value, range);
+    wrap.appendChild(cell);
+  }
+  lgFieldsBuilt = true;
+}
+
+/** Set one field (slider position + its read-only value label). */
+function setLgField(key: string, v: number): void {
+  const range = lgRangeInput(key);
+  if (range) range.value = String(v);
+  const value = document.getElementById(`lgv-${key}`);
+  if (value) value.textContent = String(v);
+}
+
+/** Repopulate every field from the preset of the given level, overlaid with
+ * the SAVED per-session values. `useParams = false` ignores the saved values
+ * (used when the level changes: the preset becomes the new baseline). */
+function fillLgFields(level: string, useParams = true): void {
+  const preset = lgPresets[level] ?? {};
+  const saved = useParams ? lgParams : {};
+  for (const r of lgRanges) {
+    const v = typeof saved[r.key] === "number" ? saved[r.key] : preset[r.key];
+    if (typeof v === "number") setLgField(r.key, v);
+  }
+}
+
+function lgRangeInput(key: string): HTMLInputElement | null {
+  return document.getElementById(`lgr-${key}`) as HTMLInputElement | null;
+}
+
+function currentLgLevel(): string {
+  return lgRadios.find((r) => r.checked)?.value ?? "normal";
+}
+
+function clampLgValue(r: LgRange, v: number): number {
+  const c = Math.min(r.max, Math.max(r.min, v));
+  return r.integer ? Math.round(c) : Math.round(c * 100) / 100;
+}
+
+// A slider drag fires `input` continuously: coalesce the posts to one per frame.
+let lgRafPending = false;
+function sendLoopGuardOverridesThrottled(): void {
+  if (lgRafPending) return;
+  lgRafPending = true;
+  requestAnimationFrame(() => {
+    lgRafPending = false;
+    sendLoopGuardOverrides();
+  });
+}
+
+/** Send the FULL override map, read from the sliders (the host clamps it too). */
+function sendLoopGuardOverrides(): void {
+  const overrides: Record<string, number> = {};
+  for (const r of lgRanges) {
+    const range = lgRangeInput(r.key);
+    if (!range) continue;
+    const v = Number(range.value);
+    if (!Number.isFinite(v)) continue;
+    const c = clampLgValue(r, v);
+    overrides[r.key] = c;
+    setLgField(r.key, c);
+  }
+  vscode.postMessage({ type: "setLoopGuardOverrides", overrides });
+}
+
+/** Level change: the preset becomes the new baseline, so the fields reset
+ * (the host clears + saves its overrides on the same change). */
+function onLoopGuardLevelChange(): void {
+  sendLoopGuard();
+  fillLgFields(currentLgLevel(), false);
+}
+
+// The Loop Guard parameters section starts COLLAPSED, so the card — and its
+// grid-row neighbour (Parallel) — stays at its minimum height. The chevron in
+// the bottom-right corner toggles it.
+function setLgParamsCollapsed(collapsed: boolean): void {
+  lgParamsField.classList.toggle("hidden", collapsed);
+  lgCollapse.setAttribute("aria-expanded", String(!collapsed));
+  lgCollapse.title = collapsed ? "Show the Loop Guard parameters" : "Hide the Loop Guard parameters";
+}
+setLgParamsCollapsed(true);
+lgCollapse.addEventListener("click", () => {
+  setLgParamsCollapsed(!lgParamsField.classList.contains("hidden"));
+});
+
 function renderControl(config: ConfigState): void {
   const cap = config.maxParallelSubAgents;
-  const hasCap = typeof cap === "number" && cap > 0;
-  parEnabled.checked = hasCap;
-  parInput.value = String(hasCap ? cap : DEFAULT_PARALLEL);
-  syncParUi();
+  const capV = typeof cap === "number" && cap > 0 ? clampParallel(cap) : 0;
+  parRange.value = String(capV);
+  parValue.textContent = parLabel(capV);
   const level: LoopGuardLevel = config.loopGuard === "high" || config.loopGuard === "low" ? config.loopGuard : "normal";
   for (const r of lgRadios) r.checked = r.value === level;
   lgResponse.checked = config.loopGuardResponse === true;
+  // Loop Guard fields: ranges + preset values come from the host (one source).
+  if (config.loopGuardPresets) lgPresets = config.loopGuardPresets;
+  lgParams = config.loopGuardParams ?? {};
+  // Reset the fields when the LEVEL or the SESSION changes; a plain config push
+  // must never clobber the user's live edits. Brand-new fields (built on a
+  // later push than the first render) are populated too.
+  let needFill = lgLastLevel !== level || lgLastSession !== activeId;
+  if (Array.isArray(config.loopGuardRanges) && config.loopGuardRanges.length > 0) {
+    if (JSON.stringify(config.loopGuardRanges) !== JSON.stringify(lgRanges)) lgRanges = config.loopGuardRanges;
+    if (!lgFieldsBuilt) {
+      buildLgFields();
+      needFill = true;
+    }
+  }
+  if (needFill) {
+    lgLastLevel = level;
+    lgLastSession = activeId;
+    fillLgFields(level);
+  }
   renderSkills(config.skills ?? []);
   renderMcp(config.mcp);
 }
@@ -2518,21 +2680,13 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
-parEnabled.addEventListener("change", () => {
-  syncParUi();
-  sendParallel();
+const sendParallelThrottled = rafThrottle(sendParallel);
+parRange.addEventListener("input", () => {
+  parValue.textContent = parLabel(Number(parRange.value));
+  sendParallelThrottled();
 });
-parMinus.addEventListener("click", () => {
-  parInput.value = String(clampParallel(Number(parInput.value) - 1));
-  sendParallel();
-});
-parPlus.addEventListener("click", () => {
-  parInput.value = String(clampParallel(Number(parInput.value) + 1));
-  sendParallel();
-});
-bindIntegerInput(parInput);
-parInput.addEventListener("change", sendParallel);
-for (const r of lgRadios) r.addEventListener("change", sendLoopGuard);
+parRange.addEventListener("change", sendParallel);
+for (const r of lgRadios) r.addEventListener("change", onLoopGuardLevelChange);
 lgResponse.addEventListener("change", sendLoopGuardResponse);
 
 providersCancelBtn.addEventListener("click", closeProvidersEditor);
@@ -2591,32 +2745,22 @@ function setStreaming(active: boolean): void {
   compactBtn.disabled = active;
   compactSettingsBtn.disabled = active;
   modelSelect.disabled = active;
-  thinkingSelect.disabled = active || !thinkingCapable;
-  ctxMinus.disabled = active;
-  ctxPlus.disabled = active;
-  ctxInput.disabled = active;
-  outMinus.disabled = active;
-  outPlus.disabled = active;
-  outInput.disabled = active;
-  sampInput.disabled = active;
-  sampMinus.disabled = active;
-  sampPlus.disabled = active;
+  for (const r of thinkingRadios) r.disabled = active || !thinkingCapable;
+  ctxRange.disabled = active;
+  outRange.disabled = active;
+  sampRange.disabled = active;
   sampAuto.disabled = active;
   samplerTemp.disabled = active;
   samplerTopp.disabled = active;
-  presenceInput.disabled = active;
-  presenceMinus.disabled = active;
-  presencePlus.disabled = active;
+  presenceRange.disabled = active;
   presenceAuto.disabled = active;
-  freqInput.disabled = active;
-  freqMinus.disabled = active;
-  freqPlus.disabled = active;
+  freqRange.disabled = active;
   freqAuto.disabled = active;
   // Guardrails card (parallel cap + Loop Guard) follows the same lock.
-  parEnabled.disabled = active;
+  parRange.disabled = active;
   for (const r of lgRadios) r.disabled = active;
   lgResponse.disabled = active;
-  syncParUi();
+  for (const el of document.querySelectorAll<HTMLInputElement>("#lg-fields input")) el.disabled = active;
   inputEl.disabled = active;
   // Mode button follows the same lock (no switching mid-stream); a dropdown
   // left open gets closed so the disabled state is obvious.
@@ -2875,127 +3019,129 @@ function renderThinkingSelect(c: ConfigState): void {
   const mode = c.thinkingMode;
   const enabled = mode === "bool" || mode === "effort" || mode === "type" || mode === "reasoning";
   thinkingCapable = enabled;
-  thinkingSelect.disabled = streamingActive || !enabled;
+  const title = enabled
+    ? "Thinking level / reasoning effort (per session)"
+    : 'This provider/model does not declare thinking control (add "thinking": "bool", "effort" or "type" to its config entry)';
   const level =
     c.thinkingLevel && ["off", "low", "medium", "high"].includes(c.thinkingLevel)
       ? c.thinkingLevel
       : "off";
-  thinkingSelect.value = level;
-  thinkingSelect.title = enabled
-    ? "Thinking level / reasoning effort (per session)"
-    : 'This provider/model does not declare thinking control (add "thinking": "bool", "effort" or "type" to its config entry)';
+  for (const r of thinkingRadios) {
+    r.disabled = streamingActive || !enabled;
+    r.checked = r.value === level;
+    if (r.parentElement) r.parentElement.title = title;
+  }
 }
-thinkingSelect.addEventListener("change", () => {
-  if (thinkingSelect.disabled) return;
-  const level = thinkingSelect.value;
-  if (!["off", "low", "medium", "high"].includes(level)) return;
-  vscode.postMessage({ type: "setThinkingLevel", level });
-});
-
-// ── Input sanitizers: numbers are typed freely, but only VALID characters ──
-/** Context window / output tokens: digits only (integers). */
-function sanitizeIntegerInput(raw: string): string {
-  return raw.replace(/\D/g, "");
-}
-/** Temperature: digits + ONE decimal separator (" . ", comma converted). */
-function sanitizeFloatInput(raw: string): string {
-  const cleaned = raw.replace(",", ".").replace(/[^\d.]/g, "");
-  const firstDot = cleaned.indexOf(".");
-  if (firstDot < 0) return cleaned;
-  return cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, "");
-}
-
-function bindIntegerInput(el: HTMLInputElement): void {
-  el.addEventListener("input", () => {
-    const v = sanitizeIntegerInput(el.value);
-    if (v !== el.value) el.value = v;
+for (const r of thinkingRadios) {
+  r.addEventListener("change", () => {
+    if (!r.checked || r.disabled) return;
+    const level = r.value;
+    if (!["off", "low", "medium", "high"].includes(level)) return;
+    vscode.postMessage({ type: "setThinkingLevel", level });
   });
 }
 
-// Context-window spinner ──
+// ── Slider helpers ──
+/** Coalesce a burst of `input` events (a slider drag) into one call per frame. */
+function rafThrottle(fn: () => void): () => void {
+  let pending = false;
+  return () => {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(() => {
+      pending = false;
+      fn();
+    });
+  };
+}
+
+// Context-window slider ──
 function sendContextWindow(value: number): void {
   const v = clampContextWindow(value);
-  ctxInput.value = String(v);
+  ctxRange.value = String(v);
+  ctxValue.textContent = String(v);
   vscode.postMessage({ type: "setContextWindow", value: v });
 }
 
-// ── Output-tokens spinner (max tokens per response) ──
+/** Show a host-pushed window value: the LABEL keeps the exact value while the
+ * slider sits on the nearest step (dragging afterwards moves by steps). */
+function renderContextWindow(c: ConfigState): void {
+  const v = clampContextWindow(c.contextWindow || DEFAULT_CONTEXT_WINDOW);
+  ctxRange.value = String(v);
+  ctxValue.textContent = String(v);
+}
+
+// ── Output-tokens slider (max tokens per response) ──
 function sendOutputTokens(value: number): void {
   const v = clampOutputTokens(value);
-  outInput.value = String(v);
+  outRange.value = String(v);
+  outValue.textContent = String(v);
   vscode.postMessage({ type: "setOutputTokens", value: v });
 }
 
 function renderOutputTokens(c: ConfigState): void {
   const v = clampOutputTokens(c.outputTokens ?? DEFAULT_OUTPUT_TOKENS);
-  outInput.value = String(v);
+  outRange.value = String(v);
+  outValue.textContent = String(v);
 }
 
 // ── Sampling controls (Temperature, Presence/Frequency penalty) ──
 // Each is a 0.0→2.0 float stepper with an "Auto" reset: digits + ONE
 // decimal point, empty = Auto (not sent). One factory keeps them identical.
 interface FloatControl {
-  input: HTMLInputElement;
   render(value: unknown): void;
 }
 
 function createFloatControl(
-  refs: { input: string; minus: string; plus: string; auto: string },
+  refs: { range: string; value: string; auto: string },
   sendType: "setSamplerValue" | "setPresencePenalty" | "setFrequencyPenalty",
   clamp: (v: number) => number | undefined = clampTemperature,
 ): FloatControl {
-  const input = document.getElementById(refs.input) as HTMLInputElement;
-  const minus = document.getElementById(refs.minus) as HTMLButtonElement;
-  const plus = document.getElementById(refs.plus) as HTMLButtonElement;
+  const range = document.getElementById(refs.range) as HTMLInputElement;
+  const label = document.getElementById(refs.value) as HTMLSpanElement;
   const auto = document.getElementById(refs.auto) as HTMLButtonElement;
 
   const send = (value: number | null): void => {
     if (value === null) {
-      input.value = "";
+      label.textContent = "Auto";
       vscode.postMessage({ type: sendType, value: null });
       return;
     }
     const v = clamp(value);
     if (v === undefined) {
-      input.value = "";
+      label.textContent = "Auto";
       vscode.postMessage({ type: sendType, value: null });
       return;
     }
-    input.value = String(v);
+    range.value = String(v);
+    label.textContent = String(v);
     vscode.postMessage({ type: sendType, value: v });
   };
-  const current = (): number => {
-    const raw = input.value.trim();
-    if (raw === "") return 0;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : 0;
-  };
-  const read = (): void => {
-    const raw = input.value.trim();
-    if (raw === "") {
-      send(null); // Auto
-      return;
-    }
-    const n = Number(raw);
-    send(Number.isNaN(n) ? null : n);
-  };
-
-  input.addEventListener("input", () => {
-    const v = sanitizeFloatInput(input.value);
-    if (v !== input.value) input.value = v;
+  const sendThrottled = rafThrottle(() => send(Number(range.value)));
+  range.addEventListener("input", () => {
+    label.textContent = range.value;
+    sendThrottled();
   });
-  input.addEventListener("change", read);
-  minus.addEventListener("click", () => send(current() - TEMPERATURE_STEP));
-  plus.addEventListener("click", () => send(current() + TEMPERATURE_STEP));
+  range.addEventListener("change", () => send(Number(range.value)));
   auto.addEventListener("click", () => send(null));
-  return { input, render: (value: unknown) => { input.value = typeof value === "number" && Number.isFinite(value) ? String(Math.round(value * 10) / 10) : ""; } };
+  return {
+    render: (value: unknown) => {
+      const v = typeof value === "number" && Number.isFinite(value) ? Math.round(value * 10) / 10 : undefined;
+      if (v === undefined) {
+        label.textContent = "Auto";
+        return;
+      }
+      range.value = String(v);
+      label.textContent = String(v);
+    },
+  };
 }
 
 // Shared sampler stepper: the scale follows the selected radio (0.0–2.0 when
 // Temperature, 0.0–1.0 when Top-P); switching mode resets the value to Auto.
 const samplerClamp = (v: number): number | undefined => (samplerTopp.checked ? clampTopP(v) : clampTemperature(v));
 const samplerControl = createFloatControl(
-  { input: "samp-input", minus: "samp-minus", plus: "samp-plus", auto: "samp-auto" },
+  { range: "samp-range", value: "samp-value", auto: "samp-auto" },
   "setSamplerValue",
   samplerClamp,
 );
@@ -3011,8 +3157,8 @@ function renderSamplerControl(c: ConfigState): void {
 samplerTemp.addEventListener("change", () => vscode.postMessage({ type: "setSamplerMode", mode: "temperature" }));
 samplerTopp.addEventListener("change", () => vscode.postMessage({ type: "setSamplerMode", mode: "topP" }));
 
-const presenceControl = createFloatControl({ input: "presence-input", minus: "presence-minus", plus: "presence-plus", auto: "presence-auto" }, "setPresencePenalty");
-const freqControl = createFloatControl({ input: "freq-input", minus: "freq-minus", plus: "freq-plus", auto: "freq-auto" }, "setFrequencyPenalty");
+const presenceControl = createFloatControl({ range: "presence-range", value: "presence-value", auto: "presence-auto" }, "setPresencePenalty");
+const freqControl = createFloatControl({ range: "freq-range", value: "freq-value", auto: "freq-auto" }, "setFrequencyPenalty");
 
 /** Compact token counts: 12345 -> "12.3k", 2000000 -> "2M". */
 function fmtTokens(n: number): string {
@@ -3108,15 +3254,18 @@ window.addEventListener("keydown", (e) => {
     closeCompactionSettings();
   }
 });
-ctxMinus.addEventListener("click", () => sendContextWindow(clampContextWindow(Number(ctxInput.value)) - CONTEXT_STEP));
-ctxPlus.addEventListener("click", () => sendContextWindow(clampContextWindow(Number(ctxInput.value)) + CONTEXT_STEP));
-// Fire on change (blur/Enter), not on every keystroke, so values can be typed freely.
-ctxInput.addEventListener("change", () => sendContextWindow(clampContextWindow(Number(ctxInput.value))));
-bindIntegerInput(ctxInput);
-outMinus.addEventListener("click", () => sendOutputTokens(clampOutputTokens(Number(outInput.value)) - OUTPUT_STEP));
-outPlus.addEventListener("click", () => sendOutputTokens(clampOutputTokens(Number(outInput.value)) + OUTPUT_STEP));
-outInput.addEventListener("change", () => sendOutputTokens(clampOutputTokens(Number(outInput.value))));
-bindIntegerInput(outInput);
+const sendContextThrottled = rafThrottle(() => sendContextWindow(Number(ctxRange.value)));
+const sendOutputThrottled = rafThrottle(() => sendOutputTokens(Number(outRange.value)));
+ctxRange.addEventListener("input", () => {
+  ctxValue.textContent = ctxRange.value;
+  sendContextThrottled();
+});
+ctxRange.addEventListener("change", () => sendContextWindow(Number(ctxRange.value)));
+outRange.addEventListener("input", () => {
+  outValue.textContent = outRange.value;
+  sendOutputThrottled();
+});
+outRange.addEventListener("change", () => sendOutputTokens(Number(outRange.value)));
 // The 3 sampling steppers (temp / presence / freq) are wired by
 // createFloatControl above (sanitize, change, ±, Auto).
 
@@ -3442,7 +3591,7 @@ window.addEventListener("message", (e) => {
       if (msg.config && typeof msg.config.parallel === "boolean") {
         applyParallel(msg.config.parallel);
       }
-      ctxInput.value = String(clampContextWindow((msg.config && msg.config.contextWindow) || DEFAULT_CONTEXT_WINDOW));
+      renderContextWindow(msg.config || {});
       renderOutputTokens(msg.config || {});
       renderSamplerControl(msg.config || {});
       renderControl((msg.config || {}) as ConfigState);
@@ -3534,7 +3683,7 @@ function renderViewState(state: {
   if (state.config && typeof state.config.parallel === "boolean") {
     applyParallel(state.config.parallel);
   }
-  ctxInput.value = String(clampContextWindow((state.config && state.config.contextWindow) || DEFAULT_CONTEXT_WINDOW));
+  renderContextWindow(state.config || {});
   renderOutputTokens(state.config || {});
   renderSamplerControl(state.config || {});
   renderControl(state.config || {});

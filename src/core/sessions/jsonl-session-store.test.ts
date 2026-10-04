@@ -387,11 +387,14 @@ describe("JsonlSessionStore control settings (parallel cap + Loop Guard)", () =>
     store.saveSettings("s1", {
       maxParallelSubAgents: 6,
       loopGuard: "high",
+      loopGuardParams: { maxNudges: 5, reasoningThreshold: 999 },
     });
 
     const loaded = store.load("s1").summary;
     expect(loaded.maxParallelSubAgents).toBe(6);
     expect(loaded.loopGuard).toBe("high");
+    // The field values are clamped to the editable ranges on the way in.
+    expect(loaded.loopGuardParams).toEqual({ maxNudges: 5, reasoningThreshold: 1 });
 
     // A later message write / rename must NOT drop them.
     store.saveMessages("s1", [msg({ content: "x" })]);
@@ -399,10 +402,24 @@ describe("JsonlSessionStore control settings (parallel cap + Loop Guard)", () =>
     const reloaded = store.load("s1").summary;
     expect(reloaded.maxParallelSubAgents).toBe(6);
     expect(reloaded.loopGuard).toBe("high");
+    expect(reloaded.loopGuardParams).toEqual({ maxNudges: 5, reasoningThreshold: 1 });
 
     // A fresh store instance still sees them (header round-trip).
     const store2 = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s9" });
     expect(store2.load("s1").summary.loopGuard).toBe("high");
+    expect(store2.load("s1").summary.loopGuardParams).toEqual({ maxNudges: 5, reasoningThreshold: 1 });
+    // The listing reads the same header, so the picker sees them too.
+    expect(store2.list().find((s) => s.id === "s1")?.loopGuardParams).toEqual({ maxNudges: 5, reasoningThreshold: 1 });
+  });
+
+  it("an explicit undefined CLEARS the saved Loop Guard parameters", () => {
+    const store = new JsonlSessionStore(() => dir, nodeFileSystem, { idGen: () => "s1" });
+    store.create();
+    store.saveSettings("s1", { loopGuardParams: { maxNudges: 4 } });
+    expect(store.load("s1").summary.loopGuardParams).toEqual({ maxNudges: 4 });
+
+    store.saveSettings("s1", { loopGuardParams: undefined });
+    expect(store.load("s1").summary.loopGuardParams).toBeUndefined();
   });
 
   it("keeps 0 as 'no cap' (not unset) and clears the override when the key is undefined", () => {

@@ -1,5 +1,5 @@
 import type { ChatMessage } from "../history/types";
-import type { LoopGuardSensitivity } from "../agent/loop-guard";
+import type { LoopGuardOptions, LoopGuardSensitivity } from "../agent/loop-guard";
 
 /** Lightweight metadata shown in the session picker UI. */
 export interface SessionSummary {
@@ -50,6 +50,9 @@ export interface SessionSummary {
   loopGuard?: LoopGuardSensitivity;
   /** Also guard the visible final answer for repetition (opt-in; undefined = off). */
   loopGuardResponse?: boolean;
+  /** Per-session Loop Guard PARAMETER overrides (the editable fields), saved
+   * on the session. Absent keys fall back to the sensitivity preset. */
+  loopGuardParams?: Partial<LoopGuardOptions>;
 }
 
 /** A session file plus its loaded messages. */
@@ -76,6 +79,7 @@ export type SessionSettings = Pick<
   | "maxParallelSubAgents"
   | "loopGuard"
   | "loopGuardResponse"
+  | "loopGuardParams"
   | "folder"
 >;
 

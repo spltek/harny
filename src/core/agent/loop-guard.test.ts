@@ -9,6 +9,10 @@ import {
   resolveLoopGuardOptions,
   normalizeLoopGuardSensitivity,
   isLoopGuardSensitivity,
+  loopGuardPresets,
+  clampLoopGuardOverrides,
+  LOOP_GUARD_FIELD_RANGES,
+  LOOP_GUARD_SENSITIVITIES,
   type ToolOutcome,
 } from "./loop-guard";
 import type { ToolCall } from "../tools/tool";
@@ -288,6 +292,41 @@ describe("Loop Guard sensitivity presets", () => {
 
   it("an unknown level falls back to normal", () => {
     expect(resolveLoopGuardOptions("bogus" as never)).toEqual(resolveLoopGuardOptions("normal"));
+  });
+
+  it("exposes the presets as COPIES (loopGuardPresets)", () => {
+    const p = loopGuardPresets();
+    expect(p.high).toEqual(resolveLoopGuardOptions("high"));
+    expect(p.normal).toEqual(resolveLoopGuardOptions("normal"));
+    expect(p.low).toEqual(resolveLoopGuardOptions("low"));
+    // Mutating a copy must not corrupt the module-level presets.
+    p.normal.maxNudges = 99;
+    expect(resolveLoopGuardOptions("normal").maxNudges).toBe(2);
+  });
+
+  it("every preset value sits inside its editable range", () => {
+    for (const level of LOOP_GUARD_SENSITIVITIES) {
+      const preset = resolveLoopGuardOptions(level);
+      for (const r of LOOP_GUARD_FIELD_RANGES) {
+        const v = preset[r.key];
+        expect(v).toBeGreaterThanOrEqual(r.min);
+        expect(v).toBeLessThanOrEqual(r.max);
+        if (r.integer) expect(Number.isInteger(v)).toBe(true);
+      }
+    }
+  });
+
+  it("clamps UI overrides to the editable ranges, dropping junk", () => {
+    expect(clampLoopGuardOverrides(undefined)).toBeUndefined();
+    expect(clampLoopGuardOverrides("x")).toBeUndefined();
+    expect(clampLoopGuardOverrides({ nope: 1 })).toBeUndefined();
+    expect(clampLoopGuardOverrides({ maxNudges: 999 })).toEqual({ maxNudges: 10 });
+    expect(clampLoopGuardOverrides({ maxNudges: -3 })).toEqual({ maxNudges: 1 });
+    expect(clampLoopGuardOverrides({ reasoningThreshold: 999 })).toEqual({ reasoningThreshold: 1 });
+    // Integer fields are rounded; ratio fields keep decimals.
+    expect(clampLoopGuardOverrides({ maxNudges: 2.7 })).toEqual({ maxNudges: 3 });
+    expect(clampLoopGuardOverrides({ reasoningThreshold: 0.52 })).toEqual({ reasoningThreshold: 0.52 });
+    expect(clampLoopGuardOverrides({ maxNudges: Number.NaN })).toBeUndefined();
   });
 
   it("normalizeLoopGuardSensitivity validates persisted values", () => {

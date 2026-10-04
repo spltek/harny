@@ -62,9 +62,9 @@ function setupDom(
         <div id="attachment-chips" class="hidden"></div>
       </div>
     </div>
-    <div id="status">AI Model: <select id="model-select"></select><button id="gear-btn">⚙</button><button id="ctx-minus">−</button><input id="ctx-input" type="text" value="128000"><button id="ctx-plus">+</button><button id="out-minus">−</button><input id="out-input" type="text" value="8192"><button id="out-plus">+</button><input id="sampler-temp" type="radio" name="sampler" checked><input id="sampler-topp" type="radio" name="sampler"><button id="samp-minus">−</button><input id="samp-input" type="text" placeholder="Auto"><button id="samp-plus">+</button><button id="samp-auto">Auto</button><button id="presence-minus">−</button><input id="presence-input" type="text" placeholder="Auto"><button id="presence-plus">+</button><button id="presence-auto">Auto</button><button id="freq-minus">−</button><input id="freq-input" type="text" placeholder="Auto"><button id="freq-plus">+</button><button id="freq-auto">Auto</button></div>
-    <div id="ctl-cards"><input type="checkbox" id="par-enabled" /><input id="par-input" type="text" value="4" /><button id="par-minus"></button><button id="par-plus"></button><button id="lg-reset"></button><input type="radio" name="lg-level" id="lg-high" value="high" /><input type="radio" name="lg-level" id="lg-normal" value="normal" checked /><input type="radio" name="lg-level" id="lg-low" value="low" /><input type="checkbox" id="lg-response" /><div id="skills-card" class="hidden"><div id="skills-list"></div></div><div id="mcp-card" class="hidden"><div id="mcp-list"></div><button id="mcp-configure"></button></div></div>
-    <div id="metrics"><select id="thinking-select"><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button><span id="compact-threshold-label"></span><button id="compact-settings-btn">⚙</button></div>
+    <div id="status">AI Model: <select id="model-select"></select><button id="gear-btn">⚙</button><input type="range" id="ctx-range" min="32000" max="2000000" step="1000"><span id="ctx-value"></span><input type="range" id="out-range" min="256" max="65536" step="256"><span id="out-value"></span><input id="sampler-temp" type="radio" name="sampler" checked><input id="sampler-topp" type="radio" name="sampler"><input type="range" id="samp-range" min="0" max="2" step="0.1"><span id="samp-value">Auto</span><button id="samp-auto">Auto</button><input type="range" id="presence-range" min="0" max="2" step="0.1"><span id="presence-value">Auto</span><button id="presence-auto">Auto</button><input type="range" id="freq-range" min="0" max="2" step="0.1"><span id="freq-value">Auto</span><button id="freq-auto">Auto</button></div>
+    <div id="ctl-cards"><input type="range" id="par-range" min="0" max="100" step="1" /><span id="par-value">4</span><button id="lg-reset"></button><input type="radio" name="lg-level" id="lg-high" value="high" /><input type="radio" name="lg-level" id="lg-normal" value="normal" checked /><input type="radio" name="lg-level" id="lg-low" value="low" /><input type="checkbox" id="lg-response" /><div id="lg-params-field"><div id="lg-fields"></div></div><button id="lg-collapse"></button><div id="skills-card" class="hidden"><div id="skills-list"></div></div><div id="mcp-card" class="hidden"><div id="mcp-list"></div><button id="mcp-configure"></button></div></div>
+    <div id="metrics"><input type="radio" name="thinking-level" id="thinking-off" value="off" /><input type="radio" name="thinking-level" id="thinking-low" value="low" /><input type="radio" name="thinking-level" id="thinking-medium" value="medium" /><input type="radio" name="thinking-level" id="thinking-high" value="high" /><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button><span id="compact-threshold-label"></span><button id="compact-settings-btn">⚙</button></div>
     <div id="compact-settings-modal" class="hidden">
       <div class="cs-backdrop"></div>
       <div class="cs-card">
@@ -359,39 +359,41 @@ describe("view webview client", () => {
     expect(document.getElementById("parallel-btn")?.classList.contains("is-on")).toBe(true);
   });
 
-  it("renders the thinking level dropdown per provider capability", async () => {
+  it("renders the thinking level radios per provider capability", async () => {
     await loadView();
-    const sel = document.getElementById("thinking-select") as HTMLSelectElement;
-    // No thinkingMode declared → disabled, value falls back to Off.
-    expect(sel.disabled).toBe(true);
-    expect(sel.value).toBe("off");
+    const off = document.getElementById("thinking-off") as HTMLInputElement;
+    // No thinkingMode declared → disabled, falls back to Off.
+    expect(off.disabled).toBe(true);
+    expect(off.checked).toBe(true);
 
     hostMessage({
       type: "config",
       config: { provider: "openai-compatible", model: "qwen.gguf", hasKey: true, thinkingMode: "bool", thinkingLevel: "high", models: [], providerModels: [], contextWindow: 128000 },
     });
-    expect(sel.disabled).toBe(false);
-    expect(sel.value).toBe("high");
+    expect(off.disabled).toBe(false);
+    expect((document.getElementById("thinking-high") as HTMLInputElement).checked).toBe(true);
 
-    sel.value = "low";
-    sel.dispatchEvent(new Event("change"));
+    posted.length = 0;
+    const low = document.getElementById("thinking-low") as HTMLInputElement;
+    low.checked = true;
+    low.dispatchEvent(new Event("change"));
     expect(posted).toContainEqual({ type: "setThinkingLevel", level: "low" });
 
-    // effort-style providers also enable the dropdown
+    // effort-style providers also enable the radios
     hostMessage({
       type: "config",
       config: { provider: "openai", model: "gpt-5", hasKey: true, thinkingMode: "effort", thinkingLevel: "medium", models: [], providerModels: [], contextWindow: 128000 },
     });
-    expect(sel.disabled).toBe(false);
-    expect(sel.value).toBe("medium");
+    expect(off.disabled).toBe(false);
+    expect((document.getElementById("thinking-medium") as HTMLInputElement).checked).toBe(true);
 
-    // DeepSeek/Anthropic toggle (OpenCode Go) also enables the dropdown
+    // DeepSeek/Anthropic toggle (OpenCode Go) also enables them
     hostMessage({
       type: "config",
       config: { provider: "openai-compatible", model: "deepseek-v4.1-flash", hasKey: true, thinkingMode: "type", thinkingLevel: "high", models: [], providerModels: [], contextWindow: 128000 },
     });
-    expect(sel.disabled).toBe(false);
-    expect(sel.value).toBe("high");
+    expect(off.disabled).toBe(false);
+    expect((document.getElementById("thinking-high") as HTMLInputElement).checked).toBe(true);
   });
 
   it("renders sessions, tabs and the active chat", async () => {
@@ -437,23 +439,23 @@ describe("view webview client", () => {
     // no DOM rebuild → streaming state untouched implicitly (elements kept)
   });
 
-  it("disables the thinking selector while working (and on config pushes) but keeps sessions/tabs usable", async () => {
+  it("disables the thinking radios while working (and on config pushes) but keeps sessions/tabs usable", async () => {
     await loadView();
-    const sel = document.getElementById("thinking-select") as HTMLSelectElement;
+    const off = document.getElementById("thinking-off") as HTMLInputElement;
     hostMessage({ type: "config", config: { provider: "openai-compatible", model: "x", hasKey: true, thinkingMode: "bool", thinkingLevel: "high", models: [], providerModels: [], contextWindow: 128000 } });
-    expect(sel.disabled).toBe(false);
+    expect(off.disabled).toBe(false);
 
     hostMessage({ type: "status", active: true });
-    expect(sel.disabled).toBe(true);
+    expect(off.disabled).toBe(true);
     // sessions list / tabs / new-session stay usable during work
     expect((document.getElementById("new-session") as HTMLButtonElement).disabled).toBe(false);
     expect(document.querySelectorAll(".tab").length).toBeGreaterThan(0);
-    // a config push mid-stream must NOT re-enable it
+    // a config push mid-stream must NOT re-enable them
     hostMessage({ type: "config", config: { provider: "openai-compatible", model: "x", hasKey: true, thinkingMode: "bool", thinkingLevel: "medium", models: [], providerModels: [], contextWindow: 128000 } });
-    expect(sel.disabled).toBe(true);
+    expect(off.disabled).toBe(true);
 
     hostMessage({ type: "status", active: false });
-    expect(sel.disabled).toBe(false);
+    expect(off.disabled).toBe(false);
   });
 
   it("locks all interaction controls while the LLM works and unlocks after", async () => {
@@ -464,31 +466,24 @@ describe("view webview client", () => {
     expect((document.getElementById("compact-btn") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("compact-settings-btn") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("model-select") as HTMLSelectElement).disabled).toBe(true);
-    expect((document.getElementById("ctx-input") as HTMLInputElement).disabled).toBe(true);
-    expect((document.getElementById("ctx-minus") as HTMLButtonElement).disabled).toBe(true);
-    expect((document.getElementById("ctx-plus") as HTMLButtonElement).disabled).toBe(true);
-    expect((document.getElementById("out-input") as HTMLInputElement).disabled).toBe(true);
-    expect((document.getElementById("out-minus") as HTMLButtonElement).disabled).toBe(true);
-    expect((document.getElementById("out-plus") as HTMLButtonElement).disabled).toBe(true);
-    expect((document.getElementById("samp-input") as HTMLInputElement).disabled).toBe(true);
-    expect((document.getElementById("samp-minus") as HTMLButtonElement).disabled).toBe(true);
-    expect((document.getElementById("samp-plus") as HTMLButtonElement).disabled).toBe(true);
+    expect((document.getElementById("ctx-range") as HTMLInputElement).disabled).toBe(true);
+    expect((document.getElementById("out-range") as HTMLInputElement).disabled).toBe(true);
+    expect((document.getElementById("samp-range") as HTMLInputElement).disabled).toBe(true);
     expect((document.getElementById("samp-auto") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("sampler-temp") as HTMLInputElement).disabled).toBe(true);
     expect((document.getElementById("sampler-topp") as HTMLInputElement).disabled).toBe(true);
-    expect((document.getElementById("presence-input") as HTMLInputElement).disabled).toBe(true);
+    expect((document.getElementById("presence-range") as HTMLInputElement).disabled).toBe(true);
     expect((document.getElementById("presence-auto") as HTMLButtonElement).disabled).toBe(true);
-    expect((document.getElementById("freq-input") as HTMLInputElement).disabled).toBe(true);
+    expect((document.getElementById("freq-range") as HTMLInputElement).disabled).toBe(true);
     expect((document.getElementById("freq-auto") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("user-input") as HTMLTextAreaElement).disabled).toBe(true);
     hostMessage({ type: "status", active: false });
     expect((document.getElementById("compact-btn") as HTMLButtonElement).disabled).toBe(false);
     expect((document.getElementById("compact-settings-btn") as HTMLButtonElement).disabled).toBe(false);
     expect((document.getElementById("model-select") as HTMLSelectElement).disabled).toBe(false);
-    expect((document.getElementById("ctx-input") as HTMLInputElement).disabled).toBe(false);
-    expect((document.getElementById("out-input") as HTMLInputElement).disabled).toBe(false);
-    expect((document.getElementById("samp-input") as HTMLInputElement).disabled).toBe(false);
-    expect((document.getElementById("samp-plus") as HTMLButtonElement).disabled).toBe(false);
+    expect((document.getElementById("ctx-range") as HTMLInputElement).disabled).toBe(false);
+    expect((document.getElementById("out-range") as HTMLInputElement).disabled).toBe(false);
+    expect((document.getElementById("samp-range") as HTMLInputElement).disabled).toBe(false);
     expect((document.getElementById("samp-auto") as HTMLButtonElement).disabled).toBe(false);
     expect((document.getElementById("sampler-topp") as HTMLInputElement).disabled).toBe(false);
     expect((document.getElementById("user-input") as HTMLTextAreaElement).disabled).toBe(false);
@@ -1152,7 +1147,7 @@ describe("view webview client", () => {
 
   it("applies a switchView in place: restores the working state and locks delete for working sessions", async () => {
     await loadView();
-    const sel = document.getElementById("thinking-select") as HTMLSelectElement;
+    const off = document.getElementById("thinking-off") as HTMLInputElement;
     hostMessage({
       type: "switchView",
       sessions: [
@@ -1168,7 +1163,7 @@ describe("view webview client", () => {
     });
     // Live working bar restored (footer, outside the transcript flow).
     expect((document.getElementById("working-bar") as HTMLElement).classList.contains("hidden")).toBe(false);
-    expect(sel.disabled).toBe(true);
+    expect(off.disabled).toBe(true);
     // The working session keeps its rename/delete buttons disabled; the idle one not.
     expect((document.querySelector('.srow[data-id="w"] .del') as HTMLButtonElement).disabled).toBe(true);
     expect((document.querySelector('.srow[data-id="w"] .rename') as HTMLButtonElement).disabled).toBe(true);
@@ -2399,38 +2394,36 @@ describe("view webview client", () => {
     expect(result.className).toContain("err");
   });
 
-  it("Guardrails card: parallel cap renders and posts setMaxParallelSubAgents", async () => {
+  it("Parallel card: the cap slider renders and posts setMaxParallelSubAgents", async () => {
     await loadView();
     hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, maxParallelSubAgents: 6 } });
-    const flag = document.getElementById("par-enabled") as HTMLInputElement;
-    const input = document.getElementById("par-input") as HTMLInputElement;
-    const plus = document.getElementById("par-plus") as HTMLButtonElement;
-    const minus = document.getElementById("par-minus") as HTMLButtonElement;
-    expect(flag.checked).toBe(true);
-    expect(input.value).toBe("6");
-    expect(input.disabled).toBe(false);
+    const range = document.getElementById("par-range") as HTMLInputElement;
+    const label = document.getElementById("par-value") as HTMLElement;
+    expect(range.value).toBe("6");
+    expect(range.max).toBe("100");
+    expect(label.textContent).toBe("6");
+    expect(range.disabled).toBe(false);
 
     posted.length = 0;
-    plus.click();
-    expect(input.value).toBe("7");
+    range.value = "7";
+    range.dispatchEvent(new Event("input"));
+    expect(label.textContent).toBe("7"); // live mirror
+    range.dispatchEvent(new Event("change"));
     const msg = posted.at(-1) as { type: string; value: number };
     expect(msg.type).toBe("setMaxParallelSubAgents");
     expect(msg.value).toBe(7);
-    minus.click();
-    minus.click();
-    expect(input.value).toBe("5");
   });
 
-  it("Guardrails card: parallel flag off posts 0 (no cap) and disables the field", async () => {
+  it("Parallel card: 0 means NO cap and shows 'Off'", async () => {
     await loadView();
     hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, maxParallelSubAgents: 4 } });
-    const flag = document.getElementById("par-enabled") as HTMLInputElement;
-    const input = document.getElementById("par-input") as HTMLInputElement;
-    expect(flag.checked).toBe(true);
-    flag.checked = false;
+    const range = document.getElementById("par-range") as HTMLInputElement;
+    const label = document.getElementById("par-value") as HTMLElement;
     posted.length = 0;
-    flag.dispatchEvent(new Event("change"));
-    expect(input.disabled).toBe(true);
+    range.value = "0";
+    range.dispatchEvent(new Event("input"));
+    expect(label.textContent).toBe("Off");
+    range.dispatchEvent(new Event("change"));
     const msg = posted.find((m) => (m as { type?: string }).type === "setMaxParallelSubAgents") as { value: number };
     expect(msg.value).toBe(0);
   });
@@ -2467,6 +2460,94 @@ describe("view webview client", () => {
     expect(response.checked).toBe(false);
   });
 
+  it("Loop Guard fields: built from the ranges, filled from the preset, post live overrides", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, loopGuard: "high",
+        loopGuardRanges: [
+          { key: "maxNudges", min: 1, max: 10, step: 1, integer: true },
+          { key: "reasoningThreshold", min: 0.05, max: 1, step: 0.05, integer: false },
+        ],
+        loopGuardPresets: {
+          high: { maxNudges: 3, reasoningThreshold: 0.45 },
+          normal: { maxNudges: 2, reasoningThreshold: 0.5 },
+          low: { maxNudges: 2, reasoningThreshold: 0.65 },
+        },
+      },
+    });
+    const nudges = document.getElementById("lgr-maxNudges") as HTMLInputElement;
+    const nudgesVal = document.getElementById("lgv-maxNudges") as HTMLElement;
+    const theta = document.getElementById("lgr-reasoningThreshold") as HTMLInputElement;
+    expect(nudges).toBeTruthy();
+    expect(nudges.type).toBe("range");
+    expect(nudges.min).toBe("1");
+    expect(nudges.max).toBe("10");
+    // Filled from the ACTIVE level's preset (high).
+    expect(nudges.value).toBe("3");
+    expect(nudgesVal.textContent).toBe("3");
+    expect(theta.value).toBe("0.45");
+    // The value is a read-only LABEL: no editable number box exists.
+    expect(document.getElementById("lgf-maxNudges")).toBeNull();
+
+    // Dragging a slider mirrors the value live and posts on release.
+    posted.length = 0;
+    nudges.value = "7";
+    nudges.dispatchEvent(new Event("input"));
+    expect(nudgesVal.textContent).toBe("7");
+    nudges.dispatchEvent(new Event("change"));
+    const msg = posted.at(-1) as { type: string; overrides: Record<string, number> };
+    expect(msg.type).toBe("setLoopGuardOverrides");
+    expect(msg.overrides.maxNudges).toBe(7);
+    expect(msg.overrides.reasoningThreshold).toBe(0.45);
+
+    // Switching the level resets the sliders + labels to that preset's values.
+    const low = document.getElementById("lg-low") as HTMLInputElement;
+    low.checked = true;
+    low.dispatchEvent(new Event("change"));
+    expect(nudges.value).toBe("2");
+    expect(nudgesVal.textContent).toBe("2");
+    expect(theta.value).toBe("0.65");
+  });
+
+  it("Loop Guard fields show the SAVED per-session values over the preset", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, loopGuard: "normal",
+        loopGuardRanges: [
+          { key: "maxNudges", min: 1, max: 10, step: 1, integer: true },
+          { key: "reasoningThreshold", min: 0.05, max: 1, step: 0.05, integer: false },
+        ],
+        loopGuardPresets: { normal: { maxNudges: 2, reasoningThreshold: 0.5 } },
+        loopGuardParams: { maxNudges: 7 },
+      },
+    });
+    // The saved value wins; a key with no saved value falls back to the preset.
+    expect((document.getElementById("lgr-maxNudges") as HTMLInputElement).value).toBe("7");
+    expect((document.getElementById("lgv-maxNudges") as HTMLElement).textContent).toBe("7");
+    expect((document.getElementById("lgr-reasoningThreshold") as HTMLInputElement).value).toBe("0.5");
+  });
+
+  it("Loop Guard parameters start COLLAPSED and the corner chevron toggles them", async () => {
+    await loadView();
+    const field = document.getElementById("lg-params-field") as HTMLElement;
+    const btn = document.getElementById("lg-collapse") as HTMLButtonElement;
+    // Collapsed by default (the card keeps its minimum height).
+    expect(field.classList.contains("hidden")).toBe(true);
+    expect(btn.getAttribute("aria-expanded")).toBe("false");
+
+    btn.click();
+    expect(field.classList.contains("hidden")).toBe(false);
+    expect(btn.getAttribute("aria-expanded")).toBe("true");
+
+    btn.click();
+    expect(field.classList.contains("hidden")).toBe(true);
+    expect(btn.getAttribute("aria-expanded")).toBe("false");
+  });
+
   it("Guardrails card reflects the initial session config on load (no config push)", async () => {
     setupDom({
       config: {
@@ -2482,8 +2563,8 @@ describe("view webview client", () => {
       },
     });
     await loadView();
-    expect((document.getElementById("par-enabled") as HTMLInputElement).checked).toBe(true);
-    expect((document.getElementById("par-input") as HTMLInputElement).value).toBe("7");
+    expect((document.getElementById("par-range") as HTMLInputElement).value).toBe("7");
+    expect((document.getElementById("par-value") as HTMLElement).textContent).toBe("7");
     expect((document.getElementById("lg-low") as HTMLInputElement).checked).toBe(true);
     expect((document.getElementById("lg-response") as HTMLInputElement).checked).toBe(true);
   });
@@ -2491,7 +2572,7 @@ describe("view webview client", () => {
   it("Guardrails card locks its controls while the session is working", async () => {
     await loadView();
     hostMessage({ type: "status", active: true });
-    expect((document.getElementById("par-enabled") as HTMLInputElement).disabled).toBe(true);
+    expect((document.getElementById("par-range") as HTMLInputElement).disabled).toBe(true);
     expect((document.getElementById("lg-high") as HTMLInputElement).disabled).toBe(true);
     expect((document.getElementById("lg-response") as HTMLInputElement).disabled).toBe(true);
     hostMessage({ type: "status", active: false });
@@ -3194,52 +3275,34 @@ describe("in-panel alert modal", () => {
   });
 });
 
-it("the shared sampler input accepts digits and ONE decimal separator only", async () => {
+  it("updates the context-window slider + label from the host-pushed value", async () => {
     await loadView();
-    const input = document.getElementById("samp-input") as HTMLInputElement;
-    input.value = "1,5.3";
-    input.dispatchEvent(new Event("input"));
-    expect(input.value).toBe("1.53"); // comma -> dot, extra dots stripped
-    input.value = "abc12.";
-    input.dispatchEvent(new Event("input"));
-    expect(input.value).toBe("12."); // letters stripped, a single trailing dot kept
-  });
-
-  it("updates the context-window control from the host-pushed (adopted) value", async () => {
-    await loadView();
-    const ctx = document.getElementById("ctx-input") as HTMLInputElement;
-    expect(ctx.value).toBe("128000");
+    const label = document.getElementById("ctx-value") as HTMLElement;
+    expect(label.textContent).toBe("128000");
     hostMessage({
       type: "config",
       config: { provider: "openai", model: "m", hasKey: true, models: [], providerModels: [], contextWindow: 131072 },
     });
-    expect(ctx.value).toBe("131072");
+    // The LABEL keeps the EXACT value; the slider sits on the nearest step.
+    expect(label.textContent).toBe("131072");
   });
 
-  it("context window and output tokens accept integers only", async () => {
-    await loadView();
-    const ctx = document.getElementById("ctx-input") as HTMLInputElement;
-    ctx.value = "12.5e3";
-    ctx.dispatchEvent(new Event("input"));
-    expect(ctx.value).toBe("1253");
-    const out = document.getElementById("out-input") as HTMLInputElement;
-    out.value = "8.5";
-    out.dispatchEvent(new Event("input"));
-    expect(out.value).toBe("85");
-  });
-
-it("presence/frequency steppers render, step and reset to Auto like temperature", async () => {
+it("presence/frequency sliders render, post on drag and reset to Auto", async () => {
     await loadView();
     hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], presencePenalty: 1.5, frequencyPenalty: 0.5 } });
-    const p = document.getElementById("presence-input") as HTMLInputElement;
-    const f = document.getElementById("freq-input") as HTMLInputElement;
-    expect(p.value).toBe("1.5");
-    expect(f.value).toBe("0.5");
-    (document.getElementById("presence-plus") as HTMLButtonElement).click();
+    const p = document.getElementById("presence-range") as HTMLInputElement;
+    const pv = document.getElementById("presence-value") as HTMLElement;
+    const fv = document.getElementById("freq-value") as HTMLElement;
+    expect(pv.textContent).toBe("1.5");
+    expect(fv.textContent).toBe("0.5");
+    p.value = "1.6";
+    p.dispatchEvent(new Event("input"));
+    expect(pv.textContent).toBe("1.6"); // live mirror
+    p.dispatchEvent(new Event("change"));
     expect(posted).toContainEqual({ type: "setPresencePenalty", value: 1.6 });
     (document.getElementById("freq-auto") as HTMLButtonElement).click();
     expect(posted).toContainEqual({ type: "setFrequencyPenalty", value: null });
-    expect(f.value).toBe("");
+    expect(fv.textContent).toBe("Auto");
   });
 
 function messagesElLastContent(): string {
@@ -3333,128 +3396,105 @@ describe("context metrics line", () => {
   });
 });
 
-describe("context window spinner", () => {
+describe("context window slider", () => {
   beforeEach(() => { posted.length = 0; setupDom(); });
 
-  it("renders the context value from config and posts changes via + / -", async () => {
+  it("renders the context value from config and posts on drag", async () => {
     await loadView();
     hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 200000 } });
-    const input = document.getElementById("ctx-input") as HTMLInputElement;
-    expect(input.value).toBe("200000");
+    const range = document.getElementById("ctx-range") as HTMLInputElement;
+    const label = document.getElementById("ctx-value") as HTMLElement;
+    expect(label.textContent).toBe("200000");
 
-    (document.getElementById("ctx-plus") as HTMLButtonElement).click();
-    expect(posted).toContainEqual({ type: "setContextWindow", value: 216000 });
-    expect(input.value).toBe("216000");
-
-    (document.getElementById("ctx-minus") as HTMLButtonElement).click();
-    expect(posted).toContainEqual({ type: "setContextWindow", value: 200000 });
+    range.value = "300000";
+    range.dispatchEvent(new Event("input"));
+    expect(label.textContent).toBe("300000"); // live mirror
+    range.dispatchEvent(new Event("change"));
+    expect(posted).toContainEqual({ type: "setContextWindow", value: 300000 });
   });
 
-  it("clamps a manually typed value and posts it on change", async () => {
+  it("clamps an out-of-range slider value to the window bounds", async () => {
     await loadView();
-    const input = document.getElementById("ctx-input") as HTMLInputElement;
-    input.value = "999999";
-    input.dispatchEvent(new Event("change"));
-    expect(posted).toContainEqual({ type: "setContextWindow", value: 999999 });
-
-    input.value = "1000"; // below min -> clamp to 32000
-    input.dispatchEvent(new Event("change"));
+    const range = document.getElementById("ctx-range") as HTMLInputElement;
+    range.value = "1000"; // below min -> 32000
+    range.dispatchEvent(new Event("change"));
     expect(posted).toContainEqual({ type: "setContextWindow", value: 32000 });
   });
 });
 
-describe("output tokens spinner", () => {
+describe("output tokens slider", () => {
   beforeEach(() => { posted.length = 0; setupDom(); });
 
-  it("renders the value from config (default 8192) and posts changes via + / -", async () => {
+  it("renders the value from config (default 8192) and posts on drag", async () => {
     await loadView();
-    const input = document.getElementById("out-input") as HTMLInputElement;
-    expect(input.value).toBe("8192");
+    const range = document.getElementById("out-range") as HTMLInputElement;
+    const label = document.getElementById("out-value") as HTMLElement;
+    expect(label.textContent).toBe("8192");
 
     hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], outputTokens: 16384 } });
-    expect(input.value).toBe("16384");
+    expect(label.textContent).toBe("16384");
 
-    (document.getElementById("out-plus") as HTMLButtonElement).click();
-    expect(posted).toContainEqual({ type: "setOutputTokens", value: 16896 });
-    expect(input.value).toBe("16896");
-
-    (document.getElementById("out-minus") as HTMLButtonElement).click();
-    expect(posted).toContainEqual({ type: "setOutputTokens", value: 16384 });
+    range.value = "20000";
+    range.dispatchEvent(new Event("input"));
+    expect(label.textContent).toBe("20000");
+    range.dispatchEvent(new Event("change"));
+    expect(posted).toContainEqual({ type: "setOutputTokens", value: 20000 });
   });
 
-  it("clamps a manually typed value and posts it on change", async () => {
+  it("clamps an out-of-range slider value to the output bounds", async () => {
     await loadView();
-    const input = document.getElementById("out-input") as HTMLInputElement;
-    input.value = "100"; // below min -> clamp to 256
-    input.dispatchEvent(new Event("change"));
+    const range = document.getElementById("out-range") as HTMLInputElement;
+    range.value = "100"; // below min -> 256
+    range.dispatchEvent(new Event("change"));
     expect(posted).toContainEqual({ type: "setOutputTokens", value: 256 });
   });
 });
 
-describe("sampler (radio + shared stepper)", () => {
+describe("sampler (radio + slider)", () => {
   beforeEach(() => { posted.length = 0; setupDom(); });
 
-  it("renders the ACTIVE sampler value and posts changes via the shared stepper", async () => {
+  it("renders the ACTIVE sampler value and posts on drag", async () => {
     await loadView();
-    const input = document.getElementById("samp-input") as HTMLInputElement;
-    // Temperature by default, no value -> Auto (empty).
-    expect(input.value).toBe("");
+    const range = document.getElementById("samp-range") as HTMLInputElement;
+    const label = document.getElementById("samp-value") as HTMLElement;
+    // Temperature by default, no value -> Auto.
+    expect(label.textContent).toBe("Auto");
     expect((document.getElementById("sampler-temp") as HTMLInputElement).checked).toBe(true);
 
     hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], temperature: 0.7 } });
-    expect(input.value).toBe("0.7");
+    expect(label.textContent).toBe("0.7");
 
-    input.value = "1.5";
-    input.dispatchEvent(new Event("change"));
+    range.value = "1.5";
+    range.dispatchEvent(new Event("input"));
+    expect(label.textContent).toBe("1.5");
+    range.dispatchEvent(new Event("change"));
     expect(posted).toContainEqual({ type: "setSamplerValue", value: 1.5 });
   });
 
-  it("clamps to the ACTIVE scale (0–2 temperature, 0–1 top-p) and Auto resets", async () => {
+  it("clamps to the ACTIVE scale and the Auto button resets to null", async () => {
     await loadView();
-    const input = document.getElementById("samp-input") as HTMLInputElement;
+    const range = document.getElementById("samp-range") as HTMLInputElement;
+    const label = document.getElementById("samp-value") as HTMLElement;
     const auto = document.getElementById("samp-auto") as HTMLButtonElement;
 
-    input.value = "9"; // temperature scale -> clamp to 2
-    input.dispatchEvent(new Event("change"));
+    range.value = "2"; // temperature scale cap
+    range.dispatchEvent(new Event("change"));
     expect(posted).toContainEqual({ type: "setSamplerValue", value: 2 });
-    expect(input.value).toBe("2");
+    expect(label.textContent).toBe("2");
 
-    // Switch to Top-P: radio change posts the mode; the host resets value to Auto.
+    // Switch to Top-P: the radio posts the mode; the host resets the value.
     (document.getElementById("sampler-topp") as HTMLInputElement).click();
     expect(posted).toContainEqual({ type: "setSamplerMode", mode: "topP" });
 
     hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], sampler: "topP", topP: 0.9 } });
-    expect(input.value).toBe("0.9");
+    expect(label.textContent).toBe("0.9");
     expect((document.getElementById("sampler-topp") as HTMLInputElement).checked).toBe(true);
 
-    input.value = "5"; // top-p scale -> clamp to 1
-    input.dispatchEvent(new Event("change"));
-    expect(posted).toContainEqual({ type: "setSamplerValue", value: 1 });
-    expect(input.value).toBe("1");
-
-    // Empty input and Auto reset to Auto (null).
-    input.value = "";
-    input.dispatchEvent(new Event("change"));
-    expect(posted).toContainEqual({ type: "setSamplerValue", value: null });
-    input.value = "0.5";
-    input.dispatchEvent(new Event("change"));
     auto.click();
     expect(posted).toContainEqual({ type: "setSamplerValue", value: null });
-    expect(input.value).toBe("");
-  });
-
-  it("steps with − / + using the active scale", async () => {
-    await loadView();
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], sampler: "topP", topP: 0.9 } });
-    const input = document.getElementById("samp-input") as HTMLInputElement;
-    (document.getElementById("samp-plus") as HTMLButtonElement).click();
-    expect(posted).toContainEqual({ type: "setSamplerValue", value: 1 }); // 0.9+0.1 -> 1.0 (cap)
-    expect(input.value).toBe("1");
-    (document.getElementById("samp-minus") as HTMLButtonElement).click();
-    expect(posted).toContainEqual({ type: "setSamplerValue", value: 0.9 });
+    expect(label.textContent).toBe("Auto");
   });
 });
-
 describe("empty shell (no open session)", () => {
   beforeEach(() => { posted.length = 0; });
 

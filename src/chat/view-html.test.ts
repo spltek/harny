@@ -170,17 +170,40 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/\.subagent-chip\s*\{[^}]*max-width:\s*100%/s);
   });
 
-  it("renders the Guardrails card (parallel cap + Loop Guard) in the control stack", () => {
+  it("renders the Parallel + Loop Guard cards side by side in the control stack", () => {
     const html = renderViewHtml({
       ...base,
       state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
     });
-    // The Guardrails card lives inside the collapsible stack and spans full width.
-    expect(html).toContain('<span class="card-title">Guardrails</span>');
-    expect(html).toContain('class="ctl-card ctl-card-wide"');
-    expect(html).toMatch(/id="par-enabled"[\s\S]*?id="par-input"[\s\S]*?id="par-plus"/);
+    // TWO equal cards, side by side (each one grid column, NOT full width).
+    expect(html).toContain('<span class="card-title">Parallel</span>');
+    expect(html).toContain('<span class="card-title">Loop Guard</span>');
+    // Window + Sampling numerics are SLIDERS with a read-only value label (no
+    // more text inputs or +/- spinner buttons).
+    for (const id of ["ctx-range", "out-range", "samp-range", "presence-range", "freq-range"]) {
+      expect(html).toMatch(new RegExp(`type="range" id="${id}"`));
+    }
+    expect(html).toMatch(/\.num-range\s*\{/);
+    // Every LABEL row inside the control cards matches a control row's height,
+    // so the left/right columns' controls line up horizontally.
+    expect(html).toMatch(/#ctl-cards \.field-label\s*\{[^}]*min-height:\s*var\(--ctl-row\)/);
+    expect(html).toMatch(/#ctl-cards\s*\{\s*--ctl-row:\s*1\.4rem/);
+    expect(html).not.toContain('id="ctx-input"');
+    expect(html).not.toContain('id="samp-input"');
+    expect(html).toMatch(/type="range" id="par-range"[\s\S]*?id="par-value"/);
+    expect(html).toMatch(/name="thinking-level"[\s\S]*?id="thinking-off"[\s\S]*?id="thinking-high"/);
     expect(html).toMatch(/name="lg-level"[\s\S]*?id="lg-high"[\s\S]*?id="lg-normal"[\s\S]*?id="lg-low"/);
     expect(html).toContain('id="lg-response"');
+    // Below the sensitivity row: the editable Loop Guard fields (filled at
+    // runtime from the host-provided ranges + presets).
+    expect(html).toMatch(/id="lg-fields"[^>]*class="lg-fields"/);
+    // The parameters section starts COLLAPSED, toggled by the corner chevron.
+    expect(html).toMatch(/id="lg-params-field"/);
+    expect(html).toMatch(/id="lg-collapse"[^>]*aria-expanded="false"/);
+    expect(html).toMatch(/#lg-params-field\.hidden\s*\{\s*display:\s*none/);
+    expect(html).toMatch(/\.lg-range\s*\{/);
+    // Neither card spans the full row any more.
+    expect(html).not.toMatch(/<span class="card-title">Parallel<\/span>\s*<div class="ctl-controls"/);
     // Skills card: a full-width, initially-hidden card with a chips list.
     expect(html).toMatch(/class="ctl-card ctl-card-wide hidden" id="skills-card"/);
     expect(html).toContain('id="skills-list"');
@@ -199,19 +222,17 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/#slash-menu\.hidden\s*\{\s*display:\s*none/);
     // The MCP editor modal starts hidden (it must not open on load).
     expect(html).toMatch(/#mcp-modal\.hidden\s*\{\s*display:\s*none/);
-    // Parallel cap + Loop Guard share one row, mirroring #ctl-cards columns.
-    expect(html).toContain('class="ctl-controls"');
-    expect(html).toMatch(/\.ctl-controls\s*\{[^}]*display:\s*grid[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
-    // The grid mirrors #ctl-cards so the fields line up vertically with the
-    // cards above (negative margin cancels the card padding; fields re-add it).
-    expect(html).toMatch(/\.ctl-controls\s*\{[^}]*margin:\s*0 -10px/);
-    expect(html).toMatch(/\.ctl-controls\s*>\s*\.field\s*\{[^}]*padding:\s*0 10px/);
-    // The radio group matches the text box height so the labels line up.
-    expect(html).toMatch(/#lg-toggle\s*\{[^}]*min-height:\s*1\.85rem[^}]*align-items:\s*center/);
+    // Guardrails + Loop Guard are two EQUAL cards, side by side: each is a
+    // plain .ctl-card (one grid column of #ctl-cards), so the inner
+    // .ctl-controls mirror grid is gone.
+    expect(html).not.toContain('class="ctl-controls"');
+    // The Loop Guard sensitivity row wraps inside its half-width card and uses
+    // the SHARED control-row height so the labels line up across columns.
+    expect(html).toMatch(/#lg-toggle\s*\{[^}]*flex-wrap:\s*wrap[^}]*min-height:\s*var\(--ctl-row[^)]*\)[^}]*align-items:\s*center/);
     expect(html).toMatch(/\.ctl-card-wide\s*\{\s*grid-column: 1 \/ -1/);
     // Window + Sampling share the row 50/50 (responsive to resize).
     expect(html).toMatch(/\.ctl-cards\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
-    // The old providers-form flag is gone (moved to the per-session Guardrails card).
+    // The old providers-form flag is gone (moved to the per-session Parallel card).
     expect(html).not.toContain("pe-maxparallel");
   });
 

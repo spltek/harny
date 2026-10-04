@@ -129,6 +129,65 @@ export function normalizeLoopGuardSensitivity(value: unknown): LoopGuardSensitiv
   return isLoopGuardSensitivity(value) ? value : undefined;
 }
 
+/** Every NUMERIC Loop Guard parameter (everything except the `guardResponse`
+ * flag), i.e. the knobs the UI exposes as editable fields. */
+export type LoopGuardNumericKey = Exclude<keyof LoopGuardOptions, "guardResponse">;
+
+/** The editable range of one Loop Guard parameter. */
+export interface LoopGuardFieldRange {
+  key: LoopGuardNumericKey;
+  min: number;
+  max: number;
+  step: number;
+  /** Counts/tokens are integers; 0..1 ratios are not. */
+  integer: boolean;
+}
+
+/**
+ * Sensible editing ranges for every Loop Guard parameter. The sensitivity
+ * presets are just POINTS inside these ranges. This is the ONE source of
+ * truth: the UI builds its fields from it and the host clamps incoming
+ * overrides to it.
+ */
+export const LOOP_GUARD_FIELD_RANGES: readonly LoopGuardFieldRange[] = [
+  { key: "maxNudges", min: 1, max: 10, step: 1, integer: true },
+  { key: "reasoningThreshold", min: 0.05, max: 1, step: 0.05, integer: false },
+  { key: "reasoningMinTokens", min: 10, max: 500, step: 10, integer: true },
+  { key: "crossTurnSimilarity", min: 0.05, max: 1, step: 0.05, integer: false },
+  { key: "crossTurnMinLength", min: 0, max: 1000, step: 10, integer: true },
+  { key: "toolFailureRepeats", min: 1, max: 10, step: 1, integer: true },
+  { key: "errorStreakTurns", min: 1, max: 10, step: 1, integer: true },
+  { key: "toolRepeatConsecutive", min: 1, max: 10, step: 1, integer: true },
+  { key: "toolRepeatWindow", min: 1, max: 50, step: 1, integer: true },
+  { key: "toolRepeatWindowThreshold", min: 1, max: 10, step: 1, integer: true },
+  { key: "answerThreshold", min: 0.05, max: 1, step: 0.05, integer: false },
+  { key: "answerMinTokens", min: 10, max: 1000, step: 10, integer: true },
+];
+
+/** Clamp a partial set of overrides to the editable ranges, dropping unknown
+ * keys and non-finite values. Returns `undefined` when nothing valid remains. */
+export function clampLoopGuardOverrides(input: unknown): Partial<LoopGuardOptions> | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const src = input as Record<string, unknown>;
+  const out: Partial<LoopGuardOptions> = {};
+  for (const r of LOOP_GUARD_FIELD_RANGES) {
+    const v = src[r.key];
+    if (typeof v !== "number" || !Number.isFinite(v)) continue;
+    (out as Record<string, number>)[r.key] = Math.min(r.max, Math.max(r.min, r.integer ? Math.round(v) : v));
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** The hard-coded presets, exposed as COPIES so the UI can show the values
+ * behind each sensitivity level without duplicating them. */
+export function loopGuardPresets(): Record<LoopGuardSensitivity, LoopGuardOptions> {
+  return {
+    low: { ...LOOP_GUARD_PRESETS.low },
+    normal: { ...LOOP_GUARD_PRESETS.normal },
+    high: { ...LOOP_GUARD_PRESETS.high },
+  };
+}
+
 /** The full resolved option set for the "normal" preset (the guard default). */
 export const DEFAULT_LOOP_GUARD_OPTIONS: LoopGuardOptions = LOOP_GUARD_PRESETS.normal;
 

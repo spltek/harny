@@ -2,7 +2,7 @@ import type { ChatController } from "../core/agent/chat-controller";
 import type { ChatHistory } from "../core/history/chat-history";
 import { PersistentChatHistory } from "../core/history/persistent-chat-history";
 import type { ThinkingLevel } from "../core/config/types";
-import type { LoopGuardSensitivity } from "../core/agent/loop-guard";
+import type { LoopGuardOptions, LoopGuardSensitivity } from "../core/agent/loop-guard";
 import type { SessionStore } from "../core/sessions/types";
 import type { SessionManager } from "../core/sessions/session-manager";
 
@@ -39,6 +39,11 @@ export interface SessionRuntime {
   loopGuard?: LoopGuardSensitivity;
   /** Also guard the visible final answer (opt-in; undefined = off). */
   loopGuardResponse?: boolean;
+  /** EPHEMERAL Loop Guard overrides from the UI's editable fields: applied to
+   * the agent for this session but deliberately NOT persisted (neither on the
+   * session nor in the config), so tuning is throw-away. Cleared whenever the
+   * sensitivity level changes (the preset becomes the new baseline). */
+  loopGuardOverrides?: Partial<LoopGuardOptions>;
   /** Chat mode chosen in this session (in-memory; default "analyze"). */
   mode?: "analyze" | "agent";
   /** Current context tokens in use (fill metric). */
@@ -101,6 +106,9 @@ export class SessionRegistry {
     rt.maxParallelSubAgents = loaded.summary.maxParallelSubAgents;
     rt.loopGuard = loaded.summary.loopGuard;
     rt.loopGuardResponse = loaded.summary.loopGuardResponse;
+    // The editable field values are SAVED on the session; restore them so the
+    // guard starts from the tuned parameters, not the bare preset.
+    rt.loopGuardOverrides = loaded.summary.loopGuardParams;
     rt.contextTokens = loaded.summary.contextTokens;
     return rt;
   }

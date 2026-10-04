@@ -24,7 +24,8 @@ import type { SkillRegistry } from "../core/skills/skill-registry";
 import type { McpManager } from "../core/mcp";
 import { McpStdioClient, McpHttpClient, type McpClient } from "../core/mcp";
 import type { McpServerConfig, McpStdioServerConfig, McpHttpServerConfig } from "../core/config/types";
-import { normalizeLoopGuardSensitivity, resolveLoopGuardOptions } from "../core/agent/loop-guard";
+import { LOOP_GUARD_FIELD_RANGES, clampLoopGuardOverrides, loopGuardPresets, normalizeLoopGuardSensitivity, resolveLoopGuardOptions } from "../core/agent/loop-guard";
+import type { LoopGuardOptions } from "../core/agent/loop-guard";
 import { DEFAULT_MAX_PARALLEL_SUB_AGENTS } from "../core/agent/agent";
 
 /**
@@ -795,8 +796,22 @@ export class ChatViewProvider implements WebviewViewProvider {
         // Per-session Loop Guard sensitivity; undefined clears the override (= normal).
         const level = normalizeLoopGuardSensitivity(msg.value);
         rt.loopGuard = level;
-        rt.agent.setLoopGuardOptions(resolveLoopGuardOptions(level, rt.loopGuardResponse));
-        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { loopGuard: level }), false);
+        // Picking a level RESETS the saved field overrides: the preset becomes
+        // the new baseline (the UI repopulates its fields from it).
+        rt.loopGuardOverrides = undefined;
+        this.applyLoopGuard(rt);
+        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { loopGuard: level, loopGuardParams: undefined }), false);
+        break;
+      }
+
+      case "setLoopGuardOverrides": {
+        const rt = this.activeRuntime();
+        if (!rt) break;
+        // Tuning from the Loop Guard fields: clamped to the editable ranges,
+        // applied to the agent AND SAVED on the session (persisted per session).
+        rt.loopGuardOverrides = clampLoopGuardOverrides(msg.overrides);
+        this.applyLoopGuard(rt);
+        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { loopGuardParams: rt.loopGuardOverrides }), false);
         break;
       }
 
@@ -806,7 +821,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         // Opt-in final-answer guard: a boolean persisted on the session.
         const value = msg.value === true;
         rt.loopGuardResponse = value;
-        rt.agent.setLoopGuardOptions(resolveLoopGuardOptions(rt.loopGuard, value));
+        this.applyLoopGuard(rt);
         this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { loopGuardResponse: value }), false);
         break;
       }
@@ -1044,6 +1059,19 @@ export class ChatViewProvider implements WebviewViewProvider {
   }
 
   /**
+   * Apply this session's Loop Guard options to the agent: the sensitivity
+   * preset (+ the opt-in answer guard) overlaid with any EPHEMERAL field
+   * overrides. Called on every send and on each UI change, so a run always
+   * starts from the current settings.
+   */
+  private applyLoopGuard(rt: SessionRuntime): void {
+    rt.agent.setLoopGuardOptions({
+      ...resolveLoopGuardOptions(rt.loopGuard, rt.loopGuardResponse),
+      ...rt.loopGuardOverrides,
+    });
+  }
+
+  /**
    * Persist settings, then refresh the view's config. `persist` may write
    * several fields at once (single saveSettings call). When `recomputeOverrides`
    * is true (the default) the per-model overrides are re-applied so the active
@@ -1066,7 +1094,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     rt.agent.setMode(rt.mode ?? "analyze");
     rt.agent.setDelegation(this.parallelEnabled);
     rt.agent.setMaxParallelSubAgents(rt.maxParallelSubAgents);
-    rt.agent.setLoopGuardOptions(resolveLoopGuardOptions(rt.loopGuard, rt.loopGuardResponse));
+    this.applyLoopGuard(rt);
     const rawText = typeof msg.text === "string" ? msg.text : "";
     const attached = (msg.attachments as AttachmentInfo[] | undefined) ?? [];
     // A message may carry text, attachments, or both — an attachment-only send
@@ -1401,6 +1429,11 @@ export class ChatViewProvider implements WebviewViewProvider {
     maxParallelSubAgents: number;
     loopGuard?: "low" | "normal" | "high";
     loopGuardResponse?: boolean;
+    /** The SAVED per-session Loop Guard field values (absent = the preset). */
+    loopGuardParams?: Partial<LoopGuardOptions>;
+    /** Preset VALUES + editable RANGES for the Loop Guard fields (from the core). */
+    loopGuardPresets: Record<string, LoopGuardOptions>;
+    loopGuardRanges: readonly { key: string; min: number; max: number; step: number; integer: boolean }[];
     /** Installed Agent Skills (catalog for the Skills card). */
     skills: { name: string; description: string }[];
     /** MCP servers + their connection status (MCP card). */
@@ -1483,6 +1516,12 @@ export class ChatViewProvider implements WebviewViewProvider {
       maxParallelSubAgents: this.effectiveParallelCap(),
       loopGuard: this.activeRuntime()?.loopGuard,
       loopGuardResponse: this.activeRuntime()?.loopGuardResponse,
+      // The SAVED per-session field values (absent = fall back to the preset).
+      loopGuardParams: this.activeRuntime()?.loopGuardOverrides,
+      // The preset VALUES + the editable RANGES behind the Loop Guard fields,
+      // so the UI never duplicates them (one source of truth in the core).
+      loopGuardPresets: loopGuardPresets(),
+      loopGuardRanges: LOOP_GUARD_FIELD_RANGES,
       skills: this.skillCatalog(),
       mcp: { servers: this.providers.readMcpServers?.() ?? {}, statuses: this.options.mcp?.getStatuses() ?? [] },
       contextWindow: this.activeRuntime()?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,

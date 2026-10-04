@@ -820,6 +820,35 @@ describe("ChatViewProvider", () => {
     );
   });
 
+  it("Loop Guard field overrides apply live and are SAVED on the session", async () => {
+    const { store, provider, registry } = buildHarness();
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "gpt-4o", provider: undefined });
+    await handler({ type: "setLoopGuard", value: "low" });
+    const agent = registry.get("s1")!.agent;
+    (agent.setLoopGuardOptions as ReturnType<typeof vi.fn>).mockClear();
+    (store.saveSettings as ReturnType<typeof vi.fn>).mockClear();
+
+    // The overrides are clamped to the editable ranges and applied live.
+    await handler({ type: "setLoopGuardOverrides", overrides: { maxNudges: 5, reasoningThreshold: 999 } });
+    expect(agent.setLoopGuardOptions).toHaveBeenCalledWith(
+      expect.objectContaining({ maxNudges: 5, reasoningThreshold: 1, crossTurnSimilarity: 0.92 }),
+    );
+    // ...and PERSISTED on the session (per-session settings).
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { loopGuardParams: { maxNudges: 5, reasoningThreshold: 1 } });
+
+    // They survive a turn: send re-asserts the SAME overrides.
+    (agent.setLoopGuardOptions as ReturnType<typeof vi.fn>).mockClear();
+    await handler({ type: "send", text: "hi" });
+    expect(agent.setLoopGuardOptions).toHaveBeenCalledWith(expect.objectContaining({ maxNudges: 5 }));
+
+    // Picking a sensitivity level DROPS them (the preset is the new baseline).
+    (agent.setLoopGuardOptions as ReturnType<typeof vi.fn>).mockClear();
+    await handler({ type: "setLoopGuard", value: "high" });
+    expect(agent.setLoopGuardOptions).toHaveBeenCalledWith(expect.objectContaining({ maxNudges: 3 }));
+  });
+
   it("sampler value persists on the active field and switching mode clears both to Auto", async () => {
     const { store, provider, modelSelector } = buildHarness();
     const { handler, view } = resolveWith(provider);

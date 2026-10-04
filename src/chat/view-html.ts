@@ -1,7 +1,7 @@
 import { FONTS, FAMILIES, PALETTE, ROOT_FONT_SIZE } from "./view-config";
 import type { ChatMessage } from "../core/history/types";
 import type { SessionSummary } from "../core/sessions/types";
-import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS } from "./context-window";
+import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, MAX_CONTEXT_WINDOW, MAX_OUTPUT_TOKENS, MIN_CONTEXT_WINDOW, MIN_OUTPUT_TOKENS } from "./context-window";
 
 export interface ViewConfigState {
   provider: string;
@@ -766,13 +766,6 @@ ${renderViewConfig(deps)}
     /* The Guardrails card spans the full row (prompt width) instead of one grid
        column: it holds the per-session run controls (parallel cap + Loop Guard). */
     .ctl-card-wide { grid-column: 1 / -1; }
-    /* Guardrails card: parallel cap + Loop Guard on ONE row. The grid MIRRORS
-       #ctl-cards (same 2 columns + 8px gap) so the fields line up VERTICALLY
-       with the cards above: column 1 under Window, column 2 under Sampling.
-       The negative margin cancels the card's 10px padding; each field re-adds
-       it so its label starts exactly where the upper cards' labels do. */
-    .ctl-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0 -10px; }
-    .ctl-controls > .field { padding: 0 10px; min-width: 0; }
     /* Skills card: one clickable TEXT per installed skill (no button chrome);
        a click fills the prompt with "/skill <name> ". */
     #skills-list { display: flex; flex-wrap: wrap; gap: 4px 12px; }
@@ -846,7 +839,44 @@ ${renderViewConfig(deps)}
     .mcp-io.err { color: var(--error, #f05555); }
     .mcp-actions { display: flex; justify-content: flex-end; gap: 8px; }
     body.no-session #mcp-card, body.no-workspace #mcp-card { display: none; }
-    #lg-toggle { flex-wrap: wrap; min-height: 1.85rem; align-items: center; }
+    /* Numeric rows (Window + Sampling): a SLIDER plus a read-only value label.
+       The label keeps the exact value; the slider is the control. */
+    .num-row { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: var(--ctl-row, 1.4rem); }
+    .num-range { flex: 1 1 auto; min-width: 0; height: 14px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+    .num-value {
+      flex: 0 0 auto; min-width: 3.6rem; text-align: right;
+      font-size: var(--fs-xs); color: var(--fg); font-variant-numeric: tabular-nums;
+    }
+    .num-range:disabled { opacity: 0.5; cursor: default; }
+    /* Loop Guard card: the sensitivity row wraps inside its half-width card. */
+    #lg-toggle { flex-wrap: wrap; row-gap: 4px; min-height: var(--ctl-row, 1.4rem); align-items: center; }
+    /* Loop Guard card: the parameters section collapses via the chevron, which
+       sits on the SAME LINE as "Include response" (the last item of the
+       sensitivity group). Collapsed by default, so the card — and its grid-row
+       neighbour (Parallel) — stays at its minimum height. */
+    #lg-params-field.hidden { display: none; }
+    .lg-head { display: flex; align-items: flex-end; gap: 8px; }
+    .lg-collapse {
+      margin-left: auto; flex: 0 0 auto;
+      background: transparent; border: none; padding: 1px; cursor: pointer;
+      color: var(--muted); line-height: 0;
+    }
+    .lg-collapse:hover { color: var(--fg); }
+    .lg-collapse svg { transition: transform 0.15s ease; }
+    .lg-collapse[aria-expanded="true"] svg { transform: rotate(180deg); }
+    /* Loop Guard FIELDS: the preset values exposed as editable sliders, SAVED
+       per session (only the sensitivity level and these values are stored). */
+    .lg-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; }
+    .lg-field {
+      display: grid; grid-template-columns: 1fr auto; grid-template-areas: "name val" "range range";
+      gap: 2px 6px; align-items: center; min-width: 0;
+      font-size: var(--fs-xs); color: #9a9a9a;
+    }
+    .lg-name { grid-area: name; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* The value is a read-only LABEL (the slider is the only control). */
+    .lg-value { grid-area: val; text-align: right; color: var(--fg); font-variant-numeric: tabular-nums; }
+    .lg-range { grid-area: range; width: 100%; height: 14px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+    .lg-field input:disabled { opacity: 0.5; cursor: default; }
     .ctl-inline { display: flex; align-items: center; gap: 8px; min-width: 0; }
     .ctl-inline input[type="checkbox"] {
       flex: 0 0 auto; width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer;
@@ -990,6 +1020,11 @@ ${renderViewConfig(deps)}
       color: #8a8a8a; user-select: none;
     }
     .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    /* ONE control-row height for the whole control stack: label rows, slider
+       rows and radio groups all share it, so the LEFT and RIGHT columns line up
+       horizontally. Deliberately small, so nothing looks padded. */
+    #ctl-cards { --ctl-row: 1.4rem; }
+    #ctl-cards .field-label { display: flex; align-items: center; min-height: var(--ctl-row); }
     .field-label { font-size: var(--fs-sm); color: #9a9a9a; }
     /* Working state: the PLAY (send) button blinks in sync with the chat's
        "Working..." bubble — same harny-pulse 1.2s animation, applied in the
@@ -1022,7 +1057,7 @@ ${renderViewConfig(deps)}
     #samp-input::placeholder, #presence-input::placeholder, #freq-input::placeholder { color: #777; font-style: italic; }
     /* Sampler selector: native radios on ONE slim row occupying the same
        slot/height as the other field labels (no pill, no box). */
-    .sampler-toggle { display: inline-flex; align-items: center; gap: 12px; }
+    .sampler-toggle { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; row-gap: 4px; min-height: var(--ctl-row, 1.4rem); }
     .sampler-opt {
       display: inline-flex; align-items: center; gap: 4px;
       font-size: var(--fs-sm);
@@ -1466,29 +1501,27 @@ ${renderViewConfig(deps)}
       <div class="ctl-card">
         <span class="card-title">Window</span>
         <div class="field">
-          <label class="field-label" for="ctx-input">Context window</label>
-          <div id="ctx-window">
-            <button id="ctx-minus" class="ctx-btn" title="Decrease context"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
-            <input id="ctx-input" type="text" inputmode="numeric" autocomplete="off" value="${DEFAULT_CONTEXT_WINDOW}" title="Context window (tokens) — integers only">
-            <button id="ctx-plus" class="ctx-btn" title="Increase context"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
+          <label class="field-label" for="ctx-range">Context window</label>
+          <div class="num-row">
+            <input type="range" id="ctx-range" class="num-range" min="${MIN_CONTEXT_WINDOW}" max="${MAX_CONTEXT_WINDOW}" step="1000" aria-label="Context window" />
+            <span class="num-value" id="ctx-value">${DEFAULT_CONTEXT_WINDOW}</span>
           </div>
         </div>
         <div class="field">
-          <label class="field-label" for="out-input">Output tokens</label>
-          <div id="out-window">
-            <button id="out-minus" class="ctx-btn" title="Decrease output tokens"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
-            <input id="out-input" type="text" inputmode="numeric" autocomplete="off" value="${DEFAULT_OUTPUT_TOKENS}" title="Max output tokens per response — integers only">
-            <button id="out-plus" class="ctx-btn" title="Increase output tokens"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
+          <label class="field-label" for="out-range">Output tokens</label>
+          <div class="num-row">
+            <input type="range" id="out-range" class="num-range" min="${MIN_OUTPUT_TOKENS}" max="${MAX_OUTPUT_TOKENS}" step="256" aria-label="Output tokens" />
+            <span class="num-value" id="out-value">${DEFAULT_OUTPUT_TOKENS}</span>
           </div>
         </div>
         <div class="field">
-          <label class="field-label" for="thinking-select">Thinking</label>
-          <select id="thinking-select" title="Reasoning effort / thinking level (per session)">
-            <option value="off">Off</option>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-          </select>
+          <span class="field-label">Thinking</span>
+          <div class="sampler-toggle" id="thinking-toggle" role="radiogroup" aria-label="Thinking level">
+            <label class="sampler-opt" title="No reasoning effort"><input type="radio" name="thinking-level" id="thinking-off" value="off" />Off</label>
+            <label class="sampler-opt" title="Low reasoning effort"><input type="radio" name="thinking-level" id="thinking-low" value="low" />Low</label>
+            <label class="sampler-opt" title="Medium reasoning effort"><input type="radio" name="thinking-level" id="thinking-medium" value="medium" />Medium</label>
+            <label class="sampler-opt" title="High reasoning effort"><input type="radio" name="thinking-level" id="thinking-high" value="high" />High</label>
+          </div>
         </div>
       </div>
       <div class="ctl-card">
@@ -1498,55 +1531,57 @@ ${renderViewConfig(deps)}
             <label class="sampler-opt"><input type="radio" name="sampler" id="sampler-temp" value="temperature" checked />Temperature</label>
             <label class="sampler-opt"><input type="radio" name="sampler" id="sampler-topp" value="topP" />Top-P</label>
           </div>
-          <div id="samp-window">
-            <button id="samp-minus" class="ctx-btn" title="Decrease sampler value"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
-            <input id="samp-input" type="text" inputmode="decimal" autocomplete="off" placeholder="Auto" title="Active sampler value — scale follows the toggle (0.0–2.0 temperature, 0.0–1.0 top-p); empty = Auto (not sent)">
-            <button id="samp-plus" class="ctx-btn" title="Increase sampler value"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
+          <div class="num-row">
+            <input type="range" id="samp-range" class="num-range" min="0" max="2" step="0.1" aria-label="Sampler value" />
+            <span class="num-value" id="samp-value">Auto</span>
             <button id="samp-auto" class="ctx-btn" title="Reset to Auto (not sent)">Auto</button>
           </div>
         </div>
         <div class="field">
-          <label class="field-label" for="presence-input">Presence penalty (0.0 → 2.0)</label>
-          <div id="presence-window">
-            <button id="presence-minus" class="ctx-btn" title="Decrease presence penalty"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
-            <input id="presence-input" type="text" inputmode="decimal" autocomplete="off" placeholder="Auto" title="Presence penalty 0.0–2.0; pushes toward new topics; empty = Auto (not sent)">
-            <button id="presence-plus" class="ctx-btn" title="Increase presence penalty"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
+          <label class="field-label" for="presence-range">Presence penalty (0.0 → 2.0)</label>
+          <div class="num-row">
+            <input type="range" id="presence-range" class="num-range" min="0" max="2" step="0.1" aria-label="Presence penalty" />
+            <span class="num-value" id="presence-value">Auto</span>
             <button id="presence-auto" class="ctx-btn" title="Reset to Auto (not sent)">Auto</button>
           </div>
         </div>
         <div class="field">
-          <label class="field-label" for="freq-input">Frequency penalty (0.0 → 2.0)</label>
-          <div id="freq-window">
-            <button id="freq-minus" class="ctx-btn" title="Decrease frequency penalty"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
-            <input id="freq-input" type="text" inputmode="decimal" autocomplete="off" placeholder="Auto" title="Frequency penalty 0.0–2.0; reduces repetition; empty = Auto (not sent)">
-            <button id="freq-plus" class="ctx-btn" title="Increase frequency penalty"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
+          <label class="field-label" for="freq-range">Frequency penalty (0.0 → 2.0)</label>
+          <div class="num-row">
+            <input type="range" id="freq-range" class="num-range" min="0" max="2" step="0.1" aria-label="Frequency penalty" />
+            <span class="num-value" id="freq-value">Auto</span>
             <button id="freq-auto" class="ctx-btn" title="Reset to Auto (not sent)">Auto</button>
           </div>
         </div>
       </div>
-      <div class="ctl-card ctl-card-wide">
-        <span class="card-title">Guardrails</span>
-        <div class="ctl-controls">
+      <div class="ctl-card">
+        <span class="card-title">Parallel</span>
         <div class="field">
-          <label class="field-label" for="par-input">Max parallel sub-agents</label>
-          <div class="ctl-inline">
-            <input type="checkbox" id="par-enabled" title="Cap how many read-only sub-agents run at once (edits are never parallel). Off = no limit." aria-label="Enable the parallel sub-agent cap" />
-            <div id="par-window">
-              <button id="par-minus" class="ctx-btn" title="Decrease"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
-              <input id="par-input" type="text" inputmode="numeric" autocomplete="off" value="4" title="Max concurrent sub-agents (1–99)" />
-              <button id="par-plus" class="ctx-btn" title="Increase"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
+          <label class="field-label" for="par-range">Max parallel sub-agents</label>
+          <div class="num-row">
+            <input type="range" id="par-range" class="num-range" min="0" max="100" step="1" aria-label="Max parallel sub-agents" />
+            <span class="num-value" id="par-value">4</span>
+          </div>
+        </div>
+      </div>
+      <div class="ctl-card" id="lg-card">
+        <span class="card-title">Loop Guard</span>
+        <div class="field">
+          <span class="field-label">Sensitivity</span>
+          <div class="lg-head">
+            <div class="sampler-toggle" id="lg-toggle" role="radiogroup" aria-label="Loop Guard sensitivity">
+              <label class="sampler-opt" title="Aggressive: flags loops sooner (more nudges, lower thresholds)"><input type="radio" name="lg-level" id="lg-high" value="high" />High</label>
+              <label class="sampler-opt" title="Balanced: the default preset"><input type="radio" name="lg-level" id="lg-normal" value="normal" checked />Normal</label>
+              <label class="sampler-opt" title="Permissive: only clear, sustained loops are flagged"><input type="radio" name="lg-level" id="lg-low" value="low" />Low</label>
+              <label class="sampler-opt" title="Also apply the Loop Guard to the final answer text (detects the model repeating the same response). Default off."><input type="checkbox" id="lg-response" />Include response</label>
             </div>
+            <button id="lg-collapse" class="lg-collapse" aria-expanded="false" aria-controls="lg-params-field" title="Show the Loop Guard parameters">
+              <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
           </div>
         </div>
-        <div class="field">
-          <span class="field-label">Loop Guard</span>
-          <div class="sampler-toggle" id="lg-toggle" role="radiogroup" aria-label="Loop Guard sensitivity">
-            <label class="sampler-opt" title="Aggressive: flags loops sooner (more nudges, lower thresholds)"><input type="radio" name="lg-level" id="lg-high" value="high" />High</label>
-            <label class="sampler-opt" title="Balanced: the default preset"><input type="radio" name="lg-level" id="lg-normal" value="normal" checked />Normal</label>
-            <label class="sampler-opt" title="Permissive: only clear, sustained loops are flagged"><input type="radio" name="lg-level" id="lg-low" value="low" />Low</label>
-            <label class="sampler-opt" title="Also apply the Loop Guard to the final answer text (detects the model repeating the same response). Default off."><input type="checkbox" id="lg-response" />Include response</label>
-          </div>
-        </div>
+        <div class="field" id="lg-params-field">
+          <div id="lg-fields" class="lg-fields"></div>
         </div>
       </div>
       <div class="ctl-card ctl-card-wide hidden" id="skills-card">
