@@ -99,6 +99,10 @@ ${renderViewConfig(deps)}
        takes its family from these two central rules. */
     body, button, input, select, textarea { font-family: var(--font-ui); }
     pre, code, .code-lang, .fd-stat, .fd-body, .sm-folder { font-family: var(--font-mono); }
+    /* Never squeeze the LAYOUT below this: past it the panel gets a horizontal
+       scrollbar instead of compressing the controls. (The PANEL's own minimum
+       width is controlled by VS Code — the extension cannot force it.) */
+    html { min-width: 25rem; overflow-x: auto; }
     body {
       font-size: 1rem;
       background: var(--bg);
@@ -107,6 +111,7 @@ ${renderViewConfig(deps)}
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      min-width: 25rem;
     }
 
     /* Sessions area: a card matching the control cards below. Borderless:
@@ -775,14 +780,13 @@ ${renderViewConfig(deps)}
     /* Narrow panel: stack the cards in ONE column, in DOM order (Window,
        Sampling, Parallel, Loop Guard), so nothing is squeezed or split
        mid-pair. The Loop Guard parameter fields collapse with it. */
-    @media (max-width: 22rem) {
+    /* Static FALLBACK for the very first paint: the JS measures the nowrap
+       sensitivity row and sets the exact column count right after. */
+    @media (max-width: 30rem) {
       .ctl-cards { grid-template-columns: minmax(0, 1fr); }
       .lg-fields { grid-template-columns: minmax(0, 1fr); }
     }
-    /* Wide panel: all FOUR cards on ONE line (Window, Sampling, Parallel,
-       Loop Guard). The parameter fields go single-column so they stay legible
-       in the narrower card. */
-    @media (min-width: 48rem) {
+    @media (min-width: 59rem) {
       .ctl-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
       .lg-fields { grid-template-columns: minmax(0, 1fr); }
     }
@@ -877,7 +881,10 @@ ${renderViewConfig(deps)}
     }
     .num-range:disabled { opacity: 0.5; cursor: default; }
     /* Loop Guard card: the sensitivity row wraps inside its half-width card. */
-    #lg-toggle { flex-wrap: wrap; row-gap: 4px; min-height: var(--ctl-row, 1.4rem); align-items: center; }
+    /* The sensitivity row NEVER wraps: "Include response" always stays on the
+       SAME line as the High/Normal/Low radios. */
+    #lg-toggle { flex-wrap: nowrap; min-height: var(--ctl-row, 1.4rem); align-items: center; }
+    #lg-toggle .sampler-opt { white-space: nowrap; }
     /* Loop Guard card: the parameters section collapses via the chevron, which
        sits on the SAME LINE as "Include response" (the last item of the
        sensitivity group). Collapsed by default, so the card — and its grid-row
@@ -892,6 +899,20 @@ ${renderViewConfig(deps)}
     .lg-collapse:hover { color: var(--fg); }
     .lg-collapse svg { transition: transform 0.15s ease; }
     .lg-collapse[aria-expanded="true"] svg { transform: rotate(180deg); }
+    /* Shared hover tooltip: a small floating card that explains a parameter.
+       Positioned by the client; never intercepts the pointer. */
+    .tip {
+      position: fixed; z-index: 60; max-width: 21rem;
+      background: var(--surface-2); color: var(--fg);
+      border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 6px;
+      padding: 6px 8px; font-size: var(--fs-xs); line-height: 1.35;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+      pointer-events: none;
+    }
+    .tip.hidden { display: none; }
+    /* The parameter name underlines on hover to advertise the tooltip. */
+    .lg-name { cursor: help; }
+    .lg-field:hover .lg-name { color: var(--fg); text-decoration: underline dotted; }
     /* Loop Guard FIELDS: the preset values exposed as editable sliders, SAVED
        per session (only the sensitivity level and these values are stored). */
     .lg-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; }
@@ -1782,6 +1803,8 @@ ${renderViewConfig(deps)}
     </div>
   </div>
   <div id="mcp-tools-popover" class="hidden"></div>
+  <!-- Shared hover tooltip: explains a control's parameter on mouse-over. -->
+  <div id="tip" class="tip hidden" role="tooltip"></div>
   <div id="slash-menu" class="hidden" role="listbox" aria-label="Commands"></div>
   <script id="harny-view-init" type="application/json">${jsonInit(deps.state)}</script>
   <script src="${scriptUri}"></script>

@@ -63,7 +63,7 @@ function setupDom(
       </div>
     </div>
     <div id="status">AI Model: <select id="model-select"></select><button id="gear-btn">⚙</button><input type="range" id="ctx-range" min="32000" max="2000000" step="1000"><span id="ctx-value"></span><input type="range" id="out-range" min="256" max="65536" step="256"><span id="out-value"></span><input id="sampler-temp" type="radio" name="sampler" checked><input id="sampler-topp" type="radio" name="sampler"><input type="range" id="samp-range" min="0" max="2" step="0.1"><span id="samp-value">Auto</span><button id="samp-auto">Auto</button><input type="range" id="presence-range" min="0" max="2" step="0.1"><span id="presence-value">Auto</span><button id="presence-auto">Auto</button><input type="range" id="freq-range" min="0" max="2" step="0.1"><span id="freq-value">Auto</span><button id="freq-auto">Auto</button></div>
-    <div id="ctl-cards"><input type="range" id="par-range" min="0" max="100" step="1" /><span id="par-value">4</span><button id="lg-reset"></button><input type="radio" name="lg-level" id="lg-high" value="high" /><input type="radio" name="lg-level" id="lg-normal" value="normal" checked /><input type="radio" name="lg-level" id="lg-low" value="low" /><input type="checkbox" id="lg-response" /><div id="lg-params-field"><div id="lg-fields"></div></div><button id="lg-collapse"></button><div id="skills-card" class="hidden"><div id="skills-list"></div></div><div id="mcp-card" class="hidden"><div id="mcp-list"></div><button id="mcp-configure"></button></div></div>
+    <div id="ctl-cards"><input type="range" id="par-range" min="0" max="100" step="1" /><span id="par-value">4</span><button id="lg-reset"></button><div id="lg-toggle" class="sampler-toggle"><input type="radio" name="lg-level" id="lg-high" value="high" /><input type="radio" name="lg-level" id="lg-normal" value="normal" checked /><input type="radio" name="lg-level" id="lg-low" value="low" /><input type="checkbox" id="lg-response" /></div><div id="lg-params-field"><div id="lg-fields"></div></div><button id="lg-collapse"></button><div id="skills-card" class="hidden"><div id="skills-list"></div></div><div id="mcp-card" class="hidden"><div id="mcp-list"></div><button id="mcp-configure"></button></div></div>
     <div id="metrics"><input type="radio" name="thinking-level" id="thinking-off" value="off" /><input type="radio" name="thinking-level" id="thinking-low" value="low" /><input type="radio" name="thinking-level" id="thinking-medium" value="medium" /><input type="radio" name="thinking-level" id="thinking-high" value="high" /><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button><span id="compact-threshold-label"></span><button id="compact-settings-btn">⚙</button></div>
     <div id="compact-settings-modal" class="hidden">
       <div class="cs-backdrop"></div>
@@ -115,6 +115,7 @@ function setupDom(
       <button id="mcp-save"></button><button id="mcp-cancel"></button>
     </div>
     <div id="mcp-tools-popover" class="hidden"></div>
+    <div id="tip" class="tip hidden"></div>
     <div id="slash-menu" class="hidden"></div>
     <div id="name-modal" class="hidden">
       <div class="name-modal-backdrop"></div>
@@ -2529,6 +2530,53 @@ describe("view webview client", () => {
     expect((document.getElementById("lgr-maxNudges") as HTMLInputElement).value).toBe("7");
     expect((document.getElementById("lgv-maxNudges") as HTMLElement).textContent).toBe("7");
     expect((document.getElementById("lgr-reasoningThreshold") as HTMLInputElement).value).toBe("0.5");
+  });
+
+  it("Loop Guard parameter names carry a hover tooltip explaining them", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, loopGuard: "normal",
+        loopGuardRanges: [{ key: "maxNudges", min: 1, max: 10, step: 1, integer: true }],
+        loopGuardPresets: { normal: { maxNudges: 2 } },
+      },
+    });
+    const tip = document.getElementById("tip") as HTMLElement;
+    const name = document.querySelector(".lg-name") as HTMLElement;
+    expect(tip.classList.contains("hidden")).toBe(true);
+
+    name.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(tip.classList.contains("hidden")).toBe(false);
+    expect(tip.textContent).toContain("Nudges — How many corrective nudges");
+    expect(tip.textContent).toContain("before the guard stops the run");
+    expect(tip.textContent).toContain("range 1–10");
+
+    name.dispatchEvent(new MouseEvent("mouseleave"));
+    expect(tip.classList.contains("hidden")).toBe(true);
+  });
+
+  it("picks the control columns from the MEASURED sensitivity row", async () => {
+    await loadView();
+    const cards = document.getElementById("ctl-cards") as HTMLElement;
+    const toggle = document.getElementById("lg-toggle") as HTMLElement;
+    const fields = document.getElementById("lg-fields") as HTMLElement;
+    // Simulate a 500px stack whose nowrap sensitivity row is 190px wide:
+    // need = 190 + 22 = 212 -> 2 columns need 212*2 + 8 = 432 <= 500.
+    Object.defineProperty(cards, "clientWidth", { value: 500, configurable: true });
+    Object.defineProperty(toggle, "scrollWidth", { value: 190, configurable: true });
+    window.dispatchEvent(new Event("resize"));
+    expect(cards.style.gridTemplateColumns).toBe("repeat(2, minmax(0, 1fr))");
+    expect(fields.style.gridTemplateColumns).toBe("repeat(2, minmax(0, 1fr))");
+
+    // A wide stack fits FOUR cards; a narrow one falls back to a single column.
+    Object.defineProperty(cards, "clientWidth", { value: 1200, configurable: true });
+    window.dispatchEvent(new Event("resize"));
+    expect(cards.style.gridTemplateColumns).toBe("repeat(4, minmax(0, 1fr))");
+    Object.defineProperty(cards, "clientWidth", { value: 300, configurable: true });
+    window.dispatchEvent(new Event("resize"));
+    expect(cards.style.gridTemplateColumns).toBe("repeat(1, minmax(0, 1fr))");
+    expect(fields.style.gridTemplateColumns).toBe("minmax(0, 1fr)");
   });
 
   it("Loop Guard parameters start COLLAPSED and the corner chevron toggles them", async () => {

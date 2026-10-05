@@ -226,9 +226,9 @@ describe("renderViewHtml", () => {
     // plain .ctl-card (one grid column of #ctl-cards), so the inner
     // .ctl-controls mirror grid is gone.
     expect(html).not.toContain('class="ctl-controls"');
-    // The Loop Guard sensitivity row wraps inside its half-width card and uses
-    // the SHARED control-row height so the labels line up across columns.
-    expect(html).toMatch(/#lg-toggle\s*\{[^}]*flex-wrap:\s*wrap[^}]*min-height:\s*var\(--ctl-row[^)]*\)[^}]*align-items:\s*center/);
+    // The sensitivity row NEVER wraps: Include response stays on the radios' line.
+    expect(html).toMatch(/#lg-toggle\s*\{[^}]*flex-wrap:\s*nowrap[^}]*min-height:\s*var\(--ctl-row[^)]*\)[^}]*align-items:\s*center/);
+    expect(html).toMatch(/#lg-toggle \.sampler-opt\s*\{\s*white-space:\s*nowrap/);
     expect(html).toMatch(/\.ctl-card-wide\s*\{\s*grid-column: 1 \/ -1/);
     // Window + Sampling share the row 50/50 (responsive to resize).
     expect(html).toMatch(/\.ctl-cards\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
@@ -237,9 +237,14 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/\.ctl-cards\s*\{[^}]*max-height:\s*clamp\(6rem, calc\(100vh - 20rem\), 75vh\)[^}]*overflow-y:\s*auto/);
     expect(html).toMatch(/#status\s*\{[^}]*min-height:\s*0/);
     // Narrow panel: ONE column, in DOM order (Window, Sampling, Parallel, Loop Guard).
-    expect(html).toMatch(/@media \(max-width: 22rem\)\s*\{\s*\.ctl-cards\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\)/);
-    // Wide panel: all four cards on ONE line.
-    expect(html).toMatch(/@media \(min-width: 48rem\)\s*\{\s*\.ctl-cards\s*\{\s*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/);
+    // Static CSS fallback; the webview then MEASURES the nowrap sensitivity row
+    // and sets the exact column count (1 / 2 / 4) so the text never overflows.
+    expect(html).toMatch(/@media \(max-width: 30rem\)\s*\{\s*\.ctl-cards\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\)/);
+    expect(html).toMatch(/@media \(min-width: 59rem\)\s*\{\s*\.ctl-cards\s*\{\s*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/);
+    // A minimum layout width: past it the panel scrolls horizontally instead of
+    // squeezing the controls (the PANEL's minimum is VS Code's, not ours).
+    expect(html).toMatch(/html\s*\{\s*min-width:\s*25rem;\s*overflow-x:\s*auto/);
+    expect(html).toMatch(/body\s*\{[^}]*min-width:\s*25rem/);
     // The old providers-form flag is gone (moved to the per-session Parallel card).
     expect(html).not.toContain("pe-maxparallel");
   });

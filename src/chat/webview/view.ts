@@ -2114,6 +2114,9 @@ const lgRadios = Array.from(document.querySelectorAll<HTMLInputElement>('input[n
 const lgResponse = document.getElementById("lg-response") as HTMLInputElement;
 const lgCollapse = document.getElementById("lg-collapse") as HTMLButtonElement;
 const lgParamsField = document.getElementById("lg-params-field") as HTMLDivElement;
+const ctlCardsEl = document.getElementById("ctl-cards") as HTMLDivElement;
+const lgToggleEl = document.getElementById("lg-toggle") as HTMLDivElement;
+const lgFieldsEl = document.getElementById("lg-fields") as HTMLDivElement;
 const skillsCard = document.getElementById("skills-card") as HTMLDivElement;
 const skillsList = document.getElementById("skills-list") as HTMLDivElement;
 const mcpCard = document.getElementById("mcp-card") as HTMLDivElement;
@@ -2133,6 +2136,7 @@ const mcpAdd = document.getElementById("mcp-add") as HTMLButtonElement;
 const mcpDelete = document.getElementById("mcp-delete") as HTMLButtonElement;
 const mcpSave = document.getElementById("mcp-save") as HTMLButtonElement;
 const mcpCancel = document.getElementById("mcp-cancel") as HTMLButtonElement;
+const tipEl = document.getElementById("tip") as HTMLDivElement;
 
 type McpEditorServer = { command?: string; args?: string[]; env?: Record<string, string>; url?: string; headers?: Record<string, string>; enabled?: boolean };
 let mcpEditorServers: Record<string, McpEditorServer> = {};
@@ -2200,6 +2204,49 @@ let lgFieldsBuilt = false;
 let lgLastLevel: string | null = null;
 let lgLastSession: string | undefined;
 
+/** Show the shared hover tooltip anchored to `el` (below it; flipped above
+ * when there is no room at the bottom). */
+function showTip(el: HTMLElement, text: string): void {
+  if (!text) return;
+  tipEl.textContent = text;
+  tipEl.classList.remove("hidden");
+  const r = el.getBoundingClientRect();
+  const t = tipEl.getBoundingClientRect();
+  let top = r.bottom + 6;
+  if (top + t.height > window.innerHeight - 4) top = Math.max(4, r.top - t.height - 6);
+  const left = Math.min(Math.max(4, r.left), Math.max(4, window.innerWidth - t.width - 4));
+  tipEl.style.top = `${top}px`;
+  tipEl.style.left = `${left}px`;
+}
+function hideTip(): void {
+  tipEl.classList.add("hidden");
+}
+/** Attach the shared tooltip to an element (replaces the native title). */
+function attachTip(el: HTMLElement, text: string): void {
+  el.addEventListener("mouseenter", () => showTip(el, text));
+  el.addEventListener("mouseleave", hideTip);
+  el.addEventListener("focus", () => showTip(el, text));
+  el.addEventListener("blur", hideTip);
+}
+// A stale tooltip must not float over unrelated content.
+window.addEventListener("scroll", hideTip, true);
+
+/** One-line explanation for each Loop Guard parameter (the labels stay short). */
+const LG_TIPS: Record<string, string> = {
+  maxNudges: "How many corrective nudges a loop type gets before the guard stops the run. Higher = more patient.",
+  reasoningThreshold: "Within a turn: how repetitive the reasoning must be to be cut (trigram duplication). Lower = flags sooner.",
+  reasoningMinTokens: "Minimum reasoning tokens before the within-turn repetition check runs.",
+  crossTurnSimilarity: "Across turns: how similar two turns' reasoning must be to inject a corrective nudge. Lower = flags sooner.",
+  crossTurnMinLength: "Minimum reasoning characters before the across-turn similarity check runs.",
+  toolFailureRepeats: "How many identical FAILING tool calls are re-run before the recorded failure is returned instead.",
+  errorStreakTurns: "Consecutive turns with tool errors before the host injects a 'change strategy' summary.",
+  toolRepeatConsecutive: "Consecutive identical successful calls that count as a loop (the call is then served from cache).",
+  toolRepeatWindow: "Sliding window (in calls) used to count repeated call signatures.",
+  toolRepeatWindowThreshold: "Repeats of the SAME call inside the window that count as a loop.",
+  answerThreshold: "How repetitive the final answer must be to be flagged (needs 'Include response'). Lower = flags sooner.",
+  answerMinTokens: "Minimum answer tokens before the final-answer repetition check runs.",
+};
+
 /** Build the editable fields once, from the host-provided ranges: each is a
  * slider (the ONLY control) with the value shown as a read-only label. */
 function buildLgFields(): void {
@@ -2210,10 +2257,12 @@ function buildLgFields(): void {
     const label = LG_LABELS[r.key] ?? r.key;
     const cell = document.createElement("label");
     cell.className = "lg-field";
-    cell.title = `${label}: ${r.min}–${r.max}`;
     const name = document.createElement("span");
     name.className = "lg-name";
     name.textContent = label;
+    // Short label + a hover tooltip that explains the parameter (and its range).
+    const tipText = LG_TIPS[r.key] ?? label;
+    attachTip(name, `${label} — ${tipText} (range ${r.min}–${r.max})`);
     const value = document.createElement("span");
     value.className = "lg-value";
     value.id = `lgv-${r.key}`;
@@ -2315,6 +2364,29 @@ setLgParamsCollapsed(true);
 lgCollapse.addEventListener("click", () => {
   setLgParamsCollapsed(!lgParamsField.classList.contains("hidden"));
 });
+
+// ── Responsive column count for the control stack ──
+// The Loop Guard sensitivity row is `nowrap`, so it IS the minimum card width:
+// instead of guessing a breakpoint in rem (which drifts with the font), MEASURE
+// the row and pick 1 / 2 / 4 columns so the text never overflows its card.
+// CSS media queries stay as the fallback for the very first paint.
+function layoutControlColumns(): void {
+  if (!ctlCardsEl || !lgToggleEl || !lgFieldsEl) return;
+  const avail = ctlCardsEl.clientWidth;
+  const row = lgToggleEl.scrollWidth;
+  if (!avail || !row) return; // not laid out yet: keep the CSS fallback
+  const GAP = 8;
+  const CARD_PAD = 22; // 2x10px card padding + slack
+  const need = row + CARD_PAD;
+  let cols = 1;
+  if (need * 4 + GAP * 3 <= avail) cols = 4;
+  else if (need * 2 + GAP <= avail) cols = 2;
+  ctlCardsEl.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+  // The parameter fields follow: 2 columns only when the card is half-width.
+  lgFieldsEl.style.gridTemplateColumns = cols === 2 ? "repeat(2, minmax(0, 1fr))" : "minmax(0, 1fr)";
+}
+if (typeof ResizeObserver !== "undefined") new ResizeObserver(layoutControlColumns).observe(ctlCardsEl);
+window.addEventListener("resize", layoutControlColumns);
 
 function renderControl(config: ConfigState): void {
   const cap = config.maxParallelSubAgents;
