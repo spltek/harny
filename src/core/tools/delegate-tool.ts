@@ -44,7 +44,9 @@ export class DelegateTool implements Tool {
       properties: {
         id: {
           type: "string",
-          description: 'Short unique id for this sub-task (e.g. "A"), used for after-dependencies and reporting.',
+          description:
+            'SHORT but MEANINGFUL id naming this sub-task, e.g. "login-ui", "api-tests", "docs" ' +
+            '(NEVER "A", "1", "task1"): it labels the sub-agent bubble and is used for after-dependencies.',
         },
         goal: {
           type: "string",

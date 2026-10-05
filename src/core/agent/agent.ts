@@ -505,6 +505,24 @@ export class Agent implements ChatController {
         : (this.deps.config.get().maxParallelSubAgents ?? DEFAULT_MAX_PARALLEL_SUB_AGENTS);
     const parallelCap =
       typeof capRaw === "number" && Number.isInteger(capRaw) && capRaw > 0 ? capRaw : Infinity;
+    // Diagnostics: the ACTUAL execution plan for this turn (how many calls run
+    // together), plus each delegate's declaration. Makes a low-parallelism turn
+    // explainable instead of looking random (Output > Harny).
+    if (planned.some((p) => p.isDelegate)) {
+      const shape = steps.map((s) => (s.kind === "single" ? "1" : String(s.indices.length))).join("+");
+      this.log(`orchestration: ${planned.length} calls -> steps ${shape} (cap ${parallelCap === Infinity ? "\u221e" : parallelCap})`);
+      for (const p of planned) {
+        if (!p.isDelegate) continue;
+        if (!p.spec) {
+          this.log("delegate: invalid args -> serial");
+          continue;
+        }
+        this.log(
+          `delegate "${p.spec.id || "?"}" access=${p.spec.access} after=[${p.spec.after.join(", ")}] ` +
+            `resources=[${p.spec.resources.join(", ")}]`,
+        );
+      }
+    }
     // Stop launching MORE work once the run is aborted (queued sub-agents must
     // not start after the user pressed Stop).
     const abortedRun = (): boolean => this.abortController?.signal.aborted === true;

@@ -497,6 +497,11 @@ ${renderViewConfig(deps)}
     .subagent-header .subagent-icon { color: #a98dff; vertical-align: -2px; }
     #working-bar .subagent-icon { vertical-align: -2px; }
     .subagent-role { color: #a98dff; font-weight: 500; }
+    /* The sub-agent's short goal in the header: what it actually does. */
+    .subagent-name {
+      color: #9a9a9a; font-weight: 400; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
     .subagent-status {
       margin-left: auto; flex-shrink: 0;
       display: inline-flex; align-items: center;

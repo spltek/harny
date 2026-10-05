@@ -1857,7 +1857,10 @@ describe("view webview client", () => {
     });
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
     expect(bubble).toBeTruthy();
-    expect(bubble.querySelector(".tool-name")?.textContent).toContain('Sub-agent "A"');
+    // A placeholder id ("A") is REPLACED by the goal snippet, so the header
+    // says what the sub-agent does; the full goal stays in the title.
+    expect(bubble.querySelector(".tool-name")?.textContent).toContain('Sub-agent "Analyze src/fetch.ts"');
+    expect(bubble.querySelector(".subagent-name")?.textContent).toContain("Analyze src/fetch.ts");
     expect(bubble.querySelector(".subagent-role")?.textContent).toBe("analyst");
     expect(bubble.querySelector(".subagent-goal")?.textContent).toContain("Analyze src/fetch.ts");
     // A freshly-planned delegate is QUEUED (the cap may hold it back); it only
@@ -2162,6 +2165,18 @@ describe("view webview client", () => {
     const icon = bubble.querySelector(".tool-name .subagent-icon");
     expect(icon).toBeTruthy();
     expect(icon?.querySelector("rect")).toBeTruthy(); // robot body
+  });
+
+  it("keeps a DESCRIPTIVE sub-agent id and still shows its goal in the header", async () => {
+    await loadView();
+    hostMessage({
+      type: "toolCall", id: "s2", name: "Delegate",
+      arguments: { id: "login-ui", goal: "Build the login form", access: "create", resources: ["src/login.tsx"] },
+    });
+    const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
+    expect(bubble.querySelector(".tool-name")?.textContent).toContain('Sub-agent "login-ui"');
+    // ...and the goal is right there, so it is clear what it does.
+    expect(bubble.querySelector(".subagent-name")?.textContent).toContain("Build the login form");
   });
 
   it("marks a failed sub-agent as failed", async () => {

@@ -765,6 +765,18 @@ const SUBAGENT_ICON =
   '<circle cx="12" cy="3" r="1.4" fill="currentColor"/>' +
   "</svg>";
 
+/** A short, readable label for a sub-agent bubble: its id when that id is
+ * descriptive, otherwise the first words of its goal — never a bare "A"/"1". */
+function subAgentLabel(id: string, goal: string): string {
+  const cleanId = (id || "").trim();
+  // Placeholder-ish ids: "A", "1", "a1", "task1", "sub-task"…
+  const placeholder = /^([a-z]?\d+|\d+[a-z]?|sub-?task|task\d*)$/i.test(cleanId);
+  if (cleanId.length > 2 && /[a-z]/i.test(cleanId) && !placeholder) return cleanId;
+  const g = (goal || "").trim().replace(/\s+/g, " ");
+  if (!g) return cleanId || "sub-task";
+  return g.length > 44 ? g.slice(0, 44).replace(/\s+\S*$/, "") + "…" : g;
+}
+
 function addSubAgentCall(args: unknown): HTMLDivElement {
   const a = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
   const id = typeof a.id === "string" ? a.id : "";
@@ -779,6 +791,11 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
 
   const div = document.createElement("div");
   div.className = "msg tool subagent tool-call-pending";
+  // The bubble header must SAY WHAT the sub-agent does: use a descriptive id
+  // when the model gave one, otherwise a short snippet of the goal, and always
+  // keep the full goal one hover away.
+  const label = subAgentLabel(id, goal);
+  const shortGoal = goal.length > 60 ? goal.slice(0, 60).replace(/\s+\S*$/, "") + "…" : goal;
   // The bubble is COLLAPSED by default (like thinking blocks): only the header
   // with the live status is visible; expanding reveals goal, resources, the
   // nested live stream and the final report.
@@ -788,8 +805,9 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
     '<span class="tool-name">' +
     SUBAGENT_ICON +
     " Sub-agent" +
-    (id ? ' "' + escapeHtml(id) + '"' : "") +
+    (label ? ' "' + escapeHtml(label) + '"' : "") +
     "</span>" +
+    (goal ? '<span class="subagent-name" title="' + escapeHtml(goal) + '">' + escapeHtml(shortGoal) + "</span>" : "") +
     (role ? '<span class="subagent-role">' + escapeHtml(role) + "</span>" : "") +
     '<span class="subagent-status queued">queued…</span>' +
     '<button class="subagent-abort" type="button" title="Abort this sub-agent" aria-label="Abort this sub-agent">' +
