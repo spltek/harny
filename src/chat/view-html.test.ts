@@ -229,6 +229,11 @@ describe("renderViewHtml", () => {
     // The sensitivity row NEVER wraps: Include response stays on the radios' line.
     expect(html).toMatch(/#lg-toggle\s*\{[^}]*flex-wrap:\s*nowrap[^}]*min-height:\s*var\(--ctl-row[^)]*\)[^}]*align-items:\s*center/);
     expect(html).toMatch(/#lg-toggle \.sampler-opt\s*\{\s*white-space:\s*nowrap/);
+    // The head row is measured WHOLE (radios + chevron) and the radios may only
+    // clip, so the expand chevron can never be pushed out of the card.
+    expect(html).toMatch(/id="lg-head"/);
+    expect(html).toMatch(/\.lg-head\s*\{[^}]*min-width:\s*0/);
+    expect(html).toMatch(/#lg-toggle\s*\{[^}]*min-width:\s*0;[^}]*overflow:\s*hidden/);
     expect(html).toMatch(/\.ctl-card-wide\s*\{\s*grid-column: 1 \/ -1/);
     // Window + Sampling share the row 50/50 (responsive to resize).
     expect(html).toMatch(/\.ctl-cards\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);

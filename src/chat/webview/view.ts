@@ -2371,12 +2371,17 @@ lgCollapse.addEventListener("click", () => {
 // the row and pick 1 / 2 / 4 columns so the text never overflows its card.
 // CSS media queries stay as the fallback for the very first paint.
 function layoutControlColumns(): void {
-  if (!ctlCardsEl || !lgToggleEl || !lgFieldsEl) return;
+  if (!ctlCardsEl || !lgFieldsEl || !lgToggleEl) return;
   const avail = ctlCardsEl.clientWidth;
-  const row = lgToggleEl.scrollWidth;
+  // MEASURE the INTRINSIC row: the radios' content width (scrollWidth keeps
+  // reporting the real content width even when the toggle is clipped by
+  // overflow:hidden) PLUS the chevron and the head gap. Measuring the head row
+  // itself would report its USED — already shrunk — width, which collapses
+  // everything to a single column.
+  const row = lgToggleEl.scrollWidth + (lgCollapse ? lgCollapse.offsetWidth : 0) + 8;
   if (!avail || !row) return; // not laid out yet: keep the CSS fallback
   const GAP = 8;
-  const CARD_PAD = 22; // 2x10px card padding + slack
+  const CARD_PAD = 24; // 2x10px card padding + slack
   const need = row + CARD_PAD;
   let cols = 1;
   if (need * 4 + GAP * 3 <= avail) cols = 4;

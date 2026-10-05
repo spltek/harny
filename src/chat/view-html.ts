@@ -890,7 +890,11 @@ ${renderViewConfig(deps)}
        sensitivity group). Collapsed by default, so the card — and its grid-row
        neighbour (Parallel) — stays at its minimum height. */
     #lg-params-field.hidden { display: none; }
-    .lg-head { display: flex; align-items: flex-end; gap: 8px; }
+    /* The head row = radios + chevron. The radios CANNOT wrap, so they may only
+       shrink by clipping: min-width 0 + overflow hidden keep the chevron in
+       place instead of letting the text push it out of the card. */
+    .lg-head { display: flex; align-items: flex-end; gap: 8px; min-width: 0; }
+    #lg-toggle { min-width: 0; overflow: hidden; }
     .lg-collapse {
       margin-left: auto; flex: 0 0 auto;
       background: transparent; border: none; padding: 1px; cursor: pointer;
@@ -1617,7 +1621,7 @@ ${renderViewConfig(deps)}
         <span class="card-title">Loop Guard</span>
         <div class="field">
           <span class="field-label">Sensitivity</span>
-          <div class="lg-head">
+          <div class="lg-head" id="lg-head">
             <div class="sampler-toggle" id="lg-toggle" role="radiogroup" aria-label="Loop Guard sensitivity">
               <label class="sampler-opt" title="Aggressive: flags loops sooner (more nudges, lower thresholds)"><input type="radio" name="lg-level" id="lg-high" value="high" />High</label>
               <label class="sampler-opt" title="Balanced: the default preset"><input type="radio" name="lg-level" id="lg-normal" value="normal" checked />Normal</label>
