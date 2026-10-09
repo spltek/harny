@@ -1644,12 +1644,13 @@ describe("ChatViewProvider all-sessions manager", () => {
     ]);
     const { handler, view } = resolveWith(provider);
     await handler({ type: "openSession", id: "x" });
-    await new Promise((r) => setTimeout(r, 0)); // let the async open + refresh settle
-    expect(registry.listOpenIds()).toContain("x");
-    // Silent refresh of the manage form (if open).
-    expect(view.webview.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "sessionsManager", currentFolder: "/home/me/a" }),
+    // The async open + refresh settle on their own: WAIT for the effect.
+    await vi.waitFor(() =>
+      expect(view.webview.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "sessionsManager", currentFolder: "/home/me/a" }),
+      ),
     );
+    expect(registry.listOpenIds()).toContain("x");
   });
 
   it("getAllSessions replies with EVERY session plus the current folder", async () => {
@@ -1877,9 +1878,10 @@ describe("ChatViewProvider compaction", () => {
     expect(rt.contextWindow).toBe(131072);
     expect(store.saveSettings).toHaveBeenCalledWith("s1", expect.objectContaining({ contextWindow: 131072 }));
     // ...and the host PUSHES the adopted value so the UI control updates.
-    await new Promise((r) => setTimeout(r, 0));
-    expect(view.webview.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "config", config: expect.objectContaining({ contextWindow: 131072 }) }),
+    await vi.waitFor(() =>
+      expect(view.webview.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "config", config: expect.objectContaining({ contextWindow: 131072 }) }),
+      ),
     );
 
     // A model WITHOUT a reported window keeps the current one.
@@ -1898,9 +1900,7 @@ describe("ChatViewProvider compaction", () => {
     const rt = registry.get("s1")!;
 
     await handler({ type: "setModel", model: "kimi-k3", provider: "opencode-go" });
-    await new Promise((r) => setTimeout(r, 0));
-
-    expect(rt.contextWindow).toBe(1048576);
+    await vi.waitFor(() => expect(rt.contextWindow).toBe(1048576));
   });
 
   it("setCompactionThreshold stores the session override (clamped) and persists it", async () => {
@@ -2258,10 +2258,12 @@ describe("ChatViewProvider soft steering + queue", () => {
     agent.send.mockClear();
 
     await handler({ type: "send", mode: "steer", id: "s1x", text: "actually Rome" });
-    await new Promise((r) => setTimeout(r, 0)); // applySteer is async
+    // applySteer is async: WAIT for it to hand the draft to the agent.
+    await vi.waitFor(() =>
+      expect(agent.steer).toHaveBeenCalledWith("s1x", "actually Rome", expect.objectContaining({})),
+    );
 
     expect(agent.send).not.toHaveBeenCalled();
-    expect(agent.steer).toHaveBeenCalledWith("s1x", "actually Rome", expect.objectContaining({}));
     expect(rt.pending?.map((p) => p.id)).toEqual(["s1x"]);
   });
 
@@ -2296,7 +2298,7 @@ describe("ChatViewProvider soft steering + queue", () => {
   it("cancels a queued steer through the agent too", async () => {
     const { handler, rt, agent } = await setupStreaming();
     await handler({ type: "send", mode: "steer", id: "s1x", text: "hmm" });
-    await new Promise((r) => setTimeout(r, 0));
+    await vi.waitFor(() => expect(agent.steer).toHaveBeenCalled());
 
     await handler({ type: "cancelPending", id: "s1x" });
 
@@ -2356,15 +2358,15 @@ describe("ChatViewProvider soft steering + queue", () => {
       text: "use THIS instead",
       attachments: [{ name: "a.txt", path: "/tmp/a.txt", size: 2, isImage: false }],
     });
-    await new Promise((r) => setTimeout(r, 0));
-
-    expect(agent.steer).toHaveBeenCalledWith(
-      "s1x",
-      expect.stringContaining("Attached file"),
-      expect.objectContaining({
-        displayText: "use THIS instead",
-        attachments: [expect.objectContaining({ name: "a.txt" })],
-      }),
+    await vi.waitFor(() =>
+      expect(agent.steer).toHaveBeenCalledWith(
+        "s1x",
+        expect.stringContaining("Attached file"),
+        expect.objectContaining({
+          displayText: "use THIS instead",
+          attachments: [expect.objectContaining({ name: "a.txt" })],
+        }),
+      ),
     );
   });
 
@@ -2395,7 +2397,7 @@ describe("ChatViewProvider soft steering + queue", () => {
   it("removes a pending steer when the agent reports it applied", async () => {
     const { handler, rt, agent, view } = await setupStreaming();
     await handler({ type: "send", mode: "steer", id: "s1x", text: "x" });
-    await new Promise((r) => setTimeout(r, 0));
+    await vi.waitFor(() => expect(agent.steer).toHaveBeenCalled());
     view.webview.postMessage.mockClear();
 
     agent.emit({ type: "steer_applied", ids: ["s1x"], content: "x" });
@@ -2408,7 +2410,7 @@ describe("ChatViewProvider soft steering + queue", () => {
     const { handler, rt, agent, view } = await setupStreaming();
     await handler({ type: "send", mode: "queue", id: "q1", text: "later" });
     await handler({ type: "send", mode: "steer", id: "s1x", text: "hmm" });
-    await new Promise((r) => setTimeout(r, 0));
+    await vi.waitFor(() => expect(agent.steer).toHaveBeenCalled());
     view.webview.postMessage.mockClear();
 
     await handler({ type: "abort" });
@@ -2422,7 +2424,7 @@ describe("ChatViewProvider soft steering + queue", () => {
     const { handler, rt, agent, view } = await setupStreaming();
     await handler({ type: "send", mode: "steer", id: "sA", text: "one" });
     await handler({ type: "send", mode: "steer", id: "sB", text: "two" });
-    await new Promise((r) => setTimeout(r, 0));
+    await vi.waitFor(() => expect(agent.steer).toHaveBeenCalledTimes(2));
     expect((rt.pending ?? []).filter((p) => p.mode === "steer").length).toBe(2);
     view.webview.postMessage.mockClear();
 
