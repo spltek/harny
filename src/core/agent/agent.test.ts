@@ -2713,10 +2713,10 @@ describe("Orchestration (Delegate)", () => {
     expect(toolMsgs.some((c) => /Sub-agent "auto" aborted/i.test(c))).toBe(true);
   });
 
-  it("rejects invalid delegate args (missing resources) without spawning", async () => {
+  it("rejects a WRITER delegate with missing resources without spawning", async () => {
     let spawned = 0;
     const { agent, history } = build({
-      calls: [{ id: "A", goal: "x", access: "read" }],
+      calls: [{ id: "A", goal: "x", access: "write" }],
       spawn: async () => {
         spawned++;
         return { content: "x", isError: false };
@@ -2727,6 +2727,21 @@ describe("Orchestration (Delegate)", () => {
 
     expect(spawned).toBe(0);
     expect(history.all().find((m) => m.role === "tool")?.content).toContain("resources");
+  });
+
+  it("spawns a READ-ONLY delegate with EMPTY resources (web research)", async () => {
+    let spawned = 0;
+    const { agent } = build({
+      calls: [{ id: "milan", goal: "search Milan", access: "read", resources: [] }],
+      spawn: async () => {
+        spawned++;
+        return { content: "🔁 report", isError: false };
+      },
+    });
+
+    await agent.send("go");
+
+    expect(spawned).toBe(1);
   });
 
   it("reports delegation unavailable when no spawn hook is configured", async () => {

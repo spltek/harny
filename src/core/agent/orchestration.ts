@@ -46,11 +46,16 @@ export function parseDelegateSpec(args: Record<string, unknown>): { spec?: Deleg
   const resources = Array.isArray(args.resources)
     ? args.resources.filter((r): r is string => typeof r === "string" && r.trim().length > 0).map((r) => r.trim())
     : [];
-  if (resources.length === 0) {
+  // Read-only tasks that do NOT touch the filesystem (web research, analysis of
+  // the conversation) legitimately have no resources: allow an empty array so
+  // they never fail. Writers MUST declare what they touch, because that is what
+  // keeps two writers on the same file from running in parallel.
+  if (resources.length === 0 && access !== "read") {
     return {
       error:
-        'Delegate requires a non-empty "resources" array listing the files/dirs the sub-agent will touch ' +
-        '(it drives the safe-parallelism decision).',
+        'Delegate with access "write"/"create" requires a non-empty "resources" array listing the files/dirs ' +
+        'the sub-agent will touch (it drives the safe-parallelism decision). Read-only tasks that do not touch ' +
+        'files (e.g. web research) may leave "resources" empty.',
     };
   }
 

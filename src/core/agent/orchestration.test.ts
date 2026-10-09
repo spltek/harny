@@ -32,10 +32,19 @@ describe("parseDelegateSpec", () => {
     expect(s).toMatchObject({ goal: "analyze", access: "read", resources: ["src/a.ts"], parallel: undefined, after: [] });
   });
 
-  it("requires goal, a valid access and a non-empty resources list", () => {
+  it("requires goal, a valid access and resources for writers", () => {
     expect(parseDelegateSpec({ access: "read", resources: ["a"] }).error).toContain("goal");
     expect(parseDelegateSpec({ goal: "x", access: "write", resources: [] }).error).toContain("resources");
+    expect(parseDelegateSpec({ goal: "x", access: "create", resources: [] }).error).toContain("resources");
     expect(parseDelegateSpec({ goal: "x", access: "nope", resources: ["a"] }).error).toContain("access");
+  });
+
+  it("allows an EMPTY resources list for read-only tasks (e.g. web research)", () => {
+    const { spec: s, error } = parseDelegateSpec({ goal: "search Milan", access: "read", resources: [] });
+    expect(error).toBeUndefined();
+    expect(s).toMatchObject({ goal: "search Milan", access: "read", resources: [] });
+    // Missing resources entirely is also fine for a reader (defaults to []).
+    expect(parseDelegateSpec({ goal: "x", access: "read" }).error).toBeUndefined();
   });
 
   it("accepts parallel:'yes' and after ids; ignores garbage", () => {

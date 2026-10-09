@@ -68,8 +68,9 @@ export class DelegateTool implements Tool {
         resources: {
           type: "array",
           items: { type: "string" },
-          minItems: 1,
-          description: "Files/dirs the sub-agent will touch (relative paths). Required.",
+          description:
+            "Files/dirs the sub-agent will touch (relative paths). REQUIRED for access \"write\"/\"create\"; " +
+            "may be empty for read-only tasks that do not touch the filesystem (e.g. web research).",
         },
         parallel: {
           type: "string",
@@ -90,7 +91,7 @@ export class DelegateTool implements Tool {
             'e.g. [1] or [2]. Give each sub-task ONLY the attachments it needs. Omit to forward ALL of them.',
         },
       },
-      required: ["goal", "access", "resources"],
+      required: ["goal", "access"],
     },
   };
 
