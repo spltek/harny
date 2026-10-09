@@ -3878,15 +3878,36 @@ describe("soft steering + pending bubbles (webview)", () => {
     expect(area.classList.contains("hidden")).toBe(false);
     const rows = area.querySelectorAll(".pending-msg");
     expect(rows.length).toBe(2);
-    expect(rows[0].textContent).toContain("Queued");
-    expect(rows[1].classList.contains("pending-steer")).toBe(true);
-    expect(rows[1].textContent).toContain("Steer");
+    // Steer group first, queue group below — even though q1 arrived first.
+    expect(rows[0].classList.contains("pending-steer")).toBe(true);
+    expect(rows[0].textContent).toContain("Steer");
+    expect(rows[1].textContent).toContain("Queued");
 
-    (rows[0].querySelector(".pending-cancel") as HTMLButtonElement).click();
+    (rows[1].querySelector(".pending-cancel") as HTMLButtonElement).click();
     expect(posted).toContainEqual({ type: "cancelPending", id: "q1" });
 
     hostMessage({ type: "pending", items: [] });
     expect(area.classList.contains("hidden")).toBe(true);
+  });
+
+  it("groups steers above queued messages, each group in arrival order", async () => {
+    await loadView();
+    hostMessage({
+      type: "pending",
+      items: [
+        { id: "q1", mode: "queue", text: "queue one" },
+        { id: "s1", mode: "steer", text: "steer one" },
+        { id: "q2", mode: "queue", text: "queue two" },
+        { id: "s2", mode: "steer", text: "steer two" },
+      ],
+    });
+    const rows = [...document.querySelectorAll("#pending-area .pending-msg")].map((r) => r.textContent);
+    expect(rows).toEqual([
+      expect.stringContaining("steer one"),
+      expect.stringContaining("steer two"),
+      expect.stringContaining("queue one"),
+      expect.stringContaining("queue two"),
+    ]);
   });
 
   it("turns a steer into a real user bubble when the host reports it applied", async () => {

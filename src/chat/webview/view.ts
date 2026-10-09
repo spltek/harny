@@ -1429,12 +1429,17 @@ function clearAttachments(): void {
   renderAttachmentChips();
 }
 
-/** Render the queue/steer messages typed while working (host-driven). */
+/** Render the queue/steer messages typed while working (host-driven).
+ * Steer bubbles ALWAYS sit above queued ones (they are applied ASAP at the
+ * next turn boundary); within each group, arrival order is preserved. */
 function renderPending(items: PendingViewItem[]): void {
   pendingItems = items || [];
+  const ordered = [...pendingItems].sort((a, b) =>
+    a.mode === b.mode ? 0 : a.mode === "steer" ? -1 : 1,
+  );
   pendingArea.innerHTML = "";
-  pendingArea.classList.toggle("hidden", pendingItems.length === 0);
-  for (const it of pendingItems) {
+  pendingArea.classList.toggle("hidden", ordered.length === 0);
+  for (const it of ordered) {
     const el = document.createElement("div");
     el.className = "pending-msg " + (it.mode === "steer" ? "pending-steer" : "pending-queue");
     const badge = document.createElement("span");

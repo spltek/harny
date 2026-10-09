@@ -1357,7 +1357,10 @@ export class ChatViewProvider implements WebviewViewProvider {
     this.draining.add(rt.sessionId);
     try {
       while (!rt.agent.streaming && rt.pending && rt.pending.length > 0) {
-        const next = rt.pending.shift()!;
+        // Steers first (they were meant to apply earlier), then queued messages
+        // FIFO — matching the UI, where steer bubbles sit above the queue.
+        const steerIdx = rt.pending.findIndex((p) => p.mode === "steer");
+        const next = rt.pending.splice(steerIdx >= 0 ? steerIdx : 0, 1)[0];
         this.postPending(rt);
         await this.dispatchSend(rt, { type: "send", text: next.text, attachments: next.attachments });
       }

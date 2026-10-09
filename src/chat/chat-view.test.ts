@@ -2335,6 +2335,25 @@ describe("ChatViewProvider soft steering + queue", () => {
     expect(rt.pending).toEqual([]);
   });
 
+  it("drains orphan steers before queued messages (grouped order)", async () => {
+    const { provider, rt, agent } = await setupStreaming();
+    const calls: string[] = [];
+    agent.send = vi.fn(async (text: string) => {
+      calls.push(text);
+      agent.streaming = false;
+    });
+    rt.pending = [
+      { id: "q1", mode: "queue", text: "queue-one" },
+      { id: "s1", mode: "steer", text: "steer-one" },
+      { id: "q2", mode: "queue", text: "queue-two" },
+    ];
+    agent.streaming = false;
+
+    await (provider as unknown as { drainPending(rt: unknown): Promise<void> }).drainPending(rt);
+
+    expect(calls).toEqual(["steer-one", "queue-one", "queue-two"]);
+  });
+
   it("a steer with attachments builds the context and forwards it", async () => {
     const attachments = {
       pick: vi.fn(async () => []),
