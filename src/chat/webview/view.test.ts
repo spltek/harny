@@ -38,8 +38,8 @@ function setupDom(
     <div id="sessions"></div>
     <div id="tabs"></div>
     <div id="messages"></div>
-    <div id="working-bar" class="hidden">● Working...</div>
     <div id="pending-area" class="hidden"></div>
+    <div id="working-bar" class="hidden">● Working...</div>
     <div id="input-area">
       <div id="steer-target" class="hidden"></div>
       <div id="input-main">
@@ -4042,6 +4042,29 @@ describe("Queue/Steer toggle (webview)", () => {
     expect(steerLabel().textContent).toBe("Steer");
     window.dispatchEvent(new Event("blur"));
     expect(steerLabel().textContent).toBe("Queue");
+  });
+
+  it("reverts the toggle to Queue after a steer is sent", async () => {
+    await loadView();
+    hostMessage({ type: "status", active: true });
+    steerBtn().click(); // → Steer
+    expect(steerLabel().textContent).toBe("Steer");
+    input().value = "use Rome";
+    input().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(posted.find((m: any) => m.type === "send")).toMatchObject({ mode: "steer" });
+    expect(steerLabel().textContent).toBe("Queue");
+  });
+
+  it("shows the working bar when a run starts without an optimistic send (queued dispatch)", async () => {
+    await loadView();
+    const bar = document.getElementById("working-bar") as HTMLElement;
+    expect(bar.classList.contains("hidden")).toBe(true);
+    // A queued message the host dispatches only sends `status`, not a local
+    // send: the bar must still appear.
+    hostMessage({ type: "status", active: true });
+    expect(bar.classList.contains("hidden")).toBe(false);
+    hostMessage({ type: "done" });
+    expect(bar.classList.contains("hidden")).toBe(true);
   });
 
   it("Enter follows the toggle state (Steer after a click, no modifier needed)", async () => {

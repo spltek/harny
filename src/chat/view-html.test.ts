@@ -16,6 +16,9 @@ describe("renderViewHtml", () => {
     expect(html).toContain('id="tabs"');
     expect(html).toContain('id="messages"');
     expect(html).toContain('id="user-input"');
+    // Pending bubbles sit below the transcript; the working bar is the very
+    // BOTTOM footer (below the pending bubbles).
+    expect(html).toMatch(/id="messages"[\s\S]*?id="pending-area"[\s\S]*?id="working-bar"/);
     expect(html).toContain('id="attach-btn"');
     expect(html).toContain('id="attachment-chips"');
     // The paperclip file picker is the HEAD key of the input row (before the

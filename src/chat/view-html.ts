@@ -1581,10 +1581,12 @@ ${renderViewConfig(deps)}
   </div>
   <div id="tabs"></div>
   <div id="messages"></div>
-  <div id="working-bar" class="hidden">● Working...</div>
   <!-- Messages typed while the session works (queue/steer): a real footer,
        outside #messages, so they survive streaming re-renders. -->
   <div id="pending-area" class="hidden"></div>
+  <!-- Working indicator: the BOTTOM-most footer, always BELOW the transcript
+       and the pending bubbles. -->
+  <div id="working-bar" class="hidden">● Working...</div>
   <!-- Control stack toggle: a slim hover-hot strip just above the ask card.
        On hover a chevron appears; clicking collapses/expands the Window +
        Sampling cards (#ctl-cards) while the ask card (with the AI Model row

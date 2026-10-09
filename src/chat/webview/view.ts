@@ -1536,8 +1536,11 @@ function send(): void {
       ...(attachments.length > 0 ? { attachments } : {}),
       ...(steerTarget ? { targetToolCallId: steerTarget.toolCallId } : {}),
     });
+    // A sent steer reverts the toggle to Queue (the default) for the next one.
+    if (effectiveMode === "steer") sendMode = "queue";
     steerTarget = null;
     renderSteerTarget();
+    renderSteerMode();
     return;
   }
   clearStreamingBubble();
@@ -3059,6 +3062,10 @@ function setStreaming(active: boolean): void {
   // Every run starts in Queue; the toggle is only clickable while working.
   if (!active) sendMode = "queue";
   renderSteerMode();
+  // A run that starts WITHOUT the optimistic send path (e.g. a queued message
+  // the host dispatched, or switching to a session that is working) must still
+  // show the working bar — it is the only progress indicator for those runs.
+  if (active && !workingEl) addWorking();
   compactBtn.disabled = active;
   compactSettingsBtn.disabled = active;
   modelSelect.disabled = active;
