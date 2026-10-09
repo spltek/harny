@@ -9,7 +9,8 @@ import type { ModelInfo, ModelListProvider } from "../core/llm/model-list";
 import { modelsDevProviderCandidates } from "../core/llm/models-dev";
 import type { SessionManager } from "../core/sessions/session-manager";
 import type { SessionSettingsPatch, SessionSummary } from "../core/sessions/types";
-import type { PendingInput, SessionRegistry, SessionRuntime } from "./session-registry";
+import type { SessionRegistry, SessionRuntime } from "./session-registry";
+import { PendingInputQueue, type PendingInput } from "./pending-input-queue";
 import { StreamTee } from "./stream-tee";
 import type { AttachmentService } from "./attachment-service";
 import type { AttachmentInfo, AttachmentPart } from "./attachment-types";
@@ -68,10 +69,8 @@ export class ChatViewProvider implements WebviewViewProvider {
    * the agent. The webview re-asserts it on load.
    */
   private parallelEnabled = false;
-  /** Sessions whose queued messages are currently being drained (re-entrancy). */
-  private readonly draining = new Set<string>();
-  /** Fallback id counter for pending messages without a client id. */
-  private pendingSeq = 0;
+  /** Per-session queue of messages typed while the agent works (queue/steer). */
+  private readonly pendingQueue: PendingInputQueue;
   /** FIFO queue for in-panel modals (name dialog, alerts, confirms…). */
   private modals: PanelModalQueue;
 
@@ -103,6 +102,10 @@ export class ChatViewProvider implements WebviewViewProvider {
     } = {},
   ) {
     this.modals = new PanelModalQueue((msg) => this.view?.webview.postMessage(msg));
+    this.pendingQueue = new PendingInputQueue({
+      buildContext: (files) => this.attachments.buildContext(files),
+      post: (sessionId, items) => this.postPending(sessionId, items),
+    });
   }
 
   setContext(context: ExtensionContext): void {
@@ -469,6 +472,7 @@ export class ChatViewProvider implements WebviewViewProvider {
   async closeTab(id: string): Promise<void> {
     this.streamTee.detach(id);
     this.registry.close(id);
+    this.pendingQueue.drop(id);
     if (this.activeId === id) {
       this.activeId = undefined;
       if (this.registry.listOpenIds().length > 0) {
@@ -501,7 +505,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       config,
       workingIds: this.workingIds(),
       streaming: !!active?.agent.streaming,
-      pending: active?.pending ?? [],
+      pending: active ? this.pendingQueue.items(active.sessionId) : [],
       liveThinking: live?.thinking ?? "",
       liveAnswer: live?.answer ?? "",
     });
@@ -967,11 +971,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         if (rt?.agent.streaming) {
           // Stop = the user regains control: drop anything still queued/steered
           // so the run does not silently restart from the pending list.
-          if (rt.pending && rt.pending.length > 0) {
-            for (const p of rt.pending) if (p.mode === "steer") rt.agent.cancelSteer(p.id);
-            rt.pending = [];
-            this.postPending(rt);
-          }
+          this.pendingQueue.clear(rt);
           rt.agent.abort();
           this.streamTee.clear(rt.sessionId);
           // Red bubble "Processing interrupted" in the transcript.
@@ -994,7 +994,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         break;
       case "cancelPending":
         // Drop a queued/steer message the user changed their mind about.
-        if (rt && typeof msg.id === "string") this.cancelPending(rt, msg.id);
+        if (rt && typeof msg.id === "string") this.pendingQueue.cancel(rt, msg.id);
         break;
       case "pickFiles":
         if (this.view) {
@@ -1142,12 +1142,12 @@ export class ChatViewProvider implements WebviewViewProvider {
    * being dropped; otherwise it runs a full send and then drains the queue.
    */
   private async send(rt: SessionRuntime, msg: any): Promise<void> {
-    if (rt.agent.streaming || this.draining.has(rt.sessionId)) {
-      this.enqueueWhileStreaming(rt, msg);
+    if (rt.agent.streaming || this.pendingQueue.isDraining(rt.sessionId)) {
+      this.pendingQueue.enqueue(rt, msg);
       return;
     }
     await this.dispatchSend(rt, msg);
-    await this.drainPending(rt);
+    await this.pendingQueue.drain(rt, (item) => this.dispatchSend(rt, item));
   }
 
   /** Run ONE message to completion (the original send body). */
@@ -1284,87 +1284,10 @@ export class ChatViewProvider implements WebviewViewProvider {
     this.view?.webview.postMessage({ type: "status", active, workingIds: this.workingIds() });
   }
 
-  /** Push the pending list to the webview (only the active session's view). */
-  private postPending(rt: SessionRuntime): void {
-    if (this.activeId !== rt.sessionId) return;
-    this.view?.webview.postMessage({ type: "pending", items: rt.pending ?? [] });
-  }
-
-  /** Drop a still-pending message (queued, or a steer not yet at a boundary). */
-  private cancelPending(rt: SessionRuntime, id: string): void {
-    const item = rt.pending?.find((p) => p.id === id);
-    if (!item) return;
-    rt.pending = (rt.pending ?? []).filter((p) => p.id !== id);
-    if (item.mode === "steer") rt.agent.cancelSteer(id);
-    this.postPending(rt);
-  }
-
-  /**
-   * The session is working: hold the message. `steer` is handed to the agent
-   * (applied at its next turn boundary); `queue` waits for the run to end.
-   */
-  private enqueueWhileStreaming(rt: SessionRuntime, msg: any): void {
-    const text = typeof msg.text === "string" ? msg.text : "";
-    const attachments = (msg.attachments as AttachmentInfo[] | undefined) ?? [];
-    if (!text.trim() && attachments.length === 0) return;
-    const mode: "queue" | "steer" = msg.mode === "steer" ? "steer" : "queue";
-    const id = typeof msg.id === "string" && msg.id ? msg.id : `p-${++this.pendingSeq}`;
-    const item: PendingInput = {
-      id,
-      mode,
-      text,
-      ...(attachments.length > 0 ? { attachments } : {}),
-    };
-    rt.pending = rt.pending ?? [];
-    rt.pending.push(item);
-    this.postPending(rt);
-    if (mode === "steer") void this.applySteer(rt, item);
-  }
-
-  /** Build the attachment context for a steer and hand it to the agent. */
-  private async applySteer(rt: SessionRuntime, item: PendingInput): Promise<void> {
-    let text = item.text;
-    let images: string[] | undefined;
-    let displayText: string | undefined;
-    let attachmentMeta: AttachmentInfo[] | undefined;
-    let attachmentParts: AttachmentPart[] | undefined;
-    if (item.attachments && item.attachments.length > 0) {
-      const ctx = await this.attachments.buildContext(item.attachments);
-      text = ctx.text ? `${ctx.text}\n\n${item.text}` : item.text;
-      images = ctx.images.length > 0 ? ctx.images : undefined;
-      attachmentMeta = item.attachments;
-      attachmentParts = ctx.parts;
-      displayText = item.text;
-    }
-    // The run may have ended (or the item been drained/cancelled) while the
-    // attachment context was being built: never deliver it twice.
-    if (!rt.agent.streaming || !rt.pending?.some((p) => p.id === item.id)) return;
-    rt.agent.steer(item.id, text, {
-      images,
-      attachments: attachmentMeta,
-      displayText,
-      attachmentParts,
-    });
-  }
-
-  /** Run the queued messages, one after another, while the session is idle. */
-  private async drainPending(rt: SessionRuntime): Promise<void> {
-    if (this.draining.has(rt.sessionId)) return;
-    this.draining.add(rt.sessionId);
-    try {
-      while (!rt.agent.streaming && rt.pending && rt.pending.length > 0) {
-        // Steers first (they were meant to apply earlier), then queued messages
-        // FIFO — matching the UI, where steer bubbles sit above the queue.
-        const steerIdx = rt.pending.findIndex((p) => p.mode === "steer");
-        const next = rt.pending.splice(steerIdx >= 0 ? steerIdx : 0, 1)[0];
-        this.postPending(rt);
-        await this.dispatchSend(rt, { type: "send", text: next.text, attachments: next.attachments });
-      }
-    } finally {
-      this.draining.delete(rt.sessionId);
-    }
-    // A message that arrived while the last item ran must not be stranded.
-    if (!rt.agent.streaming && rt.pending && rt.pending.length > 0) void this.drainPending(rt);
+  /** Push a session's pending list to the webview (only when it is active). */
+  private postPending(sessionId: string, items: PendingInput[]): void {
+    if (this.activeId !== sessionId) return;
+    this.view?.webview.postMessage({ type: "pending", items });
   }
 
   /** Apply the active session's stored model to the runtime config (clears for new sessions). */
@@ -1472,6 +1395,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     }
     this.sessions.remove(id);
     this.streamTee.detach(id);
+    this.pendingQueue.drop(id);
     this.resubscribe();
     await this.postSwitchView();
     // The manage-sessions form (if open) must drop the deleted row too.
@@ -1528,13 +1452,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       if (typeof usage.cachedWrite === "number") rt.cachedWriteTokens = usage.cachedWrite;
       void this.pushConfig();
     },
-    onSteerApplied: (sessionId, ids) => {
-      const rt = this.registry.get(sessionId);
-      if (!rt?.pending) return;
-      const consumed = new Set(ids);
-      rt.pending = rt.pending.filter((p) => !consumed.has(p.id));
-      this.postPending(rt);
-    },
+    onSteerApplied: (sessionId, ids) => this.pendingQueue.onSteerApplied(sessionId, ids),
   });
 
   private resubscribe(): void {
@@ -1780,7 +1698,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         version: (this.context?.extension as { packageJSON?: { version?: string } } | undefined)?.packageJSON?.version,
         workingIds: this.workingIds(),
         streaming: !!active?.agent.streaming,
-        pending: active?.pending ?? [],
+        pending: active ? this.pendingQueue.items(active.sessionId) : [],
         liveThinking: live?.thinking ?? "",
         liveAnswer: live?.answer ?? "",
       },

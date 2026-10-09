@@ -2233,18 +2233,20 @@ describe("ChatViewProvider soft steering + queue", () => {
     await handler({ type: "setModel", model: "m", provider: "p" });
     const rt = harness.registry.get("s1")!;
     (rt.agent as any).streaming = true; // the session is working
-    return { ...harness, handler, view, rt, agent: rt.agent as any };
+    // The pending state now lives in the extracted PendingInputQueue.
+    const queue = (harness.provider as unknown as { pendingQueue: { items(id: string): any[] } }).pendingQueue;
+    return { ...harness, handler, view, rt, agent: rt.agent as any, pending: () => queue.items(rt.sessionId) };
   }
 
   it("queues a message typed while working (no send, pending pushed)", async () => {
-    const { handler, view, rt, agent } = await setupStreaming();
+    const { handler, view, agent, pending } = await setupStreaming();
     agent.send.mockClear();
     view.webview.postMessage.mockClear();
 
     await handler({ type: "send", mode: "queue", id: "q1", text: "later" });
 
     expect(agent.send).not.toHaveBeenCalled();
-    expect(rt.pending?.map((p) => p.id)).toEqual(["q1"]);
+    expect(pending().map((p) => p.id)).toEqual(["q1"]);
     expect(view.webview.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "pending",
@@ -2254,7 +2256,7 @@ describe("ChatViewProvider soft steering + queue", () => {
   });
 
   it("steers a message typed while working (agent.steer, not a new send)", async () => {
-    const { handler, rt, agent } = await setupStreaming();
+    const { handler, agent, pending } = await setupStreaming();
     agent.send.mockClear();
 
     await handler({ type: "send", mode: "steer", id: "s1x", text: "actually Rome" });
@@ -2264,7 +2266,7 @@ describe("ChatViewProvider soft steering + queue", () => {
     );
 
     expect(agent.send).not.toHaveBeenCalled();
-    expect(rt.pending?.map((p) => p.id)).toEqual(["s1x"]);
+    expect(pending().map((p) => p.id)).toEqual(["s1x"]);
   });
 
   it("ignores the mode when idle: a normal send runs immediately", async () => {
@@ -2279,69 +2281,33 @@ describe("ChatViewProvider soft steering + queue", () => {
     await handler({ type: "send", mode: "steer", id: "x", text: "hi" });
 
     expect(agent.send).toHaveBeenCalled();
-    expect(rt.pending ?? []).toEqual([]);
+    expect(
+      (provider as unknown as { pendingQueue: { items(id: string): unknown[] } }).pendingQueue.items("s1"),
+    ).toEqual([]);
     expect(agent.steer).not.toHaveBeenCalled();
   });
 
   it("cancels a queued message without touching the agent", async () => {
-    const { handler, rt, agent, view } = await setupStreaming();
+    const { handler, agent, view, pending } = await setupStreaming();
     await handler({ type: "send", mode: "queue", id: "q1", text: "later" });
     view.webview.postMessage.mockClear();
 
     await handler({ type: "cancelPending", id: "q1" });
 
-    expect(rt.pending).toEqual([]);
+    expect(pending()).toEqual([]);
     expect(agent.cancelSteer).not.toHaveBeenCalled();
     expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "pending", items: [] });
   });
 
   it("cancels a queued steer through the agent too", async () => {
-    const { handler, rt, agent } = await setupStreaming();
+    const { handler, agent, pending } = await setupStreaming();
     await handler({ type: "send", mode: "steer", id: "s1x", text: "hmm" });
     await vi.waitFor(() => expect(agent.steer).toHaveBeenCalled());
 
     await handler({ type: "cancelPending", id: "s1x" });
 
-    expect(rt.pending).toEqual([]);
+    expect(pending()).toEqual([]);
     expect(agent.cancelSteer).toHaveBeenCalledWith("s1x");
-  });
-
-  it("drains queued messages FIFO once the run is idle", async () => {
-    const { provider, rt, agent } = await setupStreaming();
-    const calls: string[] = [];
-    agent.send = vi.fn(async (text: string) => {
-      calls.push(text);
-      agent.streaming = false; // the run finished: the next item may start
-    });
-    rt.pending = [
-      { id: "q1", mode: "queue", text: "one" },
-      { id: "q2", mode: "queue", text: "two" },
-    ];
-    agent.streaming = false; // the run is idle: the queue may drain
-
-    await (provider as unknown as { drainPending(rt: unknown): Promise<void> }).drainPending(rt);
-
-    expect(calls).toEqual(["one", "two"]);
-    expect(rt.pending).toEqual([]);
-  });
-
-  it("drains orphan steers before queued messages (grouped order)", async () => {
-    const { provider, rt, agent } = await setupStreaming();
-    const calls: string[] = [];
-    agent.send = vi.fn(async (text: string) => {
-      calls.push(text);
-      agent.streaming = false;
-    });
-    rt.pending = [
-      { id: "q1", mode: "queue", text: "queue-one" },
-      { id: "s1", mode: "steer", text: "steer-one" },
-      { id: "q2", mode: "queue", text: "queue-two" },
-    ];
-    agent.streaming = false;
-
-    await (provider as unknown as { drainPending(rt: unknown): Promise<void> }).drainPending(rt);
-
-    expect(calls).toEqual(["steer-one", "queue-one", "queue-two"]);
   });
 
   it("a steer with attachments builds the context and forwards it", async () => {
@@ -2378,7 +2344,7 @@ describe("ChatViewProvider soft steering + queue", () => {
         return { text: "ctx", images: [] };
       }),
     } as unknown as AttachmentService;
-    const { handler, rt, agent } = await setupStreaming({ attachments });
+    const { handler, rt, agent, pending } = await setupStreaming({ attachments });
 
     await handler({
       type: "send",
@@ -2391,23 +2357,23 @@ describe("ChatViewProvider soft steering + queue", () => {
 
     expect(agent.steer).not.toHaveBeenCalled();
     // It stays pending, so the drain can still run it as a normal send.
-    expect(rt.pending?.map((p) => p.id)).toEqual(["s1x"]);
+    expect(pending().map((p) => p.id)).toEqual(["s1x"]);
   });
 
   it("removes a pending steer when the agent reports it applied", async () => {
-    const { handler, rt, agent, view } = await setupStreaming();
+    const { handler, agent, view, pending } = await setupStreaming();
     await handler({ type: "send", mode: "steer", id: "s1x", text: "x" });
     await vi.waitFor(() => expect(agent.steer).toHaveBeenCalled());
     view.webview.postMessage.mockClear();
 
     agent.emit({ type: "steer_applied", ids: ["s1x"], content: "x" });
 
-    expect(rt.pending).toEqual([]);
+    expect(pending()).toEqual([]);
     expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "steerApplied", ids: ["s1x"], content: "x" });
   });
 
   it("Stop clears the pending queue so the run does not silently restart", async () => {
-    const { handler, rt, agent, view } = await setupStreaming();
+    const { handler, agent, view, pending } = await setupStreaming();
     await handler({ type: "send", mode: "queue", id: "q1", text: "later" });
     await handler({ type: "send", mode: "steer", id: "s1x", text: "hmm" });
     await vi.waitFor(() => expect(agent.steer).toHaveBeenCalled());
@@ -2415,22 +2381,33 @@ describe("ChatViewProvider soft steering + queue", () => {
 
     await handler({ type: "abort" });
 
-    expect(rt.pending).toEqual([]);
+    expect(pending()).toEqual([]);
     expect(agent.cancelSteer).toHaveBeenCalledWith("s1x");
     expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "pending", items: [] });
   });
 
+  it("closing a tab drops its pending queue (no stale bubbles on reopen)", async () => {
+    const { handler, agent, pending } = await setupStreaming();
+    await handler({ type: "send", mode: "queue", id: "q1", text: "later" });
+    expect(pending()).toHaveLength(1);
+
+    agent.streaming = false; // the tab can be closed
+    await handler({ type: "closeTab", id: "s1" });
+
+    expect(pending()).toEqual([]);
+  });
+
   it("clears ALL pending steers when the merged steer_applied arrives", async () => {
-    const { handler, rt, agent, view } = await setupStreaming();
+    const { handler, agent, view, pending } = await setupStreaming();
     await handler({ type: "send", mode: "steer", id: "sA", text: "one" });
     await handler({ type: "send", mode: "steer", id: "sB", text: "two" });
     await vi.waitFor(() => expect(agent.steer).toHaveBeenCalledTimes(2));
-    expect((rt.pending ?? []).filter((p) => p.mode === "steer").length).toBe(2);
+    expect(pending().filter((p) => p.mode === "steer").length).toBe(2);
     view.webview.postMessage.mockClear();
 
     agent.emit({ type: "steer_applied", ids: ["sA", "sB"], content: "one\n\ntwo" });
 
-    expect((rt.pending ?? []).filter((p) => p.mode === "steer").length).toBe(0);
+    expect(pending().filter((p) => p.mode === "steer").length).toBe(0);
     expect(view.webview.postMessage).toHaveBeenCalledWith({
       type: "steerApplied",
       ids: ["sA", "sB"],
