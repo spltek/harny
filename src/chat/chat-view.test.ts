@@ -28,6 +28,8 @@ const state = vi.hoisted(() => ({
   // VS Code dialogs exercised by the manage-sessions form.
   showOpenDialog: vi.fn(),
   showSaveDialog: vi.fn(),
+  // Built-in commands (e.g. vscode.openFolder) fired by the manage form.
+  executeCommand: vi.fn(),
   // VS Code filesystem used by provider export/import.
   fsWriteFile: vi.fn(async () => {}),
   fsReadFile: vi.fn(async () => new Uint8Array()),
@@ -42,6 +44,7 @@ vi.mock("vscode", () => ({
     showOpenDialog: state.showOpenDialog,
     showSaveDialog: state.showSaveDialog,
   },
+  commands: { executeCommand: state.executeCommand },
   workspace: {
     getConfiguration: () => ({ get: (key: string) => (key === "fontSize" ? 14 : undefined) }),
     onDidChangeConfiguration: () => ({ dispose: () => {} }),
@@ -1672,6 +1675,36 @@ describe("ChatViewProvider all-sessions manager", () => {
     );
   });
 
+  it("changeSessionFolder defaults the picker to the session's folder when it still exists", async () => {
+    const { store, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "x", name: "X", createdAt: 1, updatedAt: 2, messageCount: 0, folder: "/home/me/old", folderMissing: false },
+    ]);
+    state.showOpenDialog.mockResolvedValue(undefined);
+    const { handler } = resolveWith(provider);
+    await handler({ type: "sessionsManagerChangeFolder", id: "x" });
+    expect(state.showOpenDialog).toHaveBeenCalledWith(
+      expect.objectContaining({ defaultUri: { fsPath: "/home/me/old" } }),
+    );
+  });
+
+  it("changeSessionFolder warns then omits the default when the session's folder is gone", async () => {
+    const { store, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "x", name: "X", createdAt: 1, updatedAt: 2, messageCount: 0, folder: "/home/me/gone", folderMissing: true },
+    ]);
+    state.showOpenDialog.mockResolvedValue(undefined);
+    const { view, handler } = resolveWith(provider);
+    await handler({ type: "sessionsManagerChangeFolder", id: "x" });
+    // Warned first (in-panel alert naming the gone folder)…
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "alert", message: expect.stringContaining("/home/me/gone") }),
+    );
+    // …then opened the picker without a default location.
+    const arg = state.showOpenDialog.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(arg).not.toHaveProperty("defaultUri");
+  });
+
   it("changeSessionFolder with a cancelled dialog changes nothing", async () => {
     const { store, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
     state.showOpenDialog.mockResolvedValue(undefined); // user closed the picker
@@ -1681,6 +1714,43 @@ describe("ChatViewProvider all-sessions manager", () => {
     expect(view.webview.postMessage).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: "sessionsManager" }),
     );
+  });
+
+  it("sessionsManagerOpenFolder opens the session's folder in VS Code (no picker)", async () => {
+    const { store, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "x", name: "X", createdAt: 1, updatedAt: 2, messageCount: 0, folder: "/home/me/b", folderMissing: false },
+    ]);
+    const { handler } = resolveWith(provider);
+    await handler({ type: "sessionsManagerOpenFolder", id: "x" });
+    expect(state.executeCommand).toHaveBeenCalledWith("vscode.openFolder", { fsPath: "/home/me/b" }, false);
+    expect(state.showOpenDialog).not.toHaveBeenCalled();
+  });
+
+  it("sessionsManagerOpenFolder forwards Windows and POSIX paths verbatim", async () => {
+    const { store, provider } = buildHarness({ currentFolder: () => "C:\\Users\\Me\\A" });
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "w", name: "W", createdAt: 1, updatedAt: 2, messageCount: 0, folder: "C:\\Users\\Me\\B", folderMissing: false },
+      { id: "p", name: "P", createdAt: 1, updatedAt: 1, messageCount: 0, folder: "/home/me/b", folderMissing: false },
+    ]);
+    const { handler } = resolveWith(provider);
+    await handler({ type: "sessionsManagerOpenFolder", id: "w" });
+    expect(state.executeCommand).toHaveBeenLastCalledWith("vscode.openFolder", { fsPath: "C:\\Users\\Me\\B" }, false);
+    await handler({ type: "sessionsManagerOpenFolder", id: "p" });
+    expect(state.executeCommand).toHaveBeenLastCalledWith("vscode.openFolder", { fsPath: "/home/me/b" }, false);
+    expect(state.showOpenDialog).not.toHaveBeenCalled();
+  });
+
+  it("sessionsManagerOpenFolder falls back to the picker when the folder is gone", async () => {
+    const { store, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "x", name: "X", createdAt: 1, updatedAt: 2, messageCount: 0, folder: "/home/me/gone", folderMissing: true },
+    ]);
+    state.showOpenDialog.mockResolvedValue([{ fsPath: "/home/me/new" }]);
+    const { handler } = resolveWith(provider);
+    await handler({ type: "sessionsManagerOpenFolder", id: "x" });
+    expect(state.executeCommand).not.toHaveBeenCalled();
+    expect(store.saveSettings).toHaveBeenCalledWith("x", { folder: "/home/me/new" });
   });
 
   it("the MAIN sessions list shows only the current folder's sessions", async () => {

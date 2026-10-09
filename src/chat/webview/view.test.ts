@@ -3678,35 +3678,74 @@ describe("all-sessions manager (gear)", () => {
     expect(posted.some((m: any) => m.type === "getAllSessions")).toBe(true);
   });
 
-  it("renders rows with folder + actions (change folder / delete only — no Open)", async () => {
+  it("renders rows with folder + actions (open / change folder / delete)", async () => {
     await loadView();
     hostMessage({
       type: "sessionsManager",
       currentFolder: "/home/me/a",
       sessions: [
         { id: "x", name: "Local", createdAt: 1, updatedAt: 9, messageCount: 2, folder: "/home/me/a", folderMissing: false },
-        { id: "b", name: "Foreign", createdAt: 1, updatedAt: 5, messageCount: 1, folder: "/home/me/b", folderMissing: true },
+        { id: "b", name: "Foreign", createdAt: 1, updatedAt: 7, messageCount: 1, folder: "/home/me/b", folderMissing: false },
+        { id: "d", name: "Gone", createdAt: 1, updatedAt: 5, messageCount: 1, folder: "/home/me/gone", folderMissing: true },
         { id: "c", name: "NoFolder", createdAt: 1, updatedAt: 3, messageCount: 0, folder: undefined, folderMissing: false },
       ],
     });
     const rows = document.querySelectorAll("#sessions-manager-list .sm-row");
-    expect(rows.length).toBe(3);
-    // NO Open button anywhere: opening other folders happens in VS Code.
-    expect(document.querySelectorAll("#sessions-manager-list button.open-btn").length).toBe(0);
+    expect(rows.length).toBe(4);
     // Current-folder row carries the "this folder" tag.
     expect(rows[0].textContent).toContain("this folder");
     // KNOWN but missing folder: red row with "— missing".
-    expect(rows[1].textContent).toContain("missing");
+    expect(rows[2].textContent).toContain("missing");
     // UNKNOWN folder: neutral "folder not set", NOT red.
-    const unknownFolder = rows[2].querySelector(".sm-folder") as HTMLElement;
+    const unknownFolder = rows[3].querySelector(".sm-folder") as HTMLElement;
     expect(unknownFolder.classList.contains("unset")).toBe(true);
     expect(unknownFolder.classList.contains("missing")).toBe(false);
     expect(unknownFolder.textContent).toContain("folder not set");
-    // Per-row actions post the right messages.
-    (rows[1].querySelector("button.folder-btn") as HTMLButtonElement).click(); // Change folder…
-    expect(posted.some((m: any) => m.type === "sessionsManagerChangeFolder" && m.id === "b")).toBe(true);
-    (rows[1].querySelector("button.del-btn") as HTMLButtonElement).click(); // delete
-    expect(posted.some((m: any) => m.type === "deleteSession" && m.id === "b")).toBe(true);
+    // Existing folder that is NOT the open one: Open folder (no picker).
+    const openBtn = rows[1].querySelector("button.folder-btn") as HTMLButtonElement;
+    expect(openBtn.textContent).toBe("Open folder");
+    openBtn.click();
+    expect(posted.some((m: any) => m.type === "sessionsManagerOpenFolder" && m.id === "b")).toBe(true);
+    // Missing / unset / current folder: Change folder… (picker).
+    for (const i of [0, 2, 3]) {
+      const btn = rows[i].querySelector("button.folder-btn") as HTMLButtonElement;
+      expect(btn.textContent).toBe("Change folder…");
+    }
+    (rows[2].querySelector("button.folder-btn") as HTMLButtonElement).click();
+    expect(posted.some((m: any) => m.type === "sessionsManagerChangeFolder" && m.id === "d")).toBe(true);
+    (rows[2].querySelector("button.del-btn") as HTMLButtonElement).click(); // delete
+    expect(posted.some((m: any) => m.type === "deleteSession" && m.id === "d")).toBe(true);
+  });
+
+  it("matches the current folder cross-platform (Windows separators/case, POSIX case-sensitive)", async () => {
+    await loadView();
+    // Windows: same folder despite `\` vs `/` and case; a different folder opens.
+    hostMessage({
+      type: "sessionsManager",
+      currentFolder: "C:\\Users\\Me\\Proj",
+      sessions: [
+        { id: "w1", name: "WinSame", createdAt: 1, updatedAt: 9, messageCount: 0, folder: "c:/users/me/proj/", folderMissing: false },
+        { id: "w2", name: "WinOther", createdAt: 1, updatedAt: 5, messageCount: 0, folder: "C:\\Users\\Me\\Other", folderMissing: false },
+      ],
+    });
+    let rows = document.querySelectorAll("#sessions-manager-list .sm-row");
+    expect(rows[0].textContent).toContain("this folder");
+    expect((rows[0].querySelector("button.folder-btn") as HTMLButtonElement).textContent).toBe("Change folder…");
+    expect(rows[1].textContent).not.toContain("this folder");
+    expect((rows[1].querySelector("button.folder-btn") as HTMLButtonElement).textContent).toBe("Open folder");
+
+    // POSIX: case matters, so a case-different path is NOT the current folder.
+    hostMessage({
+      type: "sessionsManager",
+      currentFolder: "/home/me/proj",
+      sessions: [
+        { id: "p1", name: "PosixSame", createdAt: 1, updatedAt: 9, messageCount: 0, folder: "/home/me/proj/", folderMissing: false },
+        { id: "p2", name: "PosixCase", createdAt: 1, updatedAt: 5, messageCount: 0, folder: "/home/me/Proj", folderMissing: false },
+      ],
+    });
+    rows = document.querySelectorAll("#sessions-manager-list .sm-row");
+    expect(rows[0].textContent).toContain("this folder");
+    expect(rows[1].textContent).not.toContain("this folder");
   });
 
   it("disables ONLY the two setup gears while any session is working", async () => {

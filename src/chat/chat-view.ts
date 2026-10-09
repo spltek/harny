@@ -161,15 +161,46 @@ export class ChatViewProvider implements WebviewViewProvider {
     };
   }
 
+  /**
+   * Open the folder a session points to as the VS Code workspace, so harny's
+   * working directory becomes that folder. Falls back to re-pointing the
+   * session (warns when the folder is missing) when there is nothing to open.
+   */
+  private async openSessionFolder(id: string): Promise<void> {
+    const session = this.sessions.list().find((s) => s.id === id);
+    if (!session?.folder || session.folderMissing) {
+      await this.changeSessionFolder(id);
+      return;
+    }
+    const { commands, Uri } = await import("vscode");
+    // forceNewWindow=false: reuse the current window (the extension reloads
+    // and re-derives its root from the newly opened folder).
+    await commands.executeCommand("vscode.openFolder", Uri.file(session.folder), false);
+  }
+
   /** Change the folder a session points to (pointer-only; the file stays put). */
   private async changeSessionFolder(id: string): Promise<void> {
-    const { window } = await import("vscode");
+    const { window, Uri } = await import("vscode");
+    // Default the picker to the session's folder when it is still available,
+    // so re-pointing a session usually takes one click.
+    const session = this.sessions.list().find((s) => s.id === id);
+    // A folder that is known but gone cannot be the default: warn the user
+    // first, then still open the picker so they can re-point the session.
+    if (session?.folder && session.folderMissing) {
+      await this.inPanelAlert({
+        kind: "info",
+        title: "Folder no longer available",
+        message: `The folder this session points to (${session.folder}) no longer exists. Pick a new one.`,
+      });
+    }
+    const defaultFolder = session?.folder && !session.folderMissing ? session.folder : undefined;
     const uris = await window.showOpenDialog({
       canSelectFiles: false,
       canSelectFolders: true,
       canSelectMany: false,
       title: "Choose the folder for this session",
       openLabel: "Select folder",
+      ...(defaultFolder ? { defaultUri: Uri.file(defaultFolder) } : {}),
     });
     if (!uris || uris.length === 0) return;
     const folder = uris[0].fsPath;
@@ -531,6 +562,9 @@ export class ChatViewProvider implements WebviewViewProvider {
         break;
       case "sessionsManagerChangeFolder":
         if (typeof msg.id === "string") await this.changeSessionFolder(msg.id);
+        break;
+      case "sessionsManagerOpenFolder":
+        if (typeof msg.id === "string") await this.openSessionFolder(msg.id);
         break;
       case "modalResponse": {
         if (typeof msg.id === "number") this.onPanelModalResponse(msg.id, msg.value);

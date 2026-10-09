@@ -1816,10 +1816,28 @@ function closeSessionsManager(): void {
 }
 
 /**
+ * True when two absolute folder paths refer to the same location. VS Code
+ * `fsPath` values use `\` on Windows and `/` on POSIX, so separators and a
+ * trailing separator are normalized away. Windows drive paths are also
+ * compared case-insensitively (that filesystem is); POSIX paths stay
+ * case-sensitive, so two genuinely distinct Linux folders never collapse.
+ */
+function sameFolder(a?: string, b?: string): boolean {
+  if (!a || !b) return false;
+  const norm = (p: string) => p.replace(/[\\/]+/g, "/").replace(/\/+$/, "");
+  const na = norm(a);
+  const nb = norm(b);
+  if (na === nb) return true;
+  const windowsPath = /^[a-zA-Z]:\//;
+  return windowsPath.test(na) && windowsPath.test(nb) && na.toLowerCase() === nb.toLowerCase();
+}
+
+/**
  * Rows for the manage form: every session of every folder, most recent first
- * (the host sorts). Red rows = folder unavailable; per-row actions:
- * change folder / delete. Opening a session of another folder is NOT offered
- * here: the user opens the workspace folder in VS Code directly.
+ * (the host sorts). Red rows = folder unavailable; per-row actions: open the
+ * session's folder in VS Code (changes the working directory) or change the
+ * folder pointer / delete. A missing or unset folder offers the picker instead
+ * of Open, so the session can be re-pointed.
  */
 function renderSessionsManager(sessions: SessionInfo[], currentFolder?: string): void {
   sessionsManagerList.innerHTML = "";
@@ -1842,7 +1860,7 @@ function renderSessionsManager(sessions: SessionInfo[], currentFolder?: string):
     const nameSpan = document.createElement("span");
     nameSpan.textContent = s.name || "Session";
     nameLine.appendChild(nameSpan);
-    if (s.folder && s.folder === currentFolder) {
+    if (sameFolder(s.folder, currentFolder)) {
       const tag = document.createElement("span");
       tag.className = "sm-tag";
       tag.textContent = "this folder";
@@ -1868,11 +1886,23 @@ function renderSessionsManager(sessions: SessionInfo[], currentFolder?: string):
     actions.className = "sm-actions";
     const folderBtn = document.createElement("button");
     folderBtn.className = "secondary-ghost folder-btn";
-    folderBtn.textContent = "Change folder…";
-    folderBtn.title = "Pick the workspace folder this session points to";
-    folderBtn.addEventListener("click", () =>
-      vscode.postMessage({ type: "sessionsManagerChangeFolder", id: s.id }),
-    );
+    // A usable folder (exists, and not the one already open) is OPENED in VS
+    // Code — this changes the working directory. Otherwise the picker is the
+    // only useful action: re-point a missing/unset session's folder.
+    const canOpen = !!s.folder && !s.folderMissing && !sameFolder(s.folder, currentFolder);
+    if (canOpen) {
+      folderBtn.textContent = "Open folder";
+      folderBtn.title = "Open this folder in VS Code (changes the working directory)";
+      folderBtn.addEventListener("click", () =>
+        vscode.postMessage({ type: "sessionsManagerOpenFolder", id: s.id }),
+      );
+    } else {
+      folderBtn.textContent = "Change folder…";
+      folderBtn.title = "Pick the workspace folder this session points to";
+      folderBtn.addEventListener("click", () =>
+        vscode.postMessage({ type: "sessionsManagerChangeFolder", id: s.id }),
+      );
+    }
     const del = document.createElement("button");
     del.className = "secondary-ghost del-btn";
     del.title = "Delete this session";
