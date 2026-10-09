@@ -130,6 +130,17 @@ describe("planToolExecution", () => {
       { kind: "single", index: 1 },
     ]);
   });
+
+  it("batches read-only delegates parsed with EMPTY resources (not barriers)", () => {
+    // Regression: an empty-resources reader used to parse as INVALID, so every
+    // one became a `single` barrier and the whole batch ran ONE at a time
+    // (fewer agents in flight than the configured max).
+    const calls: PlannedCall[] = ["milan", "bologna", "firenze"].map((id) => ({
+      isDelegate: true,
+      spec: parseDelegateSpec({ id, goal: `search ${id}`, access: "read", resources: [] }).spec,
+    }));
+    expect(planToolExecution(calls)).toEqual([{ kind: "parallel", indices: [0, 1, 2] }]);
+  });
 });
 
 describe("runWithConcurrency", () => {
