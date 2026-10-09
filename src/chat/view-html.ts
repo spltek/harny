@@ -1125,9 +1125,9 @@ ${renderViewConfig(deps)}
     #parallel-btn.is-on svg { color: #ffffff; }
     #parallel-btn.is-on:hover { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45), 0 0 16px rgba(76, 141, 255, 0.55); }
 
-    /* Queue/Steer toggle: same pill family as Parallel, sitting between the
-       mode select and Parallel. Default Queue (neutral); Steer = muted red.
-       Clickable only while a run is active; Ctrl/Cmd forces Steer while held. */
+    /* Queue/Steer pill: same family as Parallel, sitting between the mode
+       select and Parallel. It is a pure INDICATOR (never clickable): Queue by
+       default, Steer (muted red) only while working with Ctrl/Cmd held. */
     #steer-btn {
       display: inline-flex;
       align-items: center;
@@ -1140,17 +1140,15 @@ ${renderViewConfig(deps)}
       color: var(--fg);
       font-size: var(--fs-sm);
       font-weight: 600;
-      cursor: pointer;
+      cursor: default;
+      pointer-events: none;
       white-space: nowrap;
       flex-shrink: 0;
       box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
       transition: background 0.18s, box-shadow 0.18s, color 0.18s, border-color 0.18s, opacity 0.18s;
     }
     #steer-btn svg { flex-shrink: 0; color: var(--muted); transition: color 0.18s; }
-    #steer-btn:hover:not(:disabled) { border-color: rgba(255, 255, 255, 0.25); color: var(--fg-strong); }
-    #steer-btn:hover:not(:disabled) svg { color: var(--fg); }
-    #steer-btn:focus-visible { outline: 2px solid #b23b3b; outline-offset: 2px; }
-    #steer-btn:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
+    #steer-btn:disabled { opacity: 0.45; box-shadow: none; }
     #steer-btn.is-steer {
       background: linear-gradient(135deg, #b23b3b, #8f2d2d);
       border-color: transparent;
@@ -1635,11 +1633,11 @@ ${renderViewConfig(deps)}
           </button>
         </div>
       </div>
-      <!-- Queue/Steer: how a message typed WHILE the agent works is applied.
-           Default Queue (it runs after the current run); Steer injects it into
-           the running loop at the next turn boundary. Clickable only while
-           working; Ctrl/Cmd forces Steer while held. -->
-      <button type="button" id="steer-btn" aria-pressed="false"
+      <!-- Queue/Steer: an INDICATOR (not a control) for how a message typed
+           while the agent works is applied. Queue by default; it shows Steer
+           only while working with Ctrl/Cmd held (the message is then injected
+           into the running loop at the next turn boundary). -->
+      <button type="button" id="steer-btn" tabindex="-1" aria-pressed="false"
               title="Queue: the next message runs after the current run ends">
         <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none"/></svg>
         <span id="steer-btn-label">Queue</span>

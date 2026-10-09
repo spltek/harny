@@ -3961,7 +3961,7 @@ describe("soft steering + pending bubbles (webview)", () => {
   });
 });
 
-describe("Queue/Steer toggle (webview)", () => {
+describe("Queue/Steer indicator (webview)", () => {
   beforeEach(() => {
     posted.length = 0;
     setupDom();
@@ -3971,24 +3971,40 @@ describe("Queue/Steer toggle (webview)", () => {
   const steerLabel = () => document.getElementById("steer-btn-label") as HTMLElement;
   const input = () => document.getElementById("user-input") as HTMLTextAreaElement;
 
-  it("defaults to Queue and is clickable only while working", async () => {
+  it("defaults to Queue and is dim while idle", async () => {
     await loadView();
     expect(steerLabel().textContent).toBe("Queue");
     expect(steerBtn().disabled).toBe(true);
     hostMessage({ type: "status", active: true });
     expect(steerBtn().disabled).toBe(false);
+    expect(steerLabel().textContent).toBe("Queue");
     hostMessage({ type: "status", active: false });
     expect(steerBtn().disabled).toBe(true);
-    expect(steerLabel().textContent).toBe("Queue"); // each run restarts in Queue
   });
 
-  it("Ctrl/Cmd does NOT switch to Steer while idle (stays Queue)", async () => {
+  it("is NOT clickable: clicking never changes the state", async () => {
     await loadView();
+    hostMessage({ type: "status", active: true });
+    steerBtn().click();
+    expect(steerLabel().textContent).toBe("Queue");
+    steerBtn().click();
+    expect(steerLabel().textContent).toBe("Queue");
+  });
+
+  it("shows Steer ONLY while working with Ctrl/Cmd held, reverts on release", async () => {
+    await loadView();
+    // idle: the modifier has no effect
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control" }));
     expect(steerLabel().textContent).toBe("Queue");
-    expect(steerBtn().classList.contains("is-steer")).toBe(false);
+    // working: the already-held modifier now shows Steer
+    hostMessage({ type: "status", active: true });
+    expect(steerLabel().textContent).toBe("Steer");
     window.dispatchEvent(new KeyboardEvent("keyup", { key: "Control" }));
+    expect(steerLabel().textContent).toBe("Queue");
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta" }));
+    expect(steerLabel().textContent).toBe("Steer");
+    // the run ends while the modifier is held → back to Queue
+    hostMessage({ type: "status", active: false });
     expect(steerLabel().textContent).toBe("Queue");
   });
 
@@ -4003,38 +4019,6 @@ describe("Queue/Steer toggle (webview)", () => {
     expect(onInput.defaultPrevented).toBe(false);
   });
 
-  it("clicking the toggle while working alternates Queue ↔ Steer", async () => {
-    await loadView();
-    hostMessage({ type: "status", active: true });
-    steerBtn().click();
-    expect(steerLabel().textContent).toBe("Steer");
-    expect(steerBtn().classList.contains("is-steer")).toBe(true);
-    steerBtn().click();
-    expect(steerLabel().textContent).toBe("Queue");
-  });
-
-  it("Ctrl/Cmd forces Steer while held, then reverts to the toggle state", async () => {
-    await loadView();
-    hostMessage({ type: "status", active: true });
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control" }));
-    expect(steerLabel().textContent).toBe("Steer");
-    window.dispatchEvent(new KeyboardEvent("keyup", { key: "Control" }));
-    expect(steerLabel().textContent).toBe("Queue"); // persistent state untouched
-
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta" }));
-    expect(steerLabel().textContent).toBe("Steer");
-  });
-
-  it("clicking the toggle while Ctrl/Cmd is held does NOT change the state (modifier wins)", async () => {
-    await loadView();
-    hostMessage({ type: "status", active: true });
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta" }));
-    steerBtn().click();
-    expect(steerLabel().textContent).toBe("Steer"); // forced by the modifier
-    window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta" }));
-    expect(steerLabel().textContent).toBe("Queue"); // the click was ignored
-  });
-
   it("blur releases the Ctrl/Cmd override", async () => {
     await loadView();
     hostMessage({ type: "status", active: true });
@@ -4044,14 +4028,15 @@ describe("Queue/Steer toggle (webview)", () => {
     expect(steerLabel().textContent).toBe("Queue");
   });
 
-  it("reverts the toggle to Queue after a steer is sent", async () => {
+  it("a sent steer stays Steer while the key is held, Queue once released", async () => {
     await loadView();
     hostMessage({ type: "status", active: true });
-    steerBtn().click(); // → Steer
-    expect(steerLabel().textContent).toBe("Steer");
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control" }));
     input().value = "use Rome";
-    input().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    input().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
     expect(posted.find((m: any) => m.type === "send")).toMatchObject({ mode: "steer" });
+    expect(steerLabel().textContent).toBe("Steer"); // still held
+    window.dispatchEvent(new KeyboardEvent("keyup", { key: "Control" }));
     expect(steerLabel().textContent).toBe("Queue");
   });
 
@@ -4067,19 +4052,19 @@ describe("Queue/Steer toggle (webview)", () => {
     expect(bar.classList.contains("hidden")).toBe(true);
   });
 
-  it("Enter follows the toggle state (Steer after a click, no modifier needed)", async () => {
+  it("Enter steers while Ctrl/Cmd is held", async () => {
     await loadView();
     hostMessage({ type: "status", active: true });
-    steerBtn().click(); // → Steer
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control" }));
     input().value = "use Rome";
-    input().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    input().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
     expect(posted.find((m: any) => m.type === "send")).toMatchObject({ mode: "steer", text: "use Rome" });
   });
 
-  it("the play key follows the toggle state too", async () => {
+  it("the play key steers while Ctrl/Cmd is held", async () => {
     await loadView();
     hostMessage({ type: "status", active: true });
-    steerBtn().click(); // → Steer
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta" }));
     input().value = "use Rome";
     (document.getElementById("send-btn") as HTMLButtonElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(posted.find((m: any) => m.type === "send")).toMatchObject({ mode: "steer", text: "use Rome" });

@@ -1489,21 +1489,19 @@ function setSteerTarget(toolCallId: string, label: string): void {
 }
 
 /**
- * Queue/Steer toggle state. `sendMode` is the persistent choice (default
- * Queue, reset when a run ends); Ctrl/Cmd held forces Steer while down and
- * WINS over a click. Only meaningful/clickable while a run is in progress.
+ * The Queue/Steer pill is a pure INDICATOR (never clicked): it shows Steer
+ * ONLY while a run is active AND Ctrl/Cmd is held, and Queue otherwise.
+ * Releasing the key (or the run ending) returns it to Queue; a sent message
+ * leaves it as-is (still Steer while the key is down, Queue once released).
  */
-let sendMode: "queue" | "steer" = "queue";
 let steerModifierHeld = false;
 
-/** The mode a new message will use right now (modifier override wins, but
- * ONLY while a run is active: idle always shows Queue). */
+/** The mode a new message will use right now. */
 function effectiveSendMode(): "queue" | "steer" {
-  if (!streamingActive) return "queue";
-  return steerModifierHeld ? "steer" : sendMode;
+  return streamingActive && steerModifierHeld ? "steer" : "queue";
 }
 
-/** Paint the toggle: label + red "Steer" state + enabled only while working. */
+/** Paint the indicator: label + red "Steer" state + dim when idle. */
 function renderSteerMode(): void {
   const isSteer = effectiveSendMode() === "steer";
   steerBtn.classList.toggle("is-steer", isSteer);
@@ -1536,8 +1534,6 @@ function send(): void {
       ...(attachments.length > 0 ? { attachments } : {}),
       ...(steerTarget ? { targetToolCallId: steerTarget.toolCallId } : {}),
     });
-    // A sent steer reverts the toggle to Queue (the default) for the next one.
-    if (effectiveMode === "steer") sendMode = "queue";
     steerTarget = null;
     renderSteerTarget();
     renderSteerMode();
@@ -1571,14 +1567,9 @@ sendBtn.addEventListener("click", (e) => {
   send();
 });
 attachBtn.addEventListener("click", () => vscode.postMessage({ type: "pickFiles" }));
-// Queue/Steer toggle: click flips it, but only while working and only when
-// Ctrl/Cmd are NOT held (the modifier wins).
-steerBtn.addEventListener("click", () => {
-  if (!streamingActive || steerModifierHeld) return;
-  sendMode = sendMode === "steer" ? "queue" : "steer";
-  renderSteerMode();
-});
-// Ctrl/Cmd is a momentary override to Steer. keyup may be missed when the
+// The Queue/Steer pill is an INDICATOR only (no click handler); its state is
+// driven purely by Ctrl/Cmd below. Ctrl/Cmd forces Steer while held; keyup may
+// be missed when the
 // window loses focus with the key down, so blur releases it too.
 window.addEventListener("keydown", (e) => {
   if (e.key === "Control" || e.key === "Meta") {
@@ -3059,8 +3050,6 @@ function setStreaming(active: boolean): void {
   inputEl.placeholder = active
     ? "Enter to send · Ctrl/Cmd = Steer · Esc to stop"
     : "Ask Harny... (Enter to send, Esc to abort)";
-  // Every run starts in Queue; the toggle is only clickable while working.
-  if (!active) sendMode = "queue";
   renderSteerMode();
   // A run that starts WITHOUT the optimistic send path (e.g. a queued message
   // the host dispatched, or switching to a session that is working) must still
