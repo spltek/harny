@@ -88,7 +88,10 @@ export function parseDelegateSpec(args: Record<string, unknown>): { spec?: Deleg
 }
 
 function isAbsolutePath(p: string): boolean {
-  return p.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(p);
+  // POSIX absolute (/x), Windows drive (C:\x or C:/x), Windows UNC
+  // (\\server\share) and Windows root-relative (\x) — all must NOT be resolved
+  // against the cwd.
+  return p.startsWith("/") || p.startsWith("\\") || /^[a-zA-Z]:[\\/]/.test(p);
 }
 
 /** Normalize a resource path: resolve it against the working directory when it

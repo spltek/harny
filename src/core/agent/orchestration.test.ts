@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { resolve } from "node:path";
 import {
   buildSubAgentTask,
   formatSubAgentAborted,
@@ -199,7 +200,9 @@ describe("sub-agent messaging", () => {
   });
 });
 
-describe("resourcesOverlap — roots + cwd (parallel safety)", () => {
+describe("resourcesOverlap — roots + cwd (parallel safety, cross-platform)", () => {
+  const cwd = process.cwd();
+
   it("treats `.`/`/`/empty (the working directory) as matching EVERYTHING", () => {
     expect(resourcesOverlap(["."], ["src/a.ts"])).toBe(true);
     expect(resourcesOverlap(["/"], ["src/a.ts"])).toBe(true);
@@ -207,13 +210,23 @@ describe("resourcesOverlap — roots + cwd (parallel safety)", () => {
     expect(resourcesOverlap(["./"], ["deep/nested/file.ts"])).toBe(true);
   });
 
-  it("resolves relative paths against the cwd so relative and absolute MATCH", () => {
-    expect(resourcesOverlap(["src/a.ts"], ["/proj/src/a.ts"], "/proj")).toBe(true);
-    expect(resourcesOverlap(["/proj/src"], ["/proj/src/a.ts"], "/proj")).toBe(true);
-    // A different project is NOT a conflict.
-    expect(resourcesOverlap(["src/a.ts"], ["/other/src/a.ts"], "/proj")).toBe(false);
-    // Absolute vs absolute on the same file.
-    expect(resourcesOverlap(["/proj/a.ts"], ["/proj/a.ts"], "/proj")).toBe(true);
+  it("resolves RELATIVE resources against the cwd so relative and absolute MATCH", () => {
+    const abs = resolve(cwd, "src/a.ts");
+    expect(resourcesOverlap(["src/a.ts"], [abs], cwd)).toBe(true);
+    expect(resourcesOverlap([resolve(cwd, "src")], [abs], cwd)).toBe(true);
+    // A sibling file under the same cwd is NOT a conflict.
+    expect(resourcesOverlap(["src/a.ts"], [resolve(cwd, "other/a.ts")], cwd)).toBe(false);
+  });
+
+  it("does NOT resolve ABSOLUTE paths against the cwd (POSIX, Windows drive, UNC)", () => {
+    // POSIX absolute paths stay distinct even with an unrelated cwd.
+    expect(resourcesOverlap(["/proj/src/a.ts"], ["/proj/src/b.ts"], "/elsewhere")).toBe(false);
+    expect(resourcesOverlap(["/proj/src"], ["/proj/src/a.ts"], "/elsewhere")).toBe(true);
+    // Windows drive paths: absolute, never resolved against the cwd.
+    expect(resourcesOverlap(["C:\\proj\\src\\a.ts"], ["D:\\proj\\src\\a.ts"], "/elsewhere")).toBe(false);
+    expect(resourcesOverlap(["C:\\proj\\src"], ["C:\\proj\\src\\a.ts"], "/elsewhere")).toBe(true);
+    // UNC path and its subpath.
+    expect(resourcesOverlap(["\\\\server\\share\\src"], ["\\\\server\\share\\src\\a.ts"], "/elsewhere")).toBe(true);
   });
 
   it("a WRITER on the root conflicts with ANY other writer (never parallel)", () => {
@@ -253,5 +266,51 @@ describe("planToolExecution — `after` is a real dependency", () => {
     // Both calls are placed (no infinite loop), whatever the grouping.
     const indices = steps.flatMap((s) => (s.kind === "single" ? [s.index] : s.indices)).sort();
     expect(indices).toEqual([0, 1]);
+  });
+});
+
+describe("path semantics across OSes (pipeline-safe on Linux/macOS/Windows)", () => {
+  const w = (id: string, resources: string[], access: "read" | "write" = "write"): PlannedCall => ({
+    isDelegate: true,
+    spec: spec({ id, resources, access }),
+  });
+
+  it("Windows: writers on the SAME file are serialized, disjoint files run in parallel", () => {
+    expect(planToolExecution([w("A", ["C:\\proj\\a.ts"]), w("B", ["C:\\proj\\a.ts"])])).toEqual([
+      { kind: "single", index: 0 },
+      { kind: "single", index: 1 },
+    ]);
+    expect(planToolExecution([w("A", ["C:\\proj\\a.ts"]), w("B", ["C:\\proj\\b.ts"])])).toEqual([
+      { kind: "parallel", indices: [0, 1] },
+    ]);
+  });
+
+  it("Windows: a drive-root writer is serialized against any other writer", () => {
+    expect(planToolExecution([w("R", ["C:\\"]), w("B", ["C:\\proj\\b.ts"])])).toEqual([
+      { kind: "single", index: 0 },
+      { kind: "single", index: 1 },
+    ]);
+  });
+
+  it("POSIX: writers on the SAME file are serialized, disjoint files run in parallel", () => {
+    expect(planToolExecution([w("A", ["/proj/a.ts"]), w("B", ["/proj/a.ts"])])).toEqual([
+      { kind: "single", index: 0 },
+      { kind: "single", index: 1 },
+    ]);
+    expect(planToolExecution([w("A", ["/proj/a.ts"]), w("B", ["/proj/b.ts"])])).toEqual([
+      { kind: "parallel", indices: [0, 1] },
+    ]);
+  });
+
+  it("treats backslashes and slashes as the SAME path (models emit either)", () => {
+    expect(resourcesOverlap(["C:\\proj\\a.ts"], ["C:/proj/a.ts"])).toBe(true);
+    expect(resourcesOverlap(["/proj/a.ts"], ["/proj\\a.ts"])).toBe(true);
+    // Case-insensitive (Windows filesystems are).
+    expect(resourcesOverlap(["C:\\Proj\\A.TS"], ["c:\\proj\\a.ts"])).toBe(true);
+  });
+
+  it("does not confuse DIFFERENT drives or different POSIX roots", () => {
+    expect(resourcesOverlap(["C:\\proj\\a.ts"], ["D:\\proj\\a.ts"])).toBe(false);
+    expect(resourcesOverlap(["/srv/a.ts"], ["/var/a.ts"])).toBe(false);
   });
 });
