@@ -58,7 +58,7 @@ npm test          # run all unit tests (vitest)
 npm run coverage  # with coverage report
 ```
 
-1091 unit tests cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (JSONL store, manager, registry, compactor, the per-session control settings incl. the Loop Guard parameters), the OpenAI-compatible LLM provider (streaming, tool calls, `finish_reason`), host-model fetching, all 14 tools (including the Analyze dry-run preview), the mode policy, the agent loop (fake LLM, abort, max turns), the **loop guard** (reasoning/empty/tool-failure/error-streak/tool-repeat detection, tool-call dedup, sensitivity presets, the editable parameter ranges + their clamping), orchestration/sub-agents, **Agent Skills** (SKILL.md parsing + discovery), **MCP** (stdio + Streamable HTTP clients, tool wrapper, manager), markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code, incl. the control-stack wiring: sliders, Auto defaults, the collapsible Loop Guard parameters and the responsive layout).
+1100 unit tests cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (JSONL store, manager, registry, compactor, the cross-folder manager with its open/change-folder actions, the per-session control settings incl. the Loop Guard parameters), the OpenAI-compatible LLM provider (streaming, tool calls, `finish_reason`), host-model fetching, all 14 tools (including the Analyze dry-run preview), the mode policy, the agent loop (fake LLM, abort, max turns), the **loop guard** (reasoning/empty/tool-failure/error-streak/tool-repeat detection, tool-call dedup, sensitivity presets, the editable parameter ranges + their clamping), orchestration/sub-agents, **Agent Skills** (SKILL.md parsing + discovery), **MCP** (stdio + Streamable HTTP clients, tool wrapper, manager), markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code, incl. the control-stack wiring: sliders, Auto defaults, the collapsible Loop Guard parameters and the responsive layout).
 
 ## Features
 
@@ -245,6 +245,7 @@ Set `HARNY_DEBUG=1` to also log the exact request body to `/tmp/harny-debug.log`
 Harny keeps **persistent sessions** in a **central home bucket** (`<home>/sessions/<workspace-key>/`, JSONL — pi/Cursor style) and manages them from a **single side view** opened with the Harny icon in the **Activity Bar** (right side). It requires **exactly one open workspace folder**: sessions are grouped per folder (key = sanitized path), the panel shows only the current folder's sessions, and living OUTSIDE the project means the agent tools (Read/Write/Edit/Grep…) can never touch transcripts and `rm -rf node_modules`-style cleanups never delete chat history.
 
 - **Sessions area** (on top, **hideable** by clicking the header): list of the sessions of the current folder — each row shows the **creation/last-modified dates** above the name, with ✎ rename and 🗑 delete, and **+ New session**.
+- **All-folders manager** (⚙ next to **+ New session**): lists **every** session across all workspace buckets, most recent first, each with its folder. The current folder's row carries a **“this folder”** tag; a folder that no longer exists renders **red (“— missing”)**; a session with no folder shows **“(folder not set)”**. Per-row actions: **Open folder** (folder available and not the one already open — runs VS Code *Open Folder*, so Harny's working directory becomes that folder), **Change folder…** (missing/unset/current — opens a picker to re-point the session, pre-filled with its folder, after warning first when the folder is gone), and **Delete**. Folder matching is **cross-platform**: separators/trailing slash are normalized and Windows drive paths are compared case-insensitively.
 - **Tab bar**: the names of all **open sessions** as tabs laid out **one after another**.
 - **Overlapped chats**: chats are **stacked**, not side by side — only **one chat is visible at a time**, the one of the selected tab. Switching tabs shows the corresponding chat.
 - **Branch**: each session row has a ⎇ button that **copies the session at its current state** (full transcript + per-session settings) into a new session and opens it. The dialog defaults to the original name. Hovering any **assistant reply** shows a ⎇ to branch the session **up to and including that reply** (same naming dialog, same uniqueness rules).
@@ -507,9 +508,8 @@ For providers that expose their model list (OpenAI, OpenRouter, opencode-go, lla
 ## Packaging
 
 ```bash
-npm install -g @vscode/vsce
-vsce package
-# → harny-0.1.0.vsix
+npm install        # installs the local @vscode/vsce dev dependency
+npm run package    # → harny-0.1.0.vsix
 ```
 
 ## License
