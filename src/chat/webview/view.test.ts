@@ -3956,3 +3956,62 @@ describe("steering affordances (webview)", () => {
     expect(input.placeholder).toContain("Enter to send");
   });
 });
+
+describe("steer-armed prompt (Ctrl/Cmd visual)", () => {
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
+
+  it("turns the prompt muted red while Ctrl/Cmd is held during a run", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    hostMessage({ type: "status", active: true });
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control" }));
+    expect(input.classList.contains("steer-armed")).toBe(true);
+    window.dispatchEvent(new KeyboardEvent("keyup", { key: "Control" }));
+    expect(input.classList.contains("steer-armed")).toBe(false);
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta" }));
+    expect(input.classList.contains("steer-armed")).toBe(true);
+  });
+
+  it("does not arm the prompt while idle (steering has no meaning)", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta" }));
+    expect(input.classList.contains("steer-armed")).toBe(false);
+  });
+
+  it("disarms on window blur (keyup can be missed)", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    hostMessage({ type: "status", active: true });
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta" }));
+    expect(input.classList.contains("steer-armed")).toBe(true);
+    window.dispatchEvent(new Event("blur"));
+    expect(input.classList.contains("steer-armed")).toBe(false);
+  });
+
+  it("clicking play while Ctrl/Cmd is held steers", async () => {
+    await loadView();
+    hostMessage({ type: "status", active: true });
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "not Florence, Rome";
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control" }));
+    (document.getElementById("send-btn") as HTMLButtonElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(posted.find((m: any) => m.type === "send")).toMatchObject({
+      mode: "steer",
+      text: "not Florence, Rome",
+    });
+  });
+
+  it("clicking play WITHOUT a modifier queues", async () => {
+    await loadView();
+    hostMessage({ type: "status", active: true });
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "later";
+    (document.getElementById("send-btn") as HTMLButtonElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(posted.find((m: any) => m.type === "send")).toMatchObject({ mode: "queue", text: "later" });
+  });
+});

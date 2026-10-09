@@ -677,6 +677,16 @@ ${renderViewConfig(deps)}
       min-height: 2.31rem; max-height: 18.5rem; outline: none;
     }
     #user-input:focus { border-color: var(--accent); }
+    /* Steer-armed: while Ctrl/Cmd is held the prompt turns muted red, so the
+       user SEES that Enter / the play key will STEER (not queue). Only while a
+       run is in progress (steering has no meaning when idle). */
+    #user-input.steer-armed {
+      background: rgba(178, 59, 59, 0.16);
+      border-color: #a83b3b;
+      border-bottom-color: #d05a5a;
+      box-shadow: inset 0 -3px 0 #a83b3b;
+    }
+    #user-input.steer-armed:focus { border-color: #d05a5a; }
     button {
       background: var(--accent); color: #fff; border: none; border-radius: 6px;
       cursor: pointer; font-size: var(--fs-lg); line-height: 1;

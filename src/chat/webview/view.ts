@@ -1481,6 +1481,15 @@ function setSteerTarget(toolCallId: string, label: string): void {
   inputEl.focus();
 }
 
+/** Ctrl/Cmd held = the next Enter / play click STEERS. Reflected by the muted
+ * red prompt, but only while a run is in progress (steering is meaningless
+ * when idle, where Enter is a normal send). */
+let steerModifierHeld = false;
+function setSteerArmed(on: boolean): void {
+  steerModifierHeld = on;
+  inputEl.classList.toggle("steer-armed", on && streamingActive);
+}
+
 function send(mode: "queue" | "steer" = "queue"): void {
   if (!activeId) return;
   const text = inputEl.value.trim();
@@ -1528,8 +1537,18 @@ function send(mode: "queue" | "steer" = "queue"): void {
 
 // ── Custom hover tooltip removed: native title attributes are used instead ──
 
-sendBtn.addEventListener("click", () => send("queue"));
+// The play key steers too when Ctrl/Cmd is held (mirrors Ctrl/Cmd+Enter).
+sendBtn.addEventListener("click", (e) => send(steerModifierHeld || e.ctrlKey || e.metaKey ? "steer" : "queue"));
 attachBtn.addEventListener("click", () => vscode.postMessage({ type: "pickFiles" }));
+// Arm/disarm the red prompt while Ctrl/Cmd is held. keyup may be missed when
+// the window loses focus with the key down, so blur disarms too.
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Control" || e.key === "Meta") setSteerArmed(true);
+});
+window.addEventListener("keyup", (e) => {
+  if (e.key === "Control" || e.key === "Meta") setSteerArmed(false);
+});
+window.addEventListener("blur", () => setSteerArmed(false));
 
 /** Read a dragged/pasted File as a base64 data URL. */
 function readAsDataUrl(file: File): Promise<string> {
@@ -2985,6 +3004,8 @@ function setStreaming(active: boolean): void {
   inputEl.placeholder = active
     ? "Enter to queue · Ctrl/Cmd+Enter to steer · Esc to stop"
     : "Ask Harny... (Enter to send, Esc to abort)";
+  // The red "steer-armed" prompt only makes sense while a run is in progress.
+  inputEl.classList.toggle("steer-armed", steerModifierHeld && active);
   compactBtn.disabled = active;
   compactSettingsBtn.disabled = active;
   modelSelect.disabled = active;
