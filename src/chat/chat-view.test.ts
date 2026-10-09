@@ -158,6 +158,8 @@ function buildHarness(opts: Record<string, unknown> = {}) {
       }),
       abort: vi.fn(),
       abortSubAgent: vi.fn(),
+      steer: vi.fn(),
+      cancelSteer: vi.fn(),
       setMode: vi.fn(),
       setDelegation: vi.fn(),
       setMaxParallelSubAgents: vi.fn(),
@@ -2221,5 +2223,203 @@ describe("ChatViewProvider compaction", () => {
     expect(conv[0].role).toBe("user"); // compacted despite no contextWindow
     expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactStart" });
     expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "refresh" }));
+  });
+});
+
+describe("ChatViewProvider soft steering + queue", () => {
+  async function setupStreaming(opts: Record<string, unknown> = {}) {
+    const harness = buildHarness({ ...opts, emitEvents: true });
+    const { handler, view } = resolveWith(harness.provider);
+    await harness.provider.createNew(); // s1
+    await handler({ type: "setModel", model: "m", provider: "p" });
+    const rt = harness.registry.get("s1")!;
+    (rt.agent as any).streaming = true; // the session is working
+    return { ...harness, handler, view, rt, agent: rt.agent as any };
+  }
+
+  it("queues a message typed while working (no send, pending pushed)", async () => {
+    const { handler, view, rt, agent } = await setupStreaming();
+    agent.send.mockClear();
+    view.webview.postMessage.mockClear();
+
+    await handler({ type: "send", mode: "queue", id: "q1", text: "later" });
+
+    expect(agent.send).not.toHaveBeenCalled();
+    expect(rt.pending?.map((p) => p.id)).toEqual(["q1"]);
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "pending",
+        items: [expect.objectContaining({ id: "q1", mode: "queue", text: "later" })],
+      }),
+    );
+  });
+
+  it("steers a message typed while working (agent.steer, not a new send)", async () => {
+    const { handler, rt, agent } = await setupStreaming();
+    agent.send.mockClear();
+
+    await handler({ type: "send", mode: "steer", id: "s1x", text: "actually Rome" });
+    await new Promise((r) => setTimeout(r, 0)); // applySteer is async
+
+    expect(agent.send).not.toHaveBeenCalled();
+    expect(agent.steer).toHaveBeenCalledWith("s1x", "actually Rome", expect.objectContaining({}));
+    expect(rt.pending?.map((p) => p.id)).toEqual(["s1x"]);
+  });
+
+  it("forwards a Parallel steer target so the sub-agent is aborted", async () => {
+    const { handler, agent } = await setupStreaming();
+    await handler({ type: "send", mode: "steer", id: "s1x", text: "not Florence", targetToolCallId: "tc-9" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(agent.steer).toHaveBeenCalledWith(
+      "s1x",
+      "not Florence",
+      expect.objectContaining({ targetToolCallId: "tc-9" }),
+    );
+  });
+
+  it("ignores the mode when idle: a normal send runs immediately", async () => {
+    const { registry, provider } = buildHarness();
+    const { handler } = resolveWith(provider);
+    await provider.createNew();
+    await handler({ type: "setModel", model: "m", provider: "p" });
+    const rt = registry.get("s1")!;
+    const agent = rt.agent as any;
+    agent.send.mockClear();
+
+    await handler({ type: "send", mode: "steer", id: "x", text: "hi" });
+
+    expect(agent.send).toHaveBeenCalled();
+    expect(rt.pending ?? []).toEqual([]);
+    expect(agent.steer).not.toHaveBeenCalled();
+  });
+
+  it("cancels a queued message without touching the agent", async () => {
+    const { handler, rt, agent, view } = await setupStreaming();
+    await handler({ type: "send", mode: "queue", id: "q1", text: "later" });
+    view.webview.postMessage.mockClear();
+
+    await handler({ type: "cancelPending", id: "q1" });
+
+    expect(rt.pending).toEqual([]);
+    expect(agent.cancelSteer).not.toHaveBeenCalled();
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "pending", items: [] });
+  });
+
+  it("cancels a queued steer through the agent too", async () => {
+    const { handler, rt, agent } = await setupStreaming();
+    await handler({ type: "send", mode: "steer", id: "s1x", text: "hmm" });
+    await new Promise((r) => setTimeout(r, 0));
+
+    await handler({ type: "cancelPending", id: "s1x" });
+
+    expect(rt.pending).toEqual([]);
+    expect(agent.cancelSteer).toHaveBeenCalledWith("s1x");
+  });
+
+  it("drains queued messages FIFO once the run is idle", async () => {
+    const { provider, rt, agent } = await setupStreaming();
+    const calls: string[] = [];
+    agent.send = vi.fn(async (text: string) => {
+      calls.push(text);
+      agent.streaming = false; // the run finished: the next item may start
+    });
+    rt.pending = [
+      { id: "q1", mode: "queue", text: "one" },
+      { id: "q2", mode: "queue", text: "two" },
+    ];
+    agent.streaming = false; // the run is idle: the queue may drain
+
+    await (provider as unknown as { drainPending(rt: unknown): Promise<void> }).drainPending(rt);
+
+    expect(calls).toEqual(["one", "two"]);
+    expect(rt.pending).toEqual([]);
+  });
+
+  it("a steer with attachments builds the context and forwards it", async () => {
+    const attachments = {
+      pick: vi.fn(async () => []),
+      buildContext: vi.fn(async () => ({ text: 'Attached file "a.txt":\n```\nhi\n```', images: [] })),
+    } as unknown as AttachmentService;
+    const { handler, agent } = await setupStreaming({ attachments });
+
+    await handler({
+      type: "send",
+      mode: "steer",
+      id: "s1x",
+      text: "use THIS instead",
+      attachments: [{ name: "a.txt", path: "/tmp/a.txt", size: 2, isImage: false }],
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(agent.steer).toHaveBeenCalledWith(
+      "s1x",
+      expect.stringContaining("Attached file"),
+      expect.objectContaining({
+        displayText: "use THIS instead",
+        attachments: [expect.objectContaining({ name: "a.txt" })],
+      }),
+    );
+  });
+
+  it("does NOT deliver a steer whose run ended while the context was building", async () => {
+    const attachments = {
+      pick: vi.fn(async () => []),
+      buildContext: vi.fn(async () => {
+        rt.agent.streaming = false; // the run ended mid-build
+        return { text: "ctx", images: [] };
+      }),
+    } as unknown as AttachmentService;
+    const { handler, rt, agent } = await setupStreaming({ attachments });
+
+    await handler({
+      type: "send",
+      mode: "steer",
+      id: "s1x",
+      text: "too late",
+      attachments: [{ name: "a.txt", path: "/tmp/a.txt", size: 2, isImage: false }],
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(agent.steer).not.toHaveBeenCalled();
+    // It stays pending, so the drain can still run it as a normal send.
+    expect(rt.pending?.map((p) => p.id)).toEqual(["s1x"]);
+  });
+
+  it("removes a pending steer when the agent reports it applied", async () => {
+    const { handler, rt, agent, view } = await setupStreaming();
+    await handler({ type: "send", mode: "steer", id: "s1x", text: "x" });
+    await new Promise((r) => setTimeout(r, 0));
+    view.webview.postMessage.mockClear();
+
+    agent.emit({ type: "steer_applied", id: "s1x", content: "x" });
+
+    expect(rt.pending).toEqual([]);
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "steerApplied", id: "s1x", content: "x" });
+  });
+
+  it("Stop clears the pending queue so the run does not silently restart", async () => {
+    const { handler, rt, agent, view } = await setupStreaming();
+    await handler({ type: "send", mode: "queue", id: "q1", text: "later" });
+    await handler({ type: "send", mode: "steer", id: "s1x", text: "hmm" });
+    await new Promise((r) => setTimeout(r, 0));
+    view.webview.postMessage.mockClear();
+
+    await handler({ type: "abort" });
+
+    expect(rt.pending).toEqual([]);
+    expect(agent.cancelSteer).toHaveBeenCalledWith("s1x");
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "pending", items: [] });
+  });
+
+  it("includes the pending list in switchView so a tab switch restores it", async () => {
+    const { handler, view, rt } = await setupStreaming();
+    await handler({ type: "send", mode: "queue", id: "q1", text: "later" });
+    view.webview.postMessage.mockClear();
+
+    await handler({ type: "switchTab", id: "s1" });
+
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "switchView", pending: [expect.objectContaining({ id: "q1" })] }),
+    );
   });
 });

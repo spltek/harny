@@ -32,6 +32,8 @@ interface ChatMsg {
   displayText?: string;
   /** Harness-injected prompt (loop guard / delegation): render with the robot. */
   harness?: boolean;
+  /** A mid-run soft-steer user message: mark it so it is recognizable. */
+  steer?: boolean;
   /** Synthetic compacted prompt/response pair: no ✂ cut / ⎇ branch key. */
   synthetic?: boolean;
 }
@@ -107,6 +109,8 @@ interface InitState {
   streaming?: boolean;
   liveThinking?: string;
   liveAnswer?: string;
+  /** Queue/steer messages typed while working (host re-pushes on reload). */
+  pending?: PendingViewItem[];
   /** Extension version (shown in the empty hero). */
   version?: string;
 }
@@ -120,6 +124,8 @@ const messagesEl = document.getElementById("messages") as HTMLDivElement;
 // The pulsing working indicator: a REAL footer glued below the transcript (NOT
 // a bubble in the flow), shown/hidden instead of being appended/removed.
 const workingBar = document.getElementById("working-bar") as HTMLDivElement;
+const pendingArea = document.getElementById("pending-area") as HTMLDivElement;
+const steerTargetEl = document.getElementById("steer-target") as HTMLDivElement;
 const inputEl = document.getElementById("user-input") as HTMLTextAreaElement;
 const slashMenu = document.getElementById("slash-menu") as HTMLDivElement;
 /** Installed skills (kept for the slash menu; set by renderSkills). */
@@ -192,6 +198,21 @@ const pendingToolCalls = new Map<string, HTMLDivElement>();
 // next send. Transient (never persisted); cleared on send or session switch. ──
 interface AttachedFile { name: string; path: string; size: number; isImage: boolean; dataUri?: string; content?: string; }
 let attachedFiles: AttachedFile[] = [];
+
+// ── Pending messages (queue/steer) typed while the session works. Rendered as
+// a real footer; the host is the source of truth (it re-pushes on reload). ──
+interface PendingViewItem {
+  id: string;
+  mode: "queue" | "steer";
+  text: string;
+  attachments?: { name: string; size: number; isImage?: boolean; dataUri?: string }[];
+  targetToolCallId?: string;
+}
+let pendingItems: PendingViewItem[] = [];
+/** Client id counter for the pending messages this panel sends. */
+let pendingSeq = 0;
+/** Parallel: a running sub-agent picked as the steer target (abort + re-plan). */
+let steerTarget: { toolCallId: string; label: string } | null = null;
 /** History length at the last full render; the LIVE user bubble's index for the
  * ✂ cut key is this value (the new message is appended at that position). */
 let historyLength = 0;
@@ -738,6 +759,9 @@ function setSubAgentStatus(
     abort.hidden = terminal;
     abort.disabled = terminal || el.dataset.aborting === "1";
   }
+  // The steer (redirect) key follows the same lifecycle: only while live.
+  const steer = el.querySelector(".subagent-steer") as HTMLButtonElement | null;
+  if (steer) steer.hidden = terminal;
 }
 
 /**
@@ -810,6 +834,9 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
     (goal ? '<span class="subagent-name" title="' + escapeHtml(goal) + '">' + escapeHtml(shortGoal) + "</span>" : "") +
     (role ? '<span class="subagent-role">' + escapeHtml(role) + "</span>" : "") +
     '<span class="subagent-status queued">queued…</span>' +
+    '<button class="subagent-steer" type="button" title="Steer: abort this sub-agent and re-plan a correction" aria-label="Steer this sub-agent">' +
+    '<svg width="10" height="10" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h11M11 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>' +
+    "</button>" +
     '<button class="subagent-abort" type="button" title="Abort this sub-agent" aria-label="Abort this sub-agent">' +
     '<svg width="10" height="10" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>' +
     "</button>" +
@@ -845,6 +872,16 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
     abortBtn.disabled = true;
     abortBtn.classList.add("pending");
     vscode.postMessage({ type: "abortSubAgent", toolCallId: tcId });
+  });
+  // Steer this sub-agent: pick it as the target of the NEXT steer message, so
+  // the orchestrator tears it down and re-plans the correction (Parallel).
+  const steerBtn = div.querySelector(".subagent-steer") as HTMLButtonElement | null;
+  steerBtn?.addEventListener("click", (e) => {
+    e.stopPropagation(); // never toggle the body
+    const tcId = div.dataset.toolCallId;
+    if (!tcId) return;
+    const name = div.querySelector(".subagent-name")?.textContent?.trim() || tcId;
+    setSteerTarget(tcId, name);
   });
   messagesEl.appendChild(div);
   scrollDown();
@@ -1119,6 +1156,8 @@ function renderMessages(msgs: ChatMsg[]): boolean {
       addHarnessMessage(m.displayText ?? (m.content || ""));
     } else {
       const el = addMessage(m.role, m.displayText ?? (m.content || ""), m.attachments, m.images);
+      // A mid-run soft-steer user message: a thin accent bar marks it.
+      if (m.role === "user" && m.steer) el.classList.add("steer-msg");
       // The synthetic compacted prompt gets a recognizable "history" icon.
       if (m.role === "user" && m.synthetic) {
         el.classList.add("synthetic-summary");
@@ -1388,13 +1427,85 @@ function clearAttachments(): void {
   renderAttachmentChips();
 }
 
-function send(): void {
-  if (sendBtn.disabled || !activeId) return;
+/** Render the queue/steer messages typed while working (host-driven). */
+function renderPending(items: PendingViewItem[]): void {
+  pendingItems = items || [];
+  pendingArea.innerHTML = "";
+  pendingArea.classList.toggle("hidden", pendingItems.length === 0);
+  for (const it of pendingItems) {
+    const el = document.createElement("div");
+    el.className = "pending-msg " + (it.mode === "steer" ? "pending-steer" : "pending-queue");
+    const badge = document.createElement("span");
+    badge.className = "pending-badge";
+    badge.textContent = it.mode === "steer" ? "Steer" : "Queued";
+    const body = document.createElement("span");
+    body.className = "pending-text";
+    body.textContent =
+      it.text || (it.attachments?.length ? "📎 " + it.attachments.map((a) => a.name).join(", ") : "(empty)");
+    body.title = body.textContent;
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "pending-cancel";
+    cancel.textContent = "×";
+    cancel.title = it.mode === "steer" ? "Cancel this steer" : "Cancel this queued message";
+    cancel.addEventListener("click", () => vscode.postMessage({ type: "cancelPending", id: it.id }));
+    el.append(badge, body, cancel);
+    pendingArea.appendChild(el);
+  }
+}
+
+/** The Parallel steer target chip above the prompt (empty = none picked). */
+function renderSteerTarget(): void {
+  steerTargetEl.innerHTML = "";
+  steerTargetEl.classList.toggle("hidden", !steerTarget);
+  if (!steerTarget) return;
+  const label = document.createElement("span");
+  label.textContent = "↪ Steering sub-agent: " + steerTarget.label;
+  const clear = document.createElement("button");
+  clear.type = "button";
+  clear.className = "pending-cancel";
+  clear.textContent = "×";
+  clear.title = "Clear the steer target";
+  clear.addEventListener("click", () => {
+    steerTarget = null;
+    renderSteerTarget();
+    focusPrompt();
+  });
+  steerTargetEl.append(label, clear);
+}
+
+/** Pick a running sub-agent to redirect: the next steer aborts it. */
+function setSteerTarget(toolCallId: string, label: string): void {
+  steerTarget = { toolCallId, label };
+  renderSteerTarget();
+  inputEl.focus();
+}
+
+function send(mode: "queue" | "steer" = "queue"): void {
+  if (!activeId) return;
   const text = inputEl.value.trim();
   const attachments = attachedFiles.slice();
   if (!text && attachments.length === 0) return;
+  // A picked sub-agent forces a steer: only a steer can abort + re-plan.
+  const effectiveMode: "queue" | "steer" = steerTarget ? "steer" : mode;
   inputEl.value = "";
   inputEl.style.height = "auto"; // back to a single line for the next message
+  clearAttachments();
+  if (streamingActive) {
+    // The session works: the message is pending. The HOST owns the bubble (it
+    // re-pushes the list on reload), so do NOT append a user bubble here.
+    vscode.postMessage({
+      type: "send",
+      mode: effectiveMode,
+      id: "c" + ++pendingSeq,
+      text,
+      ...(attachments.length > 0 ? { attachments } : {}),
+      ...(steerTarget ? { targetToolCallId: steerTarget.toolCallId } : {}),
+    });
+    steerTarget = null;
+    renderSteerTarget();
+    return;
+  }
   clearStreamingBubble();
   clearThinkingBlock();
   currentThinkingText = "";
@@ -1412,13 +1523,12 @@ function send(): void {
   workingEl = addWorking();
   scrollDown();
   vscode.postMessage({ type: "send", text, ...(attachments.length > 0 ? { attachments } : {}) });
-  clearAttachments();
   setStreaming(true);
 }
 
 // ── Custom hover tooltip removed: native title attributes are used instead ──
 
-sendBtn.addEventListener("click", send);
+sendBtn.addEventListener("click", () => send("queue"));
 attachBtn.addEventListener("click", () => vscode.postMessage({ type: "pickFiles" }));
 
 /** Read a dragged/pasted File as a base64 data URL. */
@@ -1653,11 +1763,15 @@ inputEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); selectSlashItem(); return; }
     if (e.key === "Escape") { e.preventDefault(); hideSlashMenu(); return; }
   }
-  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    // While working: Enter queues, Ctrl/Cmd+Enter steers (the aggressive move).
+    send(e.ctrlKey || e.metaKey ? "steer" : "queue");
+  }
   if (e.key === "Escape") vscode.postMessage({ type: "abort" });
 });
-// GLOBAL Esc = Stop. The textarea is DISABLED while working, so its own
-// keydown never fires — yet Esc must still stop the run. Modals/overlays take
+// GLOBAL Esc = Stop. The textarea is no longer disabled while working, but Esc
+// in a modal/overlay must still take precedence. Modals/overlays take
 // precedence: if one is open, Esc closes it (its own handler) and must NOT
 // abort the run.
 window.addEventListener("keydown", (e) => {
@@ -2864,9 +2978,13 @@ function setStreaming(active: boolean): void {
     scrollDown();
   }
   sendBtn.classList.toggle("blinking", active);
-  sendBtn.disabled = !activeId || active;
+  // The prompt STAYS usable while working: Enter queues, Ctrl/Cmd+Enter steers.
+  sendBtn.disabled = !activeId;
   abortBtn.disabled = !active;
-  attachBtn.disabled = active;
+  attachBtn.disabled = !activeId;
+  inputEl.placeholder = active
+    ? "Enter to queue · Ctrl/Cmd+Enter to steer · Esc to stop"
+    : "Ask Harny... (Enter to send, Esc to abort)";
   compactBtn.disabled = active;
   compactSettingsBtn.disabled = active;
   modelSelect.disabled = active;
@@ -2886,7 +3004,7 @@ function setStreaming(active: boolean): void {
   for (const r of lgRadios) r.disabled = active;
   lgResponse.disabled = active;
   for (const el of document.querySelectorAll<HTMLInputElement>("#lg-fields input")) el.disabled = active;
-  inputEl.disabled = active;
+  inputEl.disabled = false;
   // Mode button follows the same lock (no switching mid-stream); a dropdown
   // left open gets closed so the disabled state is obvious.
   if (active && !modeMenu.classList.contains("hidden")) closeModeMenu();
@@ -3586,6 +3704,17 @@ window.addEventListener("message", (e) => {
       scrollDown();
       break;
     }
+    case "pending":
+      renderPending((msg.items as PendingViewItem[]) || []);
+      break;
+    case "steerApplied": {
+      // The soft-steer message reached a turn boundary: show it as a real user
+      // bubble now (the end-of-run refresh rebuilds the transcript anyway).
+      const el = addMessage("user", String(msg.content || ""));
+      el.classList.add("steer-msg");
+      scrollDown();
+      break;
+    }
     case "done":
       flushStreamingMd();
       finishStream();
@@ -3696,8 +3825,9 @@ window.addEventListener("message", (e) => {
       });
       restoreLiveStream(msg); // replay the in-flight thinking/answer
       setStreaming(!!msg.streaming);
+      renderPending((msg.pending as PendingViewItem[]) || []);
       // Opening/switching a session always lands the caret in the prompt, so
-      // the user can type immediately (no-op while the prompt is disabled).
+      // the user can type immediately.
       focusPrompt();
       break;
     }
@@ -3915,6 +4045,7 @@ renderViewState({
 });
 restoreLiveStream(init);
 setStreaming(!!init.streaming);
+renderPending(init.pending || []);
 if (activeId) vscode.postMessage({ type: "getConfig" });
 // Opening the panel on a session lands the caret in the prompt.
 if (activeId) focusPrompt();

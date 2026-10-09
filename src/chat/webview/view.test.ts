@@ -39,7 +39,9 @@ function setupDom(
     <div id="tabs"></div>
     <div id="messages"></div>
     <div id="working-bar" class="hidden">● Working...</div>
+    <div id="pending-area" class="hidden"></div>
     <div id="input-area">
+      <div id="steer-target" class="hidden"></div>
       <div id="input-main">
         <button id="attach-btn">+</button>
         <textarea id="user-input" rows="1"></textarea>
@@ -462,8 +464,11 @@ describe("view webview client", () => {
   it("locks all interaction controls while the LLM works and unlocks after", async () => {
     await loadView();
     hostMessage({ type: "status", active: true });
-    expect((document.getElementById("send-btn") as HTMLButtonElement).disabled).toBe(true);
-    expect((document.getElementById("abort-btn") as HTMLButtonElement).disabled).toBe(false); // only abort stays
+    // The prompt + send + attach STAY usable while working: Enter queues,
+    // Ctrl/Cmd+Enter steers, attachments ride along with a pending message.
+    expect((document.getElementById("send-btn") as HTMLButtonElement).disabled).toBe(false);
+    expect((document.getElementById("attach-btn") as HTMLButtonElement).disabled).toBe(false);
+    expect((document.getElementById("abort-btn") as HTMLButtonElement).disabled).toBe(false);
     expect((document.getElementById("compact-btn") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("compact-settings-btn") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("model-select") as HTMLSelectElement).disabled).toBe(true);
@@ -477,7 +482,7 @@ describe("view webview client", () => {
     expect((document.getElementById("presence-auto") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("freq-range") as HTMLInputElement).disabled).toBe(true);
     expect((document.getElementById("freq-auto") as HTMLButtonElement).disabled).toBe(true);
-    expect((document.getElementById("user-input") as HTMLTextAreaElement).disabled).toBe(true);
+    expect((document.getElementById("user-input") as HTMLTextAreaElement).disabled).toBe(false);
     hostMessage({ type: "status", active: false });
     expect((document.getElementById("compact-btn") as HTMLButtonElement).disabled).toBe(false);
     expect((document.getElementById("compact-settings-btn") as HTMLButtonElement).disabled).toBe(false);
@@ -707,12 +712,12 @@ describe("view webview client", () => {
     expect(document.querySelectorAll(".attach-chip").length).toBe(0);
   });
 
-  it("disables the attach button while working", async () => {
+  it("keeps the attach button enabled while working (attachments on pending)", async () => {
     await loadView();
     const btn = document.getElementById("attach-btn") as HTMLButtonElement;
     expect(btn.disabled).toBe(false);
     hostMessage({ type: "status", active: true });
-    expect(btn.disabled).toBe(true);
+    expect(btn.disabled).toBe(false);
     hostMessage({ type: "done" });
     expect(btn.disabled).toBe(false);
   });
@@ -3809,4 +3814,145 @@ describe("all-sessions manager (gear)", () => {
 
 
 
+});
+
+describe("soft steering + pending bubbles (webview)", () => {
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
+
+  function startWorking(): void {
+    hostMessage({ type: "status", active: true });
+  }
+
+  it("while working, Enter queues the message (no optimistic user bubble)", async () => {
+    await loadView();
+    startWorking();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    const before = document.querySelectorAll("#messages .msg.user").length;
+    input.value = "then also check Milan";
+
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+
+    const send = posted.find((m: any) => m.type === "send") as any;
+    expect(send).toMatchObject({ type: "send", mode: "queue", text: "then also check Milan" });
+    expect(typeof send.id).toBe("string");
+    // No optimistic user bubble: the host owns the pending bubble.
+    expect(document.querySelectorAll("#messages .msg.user").length).toBe(before);
+    expect(input.value).toBe("");
+  });
+
+  it("while working, Ctrl+Enter steers", async () => {
+    await loadView();
+    startWorking();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "no, use Rome";
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
+    expect(posted.find((m: any) => m.type === "send")).toMatchObject({ mode: "steer", text: "no, use Rome" });
+  });
+
+  it("while idle, Enter sends normally (no mode)", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "hello";
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    const send = posted.find((m: any) => m.type === "send") as any;
+    expect(send.text).toBe("hello");
+    expect(send.mode).toBeUndefined();
+    // Idle sends are optimistic: the user bubble appears at once.
+    expect(document.querySelectorAll("#messages .msg.user").length).toBeGreaterThan(0);
+  });
+
+  it("renders pending bubbles and cancels them", async () => {
+    await loadView();
+    hostMessage({
+      type: "pending",
+      items: [
+        { id: "q1", mode: "queue", text: "later" },
+        { id: "s1", mode: "steer", text: "not Florence" },
+      ],
+    });
+    const area = document.getElementById("pending-area") as HTMLElement;
+    expect(area.classList.contains("hidden")).toBe(false);
+    const rows = area.querySelectorAll(".pending-msg");
+    expect(rows.length).toBe(2);
+    expect(rows[0].textContent).toContain("Queued");
+    expect(rows[1].classList.contains("pending-steer")).toBe(true);
+    expect(rows[1].textContent).toContain("Steer");
+
+    (rows[0].querySelector(".pending-cancel") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "cancelPending", id: "q1" });
+
+    hostMessage({ type: "pending", items: [] });
+    expect(area.classList.contains("hidden")).toBe(true);
+  });
+
+  it("turns a steer into a real user bubble when the host reports it applied", async () => {
+    await loadView();
+    hostMessage({ type: "pending", items: [{ id: "s1", mode: "steer", text: "not Florence" }] });
+    hostMessage({ type: "steerApplied", id: "s1", content: "not Florence" });
+    const last = document.querySelector("#messages .msg.user:last-of-type") as HTMLElement;
+    expect(last.textContent).toContain("not Florence");
+    expect(last.classList.contains("steer-msg")).toBe(true);
+  });
+
+  it("picking a sub-agent as steer target forces the next message to be a steer", async () => {
+    await loadView();
+    startWorking();
+    hostMessage({
+      type: "toolCall",
+      id: "tc-1",
+      name: "Delegate",
+      arguments: { id: "florence", goal: "temperature of Florence" },
+    });
+    const steerBtn = document.querySelector(".subagent-steer") as HTMLButtonElement;
+    expect(steerBtn).toBeTruthy();
+    steerBtn.click();
+    expect((document.getElementById("steer-target") as HTMLElement).textContent).toContain("Florence");
+
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "Roma invece";
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); // even plain Enter
+
+    expect(posted.find((m: any) => m.type === "send")).toMatchObject({
+      mode: "steer",
+      text: "Roma invece",
+      targetToolCallId: "tc-1",
+    });
+    // The target is consumed and the chip is cleared.
+    expect((document.getElementById("steer-target") as HTMLElement).classList.contains("hidden")).toBe(true);
+  });
+
+  it("marks a historical steer message with the steer class", async () => {
+    setupDom({
+      messages: [
+        { role: "user", content: "start", timestamp: 1 },
+        { role: "assistant", content: "working", timestamp: 2 },
+        { role: "user", content: "correction", timestamp: 3, steer: true },
+      ],
+    });
+    await loadView();
+    const steers = document.querySelectorAll("#messages .msg.user.steer-msg");
+    expect(steers.length).toBe(1);
+    expect(steers[0].textContent).toContain("correction");
+  });
+});
+
+describe("steering affordances (webview)", () => {
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
+
+  it("keeps the prompt enabled and shows the queue/steer hint while working", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    hostMessage({ type: "status", active: true });
+    expect(input.disabled).toBe(false);
+    expect(input.placeholder).toContain("queue");
+    expect(input.placeholder).toContain("steer");
+    hostMessage({ type: "status", active: false });
+    expect(input.placeholder).toContain("Enter to send");
+  });
 });

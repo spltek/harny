@@ -17,7 +17,7 @@ import {
   type ChatMode,
 } from "../tools/mode-policy";
 import type { ToolDefinition } from "../tools/tool";
-import type { ChatController } from "./chat-controller";
+import type { ChatController, SteerOptions } from "./chat-controller";
 import {
   DELEGATE_TOOL_NAME,
   formatSubAgentAborted,
@@ -141,6 +141,9 @@ export class Agent implements ChatController {
   private readonly mayDelegate: boolean;
   /** Runtime toggle: the UI "Parallel" switch enables orchestration. */
   private delegationEnabled = false;
+  /** Soft-steer messages waiting for the next turn boundary. Each carries the
+   * UI id so it can be cancelled before it is applied. Cleared per run. */
+  private pendingSteers: { id: string; content: string; options: SteerOptions }[] = [];
 
   constructor(private deps: AgentDeps) {
     this.mayDelegate = deps.allowDelegation !== false;
@@ -190,6 +193,46 @@ export class Agent implements ChatController {
 
   addUserMessage(content: string): void {
     this.deps.history.add({ role: "user", content, timestamp: Date.now() });
+  }
+
+  /**
+   * Soft steering: queue a user message for the NEXT turn boundary. Nothing is
+   * interrupted — the in-flight LLM stream and tool batch finish, then the
+   * message is added to the history and the model sees it on its next request.
+   * With `targetToolCallId` (Parallel), the named sub-agent is aborted NOW so
+   * the orchestrator returns to its loop sooner and can re-plan the correction.
+   */
+  steer(id: string, content: string, options: SteerOptions = {}): void {
+    if (!content.trim() && !(options.images?.length) && !(options.attachments?.length)) return;
+    if (options.targetToolCallId) this.abortSubAgent(options.targetToolCallId);
+    this.pendingSteers.push({ id, content, options });
+  }
+
+  /** Drop a queued steer before it reaches a boundary (no-op once applied). */
+  cancelSteer(id: string): void {
+    this.pendingSteers = this.pendingSteers.filter((s) => s.id !== id);
+  }
+
+  /** Apply every queued steer at a turn boundary (history order stays valid). */
+  private drainSteers(): void {
+    if (this.pendingSteers.length === 0) return;
+    const steers = this.pendingSteers;
+    this.pendingSteers = [];
+    for (const s of steers) {
+      if (s.options.attachmentParts && s.options.attachmentParts.length > 0) {
+        this.currentAttachmentParts = s.options.attachmentParts;
+      }
+      this.deps.history.add({
+        role: "user",
+        content: s.content,
+        images: s.options.images && s.options.images.length > 0 ? s.options.images : undefined,
+        attachments: s.options.attachments && s.options.attachments.length > 0 ? s.options.attachments : undefined,
+        displayText: s.options.displayText,
+        steer: true,
+        timestamp: Date.now(),
+      });
+      this.deps.events.emit({ type: "steer_applied", id: s.id, content: s.options.displayText ?? s.content });
+    }
   }
 
   abort(): void {
@@ -243,6 +286,7 @@ export class Agent implements ChatController {
     this.forcedDelegationNudge = false;
     this.forcedFinalReport = false;
     this.abortedDelegates.clear();
+    this.pendingSteers = [];
     try {
       await this.runTurns(0);
       this.deps.events.emit({ type: "done" });
@@ -278,6 +322,10 @@ export class Agent implements ChatController {
   }
 
   private async runTurns(turn: number): Promise<void> {
+    // Turn boundary: apply any soft-steer messages FIRST, so the history order
+    // stays valid (after the previous assistant + tool results) and the LLM
+    // request below already carries the correction.
+    this.drainSteers();
     // Turn boundary: the host may auto-compact here (threshold exceeded) so a
     // long run compacts at a step boundary and CONTINUES. Awaited so the next
     // LLM request already sees the compacted history.

@@ -23,6 +23,7 @@ function makeTee() {
     isActive: vi.fn(() => true),
     onPost: vi.fn(),
     onUsage: vi.fn(),
+    onSteerApplied: vi.fn(),
   };
   const tee = new StreamTee(deps);
   return { tee, deps };
@@ -63,6 +64,25 @@ describe("StreamTee", () => {
     a.emit({ type: "tool_result", toolResult: { toolCallId: "c1", output: "ok", isError: false } });
     expect(tee.liveOf("a")?.thinking).toBe("");
     expect(tee.liveOf("a")?.answer).toBe("");
+  });
+
+  it("routes steer_applied to the host and the view (active only for the view)", () => {
+    const active: string[] = ["a"];
+    const { tee, deps } = makeTee();
+    deps.isActive.mockImplementation((id: string) => id === active[0]);
+    const a = fakeRuntime("a");
+    const b = fakeRuntime("b");
+    tee.attachAll([a.rt, b.rt]);
+
+    a.emit({ type: "steer_applied", id: "s1", content: "use Rome" });
+    b.emit({ type: "steer_applied", id: "s2", content: "other" });
+
+    // The host drops BOTH from their pending lists…
+    expect(deps.onSteerApplied).toHaveBeenCalledWith("a", "s1");
+    expect(deps.onSteerApplied).toHaveBeenCalledWith("b", "s2");
+    // …but only the active session's bubble is posted to the view.
+    expect(deps.onPost).toHaveBeenCalledWith({ type: "steerApplied", id: "s1", content: "use Rome" });
+    expect(deps.onPost).not.toHaveBeenCalledWith(expect.objectContaining({ id: "s2" }));
   });
 
   it("forwards loop_intervention to the view and resets the live buffer", () => {

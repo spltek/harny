@@ -3041,3 +3041,150 @@ describe("Repeated-call loop: nudge before hard stop", () => {
     expect(history.all().some((m) => /final report/.test(m.content ?? ""))).toBe(true);
   });
 });
+
+describe("Agent soft steering", () => {
+  const toolCall = (id = "c1"): StreamChunk[] => [
+    { type: "tool_call_start", index: 0, id, name: "FakeTool" },
+    { type: "tool_call_end", index: 0 },
+  ];
+
+  it("injects a steer at the next turn boundary, AFTER the tool result", async () => {
+    const { agent, factory, history, events } = buildHarness({
+      chunks: [toolCall(), [{ type: "text", content: "done" }]],
+    });
+    let steered = false;
+    agent.onEvent((e) => {
+      if (e.type === "tool_result" && !steered) {
+        steered = true;
+        agent.steer("s1", "actually use Rome");
+      }
+    });
+
+    await agent.send("find Bologna and Florence");
+
+    const msgs = history.all();
+    const toolIdx = msgs.findIndex((m) => m.role === "tool");
+    const steerIdx = msgs.findIndex((m) => m.steer);
+    expect(steerIdx).toBeGreaterThan(toolIdx); // valid order: after the tool result
+    expect(msgs[steerIdx].content).toBe("actually use Rome");
+    // The model saw it on the NEXT request (2 LLM calls), and it is part of the
+    // conversation sent to the LLM.
+    expect(factory.calls).toBe(2);
+    expect(history.conversation().some((m) => m.steer && m.content === "actually use Rome")).toBe(true);
+    expect(events.some((e) => e.type === "steer_applied" && e.id === "s1")).toBe(true);
+  });
+
+  it("cancelSteer drops a queued steer before the boundary", async () => {
+    const { agent, history } = buildHarness({
+      chunks: [toolCall(), [{ type: "text", content: "done" }]],
+    });
+    agent.onEvent((e) => {
+      if (e.type === "tool_result") {
+        agent.steer("s1", "nope");
+        agent.cancelSteer("s1");
+      }
+    });
+
+    await agent.send("x");
+
+    expect(history.all().some((m) => m.steer)).toBe(false);
+  });
+
+  it("ignores an empty steer", async () => {
+    const { agent, history } = buildHarness({
+      chunks: [toolCall(), [{ type: "text", content: "done" }]],
+    });
+    agent.onEvent((e) => {
+      if (e.type === "tool_result") agent.steer("s1", "   ");
+    });
+
+    await agent.send("x");
+
+    expect(history.all().some((m) => m.steer)).toBe(false);
+  });
+
+  it("steer with targetToolCallId aborts that sub-agent immediately", () => {
+    const { agent } = buildHarness();
+    const spy = vi.spyOn(agent, "abortSubAgent");
+    agent.steer("s1", "not Florence", { targetToolCallId: "tc-9" });
+    expect(spy).toHaveBeenCalledWith("tc-9");
+  });
+
+  it("carries images/attachments and marks the message as a steer", async () => {
+    const { agent, history } = buildHarness({
+      chunks: [toolCall(), [{ type: "text", content: "done" }]],
+    });
+    agent.onEvent((e) => {
+      if (e.type === "tool_result") {
+        agent.steer("s1", "inlined content", {
+          displayText: "use this doc",
+          images: ["data:image/png;base64,AAA"],
+          attachments: [{ name: "a.png", path: "/tmp/a.png", size: 3, isImage: true }],
+        });
+      }
+    });
+
+    await agent.send("x");
+
+    const steer = history.all().find((m) => m.steer)!;
+    expect(steer.displayText).toBe("use this doc");
+    expect(steer.images).toEqual(["data:image/png;base64,AAA"]);
+    expect(steer.attachments?.[0].name).toBe("a.png");
+  });
+
+  it("does not leak a steer into a LATER run (cleared per run)", async () => {
+    const { agent, history } = buildHarness({
+      chunks: [
+        toolCall(),
+        [{ type: "text", content: "done" }],
+        [{ type: "text", content: "second" }],
+      ],
+    });
+    // Queue a steer that never reaches a boundary, then end the run.
+    agent.onEvent((e) => {
+      if (e.type === "done") agent.steer("late", "stranded");
+    });
+
+    await agent.send("first");
+    const before = history.all().filter((m) => m.steer).length;
+    await agent.send("second");
+
+    expect(before).toBe(0);
+    expect(history.all().filter((m) => m.steer).length).toBe(0);
+  });
+});
+
+describe("Agent soft steering — fragility", () => {
+  const toolCall = (id = "c1"): StreamChunk[] => [
+    { type: "tool_call_start", index: 0, id, name: "FakeTool" },
+    { type: "tool_call_end", index: 0 },
+  ];
+
+  it("applies multiple steers queued in the same turn in FIFO order", async () => {
+    const { agent, history } = buildHarness({
+      chunks: [toolCall(), [{ type: "text", content: "done" }]],
+    });
+    agent.onEvent((e) => {
+      if (e.type === "tool_result") {
+        agent.steer("a", "first correction");
+        agent.steer("b", "second correction");
+      }
+    });
+
+    await agent.send("x");
+
+    const steers = history.all().filter((m) => m.steer).map((m) => m.content);
+    expect(steers).toEqual(["first correction", "second correction"]);
+  });
+
+  it("does not apply a steer queued after the final turn (no boundary left)", async () => {
+    const { agent, history } = buildHarness({ chunks: [[{ type: "text", content: "final" }]] });
+    agent.onEvent((e) => {
+      if (e.type === "done") agent.steer("late", "too late");
+    });
+
+    await agent.send("x");
+
+    expect(history.all().some((m) => m.steer)).toBe(false);
+  });
+});

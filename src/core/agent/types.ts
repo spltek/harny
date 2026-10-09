@@ -31,6 +31,9 @@ export type AgentEvent =
    * added to the conversation: surfaced LIVE as a light-blue "Nudge" bubble so
    * it appears immediately, not only on the end-of-run refresh. */
   | { type: "harness_nudge"; content: string }
+  /** A soft-steer message reached a turn boundary and was added to the history:
+   * the UI turns its pending bubble into a real user message. */
+  | { type: "steer_applied"; id: string; content: string }
   /** Analyze finished with prepared changes that are NOT applied: the UI
    * shows a highlighted "Switch to Build" call to action. */
   | { type: "preview_ready" }

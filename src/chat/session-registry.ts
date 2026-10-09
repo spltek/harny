@@ -5,6 +5,21 @@ import type { ThinkingLevel } from "../core/config/types";
 import type { LoopGuardOptions, LoopGuardSensitivity } from "../core/agent/loop-guard";
 import type { SessionStore } from "../core/sessions/types";
 import type { SessionManager } from "../core/sessions/session-manager";
+import type { AttachmentInfo } from "./attachment-types";
+
+/**
+ * A message the user typed WHILE the session was working. `queue` runs as a new
+ * send once the current run ends; `steer` is injected into the running loop at
+ * its next turn boundary. `targetToolCallId` (Parallel steer) aborts that
+ * running sub-agent so the orchestrator re-plans the correction.
+ */
+export interface PendingInput {
+  id: string;
+  mode: "queue" | "steer";
+  text: string;
+  attachments?: AttachmentInfo[];
+  targetToolCallId?: string;
+}
 
 /** A session that is currently open in the side view, with its own agent+history. */
 export interface SessionRuntime {
@@ -46,6 +61,9 @@ export interface SessionRuntime {
   loopGuardOverrides?: Partial<LoopGuardOptions>;
   /** Chat mode chosen in this session (in-memory; default "analyze"). */
   mode?: "analyze" | "agent";
+  /** Messages typed while working: FIFO for `queue`, injected at the next turn
+   * boundary for `steer`. Ephemeral (never persisted). */
+  pending?: PendingInput[];
   /** Current context tokens in use (fill metric). */
   contextTokens?: number;
   /** Input tokens served from the provider's prompt cache (informational). */

@@ -17,6 +17,13 @@ export interface SendOptions {
   attachmentParts?: AttachmentPart[];
 }
 
+/** Payload for {@link ChatController.steer}: a mid-run correction. */
+export interface SteerOptions extends SendOptions {
+  /** Parallel ON: abort THIS running sub-agent (Delegate tool-call id) so the
+   * orchestrator re-plans the correction on its next turn. */
+  targetToolCallId?: string;
+}
+
 /**
  * The contract the chat UI needs from the agent. Keeps the webview layer
  * decoupled from the concrete Agent implementation (Dependency Inversion).
@@ -28,6 +35,15 @@ export interface ChatController {
   /** Replace the whole conversation with a loaded session (no autosave). */
   load(messages: ChatMessage[]): void;
   send(text: string, options?: SendOptions): Promise<void>;
+  /**
+   * Inject a user message into the RUNNING loop (soft steering): it is added to
+   * the history at the next turn boundary, so the model sees it on its next
+   * request without restarting the run. `id` correlates the pending bubble in
+   * the UI; a no-op when the agent is not streaming (the host queues instead).
+   */
+  steer(id: string, text: string, options?: SteerOptions): void;
+  /** Drop a queued steer before it is applied at a turn boundary. */
+  cancelSteer(id: string): void;
   abort(): void;
   /** Abort ONE running sub-agent (Delegate bubble) without stopping the whole
    * run. The orchestrator still receives that Delegate's tool result

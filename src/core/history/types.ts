@@ -25,6 +25,9 @@ export interface ChatMessage {
   /** A HARNESS-injected prompt (loop guard / delegation / budget), NOT the user
    * typing: rendered with the Harny robot at the start. */
   harness?: boolean;
+  /** A user message injected MID-RUN via soft steering (not a new run): the
+   * UI marks it so a mid-flight correction is recognizable in the transcript. */
+  steer?: boolean;
   /** Reasoning/thinking text for assistant messages (shown as a collapsible block). */
   thinking?: string;
   /**

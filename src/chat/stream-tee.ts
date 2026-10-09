@@ -9,6 +9,9 @@ export interface StreamTeeDeps {
   onPost: (message: unknown) => void;
   /** Token usage reported by a session (handled provider-side: metrics, store). */
   onUsage: (sessionId: string, usage: Usage) => void;
+  /** A soft-steer message was applied at a turn boundary: the host drops it
+   * from the session's pending list. Called for EVERY session. */
+  onSteerApplied: (sessionId: string, id: string) => void;
 }
 
 /**
@@ -82,6 +85,15 @@ export class StreamTee {
           live.thinking = "";
           live.answer = "";
           if (active) post({ type: "harnessNudge", content: event.content });
+          break;
+        case "steer_applied":
+          // A soft-steer message reached a boundary and is now a real user
+          // turn: the host removes its pending entry; the UI turns the bubble
+          // into a normal user message.
+          live.thinking = "";
+          live.answer = "";
+          this.deps.onSteerApplied(rt.sessionId, event.id);
+          if (active) post({ type: "steerApplied", id: event.id, content: event.content });
           break;
         case "done":
           live.thinking = "";
