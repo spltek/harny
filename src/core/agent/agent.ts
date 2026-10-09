@@ -17,7 +17,7 @@ import {
   type ChatMode,
 } from "../tools/mode-policy";
 import type { ToolDefinition } from "../tools/tool";
-import type { ChatController, SteerOptions } from "./chat-controller";
+import type { ChatController, SendOptions } from "./chat-controller";
 import {
   DELEGATE_TOOL_NAME,
   formatSubAgentAborted,
@@ -143,7 +143,7 @@ export class Agent implements ChatController {
   private delegationEnabled = false;
   /** Soft-steer messages waiting for the next turn boundary. Each carries the
    * UI id so it can be cancelled before it is applied. Cleared per run. */
-  private pendingSteers: { id: string; content: string; options: SteerOptions }[] = [];
+  private pendingSteers: { id: string; content: string; options: SendOptions }[] = [];
 
   constructor(private deps: AgentDeps) {
     this.mayDelegate = deps.allowDelegation !== false;
@@ -198,13 +198,12 @@ export class Agent implements ChatController {
   /**
    * Soft steering: queue a user message for the NEXT turn boundary. Nothing is
    * interrupted — the in-flight LLM stream and tool batch finish, then the
-   * message is added to the history and the model sees it on its next request.
-   * With `targetToolCallId` (Parallel), the named sub-agent is aborted NOW so
-   * the orchestrator returns to its loop sooner and can re-plan the correction.
+   * merged message is added to the history and the model sees it on its next
+   * request. In Parallel, this simply waits for the sub-agent batch to finish,
+   * after which the orchestrator re-plans from the correction.
    */
-  steer(id: string, content: string, options: SteerOptions = {}): void {
+  steer(id: string, content: string, options: SendOptions = {}): void {
     if (!content.trim() && !(options.images?.length) && !(options.attachments?.length)) return;
-    if (options.targetToolCallId) this.abortSubAgent(options.targetToolCallId);
     this.pendingSteers.push({ id, content, options });
   }
 

@@ -2266,17 +2266,6 @@ describe("ChatViewProvider soft steering + queue", () => {
     expect(rt.pending?.map((p) => p.id)).toEqual(["s1x"]);
   });
 
-  it("forwards a Parallel steer target so the sub-agent is aborted", async () => {
-    const { handler, agent } = await setupStreaming();
-    await handler({ type: "send", mode: "steer", id: "s1x", text: "not Florence", targetToolCallId: "tc-9" });
-    await new Promise((r) => setTimeout(r, 0));
-    expect(agent.steer).toHaveBeenCalledWith(
-      "s1x",
-      "not Florence",
-      expect.objectContaining({ targetToolCallId: "tc-9" }),
-    );
-  });
-
   it("ignores the mode when idle: a normal send runs immediately", async () => {
     const { registry, provider } = buildHarness();
     const { handler } = resolveWith(provider);

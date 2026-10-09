@@ -125,7 +125,6 @@ const messagesEl = document.getElementById("messages") as HTMLDivElement;
 // a bubble in the flow), shown/hidden instead of being appended/removed.
 const workingBar = document.getElementById("working-bar") as HTMLDivElement;
 const pendingArea = document.getElementById("pending-area") as HTMLDivElement;
-const steerTargetEl = document.getElementById("steer-target") as HTMLDivElement;
 const inputEl = document.getElementById("user-input") as HTMLTextAreaElement;
 const slashMenu = document.getElementById("slash-menu") as HTMLDivElement;
 /** Installed skills (kept for the slash menu; set by renderSkills). */
@@ -208,13 +207,10 @@ interface PendingViewItem {
   mode: "queue" | "steer";
   text: string;
   attachments?: { name: string; size: number; isImage?: boolean; dataUri?: string }[];
-  targetToolCallId?: string;
 }
 let pendingItems: PendingViewItem[] = [];
 /** Client id counter for the pending messages this panel sends. */
 let pendingSeq = 0;
-/** Parallel: a running sub-agent picked as the steer target (abort + re-plan). */
-let steerTarget: { toolCallId: string; label: string } | null = null;
 /** History length at the last full render; the LIVE user bubble's index for the
  * ✂ cut key is this value (the new message is appended at that position). */
 let historyLength = 0;
@@ -761,9 +757,6 @@ function setSubAgentStatus(
     abort.hidden = terminal;
     abort.disabled = terminal || el.dataset.aborting === "1";
   }
-  // The steer (redirect) key follows the same lifecycle: only while live.
-  const steer = el.querySelector(".subagent-steer") as HTMLButtonElement | null;
-  if (steer) steer.hidden = terminal;
 }
 
 /**
@@ -836,9 +829,6 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
     (goal ? '<span class="subagent-name" title="' + escapeHtml(goal) + '">' + escapeHtml(shortGoal) + "</span>" : "") +
     (role ? '<span class="subagent-role">' + escapeHtml(role) + "</span>" : "") +
     '<span class="subagent-status queued">queued…</span>' +
-    '<button class="subagent-steer" type="button" title="Steer: abort this sub-agent and re-plan a correction" aria-label="Steer this sub-agent">' +
-    '<svg width="10" height="10" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h11M11 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>' +
-    "</button>" +
     '<button class="subagent-abort" type="button" title="Abort this sub-agent" aria-label="Abort this sub-agent">' +
     '<svg width="10" height="10" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>' +
     "</button>" +
@@ -874,16 +864,6 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
     abortBtn.disabled = true;
     abortBtn.classList.add("pending");
     vscode.postMessage({ type: "abortSubAgent", toolCallId: tcId });
-  });
-  // Steer this sub-agent: pick it as the target of the NEXT steer message, so
-  // the orchestrator tears it down and re-plans the correction (Parallel).
-  const steerBtn = div.querySelector(".subagent-steer") as HTMLButtonElement | null;
-  steerBtn?.addEventListener("click", (e) => {
-    e.stopPropagation(); // never toggle the body
-    const tcId = div.dataset.toolCallId;
-    if (!tcId) return;
-    const name = div.querySelector(".subagent-name")?.textContent?.trim() || tcId;
-    setSteerTarget(tcId, name);
   });
   messagesEl.appendChild(div);
   scrollDown();
@@ -1461,33 +1441,6 @@ function renderPending(items: PendingViewItem[]): void {
   }
 }
 
-/** The Parallel steer target chip above the prompt (empty = none picked). */
-function renderSteerTarget(): void {
-  steerTargetEl.innerHTML = "";
-  steerTargetEl.classList.toggle("hidden", !steerTarget);
-  if (!steerTarget) return;
-  const label = document.createElement("span");
-  label.textContent = "↪ Steering sub-agent: " + steerTarget.label;
-  const clear = document.createElement("button");
-  clear.type = "button";
-  clear.className = "pending-cancel";
-  clear.textContent = "×";
-  clear.title = "Clear the steer target";
-  clear.addEventListener("click", () => {
-    steerTarget = null;
-    renderSteerTarget();
-    focusPrompt();
-  });
-  steerTargetEl.append(label, clear);
-}
-
-/** Pick a running sub-agent to redirect: the next steer aborts it. */
-function setSteerTarget(toolCallId: string, label: string): void {
-  steerTarget = { toolCallId, label };
-  renderSteerTarget();
-  inputEl.focus();
-}
-
 /**
  * The Queue/Steer pill is a pure INDICATOR (never clicked): it shows Steer
  * ONLY while a run is active AND Ctrl/Cmd is held, and Queue otherwise.
@@ -1518,8 +1471,7 @@ function send(): void {
   const text = inputEl.value.trim();
   const attachments = attachedFiles.slice();
   if (!text && attachments.length === 0) return;
-  // A picked sub-agent forces a steer: only a steer can abort + re-plan.
-  const effectiveMode: "queue" | "steer" = steerTarget ? "steer" : effectiveSendMode();
+  const effectiveMode: "queue" | "steer" = effectiveSendMode();
   inputEl.value = "";
   inputEl.style.height = "auto"; // back to a single line for the next message
   clearAttachments();
@@ -1532,10 +1484,7 @@ function send(): void {
       id: "c" + ++pendingSeq,
       text,
       ...(attachments.length > 0 ? { attachments } : {}),
-      ...(steerTarget ? { targetToolCallId: steerTarget.toolCallId } : {}),
     });
-    steerTarget = null;
-    renderSteerTarget();
     renderSteerMode();
     return;
   }

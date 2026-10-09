@@ -1314,9 +1314,6 @@ export class ChatViewProvider implements WebviewViewProvider {
       mode,
       text,
       ...(attachments.length > 0 ? { attachments } : {}),
-      ...(mode === "steer" && typeof msg.targetToolCallId === "string"
-        ? { targetToolCallId: msg.targetToolCallId }
-        : {}),
     };
     rt.pending = rt.pending ?? [];
     rt.pending.push(item);
@@ -1347,7 +1344,6 @@ export class ChatViewProvider implements WebviewViewProvider {
       attachments: attachmentMeta,
       displayText,
       attachmentParts,
-      targetToolCallId: item.targetToolCallId,
     });
   }
 

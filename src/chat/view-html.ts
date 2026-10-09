@@ -43,7 +43,6 @@ export interface ViewState {
     mode: "queue" | "steer";
     text: string;
     attachments?: { name: string; size: number; isImage?: boolean; dataUri?: string }[];
-    targetToolCallId?: string;
   }[];
 }
 
@@ -417,12 +416,6 @@ ${renderViewConfig(deps)}
     .pending-cancel:hover { color: var(--error); border-color: var(--error); filter: none; }
     /* A steer that became a real user turn: a thin accent bar on the left. */
     .msg.user.steer-msg { border-left: 2px solid var(--accent); }
-    /* Steering target chip: shown above the prompt when a sub-agent is picked. */
-    #steer-target {
-      display: flex; align-items: center; gap: 6px; margin: 0 0 2px;
-      font-size: var(--fs-sm); color: var(--accent);
-    }
-    #steer-target.hidden { display: none; }
     @keyframes harny-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
     /* The ACTIVE areas pulse their border with the SAME 1.2s ease-in-out
        cadence as the play button (harny-pulse) and IN PHASE with it: the
@@ -571,17 +564,6 @@ ${renderViewConfig(deps)}
     .subagent-abort:hover:not(:disabled) { background: rgba(124, 92, 255, 0.18); color: #fff; }
     .subagent-abort:disabled { opacity: 0.5; cursor: default; }
     .subagent-abort[hidden] { display: none; }
-    /* Per-sub-agent STEER (redirect): same key as abort, accent tint. Picks
-       this sub-agent as the next steer's target (abort + orchestrator re-plan). */
-    .subagent-steer {
-      flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
-      width: var(--sa-chip-h); height: var(--sa-chip-h); min-width: var(--sa-chip-h); min-height: var(--sa-chip-h);
-      padding: 0; cursor: pointer;
-      color: var(--accent); background: transparent; border: 1px solid var(--accent);
-      border-radius: 4px; transition: background-color 0.12s, color 0.12s;
-    }
-    .subagent-steer:hover:not(:disabled) { background: var(--accent); color: #fff; }
-    .subagent-steer[hidden] { display: none; }
     .subagent-goal { padding: 0 8px 4px 22px; color: var(--fg); font-style: italic; font-size: var(--fs-md); overflow-wrap: anywhere; word-break: break-word; }
     /* The bubble body (goal + nested stream + report) is collapsed by default. */
     .subagent-body.collapsed { display: none; }
@@ -1595,10 +1577,6 @@ ${renderViewConfig(deps)}
     </button>
   </div>
   <div id="input-area">
-    <!-- Steering target: shown when the user picked a running sub-agent to
-         redirect (Parallel). The next steer aborts it so the orchestrator
-         re-plans the correction. -->
-    <div id="steer-target" class="hidden"></div>
     <div id="input-main">
       <button id="attach-btn" class="secondary" title="Attach files" aria-label="Attach files"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
       <textarea id="user-input" rows="1" placeholder="Ask Harny... (Enter to send, Esc to abort)"></textarea>

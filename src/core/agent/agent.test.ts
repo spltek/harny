@@ -3103,13 +3103,6 @@ describe("Agent soft steering", () => {
     expect(history.all().some((m) => m.steer)).toBe(false);
   });
 
-  it("steer with targetToolCallId aborts that sub-agent immediately", () => {
-    const { agent } = buildHarness();
-    const spy = vi.spyOn(agent, "abortSubAgent");
-    agent.steer("s1", "not Florence", { targetToolCallId: "tc-9" });
-    expect(spy).toHaveBeenCalledWith("tc-9");
-  });
-
   it("carries images/attachments and marks the message as a steer", async () => {
     const { agent, history } = buildHarness({
       chunks: [toolCall(), [{ type: "text", content: "done" }]],
@@ -3219,5 +3212,14 @@ describe("Agent soft steering — final-answer boundary", () => {
     expect(steerIdx).toBeGreaterThan(firstAnswerIdx); // applied AFTER the answer
     expect(msgs.some((m) => m.role === "assistant" && m.content === "corrected answer")).toBe(true);
     expect(events.some((e) => e.type === "steer_applied" && e.ids.includes("s1"))).toBe(true);
+  });
+});
+
+describe("Agent soft steering — no target (removed)", () => {
+  it("steer NEVER aborts a sub-agent: it is a pure text correction", () => {
+    const { agent } = buildHarness();
+    const spy = vi.spyOn(agent, "abortSubAgent");
+    agent.steer("s1", "not Florence, Rome");
+    expect(spy).not.toHaveBeenCalled();
   });
 });

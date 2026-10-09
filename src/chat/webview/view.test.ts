@@ -41,7 +41,6 @@ function setupDom(
     <div id="pending-area" class="hidden"></div>
     <div id="working-bar" class="hidden">● Working...</div>
     <div id="input-area">
-      <div id="steer-target" class="hidden"></div>
       <div id="input-main">
         <button id="attach-btn">+</button>
         <textarea id="user-input" rows="1"></textarea>
@@ -3919,33 +3918,6 @@ describe("soft steering + pending bubbles (webview)", () => {
     expect(last.classList.contains("steer-msg")).toBe(true);
   });
 
-  it("picking a sub-agent as steer target forces the next message to be a steer", async () => {
-    await loadView();
-    startWorking();
-    hostMessage({
-      type: "toolCall",
-      id: "tc-1",
-      name: "Delegate",
-      arguments: { id: "florence", goal: "temperature of Florence" },
-    });
-    const steerBtn = document.querySelector(".subagent-steer") as HTMLButtonElement;
-    expect(steerBtn).toBeTruthy();
-    steerBtn.click();
-    expect((document.getElementById("steer-target") as HTMLElement).textContent).toContain("Florence");
-
-    const input = document.getElementById("user-input") as HTMLTextAreaElement;
-    input.value = "Roma invece";
-    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); // even plain Enter
-
-    expect(posted.find((m: any) => m.type === "send")).toMatchObject({
-      mode: "steer",
-      text: "Roma invece",
-      targetToolCallId: "tc-1",
-    });
-    // The target is consumed and the chip is cleared.
-    expect((document.getElementById("steer-target") as HTMLElement).classList.contains("hidden")).toBe(true);
-  });
-
   it("marks a historical steer message with the steer class", async () => {
     setupDom({
       messages: [
@@ -4077,5 +4049,26 @@ describe("Queue/Steer indicator (webview)", () => {
     expect(input().placeholder.toLowerCase()).toContain("steer");
     hostMessage({ type: "status", active: false });
     expect(input().placeholder).toContain("Enter to send");
+  });
+});
+
+describe("steer target removed (webview)", () => {
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
+
+  it("a Delegate bubble has the abort key but NO steer-target key", async () => {
+    await loadView();
+    hostMessage({
+      type: "toolCall",
+      id: "tc-1",
+      name: "Delegate",
+      arguments: { id: "f", goal: "temperature of Florence" },
+    });
+    const header = document.querySelector(".subagent-header") as HTMLElement;
+    expect(header.querySelector(".subagent-abort")).toBeTruthy();
+    expect(header.querySelector(".subagent-steer")).toBeNull();
+    expect(document.getElementById("steer-target")).toBeNull();
   });
 });

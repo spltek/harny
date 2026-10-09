@@ -10,15 +10,13 @@ import type { AttachmentInfo } from "./attachment-types";
 /**
  * A message the user typed WHILE the session was working. `queue` runs as a new
  * send once the current run ends; `steer` is injected into the running loop at
- * its next turn boundary. `targetToolCallId` (Parallel steer) aborts that
- * running sub-agent so the orchestrator re-plans the correction.
+ * its next turn boundary (merged with the other pending steers).
  */
 export interface PendingInput {
   id: string;
   mode: "queue" | "steer";
   text: string;
   attachments?: AttachmentInfo[];
-  targetToolCallId?: string;
 }
 
 /** A session that is currently open in the side view, with its own agent+history. */

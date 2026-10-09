@@ -43,6 +43,15 @@ describe("renderViewHtml", () => {
     expect(html).toContain(`<script src="${base.scriptUri}"></script>`);
   });
 
+  it("has NO steer-target affordance (the sub-agent target was removed)", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    expect(html).not.toContain('id="steer-target"');
+    expect(html).not.toContain("subagent-steer");
+  });
+
   it("does NOT show the version in the sessions header (kept only in the empty hero)", () => {
     const state = { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } };
     const withV = renderViewHtml({ ...base, state: { ...state, version: "0.1.0" } });
