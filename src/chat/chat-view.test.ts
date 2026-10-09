@@ -2410,10 +2410,10 @@ describe("ChatViewProvider soft steering + queue", () => {
     await new Promise((r) => setTimeout(r, 0));
     view.webview.postMessage.mockClear();
 
-    agent.emit({ type: "steer_applied", id: "s1x", content: "x" });
+    agent.emit({ type: "steer_applied", ids: ["s1x"], content: "x" });
 
     expect(rt.pending).toEqual([]);
-    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "steerApplied", id: "s1x", content: "x" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "steerApplied", ids: ["s1x"], content: "x" });
   });
 
   it("Stop clears the pending queue so the run does not silently restart", async () => {
@@ -2428,6 +2428,24 @@ describe("ChatViewProvider soft steering + queue", () => {
     expect(rt.pending).toEqual([]);
     expect(agent.cancelSteer).toHaveBeenCalledWith("s1x");
     expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "pending", items: [] });
+  });
+
+  it("clears ALL pending steers when the merged steer_applied arrives", async () => {
+    const { handler, rt, agent, view } = await setupStreaming();
+    await handler({ type: "send", mode: "steer", id: "sA", text: "one" });
+    await handler({ type: "send", mode: "steer", id: "sB", text: "two" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect((rt.pending ?? []).filter((p) => p.mode === "steer").length).toBe(2);
+    view.webview.postMessage.mockClear();
+
+    agent.emit({ type: "steer_applied", ids: ["sA", "sB"], content: "one\n\ntwo" });
+
+    expect((rt.pending ?? []).filter((p) => p.mode === "steer").length).toBe(0);
+    expect(view.webview.postMessage).toHaveBeenCalledWith({
+      type: "steerApplied",
+      ids: ["sA", "sB"],
+      content: "one\n\ntwo",
+    });
   });
 
   it("includes the pending list in switchView so a tab switch restores it", async () => {

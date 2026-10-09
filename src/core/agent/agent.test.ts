@@ -3071,7 +3071,7 @@ describe("Agent soft steering", () => {
     // conversation sent to the LLM.
     expect(factory.calls).toBe(2);
     expect(history.conversation().some((m) => m.steer && m.content === "actually use Rome")).toBe(true);
-    expect(events.some((e) => e.type === "steer_applied" && e.id === "s1")).toBe(true);
+    expect(events.some((e) => e.type === "steer_applied" && e.ids.includes("s1"))).toBe(true);
   });
 
   it("cancelSteer drops a queued steer before the boundary", async () => {
@@ -3160,8 +3160,8 @@ describe("Agent soft steering — fragility", () => {
     { type: "tool_call_end", index: 0 },
   ];
 
-  it("applies multiple steers queued in the same turn in FIFO order", async () => {
-    const { agent, history } = buildHarness({
+  it("MERGES multiple steers queued in the same turn into ONE user message", async () => {
+    const { agent, history, events } = buildHarness({
       chunks: [toolCall(), [{ type: "text", content: "done" }]],
     });
     agent.onEvent((e) => {
@@ -3173,8 +3173,12 @@ describe("Agent soft steering — fragility", () => {
 
     await agent.send("x");
 
-    const steers = history.all().filter((m) => m.steer).map((m) => m.content);
-    expect(steers).toEqual(["first correction", "second correction"]);
+    const steers = history.all().filter((m) => m.steer);
+    expect(steers.length).toBe(1); // a SINGLE merged user turn
+    expect(steers[0].content).toBe("first correction\n\nsecond correction");
+    // The event carries EVERY consumed id so the UI clears all drafts.
+    const applied = events.find((e) => e.type === "steer_applied");
+    expect(applied && applied.type === "steer_applied" ? applied.ids : []).toEqual(["a", "b"]);
   });
 
   it("does not apply a steer queued after the final turn (no boundary left)", async () => {
@@ -3214,6 +3218,6 @@ describe("Agent soft steering — final-answer boundary", () => {
     const firstAnswerIdx = msgs.findIndex((m) => m.role === "assistant" && m.content === "first answer");
     expect(steerIdx).toBeGreaterThan(firstAnswerIdx); // applied AFTER the answer
     expect(msgs.some((m) => m.role === "assistant" && m.content === "corrected answer")).toBe(true);
-    expect(events.some((e) => e.type === "steer_applied" && e.id === "s1")).toBe(true);
+    expect(events.some((e) => e.type === "steer_applied" && e.ids.includes("s1"))).toBe(true);
   });
 });

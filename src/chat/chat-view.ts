@@ -1532,10 +1532,11 @@ export class ChatViewProvider implements WebviewViewProvider {
       if (typeof usage.cachedWrite === "number") rt.cachedWriteTokens = usage.cachedWrite;
       void this.pushConfig();
     },
-    onSteerApplied: (sessionId, id) => {
+    onSteerApplied: (sessionId, ids) => {
       const rt = this.registry.get(sessionId);
       if (!rt?.pending) return;
-      rt.pending = rt.pending.filter((p) => p.id !== id);
+      const consumed = new Set(ids);
+      rt.pending = rt.pending.filter((p) => !consumed.has(p.id));
       this.postPending(rt);
     },
   });

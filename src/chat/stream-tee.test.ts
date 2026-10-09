@@ -74,15 +74,15 @@ describe("StreamTee", () => {
     const b = fakeRuntime("b");
     tee.attachAll([a.rt, b.rt]);
 
-    a.emit({ type: "steer_applied", id: "s1", content: "use Rome" });
-    b.emit({ type: "steer_applied", id: "s2", content: "other" });
+    a.emit({ type: "steer_applied", ids: ["s1"], content: "use Rome" });
+    b.emit({ type: "steer_applied", ids: ["s2"], content: "other" });
 
     // The host drops BOTH from their pending lists…
-    expect(deps.onSteerApplied).toHaveBeenCalledWith("a", "s1");
-    expect(deps.onSteerApplied).toHaveBeenCalledWith("b", "s2");
+    expect(deps.onSteerApplied).toHaveBeenCalledWith("a", ["s1"]);
+    expect(deps.onSteerApplied).toHaveBeenCalledWith("b", ["s2"]);
     // …but only the active session's bubble is posted to the view.
-    expect(deps.onPost).toHaveBeenCalledWith({ type: "steerApplied", id: "s1", content: "use Rome" });
-    expect(deps.onPost).not.toHaveBeenCalledWith(expect.objectContaining({ id: "s2" }));
+    expect(deps.onPost).toHaveBeenCalledWith({ type: "steerApplied", ids: ["s1"], content: "use Rome" });
+    expect(deps.onPost).not.toHaveBeenCalledWith(expect.objectContaining({ ids: ["s2"] }));
   });
 
   it("forwards loop_intervention to the view and resets the live buffer", () => {

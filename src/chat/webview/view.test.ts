@@ -3913,7 +3913,7 @@ describe("soft steering + pending bubbles (webview)", () => {
   it("turns a steer into a real user bubble when the host reports it applied", async () => {
     await loadView();
     hostMessage({ type: "pending", items: [{ id: "s1", mode: "steer", text: "not Florence" }] });
-    hostMessage({ type: "steerApplied", id: "s1", content: "not Florence" });
+    hostMessage({ type: "steerApplied", ids: ["s1"], content: "not Florence" });
     const last = document.querySelector("#messages .msg.user:last-of-type") as HTMLElement;
     expect(last.textContent).toContain("not Florence");
     expect(last.classList.contains("steer-msg")).toBe(true);

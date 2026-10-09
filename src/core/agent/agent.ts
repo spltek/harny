@@ -213,26 +213,32 @@ export class Agent implements ChatController {
     this.pendingSteers = this.pendingSteers.filter((s) => s.id !== id);
   }
 
-  /** Apply every queued steer at a turn boundary (history order stays valid). */
+  /**
+   * Apply ALL queued steers at a turn boundary as ONE merged user message:
+   * the model sees a single correction turn (no consecutive user messages) and
+   * the transcript shows a single steer bubble. Each steer stayed individually
+   * cancellable until this point.
+   */
   private drainSteers(): void {
     if (this.pendingSteers.length === 0) return;
     const steers = this.pendingSteers;
     this.pendingSteers = [];
-    for (const s of steers) {
-      if (s.options.attachmentParts && s.options.attachmentParts.length > 0) {
-        this.currentAttachmentParts = s.options.attachmentParts;
-      }
-      this.deps.history.add({
-        role: "user",
-        content: s.content,
-        images: s.options.images && s.options.images.length > 0 ? s.options.images : undefined,
-        attachments: s.options.attachments && s.options.attachments.length > 0 ? s.options.attachments : undefined,
-        displayText: s.options.displayText,
-        steer: true,
-        timestamp: Date.now(),
-      });
-      this.deps.events.emit({ type: "steer_applied", id: s.id, content: s.options.displayText ?? s.content });
-    }
+    const content = steers.map((s) => s.content).join("\n\n");
+    const displayText = steers.map((s) => s.options.displayText ?? s.content).join("\n\n");
+    const images = steers.flatMap((s) => s.options.images ?? []);
+    const attachments = steers.flatMap((s) => s.options.attachments ?? []);
+    const parts = steers.flatMap((s) => s.options.attachmentParts ?? []);
+    if (parts.length > 0) this.currentAttachmentParts = parts;
+    this.deps.history.add({
+      role: "user",
+      content,
+      images: images.length > 0 ? images : undefined,
+      attachments: attachments.length > 0 ? attachments : undefined,
+      displayText,
+      steer: true,
+      timestamp: Date.now(),
+    });
+    this.deps.events.emit({ type: "steer_applied", ids: steers.map((s) => s.id), content: displayText });
   }
 
   abort(): void {
