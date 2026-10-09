@@ -3188,3 +3188,32 @@ describe("Agent soft steering — fragility", () => {
     expect(history.all().some((m) => m.steer)).toBe(false);
   });
 });
+
+describe("Agent soft steering — final-answer boundary", () => {
+  it("applies a steer queued during the FINAL answer at the end of the run", async () => {
+    const { agent, factory, history, events } = buildHarness({
+      chunks: [
+        [{ type: "text", content: "first answer" }],
+        [{ type: "text", content: "corrected answer" }],
+      ],
+    });
+    let steered = false;
+    agent.onEvent((e) => {
+      if (e.type === "text_delta" && !steered) {
+        steered = true;
+        agent.steer("s1", "wait, use Rome");
+      }
+    });
+
+    await agent.send("find Florence");
+
+    // Same run continued (2 LLM calls), NOT a brand-new send.
+    expect(factory.calls).toBe(2);
+    const msgs = history.all();
+    const steerIdx = msgs.findIndex((m) => m.steer);
+    const firstAnswerIdx = msgs.findIndex((m) => m.role === "assistant" && m.content === "first answer");
+    expect(steerIdx).toBeGreaterThan(firstAnswerIdx); // applied AFTER the answer
+    expect(msgs.some((m) => m.role === "assistant" && m.content === "corrected answer")).toBe(true);
+    expect(events.some((e) => e.type === "steer_applied" && e.id === "s1")).toBe(true);
+  });
+});

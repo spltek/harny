@@ -479,6 +479,13 @@ export class Agent implements ChatController {
           return;
         }
       }
+      // A steer that arrived while THIS final answer was streaming had no turn
+      // boundary left to be applied at. Apply it NOW, at the end of the run and
+      // BEFORE the host's queued messages, instead of ending: one more turn
+      // that already carries the correction (same run, same context). This is
+      // pi's "steering enters after the current assistant turn" behaviour for
+      // the final-turn case.
+      if (this.pendingSteers.length > 0) return this.runTurns(turn + 1);
       // Follow-through safety is enforced by the system prompt, not by runtime
       // heuristics: it states that an action MUST be expressed as a tool call
       // in the same turn and that a no-tool turn counts as the final answer.
