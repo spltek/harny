@@ -556,11 +556,9 @@ describe("view webview client", () => {
     };
     input.dispatchEvent(ev);
 
-    // FileReader is async: give it a tick.
-    await new Promise((r) => setTimeout(r, 20));
-
     const chips = document.getElementById("attachment-chips") as HTMLDivElement;
-    expect(chips.querySelectorAll(".attach-chip").length).toBe(1);
+    // FileReader is async: WAIT for the chip (a fixed delay is flaky on slow CI).
+    await vi.waitFor(() => expect(chips.querySelectorAll(".attach-chip").length).toBe(1));
     expect(chips.querySelector(".attach-name")?.textContent).toBe("Image from clipboard");
     // The pasted image shows a preview thumbnail (its inline data URI).
     const thumb = chips.querySelector(".attach-thumb") as HTMLImageElement;
@@ -587,10 +585,8 @@ describe("view webview client", () => {
       items: [{ kind: "file", type: "text/markdown", getAsFile: () => file }],
     };
     input.dispatchEvent(ev);
-    await new Promise((r) => setTimeout(r, 20));
-
     const chips = document.getElementById("attachment-chips") as HTMLDivElement;
-    expect(chips.querySelectorAll(".attach-chip").length).toBe(1);
+    await vi.waitFor(() => expect(chips.querySelectorAll(".attach-chip").length).toBe(1));
 
     input.value = "summarize";
     posted.length = 0;
@@ -612,9 +608,9 @@ describe("view webview client", () => {
       input.dispatchEvent(ev);
     };
     paste();
-    await new Promise((r) => setTimeout(r, 20));
+    await vi.waitFor(() => expect(document.querySelectorAll(".attach-name").length).toBe(1));
     paste();
-    await new Promise((r) => setTimeout(r, 20));
+    await vi.waitFor(() => expect(document.querySelectorAll(".attach-name").length).toBe(2));
     const names = [...document.querySelectorAll(".attach-name")].map((e) => e.textContent);
     expect(names).toEqual(["Image from clipboard", "Image from clipboard 2"]);
   });
@@ -625,7 +621,7 @@ describe("view webview client", () => {
     const ev = new Event("drop", { cancelable: true }) as unknown as DragEvent & { dataTransfer: unknown };
     (ev as unknown as { dataTransfer: unknown }).dataTransfer = { files: [file], getData: () => "" };
     document.body.dispatchEvent(ev);
-    await new Promise((r) => setTimeout(r, 20));
+    await vi.waitFor(() => expect(document.querySelector(".attach-chip")).toBeTruthy());
     const chip = document.querySelector(".attach-chip") as HTMLElement;
     expect(chip).toBeTruthy();
     expect(chip.querySelector(".attach-name")?.textContent).toBe("dropped.png");
@@ -652,7 +648,7 @@ describe("view webview client", () => {
       items: [{ kind: "file", type: "image/png", getAsFile: () => file }],
     };
     input.dispatchEvent(ev);
-    await new Promise((r) => setTimeout(r, 20));
+    await vi.waitFor(() => expect(document.querySelector(".attach-thumb")).toBeTruthy());
 
     (document.querySelector(".attach-thumb") as HTMLImageElement).click();
     const lightbox = document.querySelector(".img-lightbox") as HTMLElement;
@@ -1057,8 +1053,8 @@ describe("view webview client", () => {
     hostMessage({ type: "thinkingDelta", content: " part" });
     hostMessage({ type: "thinkingDelta", content: " **two**" });
     expect(body.textContent).toContain("bold"); // still the leading snapshot
-    await new Promise((r) => setTimeout(r, 60));
-    expect(body.querySelectorAll("strong").length).toBe(2);
+    // The trailing render fires on the next animation frame: WAIT for it.
+    await vi.waitFor(() => expect(body.querySelectorAll("strong").length).toBe(2), { timeout: 2000 });
     expect(body.querySelector("strong:last-child")?.textContent).toBe("two");
   });
 
@@ -1610,12 +1606,17 @@ describe("view webview client", () => {
     hostMessage({ type: "textDelta", content: "answer two" }); // NEW bubble after tools
 
     // let the throttled (trailing) render of the second segment fire
-    await new Promise((r) => setTimeout(r, 160));
+    await vi.waitFor(
+      () => {
+        const a = [...document.querySelectorAll("#messages .msg.assistant")];
+        expect(a.length).toBe(2);
+        expect(a[1].textContent).toContain("answer two");
+      },
+      { timeout: 2000 },
+    );
 
     const assistants = [...document.querySelectorAll("#messages .msg.assistant")];
-    expect(assistants.length).toBe(2);
     expect(assistants[0].textContent).toContain("answer one more");
-    expect(assistants[1].textContent).toContain("answer two");
 
     // Pure chronology: thought, answer1, tool, answer2 — nothing moved.
     const cls = order();

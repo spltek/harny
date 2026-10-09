@@ -222,8 +222,8 @@ describe("ChatViewProvider", () => {
   it("resolveWebviewView renders the unified layout", async () => {
     const { provider } = buildHarness();
     const { view } = resolveWith(provider);
-    await new Promise((r) => setTimeout(r, 30));
-    expect(view.webview.html).toContain('id="sessions"');
+    // buildHtml() is async: WAIT for the HTML instead of a fixed delay.
+    await vi.waitFor(() => expect(view.webview.html).toContain('id="sessions"'), { timeout: 2000 });
     expect(view.webview.html).toContain('id="tabs"');
     expect(view.webview.html).toContain('id="user-input"');
   });
@@ -1762,8 +1762,7 @@ describe("ChatViewProvider all-sessions manager", () => {
       { id: "b", name: "Foreign", createdAt: 1, updatedAt: 2, messageCount: 0, folder: "/home/me/b", folderMissing: false },
     ]);
     const { view } = resolveWith(provider);
-    await new Promise((r) => setTimeout(r, 30));
-    expect(view.webview.html).toContain('"name":"Local"');
+    await vi.waitFor(() => expect(view.webview.html).toContain('"name":"Local"'), { timeout: 2000 });
     expect(view.webview.html).not.toContain('"name":"Foreign"');
   });
 });
