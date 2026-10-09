@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HARNY_HOME_ENV, resolveHome, sanitizeWorkspaceKey, sessionsDirFor } from "./home";
+import { HARNY_HOME_ENV, resolveHome } from "./home";
 
 describe("resolveHome (config home only)", () => {
   let globalStorage: string;
@@ -23,35 +23,5 @@ describe("resolveHome (config home only)", () => {
     const { home } = resolveHome({ globalStorageFsPath: globalStorage, env: { [HARNY_HOME_ENV]: override } });
     expect(home).toBe(override);
     rmSync(override, { recursive: true, force: true });
-  });
-});
-
-describe("sanitizeWorkspaceKey", () => {
-  it("turns a path into a safe pi-style key", () => {
-    expect(sanitizeWorkspaceKey("/Users/test/MyProject")).toBe("--Users-test-MyProject--");
-    expect(sanitizeWorkspaceKey("/")).toBe("--global--");
-    expect(sanitizeWorkspaceKey("  ")).toBe("--global--");
-  });
-
-  it("turns a WINDOWS cwd into a valid folder key (no backslash or colon)", () => {
-    const key = sanitizeWorkspaceKey("C:\\Users\\test\\MyProject");
-    expect(key).toBe("--C--Users-test-MyProject--");
-    expect(key).not.toMatch(/[\\:]/);
-  });
-
-  it("sanitizes a UNC path and every Windows-illegal character", () => {
-    expect(sanitizeWorkspaceKey("\\\\server\\share\\proj")).toBe("--server-share-proj--");
-    expect(sanitizeWorkspaceKey("C:\\a<b>c|d?e*f")).toBe("--C--a-b-c-d-e-f--");
-    expect(sanitizeWorkspaceKey("C:\\")).toBe("--C--");
-  });
-});
-
-describe("sessionsDirFor (central storage)", () => {
-  it("points sessions into the central home bucket per workspace (pi/Cursor style)", () => {
-    expect(sessionsDirFor("/Users/test/MyProject", "/home")).toBe(join("/home", "sessions", "--Users-test-MyProject--"));
-  });
-
-  it("uses the --global-- bucket when there is no single workspace root", () => {
-    expect(sessionsDirFor(undefined, "/home")).toBe(join("/home", "sessions", "--global--"));
   });
 });

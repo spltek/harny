@@ -35,6 +35,7 @@ function setupDom(
   };
   document.body.innerHTML = `
     <div id="session-head"><span class="toggle">▼</span><span>Sessions</span><span class="spacer"></span><button id="new-session">＋</button><button id="sessions-gear-btn">⚙</button></div>
+    <div id="session-search-row"><input id="session-search" type="search" placeholder="Search sessions" /></div>
     <div id="sessions"></div>
     <div id="tabs"></div>
     <div id="messages"></div>
@@ -161,6 +162,7 @@ function setupDom(
           <h3>All sessions</h3>
           <span class="sm-hint">hint</span>
         </div>
+        <div class="sm-search"><input id="sessions-search" type="search" placeholder="Search sessions" /></div>
         <div id="sessions-manager-list"></div>
         <div class="sm-footer">
           <button id="sessions-close" class="secondary">Close</button>
@@ -3672,10 +3674,94 @@ describe("session name modal (unique names)", () => {
   });
 });
 
+describe("main sessions list search", () => {
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
+
+  it("filters the MAIN list by full-text search and clears it", async () => {
+    await loadView(); // init sessions: a (Refactor), b (Debug)
+    expect(document.querySelectorAll("#sessions .srow").length).toBe(2);
+
+    const input = document.getElementById("session-search") as HTMLInputElement;
+    input.value = "debug";
+    input.dispatchEvent(new Event("input"));
+    // Debounced: asks the host with scope "main".
+    await vi.waitFor(() =>
+      expect(posted.some((m: any) => m.type === "searchSessions" && m.scope === "main" && m.query === "debug")).toBe(
+        true,
+      ),
+    );
+
+    // Host replies: only the matching session stays visible.
+    hostMessage({ type: "sessionsSearchResult", scope: "main", query: "debug", matches: [{ sessionId: "b", snippet: "x" }] });
+    const rows = document.querySelectorAll("#sessions .srow");
+    expect(rows.length).toBe(1);
+    expect(rows[0].textContent).toContain("Debug");
+
+    // Clearing the field restores the whole (current-folder) list.
+    input.value = "";
+    input.dispatchEvent(new Event("input"));
+    expect(document.querySelectorAll("#sessions .srow").length).toBe(2);
+  });
+
+  it("hides the search field when the sessions section is collapsed", async () => {
+    await loadView();
+    const row = document.getElementById("session-search-row") as HTMLElement;
+    const head = document.getElementById("session-head") as HTMLElement;
+    expect(row.classList.contains("hidden")).toBe(false);
+
+    head.click(); // collapse
+    expect(row.classList.contains("hidden")).toBe(true);
+
+    head.click(); // expand again
+    expect(row.classList.contains("hidden")).toBe(false);
+  });
+});
+
 describe("all-sessions manager (gear)", () => {
   beforeEach(() => {
     posted.length = 0;
     setupDom();
+  });
+
+  it("filters sessions by a full-text search (host FTS) and clears it", async () => {
+    await loadView();
+    hostMessage({
+      type: "sessionsManager",
+      show: true,
+      currentFolder: "/home/me/a",
+      sessions: [
+        { id: "x", name: "Rome trip", createdAt: 1, updatedAt: 9, messageCount: 2, folder: "/home/me/a", folderMissing: false },
+        { id: "y", name: "Florence trip", createdAt: 1, updatedAt: 5, messageCount: 1, folder: "/home/me/b", folderMissing: false },
+      ],
+    });
+    expect(document.querySelectorAll("#sessions-manager-list .sm-row").length).toBe(2);
+
+    const input = document.getElementById("sessions-search") as HTMLInputElement;
+    input.value = "rome";
+    input.dispatchEvent(new Event("input"));
+    // Debounced: the host is asked for the FTS matches.
+    await vi.waitFor(() =>
+      expect(posted.some((m: any) => m.type === "searchSessions" && m.query === "rome")).toBe(true),
+    );
+
+    // Host replies with the matching ids + snippet: only that row remains.
+    hostMessage({ type: "sessionsSearchResult", query: "rome", matches: [{ sessionId: "x", snippet: "in [Rome] today" }] });
+    const rows = document.querySelectorAll("#sessions-manager-list .sm-row");
+    expect(rows.length).toBe(1);
+    expect(rows[0].textContent).toContain("Rome trip");
+    expect(rows[0].querySelector(".sm-snippet")?.textContent).toContain("in Rome today");
+
+    // A stale reply for a different query is ignored.
+    hostMessage({ type: "sessionsSearchResult", query: "florence", matches: [{ sessionId: "y", snippet: "x" }] });
+    expect(document.querySelectorAll("#sessions-manager-list .sm-row").length).toBe(1);
+
+    // Clearing the field shows every session again.
+    input.value = "";
+    input.dispatchEvent(new Event("input"));
+    expect(document.querySelectorAll("#sessions-manager-list .sm-row").length).toBe(2);
   });
 
   it("the gear button asks the host for every session", async () => {

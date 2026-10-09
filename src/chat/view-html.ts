@@ -1546,7 +1546,26 @@ ${renderViewConfig(deps)}
     }
     .sm-actions button:disabled { opacity: 0.3; cursor: default; }
     #sessions-modal .sm-footer { display: flex; justify-content: flex-end; }
+    /* Full-text search field above the list: filters to sessions whose MESSAGES
+       contain the term/phrase (FTS5 on the host). */
+    #sessions-modal .sm-search { display: flex; }
+    /* Both search fields (main sessions list + all-sessions modal) share a look. */
+    #sessions-search, #session-search {
+      width: 100%; background: var(--surface-2); color: var(--fg);
+      border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+      font-size: var(--fs-lg); outline: none;
+    }
+    #sessions-search:focus, #session-search:focus { border-color: var(--accent); }
+    /* Main sessions list: the search sits between the header and the list. */
+    #session-search-row { padding: 0 8px 6px; }
+    #session-search-row.hidden { display: none; }
+    /* Per-row match excerpt: the matched terms are wrapped in [...] by FTS5 and
+       rendered in the accent color. */
+    .sm-row .sm-snippet { font-size: var(--fs-sm); color: #999; overflow-wrap: anywhere; }
+    .sm-row .sm-snippet b { color: var(--accent); font-weight: 600; }
     .sm-empty { padding: 18px; text-align: center; color: #888; font-size: var(--fs-lg); }
+    /* Main sessions list: no-match hint. */
+    #sessions .empty.no-match { font-style: italic; }
   </style>
 </head>
 <body class="controls-collapsed">
@@ -1556,6 +1575,9 @@ ${renderViewConfig(deps)}
       <span class="spacer"></span>
       <button id="new-session" title="New session"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
       <button id="sessions-gear-btn" class="gear-btn" title="Manage all sessions (every folder)"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
+    </div>
+    <div id="session-search-row">
+      <input id="session-search" type="search" placeholder="Search sessions" spellcheck="false" autocomplete="off" aria-label="Search sessions" />
     </div>
     <div id="sessions"></div>
   </div>
@@ -1794,6 +1816,9 @@ ${renderViewConfig(deps)}
       <div class="sm-head">
         <h3>All sessions</h3>
         <span class="sm-hint">Every folder, most recent first. Red = folder no longer available — set a new folder first. To use a session of another folder, open that folder in VS Code.</span>
+      </div>
+      <div class="sm-search">
+        <input id="sessions-search" type="search" placeholder="Search sessions" spellcheck="false" autocomplete="off" aria-label="Search sessions" />
       </div>
       <div id="sessions-manager-list"></div>
       <div class="sm-footer">

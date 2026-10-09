@@ -1667,6 +1667,34 @@ describe("ChatViewProvider all-sessions manager", () => {
     );
   });
 
+  it("searchSessions replies with the FTS matches (and none without a search hook)", async () => {
+    const searchSessions = vi.fn((q: string) => [{ sessionId: "a", snippet: `in [${q}]` }]);
+    const { provider } = buildHarness({ currentFolder: () => "/home/me/a", searchSessions });
+    const { handler, view } = resolveWith(provider);
+
+    await handler({ type: "searchSessions", query: "rome", scope: "main" });
+
+    expect(searchSessions).toHaveBeenCalledWith("rome");
+    // The scope (main list vs modal) is echoed back for the webview to route.
+    expect(view.webview.postMessage).toHaveBeenCalledWith({
+      type: "sessionsSearchResult",
+      query: "rome",
+      scope: "main",
+      matches: [{ sessionId: "a", snippet: "in [rome]" }],
+    });
+
+    // No search hook wired (e.g. a non-SQLite build): an empty result, no throw.
+    const plain = buildHarness();
+    const { handler: h2, view: v2 } = resolveWith(plain.provider);
+    await h2({ type: "searchSessions", query: "x" });
+    expect(v2.webview.postMessage).toHaveBeenCalledWith({
+      type: "sessionsSearchResult",
+      query: "x",
+      scope: "modal",
+      matches: [],
+    });
+  });
+
   it("changeSessionFolder picks a folder, persists it and refreshes the form", async () => {
     const { store, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
     state.showOpenDialog.mockResolvedValue([{ fsPath: "/home/me/new" }]);

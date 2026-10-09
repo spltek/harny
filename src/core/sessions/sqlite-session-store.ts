@@ -1,0 +1,470 @@
+import { randomUUID } from "node:crypto";
+import type { DatabaseSync } from "node:sqlite";
+import type { FileSystem } from "../tools/file-system";
+import type { ChatMessage } from "../history/types";
+import { isThinkingLevel, type ThinkingLevel } from "../config/types";
+import { clampLoopGuardOverrides, normalizeLoopGuardSensitivity, type LoopGuardOptions } from "../agent/loop-guard";
+import type { LoadedSession, SessionSettingsPatch, SessionStore, SessionSummary } from "./types";
+
+/** One full-text search hit: which message matched, its snippet and BM25 rank. */
+export interface SessionSearchHit {
+  sessionId: string;
+  seq: number;
+  /** Highlighted excerpt from FTS5 (`[...]` around the matched terms). */
+  snippet: string;
+  /** BM25 score (lower = more relevant, FTS5 convention). */
+  score: number;
+}
+
+/** Clamp a persisted parallel cap: a finite integer >= 0 (0 = no cap). */
+function toMaxParallelSubAgents(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const n = Math.trunc(value);
+  return n < 0 ? undefined : n;
+}
+
+export interface SqliteSessionStoreDeps {
+  /** An already-open SQLite database (production: `<home>/sessions.db`). */
+  db: DatabaseSync;
+  /** Used only to annotate `folderMissing` at list time (a folder that is gone). */
+  fs: FileSystem;
+  /** The current workspace root: stamped on new sessions (per-folder bucketing). */
+  currentFolder?: () => string | undefined;
+  idGen?: () => string;
+}
+
+type Row = Record<string, unknown>;
+
+/**
+ * SQLite-backed session storage (`node:sqlite`, built into Node >= 22.5).
+ *
+ * One database holds EVERY session of every workspace (`folder` column), so the
+ * cross-folder manager is a plain query — no bucket traversal. Messages live in
+ * a `messages` table (one row each, incremental appends) with an FTS5 index for
+ * full-text search. The full `ChatMessage` is stored as a JSON `data` column, so
+ * no field (thinking / images / tool calls …) is lost, while `content` feeds FTS.
+ */
+export class SqliteSessionStore implements SessionStore {
+  private readonly idGen: () => string;
+
+  constructor(private deps: SqliteSessionStoreDeps) {
+    this.idGen = deps.idGen ?? (() => randomUUID());
+    this.migrate();
+  }
+
+  /** Create the schema once (idempotent). FTS5 + triggers keep the index in sync. */
+  private migrate(): void {
+    this.deps.db.exec(`
+      PRAGMA journal_mode = WAL;
+      CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        folder TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        message_count INTEGER NOT NULL DEFAULT 0,
+        model TEXT,
+        model_provider TEXT,
+        thinking_level TEXT,
+        context_window INTEGER,
+        compaction_threshold_percent INTEGER,
+        context_tokens INTEGER,
+        output_tokens INTEGER,
+        temperature REAL,
+        presence_penalty REAL,
+        frequency_penalty REAL,
+        top_p REAL,
+        sampler TEXT,
+        max_parallel_sub_agents INTEGER,
+        loop_guard TEXT,
+        loop_guard_response INTEGER,
+        loop_guard_params TEXT
+      );
+      CREATE TABLE IF NOT EXISTS messages (
+        session_id TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT,
+        timestamp INTEGER,
+        data TEXT NOT NULL,
+        PRIMARY KEY (session_id, seq)
+      );
+      CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(content, content='messages', content_rowid='rowid');
+      CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+        INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+      END;
+      CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+        INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+      END;
+    `);
+  }
+
+  list(): SessionSummary[] {
+    const rows = this.deps.db.prepare("SELECT * FROM sessions").all() as Row[];
+    return rows.map((r) => this.rowToSummary(r));
+  }
+
+  create(name?: string): SessionSummary {
+    const now = Date.now();
+    const folder = this.deps.currentFolder?.();
+    const summary: SessionSummary = {
+      id: this.idGen(),
+      name: name?.trim() || "New Session",
+      createdAt: now,
+      updatedAt: now,
+      messageCount: 0,
+      ...(folder ? { folder } : {}),
+    };
+    this.upsertSummary(summary);
+    return summary;
+  }
+
+  load(id: string): LoadedSession {
+    const row = this.deps.db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as Row | undefined;
+    const summary = row ? this.rowToSummary(row) : this.emptySummary(id);
+    const rows = this.deps.db
+      .prepare("SELECT data FROM messages WHERE session_id = ? ORDER BY seq")
+      .all(id) as Row[];
+    const messages = rows.map((r) => JSON.parse(String(r.data)) as ChatMessage);
+    summary.messageCount = messages.length;
+    return { summary, messages };
+  }
+
+  /**
+   * Persist the session's messages. The caller always passes the WHOLE history,
+   * so we APPEND only the new tail when it grew (the common per-turn case) and
+   * replace everything when it shrank (a ✂ cut or a compaction) — never rewrite
+   * the whole session on an ordinary save.
+   */
+  saveMessages(id: string, messages: ChatMessage[]): SessionSummary {
+    const existing = this.getSummary(id);
+    const storedCount = this.countMessages(id);
+    this.deps.db.exec("BEGIN");
+    try {
+      if (messages.length < storedCount) {
+        this.deps.db.prepare("DELETE FROM messages WHERE session_id = ?").run(id);
+      }
+      const from = messages.length < storedCount ? 0 : storedCount;
+      const insert = this.deps.db.prepare(
+        "INSERT INTO messages(session_id, seq, role, content, timestamp, data) VALUES (?, ?, ?, ?, ?, ?)",
+      );
+      for (let i = from; i < messages.length; i++) {
+        const m = messages[i];
+        insert.run(id, i, String(m.role), m.content ?? "", m.timestamp ?? 0, JSON.stringify(m));
+      }
+      const summary = this.carrySummary(id, existing, messages);
+      this.upsertSummary(summary);
+      this.deps.db.exec("COMMIT");
+      return summary;
+    } catch (e) {
+      this.deps.db.exec("ROLLBACK");
+      throw e;
+    }
+  }
+
+  rename(id: string, name: string): SessionSummary {
+    const existing = this.getSummary(id);
+    const summary = this.carrySummary(id, existing, [], { name, updatedAt: Date.now() });
+    summary.messageCount = this.countMessages(id);
+    this.upsertSummary(summary);
+    return summary;
+  }
+
+  remove(id: string): boolean {
+    const existed = !!this.deps.db.prepare("SELECT 1 FROM sessions WHERE id = ?").get(id);
+    this.deps.db.exec("BEGIN");
+    try {
+      this.deps.db.prepare("DELETE FROM messages WHERE session_id = ?").run(id);
+      this.deps.db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
+      this.deps.db.exec("COMMIT");
+    } catch (e) {
+      this.deps.db.exec("ROLLBACK");
+      throw e;
+    }
+    return existed;
+  }
+
+  /**
+   * Atomically persist a subset of the per-session settings (a single UPDATE).
+   * The patch is normalized with the same semantics as the JSONL store: a key
+   * present (even `undefined`) SETS or CLEARS that field.
+   */
+  saveSettings(id: string, patch: SessionSettingsPatch): SessionSummary {
+    const existing = this.getSummary(id);
+    const summary = this.carrySummary(id, existing, [], { ...this.normalizePatch(patch), updatedAt: Date.now() });
+    summary.messageCount = this.countMessages(id);
+    this.upsertSummary(summary);
+    return summary;
+  }
+
+  /**
+   * Full-text search across every message of every session. The query uses
+   * FTS5 syntax (`term`, `"a phrase"`, `a OR b`, `pre*`); if the syntax is
+   * invalid (e.g. an unbalanced quote) it falls back to matching the input as a
+   * literal PHRASE, so a plain typed string never errors.
+   */
+  search(query: string, limit = 50): SessionSearchHit[] {
+    const q = query.trim();
+    if (!q) return [];
+    try {
+      return this.runSearch(q, limit);
+    } catch {
+      try {
+        return this.runSearch(`"${q.replace(/"/g, '""')}"`, limit);
+      } catch {
+        return [];
+      }
+    }
+  }
+
+  private runSearch(match: string, limit: number): SessionSearchHit[] {
+    // SECURITY: the SQL text is STATIC and the user query is bound as a
+    // PARAMETER (`?`) — never concatenated — so it cannot inject SQL. (The
+    // `"..."` fallback builds an FTS QUERY string, still passed as a bound
+    // value, not as SQL.) Every other statement in this store is parameterized
+    // the same way.
+    const rows = this.deps.db
+      .prepare(
+        `SELECT m.session_id AS sessionId, m.seq AS seq,
+                snippet(messages_fts, 0, '[', ']', '…', 12) AS snippet,
+                bm25(messages_fts) AS score
+         FROM messages_fts
+         JOIN messages m ON m.rowid = messages_fts.rowid
+         WHERE messages_fts MATCH ?
+         ORDER BY score
+         LIMIT ?`,
+      )
+      .all(match, limit) as Row[];
+    return rows.map((r) => ({
+      sessionId: String(r.sessionId),
+      seq: Number(r.seq),
+      snippet: String(r.snippet ?? ""),
+      score: Number(r.score ?? 0),
+    }));
+  }
+
+  saveModel(id: string, model?: string, provider?: string): SessionSummary {
+    return this.saveSettings(id, {
+      ...(model ? { model } : {}),
+      ...(provider ? { modelProvider: provider } : {}),
+    });
+  }
+
+  saveThinkingLevel(id: string, level?: ThinkingLevel): SessionSummary {
+    return this.saveSettings(id, { ...(isThinkingLevel(level) ? { thinkingLevel: level } : {}) });
+  }
+
+  saveContextWindow(id: string, window?: number): SessionSummary {
+    return this.saveSettings(id, { ...(typeof window === "number" ? { contextWindow: window } : {}) });
+  }
+
+  saveContextTokens(id: string, tokens?: number): SessionSummary {
+    return this.saveSettings(id, { ...(typeof tokens === "number" ? { contextTokens: tokens } : {}) });
+  }
+
+  saveOutputTokens(id: string, tokens?: number): SessionSummary {
+    return this.saveSettings(id, { ...(typeof tokens === "number" ? { outputTokens: tokens } : {}) });
+  }
+
+  saveTemperature(id: string, temp?: number): SessionSummary {
+    return this.saveSettings(id, { temperature: temp });
+  }
+
+  savePresencePenalty(id: string, value?: number): SessionSummary {
+    return this.saveSettings(id, { presencePenalty: value });
+  }
+
+  saveFrequencyPenalty(id: string, value?: number): SessionSummary {
+    return this.saveSettings(id, { frequencyPenalty: value });
+  }
+
+  saveTopP(id: string, value?: number): SessionSummary {
+    return this.saveSettings(id, { topP: value });
+  }
+
+  saveSampler(id: string, sampler?: "temperature" | "topP"): SessionSummary {
+    return this.saveSettings(id, { sampler });
+  }
+
+  /** Close the underlying database (tests / shutdown). */
+  close(): void {
+    this.deps.db.close();
+  }
+
+  // ── internals ──────────────────────────────────────────────────────────
+
+  private countMessages(id: string): number {
+    const row = this.deps.db.prepare("SELECT COUNT(*) AS c FROM messages WHERE session_id = ?").get(id) as Row;
+    return Number(row?.c ?? 0);
+  }
+
+  private getSummary(id: string): SessionSummary | undefined {
+    const row = this.deps.db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as Row | undefined;
+    return row ? this.rowToSummary(row) : undefined;
+  }
+
+  private emptySummary(id: string): SessionSummary {
+    const now = Date.now();
+    return { id, name: "Session", createdAt: now, updatedAt: now, messageCount: 0 };
+  }
+
+  /**
+   * Base summary for a mutation: the new identity plus every persisted
+   * per-session field carried forward (this is what keeps model / provider /
+   * thinking / limits alive across a plain message save).
+   */
+  private carrySummary(
+    id: string,
+    existing: SessionSummary | undefined,
+    messages: ChatMessage[],
+    extra: Partial<SessionSummary> = {},
+  ): SessionSummary {
+    return {
+      id,
+      name: extra.name ?? existing?.name ?? "New Session",
+      createdAt: existing?.createdAt ?? Date.now(),
+      updatedAt: extra.updatedAt ?? Date.now(),
+      messageCount: messages.length,
+      ...(existing?.folder ? { folder: existing.folder } : {}),
+      ...(existing?.model ? { model: existing.model } : {}),
+      ...(existing?.modelProvider ? { modelProvider: existing.modelProvider } : {}),
+      ...(existing?.thinkingLevel ? { thinkingLevel: existing.thinkingLevel } : {}),
+      ...(existing?.contextWindow ? { contextWindow: existing.contextWindow } : {}),
+      ...(existing?.compactionThresholdPercent ? { compactionThresholdPercent: existing.compactionThresholdPercent } : {}),
+      ...(existing?.contextTokens ? { contextTokens: existing.contextTokens } : {}),
+      ...(existing?.outputTokens ? { outputTokens: existing.outputTokens } : {}),
+      // 0 is a VALID value for these: `!== undefined`, not truthiness.
+      ...(existing?.temperature !== undefined ? { temperature: existing.temperature } : {}),
+      ...(existing?.presencePenalty !== undefined ? { presencePenalty: existing.presencePenalty } : {}),
+      ...(existing?.frequencyPenalty !== undefined ? { frequencyPenalty: existing.frequencyPenalty } : {}),
+      ...(existing?.topP !== undefined ? { topP: existing.topP } : {}),
+      ...(existing?.sampler ? { sampler: existing.sampler } : {}),
+      ...(existing?.maxParallelSubAgents !== undefined ? { maxParallelSubAgents: existing.maxParallelSubAgents } : {}),
+      ...(existing?.loopGuard ? { loopGuard: existing.loopGuard } : {}),
+      ...(existing?.loopGuardResponse ? { loopGuardResponse: existing.loopGuardResponse } : {}),
+      ...(existing?.loopGuardParams ? { loopGuardParams: existing.loopGuardParams } : {}),
+      ...extra,
+    };
+  }
+
+  /** Validate/clear semantics for a settings patch (mirrors the JSONL store). */
+  private normalizePatch(patch: SessionSettingsPatch): Partial<SessionSummary> {
+    const out: Partial<SessionSummary> = {};
+    const folder = patch.folder?.trim();
+    if (folder) out.folder = folder;
+    if (patch.model) out.model = patch.model;
+    if (patch.modelProvider) out.modelProvider = patch.modelProvider;
+    if (patch.thinkingLevel !== undefined && isThinkingLevel(patch.thinkingLevel)) {
+      out.thinkingLevel = patch.thinkingLevel;
+    }
+    if (typeof patch.contextWindow === "number") out.contextWindow = patch.contextWindow;
+    if (typeof patch.compactionThresholdPercent === "number") {
+      out.compactionThresholdPercent = patch.compactionThresholdPercent;
+    }
+    if (typeof patch.contextTokens === "number") out.contextTokens = patch.contextTokens;
+    if (typeof patch.outputTokens === "number") out.outputTokens = patch.outputTokens;
+    if ("temperature" in patch) out.temperature = patch.temperature;
+    if ("presencePenalty" in patch) out.presencePenalty = patch.presencePenalty;
+    if ("frequencyPenalty" in patch) out.frequencyPenalty = patch.frequencyPenalty;
+    if ("topP" in patch) out.topP = patch.topP;
+    if ("sampler" in patch) out.sampler = patch.sampler;
+    if ("maxParallelSubAgents" in patch) out.maxParallelSubAgents = toMaxParallelSubAgents(patch.maxParallelSubAgents);
+    if ("loopGuard" in patch) out.loopGuard = normalizeLoopGuardSensitivity(patch.loopGuard);
+    if ("loopGuardResponse" in patch) out.loopGuardResponse = patch.loopGuardResponse === true ? true : undefined;
+    if ("loopGuardParams" in patch) out.loopGuardParams = clampLoopGuardOverrides(patch.loopGuardParams);
+    return out;
+  }
+
+  /** INSERT or fully replace one session row (all columns from the summary). */
+  private upsertSummary(s: SessionSummary): void {
+    this.deps.db
+      .prepare(
+        `INSERT INTO sessions (
+           id, name, folder, created_at, updated_at, message_count,
+           model, model_provider, thinking_level, context_window, compaction_threshold_percent,
+           context_tokens, output_tokens, temperature, presence_penalty, frequency_penalty,
+           top_p, sampler, max_parallel_sub_agents, loop_guard, loop_guard_response, loop_guard_params
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           name=excluded.name, folder=excluded.folder, created_at=excluded.created_at,
+           updated_at=excluded.updated_at, message_count=excluded.message_count,
+           model=excluded.model, model_provider=excluded.model_provider,
+           thinking_level=excluded.thinking_level, context_window=excluded.context_window,
+           compaction_threshold_percent=excluded.compaction_threshold_percent,
+           context_tokens=excluded.context_tokens, output_tokens=excluded.output_tokens,
+           temperature=excluded.temperature, presence_penalty=excluded.presence_penalty,
+           frequency_penalty=excluded.frequency_penalty, top_p=excluded.top_p,
+           sampler=excluded.sampler, max_parallel_sub_agents=excluded.max_parallel_sub_agents,
+           loop_guard=excluded.loop_guard, loop_guard_response=excluded.loop_guard_response,
+           loop_guard_params=excluded.loop_guard_params`,
+      )
+      .run(
+        s.id,
+        s.name,
+        s.folder ?? null,
+        s.createdAt,
+        s.updatedAt,
+        s.messageCount,
+        s.model ?? null,
+        s.modelProvider ?? null,
+        s.thinkingLevel ?? null,
+        s.contextWindow ?? null,
+        s.compactionThresholdPercent ?? null,
+        s.contextTokens ?? null,
+        s.outputTokens ?? null,
+        s.temperature ?? null,
+        s.presencePenalty ?? null,
+        s.frequencyPenalty ?? null,
+        s.topP ?? null,
+        s.sampler ?? null,
+        s.maxParallelSubAgents ?? null,
+        s.loopGuard ?? null,
+        s.loopGuardResponse === true ? 1 : null,
+        s.loopGuardParams ? JSON.stringify(s.loopGuardParams) : null,
+      );
+  }
+
+  private rowToSummary(r: Row): SessionSummary {
+    const folder = typeof r.folder === "string" && r.folder.trim() ? r.folder : undefined;
+    const loopGuard = normalizeLoopGuardSensitivity(r.loop_guard);
+    const cap = toMaxParallelSubAgents(r.max_parallel_sub_agents);
+    let loopGuardParams: Partial<LoopGuardOptions> | undefined;
+    if (typeof r.loop_guard_params === "string" && r.loop_guard_params) {
+      try {
+        loopGuardParams = clampLoopGuardOverrides(JSON.parse(r.loop_guard_params));
+      } catch {
+        loopGuardParams = undefined;
+      }
+    }
+    const num = (v: unknown): number | undefined => (typeof v === "number" ? v : undefined);
+    return {
+      id: String(r.id),
+      name: String(r.name ?? "Session"),
+      createdAt: Number(r.created_at ?? 0),
+      updatedAt: Number(r.updated_at ?? 0),
+      messageCount: Number(r.message_count ?? 0),
+      ...(folder ? { folder } : {}),
+      ...(folder && !this.deps.fs.exists(folder) ? { folderMissing: true } : {}),
+      ...(typeof r.model === "string" ? { model: r.model } : {}),
+      ...(typeof r.model_provider === "string" ? { modelProvider: r.model_provider } : {}),
+      ...(typeof r.thinking_level === "string" && isThinkingLevel(r.thinking_level)
+        ? { thinkingLevel: r.thinking_level }
+        : {}),
+      ...(num(r.context_window) !== undefined ? { contextWindow: num(r.context_window) } : {}),
+      ...(num(r.compaction_threshold_percent) !== undefined
+        ? { compactionThresholdPercent: num(r.compaction_threshold_percent) }
+        : {}),
+      ...(num(r.context_tokens) !== undefined ? { contextTokens: num(r.context_tokens) } : {}),
+      ...(num(r.output_tokens) !== undefined ? { outputTokens: num(r.output_tokens) } : {}),
+      ...(num(r.temperature) !== undefined ? { temperature: num(r.temperature) } : {}),
+      ...(num(r.presence_penalty) !== undefined ? { presencePenalty: num(r.presence_penalty) } : {}),
+      ...(num(r.frequency_penalty) !== undefined ? { frequencyPenalty: num(r.frequency_penalty) } : {}),
+      ...(num(r.top_p) !== undefined ? { topP: num(r.top_p) } : {}),
+      ...(r.sampler === "temperature" || r.sampler === "topP" ? { sampler: r.sampler } : {}),
+      ...(cap !== undefined ? { maxParallelSubAgents: cap } : {}),
+      ...(loopGuard ? { loopGuard } : {}),
+      ...(r.loop_guard_response === 1 ? { loopGuardResponse: true } : {}),
+      ...(loopGuardParams ? { loopGuardParams } : {}),
+    };
+  }
+}

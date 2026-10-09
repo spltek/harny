@@ -116,6 +116,18 @@ interface InitState {
 }
 
 const sessionsEl = document.getElementById("sessions") as HTMLDivElement;
+const sessionSearchInput = document.getElementById("session-search") as HTMLInputElement;
+const sessionSearchRow = document.getElementById("session-search-row") as HTMLDivElement;
+
+/** Show/hide the sessions list AND its search field together (the search must
+ * not linger when the section is collapsed). */
+function setSessionsVisible(visible: boolean): void {
+  sessionsEl.classList.toggle("hidden", !visible);
+  sessionSearchRow.classList.toggle("hidden", !visible);
+}
+/** Matching ids for the MAIN-list search (null = no filter). Scoped to the
+ * sessions already shown (the current workspace folder). */
+let sessionSearchIds: Set<string> | null = null;
 const sessionHead = document.getElementById("session-head") as HTMLDivElement;
 const sessionsGearBtn = document.getElementById("sessions-gear-btn") as HTMLButtonElement;
 const newSessionBtn = document.getElementById("new-session") as HTMLButtonElement;
@@ -309,16 +321,19 @@ function escapeHtml(s: string): string {
 
 // ── Sessions list ──
 function renderSessions(sessions: SessionInfo[]): void {
+  // The main list only ever holds the CURRENT folder's sessions, so the search
+  // filter acts on that subset (a match in another folder never shows here).
+  const visible = sessionSearchIds ? sessions.filter((s) => sessionSearchIds!.has(s.id)) : sessions;
   sessionsEl.innerHTML = "";
-  if (!sessions || sessions.length === 0) {
+  if (visible.length === 0) {
     const p = document.createElement("div");
-    p.className = "empty";
-    p.textContent = "No sessions yet. Create a new session.";
+    p.className = "empty" + (sessionSearchIds ? " no-match" : "");
+    p.textContent = sessionSearchIds ? "No session matches the search." : "No sessions yet. Create a new session.";
     sessionsEl.appendChild(p);
     return;
   }
   const openSet = new Set(openIds);
-  for (const s of sessions) {
+  for (const s of visible) {
     const row = document.createElement("div");
     row.className = "srow" + (openSet.has(s.id) ? " open" : "") + (workingIds.has(s.id) ? " is-working" : "");
     row.dataset.id = s.id;
@@ -1071,7 +1086,7 @@ function renderEmptyShell(): void {
     vscode.postMessage({ type: "newSession" });
   });
   // The sessions list is the second path to act: make sure it stays visible.
-  sessionsEl.classList.remove("hidden");
+  setSessionsVisible(true);
   const toggle = sessionHead.querySelector(".toggle");
   if (toggle) toggle.textContent = "▼";
 }
@@ -1825,9 +1840,10 @@ ctlToggle.addEventListener("click", () => {
 window.addEventListener("focus", () => vscode.postMessage({ type: "getSkills" }));
 newSessionBtn.addEventListener("click", () => vscode.postMessage({ type: "newSession" }));
 sessionHead.addEventListener("click", () => {
-  sessionsEl.classList.toggle("hidden");
+  const visible = sessionsEl.classList.contains("hidden"); // collapsing -> show
+  setSessionsVisible(visible);
   const t = sessionHead.querySelector(".toggle");
-  if (t) t.textContent = sessionsEl.classList.contains("hidden") ? "▶" : "▼";
+  if (t) t.textContent = visible ? "▼" : "▶";
 });
 
 // The PLAY button blinks while the LLM works (streaming OR compaction): the same
@@ -1932,15 +1948,30 @@ window.addEventListener("keydown", (e) => {
 const sessionsModal = document.getElementById("sessions-modal") as HTMLDivElement;
 const sessionsManagerList = document.getElementById("sessions-manager-list") as HTMLDivElement;
 const sessionsCloseBtn = document.getElementById("sessions-close") as HTMLButtonElement;
+const sessionsSearchInput = document.getElementById("sessions-search") as HTMLInputElement;
+
+/** The last full list pushed by the host (unfiltered), plus the search filter. */
+let smSessions: SessionInfo[] = [];
+let smCurrentFolder: string | undefined;
+/** Matching session ids for the active search (null = no filter). */
+let smSearchIds: Set<string> | null = null;
+/** Best matching snippet per session (FTS5, `[...]` around the terms). */
+let smSnippets = new Map<string, string>();
 
 /** Renders the manage-form rows (keeps the modal's current shown/hidden state). */
 function renderSessionsManagerData(data: { sessions: SessionInfo[]; currentFolder?: string }): void {
-  renderSessionsManager(data.sessions || [], data.currentFolder);
+  smSessions = data.sessions || [];
+  smCurrentFolder = data.currentFolder;
+  renderSessionsManager();
 }
 
 function closeSessionsManager(): void {
   sessionsModal.classList.add("hidden");
   sessionsManagerList.innerHTML = "";
+  // Reset the search so reopening the form starts from the full list.
+  sessionsSearchInput.value = "";
+  smSearchIds = null;
+  smSnippets = new Map();
 }
 
 /**
@@ -1967,16 +1998,17 @@ function sameFolder(a?: string, b?: string): boolean {
  * folder pointer / delete. A missing or unset folder offers the picker instead
  * of Open, so the session can be re-pointed.
  */
-function renderSessionsManager(sessions: SessionInfo[], currentFolder?: string): void {
+function renderSessionsManager(): void {
+  const visible = smSearchIds ? smSessions.filter((s) => smSearchIds!.has(s.id)) : smSessions;
   sessionsManagerList.innerHTML = "";
-  if (!sessions || sessions.length === 0) {
+  if (visible.length === 0) {
     const p = document.createElement("div");
     p.className = "sm-empty";
-    p.textContent = "No sessions yet.";
+    p.textContent = smSearchIds ? "No session matches the search." : "No sessions yet.";
     sessionsManagerList.appendChild(p);
     return;
   }
-  for (const s of sessions) {
+  for (const s of visible) {
     const row = document.createElement("div");
     row.className = "sm-row";
     row.dataset.id = s.id;
@@ -1988,7 +2020,7 @@ function renderSessionsManager(sessions: SessionInfo[], currentFolder?: string):
     const nameSpan = document.createElement("span");
     nameSpan.textContent = s.name || "Session";
     nameLine.appendChild(nameSpan);
-    if (sameFolder(s.folder, currentFolder)) {
+    if (sameFolder(s.folder, smCurrentFolder)) {
       const tag = document.createElement("span");
       tag.className = "sm-tag";
       tag.textContent = "this folder";
@@ -2009,6 +2041,22 @@ function renderSessionsManager(sessions: SessionInfo[], currentFolder?: string):
     main.appendChild(nameLine);
     main.appendChild(meta);
     main.appendChild(folder);
+    // Why this session matched: the FTS5 snippet, matched terms in bold.
+    const snippet = smSnippets.get(s.id);
+    if (snippet) {
+      const sn = document.createElement("div");
+      sn.className = "sm-snippet";
+      for (const part of snippet.split(/(\[[^\]]*\])/g)) {
+        if (part.startsWith("[") && part.endsWith("]")) {
+          const b = document.createElement("b");
+          b.textContent = part.slice(1, -1);
+          sn.appendChild(b);
+        } else if (part) {
+          sn.appendChild(document.createTextNode(part));
+        }
+      }
+      main.appendChild(sn);
+    }
 
     const actions = document.createElement("span");
     actions.className = "sm-actions";
@@ -2017,7 +2065,7 @@ function renderSessionsManager(sessions: SessionInfo[], currentFolder?: string):
     // A usable folder (exists, and not the one already open) is OPENED in VS
     // Code — this changes the working directory. Otherwise the picker is the
     // only useful action: re-point a missing/unset session's folder.
-    const canOpen = !!s.folder && !s.folderMissing && !sameFolder(s.folder, currentFolder);
+    const canOpen = !!s.folder && !s.folderMissing && !sameFolder(s.folder, smCurrentFolder);
     if (canOpen) {
       folderBtn.textContent = "Open folder";
       folderBtn.title = "Open this folder in VS Code (changes the working directory)";
@@ -2048,6 +2096,37 @@ function renderSessionsManager(sessions: SessionInfo[], currentFolder?: string):
 sessionsGearBtn.addEventListener("click", () => {
   vscode.postMessage({ type: "getAllSessions" });
 });
+// Full-text search (SQLite FTS5 over messages), debounced. TWO independent
+// fields: the MAIN sessions list (filtered to the current folder's sessions)
+// and the all-sessions modal. `scope` routes the reply to the right one.
+let smSearchTimer: number | undefined;
+sessionsSearchInput.addEventListener("input", () => {
+  const q = sessionsSearchInput.value.trim();
+  window.clearTimeout(smSearchTimer);
+  if (!q) {
+    smSearchIds = null;
+    smSnippets = new Map();
+    renderSessionsManager();
+    return;
+  }
+  smSearchTimer = window.setTimeout(() => vscode.postMessage({ type: "searchSessions", query: q, scope: "modal" }), 180);
+});
+
+let sessionSearchTimer: number | undefined;
+sessionSearchInput.addEventListener("input", () => {
+  const q = sessionSearchInput.value.trim();
+  window.clearTimeout(sessionSearchTimer);
+  if (!q) {
+    sessionSearchIds = null;
+    renderSessions(currentSessions);
+    return;
+  }
+  sessionSearchTimer = window.setTimeout(
+    () => vscode.postMessage({ type: "searchSessions", query: q, scope: "main" }),
+    180,
+  );
+});
+
 sessionsCloseBtn.addEventListener("click", closeSessionsManager);
 sessionsModal.querySelector(".sm-backdrop")?.addEventListener("click", closeSessionsManager);
 window.addEventListener("keydown", (e) => {
@@ -3813,6 +3892,22 @@ window.addEventListener("message", (e) => {
       renderSessionsManagerData({ sessions: msg.sessions || [], currentFolder: msg.currentFolder });
       if (msg.show) sessionsModal.classList.remove("hidden");
       break;
+    case "sessionsSearchResult": {
+      // Full-text matches from the host (SQLite FTS5). Ignore a STALE reply: the
+      // user may have kept typing, so only apply it if it matches the field.
+      const matches = (msg.matches as { sessionId: string; snippet: string }[] | undefined) ?? [];
+      if (msg.scope === "main") {
+        if (String(msg.query ?? "") !== sessionSearchInput.value.trim()) break;
+        sessionSearchIds = new Set(matches.map((m) => m.sessionId));
+        renderSessions(currentSessions);
+        break;
+      }
+      if (String(msg.query ?? "") !== sessionsSearchInput.value.trim()) break;
+      smSearchIds = new Set(matches.map((m) => m.sessionId));
+      smSnippets = new Map(matches.map((m) => [m.sessionId, m.snippet]));
+      renderSessionsManager();
+      break;
+    }
     case "status":
       if (Array.isArray(msg.workingIds)) workingIds = new Set(msg.workingIds as string[]);
       // Patch the row locks IN PLACE (no full list rebuild): rebuilding the

@@ -1,0 +1,271 @@
+import { describe, it, expect, afterEach } from "vitest";
+import { DatabaseSync } from "node:sqlite";
+import { SqliteSessionStore } from "./sqlite-session-store";
+import type { FileSystem } from "../tools/file-system";
+import type { ChatMessage } from "../history/types";
+
+/** In-memory fake filesystem: only `exists` matters (folderMissing). */
+function fakeFs(existing: string[] = []): FileSystem {
+  const set = new Set(existing);
+  return {
+    readText: () => "",
+    writeText: () => {},
+    exists: (p: string) => set.has(p),
+    list: () => [],
+    size: () => 0,
+    mkdirRecursive: () => {},
+  } as unknown as FileSystem;
+}
+
+const msg = (role: ChatMessage["role"], content: string, timestamp = 1): ChatMessage => ({ role, content, timestamp });
+
+/**
+ * Every test gets its OWN in-memory database, closed in afterEach: nothing is
+ * written to disk and no state leaks between tests.
+ */
+function makeStore(opts: { existing?: string[]; currentFolder?: () => string | undefined } = {}) {
+  const db = new DatabaseSync(":memory:");
+  const store = new SqliteSessionStore({
+    db,
+    fs: fakeFs(opts.existing),
+    currentFolder: opts.currentFolder,
+    idGen: (() => {
+      let n = 0;
+      return () => `s${++n}`;
+    })(),
+  });
+  dbs.push(db);
+  return { store, db };
+}
+
+const dbs: DatabaseSync[] = [];
+afterEach(() => {
+  for (const db of dbs.splice(0)) db.close();
+});
+
+describe("SqliteSessionStore — sessions & messages", () => {
+  it("creates a session, lists it and loads it back", () => {
+    const { store } = makeStore();
+    const created = store.create("Refactor");
+    expect(created.id).toBe("s1");
+    expect(created.name).toBe("Refactor");
+
+    expect(store.list().map((s) => s.id)).toEqual(["s1"]);
+
+    store.saveMessages("s1", [msg("user", "hello"), msg("assistant", "hi")]);
+    const loaded = store.load("s1");
+    expect(loaded.summary.messageCount).toBe(2);
+    expect(loaded.messages.map((m) => m.content)).toEqual(["hello", "hi"]);
+  });
+
+  it("APPENDS only the new tail on a normal save (incremental)", () => {
+    const { store, db } = makeStore();
+    store.create();
+    const all = [msg("user", "one"), msg("assistant", "two")];
+    store.saveMessages("s1", all);
+    // rowid stays stable for the appended tail => the prefix was NOT rewritten
+    const before = db.prepare("SELECT rowid FROM messages WHERE session_id=? ORDER BY seq").all("s1") as { rowid: number }[];
+
+    store.saveMessages("s1", [...all, msg("user", "three")]);
+
+    const after = db.prepare("SELECT rowid FROM messages WHERE session_id=? ORDER BY seq").all("s1") as { rowid: number }[];
+    expect(after.length).toBe(3);
+    // The first two rows kept their identity (append, not delete+reinsert).
+    expect(after[0].rowid).toBe(before[0].rowid);
+    expect(after[1].rowid).toBe(before[1].rowid);
+  });
+
+  it("REPLACES when the history SHRINKS (a ✂ cut / compaction)", () => {
+    const { store } = makeStore();
+    store.create();
+    store.saveMessages("s1", [msg("user", "a"), msg("assistant", "b"), msg("user", "c")]);
+    store.saveMessages("s1", [msg("user", "a")]); // truncated
+    const loaded = store.load("s1");
+    expect(loaded.messages.map((m) => m.content)).toEqual(["a"]);
+    expect(loaded.summary.messageCount).toBe(1);
+  });
+
+  it("preserves EVERY field of a message (JSON data column)", () => {
+    const { store } = makeStore();
+    store.create();
+    const rich: ChatMessage = {
+      role: "assistant",
+      content: "answer",
+      timestamp: 42,
+      thinking: "deep thought",
+      images: ["data:image/png;base64,AAA"],
+      toolCalls: [{ id: "c1", name: "Read", arguments: { path: "a.ts" } }],
+      attachments: [{ name: "a.txt", path: "/tmp/a.txt", size: 2 }],
+      displayText: "shown",
+      steer: true,
+    };
+    store.saveMessages("s1", [rich]);
+    expect(store.load("s1").messages[0]).toEqual(rich);
+  });
+
+  it("rename and remove", () => {
+    const { store } = makeStore();
+    store.create("Old");
+    store.saveMessages("s1", [msg("user", "x")]);
+    expect(store.rename("s1", "New").name).toBe("New");
+    expect(store.list()[0].name).toBe("New");
+
+    expect(store.remove("s1")).toBe(true);
+    expect(store.list()).toEqual([]);
+    expect(store.load("s1").messages).toEqual([]);
+  });
+});
+
+describe("SqliteSessionStore — per-session settings", () => {
+  it("persists settings and carries them across a message save", () => {
+    const { store } = makeStore();
+    store.create();
+    store.saveSettings("s1", {
+      model: "gpt-4o",
+      modelProvider: "openai",
+      thinkingLevel: "high",
+      contextWindow: 200000,
+      compactionThresholdPercent: 75,
+      contextTokens: 12345,
+      outputTokens: 4096,
+      temperature: 0.2,
+      topP: 0.9,
+      sampler: "topP",
+      maxParallelSubAgents: 6,
+      loopGuard: "high",
+      loopGuardResponse: true,
+      loopGuardParams: { maxNudges: 3 },
+      folder: "/proj/a",
+    });
+    store.saveMessages("s1", [msg("user", "hello")]);
+
+    const s = store.load("s1").summary;
+    expect(s).toMatchObject({
+      model: "gpt-4o",
+      modelProvider: "openai",
+      thinkingLevel: "high",
+      contextWindow: 200000,
+      compactionThresholdPercent: 75,
+      contextTokens: 12345,
+      outputTokens: 4096,
+      temperature: 0.2,
+      topP: 0.9,
+      sampler: "topP",
+      maxParallelSubAgents: 6,
+      loopGuard: "high",
+      loopGuardResponse: true,
+      loopGuardParams: { maxNudges: 3 },
+      folder: "/proj/a",
+    });
+  });
+
+  it("the per-field save* wrappers all delegate to saveSettings", () => {
+    const { store } = makeStore();
+    store.create();
+    store.saveModel("s1", "m", "p");
+    store.saveThinkingLevel("s1", "low");
+    store.saveContextWindow("s1", 100000);
+    store.saveContextTokens("s1", 555);
+    store.saveOutputTokens("s1", 2048);
+    expect(store.load("s1").summary).toMatchObject({
+      model: "m",
+      modelProvider: "p",
+      thinkingLevel: "low",
+      contextWindow: 100000,
+      contextTokens: 555,
+      outputTokens: 2048,
+    });
+  });
+
+  it("Auto (undefined) CLEARS temperature/penalties/topP/sampler", () => {
+    const { store } = makeStore();
+    store.create();
+    store.saveSettings("s1", { temperature: 0.7, presencePenalty: 1, frequencyPenalty: 1, topP: 0.5, sampler: "topP" });
+    store.saveTemperature("s1", undefined);
+    store.savePresencePenalty("s1", undefined);
+    store.saveFrequencyPenalty("s1", undefined);
+    store.saveTopP("s1", undefined);
+    store.saveSampler("s1", undefined);
+
+    const s = store.load("s1").summary;
+    expect(s.temperature).toBeUndefined();
+    expect(s.presencePenalty).toBeUndefined();
+    expect(s.frequencyPenalty).toBeUndefined();
+    expect(s.topP).toBeUndefined();
+    expect(s.sampler).toBeUndefined();
+  });
+
+  it("stamps the CURRENT folder on create and annotates a missing one", () => {
+    const { store } = makeStore({ existing: ["/proj/a"], currentFolder: () => "/proj/a" });
+    const created = store.create();
+    expect(created.folder).toBe("/proj/a");
+    // /proj/a exists => not missing.
+    expect(store.list()[0].folderMissing).toBeUndefined();
+
+    // A folder that no longer exists is flagged at list time.
+    store.saveSettings(created.id, { folder: "/proj/gone" });
+    expect(store.list()[0].folderMissing).toBe(true);
+  });
+});
+
+describe("SqliteSessionStore — full-text search", () => {
+  function seed() {
+    const { store } = makeStore();
+    const a = store.create("Rome");
+    store.saveMessages(a.id, [msg("user", "Find the temperature in Rome"), msg("assistant", "Rome is warm")]);
+    const b = store.create("Florence");
+    store.saveMessages(b.id, [msg("user", "and the weather in Florence")]);
+    return { store, a, b };
+  }
+
+  it("finds messages across sessions and returns a highlighted snippet", () => {
+    const { store } = seed();
+    const hits = store.search("rome");
+    expect(hits.map((h) => h.sessionId)).toEqual(["s1", "s1"]); // two matches in Rome
+    expect(hits[0].snippet).toContain("[Rome]");
+    expect(hits[0].score).toBeLessThanOrEqual(hits[1].score); // BM25 ascending
+  });
+
+  it("matches multiple terms (AND) and respects the limit", () => {
+    const { store } = seed();
+    expect(store.search("rome temperature").map((h) => h.sessionId)).toEqual(["s1"]);
+    expect(store.search("rome OR florence", 1).length).toBe(1);
+  });
+
+  it("an empty query returns nothing", () => {
+    const { store } = seed();
+    expect(store.search("   ")).toEqual([]);
+  });
+
+  it("drops the FTS rows when a session is removed", () => {
+    const { store, a } = seed();
+    expect(store.search("rome").length).toBeGreaterThan(0);
+    store.remove(a.id);
+    expect(store.search("rome")).toEqual([]);
+  });
+});
+
+describe("SqliteSessionStore — SQL-injection safety", () => {
+  it("a malicious SEARCH query is treated as data (parameterized MATCH)", () => {
+    const { store, db } = makeStore();
+    store.create();
+    store.saveMessages("s1", [msg("user", "hello world")]);
+
+    const evil = "'); DROP TABLE messages; --";
+    expect(() => store.search(evil)).not.toThrow();
+    // Tables are intact and still hold the data.
+    expect((db.prepare("SELECT count(*) c FROM messages").get() as { c: number }).c).toBe(1);
+    expect((db.prepare("SELECT count(*) c FROM sessions").get() as { c: number }).c).toBe(1);
+  });
+
+  it("a malicious ID never matches (parameterized lookups/removals)", () => {
+    const { store } = makeStore();
+    store.create("A");
+    store.create("B");
+    const evil = "x' OR '1'='1";
+
+    expect(store.load(evil).messages).toEqual([]);
+    expect(store.remove(evil)).toBe(false);
+    expect(store.list().length).toBe(2); // nothing deleted
+  });
+});

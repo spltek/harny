@@ -99,6 +99,8 @@ export class ChatViewProvider implements WebviewViewProvider {
       skills?: SkillRegistry;
       /** MCP manager: status for the MCP card + reconnect after a save. */
       mcp?: McpManager;
+      /** Full-text search across sessions (SQLite FTS5). Absent = no search. */
+      searchSessions?: (query: string) => { sessionId: string; snippet: string }[];
     } = {},
   ) {
     this.modals = new PanelModalQueue((msg) => this.view?.webview.postMessage(msg));
@@ -569,6 +571,19 @@ export class ChatViewProvider implements WebviewViewProvider {
         // show:true — the user clicked the gear: the form opens with this data.
         this.view?.webview.postMessage(this.sessionsManagerPayload(true));
         break;
+      case "searchSessions": {
+        // Full-text search over session messages: reply with the matching ids.
+        // `scope` (main list vs all-sessions modal) is echoed so the webview
+        // routes the reply to the right filter.
+        const query = typeof msg.query === "string" ? msg.query : "";
+        this.view?.webview.postMessage({
+          type: "sessionsSearchResult",
+          query,
+          scope: msg.scope === "main" ? "main" : "modal",
+          matches: this.options.searchSessions?.(query) ?? [],
+        });
+        break;
+      }
       case "sessionsManagerChangeFolder":
         if (typeof msg.id === "string") await this.changeSessionFolder(msg.id);
         break;

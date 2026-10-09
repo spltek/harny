@@ -14,8 +14,7 @@ import { HarnyFileConfigProvider } from "./core/config/harny-file-config-provide
 import { MemoryOverrideConfigProvider } from "./core/config/memory-override-config-provider";
 import { VscodeConfigProvider } from "./core/config/vscode-config-provider";
 import { InMemoryEventBus } from "./core/events/in-memory-event-bus";
-import { JsonlSessionStore } from "./core/sessions/jsonl-session-store";
-import { AllFoldersSessionStore } from "./core/sessions/all-folders-session-store";
+import { SqliteSessionStore } from "./core/sessions/sqlite-session-store";
 import { SessionManager } from "./core/sessions/session-manager";
 import { Compactor, DEFAULT_COMPACTION } from "./core/sessions/compactor";
 import { DefaultLlmProviderFactory } from "./core/llm/llm-provider-factory";
@@ -35,7 +34,7 @@ import { McpManager } from "./core/mcp";
 import { ChatViewProvider } from "./chat/chat-view";
 import { SessionRegistry } from "./chat/session-registry";
 import { AttachmentService } from "./chat/attachment-service";
-import { resolveHome, sessionsDirFor } from "./core/storage/home";
+import { resolveHome } from "./core/storage/home";
 import { debugLog, infoLog } from "./logger";
 
 /**
@@ -54,7 +53,7 @@ function singleWorkspaceRoot(): string | undefined {
  * dedicated Agent (fresh history + event bus) per open session; a single
  * right-side view shows the sessions list + tabs and routes to the active one.
  */
-export function activate(context: ExtensionContext) {
+export async function activate(context: ExtensionContext) {
   debugLog("activate called");
 
   let root = singleWorkspaceRoot();
@@ -70,13 +69,6 @@ export function activate(context: ExtensionContext) {
     debugLog("could not create storage home", e);
   }
   infoLog("storage home=", resolved.home);
-
-  // Sessions live in the CENTRAL home buckets per workspace (pi/Cursor style).
-  // The AllFoldersSessionStore traverses EVERY bucket under home/sessions, so
-  // the manage-sessions form can list sessions of other folders; per-session
-  // `folder` is persisted in the JSONL header (changed via saveSettings).
-  const bucketsRoot = () => join(resolved.home, "sessions");
-  const sessionsDir = () => sessionsDirFor(root, resolved.home);
 
   const runtimeOverrides = new MemoryOverrideConfigProvider();
   const fileConfig = new HarnyFileConfigProvider(() => resolved.home, nodeFileSystem);
@@ -121,13 +113,26 @@ export function activate(context: ExtensionContext) {
   );
   const compactor = new Compactor(llmFactory, () => config.get());
 
-  const store = new AllFoldersSessionStore({
-    bucketsRoot,
-    currentBucket: sessionsDir,
-    currentFolder: () => root,
+  // Session storage: ONE SQLite database (node:sqlite, built into Node >= 22.5)
+  // holding every workspace's sessions (the `folder` column groups them), so the
+  // cross-folder manager is a plain query. Requires VS Code 1.101+ (Node 22.5+).
+  let db: import("node:sqlite").DatabaseSync;
+  try {
+    const { DatabaseSync } = await import("node:sqlite");
+    db = new DatabaseSync(join(resolved.home, "sessions.db"));
+  } catch (e) {
+    infoLog("node:sqlite unavailable:", e);
+    void window.showErrorMessage(
+      "Harny requires VS Code 1.101 or newer (Node 22.5+): session storage uses the built-in node:sqlite.",
+    );
+    return;
+  }
+  const store = new SqliteSessionStore({
+    db,
     fs: nodeFileSystem,
-    bucketStore: (dir) => new JsonlSessionStore(() => dir, nodeFileSystem),
+    currentFolder: () => root,
   });
+  context.subscriptions.push({ dispose: () => store.close() });
   const sessions = new SessionManager(store);
 
   const attachments = new AttachmentService(nodeFileSystem, async () => {
@@ -184,6 +189,8 @@ export function activate(context: ExtensionContext) {
       skills,
       // MCP: status for the MCP card + reconnect after a config save.
       mcp,
+      // Full-text search across session messages (SQLite FTS5).
+      searchSessions: (query) => store.search(query).map((h) => ({ sessionId: h.sessionId, snippet: h.snippet })),
     },
   );
   viewProvider.setContext(context);
