@@ -20,12 +20,13 @@ describe("DelegateTool", () => {
     expect(props.id?.type).toBe("string");
     // The description steers the orchestrator on parallelism and edits.
     expect(d.description).toContain("WRITE/CREATE sub-agents on DIFFERENT files");
-    expect(d.description).toContain("MANDATORY FIRST STEP");
+    expect(d.description).toContain("FIRST STEP");
     expect(d.description).toContain("resources");
-    // With Parallel ON, orchestration is the ONLY goal — even a single task
-    // must be delegated (never answer/work yourself).
-    expect(d.description).toContain("ONLY job is orchestration");
-    expect(d.description).toContain("delegate on EVERY request");
+    // With Parallel ON, orchestration is the job: every tool-needing request is
+    // delegated (never work yourself), but a pure question is answered directly.
+    expect(d.description).toContain("your job is orchestration");
+    expect(d.description).toContain("Delegate every request that needs tools");
+    expect(d.description).toContain("a PURE question/explanation you answer directly");
   });
 
   it("refuses direct execution (only the agent loop runs it)", () => {

@@ -100,7 +100,7 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     expect(prompt).toContain("they MUST be read-only");
     expect(prompt).toContain("ORCHESTRATION");
     // The SAME 3-step orchestration flow applies in Analyze too (Parallel ON).
-    expect(prompt).toContain("STEP 1 — THINK, DO NOT ANSWER");
+    expect(prompt).toContain("STEP 1 — DECIDE");
     expect(prompt).toContain("STEP 2 — PLAN + LAUNCH");
     expect(prompt).toContain("sub-agent");
     // Read-only preview: writers are advertised (they run as previews).
@@ -140,8 +140,9 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     for (const mode of ["analyze", "agent"] as const) {
       const p = withDelegate.build(mode);
       expect(p).toContain("ORCHESTRATION MODE (PARALLEL ON)");
-      expect(p).toContain("Do NOT answer");
-      expect(p).toContain("STEP 1 — THINK, DO NOT ANSWER");
+      // A pure question is answered directly; a tool-needing request is delegated.
+      expect(p).toContain("ANSWER it directly");
+      expect(p).toContain("STEP 1 — DECIDE");
       expect(p).toContain("STEP 2 — PLAN + LAUNCH");
       expect(p).toContain("STEP 3 — COLLECT + ANSWER");
       // Conflict reasoning about resources (not just files) + meaningful ids.

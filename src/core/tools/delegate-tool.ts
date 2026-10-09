@@ -15,8 +15,9 @@ export class DelegateTool implements Tool {
     name: "Delegate",
     description:
       "Launch a sub-agent to work on ONE sub-task and return its report. " +
-      "You are the ORCHESTRATOR: with Parallel ON your ONLY job is orchestration — you NEVER do the work yourself. " +
-      "EVERY request MUST run as sub-agent(s), even a single, whole or trivial task (delegate it to ONE sub-agent). " +
+      "You are the ORCHESTRATOR: with Parallel ON your job is orchestration — you NEVER do the work yourself. " +
+      "Every request that NEEDS TOOLS (read/search/run/change) MUST run as sub-agent(s), even a single, whole or " +
+      "non-splittable task (delegate it to ONE sub-agent); a PURE question/explanation you answer directly. " +
       "The sub-agent runs its own agent loop with the full tool set on the SAME working directory.\n\n" +
       "DECLARE EXACTLY what the sub-agent will touch so the system can parallelize safely:\n" +
       "- resources: the files/dirs it will read or write (paths relative to the working directory).\n" +
@@ -26,8 +27,8 @@ export class DelegateTool implements Tool {
       "(or overlapping dirs) are serialized automatically (use `after` to order them).\n" +
       "- after: ids of sibling sub-tasks that must finish first (use it when a sub-agent needs another's output).\n\n" +
       "RULES:\n" +
-      "- You are the ORCHESTRATOR: YOU organize the sub-tasks and decide what runs in parallel. MANDATORY FIRST STEP " +
-      "(every request): decompose the task and analyze conflicts BEFORE acting.\n" +
+      "- You are the ORCHESTRATOR: YOU organize the sub-tasks and decide what runs in parallel. FIRST STEP " +
+      "(every tool-needing request): decompose the task and analyze conflicts BEFORE acting.\n" +
       "- Reason about RESOURCES, not only exact file paths: a writer conflicts with another writer on the same " +
       "file/dir, with DELETING/MOVING a parent folder, and with a concurrent reader of the same file. Shared " +
       "config/manifests/lockfiles/generated code and the same module/feature are conflicts too. If unsure, ORDER " +
@@ -37,8 +38,8 @@ export class DelegateTool implements Tool {
       "- Emit ALL independent Delegate calls in the SAME turn so they run in parallel (up to the configured max); " +
       "use after for dependencies. Do not flood: group tiny steps. WRITE/CREATE sub-agents on DIFFERENT files " +
       "run in parallel too.\n" +
-      "- MANDATORY: delegate on EVERY request (never 0). Even if the task is monolithic, single or trivial, delegate " +
-      "it WHOLE to ONE sub-agent — do NOT answer or work yourself.",
+      "- Delegate every request that needs tools (never do the work yourself): even a monolithic, single or " +
+      "non-splittable task goes WHOLE to ONE sub-agent. A pure question/explanation needs no tools: answer it directly.",
     parameters: {
       type: "object",
       properties: {

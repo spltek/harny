@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { OpenAIChatProvider } from "./openai-chat-provider";
 import { FakeHttpClient, sseResponse } from "./http-client.test-utils";
+import type { HttpResponse } from "./http-client";
 import type { HarnyConfig } from "../config/types";
 import type { ToolDefinition } from "../tools/tool";
 import type { StreamChunk } from "./types";
@@ -597,5 +598,49 @@ describe("OpenAIChatProvider temperature guard", () => {
     await collect(provider.stream([{ role: "user", content: "x" }]));
     const body = JSON.parse(http.requests[0].body);
     expect(body.temperature).toBe(0.7);
+  });
+});
+
+describe("OpenAIChatProvider — transient retry (rate limits)", () => {
+  function errorResponse(status: number, retryAfter?: string): HttpResponse {
+    const text = `{"error":"transient"}`;
+    return {
+      ok: false,
+      status,
+      headers: {
+        get: (n: string) => (retryAfter !== undefined && n.toLowerCase() === "retry-after" ? retryAfter : null),
+      },
+      text: async () => text,
+      json: async () => ({ error: "transient" }),
+      body: null,
+    };
+  }
+
+  it("retries a 429 (honoring Retry-After) and then succeeds", async () => {
+    const http = new FakeHttpClient();
+    http.respondWith(
+      errorResponse(429, "0"),
+      sseResponse('data: {"choices":[{"delta":{"content":"hi"}}]}', "data: [DONE]"),
+    );
+    const provider = new OpenAIChatProvider(config, http, tools);
+    const chunks = await collect(provider.stream([{ role: "user", content: "hi" }]));
+    expect(http.requests).toHaveLength(2); // first 429 + retry
+    expect(chunks.some((c) => c.type === "text" && c.content === "hi")).toBe(true);
+  });
+
+  it("does NOT retry a non-transient error (400)", async () => {
+    const http = new FakeHttpClient();
+    http.respondWith(errorResponse(400));
+    const provider = new OpenAIChatProvider(config, http, tools);
+    await expect(collect(provider.stream([{ role: "user", content: "hi" }]))).rejects.toThrow(/400/);
+    expect(http.requests).toHaveLength(1);
+  });
+
+  it("gives up after the max retries and throws the last status", async () => {
+    const http = new FakeHttpClient();
+    for (let i = 0; i < 5; i++) http.respondWith(errorResponse(503, "0"));
+    const provider = new OpenAIChatProvider(config, http, tools);
+    await expect(collect(provider.stream([{ role: "user", content: "hi" }]))).rejects.toThrow(/503/);
+    expect(http.requests).toHaveLength(4); // 1 attempt + 3 retries
   });
 });

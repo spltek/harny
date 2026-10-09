@@ -1482,24 +1482,17 @@ describe("Orchestration (Delegate)", () => {
     });
   });
 
-  it("Parallel ON hard guarantee: nudges a direct answer so at least one sub-agent runs", async () => {
+  it("Parallel ON: a direct answer (no tools) is accepted — no forced sub-agent", async () => {
     const spawned: DelegateSpec[] = [];
     const history = new InMemoryChatHistory();
-    const factory = fakeFactory(
-      [{ type: "text", content: "here is your answer" }],
-      delegateTurn([{ id: "A", goal: "do it", access: "read", resources: ["a.ts"] }]),
-      [{ type: "text", content: "done" }],
-    );
+    const factory = fakeFactory([{ type: "text", content: "here is your answer" }]);
     const tools = new ToolRegistry([makeTool("Read")]);
-    const events = new InMemoryEventBus<AgentEvent>();
-    const eventLog: AgentEvent[] = [];
-    events.subscribe((e) => eventLog.push(e));
     const agent = new Agent({
       config: new StaticConfigProvider(VALID_CONFIG),
       llmFactory: factory,
       tools,
       history,
-      events,
+      events: new InMemoryEventBus<AgentEvent>(),
       systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
       spawnSubAgent: async (spec) => {
         spawned.push(spec);
@@ -1509,12 +1502,12 @@ describe("Orchestration (Delegate)", () => {
     agent.setMode("agent");
     agent.setDelegation(true);
 
-    await agent.send("do the thing");
+    await agent.send("what is 2+2");
 
-    expect(spawned).toHaveLength(1);
-    expect(history.all().some((m) => m.role === "user" && m.harness === true && /MANDATORY/.test(m.content))).toBe(true);
-    // The nudge is surfaced LIVE (light-blue bubble), not only on refresh.
-    expect(eventLog.some((e) => e.type === "harness_nudge")).toBe(true);
+    // A pure question is answered directly: no sub-agent, no "you must delegate" nudge.
+    expect(spawned).toHaveLength(0);
+    expect(history.all().some((m) => m.role === "user" && m.harness)).toBe(false);
+    expect(history.all().some((m) => m.role === "assistant" && m.content === "here is your answer")).toBe(true);
   });
 
   it("Parallel ON: the FIRST turn advertises ONLY the Delegate tool", async () => {
@@ -1557,10 +1550,17 @@ describe("Orchestration (Delegate)", () => {
     expect(seenDefs[1].map((d) => d.name).sort()).toEqual(["Delegate", "Read", "WebSearch"].sort());
   });
 
-  it("Parallel ON hard fallback: the HOST dispatches a sub-agent if the model never delegates", async () => {
+  it("Parallel ON hard fallback: the HOST forces ONE read-only sub-agent if the model keeps using other tools", async () => {
     const spawned: DelegateSpec[] = [];
     const history = new InMemoryChatHistory();
-    const factory = fakeFactory([{ type: "text", content: "direct answer" }]); // never delegates
+    const readTurn: StreamChunk[] = [
+      { type: "tool_call_start", index: 0, id: "r1", name: "Read" },
+      { type: "tool_call_delta", index: 0, delta: '{"path":"a.txt"}' },
+      { type: "tool_call_end", index: 0 },
+    ];
+    // The model keeps trying to Read (never delegates): turn 0 is blocked and
+    // nudged, turn 1 is blocked again → the host forces ONE sub-agent.
+    const factory = fakeFactory(readTurn, readTurn, [{ type: "text", content: "done" }]);
     const tools = new ToolRegistry([makeTool("Read")]);
     const agent = new Agent({
       config: new StaticConfigProvider(VALID_CONFIG),
@@ -1580,7 +1580,7 @@ describe("Orchestration (Delegate)", () => {
     await agent.send("do the thing");
 
     // The nudge was injected ONCE, then the host dispatched exactly one sub-agent.
-    expect(history.all().filter((m) => m.role === "user" && /MANDATORY/.test(m.content))).toHaveLength(1);
+    expect(history.all().filter((m) => m.role === "user" && /STOP\. Parallel/.test(m.content))).toHaveLength(1);
     expect(spawned).toHaveLength(1);
     expect(spawned[0].goal).toBe("do the thing");
     // SAFE fallback: read-only, no broad write grant on the whole project.
@@ -2683,15 +2683,20 @@ describe("Orchestration (Delegate)", () => {
     expect(spawned).toEqual(["A"]);
   });
 
-  it("aborts the HOST-dispatched sub-agent if aborted before it starts", async () => {
+  it("aborts the HOST-forced sub-agent if aborted before it starts", async () => {
     const spawned: number[] = [];
-    const answer = (): StreamChunk[] => [{ type: "text", content: "direct answer" }];
+    const readTurn = (): StreamChunk[] => [
+      { type: "tool_call_start", index: 0, id: "r1", name: "Read" },
+      { type: "tool_call_delta", index: 0, delta: '{"path":"a.txt"}' },
+      { type: "tool_call_end", index: 0 },
+    ];
     const tools = new ToolRegistry([makeTool("Read")]);
     const events = new InMemoryEventBus<AgentEvent>();
     const history = new InMemoryChatHistory();
     const agent = new Agent({
       config: new StaticConfigProvider(VALID_CONFIG),
-      llmFactory: fakeFactory(answer(), answer(), answer()),
+      // The model keeps using a non-Delegate tool → blocked, nudged, then forced.
+      llmFactory: fakeFactory(readTurn(), readTurn(), [{ type: "text", content: "done" }]),
       tools,
       history,
       events,

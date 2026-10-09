@@ -1,7 +1,7 @@
 import type { HarnyConfig } from "../config/types";
 import type { ToolDefinition } from "../tools/tool";
 import { endpointUrl } from "./endpoint";
-import type { HttpClient } from "./http-client";
+import type { HttpClient, HttpResponse } from "./http-client";
 import { sseLines } from "./sse";
 import { toChatToolDefinitions, toOpenAIMessages } from "./message-converter";
 import type { LLMMessage, LLMProvider, StreamChunk } from "./types";
@@ -11,6 +11,40 @@ import { join } from "node:path";
 
 /** Temp debug log path — cross-platform (never hardcode /tmp). */
 const DEBUG_LOG_FILE = join(tmpdir(), "harny-debug.log");
+
+/** Transient statuses worth retrying (rate limit / gateway / overload). */
+const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
+/** Extra attempts AFTER the first (so up to 4 requests total). */
+const MAX_POST_RETRIES = 3;
+
+function abortError(): Error {
+  const e = new Error("Aborted");
+  e.name = "AbortError";
+  return e;
+}
+
+/** Sleep that rejects with an AbortError when the signal fires (Stop during backoff). */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(abortError());
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(abortError());
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/** Backoff for a retryable response: honor `Retry-After`, else exponential+jitter. */
+function retryDelayMs(attempt: number, retryAfter: string | null): number {
+  const seconds = retryAfter !== null ? Number(retryAfter) : NaN;
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 30_000);
+  return Math.min(1000 * 2 ** attempt, 8000) + Math.floor(Math.random() * 250);
+}
 
 /**
  * OpenAI Chat Completions provider (POST /v1/chat/completions, SSE streaming).
@@ -130,7 +164,22 @@ export class OpenAIChatProvider implements LLMProvider {
       headers[this.config.sessionHeader] = this.config.sessionId;
     }
 
-    const response = await this.http.post(url, JSON.stringify(body), headers, signal);
+    const payload = JSON.stringify(body);
+    let response: HttpResponse = await this.http.post(url, payload, headers, signal);
+    // Retry transient failures (429 rate limits, 5xx) with backoff, so N
+    // concurrent sub-agents do not all fail on a provider rate limit. Honors
+    // `Retry-After`; Stop (abort) cancels the backoff immediately.
+    for (
+      let attempt = 0;
+      !response.ok && RETRYABLE_STATUS.has(response.status) && attempt < MAX_POST_RETRIES;
+      attempt++
+    ) {
+      if (signal?.aborted) break;
+      const retryAfter = response.headers?.get?.("retry-after") ?? null;
+      await response.text().catch(() => ""); // drain the socket before retrying
+      await sleep(retryDelayMs(attempt, retryAfter), signal);
+      response = await this.http.post(url, payload, headers, signal);
+    }
 
     if (process.env.HARNY_DEBUG) {
       // DEBUG: show EXACTLY what reaches the server (model / reasoning_effort /

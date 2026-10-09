@@ -99,20 +99,13 @@ READ-ONLY MODE (Analyze) — PREVIEW RULES:
       );
     }
     const orchestratorIntro = hasDelegate
-      ? `\nORCHESTRATION MODE (PARALLEL ON) — you are the ORCHESTRATOR. Your ONLY goal is to orchestrate: you NEVER do the work yourself, and EVERY request MUST run as sub-agent(s) — even a single, whole or trivial task goes to ONE sub-agent. On every request, in this exact order:\n` +
-        `1. Do NOT answer, and do NOT call any other tool — think ONLY about how to orchestrate.\n` +
-        `2. Split the request into 1..N INDEPENDENT sub-tasks (N ≥ 1; NEVER 0 — if the task cannot be split, delegate it whole to ONE sub-agent), checking resource conflicts so they can run safely.\n` +
-        `3. Emit one Delegate call per sub-task — ALL the independent ones in the SAME turn.\n` +
-        `Answer the user only AFTER the sub-agent reports arrive.` +
-        (delegateOnly
-          ? `\nRIGHT NOW the ONLY tool you may call is Delegate: your reply must be the Delegate call(s), not text, and no other tool is available yet. Do NOT call TodoWrite, WebSearch, WebFetch, Read, Grep, Glob, Shell, Edit, Write, StrReplace, Delete or ReadLints — any such call is refused.`
-          : "")
+      ? `\nORCHESTRATION MODE (PARALLEL ON) — you are the ORCHESTRATOR: you never do the work yourself. Delegate every request that needs tools; a PURE question/explanation you answer directly. See the ORCHESTRATION section at the end for the exact steps.`
       : "";
     const delegateRules = hasDelegate
       ? `
 
 ORCHESTRATION — Parallel is ON. You are the ORCHESTRATOR. Repeat these 3 steps on EVERY request; never answer the user before delegating.
-- STEP 1 — THINK, DO NOT ANSWER: your first move is never a text answer and never another tool. Your ONLY goal is orchestration — you never do the work yourself. Think ONLY about delegation: split the request into 1..N INDEPENDENT sub-tasks (N ≥ 1; NEVER 0 — a single, whole or trivial request is delegated to ONE sub-agent), then check resource conflicts so parallel tasks cannot collide. Reason about resources in general, not exact paths:
+- STEP 1 — DECIDE: if the request needs NO tools (a pure question, an explanation, a definition), just ANSWER it directly and stop — do NOT delegate. Otherwise you never do the work yourself: split the request into 1..N INDEPENDENT sub-tasks (N ≥ 1; a single, whole or non-splittable request goes to ONE sub-agent) and check resource conflicts so parallel tasks cannot collide. Reason about resources in general, not exact paths:
   · two writers on the same file/dir conflict;
   · writing a file conflicts with a concurrent reader of it, and with deleting/moving a containing folder;
   · a task that consumes another's artifact must be ORDERED (use after);

@@ -445,23 +445,11 @@ export class Agent implements ChatController {
     // The Analyze preview footer belongs to the FINAL answer only: appending it
     // to an intermediate tool turn (the run continues) would be premature.
     const finalContent = toolCalls.length === 0 ? this.withPreviewFooter(withTruncation) : withTruncation;
-    // Parallel ON is a HARD guarantee (≥1 sub-agent per request). If the model
-    // refused even after the nudge, the HOST will dispatch one itself; in that
-    // case keep the model's direct answer only in the UI (uiOnly) so the LLM
-    // story does not carry a now-superseded answer before the sub-agent turn.
-    const willForceDelegate =
-      toolCalls.length === 0 &&
-      this.delegationEnabled &&
-      !this.delegatedThisRun &&
-      this.forcedDelegationNudge &&
-      !!this.deps.spawnSubAgent &&
-      !!this.runGoal;
     this.deps.history.add({
       role: "assistant",
       content: finalContent,
       toolCalls,
       timestamp: Date.now(),
-      ...(willForceDelegate ? { uiOnly: true } : {}),
       ...(thinking.trim() ? { thinking } : {}),
       ...(reasoningDetails && reasoningDetails.length > 0 ? { reasoningDetails } : {}),
     });
@@ -471,25 +459,10 @@ export class Agent implements ChatController {
     }
 
     if (toolCalls.length === 0) {
-      if (this.delegationEnabled && !this.delegatedThisRun) {
-        // 1) First offense: nudge the model to delegate and continue.
-        if (!this.forcedDelegationNudge && turn + 1 < maxTurns) {
-          this.forcedDelegationNudge = true;
-          this.log(`parallel ON but no Delegate call — nudging the model to delegate`);
-          this.addHarnessNudge(
-            "Parallel is ON but you did NOT delegate. This is MANDATORY: do NOT answer directly. Think how to " +
-              "split the request into 1..N independent sub-tasks (N ≥ 1), then emit the Delegate call(s) NOW — all " +
-              "independent ones in the same turn. If nothing can run in parallel, still delegate the whole bounded " +
-              "task to ONE sub-agent.",
-          );
-          return this.runTurns(turn + 1);
-        }
-        // 2) The model ignored the nudge: the HOST dispatches one sub-agent.
-        if (willForceDelegate) {
-          await this.forceDelegate(turn);
-          return;
-        }
-      }
+      // A no-tool turn is the FINAL answer. In Parallel ON the orchestrator may
+      // answer a pure question directly (it cannot use other tools before
+      // delegating anyway, so this can only be text); a request that needs
+      // tools is delegated via the block below. No forced sub-agent here.
       // A steer that arrived while THIS final answer was streaming had no turn
       // boundary left to be applied at. Apply it NOW, at the end of the run and
       // BEFORE the host's queued messages, instead of ending: one more turn
