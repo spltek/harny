@@ -198,3 +198,60 @@ describe("sub-agent messaging", () => {
     expect(aborted).toMatch(/remaining work/i);
   });
 });
+
+describe("resourcesOverlap — roots + cwd (parallel safety)", () => {
+  it("treats `.`/`/`/empty (the working directory) as matching EVERYTHING", () => {
+    expect(resourcesOverlap(["."], ["src/a.ts"])).toBe(true);
+    expect(resourcesOverlap(["/"], ["src/a.ts"])).toBe(true);
+    expect(resourcesOverlap(["src/a.ts"], [""])).toBe(true);
+    expect(resourcesOverlap(["./"], ["deep/nested/file.ts"])).toBe(true);
+  });
+
+  it("resolves relative paths against the cwd so relative and absolute MATCH", () => {
+    expect(resourcesOverlap(["src/a.ts"], ["/proj/src/a.ts"], "/proj")).toBe(true);
+    expect(resourcesOverlap(["/proj/src"], ["/proj/src/a.ts"], "/proj")).toBe(true);
+    // A different project is NOT a conflict.
+    expect(resourcesOverlap(["src/a.ts"], ["/other/src/a.ts"], "/proj")).toBe(false);
+    // Absolute vs absolute on the same file.
+    expect(resourcesOverlap(["/proj/a.ts"], ["/proj/a.ts"], "/proj")).toBe(true);
+  });
+
+  it("a WRITER on the root conflicts with ANY other writer (never parallel)", () => {
+    const root = spec({ id: "root", access: "write", resources: ["."] });
+    const file = spec({ id: "file", access: "write", resources: ["src/a.ts"] });
+    expect(haveWriteConflict(root, file)).toBe(true);
+    // Two root writers too.
+    const root2 = spec({ id: "root2", access: "create", resources: ["/"] });
+    expect(haveWriteConflict(root, root2)).toBe(true);
+  });
+});
+
+describe("planToolExecution — `after` is a real dependency", () => {
+  const d = (id: string, after: string[] = []): PlannedCall => ({
+    isDelegate: true,
+    spec: spec({ id, after }),
+  });
+
+  it("runs a dependent AFTER its prerequisite even when emitted out of order", () => {
+    // C depends on A, but the model emitted C FIRST. A must still run first.
+    const steps = planToolExecution([d("C", ["A"]), d("A")]);
+    const pos = (index: number): number =>
+      steps.findIndex((s) => (s.kind === "single" ? s.index === index : s.indices.includes(index)));
+    expect(pos(1)).toBeLessThan(pos(0)); // A (index 1) before C (index 0)
+  });
+
+  it("keeps in-order dependencies correct (A then B after A)", () => {
+    const steps = planToolExecution([d("A"), d("B", ["A"])]);
+    expect(steps).toEqual([
+      { kind: "single", index: 0 },
+      { kind: "single", index: 1 },
+    ]);
+  });
+
+  it("does not hang on a cyclic dependency (both run, best-effort)", () => {
+    const steps = planToolExecution([d("A", ["B"]), d("B", ["A"])]);
+    // Both calls are placed (no infinite loop), whatever the grouping.
+    const indices = steps.flatMap((s) => (s.kind === "single" ? [s.index] : s.indices)).sort();
+    expect(indices).toEqual([0, 1]);
+  });
+});

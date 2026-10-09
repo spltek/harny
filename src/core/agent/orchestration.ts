@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import type { ToolResult } from "../tools/tool";
 
 /** The orchestration tool: launches a sub-agent and returns its report. */
@@ -86,27 +87,45 @@ export function parseDelegateSpec(args: Record<string, unknown>): { spec?: Deleg
   };
 }
 
-function normalizePath(p: string): string {
-  return p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+function isAbsolutePath(p: string): boolean {
+  return p.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(p);
 }
 
-/** Do two resource sets overlap (same path, or one dir containing the other)? */
-export function resourcesOverlap(a: readonly string[], b: readonly string[]): boolean {
+/** Normalize a resource path: resolve it against the working directory when it
+ * is relative (so `src/a.ts` and `/proj/src/a.ts` MATCH), then collapse
+ * separators/case. A `.`/`/`/empty path normalizes to the ROOT marker. */
+function normalizePath(p: string, cwd?: string): string {
+  let s = p.trim();
+  if (cwd && s && !isAbsolutePath(s)) s = resolve(cwd, s);
+  const n = s.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  return n;
+}
+
+/** A path that means "the whole working directory" (matches EVERYTHING). */
+function isRootPath(n: string): boolean {
+  return n === "" || n === "." || n === "/";
+}
+
+/** Do two resource sets overlap (same path, or one dir containing the other)?
+ * `.`/`/` (or the working directory) means "everything" and matches any path,
+ * so a writer on the root can never run in parallel with another writer. */
+export function resourcesOverlap(a: readonly string[], b: readonly string[], cwd?: string): boolean {
   return a.some((x) =>
     b.some((y) => {
-      const nx = normalizePath(x);
-      const ny = normalizePath(y);
+      const nx = normalizePath(x, cwd);
+      const ny = normalizePath(y, cwd);
+      if (isRootPath(nx) || isRootPath(ny)) return true;
       return nx === ny || nx.startsWith(ny + "/") || ny.startsWith(nx + "/");
     }),
   );
 }
 
 /** True when running both together could race on a write. */
-export function haveWriteConflict(a: DelegateSpec, b: DelegateSpec): boolean {
+export function haveWriteConflict(a: DelegateSpec, b: DelegateSpec, cwd?: string): boolean {
   const aWrite = a.access !== "read";
   const bWrite = b.access !== "read";
   if (!aWrite && !bWrite) return false;
-  return resourcesOverlap(a.resources, b.resources);
+  return resourcesOverlap(a.resources, b.resources, cwd);
 }
 
 export interface PlannedCall {
@@ -124,35 +143,74 @@ export type ExecutionStep =
 /**
  * Plan how to execute a turn's tool calls.
  *
- * CONSECUTIVE delegates with no ordering dependency are batched together as
- * long as they do NOT conflict on resources: reads never conflict with reads,
- * and a WRITE only conflicts with another call whose resources OVERLAP it.
- * So 5 writers on 5 DIFFERENT files run in parallel; two writers on the same
- * file (or a reader of a file being written) are split into separate steps.
- * Any non-delegate call, or a delegate with an `after` dependency, is a
- * BARRIER that runs on its own. Results keep the original call order.
+ * Delegates are batched together as long as they do NOT conflict on resources:
+ * reads never conflict with reads, and a WRITE only conflicts with another call
+ * whose resources OVERLAP it. So 5 writers on 5 DIFFERENT files run in parallel;
+ * two writers on the same file (or a reader of a file being written) are split
+ * into separate steps. A non-delegate call (or an INVALID delegate) is a
+ * BARRIER that runs on its own. A delegate with `after` runs ONLY after the
+ * steps that contain its dependencies — even when the model emits the calls out
+ * of order (the dependency is resolved, not just treated as a position).
+ * Results keep the original call order (the caller stores by index).
  */
-export function planToolExecution(calls: readonly PlannedCall[]): ExecutionStep[] {
+export function planToolExecution(calls: readonly PlannedCall[], cwd?: string): ExecutionStep[] {
   const steps: ExecutionStep[] = [];
   let batch: { index: number; spec: DelegateSpec }[] = [];
+  const completed = new Set<string>(); // delegate ids already in a CLOSED step
   const flush = () => {
     if (batch.length === 1) steps.push({ kind: "single", index: batch[0].index });
     else if (batch.length > 1) steps.push({ kind: "parallel", indices: batch.map((b) => b.index) });
+    for (const b of batch) if (b.spec.id) completed.add(b.spec.id);
     batch = [];
   };
-  calls.forEach((call, i) => {
-    const spec =
-      call.isDelegate && call.spec && call.spec.after.length === 0 ? call.spec : undefined;
+  const inBatch = (id: string): boolean => batch.some((b) => b.spec.id === id);
+  const depsReady = (spec: DelegateSpec): boolean => spec.after.every((d) => completed.has(d));
+  const deferred: number[] = [];
+  const place = (i: number): void => {
+    const call = calls[i];
+    const spec = call.isDelegate && call.spec ? call.spec : undefined;
     if (!spec) {
       flush();
       steps.push({ kind: "single", index: i });
       return;
     }
-    // Cannot share a batch with a conflicting call (overlapping write): start
-    // a fresh batch so it can still parallelize with later safe calls.
-    if (batch.some((b) => haveWriteConflict(spec, b.spec))) flush();
+    // A dependency on a sibling in the CURRENT batch: close the batch first so
+    // the dependency completes, then the dependent can start.
+    if (spec.after.some((d) => inBatch(d))) flush();
+    // A dependency that has not run yet (the model emitted out of order): defer
+    // the call until its prerequisites are placed.
+    if (!depsReady(spec)) {
+      deferred.push(i);
+      return;
+    }
+    if (batch.some((b) => haveWriteConflict(spec, b.spec, cwd))) flush();
     batch.push({ index: i, spec });
-  });
+  };
+  for (let i = 0; i < calls.length; i++) place(i);
+  flush();
+  // Resolve deferred calls now that every in-order call is placed. Repeat until
+  // no progress; a leftover (cycle / unknown id) runs last rather than hanging.
+  let progress = true;
+  while (deferred.length > 0 && progress) {
+    progress = false;
+    for (let k = 0; k < deferred.length; ) {
+      const i = deferred[k];
+      const spec = calls[i].spec!;
+      if (depsReady(spec)) {
+        deferred.splice(k, 1);
+        progress = true;
+        if (batch.some((b) => haveWriteConflict(spec, b.spec, cwd))) flush();
+        batch.push({ index: i, spec });
+      } else {
+        k++;
+      }
+    }
+  }
+  for (const i of deferred) {
+    const spec = calls[i].spec!;
+    if (batch.some((b) => haveWriteConflict(spec, b.spec, cwd))) flush();
+    batch.push({ index: i, spec });
+  }
   flush();
   return steps;
 }

@@ -1,4 +1,4 @@
-import type { Tool, ToolDefinition, ToolResult } from "./tool";
+import type { Tool, ToolContext, ToolDefinition, ToolResult } from "./tool";
 
 interface TodoItem {
   id: string;
@@ -37,9 +37,23 @@ export class TodoTool implements Tool {
     },
   };
 
-  private state: TodoItem[] = [];
+  /** Per-conversation todo list. Keyed by the caller's ownerId so the
+   * orchestrator, each session and each concurrent sub-agent keep SEPARATE
+   * lists (the tool instance is shared across all of them). */
+  private readonly states = new Map<string, TodoItem[]>();
 
-  execute(args: Record<string, unknown>): ToolResult {
+  private stateFor(ctx?: ToolContext): TodoItem[] {
+    const key = ctx?.ownerId ?? "default";
+    let s = this.states.get(key);
+    if (!s) {
+      s = [];
+      this.states.set(key, s);
+    }
+    return s;
+  }
+
+  execute(args: Record<string, unknown>, ctx?: ToolContext): ToolResult {
+    let state = this.stateFor(ctx);
     const todos = args.todos as TodoItem[] | undefined;
     const merge = args.merge as boolean | undefined;
     if (!Array.isArray(todos)) {
@@ -52,8 +66,8 @@ export class TodoTool implements Tool {
       };
     }
 
-    if (merge && this.state.length > 0) {
-      const map = new Map(this.state.map((t) => [t.id, { ...t }]));
+    if (merge && state.length > 0) {
+      const map = new Map(state.map((t) => [t.id, { ...t }]));
       for (const t of todos) {
         const existing = map.get(t.id);
         if (existing) {
@@ -63,12 +77,13 @@ export class TodoTool implements Tool {
           map.set(t.id, { ...t });
         }
       }
-      this.state = Array.from(map.values());
+      state = Array.from(map.values());
     } else {
-      this.state = todos.map((t) => ({ id: t.id, content: t.content, status: t.status }));
+      state = todos.map((t) => ({ id: t.id, content: t.content, status: t.status }));
     }
+    this.states.set(ctx?.ownerId ?? "default", state);
 
-    const lines = this.state.map((t) => {
+    const lines = state.map((t) => {
       const icon =
         t.status === "completed" ? "✅" : t.status === "in_progress" ? "🔄" : t.status === "cancelled" ? "❌" : "⏳";
       return `${icon} [${t.status}] ${t.content}`;

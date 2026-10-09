@@ -37,6 +37,22 @@ describe("TodoTool", () => {
     const tool = new TodoTool();
     expect(tool.execute({}).isError).toBe(true);
   });
+
+  it("keeps PER-owner lists: concurrent sub-agents never clobber each other", () => {
+    const tool = new TodoTool();
+    const a = tool.execute({ todos: [{ id: "1", content: "alpha", status: "pending" }], merge: false }, { ownerId: "sub-a" });
+    expect(a.content).toContain("alpha");
+    // A different owner (another sub-agent / session) has its OWN list.
+    const b = tool.execute({ todos: [{ id: "1", content: "beta", status: "pending" }], merge: false }, { ownerId: "sub-b" });
+    expect(b.content).toContain("beta");
+    // Updating A's list leaves B's untouched.
+    const a2 = tool.execute({ todos: [{ id: "1", content: "alpha", status: "completed" }], merge: true }, { ownerId: "sub-a" });
+    expect(a2.content).toContain("✅ [completed] alpha");
+    expect(a2.content).not.toContain("beta");
+    const b2 = tool.execute({ todos: [{ id: "1", content: "beta", status: "pending" }], merge: true }, { ownerId: "sub-b" });
+    expect(b2.content).toContain("beta");
+    expect(b2.content).not.toContain("alpha");
+  });
 });
 
 function httpResponse(body: string, headers: Record<string, string> = {}): HttpResponse {

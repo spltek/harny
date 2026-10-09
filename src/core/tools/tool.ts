@@ -41,6 +41,10 @@ export interface ToolDefinition {
  */
 export interface ToolContext {
   dryRun?: boolean;
+  /** Identity of the calling agent/conversation. Tools that keep
+   * per-conversation state (e.g. TodoWrite) key their state by it, so
+   * concurrent sessions/sub-agents never clobber each other. */
+  ownerId?: string;
 }
 
 export interface Tool {

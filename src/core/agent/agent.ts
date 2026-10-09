@@ -103,6 +103,12 @@ export interface AgentDeps {
    * The host uses it to auto-compact MID-RUN when the context threshold is
    * exceeded: it compacts at a step boundary, then the run continues. */
   onTurnBoundary?: () => Promise<void> | void;
+  /** Working directory, used to resolve delegate `resources` for the safe
+   * parallelism decision (relative vs absolute paths must MATCH). */
+  cwd?: () => string;
+  /** Identity of this agent, passed to tools that keep per-conversation state
+   * (e.g. TodoWrite): each session and each sub-agent gets its OWN state. */
+  ownerId?: string;
 }
 
 /**
@@ -547,7 +553,7 @@ export class Agent implements ChatController {
       const isDelegate = tc.name === DELEGATE_TOOL_NAME;
       return { isDelegate, spec: isDelegate ? parseDelegateSpec(tc.arguments).spec : undefined };
     });
-    const steps = planToolExecution(planned);
+    const steps = planToolExecution(planned, this.deps.cwd?.());
     const results: ToolResult[] = new Array(toolCalls.length);
     const emitted = new Set<number>();
     const emitResult = (index: number, result: ToolResult): void => {
@@ -570,7 +576,16 @@ export class Agent implements ChatController {
     // explainable instead of looking random (Output > Harny).
     if (planned.some((p) => p.isDelegate)) {
       const shape = steps.map((s) => (s.kind === "single" ? "1" : String(s.indices.length))).join("+");
-      this.log(`orchestration: ${planned.length} calls -> steps ${shape} (cap ${parallelCap === Infinity ? "\u221e" : parallelCap})`);
+      // Planned peak concurrency = the largest parallel batch, capped. Makes a
+      // "fewer agents than the max" turn explainable at a glance.
+      const peak = steps.reduce(
+        (m, s) => (s.kind === "parallel" ? Math.max(m, Math.min(s.indices.length, parallelCap)) : m),
+        0,
+      );
+      this.log(
+        `orchestration: ${planned.length} calls -> steps ${shape} ` +
+          `(cap ${parallelCap === Infinity ? "\u221e" : parallelCap}, peak ${peak === Infinity ? "\u221e" : peak})`,
+      );
       for (const p of planned) {
         if (!p.isDelegate) continue;
         if (!p.spec) {
@@ -591,7 +606,10 @@ export class Agent implements ChatController {
     // re-run). This BREAKS tool loops at the source instead of only nudging.
     const runOne = async (index: number): Promise<void> => {
       const tc = toolCalls[index];
-      const readOnly = isReadOnlyTool(tc.name);
+      // A Delegate is read-only exactly when its parsed spec says so (a
+      // read-only delegate must get the read-cache / dedup of a read tool).
+      const readOnly =
+        tc.name === DELEGATE_TOOL_NAME ? planned[index]?.spec?.access === "read" : isReadOnlyTool(tc.name);
       const decision = this.guard.beforeToolCall(tc, readOnly);
       let r: ToolResult;
       if (decision.mode === "run") {
@@ -985,7 +1003,13 @@ export class Agent implements ChatController {
       };
     }
     try {
-      const result = await tool.execute(tc.arguments, dryRun ? { dryRun: true } : undefined);
+      // `ownerId` lets stateful tools (TodoWrite) keep PER-conversation state,
+      // so concurrent sub-agents never clobber each other's list.
+      const ctx =
+        dryRun || this.deps.ownerId
+          ? { ...(dryRun ? { dryRun: true } : {}), ...(this.deps.ownerId ? { ownerId: this.deps.ownerId } : {}) }
+          : undefined;
+      const result = await tool.execute(tc.arguments, ctx);
       // Remember that a preview was prepared so the final answer can be made
       // unambiguous (the model may still claim it "applied" the change).
       if (dryRun && !result.isError) {
@@ -1041,11 +1065,16 @@ export class Agent implements ChatController {
    */
   private async forceDelegate(turn: number): Promise<void> {
     if (!this.deps.spawnSubAgent || !this.runGoal) return;
+    // SAFE fallback: READ-ONLY research, no resources. Granting a fallback
+    // sub-agent write access to the WHOLE project (write + ["."]) for any
+    // request the model refused to delegate is too broad; if the task really
+    // needs writes, the orchestrator can delegate a proper writer right after
+    // (it has the full tool set once it has delegated).
     const spec: DelegateSpec = {
       id: "auto",
       goal: this.runGoal,
-      access: isAnalyzeMode(this._mode) ? "read" : "write",
-      resources: ["."],
+      access: "read",
+      resources: [],
       parallel: false,
       after: [],
     };
@@ -1057,7 +1086,7 @@ export class Agent implements ChatController {
       resources: spec.resources,
     };
     this.delegatedThisRun = true;
-    this.log(`parallel hard fallback: host dispatched one sub-agent ("${spec.id}")`);
+    this.log(`parallel hard fallback: host dispatched one READ-ONLY sub-agent ("${spec.id}")`);
     this.deps.history.add({
       role: "assistant",
       content: "",

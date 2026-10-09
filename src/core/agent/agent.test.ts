@@ -1583,6 +1583,9 @@ describe("Orchestration (Delegate)", () => {
     expect(history.all().filter((m) => m.role === "user" && /MANDATORY/.test(m.content))).toHaveLength(1);
     expect(spawned).toHaveLength(1);
     expect(spawned[0].goal).toBe("do the thing");
+    // SAFE fallback: read-only, no broad write grant on the whole project.
+    expect(spawned[0].access).toBe("read");
+    expect(spawned[0].resources).toEqual([]);
     // The report is in the transcript as a tool result of a synthetic Delegate call.
     expect(history.all().some((m) => m.role === "tool" && /auto report/.test(m.content))).toBe(true);
     expect(
@@ -2727,6 +2730,26 @@ describe("Orchestration (Delegate)", () => {
 
     expect(spawned).toBe(0);
     expect(history.all().find((m) => m.role === "tool")?.content).toContain("resources");
+  });
+
+  it("dedupes two IDENTICAL read-only delegates in the same turn (read cache)", async () => {
+    const spawned: string[] = [];
+    const { agent, history } = build({
+      calls: [
+        { id: "dup", goal: "same", access: "read", resources: [] },
+        { id: "dup", goal: "same", access: "read", resources: [] },
+      ],
+      spawn: async (spec) => {
+        spawned.push(spec.id);
+        return { content: "report", isError: false };
+      },
+    });
+
+    await agent.send("go");
+
+    // Only ONE actually ran; the identical second was refused (already running).
+    expect(spawned).toEqual(["dup"]);
+    expect(history.all().some((m) => m.role === "tool" && /already running/i.test(m.content))).toBe(true);
   });
 
   it("spawns a READ-ONLY delegate with EMPTY resources (web research)", async () => {

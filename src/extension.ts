@@ -156,6 +156,9 @@ export function activate(context: ExtensionContext) {
       abortSubAgent: (toolCallId) => subAgents.abort(toolCallId),
       log: (m) => infoLog(`[agent] ${m}`),
       onTurnBoundary: () => midRunCompact?.(sessionId),
+      cwd,
+      // Per-session identity: stateful tools (TodoWrite) keep separate state.
+      ownerId: sessionId,
     });
   };
 

@@ -121,6 +121,10 @@ export class SubAgentRunner {
       // Never end a heavy sub-agent with a bare "turn limit": force a final
       // tool-less report turn so the caller always gets a usable synthesis.
       forceFinalReportOnLimit: true,
+      cwd: this.deps.cwd,
+      // Each sub-agent has its OWN tool state (TodoWrite): concurrent sub-agents
+      // must never clobber each other's list.
+      ownerId: `sub-${key}`,
       log: this.deps.log ? (m) => this.deps.log!(`subagent "${spec.id}": ${m}`) : undefined,
     });
     agent.setMode(mode);
