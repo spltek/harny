@@ -3961,6 +3961,27 @@ describe("Queue/Steer toggle (webview)", () => {
     expect(steerLabel().textContent).toBe("Queue"); // each run restarts in Queue
   });
 
+  it("Ctrl/Cmd does NOT switch to Steer while idle (stays Queue)", async () => {
+    await loadView();
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control" }));
+    expect(steerLabel().textContent).toBe("Queue");
+    expect(steerBtn().classList.contains("is-steer")).toBe(false);
+    window.dispatchEvent(new KeyboardEvent("keyup", { key: "Control" }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta" }));
+    expect(steerLabel().textContent).toBe("Queue");
+  });
+
+  it("suppresses the native context menu on controls but keeps it in the prompt", async () => {
+    await loadView();
+    const onButton = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    steerBtn().dispatchEvent(onButton);
+    expect(onButton.defaultPrevented).toBe(true);
+
+    const onInput = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    input().dispatchEvent(onInput);
+    expect(onInput.defaultPrevented).toBe(false);
+  });
+
   it("clicking the toggle while working alternates Queue ↔ Steer", async () => {
     await loadView();
     hostMessage({ type: "status", active: true });

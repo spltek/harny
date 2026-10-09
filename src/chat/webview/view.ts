@@ -1491,8 +1491,10 @@ function setSteerTarget(toolCallId: string, label: string): void {
 let sendMode: "queue" | "steer" = "queue";
 let steerModifierHeld = false;
 
-/** The mode a new message will use right now (modifier override wins). */
+/** The mode a new message will use right now (modifier override wins, but
+ * ONLY while a run is active: idle always shows Queue). */
 function effectiveSendMode(): "queue" | "steer" {
+  if (!streamingActive) return "queue";
   return steerModifierHeld ? "steer" : sendMode;
 }
 
@@ -1585,6 +1587,13 @@ window.addEventListener("keyup", (e) => {
 window.addEventListener("blur", () => {
   steerModifierHeld = false;
   renderSteerMode();
+});
+// On macOS Ctrl+click is a SECONDARY click: over a control it would pop the
+// native cut/copy/paste menu and swallow the Ctrl+click. Suppress it on the UI
+// chrome (buttons, cards, selects); keep it inside inputs/textarea for paste.
+document.addEventListener("contextmenu", (e) => {
+  const target = e.target as HTMLElement | null;
+  if (!target?.closest("input, textarea")) e.preventDefault();
 });
 
 /** Read a dragged/pasted File as a base64 data URL. */
