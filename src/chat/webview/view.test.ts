@@ -59,6 +59,7 @@ function setupDom(
           <button type="button" class="mode-item" data-mode="agent" role="option" aria-selected="false">Build</button>
         </div>
       </div>
+      <button type="button" id="steer-btn" aria-pressed="false"><span id="steer-btn-label">Queue</span></button>
       <button type="button" id="parallel-btn" aria-pressed="false">Parallel</button>
       <div id="attach-row">
         <div id="attachment-chips" class="hidden"></div>
@@ -3939,79 +3940,92 @@ describe("soft steering + pending bubbles (webview)", () => {
   });
 });
 
-describe("steering affordances (webview)", () => {
+describe("Queue/Steer toggle (webview)", () => {
   beforeEach(() => {
     posted.length = 0;
     setupDom();
   });
 
-  it("keeps the prompt enabled and shows the queue/steer hint while working", async () => {
+  const steerBtn = () => document.getElementById("steer-btn") as HTMLButtonElement;
+  const steerLabel = () => document.getElementById("steer-btn-label") as HTMLElement;
+  const input = () => document.getElementById("user-input") as HTMLTextAreaElement;
+
+  it("defaults to Queue and is clickable only while working", async () => {
     await loadView();
-    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    expect(steerLabel().textContent).toBe("Queue");
+    expect(steerBtn().disabled).toBe(true);
     hostMessage({ type: "status", active: true });
-    expect(input.disabled).toBe(false);
-    expect(input.placeholder).toContain("queue");
-    expect(input.placeholder).toContain("steer");
+    expect(steerBtn().disabled).toBe(false);
     hostMessage({ type: "status", active: false });
-    expect(input.placeholder).toContain("Enter to send");
-  });
-});
-
-describe("steer-armed prompt (Ctrl/Cmd visual)", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
+    expect(steerBtn().disabled).toBe(true);
+    expect(steerLabel().textContent).toBe("Queue"); // each run restarts in Queue
   });
 
-  it("turns the prompt muted red while Ctrl/Cmd is held during a run", async () => {
+  it("clicking the toggle while working alternates Queue ↔ Steer", async () => {
     await loadView();
-    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    hostMessage({ type: "status", active: true });
+    steerBtn().click();
+    expect(steerLabel().textContent).toBe("Steer");
+    expect(steerBtn().classList.contains("is-steer")).toBe(true);
+    steerBtn().click();
+    expect(steerLabel().textContent).toBe("Queue");
+  });
+
+  it("Ctrl/Cmd forces Steer while held, then reverts to the toggle state", async () => {
+    await loadView();
     hostMessage({ type: "status", active: true });
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control" }));
-    expect(input.classList.contains("steer-armed")).toBe(true);
+    expect(steerLabel().textContent).toBe("Steer");
     window.dispatchEvent(new KeyboardEvent("keyup", { key: "Control" }));
-    expect(input.classList.contains("steer-armed")).toBe(false);
+    expect(steerLabel().textContent).toBe("Queue"); // persistent state untouched
 
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta" }));
-    expect(input.classList.contains("steer-armed")).toBe(true);
+    expect(steerLabel().textContent).toBe("Steer");
   });
 
-  it("does not arm the prompt while idle (steering has no meaning)", async () => {
+  it("clicking the toggle while Ctrl/Cmd is held does NOT change the state (modifier wins)", async () => {
     await loadView();
-    const input = document.getElementById("user-input") as HTMLTextAreaElement;
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta" }));
-    expect(input.classList.contains("steer-armed")).toBe(false);
-  });
-
-  it("disarms on window blur (keyup can be missed)", async () => {
-    await loadView();
-    const input = document.getElementById("user-input") as HTMLTextAreaElement;
     hostMessage({ type: "status", active: true });
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta" }));
-    expect(input.classList.contains("steer-armed")).toBe(true);
+    steerBtn().click();
+    expect(steerLabel().textContent).toBe("Steer"); // forced by the modifier
+    window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta" }));
+    expect(steerLabel().textContent).toBe("Queue"); // the click was ignored
+  });
+
+  it("blur releases the Ctrl/Cmd override", async () => {
+    await loadView();
+    hostMessage({ type: "status", active: true });
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta" }));
+    expect(steerLabel().textContent).toBe("Steer");
     window.dispatchEvent(new Event("blur"));
-    expect(input.classList.contains("steer-armed")).toBe(false);
+    expect(steerLabel().textContent).toBe("Queue");
   });
 
-  it("clicking play while Ctrl/Cmd is held steers", async () => {
+  it("Enter follows the toggle state (Steer after a click, no modifier needed)", async () => {
     await loadView();
     hostMessage({ type: "status", active: true });
-    const input = document.getElementById("user-input") as HTMLTextAreaElement;
-    input.value = "not Florence, Rome";
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control" }));
-    (document.getElementById("send-btn") as HTMLButtonElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    expect(posted.find((m: any) => m.type === "send")).toMatchObject({
-      mode: "steer",
-      text: "not Florence, Rome",
-    });
+    steerBtn().click(); // → Steer
+    input().value = "use Rome";
+    input().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(posted.find((m: any) => m.type === "send")).toMatchObject({ mode: "steer", text: "use Rome" });
   });
 
-  it("clicking play WITHOUT a modifier queues", async () => {
+  it("the play key follows the toggle state too", async () => {
     await loadView();
     hostMessage({ type: "status", active: true });
-    const input = document.getElementById("user-input") as HTMLTextAreaElement;
-    input.value = "later";
+    steerBtn().click(); // → Steer
+    input().value = "use Rome";
     (document.getElementById("send-btn") as HTMLButtonElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    expect(posted.find((m: any) => m.type === "send")).toMatchObject({ mode: "queue", text: "later" });
+    expect(posted.find((m: any) => m.type === "send")).toMatchObject({ mode: "steer", text: "use Rome" });
+  });
+
+  it("keeps the prompt enabled while working with a mode hint", async () => {
+    await loadView();
+    hostMessage({ type: "status", active: true });
+    expect(input().disabled).toBe(false);
+    expect(input().placeholder.toLowerCase()).toContain("steer");
+    hostMessage({ type: "status", active: false });
+    expect(input().placeholder).toContain("Enter to send");
   });
 });

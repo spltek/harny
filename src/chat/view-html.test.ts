@@ -21,6 +21,10 @@ describe("renderViewHtml", () => {
     // The paperclip file picker is the HEAD key of the input row (before the
     // textarea, same row as send/abort) and shares their exact size rule.
     expect(html).toMatch(/id="input-main"[\s\S]*?<button id="attach-btn"/);
+    // The Queue/Steer toggle sits BETWEEN the mode select and Parallel.
+    expect(html).toContain('id="steer-btn"');
+    expect(html).toContain('id="steer-btn-label"');
+    expect(html).toMatch(/id="mode-select"[\s\S]*?id="steer-btn"[\s\S]*?id="parallel-btn"/);
     expect(html).toMatch(/<button id="attach-btn"[\s\S]*?id="user-input"/);
     // It shows a PAPERCLIP glyph (attachment), not a bare "+".
     expect(html).toMatch(/<button id="attach-btn"[^>]*>\s*<svg[\s\S]*?<\/svg>\s*<\/button>/);

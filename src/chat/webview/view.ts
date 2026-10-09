@@ -142,6 +142,8 @@ const modeMenu = document.getElementById("mode-menu") as HTMLDivElement;
 const modeItems = Array.from(modeMenu.querySelectorAll<HTMLButtonElement>(".mode-item"));
 const parallelBtn = document.getElementById("parallel-btn") as HTMLButtonElement;
 const sendBtn = document.getElementById("send-btn") as HTMLButtonElement;
+const steerBtn = document.getElementById("steer-btn") as HTMLButtonElement;
+const steerBtnLabel = document.getElementById("steer-btn-label") as HTMLSpanElement;
 const abortBtn = document.getElementById("abort-btn") as HTMLButtonElement;
 const attachBtn = document.getElementById("attach-btn") as HTMLButtonElement;
 const attachmentChips = document.getElementById("attachment-chips") as HTMLDivElement;
@@ -1481,22 +1483,38 @@ function setSteerTarget(toolCallId: string, label: string): void {
   inputEl.focus();
 }
 
-/** Ctrl/Cmd held = the next Enter / play click STEERS. Reflected by the muted
- * red prompt, but only while a run is in progress (steering is meaningless
- * when idle, where Enter is a normal send). */
+/**
+ * Queue/Steer toggle state. `sendMode` is the persistent choice (default
+ * Queue, reset when a run ends); Ctrl/Cmd held forces Steer while down and
+ * WINS over a click. Only meaningful/clickable while a run is in progress.
+ */
+let sendMode: "queue" | "steer" = "queue";
 let steerModifierHeld = false;
-function setSteerArmed(on: boolean): void {
-  steerModifierHeld = on;
-  inputEl.classList.toggle("steer-armed", on && streamingActive);
+
+/** The mode a new message will use right now (modifier override wins). */
+function effectiveSendMode(): "queue" | "steer" {
+  return steerModifierHeld ? "steer" : sendMode;
 }
 
-function send(mode: "queue" | "steer" = "queue"): void {
+/** Paint the toggle: label + red "Steer" state + enabled only while working. */
+function renderSteerMode(): void {
+  const isSteer = effectiveSendMode() === "steer";
+  steerBtn.classList.toggle("is-steer", isSteer);
+  steerBtn.setAttribute("aria-pressed", String(isSteer));
+  steerBtnLabel.textContent = isSteer ? "Steer" : "Queue";
+  steerBtn.disabled = !streamingActive;
+  steerBtn.title = isSteer
+    ? "Steer: the next message is injected into the running loop"
+    : "Queue: the next message runs after the current run ends";
+}
+
+function send(): void {
   if (!activeId) return;
   const text = inputEl.value.trim();
   const attachments = attachedFiles.slice();
   if (!text && attachments.length === 0) return;
   // A picked sub-agent forces a steer: only a steer can abort + re-plan.
-  const effectiveMode: "queue" | "steer" = steerTarget ? "steer" : mode;
+  const effectiveMode: "queue" | "steer" = steerTarget ? "steer" : effectiveSendMode();
   inputEl.value = "";
   inputEl.style.height = "auto"; // back to a single line for the next message
   clearAttachments();
@@ -1537,18 +1555,37 @@ function send(mode: "queue" | "steer" = "queue"): void {
 
 // ── Custom hover tooltip removed: native title attributes are used instead ──
 
-// The play key steers too when Ctrl/Cmd is held (mirrors Ctrl/Cmd+Enter).
-sendBtn.addEventListener("click", (e) => send(steerModifierHeld || e.ctrlKey || e.metaKey ? "steer" : "queue"));
+// The play key uses the SAME mode as Enter (toggle state, Ctrl/Cmd override).
+sendBtn.addEventListener("click", (e) => {
+  steerModifierHeld = steerModifierHeld || e.ctrlKey || e.metaKey;
+  send();
+});
 attachBtn.addEventListener("click", () => vscode.postMessage({ type: "pickFiles" }));
-// Arm/disarm the red prompt while Ctrl/Cmd is held. keyup may be missed when
-// the window loses focus with the key down, so blur disarms too.
+// Queue/Steer toggle: click flips it, but only while working and only when
+// Ctrl/Cmd are NOT held (the modifier wins).
+steerBtn.addEventListener("click", () => {
+  if (!streamingActive || steerModifierHeld) return;
+  sendMode = sendMode === "steer" ? "queue" : "steer";
+  renderSteerMode();
+});
+// Ctrl/Cmd is a momentary override to Steer. keyup may be missed when the
+// window loses focus with the key down, so blur releases it too.
 window.addEventListener("keydown", (e) => {
-  if (e.key === "Control" || e.key === "Meta") setSteerArmed(true);
+  if (e.key === "Control" || e.key === "Meta") {
+    steerModifierHeld = true;
+    renderSteerMode();
+  }
 });
 window.addEventListener("keyup", (e) => {
-  if (e.key === "Control" || e.key === "Meta") setSteerArmed(false);
+  if (e.key === "Control" || e.key === "Meta") {
+    steerModifierHeld = false;
+    renderSteerMode();
+  }
 });
-window.addEventListener("blur", () => setSteerArmed(false));
+window.addEventListener("blur", () => {
+  steerModifierHeld = false;
+  renderSteerMode();
+});
 
 /** Read a dragged/pasted File as a base64 data URL. */
 function readAsDataUrl(file: File): Promise<string> {
@@ -1784,8 +1821,9 @@ inputEl.addEventListener("keydown", (e) => {
   }
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
-    // While working: Enter queues, Ctrl/Cmd+Enter steers (the aggressive move).
-    send(e.ctrlKey || e.metaKey ? "steer" : "queue");
+    // Ctrl/Cmd is a momentary override to Steer; otherwise the toggle decides.
+    steerModifierHeld = steerModifierHeld || e.ctrlKey || e.metaKey;
+    send();
   }
   if (e.key === "Escape") vscode.postMessage({ type: "abort" });
 });
@@ -3002,10 +3040,11 @@ function setStreaming(active: boolean): void {
   abortBtn.disabled = !active;
   attachBtn.disabled = !activeId;
   inputEl.placeholder = active
-    ? "Enter to queue · Ctrl/Cmd+Enter to steer · Esc to stop"
+    ? "Enter to send · Ctrl/Cmd = Steer · Esc to stop"
     : "Ask Harny... (Enter to send, Esc to abort)";
-  // The red "steer-armed" prompt only makes sense while a run is in progress.
-  inputEl.classList.toggle("steer-armed", steerModifierHeld && active);
+  // Every run starts in Queue; the toggle is only clickable while working.
+  if (!active) sendMode = "queue";
+  renderSteerMode();
   compactBtn.disabled = active;
   compactSettingsBtn.disabled = active;
   modelSelect.disabled = active;

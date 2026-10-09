@@ -677,16 +677,6 @@ ${renderViewConfig(deps)}
       min-height: 2.31rem; max-height: 18.5rem; outline: none;
     }
     #user-input:focus { border-color: var(--accent); }
-    /* Steer-armed: while Ctrl/Cmd is held the prompt turns muted red, so the
-       user SEES that Enter / the play key will STEER (not queue). Only while a
-       run is in progress (steering has no meaning when idle). */
-    #user-input.steer-armed {
-      background: rgba(178, 59, 59, 0.16);
-      border-color: #a83b3b;
-      border-bottom-color: #d05a5a;
-      box-shadow: inset 0 -3px 0 #a83b3b;
-    }
-    #user-input.steer-armed:focus { border-color: #d05a5a; }
     button {
       background: var(--accent); color: #fff; border: none; border-radius: 6px;
       cursor: pointer; font-size: var(--fs-lg); line-height: 1;
@@ -1134,6 +1124,41 @@ ${renderViewConfig(deps)}
     }
     #parallel-btn.is-on svg { color: #ffffff; }
     #parallel-btn.is-on:hover { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45), 0 0 16px rgba(76, 141, 255, 0.55); }
+
+    /* Queue/Steer toggle: same pill family as Parallel, sitting between the
+       mode select and Parallel. Default Queue (neutral); Steer = muted red.
+       Clickable only while a run is active; Ctrl/Cmd forces Steer while held. */
+    #steer-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      height: 1.85rem;
+      padding: 0 10px 0 8px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--fg);
+      font-size: var(--fs-sm);
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+      transition: background 0.18s, box-shadow 0.18s, color 0.18s, border-color 0.18s, opacity 0.18s;
+    }
+    #steer-btn svg { flex-shrink: 0; color: var(--muted); transition: color 0.18s; }
+    #steer-btn:hover:not(:disabled) { border-color: rgba(255, 255, 255, 0.25); color: var(--fg-strong); }
+    #steer-btn:hover:not(:disabled) svg { color: var(--fg); }
+    #steer-btn:focus-visible { outline: 2px solid #b23b3b; outline-offset: 2px; }
+    #steer-btn:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
+    #steer-btn.is-steer {
+      background: linear-gradient(135deg, #b23b3b, #8f2d2d);
+      border-color: transparent;
+      color: #ffffff;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 12px rgba(178, 59, 59, 0.4);
+    }
+    #steer-btn.is-steer svg { color: #ffffff; }
+    #steer-btn.is-steer:hover:not(:disabled) { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45), 0 0 16px rgba(178, 59, 59, 0.55); }
 
     .card-title {
       font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
@@ -1608,6 +1633,15 @@ ${renderViewConfig(deps)}
           </button>
         </div>
       </div>
+      <!-- Queue/Steer: how a message typed WHILE the agent works is applied.
+           Default Queue (it runs after the current run); Steer injects it into
+           the running loop at the next turn boundary. Clickable only while
+           working; Ctrl/Cmd forces Steer while held. -->
+      <button type="button" id="steer-btn" aria-pressed="false"
+              title="Queue: the next message runs after the current run ends">
+        <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none"/></svg>
+        <span id="steer-btn-label">Queue</span>
+      </button>
       <!-- Parallel: press/release toggle enabling orchestration (sub-agents)
            for the current mode. Blue when pressed. -->
       <button type="button" id="parallel-btn" aria-pressed="false"
