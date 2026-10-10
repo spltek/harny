@@ -43,6 +43,57 @@ describe("renderViewHtml", () => {
     expect(html).toContain(`<script src="${base.scriptUri}"></script>`);
   });
 
+  it("renders the filterable model modal + selector button (no native <select>)", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    expect(html).toContain('id="model-btn"');
+    expect(html).toContain('id="model-btn-label"');
+    expect(html).toContain('id="model-modal"');
+    expect(html).toContain('id="model-search"');
+    expect(html).toContain('id="model-list"');
+    // The old native dropdown is gone.
+    expect(html).not.toContain('id="model-select"');
+    // List rows are plain (no global "key" chrome) and hover is id-scoped.
+    expect(html).toMatch(/#model-list \.mm-model:hover \{[^}]*filter: none/);
+  });
+
+  it("masks the API key field and provides a hold-to-reveal eye", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    // Masked by default (password), with the eye button beside it.
+    expect(html).toMatch(/id="pe-apikey" type="password"/);
+    expect(html).toContain('id="pe-apikey-reveal"');
+    expect(html).toContain('class="pe-eye"');
+    // The eye sits INSIDE the field and is a plain key (no 3D chrome).
+    expect(html).toMatch(/\.pe-secret \.pe-eye \{[\s\S]*?box-shadow: none/);
+    expect(html).toMatch(/\.pe-secret \.pe-eye:hover \{[^}]*filter: none/);
+  });
+
+  it("labels the providers-editor export/import clearly", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    expect(html).toContain(">Export models configuration</button>");
+    expect(html).toContain(">Import models configuration</button>");
+  });
+
+  it("the tab strip does not shrink tabs and hides any vertical scrollbar", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    // Horizontal scroll only (no vertical bar on a single-row strip).
+    expect(html).toMatch(/#tabs \{[\s\S]*?overflow-x: auto; overflow-y: hidden/);
+    // Tabs keep a readable floor and never shrink (the strip scrolls instead).
+    expect(html).toMatch(/\.tab \{[\s\S]*?flex-shrink: 0/);
+    expect(html).toMatch(/\.tab \{[\s\S]*?min-width: 5\.5rem/);
+  });
+
   it("has NO steer-target affordance (the sub-agent target was removed)", () => {
     const html = renderViewHtml({
       ...base,
@@ -301,7 +352,7 @@ describe("renderViewHtml", () => {
     // The AI Model row (label + select + gear) lives INSIDE the ask box, just
     // below the prompt (after #input-main, before the chips row) — no longer
     // part of the collapsible block.
-    expect(html).toMatch(/id="input-area"[\s\S]*?<div class="ctl-card ctl-card-model">[\s\S]*?id="model-select"/);
+    expect(html).toMatch(/id="input-area"[\s\S]*?<div class="ctl-card ctl-card-model">[\s\S]*?id="model-btn"/);
     expect(html).toMatch(/id="input-main"[\s\S]*?<div class="ctl-card ctl-card-model">[\s\S]*?id="attach-row"/);
     expect(html).not.toMatch(/<div id="status">[\s\S]*?<div class="ctl-card ctl-card-model"/);
     // Empty chips row is fully hidden, so the ask box keeps the same 8px

@@ -1931,6 +1931,60 @@ describe("ChatViewProvider compaction", () => {
     await vi.waitFor(() => expect(rt.contextWindow).toBe(1048576));
   });
 
+  it("alerts in-panel when the context window is unknown everywhere (host + models.dev)", async () => {
+    const { provider } = buildHarness({
+      providerEntry: { name: "opencode-go", baseUrl: "https://opencode.ai/zen/go/v1", models: [] },
+      fetchModelInfos: async () => [{ id: "unknown-model" }], // host reports NO context
+      modelsDev: { getContext: vi.fn(async () => undefined) }, // catalog does not know it
+    });
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    view.webview.postMessage.mockClear();
+
+    await handler({ type: "setModel", model: "unknown-model", provider: "opencode-go" });
+
+    await vi.waitFor(() =>
+      expect(view.webview.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "modal",
+          kind: "alert",
+          title: "Context window unknown",
+          message: expect.stringContaining("unknown-model"),
+        }),
+      ),
+    );
+
+    // Re-selecting the SAME unknown model must NOT alert again (once per model).
+    const isContextAlert = (m: unknown): boolean =>
+      !!m && typeof m === "object" && (m as { title?: string }).title === "Context window unknown";
+    view.webview.postMessage.mockClear();
+    await handler({ type: "setModel", model: "unknown-model", provider: "opencode-go" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(view.webview.postMessage.mock.calls.some((c: unknown[]) => isContextAlert(c[0]))).toBe(false);
+  });
+
+  it("enriches the model LIST with the models.dev context window (host reports none)", async () => {
+    const getContext = vi.fn(async () => 1048576);
+    const { provider } = buildHarness({
+      config: { ...CONFIG, hostModelProviders: ["opencode-go"] },
+      providerEntry: { name: "opencode-go", baseUrl: "https://opencode.ai/zen/go/v1", models: [] },
+      fetchModelInfos: async () => [{ id: "kimi-k3" }], // host reports NO context
+      modelsDev: { getContext },
+    });
+    const { view } = resolveWith(provider);
+
+    // Background enrichment resolves it and pushes an updated config; the list
+    // entry then carries the contextLength (so it shows in the model modal).
+    await vi.waitFor(() => {
+      const configs = view.webview.postMessage.mock.calls
+        .map((c: unknown[]) => c[0] as { type?: string; config?: { providerModels?: { model: string; contextLength?: number }[] } })
+        .filter((m) => m?.type === "config");
+      const models = configs.flatMap((c) => c.config?.providerModels ?? []);
+      expect(models.some((m) => m.model === "kimi-k3" && m.contextLength === 1048576)).toBe(true);
+    });
+    expect(getContext).toHaveBeenCalled();
+  });
+
   it("setCompactionThreshold stores the session override (clamped) and persists it", async () => {
     const options = { compactor: new Compactor(compactorFactory(), () => CONFIG), compaction: DEFAULT_COMPACTION };
     const { store, registry, provider } = buildHarness(options);

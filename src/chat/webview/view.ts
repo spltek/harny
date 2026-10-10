@@ -158,7 +158,11 @@ const steerBtnLabel = document.getElementById("steer-btn-label") as HTMLSpanElem
 const abortBtn = document.getElementById("abort-btn") as HTMLButtonElement;
 const attachBtn = document.getElementById("attach-btn") as HTMLButtonElement;
 const attachmentChips = document.getElementById("attachment-chips") as HTMLDivElement;
-const modelSelect = document.getElementById("model-select") as HTMLSelectElement;
+const modelBtn = document.getElementById("model-btn") as HTMLButtonElement;
+const modelBtnLabel = document.getElementById("model-btn-label") as HTMLSpanElement;
+const modelModal = document.getElementById("model-modal") as HTMLDivElement;
+const modelListEl = document.getElementById("model-list") as HTMLDivElement;
+const modelSearchInput = document.getElementById("model-search") as HTMLInputElement;
 const thinkingRadios = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="thinking-level"]'));
 const ctxRange = document.getElementById("ctx-range") as HTMLInputElement;
 const ctxValue = document.getElementById("ctx-value") as HTMLSpanElement;
@@ -421,7 +425,29 @@ function renderTabs(sessions: SessionInfo[]): void {
     });
   }
   applyTabLocks();
+  // Keep the ACTIVE tab visible when it CHANGES (the strip may be scrolled).
+  if (activeId !== lastActiveTabId) {
+    lastActiveTabId = activeId;
+    tabsEl.querySelector<HTMLElement>(".tab.active")?.scrollIntoView?.({ inline: "nearest", block: "nearest" });
+  }
 }
+
+/** Last active tab scrolled into view (avoid yanking the strip on every render). */
+let lastActiveTabId: string | undefined;
+
+// The tab strip has no vertical content: a vertical wheel scrolls it SIDEWAYS,
+// so many (non-shrinking) tabs stay reachable. Horizontal trackpad deltas are
+// left to the native overflow scroll.
+tabsEl.addEventListener(
+  "wheel",
+  (e) => {
+    if (e.deltaY === 0 || e.deltaX !== 0) return;
+    const before = tabsEl.scrollLeft;
+    tabsEl.scrollLeft += e.deltaY;
+    if (tabsEl.scrollLeft !== before) e.preventDefault();
+  },
+  { passive: false },
+);
 
 /** Disable the × of every WORKING session's tab (switching stays allowed). */
 function applyTabLocks(): void {
@@ -2159,6 +2185,31 @@ const providerSelect = document.getElementById("provider-select") as HTMLSelectE
 const peName = document.getElementById("pe-name") as HTMLInputElement;
 const peBaseUrl = document.getElementById("pe-baseurl") as HTMLInputElement;
 const peApiKey = document.getElementById("pe-apikey") as HTMLInputElement;
+const peApiKeyReveal = document.getElementById("pe-apikey-reveal") as HTMLButtonElement;
+
+/** Mask/unmask the API key field. `on` = show the plain key. */
+function setApiKeyVisible(on: boolean): void {
+  peApiKey.type = on ? "text" : "password";
+}
+// The eye reveals the key ONLY while held down (mouse, touch or pen), then
+// re-masks. `preventDefault` keeps the caret in the field and avoids selecting
+// the button's text.
+peApiKeyReveal.addEventListener("mousedown", (e) => {
+  e.preventDefault();
+  setApiKeyVisible(true);
+});
+peApiKeyReveal.addEventListener("mouseup", () => setApiKeyVisible(false));
+peApiKeyReveal.addEventListener("mouseleave", () => setApiKeyVisible(false));
+peApiKeyReveal.addEventListener(
+  "touchstart",
+  (e) => {
+    e.preventDefault();
+    setApiKeyVisible(true);
+  },
+  { passive: false },
+);
+peApiKeyReveal.addEventListener("touchend", () => setApiKeyVisible(false));
+window.addEventListener("blur", () => setApiKeyVisible(false));
 const peThinking = document.getElementById("pe-thinking") as HTMLSelectElement;
 const peSessionHeader = document.getElementById("pe-session-header") as HTMLInputElement;
 const providerTestBtn = document.getElementById("provider-test") as HTMLButtonElement;
@@ -2213,6 +2264,7 @@ function loadProviderIntoForm(name: string): void {
   peName.value = name;
   peBaseUrl.value = entry?.baseUrl ?? "";
   peApiKey.value = entry?.apiKey ?? "";
+  setApiKeyVisible(false); // always reopen masked
   peThinking.value = entry?.thinking ?? "unspecified";
   peSessionHeader.value = entry?.sessionHeader ?? "";
   providerTestResult.classList.add("hidden");
@@ -3085,7 +3137,7 @@ function setStreaming(active: boolean): void {
   if (active && !workingEl) addWorking();
   compactBtn.disabled = active;
   compactSettingsBtn.disabled = active;
-  modelSelect.disabled = active;
+  modelBtn.disabled = active;
   for (const r of thinkingRadios) r.disabled = active || !thinkingCapable;
   ctxRange.disabled = active;
   outRange.disabled = active;
@@ -3219,141 +3271,193 @@ function formatContext(n: number): string {
   return String(n);
 }
 
-function renderModelSelect(c: ConfigState): void {
-  modelSelect.innerHTML = "";
-  const providerModels = c.providerModels && c.providerModels.length > 0 ? c.providerModels : null;
-  const activeProvider = c.activeProvider;
-  // The saved model that is no longer served (fetch failed, removed from
-  // host) falls back to the same "pick one" placeholder as a brand-new
-  // session, so the combo never auto-selects an unrelated model.
-  const list = providerModels
-    ? new Set(providerModels.map((p) => p.model))
-    : new Set(c.models || []);
-  if (!c.model || (c.model && !list.has(c.model))) {
-    const ph = document.createElement("option");
-    ph.value = "";
-    ph.textContent = "— Select a model —";
-    ph.disabled = true;
-    ph.selected = true;
-    modelSelect.appendChild(ph);
-  }
+/** The current model config, kept so the modal can re-render on filter. */
+let modelConfig: ConfigState | null = null;
+let modelFilter = "";
 
+interface ModelEntry { model: string; contextLength?: number; }
+interface ModelGroup { provider: string; models: ModelEntry[]; error?: string; }
+
+/**
+ * Group the provider/model pairs (or the flat model list) into the TREE the
+ * modal shows: a provider header + its models, plus host-unreachable errors.
+ */
+function buildModelGroups(c: ConfigState): ModelGroup[] {
+  const providerModels = c.providerModels && c.providerModels.length > 0 ? c.providerModels : null;
   if (providerModels) {
-    const groups = new Map<string, { model: string; contextLength?: number }[]>();
-    const order: string[] = [];
+    const map = new Map<string, ModelEntry[]>();
     for (const pm of providerModels) {
-      if (!groups.has(pm.provider)) {
-        groups.set(pm.provider, []);
-        order.push(pm.provider);
-      }
-      groups.get(pm.provider)!.push({ model: pm.model, contextLength: pm.contextLength });
+      if (!map.has(pm.provider)) map.set(pm.provider, []);
+      map.get(pm.provider)!.push({ model: pm.model, contextLength: pm.contextLength });
     }
-    // One combined list of groups (normal + failed), appended together in
-    // alphabetical order so a red provider stays in its proper position.
-    const allGroups: HTMLOptGroupElement[] = [];
-    for (const provider of [...groups.keys()].sort((a, b) => a.localeCompare(b))) {
-      const g = document.createElement("optgroup");
-      g.label = provider;
-      // Alphabetical within each provider group.
-      const sorted = [...(groups.get(provider) || [])].sort((a, b) => a.model.localeCompare(b.model));
-      for (const mi of sorted) {
-        const opt = document.createElement("option");
-        opt.value = mi.model;
-        // Show the host-reported context window next to the model (OpenRouter,
-        // vLLM, llama.cpp, …).
-        opt.textContent = mi.contextLength ? `${mi.model} · ${formatContext(mi.contextLength)}` : mi.model;
-        opt.dataset.provider = provider;
-        if (mi.model === c.model && (provider === activeProvider || !activeProvider)) opt.selected = true;
-        g.appendChild(opt);
-      }
-      allGroups.push(g);
+    const groups: ModelGroup[] = [...map.entries()].map(([provider, models]) => ({
+      provider,
+      models: [...models].sort((a, b) => a.model.localeCompare(b.model)),
+    }));
+    // Failed host fetches: the provider still APPEARS with the error.
+    for (const err of c.hostModelErrors ?? []) {
+      const message = err.error || "GET /v1/models failed";
+      const g = groups.find((x) => x.provider === err.provider);
+      if (g) g.error = message;
+      else groups.push({ provider: err.provider, models: [], error: message });
     }
-    // Failed host fetches: the provider name still APPEARS (red, own group)
-    // with the error, instead of silently disappearing from the combo.
-    const errors = c.hostModelErrors ?? [];
-    const pendingErrors: { label: string; g: HTMLOptGroupElement }[] = [];
-    for (const err of errors) {
-      // A group that also served models gets the error marker instead of a dup.
-      const existingGroup = allGroups.find((gr) => gr.label === err.provider);
-      if (existingGroup) {
-        const opt = document.createElement("option");
-        opt.value = "";
-        opt.className = "option-error";
-        opt.textContent =
-          "⚠️ " + (err.error ? err.error : "GET /v1/models failed") + " — host unreachable";
-        opt.disabled = true;
-        existingGroup.appendChild(opt);
-        existingGroup.className = "optgroup-failed";
-        continue;
-      }
-      const g = document.createElement("optgroup");
-      g.label = err.provider;
-      g.className = "optgroup-failed";
-      g.title = "GET /v1/models failed — is the host reachable?";
-      const opt = document.createElement("option");
-      opt.value = "";
-      opt.className = "option-error";
-      opt.textContent = "⚠️ " + (err.error ? err.error : "GET /v1/models failed") + " — host unreachable";
-      opt.disabled = true;
-      g.appendChild(opt);
-      pendingErrors.push({ label: err.provider, g });
+    return groups.sort((a, b) => a.provider.localeCompare(b.provider));
+  }
+  const models = (c.models && c.models.length > 0 ? [...c.models] : c.model ? [c.model] : []).sort();
+  return models.length > 0 ? [{ provider: "", models: models.map((m) => ({ model: m })) }] : [];
+}
+
+/** Update the selector BUTTON label (current model + its context window).
+ * A saved model that is NO LONGER served falls back to the placeholder. */
+function updateModelButton(c: ConfigState): void {
+  const providerModels = c.providerModels && c.providerModels.length > 0 ? c.providerModels : null;
+  const known = providerModels
+    ? providerModels.some((p) => p.model === c.model)
+    : new Set(c.models || []).has(c.model);
+  const usable = !!c.model && known;
+  const current =
+    providerModels?.find((p) => p.model === c.model && (p.provider === c.activeProvider || !c.activeProvider)) ??
+    providerModels?.find((p) => p.model === c.model);
+  modelBtnLabel.textContent = usable
+    ? c.model + (current?.contextLength ? ` · ${formatContext(current.contextLength)}` : "")
+    : "Select a model";
+  modelBtn.classList.toggle("placeholder", !usable);
+  modelBtn.title = usable ? `Switch model — current: ${c.model}` : "Select a model";
+}
+
+/** Re-render the modal's grouped list, applying the current filter. The TREE
+ * is preserved: only matching models remain, empty providers drop out. */
+function renderModelList(): void {
+  modelListEl.innerHTML = "";
+  if (!modelConfig) return;
+  const filter = modelFilter.trim().toLowerCase();
+  let shown = 0;
+  for (const g of buildModelGroups(modelConfig)) {
+    const providerMatch = !!filter && g.provider.toLowerCase().includes(filter);
+    const models = filter && !providerMatch ? g.models.filter((m) => m.model.toLowerCase().includes(filter)) : g.models;
+    const showError = !!g.error && (!filter || providerMatch);
+    if (models.length === 0 && !showError) continue;
+    shown++;
+    const head = document.createElement("div");
+    head.className = "mm-provider";
+    head.textContent = g.provider || "Models";
+    if (models.length > 0) {
+      const count = document.createElement("span");
+      count.className = "mm-count";
+      count.textContent = String(models.length);
+      head.appendChild(count);
     }
-    // Merge the failed-only groups into the alphabetical position.
-    for (const { label, g } of pendingErrors.sort((a, b) => a.label.localeCompare(b.label))) {
-      const insertAt = allGroups.findIndex((gr) => gr.label.localeCompare(label) > 0);
-      if (insertAt === -1) allGroups.push(g);
-      else allGroups.splice(insertAt, 0, g);
-    }
-    for (const g of allGroups) modelSelect.appendChild(g);
-  } else {
-    const models = (c.models && c.models.length > 0 ? [...c.models] : c.model ? [c.model] : []).sort();
+    modelListEl.appendChild(head);
     for (const m of models) {
-      const opt = document.createElement("option");
-      opt.value = m;
-      opt.textContent = m;
-      if (m === c.model) opt.selected = true;
-      modelSelect.appendChild(opt);
+      const isCurrent =
+        m.model === modelConfig.model && (g.provider === modelConfig.activeProvider || !modelConfig.activeProvider);
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "mm-model" + (isCurrent ? " is-current" : "");
+      const name = document.createElement("span");
+      name.className = "mm-model-name";
+      name.textContent = m.model;
+      row.appendChild(name);
+      if (m.contextLength) {
+        const ctx = document.createElement("span");
+        ctx.className = "mm-ctx";
+        ctx.textContent = formatContext(m.contextLength);
+        row.appendChild(ctx);
+      }
+      if (isCurrent) {
+        const check = document.createElement("span");
+        check.className = "mm-check";
+        check.textContent = "✓";
+        row.appendChild(check);
+      }
+      row.addEventListener("click", () => selectModel(m.model, g.provider || undefined));
+      modelListEl.appendChild(row);
     }
+    if (showError) {
+      const err = document.createElement("div");
+      err.className = "mm-error";
+      err.textContent = "⚠️ " + g.error + " — host unreachable";
+      modelListEl.appendChild(err);
+    }
+  }
+  if (shown === 0) {
+    const p = document.createElement("div");
+    p.className = "mm-empty";
+    p.textContent = modelFilter ? "No model matches the search." : "No models available.";
+    modelListEl.appendChild(p);
   }
 }
-modelSelect.addEventListener("change", () => {
-  const opt = modelSelect.selectedOptions[0];
-  if (!opt) return;
-  if (!opt.value) return; // placeholder
-  const message: Record<string, unknown> = { type: "setModel", model: opt.value };
-  if (opt.dataset.provider) message.provider = opt.dataset.provider;
+
+/** Selecting a model posts `setModel` and closes the modal. */
+function selectModel(model: string, provider?: string): void {
+  const message: Record<string, unknown> = { type: "setModel", model };
+  if (provider) message.provider = provider;
   vscode.postMessage(message);
+  closeModelModal();
   focusPrompt();
-});
-// Leaving the dropdown (blur) also returns the caret to the prompt.
-modelSelect.addEventListener("blur", () => focusPrompt());
-// A native <select> fires NO `change` when the SAME option is picked again, and
-// it keeps focus after the popup closes. Return the caret when the dropdown
-// interaction ends: a mouseup well after the popup opened (so the opening click
-// is ignored) with the select still focused.
-let modelPopupOpenedAt = 0;
-modelSelect.addEventListener("mousedown", () => {
-  modelPopupOpenedAt = Date.now();
-});
-document.addEventListener("mouseup", () => {
-  if (modelPopupOpenedAt && Date.now() - modelPopupOpenedAt > 250) {
-    modelPopupOpenedAt = 0;
-    if (document.activeElement === modelSelect) focusPrompt();
-  }
-});
-// Esc closes the popup keeping the same value: return the caret too.
-modelSelect.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") focusPrompt();
-});
-// Refresh the provider list every time the dropdown is opened, so a host that
-// came up after the panel loaded (e.g. llama.cpp started later) shows up.
-// The host-side cache (HOST_CACHE_TTL) keeps this from hammering the servers.
-function requestModelRefresh(): void {
-  if (modelSelect.disabled) return;
+}
+
+function openModelModal(): void {
+  if (modelBtn.disabled) return;
+  modelFilter = "";
+  modelSearchInput.value = "";
+  renderModelList();
+  modelModal.classList.remove("hidden");
+  modelSearchInput.focus();
+  // Refresh the provider list on open (a host started later shows up).
   vscode.postMessage({ type: "getConfig" });
 }
-modelSelect.addEventListener("mousedown", requestModelRefresh);
-modelSelect.addEventListener("focus", requestModelRefresh);
+
+function closeModelModal(): void {
+  modelModal.classList.add("hidden");
+  modelFilter = "";
+  modelSearchInput.value = "";
+}
+
+/** Config push: update the button label and, if the modal is open, its list. */
+function renderModelSelect(c: ConfigState): void {
+  modelConfig = c;
+  updateModelButton(c);
+  if (!modelModal.classList.contains("hidden")) renderModelList();
+}
+// The model selector BUTTON opens the filterable modal (no native dropdown).
+modelBtn.addEventListener("click", openModelModal);
+document.getElementById("model-close")?.addEventListener("click", closeModelModal);
+modelModal.querySelector(".mm-backdrop")?.addEventListener("click", closeModelModal);
+modelSearchInput.addEventListener("input", () => {
+  modelFilter = modelSearchInput.value;
+  renderModelList();
+});
+// Keyboard: from the filter, ArrowDown jumps into the list; Esc closes.
+modelSearchInput.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    modelListEl.querySelector<HTMLButtonElement>(".mm-model")?.focus();
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    closeModelModal();
+    focusPrompt();
+  }
+});
+// In the list: ArrowUp/Down move the focus, Enter selects (native button), Esc closes.
+modelListEl.addEventListener("keydown", (e) => {
+  const row = (e.target as HTMLElement)?.closest<HTMLButtonElement>(".mm-model");
+  if (!row) return;
+  const rows = [...modelListEl.querySelectorAll<HTMLButtonElement>(".mm-model")];
+  const i = rows.indexOf(row);
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    rows[Math.min(rows.length - 1, i + 1)]?.focus();
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    if (i <= 0) modelSearchInput.focus();
+    else rows[i - 1]?.focus();
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    closeModelModal();
+    focusPrompt();
+  }
+});
 
 // ── Thinking level (reasoning effort, generalized across providers) ──
 function renderThinkingSelect(c: ConfigState): void {

@@ -57,6 +57,16 @@ export class ChatViewProvider implements WebviewViewProvider {
   private context: ExtensionContext | undefined;
   private activeId: string | undefined;
   private hostCache = new Map<string, { at: number; models: ModelInfo[] }>();
+  /** models.dev context windows resolved for hosts that do NOT report one
+   * (e.g. opencode-go), keyed by `provider|model`. Filled in the background so
+   * the model LIST shows the same window that selecting the model adopts. */
+  private readonly modelsDevContext = new Map<string, number>();
+  /** `provider|model` keys already looked up this session (avoid re-hitting the
+   * catalog on every config push). */
+  private readonly modelsDevAttempted = new Set<string>();
+  /** `sessionId|model` for which the "context window unknown" alert was shown
+   * (so re-selecting the same model does not re-alert). */
+  private readonly contextAlerts = new Set<string>();
   // Short host-model cache: the dropdown re-fetches on open (view sends
   // getConfig on mousedown/focus), so a host that comes up later (e.g. llama.cpp
   // started after the panel) shows up on the next open. Kept short because the
@@ -799,7 +809,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         void this.pushConfig();
         // Host did not report a context window (e.g. OpenCode Go): resolve it
         // from models.dev in the background and update the panel when loaded.
-        if (!adoptedWindow && provider) this.resolveContextFromModelsDev(rt, model, provider);
+        if (!adoptedWindow) void this.ensureContextWindow(rt, model, provider);
         break;
       }
 
@@ -1568,6 +1578,14 @@ export class ChatViewProvider implements WebviewViewProvider {
         providerModels.push({ provider: name, model: m.id, ...(m.contextLength ? { contextLength: m.contextLength } : {}) });
       }
     }
+    // Fill in the context window from models.dev for hosts that do not report it
+    // (opencode-go & friends), so the LIST matches what selecting adopts. Cached
+    // values are applied now; the still-missing ones are resolved in background.
+    for (const m of providerModels) {
+      const known = this.modelsDevContext.get(`${m.provider}|${m.model}`);
+      if (!m.contextLength && known) m.contextLength = known;
+    }
+    this.enrichContextFromModelsDev(providerModels);
 
     let modelMissing = false;
     const rt = this.activeRuntime();
@@ -1630,27 +1648,86 @@ export class ChatViewProvider implements WebviewViewProvider {
   }
 
   /**
-   * Best-effort context window for a model whose host does not report it, from
-   * the models.dev catalog (cached). Updates the panel when it resolves and the
-   * user is still on that model.
+   * A selected model whose host did not report a context window: try the cached
+   * models.dev value, then the catalog itself; when NEITHER source knows it,
+   * alert the user (in-panel modal) to set the correct window manually.
    */
-  private resolveContextFromModelsDev(rt: SessionRuntime, model: string, provider: string): void {
+  private async ensureContextWindow(rt: SessionRuntime, model: string, provider?: string): Promise<void> {
+    const key = provider ? `${provider}|${model}` : "";
+    // 1) Already resolved (e.g. by the list enrichment): apply it immediately.
+    const known = provider ? this.modelsDevContext.get(key) : undefined;
+    if (known) {
+      this.applyContextWindow(rt, model, known);
+      return;
+    }
+    // 2) Ask models.dev (cached catalog).
+    let ctx: number | undefined;
+    const catalog = this.options.modelsDev;
+    if (catalog && provider) {
+      const entry = this.providers.getProvider(provider);
+      ctx = await catalog
+        .getContext(model, modelsDevProviderCandidates(provider, entry?.baseUrl))
+        .catch(() => undefined);
+      if (ctx) this.modelsDevContext.set(key, ctx);
+    }
+    if (ctx) {
+      this.applyContextWindow(rt, model, ctx);
+      return;
+    }
+    // 3) Unknown everywhere: prompt the user (once per session+model).
+    if (this.activeRuntime() !== rt || rt.model !== model) return; // raced
+    const alertKey = `${rt.sessionId}|${model}`;
+    if (this.contextAlerts.has(alertKey)) return;
+    this.contextAlerts.add(alertKey);
+    await this.inPanelAlert({
+      kind: "info",
+      title: "Context window unknown",
+      message:
+        `Harny could not determine the context window for "${model}" (the host did not report it and it is ` +
+        `not in models.dev). Set the correct value from the Window control to keep auto-compaction accurate.`,
+    });
+  }
+
+  /** Apply a resolved context window to the session (only if still current). */
+  private applyContextWindow(rt: SessionRuntime, model: string, ctx: number): void {
+    // A fast model switch may have raced: only apply to the current model.
+    if (this.activeRuntime() !== rt || rt.model !== model) return;
+    rt.contextWindow = ctx;
+    this.sessions.saveSettings(rt.sessionId, { contextWindow: ctx });
+    void this.pushConfig();
+  }
+
+  /**
+   * Resolve from models.dev (best-effort, BACKGROUND) the context windows that
+   * a host did NOT report, so the model list shows them too. Each
+   * `provider|model` is attempted at most once per session; when something
+   * resolves, a config push refreshes the list.
+   */
+  private enrichContextFromModelsDev(
+    providerModels: { provider: string; model: string; contextLength?: number }[],
+  ): void {
     const catalog = this.options.modelsDev;
     if (!catalog) return;
-    const entry = this.providers.getProvider(provider);
-    void catalog
-      .getContext(model, modelsDevProviderCandidates(provider, entry?.baseUrl))
-      .then((ctx) => {
-        if (!ctx) return;
-        // A fast model switch may have raced: only apply to the current model.
-        if (this.activeRuntime() !== rt || rt.model !== model) return;
-        rt.contextWindow = ctx;
-        this.sessions.saveSettings(rt.sessionId, { contextWindow: ctx });
-        void this.pushConfig();
-      })
-      .catch(() => {
-        /* offline: keep the current window */
-      });
+    const missing = providerModels.filter((m) => {
+      const key = `${m.provider}|${m.model}`;
+      return !m.contextLength && !this.modelsDevAttempted.has(key);
+    });
+    if (missing.length === 0) return;
+    for (const m of missing) this.modelsDevAttempted.add(`${m.provider}|${m.model}`);
+    void (async () => {
+      let resolved = 0;
+      for (const m of missing) {
+        const entry = this.providers.getProvider(m.provider);
+        const ctx = await catalog
+          .getContext(m.model, modelsDevProviderCandidates(m.provider, entry?.baseUrl))
+          .catch(() => undefined);
+        if (ctx) {
+          this.modelsDevContext.set(`${m.provider}|${m.model}`, ctx);
+          resolved++;
+        }
+      }
+      if (resolved > 0) void this.pushConfig();
+    })();
   }
 
   private async fetchHostModels(name: string): Promise<ModelInfo[]> {

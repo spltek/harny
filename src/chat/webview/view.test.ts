@@ -65,7 +65,7 @@ function setupDom(
         <div id="attachment-chips" class="hidden"></div>
       </div>
     </div>
-    <div id="status">AI Model: <select id="model-select"></select><button id="gear-btn">⚙</button><input type="range" id="ctx-range" min="32000" max="2000000" step="1000"><span id="ctx-value"></span><input type="range" id="out-range" min="256" max="65536" step="256"><span id="out-value"></span><input id="sampler-temp" type="radio" name="sampler" checked><input id="sampler-topp" type="radio" name="sampler"><input type="range" id="samp-range" min="0" max="2" step="0.1"><span id="samp-value">Auto</span><button id="samp-auto">Auto</button><input type="range" id="presence-range" min="0" max="2" step="0.1"><span id="presence-value">Auto</span><button id="presence-auto">Auto</button><input type="range" id="freq-range" min="0" max="2" step="0.1"><span id="freq-value">Auto</span><button id="freq-auto">Auto</button></div>
+    <div id="status">AI Model: <button id="model-btn"><span id="model-btn-label">Select a model</span></button><button id="gear-btn">⚙</button><input type="range" id="ctx-range" min="32000" max="2000000" step="1000"><span id="ctx-value"></span><input type="range" id="out-range" min="256" max="65536" step="256"><span id="out-value"></span><input id="sampler-temp" type="radio" name="sampler" checked><input id="sampler-topp" type="radio" name="sampler"><input type="range" id="samp-range" min="0" max="2" step="0.1"><span id="samp-value">Auto</span><button id="samp-auto">Auto</button><input type="range" id="presence-range" min="0" max="2" step="0.1"><span id="presence-value">Auto</span><button id="presence-auto">Auto</button><input type="range" id="freq-range" min="0" max="2" step="0.1"><span id="freq-value">Auto</span><button id="freq-auto">Auto</button></div>
     <div id="ctl-cards"><input type="range" id="par-range" min="0" max="100" step="1" /><span id="par-value">4</span><button id="lg-reset"></button><div id="lg-head"><div id="lg-toggle" class="sampler-toggle"><input type="radio" name="lg-level" id="lg-high" value="high" /><input type="radio" name="lg-level" id="lg-normal" value="normal" checked /><input type="radio" name="lg-level" id="lg-low" value="low" /><input type="checkbox" id="lg-response" /></div><button id="lg-collapse"></button></div><div id="lg-params-field"><div id="lg-fields"></div></div><div id="skills-card" class="hidden"><div id="skills-list"></div></div><div id="mcp-card" class="hidden"><div id="mcp-list"></div><button id="mcp-configure"></button></div></div>
     <div id="metrics"><input type="radio" name="thinking-level" id="thinking-off" value="off" /><input type="radio" name="thinking-level" id="thinking-low" value="low" /><input type="radio" name="thinking-level" id="thinking-medium" value="medium" /><input type="radio" name="thinking-level" id="thinking-high" value="high" /><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button><span id="compact-threshold-label"></span><button id="compact-settings-btn">⚙</button></div>
     <div id="compact-settings-modal" class="hidden">
@@ -90,15 +90,16 @@ function setupDom(
         <select id="provider-select"></select>
         <input id="pe-name" type="text" />
         <input id="pe-baseurl" type="text" />
-        <input id="pe-apikey" type="text" />
+        <input id="pe-apikey" type="password" />
+        <button id="pe-apikey-reveal">eye</button>
         <select id="pe-thinking"><option value="effort">Effort</option><option value="bool">Bool</option><option value="unspecified">Unspecified</option></select>
         <input id="pe-session-header" type="text" />
         <button id="provider-test" class="secondary">Test</button>
         <button id="provider-delete" class="secondary">Delete</button>
         <button id="provider-add" class="secondary">+ New</button>
         <div id="provider-test-result" class="hidden"></div>
-        <button id="providers-export" class="secondary">Export</button>
-        <button id="providers-import" class="secondary">Import</button>
+        <button id="providers-export" class="secondary">Export models configuration</button>
+        <button id="providers-import" class="secondary">Import models configuration</button>
         <span id="providers-io-result" class="providers-io"></span>
         <button id="providers-save">Save</button>
         <button id="providers-cancel" class="secondary">Cancel</button>
@@ -169,6 +170,14 @@ function setupDom(
         </div>
       </div>
     </div>
+    <div id="model-modal" class="hidden">
+      <div class="mm-backdrop"></div>
+      <div class="mm-card">
+        <div class="mm-head"><h3>Select model</h3><button id="model-close">✕</button></div>
+        <div class="mm-search"><input id="model-search" type="search" placeholder="Search models" /></div>
+        <div id="model-list"></div>
+      </div>
+    </div>
     <script id="harny-view-init" type="application/json">${JSON.stringify(init)}</script>
   `;
   (globalThis as Record<string, unknown>).acquireVsCodeApi = () => ({
@@ -189,36 +198,32 @@ describe("view webview client", () => {
     setupDom();
   });
 
-  it("keeps failed providers visible in the model dropdown, and falls back to 'pick one' when the saved model is gone", async () => {
+  it("keeps failed providers visible in the model modal, and falls back to 'pick one' when the saved model is gone", async () => {
     await loadView();
-    const select = document.getElementById("model-select") as HTMLSelectElement;
+    const btn = document.getElementById("model-btn") as HTMLButtonElement;
+    const label = document.getElementById("model-btn-label") as HTMLElement;
 
-    // Host fetch failures: the provider STILL appears (red group + error), and
-    // the saved model that is no longer served shows the splash placeholder.
     hostMessage({
       type: "config",
       config: { provider: "openai", model: "old-model", hasKey: true, hostModelErrors: [{ provider: "llamacpp", error: "HTTP 500" }], models: [], providerModels: [{ provider: "openai", model: "gpt-4o" }], contextWindow: 128000 },
     });
+    // The saved model is gone: the button shows the placeholder.
+    expect(label.textContent).toBe("Select a model");
+    expect(btn.classList.contains("placeholder")).toBe(true);
 
-    // The failed provider's own optgroup exists with the error message.
-    const failedGroup = [...select.querySelectorAll<HTMLOptGroupElement>("optgroup")].find(
-      (g) => g.label === "llamacpp",
-    );
-    expect(failedGroup).toBeTruthy();
-    expect(failedGroup!.textContent).toContain("HTTP 500");
+    // Open the modal: the failed provider appears with its error.
+    btn.click();
+    const list = document.getElementById("model-list") as HTMLElement;
+    expect(list.textContent).toContain("llamacpp");
+    expect(list.textContent).toContain("HTTP 500");
 
-    // The saved model is gone from the list: pick-one placeholder is shown.
-    const placeholder = select.querySelector<HTMLOptionElement>('option[value=""]');
-    expect(placeholder).toBeTruthy();
-    expect(placeholder!.textContent).toContain("Select a model");
-
-    // Models available and reachable: no placeholder, real model selected.
+    // Models available and reachable: the button shows the real model.
     hostMessage({
       type: "config",
       config: { provider: "openai-compatible", model: "qwen.gguf", hasKey: true, models: [], providerModels: [{ provider: "llamacpp", model: "qwen.gguf" }], contextWindow: 128000 },
     });
-    expect(select.querySelector('option[value=""]')).toBeFalsy();
-    expect(select.value).toBe("qwen.gguf");
+    expect(label.textContent).toContain("qwen.gguf");
+    expect(btn.classList.contains("placeholder")).toBe(false);
   });
 
   it("collapses and expands the control stack via the toggle (collapsed by default)", async () => {
@@ -473,7 +478,7 @@ describe("view webview client", () => {
     expect((document.getElementById("abort-btn") as HTMLButtonElement).disabled).toBe(false);
     expect((document.getElementById("compact-btn") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("compact-settings-btn") as HTMLButtonElement).disabled).toBe(true);
-    expect((document.getElementById("model-select") as HTMLSelectElement).disabled).toBe(true);
+    expect((document.getElementById("model-btn") as HTMLButtonElement).disabled).toBe(true);
     expect((document.getElementById("ctx-range") as HTMLInputElement).disabled).toBe(true);
     expect((document.getElementById("out-range") as HTMLInputElement).disabled).toBe(true);
     expect((document.getElementById("samp-range") as HTMLInputElement).disabled).toBe(true);
@@ -488,7 +493,7 @@ describe("view webview client", () => {
     hostMessage({ type: "status", active: false });
     expect((document.getElementById("compact-btn") as HTMLButtonElement).disabled).toBe(false);
     expect((document.getElementById("compact-settings-btn") as HTMLButtonElement).disabled).toBe(false);
-    expect((document.getElementById("model-select") as HTMLSelectElement).disabled).toBe(false);
+    expect((document.getElementById("model-btn") as HTMLButtonElement).disabled).toBe(false);
     expect((document.getElementById("ctx-range") as HTMLInputElement).disabled).toBe(false);
     expect((document.getElementById("out-range") as HTMLInputElement).disabled).toBe(false);
     expect((document.getElementById("samp-range") as HTMLInputElement).disabled).toBe(false);
@@ -1402,14 +1407,11 @@ describe("view webview client", () => {
     (document.getElementById("parallel-btn") as HTMLButtonElement).click();
     expect(document.activeElement).toBe(input);
 
-    // Model dropdown selection
+    // Model selection (modal): picking a model returns focus to the prompt.
     blur();
-    const sel = document.getElementById("model-select") as HTMLSelectElement;
-    const opt = document.createElement("option");
-    opt.value = "m1";
-    sel.appendChild(opt);
-    sel.value = "m1";
-    sel.dispatchEvent(new Event("change"));
+    hostMessage({ type: "config", config: { provider: "openai", model: "m1", hasKey: true, models: ["m1"], providerModels: [{ provider: "openai", model: "m1" }] } });
+    (document.getElementById("model-btn") as HTMLButtonElement).click();
+    (document.querySelector("#model-list .mm-model") as HTMLButtonElement).click();
     expect(document.activeElement).toBe(input);
 
     // Attach flow finished (picker closed / cancelled)
@@ -1418,39 +1420,26 @@ describe("view webview client", () => {
     expect(document.activeElement).toBe(input);
   });
 
-  it("returns focus when the SAME model is re-selected, or Esc closes the dropdown", async () => {
-    vi.useFakeTimers();
-    try {
-      await loadView();
-      const input = document.getElementById("user-input") as HTMLTextAreaElement;
-      const sel = document.getElementById("model-select") as HTMLSelectElement;
-
-      // (a) popup closed by picking the SAME model (no `change` event).
-      (document.activeElement as HTMLElement | null)?.blur();
-      sel.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-      vi.advanceTimersByTime(400);
-      sel.focus();
-      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-      expect(document.activeElement).toBe(input);
-
-      // (b) Esc keeps the same selection.
-      (document.activeElement as HTMLElement | null)?.blur();
-      sel.focus();
-      sel.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-      expect(document.activeElement).toBe(input);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("leaving the model dropdown (blur) returns focus to the prompt", async () => {
+  it("Esc closes the model modal and returns focus to the prompt", async () => {
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
-    const sel = document.getElementById("model-select") as HTMLSelectElement;
+    const modal = document.getElementById("model-modal") as HTMLElement;
     (document.activeElement as HTMLElement | null)?.blur();
-    sel.focus();
-    sel.blur();
+    (document.getElementById("model-btn") as HTMLButtonElement).click();
+    expect(modal.classList.contains("hidden")).toBe(false);
+
+    document.getElementById("model-search")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(modal.classList.contains("hidden")).toBe(true);
     expect(document.activeElement).toBe(input);
+  });
+
+  it("the ✕ closes the model modal", async () => {
+    await loadView();
+    const modal = document.getElementById("model-modal") as HTMLElement;
+    (document.getElementById("model-btn") as HTMLButtonElement).click();
+    expect(modal.classList.contains("hidden")).toBe(false);
+    (document.getElementById("model-close") as HTMLButtonElement).click();
+    expect(modal.classList.contains("hidden")).toBe(true);
   });
 
   it("closing the mode menu (Esc / outside click) returns focus to the prompt", async () => {
@@ -2239,7 +2228,7 @@ describe("view webview client", () => {
     expect((bubble.querySelector(".subagent-abort") as HTMLButtonElement).hidden).toBe(true);
   });
 
-  it("renders a model dropdown grouped by provider and posts setModel on change", async () => {
+  it("renders the model modal grouped by provider and posts setModel on click", async () => {
     await loadView();
     hostMessage({
       type: "config",
@@ -2256,16 +2245,126 @@ describe("view webview client", () => {
         ],
       },
     });
+    // The selector BUTTON shows the current model.
+    expect((document.getElementById("model-btn-label") as HTMLElement).textContent).toContain("deepseek-v4-flash");
 
-    const select = document.getElementById("model-select") as HTMLSelectElement;
-    expect(select.options.length).toBe(3);
-    expect(select.querySelector("optgroup[label='llamacpp']")?.textContent).toContain("LLM/gemma.gguf");
-    expect(select.value).toBe("deepseek-v4-flash");
+    (document.getElementById("model-btn") as HTMLButtonElement).click();
+    const list = document.getElementById("model-list") as HTMLElement;
+    const names = [...list.querySelectorAll(".mm-model")].map((m) => m.querySelector(".mm-model-name")?.textContent);
+    expect(names).toEqual(["LLM/gemma.gguf", "deepseek-v4-flash", "deepseek-v4-pro"]);
+    expect(list.querySelector(".mm-model.is-current")?.textContent).toContain("deepseek-v4-flash");
 
-    const local = [...select.options].find((o) => o.value === "LLM/gemma.gguf") as HTMLOptionElement;
-    select.value = local.value;
-    select.dispatchEvent(new Event("change"));
+    const local = [...list.querySelectorAll<HTMLButtonElement>(".mm-model")].find((m) =>
+      m.textContent?.includes("LLM/gemma.gguf"),
+    )!;
+    local.click();
     expect(posted).toContainEqual({ type: "setModel", model: "LLM/gemma.gguf", provider: "llamacpp" });
+    expect((document.getElementById("model-modal") as HTMLElement).classList.contains("hidden")).toBe(true);
+  });
+
+  it("filters the model modal keeping the provider tree (only matches remain)", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai-compatible",
+        activeProvider: "openrouter",
+        model: "qwen/qwen3.8",
+        hasKey: true,
+        models: [],
+        providerModels: [
+          { provider: "openrouter", model: "deepseek/deepseek-v4" },
+          { provider: "openrouter", model: "qwen/qwen3.8" },
+          { provider: "llamacpp", model: "Qwen3.6-35B" },
+          { provider: "openai", model: "gpt-4o" },
+        ],
+      },
+    });
+    (document.getElementById("model-btn") as HTMLButtonElement).click();
+    const list = document.getElementById("model-list") as HTMLElement;
+    expect(list.querySelectorAll(".mm-provider").length).toBe(3);
+
+    const filter = document.getElementById("model-search") as HTMLInputElement;
+    filter.value = "qwen";
+    filter.dispatchEvent(new Event("input"));
+
+    // Tree preserved: only providers WITH a match remain, and only the matching models.
+    const headers = [...list.querySelectorAll(".mm-provider")].map((h) => h.firstChild?.textContent);
+    expect(headers).toEqual(["llamacpp", "openrouter"]);
+    const names = [...list.querySelectorAll(".mm-model")].map((m) => m.querySelector(".mm-model-name")?.textContent);
+    expect(names).toEqual(["Qwen3.6-35B", "qwen/qwen3.8"]);
+
+    // No match -> empty hint.
+    filter.value = "zzz";
+    filter.dispatchEvent(new Event("input"));
+    expect(list.textContent).toContain("No model matches");
+  });
+
+  it("filtering by the PROVIDER name keeps ALL its models", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai-compatible",
+        activeProvider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [
+          { provider: "openai", model: "gpt-4o" },
+          { provider: "openai", model: "gpt-4o-mini" },
+          { provider: "openrouter", model: "qwen/qwen3.8" },
+        ],
+      },
+    });
+    (document.getElementById("model-btn") as HTMLButtonElement).click();
+    const list = document.getElementById("model-list") as HTMLElement;
+    const filter = document.getElementById("model-search") as HTMLInputElement;
+    filter.value = "openai";
+    filter.dispatchEvent(new Event("input"));
+
+    const headers = [...list.querySelectorAll(".mm-provider")].map((h) => h.firstChild?.textContent);
+    expect(headers).toEqual(["openai"]);
+    const names = [...list.querySelectorAll(".mm-model")].map((m) => m.querySelector(".mm-model-name")?.textContent);
+    expect(names).toEqual(["gpt-4o", "gpt-4o-mini"]);
+  });
+
+  it("navigates the model modal with the keyboard (ArrowDown/Up, Esc)", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        activeProvider: "openai",
+        model: "m1",
+        hasKey: true,
+        models: [],
+        providerModels: [
+          { provider: "openai", model: "m1" },
+          { provider: "openai", model: "m2" },
+        ],
+      },
+    });
+    (document.getElementById("model-btn") as HTMLButtonElement).click();
+    const modal = document.getElementById("model-modal") as HTMLElement;
+    const filter = document.getElementById("model-search") as HTMLInputElement;
+    const list = document.getElementById("model-list") as HTMLElement;
+    const rows = [...list.querySelectorAll<HTMLButtonElement>(".mm-model")];
+
+    // ArrowDown from the filter focuses the first row.
+    filter.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    expect(document.activeElement).toBe(rows[0]);
+    // ArrowDown / ArrowUp move between rows; ArrowUp from the first returns to the filter.
+    rows[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    expect(document.activeElement).toBe(rows[1]);
+    rows[1].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+    expect(document.activeElement).toBe(rows[0]);
+    rows[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+    expect(document.activeElement).toBe(filter);
+    // Esc from a row closes the modal.
+    filter.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    rows[0].dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(modal.classList.contains("hidden")).toBe(true);
   });
 
   it("shows the host-reported context window next to each model", async () => {
@@ -2285,11 +2384,15 @@ describe("view webview client", () => {
         ],
       },
     });
-    const select = document.getElementById("model-select") as HTMLSelectElement;
-    const byValue = (v: string) => [...select.options].find((o) => o.value === v) as HTMLOptionElement;
-    expect(byValue("openrouter/x").textContent).toBe("openrouter/x · 128k");
-    expect(byValue("openrouter/big").textContent).toBe("openrouter/big · 1M");
-    expect(byValue("openrouter/plain").textContent).toBe("openrouter/plain");
+    (document.getElementById("model-btn") as HTMLButtonElement).click();
+    const list = document.getElementById("model-list") as HTMLElement;
+    const row = (name: string) =>
+      [...list.querySelectorAll<HTMLButtonElement>(".mm-model")].find(
+        (m) => m.querySelector(".mm-model-name")?.textContent === name,
+      )!;
+    expect(row("openrouter/x").querySelector(".mm-ctx")?.textContent).toBe("128k");
+    expect(row("openrouter/big").querySelector(".mm-ctx")?.textContent).toBe("1M");
+    expect(row("openrouter/plain").querySelector(".mm-ctx")).toBeNull();
   });
 
   it("orders provider groups alphabetically and merges failed providers into their sorted position", async () => {
@@ -2313,8 +2416,9 @@ describe("view webview client", () => {
         hostModelErrors: [{ provider: "llamacpp", error: "HTTP 500" }],
       },
     });
-    const select = document.getElementById("model-select") as HTMLSelectElement;
-    const labels = [...select.querySelectorAll<HTMLOptGroupElement>("optgroup")].map((g) => g.label);
+    (document.getElementById("model-btn") as HTMLButtonElement).click();
+    const list = document.getElementById("model-list") as HTMLElement;
+    const labels = [...list.querySelectorAll(".mm-provider")].map((h) => h.firstChild?.textContent);
     expect(labels).toEqual(["llamacpp", "opencode-go", "openrouter"]);
   });
 
@@ -2332,27 +2436,72 @@ describe("view webview client", () => {
         hostModelErrors: [{ provider: "llamacpp", error: "GET /v1/models → HTTP 500" }],
       },
     });
-    const select = document.getElementById("model-select") as HTMLSelectElement;
-    const failed = select.querySelector<HTMLOptGroupElement>("optgroup[label='llamacpp']");
-    expect(failed).toBeTruthy();
-    expect(failed!.className).toContain("optgroup-failed");
-    const err = [...failed!.querySelectorAll<HTMLOptionElement>("option")].find((o) => o.className.includes("option-error"));
+    (document.getElementById("model-btn") as HTMLButtonElement).click();
+    const list = document.getElementById("model-list") as HTMLElement;
+    const headers = [...list.querySelectorAll(".mm-provider")].map((h) => h.firstChild?.textContent);
+    expect(headers).toContain("llamacpp");
+    const err = list.querySelector(".mm-error") as HTMLElement;
     expect(err).toBeTruthy();
-    expect(err!.textContent).toContain("HTTP 500");
-    expect(err!.textContent).toContain("host unreachable");
-    expect(err!.disabled).toBe(true);
+    expect(err.textContent).toContain("HTTP 500");
+    expect(err.textContent).toContain("host unreachable");
   });
 
-  it("refreshes the provider list when the model dropdown is opened", async () => {
+  it("refreshes the provider list when the model modal is opened", async () => {
     await loadView();
     posted.length = 0;
-    const select = document.getElementById("model-select") as HTMLSelectElement;
-    select.dispatchEvent(new MouseEvent("mousedown"));
+    (document.getElementById("model-btn") as HTMLButtonElement).click();
     expect(posted).toContainEqual({ type: "getConfig" });
+  });
 
-    posted.length = 0;
-    select.dispatchEvent(new FocusEvent("focus"));
-    expect(posted).toContainEqual({ type: "getConfig" });
+  it("masks the API key and reveals it ONLY while the eye is held", async () => {
+    await loadView();
+    const key = document.getElementById("pe-apikey") as HTMLInputElement;
+    const eye = document.getElementById("pe-apikey-reveal") as HTMLButtonElement;
+    expect(key.type).toBe("password");
+
+    eye.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(key.type).toBe("text");
+    eye.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    expect(key.type).toBe("password");
+
+    // Leaving the button while held also re-masks.
+    eye.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    eye.dispatchEvent(new MouseEvent("mouseleave", { bubbles: true }));
+    expect(key.type).toBe("password");
+  });
+
+  it("reveals the API key on TOUCH and re-masks on release / window blur", async () => {
+    await loadView();
+    const key = document.getElementById("pe-apikey") as HTMLInputElement;
+    const eye = document.getElementById("pe-apikey-reveal") as HTMLButtonElement;
+
+    eye.dispatchEvent(new Event("touchstart", { cancelable: true, bubbles: true }));
+    expect(key.type).toBe("text");
+    eye.dispatchEvent(new Event("touchend", { bubbles: true }));
+    expect(key.type).toBe("password");
+
+    // Losing the window focus while held re-masks too.
+    eye.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(key.type).toBe("text");
+    window.dispatchEvent(new Event("blur"));
+    expect(key.type).toBe("password");
+  });
+
+  it("re-masks the API key when another provider is selected", async () => {
+    await loadView();
+    hostMessage({
+      type: "providersEditor",
+      data: { activeProvider: "a", providers: { a: { apiKey: "sk-a" }, b: { apiKey: "sk-b" } } },
+    });
+    const key = document.getElementById("pe-apikey") as HTMLInputElement;
+    const eye = document.getElementById("pe-apikey-reveal") as HTMLButtonElement;
+    eye.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(key.type).toBe("text");
+
+    const sel = document.getElementById("provider-select") as HTMLSelectElement;
+    sel.value = "b";
+    sel.dispatchEvent(new Event("change"));
+    expect(key.type).toBe("password");
   });
 
   it("gear button opens the providers editor and save posts normalized providers", async () => {
@@ -3109,11 +3258,51 @@ describe("view webview client", () => {
         ],
       },
     });
-    const select = document.getElementById("model-select") as HTMLSelectElement;
-    expect(select.options[0].textContent).toContain("Select a model");
-    expect(select.options[0].disabled).toBe(true);
-    // placeholder selected, no real model auto-selected
-    expect(select.value).toBe("");
+    const label = document.getElementById("model-btn-label") as HTMLElement;
+    const btn = document.getElementById("model-btn") as HTMLButtonElement;
+    expect(label.textContent).toBe("Select a model");
+    expect(btn.classList.contains("placeholder")).toBe(true);
+  });
+
+  it("scrolls the tab strip sideways on a vertical wheel", async () => {
+    await loadView();
+    const tabs = document.getElementById("tabs") as HTMLElement;
+    let left = 0;
+    Object.defineProperty(tabs, "scrollLeft", {
+      configurable: true,
+      get: () => left,
+      set: (v: number) => {
+        left = v;
+      },
+    });
+    tabs.dispatchEvent(new WheelEvent("wheel", { deltaY: 40, bubbles: true, cancelable: true }));
+    expect(left).toBe(40);
+  });
+
+  it("scrolls the ACTIVE tab into view when the active tab changes", async () => {
+    await loadView();
+    const spy = vi.fn();
+    const proto = HTMLElement.prototype as unknown as { scrollIntoView?: () => void };
+    const original = proto.scrollIntoView;
+    proto.scrollIntoView = spy;
+    try {
+      hostMessage({
+        type: "switchView",
+        activeId: "b",
+        openIds: ["a", "b"],
+        sessions: [
+          { id: "a", name: "Refactor", createdAt: 1, updatedAt: 2, messageCount: 3 },
+          { id: "b", name: "Debug", createdAt: 2, updatedAt: 1, messageCount: 1 },
+        ],
+        messages: [],
+        config: {},
+        workingIds: [],
+      });
+      expect(spy).toHaveBeenCalled();
+    } finally {
+      if (original) proto.scrollIntoView = original;
+      else delete proto.scrollIntoView;
+    }
   });
 
   it("disables the tab × of a WORKING session (switching stays allowed)", async () => {

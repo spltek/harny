@@ -183,10 +183,17 @@ ${renderViewConfig(deps)}
     /* Tabs: raised pill keys, consistent with the 3D button chrome. */
     #tabs {
       display: flex; gap: 3px; padding: 5px 8px 0;
-      border-bottom: 1px solid var(--border); overflow-x: auto; flex-shrink: 0;
-      scrollbar-width: none;
+      border-bottom: 1px solid var(--border); flex-shrink: 0;
+      /* Horizontal scroll ONLY: no vertical scrollbar on a single-row strip. */
+      overflow-x: auto; overflow-y: hidden;
+      /* Tabs do NOT shrink (they stay readable); the strip SCROLLS instead. A
+         thin, always-visible scrollbar + wheel-to-sideways make it reachable. */
+      scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
     }
-    #tabs::-webkit-scrollbar { display: none; }
+    #tabs::-webkit-scrollbar { height: 6px; }
+    #tabs::-webkit-scrollbar-track { background: transparent; }
+    #tabs::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.22); border-radius: 3px; }
+    #tabs::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.4); }
     .tab {
       position: relative;
       display: inline-flex; align-items: center; gap: 5px;
@@ -196,7 +203,8 @@ ${renderViewConfig(deps)}
       background: linear-gradient(to bottom, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0));
       box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.1);
       transition: color 0.12s, background-color 0.12s, box-shadow 0.12s;
-      max-width: 12rem; min-width: 0; flex-shrink: 1;
+      /* Readable floor: never squeeze a tab below this (the strip scrolls). */
+      max-width: 12rem; min-width: 5.5rem; flex-shrink: 0;
       /* sits flush on the strip's border (active covers it with its face) */
       margin-bottom: -1px;
     }
@@ -1155,11 +1163,18 @@ ${renderViewConfig(deps)}
        "Working..." bubble — same harny-pulse 1.2s animation, applied in the
        same tick (send/compactStart), so the two pulse together. */
     #send-btn.blinking { animation: harny-pulse 1.2s ease-in-out infinite; }
-    #model-select {
-      flex: 1; min-width: 0; background: transparent; color: inherit; border: none; outline: none;
-      font-size: var(--fs-md); cursor: pointer; height: 1.85rem;
+    /* Model selector: a BUTTON (not a native <select>) that opens the
+       filterable "Select model" modal. */
+    .model-btn {
+      flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 6px;
+      background: transparent; color: inherit; border: none; outline: none;
+      font-size: var(--fs-md); cursor: pointer; height: 1.85rem; text-align: left;
     }
-    #model-select option, #model-select optgroup { color: #1e1e1e; }
+    .model-btn:disabled { opacity: 0.5; cursor: default; }
+    .model-btn:hover:not(:disabled) #model-btn-label { color: var(--accent); }
+    #model-btn-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .model-btn.placeholder #model-btn-label { color: var(--muted); font-style: italic; }
+    .model-btn .model-btn-chevron { flex: none; color: var(--muted); }
     #thinking-select {
       width: 100%;
       background: var(--input-bg); color: var(--fg); border: 1px solid var(--border);
@@ -1357,6 +1372,17 @@ ${renderViewConfig(deps)}
     #provider-select option:checked { background: var(--accent, #3794ff); color: #fff; }
     .provider-form-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; overflow-y: auto; }
     .provider-form-col .field-label { font-size: var(--fs-md); }
+    /* API key: masked by default; the eye reveals it ONLY while held down. */
+    .pe-secret { position: relative; display: flex; align-items: center; }
+    .pe-secret input { flex: 1; padding-right: 2.2rem; }
+    .pe-secret .pe-eye {
+      position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 1.6rem; height: 1.6rem; min-height: 0; padding: 0;
+      background: transparent; border: none; box-shadow: none; color: var(--muted); cursor: pointer;
+    }
+    .pe-secret .pe-eye:hover { color: var(--accent); filter: none; }
+    .pe-secret .pe-eye:active { transform: translateY(-50%); box-shadow: none; filter: none; }
     .provider-form-col input, .provider-form-col select {
       font-size: var(--fs-lg); padding: 5px 8px; border-radius: 5px;
       background: var(--input-bg, #252526); border: 1px solid var(--border); color: var(--fg);
@@ -1566,6 +1592,59 @@ ${renderViewConfig(deps)}
     .sm-empty { padding: 18px; text-align: center; color: #888; font-size: var(--fs-lg); }
     /* Main sessions list: no-match hint. */
     #sessions .empty.no-match { font-style: italic; }
+
+    /* ── "Select model" modal (filterable, provider tree preserved) ── */
+    #model-modal { position: fixed; inset: 0; z-index: 70; }
+    #model-modal.hidden { display: none; }
+    #model-modal .mm-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5); }
+    #model-modal .mm-card {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      width: min(560px, calc(100% - 20px)); max-height: 88%;
+      background: var(--bg, #1e1e1e); border: 1px solid var(--border);
+      border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5); font-size: var(--fs-lg);
+    }
+    #model-modal .mm-head { display: flex; align-items: center; justify-content: space-between; }
+    #model-modal h3 { margin: 0; font-size: var(--fs-xl); font-weight: 700; color: var(--fg-strong); }
+    #model-modal .mm-search { display: flex; }
+    #model-search {
+      width: 100%; background: var(--surface-2); color: var(--fg);
+      border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+      font-size: var(--fs-lg); outline: none;
+    }
+    #model-search:focus { border-color: var(--accent); }
+    #model-list { display: flex; flex-direction: column; gap: 5px; overflow-y: auto; min-height: 160px; flex: 1; }
+    /* Provider header: the tree is PRESERVED when filtering (only matching
+       models remain, empty providers drop out). */
+    .mm-provider {
+      display: flex; align-items: center; gap: 6px; margin-top: 6px; padding: 2px 4px;
+      font-size: var(--fs-sm); font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;
+      color: var(--muted); position: sticky; top: 0; background: var(--bg, #1e1e1e);
+    }
+    .mm-provider .mm-count { font-weight: 500; color: #777; text-transform: none; }
+    /* Plain list rows: cancel the global "key" chrome (bevel/shadow/press).
+       Hover just lightens the background. Id-prefixed so it beats the
+       button:not(:disabled):hover filter. */
+    #model-list .mm-model {
+      display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+      padding: 9px 12px 9px 18px; border-radius: 8px; min-height: 0;
+      justify-content: flex-start; box-shadow: none;
+      background: transparent; border: 1px solid transparent; color: var(--fg);
+      cursor: pointer; font-size: var(--fs-lg);
+      transition: background-color 0.12s;
+    }
+    #model-list .mm-model:hover { background: var(--surface-2); filter: none; transform: none; }
+    #model-list .mm-model:active { transform: none; box-shadow: none; filter: none; }
+    #model-list .mm-model:focus { outline: none; border-color: var(--accent); background: var(--surface-2); }
+    /* The current model: a light accent tint so it reads as "selected". */
+    #model-list .mm-model.is-current { background: rgba(217, 95, 39, 0.16); }
+    #model-list .mm-model.is-current:hover { background: rgba(217, 95, 39, 0.24); }
+    .mm-model .mm-model-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mm-model .mm-ctx { flex: none; font-size: var(--fs-sm); color: #888; }
+    .mm-model.is-current { color: var(--accent); font-weight: 600; }
+    .mm-model .mm-check { flex: none; color: var(--accent); }
+    .mm-error { padding: 4px 8px 4px 20px; font-size: var(--fs-sm); color: var(--error); }
+    .mm-empty { padding: 18px; text-align: center; color: #888; font-size: var(--fs-lg); }
   </style>
 </head>
 <body class="controls-collapsed">
@@ -1650,7 +1729,10 @@ ${renderViewConfig(deps)}
         <span>Parallel</span>
       </button>
       <span class="model-label">AI Model:</span>
-      <select id="model-select" title="Switch model"></select>
+      <button type="button" id="model-btn" class="model-btn" title="Select a model" aria-haspopup="dialog">
+        <span id="model-btn-label">Select a model</span>
+        <svg class="model-btn-chevron" width="10" height="10" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+      </button>
       <button id="gear-btn" class="gear-btn" title="Configure providers & models"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
     </div>
     <div id="attach-row">
@@ -1826,6 +1908,19 @@ ${renderViewConfig(deps)}
       </div>
     </div>
   </div>
+  <div id="model-modal" class="hidden">
+    <div class="mm-backdrop"></div>
+    <div class="mm-card">
+      <div class="mm-head">
+        <h3>Select model</h3>
+        <button id="model-close" class="secondary-ghost" title="Close" aria-label="Close">✕</button>
+      </div>
+      <div class="mm-search">
+        <input id="model-search" type="search" placeholder="Search models" spellcheck="false" autocomplete="off" aria-label="Search models" />
+      </div>
+      <div id="model-list"></div>
+    </div>
+  </div>
   <div id="providers-modal" class="hidden">
     <div class="providers-backdrop"></div>
     <div class="providers-card">
@@ -1852,7 +1947,12 @@ ${renderViewConfig(deps)}
           </div>
           <div class="field">
             <label class="field-label" for="pe-apikey">API Key (optional — leave empty for local hosts)</label>
-            <input id="pe-apikey" type="text" spellcheck="false" placeholder="sk-..." />
+            <div class="pe-secret">
+              <input id="pe-apikey" type="password" spellcheck="false" placeholder="sk-..." autocomplete="off" />
+              <button type="button" id="pe-apikey-reveal" class="pe-eye" title="Hold to show the key" aria-label="Hold to show the API key">
+                <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
+              </button>
+            </div>
           </div>
           <div class="field">
             <label class="field-label" for="pe-thinking">Reasoning</label>
@@ -1876,8 +1976,8 @@ ${renderViewConfig(deps)}
         </div>
       </div>
       <div class="providers-actions">
-        <button id="providers-export" class="secondary" title="Export the providers config to a JSON file">Export</button>
-        <button id="providers-import" class="secondary" title="Import providers from a JSON file (merged into the current config)">Import</button>
+        <button id="providers-export" class="secondary" title="Export the providers config to a JSON file">Export models configuration</button>
+        <button id="providers-import" class="secondary" title="Import providers from a JSON file (merged into the current config)">Import models configuration</button>
         <span id="providers-io-result" class="providers-io"></span>
         <button id="providers-cancel" class="secondary">Cancel</button>
         <button id="providers-save">Save</button>
