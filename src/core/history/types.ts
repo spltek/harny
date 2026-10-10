@@ -1,5 +1,34 @@
 import type { ToolCall } from "../tools/tool";
 
+/**
+ * Per-turn metrics captured from the provider stream: the REAL token usage of
+ * the turn plus its wall-clock timings. Persisted WITH the message (the JSON
+ * `data` column), so the UI can show a badge and the host can reuse real
+ * counts instead of only estimating.
+ */
+export interface MessageMeta {
+  /** Input tokens of the WHOLE prompt for this turn (provider-reported). */
+  inputTokens?: number;
+  /** Tokens generated in this turn (provider-reported). */
+  outputTokens?: number;
+  /** Total tokens for this turn (provider-reported). */
+  totalTokens?: number;
+  /** Input tokens served from the provider's prompt cache. */
+  cachedTokens?: number;
+  /** Tokens written INTO the provider's prompt cache. */
+  cachedWriteTokens?: number;
+  /** Wall-clock epoch (ms) when the turn started. */
+  startedAt?: number;
+  /** Wall-clock epoch (ms) of the FIRST streamed token. */
+  firstTokenAt?: number;
+  /** Wall-clock epoch (ms) when the turn finished. */
+  endedAt?: number;
+  /** Time to first token (ms). */
+  ttftMs?: number;
+  /** Total turn duration (ms). */
+  durationMs?: number;
+}
+
 /** Files attached to a user message (metadata only; shown in its bubble). */
 export interface MessageAttachment {
   name: string;
@@ -30,6 +59,11 @@ export interface ChatMessage {
   steer?: boolean;
   /** Reasoning/thinking text for assistant messages (shown as a collapsible block). */
   thinking?: string;
+  /**
+   * Per-turn metrics (real token usage + timings) for assistant messages. Shown
+   * as a compact badge under the bubble and reused for context accounting.
+   */
+  meta?: MessageMeta;
   /**
    * Structured OpenRouter reasoning blocks captured from the stream, persisted
    * and passed back verbatim on later turns (encrypted/summarized reasoning).

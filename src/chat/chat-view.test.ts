@@ -10,7 +10,7 @@ import { SessionRegistry } from "./session-registry";
 import type { ChatController } from "../core/agent/chat-controller";
 import type { ChatHistory } from "../core/history/chat-history";
 import { ChatViewProvider } from "./chat-view";
-import { Compactor, DEFAULT_COMPACTION } from "../core/sessions/compactor";
+import { Compactor, DEFAULT_COMPACTION, estimateContextTokens } from "../core/sessions/compactor";
 import type { LLMProviderFactory } from "../core/llm/types";
 
 const state = vi.hoisted(() => ({
@@ -1028,6 +1028,48 @@ describe("ChatViewProvider", () => {
       expect.objectContaining({ type: "modal", kind: "alert", alertKind: "confirm", danger: true }),
     );
     expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "refresh", messages: kept }));
+  });
+
+  it("truncateAt recomputes AND persists the context tokens from the KEPT messages", async () => {
+    const { store, registry, provider } = buildHarness();
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    const kept = [
+      { role: "user", content: "q1", timestamp: 1 },
+      { role: "assistant", content: "a1", timestamp: 2 },
+    ];
+    rt.history.replace([...kept, { role: "user", content: "q2", timestamp: 3 }]);
+    rt.contextTokens = 99999; // stale provider count from before the cut
+    store.saveSettings("s1", { contextTokens: 99999 });
+    (store.saveSettings as any).mockClear();
+
+    await handler({ type: "truncateAt", index: 2 }); // keep [q1, a1]
+
+    // Subtracting the removed interaction: the fill is the KEPT sum, not 0.
+    const expected = estimateContextTokens(kept as never);
+    expect(expected).toBeLessThan(99999);
+    expect(rt.contextTokens).toBe(expected);
+    // PERSISTED: a reload (tab switch / panel reload / restart) must NOT restore
+    // the pre-cut count (saveMessages carries the old one over).
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { contextTokens: expected });
+  });
+
+  it("truncateAt to EMPTY leaves 0 context tokens", async () => {
+    const { store, registry, provider } = buildHarness();
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.history.replace([
+      { role: "user", content: "q1", timestamp: 1 },
+      { role: "assistant", content: "a1", timestamp: 2 },
+    ]);
+    rt.contextTokens = 99999;
+
+    await handler({ type: "truncateAt", index: 0 });
+
+    expect(rt.contextTokens).toBe(0);
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { contextTokens: 0 });
   });
 
   it("truncateAt does nothing when the confirmation is cancelled", async () => {

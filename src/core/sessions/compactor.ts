@@ -64,6 +64,46 @@ export function serializeConversation(messages: ChatMessage[], toolResultLimit =
     .join("\n");
 }
 
+/** Index of the LAST assistant message carrying real usage within [from, to). */
+function lastAssistantWithUsage(messages: ChatMessage[], from: number, to: number): number {
+  for (let i = to - 1; i >= from; i--) {
+    const m = messages[i];
+    if (m.role === "assistant" && typeof m.meta?.inputTokens === "number" && m.meta.inputTokens > 0) return i;
+  }
+  return -1;
+}
+
+/**
+ * REAL token size of the message window `[from, end)` derived from the
+ * provider-reported cumulative `meta.inputTokens`: the delta between the last
+ * assistant INSIDE the window and the last one BEFORE it (a window starting at
+ * 0 has no baseline, so its cumulative input is already the right number), plus
+ * an estimate of the trailing messages after that assistant. `undefined` when
+ * the window has no real usage at all.
+ */
+export function realWindowTokens(messages: ChatMessage[], from = 0): number | undefined {
+  const lastIdx = lastAssistantWithUsage(messages, from, messages.length);
+  if (lastIdx < 0) return undefined;
+  const lastInput = messages[lastIdx].meta?.inputTokens ?? 0;
+  const beforeIdx = lastAssistantWithUsage(messages, 0, from);
+  const base = beforeIdx >= 0 ? messages[beforeIdx].meta?.inputTokens ?? 0 : 0;
+  const window = Math.max(0, lastInput - base);
+  return window + estimateTokens(serializeConversation(messages.slice(lastIdx)));
+}
+
+/**
+ * Best-effort context fill, preferring REAL provider data: the last assistant
+ * turn recorded the cumulative `meta.inputTokens` (the size of the WHOLE prompt
+ * for that turn), so the current fill = that + the estimate of everything since.
+ * Falls back to a pure estimate when no real usage exists (a fresh session) or
+ * after a COMPACTION (the synthetic summary rewrote the prefix, invalidating
+ * the old cumulative counts).
+ */
+export function estimateContextTokens(messages: ChatMessage[]): number {
+  if (messages.some((m) => m.synthetic)) return estimateTokens(serializeConversation(messages));
+  return realWindowTokens(messages) ?? estimateTokens(serializeConversation(messages));
+}
+
 /**
  * Manual compaction: always summarize a fraction of the CURRENT context.
  * Keeps the most recent `keepRecentFraction` of the estimated tokens and

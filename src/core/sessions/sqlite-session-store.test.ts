@@ -177,6 +177,22 @@ describe("SqliteSessionStore — per-session settings", () => {
     });
   });
 
+  it("contextTokens: 0 survives a cut + reload (an explicit clear beats the carry-over)", () => {
+    const { store } = makeStore();
+    store.create();
+    store.saveMessages("s1", [msg("user", "a"), msg("assistant", "b")]);
+    store.saveSettings("s1", { contextTokens: 12345 });
+    expect(store.load("s1").summary.contextTokens).toBe(12345);
+
+    // A ✂ cut: the host saves the shortened history, then clears the fill to 0.
+    // saveMessages CARRIES the previous value over, so the explicit 0 must win.
+    store.saveMessages("s1", [msg("user", "a")]);
+    expect(store.load("s1").summary.contextTokens).toBe(12345); // still carried
+    store.saveSettings("s1", { contextTokens: 0 });
+
+    expect(store.load("s1").summary.contextTokens).toBe(0);
+  });
+
   it("Auto (undefined) CLEARS temperature/penalties/topP/sampler", () => {
     const { store } = makeStore();
     store.create();

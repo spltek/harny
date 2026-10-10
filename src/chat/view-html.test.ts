@@ -82,6 +82,16 @@ describe("renderViewHtml", () => {
     expect(html).toContain(">Import models configuration</button>");
   });
 
+  it("styles the per-turn metrics badge under assistant bubbles", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    expect(html).toContain(".msg-meta {");
+    expect(html).toMatch(/\.msg-meta \{[^}]*align-self: flex-start/);
+    expect(html).toMatch(/\.msg-meta \{[^}]*tabular-nums/);
+  });
+
   it("the tab strip does not shrink tabs and hides any vertical scrollbar", () => {
     const html = renderViewHtml({
       ...base,

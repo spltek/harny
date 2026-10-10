@@ -20,7 +20,7 @@ import { renderViewHtml } from "./view-html";
 import { toTemperature, toTopP } from "./temperature";
 import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, toContextWindow, toOutputTokens } from "./context-window";
 import { PanelModalQueue } from "./panel-modal-queue";
-import { Compactor, DEFAULT_COMPACTION, CompactionSettings, planManualCompaction, shouldCompact, estimateTokens, serializeConversation, splitSummary, toCompactionThresholdPercent } from "../core/sessions/compactor";
+import { Compactor, DEFAULT_COMPACTION, CompactionSettings, planManualCompaction, shouldCompact, estimateTokens, serializeConversation, estimateContextTokens, realWindowTokens, splitSummary, toCompactionThresholdPercent } from "../core/sessions/compactor";
 import type { SkillRegistry } from "../core/skills/skill-registry";
 import type { McpManager } from "../core/mcp";
 import { McpStdioClient, McpHttpClient, type McpClient } from "../core/mcp";
@@ -352,9 +352,17 @@ export class ChatViewProvider implements WebviewViewProvider {
     if (!ok) return;
     rt.history.replace(kept);
     this.sessions.saveMessages(rt.sessionId, kept);
-    // The transcript is shorter now: reset the fill metrics so the bars do not
-    // lie, then re-render the cut conversation.
-    rt.contextTokens = 0;
+    // Per-interaction accounting: providers report only the TOTAL input per
+    // turn, never per message, so we ESTIMATE each interaction and, after a cut,
+    // keep the tokens of the KEPT messages only — i.e. subtract the removed
+    // ones. Cutting everything leaves 0 (as expected); a partial cut drops by
+    // the removed share. PERSIST it: `saveMessages` carries the previous
+    // `contextTokens` over, so without this write a reload (tab switch / panel
+    // reload / restart) would restore the pre-cut count and the bar would jump
+    // back up.
+    rt.contextTokens = estimateContextTokens(rt.history.conversation());
+    this.sessions.saveSettings(rt.sessionId, { contextTokens: rt.contextTokens });
+    // Any previously reported cache hit is meaningless for the new layout.
     rt.cachedTokens = 0;
     rt.cachedWriteTokens = 0;
     void this.pushConfig();
@@ -1447,10 +1455,15 @@ export class ChatViewProvider implements WebviewViewProvider {
     ];
     rt.history.replace(newHistory);
     this.sessions.saveMessages(rt.sessionId, newHistory);
-    const next =
-      estimateTokens(synthPrompt) +
-      estimateTokens(synthResponse) +
-      plan.kept.reduce((acc, m) => acc + estimateTokens(m.content), 0);
+    // Prefer REAL data for the KEPT window (the cumulative `meta.inputTokens`
+    // delta across it): the summary rewrote the prefix, so re-estimating the
+    // whole history would no longer match the provider's numbers.
+    const keptFrom = plan.kept.length > 0 ? messages.indexOf(plan.kept[0]) : -1;
+    const keptTokens =
+      keptFrom >= 0
+        ? realWindowTokens(messages, keptFrom) ?? estimateTokens(serializeConversation(plan.kept))
+        : 0;
+    const next = estimateTokens(synthPrompt) + estimateTokens(synthResponse) + keptTokens;
     rt.contextTokens = next;
     this.sessions.saveSettings(rt.sessionId, { contextTokens: next });
     // The context was rebuilt: any previously reported cache hit is meaningless

@@ -3266,3 +3266,41 @@ describe("Agent soft steering — no target (removed)", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 });
+
+describe("Agent — per-turn meta (real usage + timings)", () => {
+  it("attaches REAL usage and wall-clock timings to the assistant message", async () => {
+    const { agent, history } = buildHarness({
+      chunks: [
+        [
+          { type: "text", content: "hi" },
+          { type: "usage", usage: { input: 1234, output: 56, total: 1290, cached: 1000, cachedWrite: 20 } },
+        ],
+      ],
+    });
+
+    await agent.send("hello");
+
+    const assistant = history.all().find((m) => m.role === "assistant")!;
+    expect(assistant.meta).toBeDefined();
+    expect(assistant.meta!.inputTokens).toBe(1234);
+    expect(assistant.meta!.outputTokens).toBe(56);
+    expect(assistant.meta!.totalTokens).toBe(1290);
+    expect(assistant.meta!.cachedTokens).toBe(1000);
+    expect(assistant.meta!.cachedWriteTokens).toBe(20);
+    expect(typeof assistant.meta!.startedAt).toBe("number");
+    expect(assistant.meta!.endedAt!).toBeGreaterThanOrEqual(assistant.meta!.startedAt!);
+    expect(assistant.meta!.durationMs!).toBeGreaterThanOrEqual(0);
+    expect(assistant.meta!.firstTokenAt!).toBeGreaterThanOrEqual(assistant.meta!.startedAt!);
+    expect(assistant.meta!.ttftMs!).toBeGreaterThanOrEqual(0);
+  });
+
+  it("omits the token fields when the provider reports no usage (timings only)", async () => {
+    const { agent, history } = buildHarness({ chunks: [[{ type: "text", content: "hi" }]] });
+    await agent.send("hello");
+    const assistant = history.all().find((m) => m.role === "assistant")!;
+    expect(assistant.meta).toBeDefined();
+    expect(assistant.meta!.inputTokens).toBeUndefined();
+    expect(assistant.meta!.outputTokens).toBeUndefined();
+    expect(typeof assistant.meta!.durationMs).toBe("number");
+  });
+});

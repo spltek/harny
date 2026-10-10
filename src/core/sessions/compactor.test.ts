@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { Compactor, DEFAULT_COMPACTION, estimateTokens, planManualCompaction, shouldCompact, serializeConversation, splitSummary, clampCompactionThresholdPercent, toCompactionThresholdPercent } from "./compactor";
+import { Compactor, DEFAULT_COMPACTION, estimateTokens, planManualCompaction, shouldCompact, serializeConversation, splitSummary, clampCompactionThresholdPercent, toCompactionThresholdPercent, estimateContextTokens, realWindowTokens } from "./compactor";
 import type { LLMProviderFactory } from "../llm/types";
 import type { HarnyConfig } from "../config/types";
 import type { ChatMessage } from "../history/types";
@@ -138,5 +138,53 @@ describe("splitSummary", () => {
     const r = splitSummary("");
     expect(r.prompt.length).toBeGreaterThan(0);
     expect(r.response.length).toBeGreaterThan(0);
+  });
+});
+
+describe("compactor: real-data context accounting", () => {
+  const asst = (content: string, inputTokens?: number): ChatMessage => ({
+    role: "assistant",
+    content,
+    timestamp: 2,
+    ...(inputTokens !== undefined ? { meta: { inputTokens } } : {}),
+  });
+
+  it("estimateContextTokens prefers the last REAL input count + trailing estimate", () => {
+    const msgs: ChatMessage[] = [u("hello"), asst("hi", 1000), u("x".repeat(40))];
+    const trailing = estimateTokens(serializeConversation(msgs.slice(1)));
+    expect(estimateContextTokens(msgs)).toBe(1000 + trailing);
+  });
+
+  it("estimateContextTokens falls back to a pure estimate with no real usage", () => {
+    const msgs: ChatMessage[] = [u("hello"), asst("hi")];
+    expect(estimateContextTokens(msgs)).toBe(estimateTokens(serializeConversation(msgs)));
+  });
+
+  it("estimateContextTokens falls back after a COMPACTION (prefix rewritten)", () => {
+    const msgs: ChatMessage[] = [
+      { role: "user", content: "summary", timestamp: 1, synthetic: true },
+      { role: "assistant", content: "ok", timestamp: 2, synthetic: true },
+      asst("old", 5000),
+    ];
+    expect(estimateContextTokens(msgs)).toBe(estimateTokens(serializeConversation(msgs)));
+  });
+
+  it("estimateContextTokens is 0 for an empty history", () => {
+    expect(estimateContextTokens([])).toBe(0);
+  });
+
+  it("realWindowTokens subtracts the cumulative baseline BEFORE the window", () => {
+    const msgs: ChatMessage[] = [u("a"), asst("b", 1000), u("c"), asst("d", 1600)];
+    const expected = 1600 - 1000 + estimateTokens(serializeConversation(msgs.slice(3)));
+    expect(realWindowTokens(msgs, 2)).toBe(expected);
+  });
+
+  it("realWindowTokens from 0 uses the cumulative count as-is", () => {
+    const msgs: ChatMessage[] = [u("a"), asst("b", 1000)];
+    expect(realWindowTokens(msgs, 0)).toBe(1000 + estimateTokens(serializeConversation(msgs.slice(1))));
+  });
+
+  it("realWindowTokens is undefined when the window has no real usage", () => {
+    expect(realWindowTokens([u("a"), asst("b")], 0)).toBeUndefined();
   });
 });

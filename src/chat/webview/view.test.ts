@@ -4348,3 +4348,43 @@ describe("steer target removed (webview)", () => {
     expect(document.getElementById("steer-target")).toBeNull();
   });
 });
+
+describe("per-turn metrics badge (webview)", () => {
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
+
+  it("renders a compact badge under an assistant bubble (real usage + timings)", async () => {
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "user", content: "hi", timestamp: 1 },
+        {
+          role: "assistant",
+          content: "hello",
+          timestamp: 2,
+          meta: { inputTokens: 1200, outputTokens: 340, totalTokens: 1540, cachedTokens: 800, cachedWriteTokens: 100, durationMs: 3400, ttftMs: 800 },
+        },
+      ],
+    });
+    const badge = document.querySelector(".msg-meta") as HTMLElement;
+    expect(badge).toBeTruthy();
+    expect(badge.textContent).toContain("1.2k in");
+    expect(badge.textContent).toContain("340 out");
+    expect(badge.textContent).toContain("⚡ 800");
+    expect(badge.textContent).toContain("3.4s");
+    expect(badge.textContent).toContain("ttft 800ms");
+    expect(badge.title).toContain("input: 1200 tokens");
+    expect(badge.title).toContain("cache write: 100 tokens");
+    // The badge sits right AFTER the assistant bubble.
+    expect(badge.previousElementSibling!.classList.contains("assistant")).toBe(true);
+  });
+
+  it("renders no badge when a message carries no meta", async () => {
+    await loadView();
+    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "hello", timestamp: 2 }] });
+    expect(document.querySelector(".msg-meta")).toBeNull();
+  });
+});

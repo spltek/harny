@@ -3,8 +3,8 @@ import { requiresApiKey } from "../config/requires-api-key";
 import { describeFetchError } from "../tools/url-utils";
 import type { EventBus } from "../events/event-bus";
 import type { ChatHistory } from "../history/chat-history";
-import type { ChatMessage } from "../history/types";
-import type { LLMProviderFactory, LLMMessage } from "../llm/types";
+import type { ChatMessage, MessageMeta } from "../history/types";
+import type { LLMProviderFactory, LLMMessage, Usage } from "../llm/types";
 import type { Tool, ToolCall, ToolRegistry, ToolResult } from "../tools";
 import {
   ANALYZE_BLOCKED_SHELL_MESSAGE,
@@ -372,6 +372,7 @@ export class Agent implements ChatController {
           ...(final.reasoningDetails && final.reasoningDetails.length > 0
             ? { reasoningDetails: final.reasoningDetails }
             : {}),
+          meta: this.turnMeta(final),
         });
         return;
       }
@@ -452,6 +453,7 @@ export class Agent implements ChatController {
       timestamp: Date.now(),
       ...(thinking.trim() ? { thinking } : {}),
       ...(reasoningDetails && reasoningDetails.length > 0 ? { reasoningDetails } : {}),
+      meta: this.turnMeta(turnResult),
     });
     // Changes prepared as previews: highlight the "Switch to Build" CTA in the UI.
     if (finalContent.includes(PREVIEW_FOOTER_MARKER)) {
@@ -770,6 +772,26 @@ export class Agent implements ChatController {
     return `[CURRENT STATE] Mode: ${mode}. Parallel: ${parallel}.`;
   }
 
+  /** Build the per-turn `meta` (REAL usage + wall-clock timings) for an assistant message. */
+  private turnMeta(r: { usage?: Usage; startedAt: number; firstTokenAt?: number; endedAt?: number }): MessageMeta {
+    const endedAt = r.endedAt ?? Date.now();
+    return {
+      ...(r.usage
+        ? {
+            inputTokens: r.usage.input,
+            outputTokens: r.usage.output,
+            totalTokens: r.usage.total,
+            ...(typeof r.usage.cached === "number" ? { cachedTokens: r.usage.cached } : {}),
+            ...(typeof r.usage.cachedWrite === "number" ? { cachedWriteTokens: r.usage.cachedWrite } : {}),
+          }
+        : {}),
+      startedAt: r.startedAt,
+      ...(r.firstTokenAt !== undefined ? { firstTokenAt: r.firstTokenAt, ttftMs: r.firstTokenAt - r.startedAt } : {}),
+      endedAt,
+      durationMs: endedAt - r.startedAt,
+    };
+  }
+
   private async runLlmTurn(toolDefinitionsOverride?: ToolDefinition[]): Promise<{
     content: string;
     toolCalls: ToolCall[];
@@ -783,6 +805,14 @@ export class Agent implements ChatController {
     /** True when the opt-in RESPONSE guard cut the visible answer short because
      * it repeated itself; the caller must nudge instead of executing tools. */
     answerLoop?: boolean;
+    /** Provider-reported token usage for this turn (undefined = not reported). */
+    usage?: Usage;
+    /** Wall-clock start of the LLM request (ms epoch). */
+    startedAt: number;
+    /** Wall-clock epoch of the first streamed token (undefined = none). */
+    firstTokenAt?: number;
+    /** Wall-clock end of the turn (ms epoch). */
+    endedAt: number;
   }> {
     const config = this.deps.config.get();
     const provider = this.deps.llmFactory.create(config);
@@ -824,6 +854,8 @@ export class Agent implements ChatController {
     let reasoningLoop = false;
     let answerLoop = false;
     const toolCalls: ToolCall[] = [];
+    let usage: Usage | undefined;
+    let firstTokenAt: number | undefined;
 
     // Thinking tag parser: some models (Qwen, local LLMs) emit reasoning
     // inside <think>...</think> or <reason>...</reason> embedded in text.
@@ -863,6 +895,8 @@ export class Agent implements ChatController {
         chunkCount++;
         lastChunkAt = Date.now();
         if (chunk.type === "text") {
+          // Time to first token: the first CONTENT chunk, not any chunk.
+          if (firstTokenAt === undefined) firstTokenAt = Date.now();
           // Emit raw chunk for stream log
           this.deps.events.emit({ type: "raw_chunk", chunk: chunk.content, kind: "text" });
 
@@ -878,6 +912,7 @@ export class Agent implements ChatController {
             }
           }
         } else if (chunk.type === "thinking") {
+          if (firstTokenAt === undefined) firstTokenAt = Date.now();
           // Emit raw chunk for stream log
           this.deps.events.emit({ type: "raw_chunk", chunk: chunk.content, kind: "thinking" });
           // Forward reasoning content separately and keep it in the message
@@ -888,6 +923,7 @@ export class Agent implements ChatController {
           // thinking so they can be passed back verbatim (encrypted reasoning).
           reasoningDetails = chunk.details;
         } else if (chunk.type === "usage") {
+          usage = chunk.usage;
           this.deps.events.emit({ type: "usage", usage: chunk.usage });
         } else if (chunk.type === "finish") {
           finishReason = chunk.reason;
@@ -944,7 +980,19 @@ export class Agent implements ChatController {
       `stream: end after ${Math.round((Date.now() - streamStart) / 1000)}s chunks=${chunkCount} ` +
         `content=${content.length}c thinking=${thinking.length}c tools=${toolCalls.length} finish=${finishReason ?? "-"}`,
     );
-    return { content, toolCalls, thinking, reasoningDetails, finishReason, reasoningLoop, answerLoop };
+    return {
+      content,
+      toolCalls,
+      thinking,
+      reasoningDetails,
+      finishReason,
+      reasoningLoop,
+      answerLoop,
+      usage,
+      startedAt: streamStart,
+      firstTokenAt,
+      endedAt: Date.now(),
+    };
   }
 
   private async executeToolSafely(tc: ToolCall): Promise<ToolResult> {

@@ -18,6 +18,19 @@ interface ToolCallView {
   name: string;
   arguments: unknown;
 }
+/** Per-turn metrics captured from the provider stream (real usage + timings). */
+interface MsgMeta {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cachedTokens?: number;
+  cachedWriteTokens?: number;
+  startedAt?: number;
+  firstTokenAt?: number;
+  endedAt?: number;
+  ttftMs?: number;
+  durationMs?: number;
+}
 interface ChatMsg {
   role: string;
   content: string;
@@ -36,6 +49,8 @@ interface ChatMsg {
   steer?: boolean;
   /** Synthetic compacted prompt/response pair: no ✂ cut / ⎇ branch key. */
   synthetic?: boolean;
+  /** REAL per-turn usage + timings (assistant messages): shown as a badge. */
+  meta?: MsgMeta;
 }
 interface SessionInfo {
   id: string;
@@ -517,6 +532,41 @@ function addMessage(
   messagesEl.appendChild(div);
   scrollDown();
   return div;
+}
+
+/** Compact duration: 820ms / 3.4s / 1m05s. */
+function fmtDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(1)}s`;
+  const m = Math.floor(s / 60);
+  return `${m}m${String(Math.round(s % 60)).padStart(2, "0")}s`;
+}
+
+/** Compact per-turn metrics badge (REAL usage + timings) shown under a bubble. */
+function metaBadge(meta: MsgMeta): HTMLElement | undefined {
+  const parts: string[] = [];
+  if (typeof meta.inputTokens === "number") parts.push(`${fmtTokens(meta.inputTokens)} in`);
+  if (typeof meta.outputTokens === "number") parts.push(`${fmtTokens(meta.outputTokens)} out`);
+  if (typeof meta.cachedTokens === "number" && meta.cachedTokens > 0) parts.push(`⚡ ${fmtTokens(meta.cachedTokens)}`);
+  if (typeof meta.durationMs === "number") parts.push(fmtDuration(meta.durationMs));
+  if (typeof meta.ttftMs === "number") parts.push(`ttft ${fmtDuration(meta.ttftMs)}`);
+  if (parts.length === 0) return undefined;
+  const el = document.createElement("div");
+  el.className = "msg-meta";
+  el.textContent = parts.join(" · ");
+  el.title = [
+    meta.inputTokens !== undefined ? `input: ${meta.inputTokens} tokens` : "",
+    meta.outputTokens !== undefined ? `output: ${meta.outputTokens} tokens` : "",
+    meta.totalTokens !== undefined ? `total: ${meta.totalTokens} tokens` : "",
+    meta.cachedTokens !== undefined ? `cached input: ${meta.cachedTokens} tokens` : "",
+    meta.cachedWriteTokens !== undefined ? `cache write: ${meta.cachedWriteTokens} tokens` : "",
+    meta.ttftMs !== undefined ? `time to first token: ${meta.ttftMs} ms` : "",
+    meta.durationMs !== undefined ? `duration: ${meta.durationMs} ms` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return el;
 }
 
 /**
@@ -1138,14 +1188,20 @@ function renderMessages(msgs: ChatMsg[]): boolean {
       // like "I'll split this into 4 sub-tasks" jump BELOW the sub-agent
       // bubbles after the completion `refresh` re-rendered the transcript.
       const content = m.content || "";
+      let bubble: HTMLDivElement | undefined;
       if (content.trim() && !content.startsWith("🔧 ")) {
-        const el = addMessage("assistant", content);
-        if (content.startsWith("❌")) el.classList.add("error");
-        else if (content.startsWith("🔁")) el.classList.add("loop");
+        bubble = addMessage("assistant", content);
+        if (content.startsWith("❌")) bubble.classList.add("error");
+        else if (content.startsWith("🔁")) bubble.classList.add("loop");
         // Loop notices are system annotations, not branchable messages.
-        if (!content.startsWith("🔁")) attachBranchAt(el, i);
+        if (!content.startsWith("🔁")) attachBranchAt(bubble, i);
         // Prepared-but-not-applied changes: re-render the highlighted CTA.
         if (content.includes("Nothing has been applied")) addSwitchToBuildBanner();
+      }
+      // REAL per-turn metrics (usage + timings) as a compact badge under the bubble.
+      if (bubble && m.meta) {
+        const badge = metaBadge(m.meta);
+        if (badge) bubble.insertAdjacentElement("afterend", badge);
       }
       if (m.toolCalls && m.toolCalls.length > 0) {
         for (const tc of m.toolCalls) {

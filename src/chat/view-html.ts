@@ -300,6 +300,12 @@ ${renderViewConfig(deps)}
     }
     .msg.assistant, .msg.tool { width: 100%; max-width: 100%; }
     .msg.assistant { align-self: flex-start; background: var(--assistant-msg); min-width: 0; position: relative; font-size: var(--fs-lg); }
+    /* Per-turn metrics badge (REAL usage + timings) under an assistant bubble. */
+    .msg-meta {
+      align-self: flex-start; max-width: 92%; margin: -2px 0 2px 4px;
+      font-size: var(--fs-sm); color: var(--muted); font-variant-numeric: tabular-nums;
+      user-select: text; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
     /* Bubble action tabs: the ⎇ branch key on assistant replies and the ✂ cut
        key on user prompts become little "linguette" anchored to the bubble's
        TOP-RIGHT. On hover they SLIDE UP out of the bubble (same fade/reveal as
