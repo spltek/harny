@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { SessionManager } from "./session-manager";
 import type { LoadedSession, SessionSettingsPatch, SessionStore, SessionSummary } from "./types";
+import { EMPTY_DB_VACUUM_STATS } from "./types";
 
 function makeStore(): SessionStore {
   let idc = 0;
@@ -68,5 +69,17 @@ describe("SessionManager", () => {
 
     expect(store.saveSettings).toHaveBeenCalledWith("s1", { model: "gpt-4o", temperature: 0.2 });
     expect(summary).toEqual(expect.objectContaining({ model: "gpt-4o", temperature: 0.2 }));
+  });
+});
+
+describe("SessionManager — optional DB maintenance", () => {
+  it("falls back to empty values when the store does not support maintenance", () => {
+    const manager = new SessionManager(makeStore()); // no maintain / dbVacuumStats
+    expect(manager.dbVacuumStats()).toEqual(EMPTY_DB_VACUUM_STATS);
+    const r = manager.maintain();
+    expect(r.vacuumed).toBe(false);
+    expect(r.before).toEqual(EMPTY_DB_VACUUM_STATS);
+    expect(r.after).toEqual(EMPTY_DB_VACUUM_STATS);
+    expect(r.durationMs).toBe(0);
   });
 });

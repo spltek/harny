@@ -207,3 +207,13 @@ describe("StreamTee — turn_meta", () => {
     expect(deps.onPost).toHaveBeenCalledWith({ type: "turnMeta", meta: { inputTokens: 123, durationMs: 5 } });
   });
 });
+
+describe("StreamTee — raw_chunk", () => {
+  it("ignores raw_chunk (informational, never routed to the view)", () => {
+    const { tee, deps } = makeTee();
+    const a = fakeRuntime("a");
+    tee.attach(a.rt);
+    a.emit({ type: "raw_chunk", chunk: "x", kind: "text" });
+    expect(deps.onPost).not.toHaveBeenCalled();
+  });
+});

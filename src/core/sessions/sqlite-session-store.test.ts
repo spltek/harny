@@ -351,3 +351,21 @@ describe("SqliteSessionStore — vacuum also optimizes the indexes", () => {
     expect(store.search("hello").some((h) => h.sessionId === "s2")).toBe(true);
   });
 });
+
+describe("SqliteSessionStore — misc", () => {
+  it("search('') short-circuits to no hits", () => {
+    const { store } = makeStore();
+    store.create();
+    store.saveMessages("s1", [msg("user", "hello world")]);
+    expect(store.search("")).toEqual([]);
+    expect(store.search("   ")).toEqual([]);
+  });
+
+  it("close() releases the database", () => {
+    const db = new DatabaseSync(":memory:");
+    const store = new SqliteSessionStore({ db, fs: fakeFs(), idGen: () => "s1" });
+    store.create();
+    store.close();
+    expect(() => db.prepare("SELECT 1").get()).toThrow();
+  });
+});
