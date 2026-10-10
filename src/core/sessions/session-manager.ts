@@ -1,5 +1,6 @@
 import type { ChatMessage } from "../history/types";
-import type { LoadedSession, SessionSettingsPatch, SessionStore, SessionSummary } from "./types";
+import type { DbVacuumResult, DbVacuumStats, LoadedSession, SessionSettingsPatch, SessionStore, SessionSummary } from "./types";
+import { EMPTY_DB_VACUUM_STATS } from "./types";
 
 /**
  * Per-workspace session coordinator. This is a thin facade over a SessionStore
@@ -43,5 +44,25 @@ export class SessionManager {
    */
   saveSettings(id: string, patch: SessionSettingsPatch): SessionSummary {
     return this.store.saveSettings(id, patch);
+  }
+
+  /**
+   * Best-effort DB compaction. A `freeRatioThreshold` of 0 FORCES it. The
+   * store may not support it (optional method) — then it is a no-op.
+   */
+  maintain(options?: { freeRatioThreshold?: number }): DbVacuumResult {
+    return (
+      this.store.maintain?.(options) ?? {
+        vacuumed: false,
+        before: EMPTY_DB_VACUUM_STATS,
+        after: EMPTY_DB_VACUUM_STATS,
+        durationMs: 0,
+      }
+    );
+  }
+
+  /** Cheap DB-size stats for the vacuum UI (empty when unsupported). */
+  dbVacuumStats(): DbVacuumStats {
+    return this.store.dbVacuumStats?.() ?? EMPTY_DB_VACUUM_STATS;
   }
 }

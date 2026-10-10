@@ -4,7 +4,7 @@ import type { FileSystem } from "../tools/file-system";
 import type { ChatMessage } from "../history/types";
 import { isThinkingLevel, type ThinkingLevel } from "../config/types";
 import { clampLoopGuardOverrides, normalizeLoopGuardSensitivity, type LoopGuardOptions } from "../agent/loop-guard";
-import type { LoadedSession, SessionSettingsPatch, SessionStore, SessionSummary } from "./types";
+import type { DbVacuumResult, DbVacuumStats, LoadedSession, SessionSettingsPatch, SessionStore, SessionSummary } from "./types";
 
 /** One full-text search hit: which message matched, its snippet and BM25 rank. */
 export interface SessionSearchHit {
@@ -289,6 +289,57 @@ export class SqliteSessionStore implements SessionStore {
   /** Close the underlying database (tests / shutdown). */
   close(): void {
     this.deps.db.close();
+  }
+
+  /**
+   * Cheap (O(1), DB-header only) size stats: how many pages are FREE
+   * (reclaimable holes left by ✂ cuts / session deletes) vs the total.
+   */
+  dbVacuumStats(): DbVacuumStats {
+    let pageCount = 0;
+    let freePages = 0;
+    let pageSize = 0;
+    try {
+      pageCount = Number((this.deps.db.prepare("PRAGMA page_count").get() as Row)?.page_count ?? 0);
+      freePages = Number((this.deps.db.prepare("PRAGMA freelist_count").get() as Row)?.freelist_count ?? 0);
+      pageSize = Number((this.deps.db.prepare("PRAGMA page_size").get() as Row)?.page_size ?? 0);
+    } catch {
+      /* best effort */
+    }
+    return {
+      pageCount,
+      freePages,
+      pageSize,
+      bytesFree: freePages * pageSize,
+      bytesTotal: pageCount * pageSize,
+      ratio: pageCount > 0 ? freePages / pageCount : 0,
+    };
+  }
+
+  /**
+   * Best-effort compaction: VACUUM when the free-page ratio reaches the
+   * threshold (0 = force), then truncate the WAL. Returns before/after stats
+   * for the UI. NEVER throws.
+   */
+  maintain(options: { freeRatioThreshold?: number } = {}): DbVacuumResult {
+    const threshold = options.freeRatioThreshold ?? 0.2;
+    const before = this.dbVacuumStats();
+    const startedAt = Date.now();
+    let vacuumed = false;
+    try {
+      if (before.pageCount > 0 && before.ratio >= threshold) {
+        this.deps.db.exec("VACUUM");
+        vacuumed = true;
+      }
+    } catch {
+      /* best effort: leave the DB as is */
+    }
+    try {
+      this.deps.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    } catch {
+      /* best effort (no WAL for :memory:) */
+    }
+    return { vacuumed, before, after: this.dbVacuumStats(), durationMs: Date.now() - startedAt };
   }
 
   // ── internals ──────────────────────────────────────────────────────────

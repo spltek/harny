@@ -1581,6 +1581,44 @@ ${renderViewConfig(deps)}
     }
     .sm-actions button:disabled { opacity: 0.3; cursor: default; }
     #sessions-modal .sm-footer { display: flex; justify-content: flex-end; }
+    /* DB compaction controls in the All-sessions modal footer. */
+    .sm-vacuum {
+      display: flex; flex-direction: column; gap: 8px;
+      border-top: 1px solid var(--border); padding-top: 10px;
+    }
+    .sm-vacuum-head { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--muted); }
+    .sm-vacuum-head .spacer { flex: 1; }
+    .sm-vacuum-slider {
+      display: grid; grid-template-columns: 8.5rem 1fr 4.5rem; align-items: center; gap: 8px;
+      font-size: var(--fs-sm); color: var(--muted);
+    }
+    .sm-vacuum-slider input[type="range"] { width: 100%; accent-color: var(--accent); }
+    .sm-vacuum-val { text-align: right; font-variant-numeric: tabular-nums; color: var(--fg); }
+    .sm-vacuum-stats { font-size: var(--fs-sm); color: var(--muted); font-variant-numeric: tabular-nums; }
+    .sm-vacuum-stats b { color: var(--fg); }
+    .sm-vacuum-stats .warn { color: var(--accent); }
+    /* Shared "compact database" modal (auto suggestion OR manual button). */
+    #db-vacuum-modal { position: fixed; inset: 0; z-index: 70; }
+    #db-vacuum-modal.hidden { display: none; }
+    #db-vacuum-modal .dv-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5); }
+    #db-vacuum-modal .dv-card {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      width: min(520px, calc(100% - 20px));
+      background: var(--bg, #1e1e1e); border: 1px solid var(--border);
+      border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column;
+      gap: 12px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5); font-size: var(--fs-lg);
+    }
+    #db-vacuum-modal h3 { margin: 0; font-size: var(--fs-xl); font-weight: 700; color: var(--fg-strong); }
+    #db-vacuum-modal .sm-hint { font-size: var(--fs-sm); color: var(--muted, #999); }
+    .db-vacuum-stats {
+      display: flex; flex-direction: column; gap: 4px;
+      background: var(--input-bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 12px;
+      font-size: var(--fs-sm); color: var(--muted); font-variant-numeric: tabular-nums;
+    }
+    .db-vacuum-stats b { color: var(--fg); }
+    .db-vacuum-stats .warn { color: var(--accent); }
+    .dv-footer { display: flex; justify-content: flex-end; gap: 8px; }
     /* Full-text search field above the list: filters to sessions whose MESSAGES
        contain the term/phrase (FTS5 on the host). */
     #sessions-modal .sm-search { display: flex; }
@@ -1912,8 +1950,39 @@ ${renderViewConfig(deps)}
         <input id="sessions-search" type="search" placeholder="Search sessions" spellcheck="false" autocomplete="off" aria-label="Search sessions" />
       </div>
       <div id="sessions-manager-list"></div>
+      <div id="sm-vacuum" class="sm-vacuum">
+        <div class="sm-vacuum-head">
+          <span>Database compaction</span>
+          <span class="spacer"></span>
+          <button id="sm-vacuum-btn" class="secondary">Compact now…</button>
+        </div>
+        <div class="sm-vacuum-slider">
+          <label for="sm-vacuum-threshold">Suggest above</label>
+          <input id="sm-vacuum-threshold" type="range" min="1" max="100" step="1" />
+          <span id="sm-vacuum-threshold-val" class="sm-vacuum-val"></span>
+        </div>
+        <div class="sm-vacuum-slider">
+          <label for="sm-vacuum-min">Min reclaimable</label>
+          <input id="sm-vacuum-min" type="range" min="0" max="10240" step="1" />
+          <span id="sm-vacuum-min-val" class="sm-vacuum-val"></span>
+        </div>
+        <div id="sm-vacuum-stats" class="sm-vacuum-stats"></div>
+      </div>
       <div class="sm-footer">
         <button id="sessions-close" class="secondary">Close</button>
+      </div>
+    </div>
+  </div>
+  <div id="db-vacuum-modal" class="hidden">
+    <div class="dv-backdrop"></div>
+    <div class="dv-card">
+      <h3>Compact sessions database</h3>
+      <p id="db-vacuum-msg" class="sm-hint"></p>
+      <div id="db-vacuum-stats" class="db-vacuum-stats"></div>
+      <div id="db-vacuum-info" class="sm-vacuum-info"></div>
+      <div class="dv-footer">
+        <button id="db-vacuum-close" class="secondary">Close</button>
+        <button id="db-vacuum-run">Compact now</button>
       </div>
     </div>
   </div>

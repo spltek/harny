@@ -285,3 +285,52 @@ describe("SqliteSessionStore — SQL-injection safety", () => {
     expect(store.list().length).toBe(2); // nothing deleted
   });
 });
+
+describe("SqliteSessionStore — vacuum stats & maintenance", () => {
+  it("dbVacuumStats reports free vs total pages (O(1))", () => {
+    const { store } = makeStore();
+    store.create();
+    const s = store.dbVacuumStats();
+    expect(s.pageCount).toBeGreaterThan(0);
+    expect(s.pageSize).toBeGreaterThan(0);
+    expect(s.bytesTotal).toBe(s.pageCount * s.pageSize);
+    expect(s.freePages).toBe(0);
+    expect(s.ratio).toBe(0);
+  });
+
+  it("maintain VACUUMs when free pages dominate and reports before/after", () => {
+    const { store } = makeStore();
+    store.create();
+    store.saveMessages(
+      "s1",
+      Array.from({ length: 3000 }, (_, i) => msg("user", "x".repeat(2000) + i)),
+    );
+    store.remove("s1"); // every page becomes free
+    expect(store.dbVacuumStats().ratio).toBeGreaterThanOrEqual(0.2);
+
+    const r = store.maintain({ freeRatioThreshold: 0.2 });
+    expect(r.vacuumed).toBe(true);
+    expect(r.before.ratio).toBeGreaterThanOrEqual(0.2);
+    expect(r.after.freePages).toBe(0);
+    expect(typeof r.durationMs).toBe("number");
+  });
+
+  it("maintain is a no-op below the threshold (and never throws)", () => {
+    const { store } = makeStore();
+    store.create();
+    store.saveMessages("s1", [msg("user", "small")]);
+    const r = store.maintain({ freeRatioThreshold: 0.5 });
+    expect(r.vacuumed).toBe(false);
+    expect(r.after.ratio).toBe(r.before.ratio);
+  });
+});
+
+describe("SqliteSessionStore — vacuum force", () => {
+  it("maintain with threshold 0 FORCES a VACUUM even with no free pages", () => {
+    const { store } = makeStore();
+    store.create();
+    store.saveMessages("s1", [msg("user", "a")]);
+    const r = store.maintain({ freeRatioThreshold: 0 });
+    expect(r.vacuumed).toBe(true);
+  });
+});

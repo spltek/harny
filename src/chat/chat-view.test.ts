@@ -33,6 +33,9 @@ const state = vi.hoisted(() => ({
   // VS Code filesystem used by provider export/import.
   fsWriteFile: vi.fn(async () => {}),
   fsReadFile: vi.fn(async () => new Uint8Array()),
+  // VS Code settings write + the vacuum threshold (undefined = default 20).
+  updateConfiguration: vi.fn(async () => {}),
+  dbVacuumThreshold: undefined as number | undefined,
 }));
 
 vi.mock("vscode", () => ({
@@ -46,7 +49,11 @@ vi.mock("vscode", () => ({
   },
   commands: { executeCommand: state.executeCommand },
   workspace: {
-    getConfiguration: () => ({ get: (key: string) => (key === "fontSize" ? 14 : undefined) }),
+    getConfiguration: () => ({
+      get: (key: string) =>
+        key === "fontSize" ? 14 : key === "dbVacuumThresholdPercent" ? state.dbVacuumThreshold : undefined,
+      update: state.updateConfiguration,
+    }),
     onDidChangeConfiguration: () => ({ dispose: () => {} }),
     fs: { writeFile: state.fsWriteFile, readFile: state.fsReadFile },
   },
@@ -84,6 +91,13 @@ function makeStore(): SessionStore {
     saveFrequencyPenalty: vi.fn((id, value) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(value !== undefined ? { frequencyPenalty: value } : {}) })),
     saveTopP: vi.fn((id, value) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(value !== undefined ? { topP: value } : {}) })),
     saveSampler: vi.fn((id, mode) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(mode ? { sampler: mode } : {}) })),
+    dbVacuumStats: vi.fn(() => ({ pageCount: 100, freePages: 0, pageSize: 4096, bytesFree: 0, bytesTotal: 409600, ratio: 0 })),
+    maintain: vi.fn(() => ({
+      vacuumed: false,
+      before: { pageCount: 100, freePages: 0, pageSize: 4096, bytesFree: 0, bytesTotal: 409600, ratio: 0 },
+      after: { pageCount: 100, freePages: 0, pageSize: 4096, bytesFree: 0, bytesTotal: 409600, ratio: 0 },
+      durationMs: 0,
+    })),
     saveContextTokens: vi.fn((id, tokens) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(tokens ? { contextTokens: tokens } : {}) })),
   } as unknown as SessionStore;
 }
@@ -2550,4 +2564,182 @@ describe("ChatViewProvider soft steering + queue", () => {
       expect.objectContaining({ type: "switchView", pending: [expect.objectContaining({ id: "q1" })] }),
     );
   });
+});
+
+describe("ChatViewProvider DB vacuum suggestion", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.noAutoName = false;
+    state.autoName = "New Session";
+    state.dbVacuumThreshold = undefined;
+  });
+
+  const stats = (freeMB: number, totalMB = 100) => ({
+    pageCount: Math.round((totalMB * 1024 * 1024) / 4096),
+    freePages: Math.round((freeMB * 1024 * 1024) / 4096),
+    pageSize: 4096,
+    bytesFree: Math.round(freeMB * 1024 * 1024),
+    bytesTotal: Math.round(totalMB * 1024 * 1024),
+    ratio: freeMB / totalMB,
+  });
+  const openedVacuum = (view: any) =>
+    view.webview.postMessage.mock.calls.some((c: any[]) => c[0]?.type === "modal" && c[0]?.kind === "dbVacuum");
+
+  it("suggests compaction after a session delete when the free ratio exceeds the threshold", async () => {
+    const { store, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    (store.dbVacuumStats as any).mockReturnValue(stats(50)); // 50% >= 20%
+    await handler({ type: "deleteSession", id: "s1" });
+    await vi.waitFor(() => expect(openedVacuum(view)).toBe(true));
+  });
+
+  it("does NOT suggest when below the threshold", async () => {
+    const { store, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew();
+    (store.dbVacuumStats as any).mockReturnValue(stats(5)); // 5% < 20%
+    await handler({ type: "deleteSession", id: "s1" });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(openedVacuum(view)).toBe(false);
+  });
+
+  it("does NOT suggest below the minimum RECLAIMABLE size (even at a high ratio)", async () => {
+    const { store, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew();
+    // 90% free but only 0.9 MB reclaimable (< 10 MB minimum) -> no nagging.
+    (store.dbVacuumStats as any).mockReturnValue(stats(0.9, 1));
+    await handler({ type: "deleteSession", id: "s1" });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(openedVacuum(view)).toBe(false);
+  });
+
+  it("suggests after a ✂ cut too", async () => {
+    const { store, registry, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew();
+    const rt = registry.get("s1")!;
+    rt.history.replace([
+      { role: "user", content: "q", timestamp: 1 },
+      { role: "assistant", content: "a", timestamp: 2 },
+    ]);
+    (store.dbVacuumStats as any).mockReturnValue(stats(50));
+    await handler({ type: "truncateAt", index: 1 });
+    await vi.waitFor(() => expect(openedVacuum(view)).toBe(true));
+  });
+
+  it("the manual button opens the SAME modal", async () => {
+    const { store, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    (store.dbVacuumStats as any).mockReturnValue(stats(50));
+    await handler({ type: "openVacuumModal" });
+    await vi.waitFor(() => expect(openedVacuum(view)).toBe(true));
+  });
+
+  it("runVacuum FORCES a compaction and reports the result", async () => {
+    const { store, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    (store.maintain as any).mockReturnValue({ vacuumed: true, before: stats(50), after: stats(0), durationMs: 42 });
+    await handler({ type: "runVacuum" });
+    expect(store.maintain).toHaveBeenCalledWith({ freeRatioThreshold: 0 });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "dbVacuumResult", result: expect.objectContaining({ vacuumed: true }) }),
+    );
+  });
+
+  it("setVacuumThreshold persists the global VS Code setting", async () => {
+    const { provider } = buildHarness();
+    const { handler } = resolveWith(provider);
+    await handler({ type: "setVacuumThreshold", percent: 35 });
+    expect(state.updateConfiguration).toHaveBeenCalledWith("dbVacuumThresholdPercent", 35, true);
+  });
+
+  it("setVacuumMinFreeMB persists the global VS Code setting", async () => {
+    const { provider } = buildHarness();
+    const { handler } = resolveWith(provider);
+    await handler({ type: "setVacuumMinFreeMB", mb: 25 });
+    expect(state.updateConfiguration).toHaveBeenCalledWith("dbVacuumMinFreeMB", 25, true);
+  });
+});
+
+describe("ChatViewProvider DB vacuum — re-ask + clamping", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.noAutoName = false;
+    state.autoName = "New Session";
+    state.dbVacuumThreshold = undefined;
+  });
+  const stats = (freeMB: number, totalMB = 100) => ({
+    pageCount: Math.round((totalMB * 1024 * 1024) / 4096),
+    freePages: Math.round((freeMB * 1024 * 1024) / 4096),
+    pageSize: 4096,
+    bytesFree: Math.round(freeMB * 1024 * 1024),
+    bytesTotal: Math.round(totalMB * 1024 * 1024),
+    ratio: freeMB / totalMB,
+  });
+  const openedVacuum = (view: any) =>
+    view.webview.postMessage.mock.calls.some((c: any[]) => c[0]?.type === "modal" && c[0]?.kind === "dbVacuum");
+
+  it("re-suggests on the NEXT trigger after the prompt was closed", async () => {
+    const { store, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await provider.createNew(); // s2
+    (store.dbVacuumStats as any).mockReturnValue(stats(50));
+    await handler({ type: "deleteSession", id: "s1" });
+    await vi.waitFor(() => expect(openedVacuum(view)).toBe(true));
+    const first = view.webview.postMessage.mock.calls.map((c: any[]) => c[0]).find((m: any) => m?.kind === "dbVacuum");
+    await handler({ type: "modalResponse", id: first.modalId, value: true });
+    view.webview.postMessage.mockClear();
+    await handler({ type: "openVacuumModal" });
+    await vi.waitFor(() => expect(openedVacuum(view)).toBe(true));
+  });
+
+  it("clamps the threshold to 1..100 and the min MB to 0..10240", async () => {
+    const { provider } = buildHarness();
+    const { handler } = resolveWith(provider);
+    await handler({ type: "setVacuumThreshold", percent: 0 });
+    expect(state.updateConfiguration).toHaveBeenCalledWith("dbVacuumThresholdPercent", 1, true);
+    await handler({ type: "setVacuumThreshold", percent: 999 });
+    expect(state.updateConfiguration).toHaveBeenCalledWith("dbVacuumThresholdPercent", 100, true);
+    await handler({ type: "setVacuumMinFreeMB", mb: -5 });
+    expect(state.updateConfiguration).toHaveBeenCalledWith("dbVacuumMinFreeMB", 0, true);
+    await handler({ type: "setVacuumMinFreeMB", mb: 999999 });
+    expect(state.updateConfiguration).toHaveBeenCalledWith("dbVacuumMinFreeMB", 10240, true);
+  });
+});
+
+describe("ChatViewProvider DB vacuum — a bocce ferme", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.noAutoName = false;
+    state.autoName = "New Session";
+    state.dbVacuumThreshold = undefined;
+  });
+
+  it("runVacuum WAITS while a session streams, then compacts once idle", async () => {
+    const { store, registry, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    (rt.agent as any).streaming = true; // a live turn: a synchronous VACUUM would freeze it
+    (store.maintain as any).mockReturnValue({
+      vacuumed: true,
+      before: { pageCount: 1, freePages: 1, pageSize: 4096, bytesFree: 4096, bytesTotal: 4096, ratio: 1 },
+      after: { pageCount: 1, freePages: 0, pageSize: 4096, bytesFree: 0, bytesTotal: 4096, ratio: 0 },
+      durationMs: 1,
+    });
+
+    const pending = handler({ type: "runVacuum" });
+    await new Promise((r) => setTimeout(r, 50));
+    // Still streaming: nothing ran yet, and the UI was told we are waiting.
+    expect(store.maintain).not.toHaveBeenCalled();
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "dbVacuumRunning" });
+
+    (rt.agent as any).streaming = false;
+    await pending; // the 1s poll fires, the session is idle -> compact
+    expect(store.maintain).toHaveBeenCalledWith({ freeRatioThreshold: 0 });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "dbVacuumResult" }));
+  }, 10_000);
 });

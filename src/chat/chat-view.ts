@@ -8,7 +8,7 @@ import { requiresApiKey } from "../core/config/requires-api-key";
 import type { ModelInfo, ModelListProvider } from "../core/llm/model-list";
 import { modelsDevProviderCandidates } from "../core/llm/models-dev";
 import type { SessionManager } from "../core/sessions/session-manager";
-import type { SessionSettingsPatch, SessionSummary } from "../core/sessions/types";
+import type { DbVacuumStats, SessionSettingsPatch, SessionSummary } from "../core/sessions/types";
 import type { SessionRegistry, SessionRuntime } from "./session-registry";
 import { PendingInputQueue, type PendingInput } from "./pending-input-queue";
 import { StreamTee } from "./stream-tee";
@@ -83,6 +83,8 @@ export class ChatViewProvider implements WebviewViewProvider {
   private readonly pendingQueue: PendingInputQueue;
   /** FIFO queue for in-panel modals (name dialog, alerts, confirms…). */
   private modals: PanelModalQueue;
+  /** True while the shared "compact database" modal is open (avoid re-prompts). */
+  private vacuumPromptOpen = false;
 
   constructor(
     private config: ConfigProvider,
@@ -177,6 +179,8 @@ export class ChatViewProvider implements WebviewViewProvider {
       currentFolder: this.currentFolder(),
       workingIds: this.workingIds(),
       show,
+      // DB compaction controls (threshold + free-page stats) for the footer.
+      vacuum: { stats: this.sessions.dbVacuumStats(), threshold: this.vacuumThresholdPercent(), minFreeMB: this.vacuumMinFreeMB() },
     };
   }
 
@@ -362,6 +366,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     // back up.
     rt.contextTokens = estimateContextTokens(rt.history.conversation());
     this.sessions.saveSettings(rt.sessionId, { contextTokens: rt.contextTokens });
+    void this.maybeSuggestVacuum();
     // Any previously reported cache hit is meaningless for the new layout.
     rt.cachedTokens = 0;
     rt.cachedWriteTokens = 0;
@@ -510,6 +515,92 @@ export class ChatViewProvider implements WebviewViewProvider {
     return this.registry.listOpenIds().filter((id) => this.registry.get(id)?.agent.streaming);
   }
 
+  /** True when a SYNCHRONOUS VACUUM would freeze something live. */
+  private dbBusy(): boolean {
+    return this.workingIds().length > 0 || this.registry.listOpenIds().some((id) => this.pendingQueue.isDraining(id));
+  }
+
+  /** Suggested-compaction threshold (free-page %), from the VS Code setting. */
+  private vacuumThresholdPercent(): number {
+    const v = workspace.getConfiguration("harny").get<number>("dbVacuumThresholdPercent");
+    return typeof v === "number" && Number.isFinite(v) ? Math.min(100, Math.max(1, Math.round(v))) : 20;
+  }
+
+  /** Minimum RECLAIMABLE megabytes below which we never SUGGEST compaction. */
+  private vacuumMinFreeMB(): number {
+    const mb = workspace.getConfiguration("harny").get<number>("dbVacuumMinFreeMB");
+    return typeof mb === "number" && Number.isFinite(mb) ? Math.max(0, Math.round(mb)) : 10;
+  }
+
+  /**
+   * After a ✂ cut / session delete (and once at startup): SUGGEST compaction
+   * when the DB has too many free pages. The check is O(1) (header only);
+   * nothing is shown below the threshold. Skipped while a prompt is already up.
+   */
+  private async maybeSuggestVacuum(): Promise<void> {
+    if (this.vacuumPromptOpen || !this.view) return;
+    const stats = this.sessions.dbVacuumStats();
+    if (stats.pageCount === 0) return;
+    if (stats.ratio * 100 < this.vacuumThresholdPercent()) return;
+    // Never nag for a few hundred KB: only suggest when it reclaims REAL space.
+    if (stats.bytesFree < this.vacuumMinFreeMB() * 1024 * 1024) return;
+    await this.openVacuumModal(stats);
+  }
+
+  /** Open the SHARED vacuum modal (auto suggestion OR the All-Sessions button). */
+  private async openVacuumModal(stats: DbVacuumStats): Promise<void> {
+    if (this.vacuumPromptOpen) return;
+    this.vacuumPromptOpen = true;
+    try {
+      await this.modals.request({
+        kind: "dbVacuum",
+        stats,
+        threshold: this.vacuumThresholdPercent(),
+        minFreeMB: this.vacuumMinFreeMB(),
+      });
+    } finally {
+      this.vacuumPromptOpen = false;
+    }
+  }
+
+  /**
+   * Run a compaction "a bocce ferme": a VACUUM is SYNCHRONOUS and freezes the
+   * host event loop, so it waits until no session is streaming/draining a queue,
+   * then reports the before/after result to the open modal.
+   */
+  private async runVacuum(): Promise<void> {
+    if (this.dbBusy()) this.view?.webview.postMessage({ type: "dbVacuumRunning" });
+    const deadline = Date.now() + 5 * 60_000;
+    while (this.dbBusy() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 1000));
+    const result = this.sessions.maintain({ freeRatioThreshold: 0 });
+    this.view?.webview.postMessage({ type: "dbVacuumResult", result });
+  }
+
+  /** Persist the suggested-compaction threshold (global VS Code setting). */
+  private async setVacuumThreshold(percent: number): Promise<void> {
+    const n = Number(percent);
+    const v = Number.isFinite(n) ? Math.min(100, Math.max(1, Math.round(n))) : 20;
+    await workspace.getConfiguration("harny").update("dbVacuumThresholdPercent", v, true);
+    this.pushVacuumSettings();
+  }
+
+  /** Persist the minimum reclaimable MB (global VS Code setting). */
+  private async setVacuumMinFreeMB(mb: number): Promise<void> {
+    const n = Number(mb);
+    const v = Number.isFinite(n) ? Math.min(10240, Math.max(0, Math.round(n))) : 0;
+    await workspace.getConfiguration("harny").update("dbVacuumMinFreeMB", v, true);
+    this.pushVacuumSettings();
+  }
+
+  /** Push both vacuum settings to the webview (footer + modal inputs). */
+  private pushVacuumSettings(): void {
+    this.view?.webview.postMessage({
+      type: "dbVacuumSettings",
+      threshold: this.vacuumThresholdPercent(),
+      minFreeMB: this.vacuumMinFreeMB(),
+    });
+  }
+
   /** Push the full view state WITHOUT reloading the webview page. */
   private async postSwitchView(): Promise<void> {
     if (!this.view) return;
@@ -544,6 +635,8 @@ export class ChatViewProvider implements WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage((msg) => this.onMessage(msg));
     this.resubscribe();
     this.refresh();
+    // Startup suggestion: cheap O(1) check once the page is up.
+    setTimeout(() => void this.maybeSuggestVacuum(), 3000);
   }
 
   /** Rebuild the whole view (host-side refresh after any change). */
@@ -612,6 +705,19 @@ export class ChatViewProvider implements WebviewViewProvider {
         if (typeof msg.id === "number") this.onPanelModalResponse(msg.id, msg.value);
         break;
       }
+      case "runVacuum":
+        await this.runVacuum();
+        break;
+      case "openVacuumModal":
+        // NOT awaited: the modal stays open until the user closes it.
+        void this.openVacuumModal(this.sessions.dbVacuumStats());
+        break;
+      case "setVacuumThreshold":
+        await this.setVacuumThreshold(Number(msg.percent));
+        break;
+      case "setVacuumMinFreeMB":
+        await this.setVacuumMinFreeMB(Number(msg.mb));
+        break;
       case "getConfig":
         await this.pushConfig();
         break;
@@ -1427,6 +1533,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       }
     }
     this.sessions.remove(id);
+    void this.maybeSuggestVacuum();
     this.streamTee.detach(id);
     this.pendingQueue.drop(id);
     this.resubscribe();

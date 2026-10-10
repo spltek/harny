@@ -99,6 +99,37 @@ export type SessionSettingsPatch = Partial<SessionSettings>;
  * convenience wrappers over it, retained for the store's per-field unit tests
  * and callers that set exactly one field.
  */
+/** Cheap DB-size stats (free vs total pages) for the vacuum UI. */
+export interface DbVacuumStats {
+  pageCount: number;
+  freePages: number;
+  pageSize: number;
+  /** Reclaimable bytes (freePages × pageSize). */
+  bytesFree: number;
+  /** Total DB bytes (pageCount × pageSize). */
+  bytesTotal: number;
+  /** freePages / pageCount (0..1). */
+  ratio: number;
+}
+
+/** Result of a compaction attempt (before/after for the result message). */
+export interface DbVacuumResult {
+  vacuumed: boolean;
+  before: DbVacuumStats;
+  after: DbVacuumStats;
+  durationMs: number;
+}
+
+/** Empty stats (store without the optional maintenance support). */
+export const EMPTY_DB_VACUUM_STATS: DbVacuumStats = {
+  pageCount: 0,
+  freePages: 0,
+  pageSize: 0,
+  bytesFree: 0,
+  bytesTotal: 0,
+  ratio: 0,
+};
+
 export interface SessionStore {
   list(): SessionSummary[];
   create(name?: string): SessionSummary;
@@ -127,4 +158,13 @@ export interface SessionStore {
   saveTopP(id: string, value?: number): SessionSummary;
   /** Persist the ACTIVE sampler (temperature | topP). */
   saveSampler(id: string, sampler?: "temperature" | "topP"): SessionSummary;
+  /**
+   * OPTIONAL: cheap (O(1), header-only) DB-size stats for the vacuum UI.
+   */
+  dbVacuumStats?(): DbVacuumStats;
+  /**
+   * OPTIONAL best-effort maintenance: VACUUM when free pages dominate (a
+   * `freeRatioThreshold` of 0 FORCES it), then truncate the WAL. Never throws.
+   */
+  maintain?(options?: { freeRatioThreshold?: number }): DbVacuumResult;
 }

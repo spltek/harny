@@ -165,9 +165,28 @@ function setupDom(
         </div>
         <div class="sm-search"><input id="sessions-search" type="search" placeholder="Search sessions" /></div>
         <div id="sessions-manager-list"></div>
+        <div id="sm-vacuum">
+          <input id="sm-vacuum-threshold" type="range" />
+          <span id="sm-vacuum-threshold-val"></span>
+          <input id="sm-vacuum-min" type="range" />
+          <span id="sm-vacuum-min-val"></span>
+          <button id="sm-vacuum-btn">Compact now…</button>
+          <div id="sm-vacuum-stats"></div>
+        </div>
         <div class="sm-footer">
           <button id="sessions-close" class="secondary">Close</button>
         </div>
+      </div>
+    </div>
+    <div id="db-vacuum-modal" class="hidden">
+      <div class="dv-backdrop"></div>
+      <div class="dv-card">
+        <h3>Compact sessions database</h3>
+        <p id="db-vacuum-msg"></p>
+        <div id="db-vacuum-stats"></div>
+        <div id="db-vacuum-info"></div>
+        <button id="db-vacuum-close">Close</button>
+        <button id="db-vacuum-run">Compact now</button>
       </div>
     </div>
     <div id="model-modal" class="hidden">
@@ -4439,5 +4458,105 @@ describe("per-turn metrics badge — live turnMeta", () => {
     expect(badge.textContent).toContain("1.5k in");
     expect(badge.textContent).toContain("elapsed 1.2s");
     expect(badge.textContent).toContain("first token 300ms");
+  });
+});
+
+describe("DB vacuum modal (webview)", () => {
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
+
+  const stats = { pageCount: 100, freePages: 50, pageSize: 4096, bytesFree: 204800, bytesTotal: 409600, ratio: 0.5 };
+
+  it("opens on the dbVacuum modal kind, rendering the stats and the threshold", async () => {
+    await loadView();
+    hostMessage({ type: "modal", modalId: 7, kind: "dbVacuum", threshold: 20, minFreeMB: 10, stats });
+    expect((document.getElementById("db-vacuum-modal") as HTMLElement).classList.contains("hidden")).toBe(false);
+    expect((document.getElementById("db-vacuum-stats") as HTMLElement).textContent).toContain("50%");
+    expect((document.getElementById("db-vacuum-info") as HTMLElement).textContent).toContain("20%");
+    expect((document.getElementById("db-vacuum-info") as HTMLElement).textContent).toContain("10 MB");
+  });
+
+  it("Close posts modalResponse for the modal id", async () => {
+    await loadView();
+    hostMessage({ type: "modal", modalId: 7, kind: "dbVacuum", stats });
+    (document.getElementById("db-vacuum-close") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "modalResponse", id: 7, value: true });
+  });
+
+  it("Compact now posts runVacuum and shows the before → after result", async () => {
+    await loadView();
+    hostMessage({ type: "modal", modalId: 7, kind: "dbVacuum", stats });
+    (document.getElementById("db-vacuum-run") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "runVacuum" });
+
+    hostMessage({
+      type: "dbVacuumResult",
+      result: { vacuumed: true, before: stats, after: { ...stats, freePages: 0, bytesFree: 0, ratio: 0 }, durationMs: 1200 },
+    });
+    expect((document.getElementById("db-vacuum-msg") as HTMLElement).textContent).toContain("1.2s");
+    expect((document.getElementById("db-vacuum-run") as HTMLButtonElement).textContent).toBe("Compact again");
+  });
+
+  it("the All-Sessions footer renders the stats + both settings and posts the manual open", async () => {
+    await loadView();
+    hostMessage({ type: "sessionsManager", sessions: [], vacuum: { stats, threshold: 25, minFreeMB: 15 }, show: false });
+    expect((document.getElementById("sm-vacuum-stats") as HTMLElement).textContent).toContain("50%");
+    expect((document.getElementById("sm-vacuum-threshold") as HTMLInputElement).value).toBe("25");
+    expect((document.getElementById("sm-vacuum-min") as HTMLInputElement).value).toBe("15");
+    (document.getElementById("sm-vacuum-btn") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "openVacuumModal" });
+  });
+});
+
+describe("DB vacuum — sliders, info-only modal, live settings", () => {
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
+  const stats = { pageCount: 100, freePages: 50, pageSize: 4096, bytesFree: 204800, bytesTotal: 409600, ratio: 0.5 };
+
+  it("sliders update their value labels live and persist on change", async () => {
+    await loadView();
+    const th = document.getElementById("sm-vacuum-threshold") as HTMLInputElement;
+    const thVal = document.getElementById("sm-vacuum-threshold-val") as HTMLElement;
+    const min = document.getElementById("sm-vacuum-min") as HTMLInputElement;
+    const minVal = document.getElementById("sm-vacuum-min-val") as HTMLElement;
+
+    th.value = "42";
+    th.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(thVal.textContent).toBe("42%");
+    th.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(posted).toContainEqual({ type: "setVacuumThreshold", percent: 42 });
+
+    min.value = "33";
+    min.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(minVal.textContent).toBe("33 MB");
+    min.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(posted).toContainEqual({ type: "setVacuumMinFreeMB", mb: 33 });
+  });
+
+  it("dbVacuumSettings updates both sliders + their labels", async () => {
+    await loadView();
+    hostMessage({ type: "dbVacuumSettings", threshold: 30, minFreeMB: 40 });
+    expect((document.getElementById("sm-vacuum-threshold") as HTMLInputElement).value).toBe("30");
+    expect((document.getElementById("sm-vacuum-threshold-val") as HTMLElement).textContent).toBe("30%");
+    expect((document.getElementById("sm-vacuum-min") as HTMLInputElement).value).toBe("40");
+    expect((document.getElementById("sm-vacuum-min-val") as HTMLElement).textContent).toBe("40 MB");
+  });
+
+  it("the dbVacuum modal is INFO ONLY (no editable input inside it)", async () => {
+    await loadView();
+    hostMessage({ type: "modal", modalId: 7, kind: "dbVacuum", threshold: 20, minFreeMB: 10, stats });
+    expect(document.querySelector("#db-vacuum-modal input")).toBeNull();
+    expect((document.getElementById("db-vacuum-info") as HTMLElement).textContent).toContain("All sessions");
+  });
+
+  it("dbVacuumRunning shows the waiting message", async () => {
+    await loadView();
+    hostMessage({ type: "modal", modalId: 7, kind: "dbVacuum", stats });
+    hostMessage({ type: "dbVacuumRunning" });
+    expect((document.getElementById("db-vacuum-msg") as HTMLElement).textContent).toContain("idle");
   });
 });

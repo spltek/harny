@@ -119,6 +119,20 @@
           "type": "boolean",
           "default": false,
           "description": "Auto-approve tool calls without confirmation"
+        },
+        "harny.dbVacuumThresholdPercent": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Free-page percentage above which Harny suggests compacting the sessions database (VACUUM)."
+        },
+        "harny.dbVacuumMinFreeMB": {
+          "type": "number",
+          "default": 10,
+          "minimum": 0,
+          "maximum": 10240,
+          "description": "Minimum RECLAIMABLE megabytes below which Harny never suggests compacting (0 = no minimum, max 10 GB)."
         }
       }
     }

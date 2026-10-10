@@ -2048,6 +2048,19 @@ const sessionsModal = document.getElementById("sessions-modal") as HTMLDivElemen
 const sessionsManagerList = document.getElementById("sessions-manager-list") as HTMLDivElement;
 const sessionsCloseBtn = document.getElementById("sessions-close") as HTMLButtonElement;
 const sessionsSearchInput = document.getElementById("sessions-search") as HTMLInputElement;
+// DB compaction (VACUUM): the All-sessions footer controls + the shared modal.
+const smVacuumThreshold = document.getElementById("sm-vacuum-threshold") as HTMLInputElement;
+const smVacuumMin = document.getElementById("sm-vacuum-min") as HTMLInputElement;
+const smVacuumThresholdVal = document.getElementById("sm-vacuum-threshold-val") as HTMLSpanElement;
+const smVacuumMinVal = document.getElementById("sm-vacuum-min-val") as HTMLSpanElement;
+const smVacuumBtn = document.getElementById("sm-vacuum-btn") as HTMLButtonElement;
+const smVacuumStats = document.getElementById("sm-vacuum-stats") as HTMLDivElement;
+const dbVacuumModal = document.getElementById("db-vacuum-modal") as HTMLDivElement;
+const dbVacuumMsg = document.getElementById("db-vacuum-msg") as HTMLParagraphElement;
+const dbVacuumStatsEl = document.getElementById("db-vacuum-stats") as HTMLDivElement;
+const dbVacuumInfo = document.getElementById("db-vacuum-info") as HTMLDivElement;
+const dbVacuumClose = document.getElementById("db-vacuum-close") as HTMLButtonElement;
+const dbVacuumRun = document.getElementById("db-vacuum-run") as HTMLButtonElement;
 
 /** The last full list pushed by the host (unfiltered), plus the search filter. */
 let smSessions: SessionInfo[] = [];
@@ -2058,11 +2071,96 @@ let smSearchIds: Set<string> | null = null;
 let smSnippets = new Map<string, string>();
 
 /** Renders the manage-form rows (keeps the modal's current shown/hidden state). */
-function renderSessionsManagerData(data: { sessions: SessionInfo[]; currentFolder?: string }): void {
+function renderSessionsManagerData(data: { sessions: SessionInfo[]; currentFolder?: string; vacuum?: { stats: VacuumStats; threshold: number; minFreeMB: number } }): void {
   smSessions = data.sessions || [];
   smCurrentFolder = data.currentFolder;
+  if (data.vacuum) renderSmVacuum(data.vacuum.stats, data.vacuum.threshold, data.vacuum.minFreeMB);
   renderSessionsManager();
 }
+
+// ── DB compaction (VACUUM) ──
+interface VacuumStats {
+  pageCount: number;
+  freePages: number;
+  pageSize: number;
+  bytesFree: number;
+  bytesTotal: number;
+  ratio: number;
+}
+
+/** Human bytes: 1234567 -> "1.2 MB". */
+function fmtBytes(n: number): string {
+  if (n >= 1_073_741_824) return (n / 1_073_741_824).toFixed(1) + " GB";
+  if (n >= 1_048_576) return (n / 1_048_576).toFixed(1) + " MB";
+  if (n >= 1024) return Math.round(n / 1024) + " KB";
+  return n + " B";
+}
+
+/** The free/total numbers shown in BOTH the footer and the modal. */
+function vacuumStatsHtml(stats: VacuumStats | undefined): string {
+  if (!stats || !stats.pageCount) return "<div>Database not available.</div>";
+  const pct = Math.round(stats.ratio * 100);
+  const cls = pct > 0 ? ' class="warn"' : "";
+  return (
+    `<div><b${cls}>${fmtBytes(stats.bytesFree)}</b> reclaimable of <b>${fmtBytes(stats.bytesTotal)}</b> (${pct}%)</div>` +
+    `<div>${stats.freePages} free pages of ${stats.pageCount} total</div>`
+  );
+}
+
+function renderSmVacuum(stats: VacuumStats | undefined, threshold: number, minFreeMB: number): void {
+  if (threshold > 0) {
+    smVacuumThreshold.value = String(threshold);
+    smVacuumThresholdVal.textContent = threshold + "%";
+  }
+  if (minFreeMB >= 0) {
+    smVacuumMin.value = String(minFreeMB);
+    smVacuumMinVal.textContent = minFreeMB + " MB";
+  }
+  smVacuumStats.innerHTML = vacuumStatsHtml(stats);
+}
+
+let dbVacuumModalId = -1;
+function openDbVacuumModal(msg: { modalId?: number; stats?: VacuumStats; threshold?: number; minFreeMB?: number }): void {
+  dbVacuumModalId = typeof msg.modalId === "number" ? msg.modalId : -1;
+  dbVacuumMsg.textContent =
+    "Compacting rewrites the database to reclaim the free pages left by deleted sessions and cut conversations. It runs when the chat is idle.";
+  dbVacuumStatsEl.innerHTML = vacuumStatsHtml(msg.stats);
+  dbVacuumInfo.innerHTML =
+    `Suggests compaction above <b>${msg.threshold ?? 20}%</b> when at least <b>${msg.minFreeMB ?? 10} MB</b> are reclaimable ` +
+    "(change them in All sessions).";
+  dbVacuumRun.disabled = false;
+  dbVacuumRun.textContent = "Compact now";
+  dbVacuumModal.classList.remove("hidden");
+  dbVacuumRun.focus();
+}
+
+function closeDbVacuumModal(): void {
+  dbVacuumModal.classList.add("hidden");
+  if (dbVacuumModalId < 0) return;
+  const id = dbVacuumModalId;
+  dbVacuumModalId = -1;
+  vscode.postMessage({ type: "modalResponse", id, value: true });
+}
+
+dbVacuumRun.addEventListener("click", () => {
+  dbVacuumRun.disabled = true;
+  dbVacuumRun.textContent = "Compacting…";
+  dbVacuumMsg.textContent = "Compacting…";
+  vscode.postMessage({ type: "runVacuum" });
+});
+dbVacuumClose.addEventListener("click", () => closeDbVacuumModal());
+dbVacuumModal.querySelector(".dv-backdrop")?.addEventListener("click", () => closeDbVacuumModal());
+smVacuumBtn.addEventListener("click", () => vscode.postMessage({ type: "openVacuumModal" }));
+smVacuumThreshold.addEventListener("input", () => {
+  smVacuumThresholdVal.textContent = smVacuumThreshold.value + "%";
+});
+smVacuumThreshold.addEventListener("change", () =>
+  vscode.postMessage({ type: "setVacuumThreshold", percent: Number(smVacuumThreshold.value) }),
+);
+smVacuumMin.addEventListener("input", () => {
+  smVacuumMinVal.textContent = smVacuumMin.value + " MB";
+});
+smVacuumMin.addEventListener("change", () => vscode.postMessage({ type: "setVacuumMinFreeMB", mb: Number(smVacuumMin.value) }));
 
 function closeSessionsManager(): void {
   sessionsModal.classList.add("hidden");
@@ -4065,13 +4163,37 @@ window.addEventListener("message", (e) => {
         openAlert(msg);
       } else if (msg.kind === "name") {
         openNameModal({ mode: msg.mode, id: msg.id, current: msg.current, modalId: msg.modalId });
+      } else if (msg.kind === "dbVacuum") {
+        openDbVacuumModal(msg);
       }
+      break;
+    }
+    case "dbVacuumRunning":
+      dbVacuumMsg.textContent = "Waiting for the chat to be idle…";
+      break;
+    case "dbVacuumSettings":
+      smVacuumThreshold.value = String(msg.threshold);
+      smVacuumThresholdVal.textContent = msg.threshold + "%";
+      smVacuumMin.value = String(msg.minFreeMB);
+      smVacuumMinVal.textContent = msg.minFreeMB + " MB";
+      break;
+    case "dbVacuumResult": {
+      const r = msg.result as { vacuumed: boolean; before: VacuumStats; after: VacuumStats; durationMs: number } | undefined;
+      if (r) {
+        dbVacuumStatsEl.innerHTML = vacuumStatsHtml(r.before) + "<div>↓ after compaction</div>" + vacuumStatsHtml(r.after);
+        dbVacuumMsg.textContent = r.vacuumed
+          ? `Compacted in ${(r.durationMs / 1000).toFixed(1)}s.`
+          : "Nothing to reclaim — the database was already compact.";
+        smVacuumStats.innerHTML = vacuumStatsHtml(r.after);
+      }
+      dbVacuumRun.disabled = false;
+      dbVacuumRun.textContent = "Compact again";
       break;
     }
     case "sessionsManager":
       // Re-render the rows. The modal only OPENS when the host says so (gear
       // click); silent refreshes after open/close/delete never pop the form.
-      renderSessionsManagerData({ sessions: msg.sessions || [], currentFolder: msg.currentFolder });
+      renderSessionsManagerData({ sessions: msg.sessions || [], currentFolder: msg.currentFolder, vacuum: msg.vacuum });
       if (msg.show) sessionsModal.classList.remove("hidden");
       break;
     case "sessionsSearchResult": {
