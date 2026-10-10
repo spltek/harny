@@ -4722,3 +4722,31 @@ describe("models.dev unreachable warning", () => {
     expect((document.getElementById("mm-modelsdev-warn") as HTMLElement).classList.contains("hidden")).toBe(true);
   });
 });
+
+describe("Esc closes the TOP-MOST overlay (LIFO)", () => {
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
+  const stats = { pageCount: 100, freePages: 50, pageSize: 4096, bytesFree: 204800, bytesTotal: 409600, ratio: 0.5 };
+
+  it("closes the Compact modal, NOT the All-sessions modal underneath it", async () => {
+    await loadView();
+    // Open All sessions, then the shared Compact modal ON TOP of it.
+    hostMessage({ type: "sessionsManager", sessions: [], show: true });
+    hostMessage({ type: "modal", modalId: 5, kind: "dbVacuum", threshold: 20, minFreeMB: 128, stats });
+    const sessions = document.getElementById("sessions-modal") as HTMLElement;
+    const vacuum = document.getElementById("db-vacuum-modal") as HTMLElement;
+    expect(sessions.classList.contains("hidden")).toBe(false);
+    expect(vacuum.classList.contains("hidden")).toBe(false);
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    // The LAST opened (Compact) closes; the one underneath stays.
+    expect(vacuum.classList.contains("hidden")).toBe(true);
+    expect(sessions.classList.contains("hidden")).toBe(false);
+
+    // A second Esc then closes All sessions.
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(sessions.classList.contains("hidden")).toBe(true);
+  });
+});

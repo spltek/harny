@@ -716,12 +716,6 @@ function ensureLightbox(): HTMLDivElement {
   overlay.appendChild(img);
   overlay.addEventListener("click", () => closeImageLightbox());
   document.body.appendChild(overlay);
-  window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && lightboxEl && !lightboxEl.classList.contains("hidden")) {
-      e.preventDefault();
-      closeImageLightbox();
-    }
-  });
   lightboxEl = overlay;
   return overlay;
 }
@@ -2047,12 +2041,6 @@ function closeAlert(ok: boolean): void {
 alertOk.addEventListener("click", () => closeAlert(true));
 alertCancel.addEventListener("click", () => closeAlert(false));
 alertModal.querySelector(".alert-backdrop")?.addEventListener("click", () => closeAlert(false));
-window.addEventListener("keydown", (e) => {
-  if (alertId >= 0 && e.key === "Escape") {
-    e.preventDefault();
-    closeAlert(false);
-  }
-});
 
 // ── All-sessions manager (gear next to New session) ──
 const sessionsModal = document.getElementById("sessions-modal") as HTMLDivElement;
@@ -2337,12 +2325,6 @@ sessionSearchInput.addEventListener("input", () => {
 
 sessionsCloseBtn.addEventListener("click", closeSessionsManager);
 sessionsModal.querySelector(".sm-backdrop")?.addEventListener("click", closeSessionsManager);
-window.addEventListener("keydown", (e) => {
-  if (!sessionsModal.classList.contains("hidden") && e.key === "Escape") {
-    e.preventDefault();
-    closeSessionsManager();
-  }
-});
 
 function submitName(): void {
   if (!namePrompt) return;
@@ -3239,12 +3221,6 @@ mcpSave.addEventListener("click", () => {
   mcpEditorSelected = name;
   vscode.postMessage({ type: "saveMcpServers", servers: mcpEditorServers });
 });
-window.addEventListener("keydown", (e) => {
-  if (!mcpModal.classList.contains("hidden") && e.key === "Escape") {
-    e.preventDefault();
-    closeMcpEditor();
-  }
-});
 
 const sendParallelThrottled = rafThrottle(sendParallel);
 parRange.addEventListener("input", () => {
@@ -3257,12 +3233,6 @@ lgResponse.addEventListener("change", sendLoopGuardResponse);
 
 providersCancelBtn.addEventListener("click", closeProvidersEditor);
 providersModal.querySelector(".providers-backdrop")?.addEventListener("click", closeProvidersEditor);
-window.addEventListener("keydown", (e) => {
-  if (!providersModal.classList.contains("hidden") && e.key === "Escape") {
-    e.preventDefault();
-    closeProvidersEditor();
-  }
-});
 
 
 // ── View lock (per active session) ──
@@ -3634,10 +3604,6 @@ modelSearchInput.addEventListener("keydown", (e) => {
   if (e.key === "ArrowDown") {
     e.preventDefault();
     modelListEl.querySelector<HTMLButtonElement>(".mm-model")?.focus();
-  } else if (e.key === "Escape") {
-    e.preventDefault();
-    closeModelModal();
-    focusPrompt();
   }
 });
 // In the list: ArrowUp/Down move the focus, Enter selects (native button), Esc closes.
@@ -3945,12 +3911,6 @@ compactSettingsSave.addEventListener("click", () => {
   renderCompactionThreshold();
   vscode.postMessage({ type: "setCompactionThreshold", value });
   closeCompactionSettings();
-});
-window.addEventListener("keydown", (e) => {
-  if (!compactSettingsModal.classList.contains("hidden") && e.key === "Escape") {
-    e.preventDefault();
-    closeCompactionSettings();
-  }
 });
 const sendContextThrottled = rafThrottle(() => sendContextWindow(Number(ctxRange.value)));
 const sendOutputThrottled = rafThrottle(() => sendOutputTokens(Number(outRange.value)));
@@ -4540,5 +4500,36 @@ renderPending(init.pending || []);
 if (activeId) vscode.postMessage({ type: "getConfig" });
 // Opening the panel on a session lands the caret in the prompt.
 if (activeId) focusPrompt();
+
+// ── Esc closes the TOP-MOST overlay only (LIFO) ──
+// ONE dispatcher instead of a listener per modal: with nested modals open (e.g.
+// All sessions → Compact) Esc must close the LAST one opened, not whichever
+// listener happens to fire first (which also left the inner modal open).
+const ESC_OVERLAYS: { visible: () => boolean; close: () => void }[] = [
+  { visible: () => !!lightboxEl && !lightboxEl.classList.contains("hidden"), close: () => closeImageLightbox() },
+  { visible: () => alertId >= 0, close: () => closeAlert(false) },
+  { visible: () => !dbVacuumModal.classList.contains("hidden"), close: () => closeDbVacuumModal() },
+  { visible: () => !compactSettingsModal.classList.contains("hidden"), close: () => closeCompactionSettings() },
+  { visible: () => !providersModal.classList.contains("hidden"), close: () => closeProvidersEditor() },
+  { visible: () => !mcpModal.classList.contains("hidden"), close: () => closeMcpEditor() },
+  {
+    visible: () => !modelModal.classList.contains("hidden"),
+    close: () => {
+      closeModelModal();
+      focusPrompt();
+    },
+  },
+  { visible: () => !sessionsModal.classList.contains("hidden"), close: () => closeSessionsManager() },
+];
+window.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  for (const o of ESC_OVERLAYS) {
+    if (o.visible()) {
+      e.preventDefault();
+      o.close();
+      return;
+    }
+  }
+});
 
 export {};
