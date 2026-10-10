@@ -99,9 +99,9 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     expect(prompt).toContain("READ-ONLY MODE (Analyze)");
     expect(prompt).toContain("they MUST be read-only");
     expect(prompt).toContain("ORCHESTRATION");
-    // The SAME 3-step orchestration flow applies in Analyze too (Parallel ON).
+    // The SAME 4-step orchestration flow applies in Analyze too (Parallel ON).
     expect(prompt).toContain("STEP 1 — DECIDE");
-    expect(prompt).toContain("STEP 2 — PLAN + LAUNCH");
+    expect(prompt).toContain("STEP 2 — MAXIMIZE PARALLELISM");
     expect(prompt).toContain("sub-agent");
     // Read-only preview: writers are advertised (they run as previews).
     const listSection = prompt.slice(prompt.indexOf("You have access to these tools:"), prompt.indexOf("\nGuidelines:"));
@@ -119,6 +119,7 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     const builder = new DefaultSystemPromptBuilder((m) => toolDefinitionsForMode(delegateOnly, m), () => "/w");
     const prompt = builder.build("agent");
     expect(prompt).toContain("DELEGATION TURN");
+    expect(prompt).toContain("MAXIMIZE PARALLELISM");
     expect(prompt).toContain("ONLY tool you may call is Delegate");
     expect(prompt).toContain("Do NOT call TodoWrite");
     expect(prompt).toContain("any such call is refused");
@@ -130,7 +131,7 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     expect(prompt).not.toContain("Guidelines:");
   });
 
-  it("adds the same 3-step orchestration rules when Parallel is ON, in BOTH modes", () => {
+  it("adds the same 4-step orchestration rules when Parallel is ON, in BOTH modes", () => {
     const withDelegate = new DefaultSystemPromptBuilder(
       (mode) => toolDefinitionsForMode(toolsWithDelegate(), mode),
       () => "/w",
@@ -143,8 +144,12 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
       // A pure question is answered directly; a tool-needing request is delegated.
       expect(p).toContain("ANSWER it directly");
       expect(p).toContain("STEP 1 — DECIDE");
-      expect(p).toContain("STEP 2 — PLAN + LAUNCH");
-      expect(p).toContain("STEP 3 — COLLECT + ANSWER");
+      expect(p).toContain("STEP 2 — MAXIMIZE PARALLELISM");
+      expect(p).toContain("STEP 3 — PLAN + LAUNCH");
+      expect(p).toContain("STEP 4 — COLLECT + ANSWER");
+      // The explicit MAXIMIZE-PARALLELISM phase: N independent items = N sub-agents.
+      expect(p).toContain("LARGEST set of INDEPENDENT sub-tasks");
+      expect(p).toContain("ONE sub-agent EACH");
       // Conflict reasoning about resources (not just files) + meaningful ids.
       expect(p).toContain("containing folder");
       expect(p).toContain("MEANINGFUL id");

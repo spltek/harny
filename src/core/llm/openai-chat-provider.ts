@@ -17,6 +17,23 @@ const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 /** Extra attempts AFTER the first (so up to 4 requests total). */
 const MAX_POST_RETRIES = 3;
 
+/**
+ * Turn a raw provider error body into a clear message. A model that the host
+ * serves over a DIFFERENT protocol (Anthropic Messages, OpenAI Responses, …) is
+ * called out explicitly instead of dumping the JSON: harny speaks only OpenAI
+ * Chat Completions.
+ */
+export function describeApiError(status: number, text: string): string {
+  if (/ModelProtocolUnsupported|does not support this protocol/i.test(text)) {
+    return (
+      `This model is not served over OpenAI Chat Completions (HTTP ${status}): the provider exposes it through a ` +
+      `different protocol (e.g. Anthropic Messages or OpenAI Responses). Pick a model that supports Chat ` +
+      `Completions, or use a provider that exposes it that way (e.g. OpenRouter).`
+    );
+  }
+  return `OpenAI API error ${status}: ${text}`;
+}
+
 function abortError(): Error {
   const e = new Error("Aborted");
   e.name = "AbortError";
@@ -211,7 +228,7 @@ export class OpenAIChatProvider implements LLMProvider {
 
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`OpenAI API error ${response.status}: ${text}`);
+      throw new Error(describeApiError(response.status, text));
     }
 
     const seenToolCallIndices = new Set<number>();

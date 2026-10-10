@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { OpenAIChatProvider } from "./openai-chat-provider";
+import { OpenAIChatProvider, describeApiError } from "./openai-chat-provider";
 import { FakeHttpClient, sseResponse } from "./http-client.test-utils";
 import type { HttpResponse } from "./http-client";
 import type { HarnyConfig } from "../config/types";
@@ -642,5 +642,23 @@ describe("OpenAIChatProvider — transient retry (rate limits)", () => {
     const provider = new OpenAIChatProvider(config, http, tools);
     await expect(collect(provider.stream([{ role: "user", content: "hi" }]))).rejects.toThrow(/503/);
     expect(http.requests).toHaveLength(4); // 1 attempt + 3 retries
+  });
+});
+
+describe("describeApiError", () => {
+  it("explains a protocol mismatch instead of dumping the JSON body", () => {
+    const body = JSON.stringify({
+      type: "error",
+      error: { type: "ModelProtocolUnsupported", message: "Model does not support this protocol." },
+    });
+    const msg = describeApiError(400, body);
+    expect(msg).toContain("not served over OpenAI Chat Completions");
+    expect(msg).toContain("Anthropic Messages");
+    expect(msg).toContain("OpenRouter");
+    expect(msg).not.toContain("ModelProtocolUnsupported");
+  });
+
+  it("keeps the plain message for any other error", () => {
+    expect(describeApiError(401, "unauthorized")).toBe("OpenAI API error 401: unauthorized");
   });
 });
