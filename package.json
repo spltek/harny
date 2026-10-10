@@ -42,31 +42,6 @@
         }
       ]
     },
-    "commands": [
-      {
-        "command": "harny.openChat",
-        "title": "Harny: Open Chat"
-      },
-      {
-        "command": "harny.newSession",
-        "title": "Harny: New Session"
-      },
-      {
-        "command": "harny.reloadConfig",
-        "title": "Harny: Reload Config"
-      },
-      {
-        "command": "harny.debugConfig",
-        "title": "Harny: Debug Config"
-      }
-    ],
-    "keybindings": [
-      {
-        "command": "harny.openChat",
-        "key": "ctrl+shift+h",
-        "mac": "cmd+shift+h"
-      }
-    ],
     "configuration": {
       "title": "Harny",
       "properties": {

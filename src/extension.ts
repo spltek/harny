@@ -222,36 +222,6 @@ export async function activate(context: ExtensionContext) {
     await commands.executeCommand("harny.chatView.focus");
   }
 
-  context.subscriptions.push(
-    commands.registerCommand("harny.openChat", () => {
-      void revealViewInRight();
-      void viewProvider.createNew();
-    }),
-    commands.registerCommand("harny.newSession", () => {
-      void revealViewInRight();
-      void viewProvider.createNew();
-    }),
-  );
-
-  context.subscriptions.push(
-    commands.registerCommand("harny.reloadConfig", () => {
-      debugLog("manual reload config command");
-      viewProvider.refresh();
-    }),
-    commands.registerCommand("harny.debugConfig", () => {
-      const cfg = config.get();
-      window.showInformationMessage(
-        `Harny config:\nprovider=${cfg.provider}\nactiveProvider=${cfg.activeProvider}\nmodel=${cfg.model}\nbaseUrl=${cfg.baseUrl}\n` +
-          `thinkingMode=${cfg.thinkingMode}\nthinkingLevel=${cfg.thinkingLevel ?? "Auto"}\ntemperature=${cfg.temperature ?? "Auto"}\ntopP=${cfg.topP ?? "Auto"}\nsampler=${cfg.sampler ?? "temperature"}\n` +
-          `presencePenalty=${cfg.presencePenalty ?? "Auto"}\nfrequencyPenalty=${cfg.frequencyPenalty ?? "Auto"}\n` +
-          `availableModels (${(cfg.availableModels ?? []).length})\n` +
-          `providerModels (${(cfg.providerModels ?? []).length})\n` +
-          `hostModelProviders (${(cfg.hostModelProviders ?? []).length})`,
-        { modal: false },
-      );
-    }),
-  );
-
   // Live-reload config on file change.
   const reload = () => {
     debugLog("config file changed, refreshing");
