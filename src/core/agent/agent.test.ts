@@ -3303,4 +3303,15 @@ describe("Agent — per-turn meta (real usage + timings)", () => {
     expect(assistant.meta!.outputTokens).toBeUndefined();
     expect(typeof assistant.meta!.durationMs).toBe("number");
   });
+
+  it("emits a turn_meta event with the REAL metrics as soon as a turn is committed", async () => {
+    const { agent, events } = buildHarness({
+      chunks: [[{ type: "text", content: "hi" }, { type: "usage", usage: { input: 1000, output: 10, total: 1010 } }]],
+    });
+    await agent.send("hello");
+    const tm = events.find((e) => e.type === "turn_meta");
+    expect(tm).toBeDefined();
+    expect(tm && tm.type === "turn_meta" ? tm.meta.inputTokens : undefined).toBe(1000);
+    expect(tm && tm.type === "turn_meta" ? typeof tm.meta.durationMs : undefined).toBe("number");
+  });
 });

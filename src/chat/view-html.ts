@@ -300,9 +300,12 @@ ${renderViewConfig(deps)}
     }
     .msg.assistant, .msg.tool { width: 100%; max-width: 100%; }
     .msg.assistant { align-self: flex-start; background: var(--assistant-msg); min-width: 0; position: relative; font-size: var(--fs-lg); }
-    /* Per-turn metrics badge (REAL usage + timings) under an assistant bubble. */
+    /* Per-turn metrics badge (REAL usage + timings) under an assistant bubble.
+       flex-shrink: 0 is REQUIRED: #messages is a flex column and this item has
+       overflow: hidden, so its automatic min-height is 0 and it would be
+       squashed to 0px (invisible) as soon as the transcript overflows. */
     .msg-meta {
-      align-self: flex-start; max-width: 92%; margin: -2px 0 2px 4px;
+      flex-shrink: 0; align-self: flex-start; max-width: 92%; margin: -2px 0 2px 4px;
       font-size: var(--fs-sm); color: var(--muted); font-variant-numeric: tabular-nums;
       user-select: text; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }

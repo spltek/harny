@@ -108,6 +108,10 @@ export class StreamTee {
         case "usage":
           this.deps.onUsage(rt.sessionId, event.usage);
           break;
+        case "turn_meta":
+          // The turn is committed: show its REAL metrics badge right away.
+          if (active) post({ type: "turnMeta", meta: event.meta });
+          break;
         case "raw_chunk":
           break; // informational (stream log); not routed to the view
       }

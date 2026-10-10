@@ -191,3 +191,19 @@ describe("StreamTee", () => {
     expect(tee.liveOf("a")?.answer).toBe("");
   });
 });
+describe("StreamTee — turn_meta", () => {
+  it("forwards turn_meta to the ACTIVE session only", () => {
+    const active: string[] = ["a"];
+    const { tee, deps } = makeTee();
+    deps.isActive.mockImplementation((id: string) => id === active[0]);
+    const a = fakeRuntime("a");
+    const b = fakeRuntime("b");
+    tee.attachAll([a.rt, b.rt]);
+
+    a.emit({ type: "turn_meta", meta: { inputTokens: 123, durationMs: 5 } });
+    b.emit({ type: "turn_meta", meta: { inputTokens: 456 } });
+
+    expect(deps.onPost).toHaveBeenCalledTimes(1);
+    expect(deps.onPost).toHaveBeenCalledWith({ type: "turnMeta", meta: { inputTokens: 123, durationMs: 5 } });
+  });
+});

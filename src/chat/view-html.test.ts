@@ -88,6 +88,7 @@ describe("renderViewHtml", () => {
       state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
     });
     expect(html).toContain(".msg-meta {");
+    expect(html).toMatch(/\.msg-meta \{[^}]*flex-shrink: 0/);
     expect(html).toMatch(/\.msg-meta \{[^}]*align-self: flex-start/);
     expect(html).toMatch(/\.msg-meta \{[^}]*tabular-nums/);
   });

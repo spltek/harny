@@ -4374,8 +4374,8 @@ describe("per-turn metrics badge (webview)", () => {
     expect(badge.textContent).toContain("1.2k in");
     expect(badge.textContent).toContain("340 out");
     expect(badge.textContent).toContain("⚡ 800");
-    expect(badge.textContent).toContain("3.4s");
-    expect(badge.textContent).toContain("ttft 800ms");
+    expect(badge.textContent).toContain("elapsed 3.4s");
+    expect(badge.textContent).toContain("first token 800ms");
     expect(badge.title).toContain("input: 1200 tokens");
     expect(badge.title).toContain("cache write: 100 tokens");
     // The badge sits right AFTER the assistant bubble.
@@ -4386,5 +4386,58 @@ describe("per-turn metrics badge (webview)", () => {
     await loadView();
     hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "hello", timestamp: 2 }] });
     expect(document.querySelector(".msg-meta")).toBeNull();
+  });
+});
+
+
+describe("per-turn metrics badge — tool-only turns", () => {
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
+
+  it("shows a badge for a TOOL-ONLY assistant turn (no text bubble)", async () => {
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "user", content: "go", timestamp: 1 },
+        {
+          role: "assistant",
+          content: "🔧 Tool: Read",
+          timestamp: 2,
+          meta: { inputTokens: 900, outputTokens: 12, durationMs: 1500 },
+          toolCalls: [{ id: "t1", name: "Read", arguments: {} }],
+        },
+        { role: "tool", content: "out", toolCallId: "t1", timestamp: 3 },
+      ],
+    });
+    const badges = document.querySelectorAll(".msg-meta");
+    expect(badges.length).toBe(1);
+    expect(badges[0].textContent).toContain("900 in");
+    expect(badges[0].textContent).toContain("elapsed 1.5s");
+  });
+});
+
+
+
+describe("per-turn metrics badge — live turnMeta", () => {
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
+
+  it("appends a badge IMMEDIATELY on turnMeta, with no re-render", async () => {
+    await loadView();
+    hostMessage({ type: "refresh", messages: [{ role: "user", content: "q", timestamp: 1 }] });
+    expect(document.querySelectorAll(".msg-meta").length).toBe(0);
+
+    hostMessage({ type: "turnMeta", meta: { inputTokens: 1500, outputTokens: 30, durationMs: 1200, ttftMs: 300 } });
+
+    const badge = document.querySelector(".msg-meta") as HTMLElement;
+    expect(badge).toBeTruthy();
+    expect(badge.textContent).toContain("1.5k in");
+    expect(badge.textContent).toContain("elapsed 1.2s");
+    expect(badge.textContent).toContain("first token 300ms");
   });
 });

@@ -1,5 +1,6 @@
 import type { ToolCall } from "../tools/tool";
 import type { Usage } from "../llm/types";
+import type { MessageMeta } from "../history/types";
 
 /** Sub-agent events worth streaming live into the Delegate bubble. */
 export type SubAgentEvent =
@@ -22,6 +23,10 @@ export type AgentEvent =
   | { type: "subagent_event"; toolCallId: string; event: SubAgentEvent }
   | { type: "tool_result"; toolResult: { toolCallId: string; output: string; isError: boolean } }
   | { type: "usage"; usage: Usage }
+  /** REAL per-turn metrics (usage + timings) emitted RIGHT AFTER an assistant
+   * turn is committed, so the UI can show its badge as soon as the turn ends
+   * (no need to wait for the end-of-run transcript refresh). */
+  | { type: "turn_meta"; meta: MessageMeta }
   | { type: "done" }
   | { type: "error"; error: string }
   /** The loop guard detected a degenerate loop and REACTED (broke it and told

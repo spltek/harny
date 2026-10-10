@@ -364,6 +364,7 @@ export class Agent implements ChatController {
         const final = await this.runLlmTurn([]);
         // Never let the synthetic tool label leak into a stored report either.
         const finalText = isSyntheticToolSummary(final.content) ? "" : final.content.trim();
+        const finalMeta = this.turnMeta(final);
         this.deps.history.add({
           role: "assistant",
           content: finalText || "(no report produced)",
@@ -372,8 +373,9 @@ export class Agent implements ChatController {
           ...(final.reasoningDetails && final.reasoningDetails.length > 0
             ? { reasoningDetails: final.reasoningDetails }
             : {}),
-          meta: this.turnMeta(final),
+          meta: finalMeta,
         });
+        this.deps.events.emit({ type: "turn_meta", meta: finalMeta });
         return;
       }
       // Bounded, but say so: a silent stop looks like a hang. This branch only
@@ -446,6 +448,7 @@ export class Agent implements ChatController {
     // The Analyze preview footer belongs to the FINAL answer only: appending it
     // to an intermediate tool turn (the run continues) would be premature.
     const finalContent = toolCalls.length === 0 ? this.withPreviewFooter(withTruncation) : withTruncation;
+    const meta = this.turnMeta(turnResult);
     this.deps.history.add({
       role: "assistant",
       content: finalContent,
@@ -453,8 +456,12 @@ export class Agent implements ChatController {
       timestamp: Date.now(),
       ...(thinking.trim() ? { thinking } : {}),
       ...(reasoningDetails && reasoningDetails.length > 0 ? { reasoningDetails } : {}),
-      meta: this.turnMeta(turnResult),
+      meta,
     });
+    // Publish the turn's REAL metrics NOW (right after it is committed), so the
+    // UI can show the badge as soon as the turn ends instead of only on the
+    // end-of-run refresh.
+    this.deps.events.emit({ type: "turn_meta", meta });
     // Changes prepared as previews: highlight the "Switch to Build" CTA in the UI.
     if (finalContent.includes(PREVIEW_FOOTER_MARKER)) {
       this.deps.events.emit({ type: "preview_ready" });

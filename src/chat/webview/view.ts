@@ -549,8 +549,8 @@ function metaBadge(meta: MsgMeta): HTMLElement | undefined {
   if (typeof meta.inputTokens === "number") parts.push(`${fmtTokens(meta.inputTokens)} in`);
   if (typeof meta.outputTokens === "number") parts.push(`${fmtTokens(meta.outputTokens)} out`);
   if (typeof meta.cachedTokens === "number" && meta.cachedTokens > 0) parts.push(`⚡ ${fmtTokens(meta.cachedTokens)}`);
-  if (typeof meta.durationMs === "number") parts.push(fmtDuration(meta.durationMs));
-  if (typeof meta.ttftMs === "number") parts.push(`ttft ${fmtDuration(meta.ttftMs)}`);
+  if (typeof meta.durationMs === "number") parts.push(`elapsed ${fmtDuration(meta.durationMs)}`);
+  if (typeof meta.ttftMs === "number") parts.push(`first token ${fmtDuration(meta.ttftMs)}`);
   if (parts.length === 0) return undefined;
   const el = document.createElement("div");
   el.className = "msg-meta";
@@ -567,6 +567,19 @@ function metaBadge(meta: MsgMeta): HTMLElement | undefined {
     .filter(Boolean)
     .join("\n");
   return el;
+}
+
+/**
+ * Append a per-turn metrics badge at the END of the transcript. Used by the
+ * live `turnMeta` event: the turn just ended, so the badge is known and can be
+ * shown immediately with NO full re-render (no flicker).
+ */
+function appendTurnBadge(meta: MsgMeta | undefined): void {
+  if (!meta) return;
+  const badge = metaBadge(meta);
+  if (!badge) return;
+  messagesEl.appendChild(badge);
+  scrollDown();
 }
 
 /**
@@ -1188,20 +1201,14 @@ function renderMessages(msgs: ChatMsg[]): boolean {
       // like "I'll split this into 4 sub-tasks" jump BELOW the sub-agent
       // bubbles after the completion `refresh` re-rendered the transcript.
       const content = m.content || "";
-      let bubble: HTMLDivElement | undefined;
       if (content.trim() && !content.startsWith("🔧 ")) {
-        bubble = addMessage("assistant", content);
+        const bubble = addMessage("assistant", content);
         if (content.startsWith("❌")) bubble.classList.add("error");
         else if (content.startsWith("🔁")) bubble.classList.add("loop");
         // Loop notices are system annotations, not branchable messages.
         if (!content.startsWith("🔁")) attachBranchAt(bubble, i);
         // Prepared-but-not-applied changes: re-render the highlighted CTA.
         if (content.includes("Nothing has been applied")) addSwitchToBuildBanner();
-      }
-      // REAL per-turn metrics (usage + timings) as a compact badge under the bubble.
-      if (bubble && m.meta) {
-        const badge = metaBadge(m.meta);
-        if (badge) bubble.insertAdjacentElement("afterend", badge);
       }
       if (m.toolCalls && m.toolCalls.length > 0) {
         for (const tc of m.toolCalls) {
@@ -1230,6 +1237,12 @@ function renderMessages(msgs: ChatMsg[]): boolean {
           }
         }
       }
+      // Badge at the END of the turn (after the text bubble AND its tool
+      // bubbles), matching the live `turnMeta` injection.
+      if (m.meta) {
+        const badge = metaBadge(m.meta);
+        if (badge) messagesEl.appendChild(badge);
+      }
     } else if (m.role === "user" && m.harness) {
       // Harness-injected prompt: robot icon + markdown, no ✂ cut key.
       addHarnessMessage(m.displayText ?? (m.content || ""));
@@ -1247,6 +1260,10 @@ function renderMessages(msgs: ChatMsg[]): boolean {
       if (m.role === "user") attachTruncateAt(el, i);
     }
   }
+  // The per-message `addMessage` already scrolled, but the metrics badge is
+  // appended AFTER the last bubble: scroll once more so auto-scroll includes
+  // its height (otherwise the badge is left just below the fold).
+  if (hasVisible) scrollDown();
   return hasVisible;
 }
 
@@ -3840,6 +3857,11 @@ window.addEventListener("message", (e) => {
       }
       break;
     }
+    case "turnMeta":
+      // A turn just ended: append its REAL metrics badge at the end of the
+      // transcript (no re-render).
+      appendTurnBadge(msg.meta as MsgMeta);
+      break;
     case "toolCall": {
       // A tool phase ends the current answer segment: commit pending renders
       // and close the bubble — later text becomes a NEW blue bubble.
