@@ -58,7 +58,7 @@ npm test          # run all unit tests (vitest)
 npm run coverage  # with coverage report
 ```
 
-1144 unit tests cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (SQLite store with FTS5 search, manager, registry, compactor, the cross-folder manager with its open/change-folder actions, the per-session control settings incl. the Loop Guard parameters), the OpenAI-compatible LLM provider (streaming, tool calls, `finish_reason`), host-model fetching, all 14 tools (including the Analyze dry-run preview), the mode policy, the agent loop (fake LLM, abort, max turns), the **loop guard** (reasoning/empty/tool-failure/error-streak/tool-repeat detection, tool-call dedup, sensitivity presets, the editable parameter ranges + their clamping), orchestration/sub-agents, **Agent Skills** (SKILL.md parsing + discovery), **MCP** (stdio + Streamable HTTP clients, tool wrapper, manager), markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code, incl. the control-stack wiring: sliders, Auto defaults, the collapsible Loop Guard parameters and the responsive layout).
+1214 unit tests cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (SQLite store with FTS5 search, manager, registry, compactor, the cross-folder manager with its open/change-folder actions, the per-session control settings incl. the Loop Guard parameters), the OpenAI-compatible LLM provider (streaming, tool calls, `finish_reason`), host-model fetching, all 14 tools (including the Analyze dry-run preview), the mode policy, the agent loop (fake LLM, abort, max turns), the **loop guard** (reasoning/empty/tool-failure/error-streak/tool-repeat detection, tool-call dedup, sensitivity presets, the editable parameter ranges + their clamping), orchestration/sub-agents, **Agent Skills** (SKILL.md parsing + discovery), **MCP** (stdio + Streamable HTTP clients, tool wrapper, manager), markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code, incl. the control-stack wiring: sliders, Auto defaults, the collapsible Loop Guard parameters and the responsive layout), the per-turn metrics badge (real usage + timings), the real context accounting (after a ✂ cut / compaction) and the DB compaction + index optimization (VACUUM, `PRAGMA optimize`, FTS5 `optimize`).
 
 ## Features
 
@@ -81,6 +81,9 @@ npm run coverage  # with coverage report
 - **Loop guard**: reasoning, empty, failing-tool, error-streak and repeated-tool loops are **broken, not just stopped** — the host interrupts the degenerate behaviour, tells the model how to recover and keeps going; identical read-only calls are served from cache and identical failing calls are not re-run
 - **Output-token-limit handling**: the provider's `finish_reason` is propagated; a truncated response is surfaced explicitly ("raise `harny.maxTokens`") instead of failing silently
 - **Diagnostics**: one line per turn (finish reason, content/thinking sizes, tool names, loop-guard decisions) in **Output > Harny**; an optional full request file log with `HARNY_DEBUG=1`
+- **Per-turn metrics badge**: under every assistant turn a compact badge shows the **REAL** usage and timings — `6.9k in · 74 out · ⚡ 800 · elapsed 2.3s · first token 676ms` (hover for the full detail). It appears **as soon as the turn ends** (a `turn_meta` event, no transcript re-render) and is shown for tool-only turns too. Captured from the provider stream (`usage`) and persisted with the message
+- **Real context accounting**: the context-fill metric prefers the provider-reported input tokens; after a ✂ cut it is recomputed from the **KEPT** messages and **persisted** (cutting everything → 0, so it no longer “jumps back” on reload), and after a compaction the kept window's real cumulative-input delta is used. Auto-compaction follows the same numbers
+- **Database compaction (VACUUM)**: the **All sessions** modal has two stacked sliders (free-page % above which compaction is suggested — default `20`; minimum **reclaimable** MB — default `128`) + the free/total numbers + **Compact & optimize indexes…**. The SAME modal is suggested automatically after a ✂ cut / session delete (and once at startup) when the DB is bloated, runs **“a bocce ferme”** (never during a live turn, since VACUUM is synchronous) and reports the **before → after** result. Besides reclaiming pages it also runs `PRAGMA optimize` and the **FTS5 `optimize`** (VACUUM alone does NOT merge full-text segments)
 - **Per-session controls**: context window, output tokens, sampler value, presence/frequency penalties, thinking level and every Loop Guard parameter are edited with **sliders** (each with a read-only value label; **Auto** snaps back to the knob's default) and persisted **per session** (in the SQLite `sessions` row), restored on reopen; they win over the provider defaults
 - **Responsive control stack**: the cards lay out **1 / 2 / 4 per row** as the panel widens, all share ONE row height so the left and right columns' controls **line up**, and the whole stack **scrolls vertically** once it would take more than 75% of the panel height (the prompt and the metrics are the last to give way)
 - **Empty shell**: with no open session the control stack is hidden and a hero invites you to pick a session from the list or create a new one
@@ -479,15 +482,12 @@ For providers that expose their model list (OpenAI, OpenRouter, opencode-go, lla
 | `harny.contextFiles` | `true` | Auto-include project files as context |
 | `harny.autoApprove` | `false` | Auto-approve tool calls |
 | `harny.autoOpen` | `false` | Open the chat panel on startup |
+| `harny.dbVacuumThresholdPercent` | `20` | Free-page percentage above which Harny **suggests** compacting the sessions database (VACUUM) |
+| `harny.dbVacuumMinFreeMB` | `128` | Minimum **reclaimable** megabytes below which Harny never suggests compacting (`0` = no minimum) |
 
 ### Commands
 
-| Command | Shortcut | Description |
-|---------|----------|-------------|
-| `Harny: Open Chat` | `Cmd+Shift+H` | Open the Sessions view (right side) + a new chat |
-| `Harny: New Session` | — | Create and open a new session (new tab) |
-| `Harny: Reload Config` | — | Reload the config file |
-| `Harny: Debug Config` | — | Show the resolved config summary |
+Harny registers **no custom Command Palette entries** — the palette stays clean. The view is opened from the Activity Bar icon, or via VS Code's auto-generated **Focus on Harny Chat View** / **View: Toggle Harny**. (The old `Harny: Open Chat` / `New Session` / `Reload Config` / `Debug Config` commands and the `Cmd+Shift+H` keybinding were removed.)
 
 ### Quick Start
 
