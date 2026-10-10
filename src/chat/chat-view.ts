@@ -497,6 +497,13 @@ export class ChatViewProvider implements WebviewViewProvider {
     this.activeId = id;
     this.resubscribe();
     this.applyActiveModel();
+    // A session may predate the model-limits feature: adopt the model's
+    // DETECTED context/output when it has no explicit override yet (silent —
+    // no alert on open).
+    const rt = this.registry.get(id);
+    if (rt?.model && (rt.contextWindow === undefined || rt.outputTokens === undefined)) {
+      void this.ensureModelLimits(rt, rt.model, rt.modelProvider, false);
+    }
     await this.postSwitchView();
   }
 
@@ -1832,7 +1839,7 @@ export class ChatViewProvider implements WebviewViewProvider {
    * models.dev value, then the catalog itself; when NEITHER source knows it,
    * alert the user (in-panel modal) to set the correct window manually.
    */
-  private async ensureModelLimits(rt: SessionRuntime, model: string, provider?: string): Promise<void> {
+  private async ensureModelLimits(rt: SessionRuntime, model: string, provider?: string, alert = true): Promise<void> {
     const key = provider ? `${provider}|${model}` : "";
     let ctx = provider ? this.modelsDevContext.get(key) : undefined;
     let out = provider ? this.modelsDevOutput.get(key) : undefined;
@@ -1862,7 +1869,8 @@ export class ChatViewProvider implements WebviewViewProvider {
       if (ctx && out) return;
     }
     // 3) Unknown everywhere: prompt the user (once per session+model) to set
-    //    BOTH values when neither is known.
+    //    BOTH values when neither is known. Skipped for a SILENT (on-open) pass.
+    if (!alert) return;
     if (this.activeRuntime() !== rt || rt.model !== model) return; // raced
     const alertKey = `${rt.sessionId}|${model}`;
     if (this.contextAlerts.has(alertKey)) return;

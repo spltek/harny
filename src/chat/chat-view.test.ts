@@ -2871,3 +2871,34 @@ describe("ChatViewProvider models.dev unreachable warning", () => {
     });
   });
 });
+
+describe("ChatViewProvider adopts limits on session open", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.noAutoName = false;
+    state.autoName = "New Session";
+  });
+
+  it("adopts the model's DETECTED context/output when switching to a session that has none", async () => {
+    const { registry, provider } = buildHarness({
+      config: { ...CONFIG, hostModelProviders: ["opencode-go"] },
+      providerEntry: { name: "opencode-go", baseUrl: "https://opencode.ai/zen/go/v1", models: [] },
+      fetchModelInfos: async () => [{ id: "deepseek-v4.1-flash", contextLength: 1000000, maxOutputTokens: 262144 }],
+      modelsDev: { getLimits: vi.fn(async () => ({})) },
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1 (active)
+    await provider.createNew(); // s2 (active)
+    const rt = registry.get("s1")!;
+    // A session created BEFORE the limits feature: model set, no overrides.
+    rt.model = "deepseek-v4.1-flash";
+    rt.modelProvider = "opencode-go";
+    rt.contextWindow = undefined;
+    rt.outputTokens = undefined;
+
+    await handler({ type: "switchTab", id: "s1" });
+
+    await vi.waitFor(() => expect(rt.outputTokens).toBe(262144));
+    expect(rt.contextWindow).toBe(1000000);
+  });
+});

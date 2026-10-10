@@ -697,11 +697,13 @@ export class Agent implements ChatController {
   /** Human-readable note for a response truncated at the output-token limit. */
   private truncationNote(reasoningAteBudget: boolean): string {
     const maxTokens = this.deps.config.get().maxTokens;
+    const shown =
+      typeof maxTokens === "number" && Number.isFinite(maxTokens) ? `, max output tokens = ${maxTokens}` : "";
     return (
       "Output truncated by the token limit (finish_reason=length" +
-      `, maxTokens=${maxTokens})` +
+      `${shown})` +
       (reasoningAteBudget ? " — the reasoning likely consumed the whole budget" : "") +
-      ". Increase `harny.maxTokens` (or shorten the request/reasoning) and ask me to continue."
+      ". Raise the session's Output tokens (or `harny.maxTokens`), or shorten the request/reasoning, and ask me to continue."
     );
   }
 
