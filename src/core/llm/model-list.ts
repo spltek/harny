@@ -25,6 +25,9 @@ export interface ModelInfo {
   /** Context window in tokens, when the host reports it (OpenRouter's
    * `context_length`, vLLM's `max_model_len`, llama.cpp's `meta.n_ctx_train`, …). */
   contextLength?: number;
+  /** Max OUTPUT tokens, when the host reports it (OpenRouter's
+   * `top_provider.max_completion_tokens`, `max_output_tokens`, …). */
+  maxOutputTokens?: number;
 }
 
 export interface ModelListProvider {
@@ -64,6 +67,44 @@ function pickContext(o: Record<string, unknown>): number | undefined {
   for (const key of CONTEXT_KEYS) {
     const n = toPositiveInt(o[key]);
     if (n) return n;
+  }
+  return undefined;
+}
+
+/** Keys that carry a model's MAX OUTPUT tokens across the known `/models`
+ * shapes (OpenRouter's `top_provider.max_completion_tokens`, `max_output_tokens`,
+ * `max_completion_tokens`, …). */
+const OUTPUT_KEYS = [
+  "max_output_tokens",
+  "max_completion_tokens",
+  "maxOutputTokens",
+  "max_tokens",
+  "output_tokens",
+  "output",
+] as const;
+
+function pickOutput(o: Record<string, unknown>): number | undefined {
+  for (const key of OUTPUT_KEYS) {
+    const n = toPositiveInt(o[key]);
+    if (n) return n;
+  }
+  return undefined;
+}
+
+/** Best-effort MAX OUTPUT tokens from the common `/models` response shapes
+ * (top-level fields, or nested under `limit`/`limits`/`metadata`/`meta`/
+ * `top_provider`/`architecture` — e.g. OpenRouter's `top_provider`). */
+export function extractMaxOutput(model: unknown): number | undefined {
+  if (!model || typeof model !== "object") return undefined;
+  const o = model as Record<string, unknown>;
+  const direct = pickOutput(o);
+  if (direct) return direct;
+  for (const container of CONTEXT_CONTAINERS) {
+    const child = o[container];
+    if (child && typeof child === "object") {
+      const n = pickOutput(child as Record<string, unknown>);
+      if (n) return n;
+    }
   }
   return undefined;
 }
@@ -139,7 +180,12 @@ export class HttpModelListProvider implements ModelListProvider {
       if (!trimmed || seen.has(trimmed)) continue;
       seen.add(trimmed);
       const contextLength = typeof m === "string" ? undefined : extractContextLength(m);
-      infos.push({ id: trimmed, ...(contextLength ? { contextLength } : {}) });
+      const maxOutputTokens = typeof m === "string" ? undefined : extractMaxOutput(m);
+      infos.push({
+        id: trimmed,
+        ...(contextLength ? { contextLength } : {}),
+        ...(maxOutputTokens ? { maxOutputTokens } : {}),
+      });
     }
     return infos;
   }

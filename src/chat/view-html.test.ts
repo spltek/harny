@@ -53,10 +53,23 @@ describe("renderViewHtml", () => {
     expect(html).toContain('id="model-modal"');
     expect(html).toContain('id="model-search"');
     expect(html).toContain('id="model-list"');
+    // No ✕ in the header: the ONLY close affordance is the Cancel button in the footer.
+    expect(html).toContain('id="model-close" class="secondary">Cancel</button>');
+    expect(html).not.toMatch(/mm-head[\s\S]*?✕/);
     // The old native dropdown is gone.
     expect(html).not.toContain('id="model-select"');
     // List rows are plain (no global "key" chrome) and hover is id-scoped.
     expect(html).toMatch(/#model-list \.mm-model:hover \{[^}]*filter: none/);
+    // Context + output sit in fixed, RIGHT-aligned grid columns (aligned rows).
+    expect(html).toMatch(/#model-list \.mm-model \{[^}]*display: grid/);
+    expect(html).toMatch(/\.mm-model \.mm-ctx \{[^}]*text-align: right/);
+    // The list is ONE grid and each row is a SUBGRID, so ctx | "out" | value
+    // share a width across rows (the widest value) and stay right-aligned.
+    expect(html).toMatch(/#model-list \{[^}]*grid-template-columns: 1fr max-content max-content max-content 1.1rem/);
+    // Rows pack from the TOP (a grid would otherwise STRETCH the header row and
+    // push a single filtered model to the bottom).
+    expect(html).toMatch(/#model-list \{[^}]*align-content: start/);
+    expect(html).toMatch(/#model-list \.mm-model \{[^}]*grid-template-columns: subgrid/);
   });
 
   it("masks the API key field and provides a hold-to-reveal eye", () => {

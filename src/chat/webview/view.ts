@@ -2,8 +2,8 @@ import { renderMarkdown } from "./markdown";
 import { splitDiffFence, countDiff } from "./diff-fence";
 import Prism from "./prism";
 import { langIdForPath } from "./lang-map";
-import { clampContextWindow, clampOutputTokens, DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS } from "../context-window";
-import { clampTemperature, clampTopP } from "../temperature";
+import { clampContextWindow, clampOutputTokens, DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, MAX_CONTEXT_WINDOW, MAX_OUTPUT_TOKENS, MIN_CONTEXT_WINDOW, MIN_OUTPUT_TOKENS } from "../context-window";
+import { clampTemperature, clampTopP, TEMPERATURE_MAX, TEMPERATURE_MIN, TEMPERATURE_STEP } from "../temperature";
 
 declare function acquireVsCodeApi(): {
   postMessage(message: unknown): void;
@@ -69,7 +69,7 @@ interface ConfigState {
   model: string;
   hasKey: boolean;
   models?: string[];
-  providerModels?: { provider: string; model: string; contextLength?: number }[];
+  providerModels?: { provider: string; model: string; contextLength?: number; maxOutputTokens?: number }[];
   modelMissing?: boolean;
   hostModelErrors?: { provider: string; error: string }[];
   noModels?: boolean;
@@ -81,9 +81,15 @@ interface ConfigState {
   mode?: "analyze" | "agent";
   /** Global "Parallel" switch: orchestration/sub-agents enabled. */
   parallel?: boolean;
+  /** True when the models.dev fallback is unreachable and a limit is missing. */
+  modelsDevError?: boolean;
   contextWindow?: number;
+  /** Slider MAXIMUM for the context window (the model's detected value). */
+  maxContextWindow?: number;
   compactionThresholdPercent?: number;
   outputTokens?: number;
+  /** Slider MAXIMUM for the output tokens (the model's detected value). */
+  maxOutputTokens?: number;
   temperature?: number;
   presencePenalty?: number;
   frequencyPenalty?: number;
@@ -175,15 +181,20 @@ const attachBtn = document.getElementById("attach-btn") as HTMLButtonElement;
 const attachmentChips = document.getElementById("attachment-chips") as HTMLDivElement;
 const modelBtn = document.getElementById("model-btn") as HTMLButtonElement;
 const modelBtnLabel = document.getElementById("model-btn-label") as HTMLSpanElement;
+const modelWarn = document.getElementById("model-warn") as HTMLSpanElement;
 const modelModal = document.getElementById("model-modal") as HTMLDivElement;
 const modelListEl = document.getElementById("model-list") as HTMLDivElement;
+const mmModelsDevWarn = document.getElementById("mm-modelsdev-warn") as HTMLDivElement;
 const modelSearchInput = document.getElementById("model-search") as HTMLInputElement;
 const thinkingRadios = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="thinking-level"]'));
 const ctxRange = document.getElementById("ctx-range") as HTMLInputElement;
 const ctxValue = document.getElementById("ctx-value") as HTMLSpanElement;
+const ctxRangeLabel = document.getElementById("ctx-range-label") as HTMLSpanElement;
 const outRange = document.getElementById("out-range") as HTMLInputElement;
 const outValue = document.getElementById("out-value") as HTMLSpanElement;
+const outRangeLabel = document.getElementById("out-range-label") as HTMLSpanElement;
 const sampRange = document.getElementById("samp-range") as HTMLInputElement;
+const sampRangeLabel = document.getElementById("samp-range-label") as HTMLSpanElement;
 const sampAuto = document.getElementById("samp-auto") as HTMLButtonElement;
 const samplerTemp = document.getElementById("sampler-temp") as HTMLInputElement;
 const samplerTopp = document.getElementById("sampler-topp") as HTMLInputElement;
@@ -3446,8 +3457,15 @@ function formatContext(n: number): string {
 let modelConfig: ConfigState | null = null;
 let modelFilter = "";
 
-interface ModelEntry { model: string; contextLength?: number; }
+interface ModelEntry { model: string; contextLength?: number; maxOutputTokens?: number; }
 interface ModelGroup { provider: string; models: ModelEntry[]; error?: string; }
+
+/** " · 128k · out 16k" — a limit the host/catalog did not report shows as "-". */
+function modelLimitsLabel(m?: { contextLength?: number; maxOutputTokens?: number }): string {
+  const ctx = m?.contextLength ? formatContext(m.contextLength) : "-";
+  const out = m?.maxOutputTokens ? formatContext(m.maxOutputTokens) : "-";
+  return ` · ${ctx} · out ${out}`;
+}
 
 /**
  * Group the provider/model pairs (or the flat model list) into the TREE the
@@ -3459,7 +3477,7 @@ function buildModelGroups(c: ConfigState): ModelGroup[] {
     const map = new Map<string, ModelEntry[]>();
     for (const pm of providerModels) {
       if (!map.has(pm.provider)) map.set(pm.provider, []);
-      map.get(pm.provider)!.push({ model: pm.model, contextLength: pm.contextLength });
+      map.get(pm.provider)!.push({ model: pm.model, contextLength: pm.contextLength, maxOutputTokens: pm.maxOutputTokens });
     }
     const groups: ModelGroup[] = [...map.entries()].map(([provider, models]) => ({
       provider,
@@ -3489,11 +3507,11 @@ function updateModelButton(c: ConfigState): void {
   const current =
     providerModels?.find((p) => p.model === c.model && (p.provider === c.activeProvider || !c.activeProvider)) ??
     providerModels?.find((p) => p.model === c.model);
-  modelBtnLabel.textContent = usable
-    ? c.model + (current?.contextLength ? ` · ${formatContext(current.contextLength)}` : "")
-    : "Select a model";
+  modelBtnLabel.textContent = usable ? c.model + modelLimitsLabel(current) : "Select a model";
   modelBtn.classList.toggle("placeholder", !usable);
   modelBtn.title = usable ? `Switch model — current: ${c.model}` : "Select a model";
+  // A soft ⚠ badge when the models.dev fallback is down (limits may be unknown).
+  modelWarn.classList.toggle("hidden", !c.modelsDevError);
 }
 
 /** Re-render the modal's grouped list, applying the current filter. The TREE
@@ -3501,6 +3519,9 @@ function updateModelButton(c: ConfigState): void {
 function renderModelList(): void {
   modelListEl.innerHTML = "";
   if (!modelConfig) return;
+  // Soft warning row: the models.dev fallback is unreachable (shown only when a
+  // limit is actually missing — the host decides).
+  mmModelsDevWarn.classList.toggle("hidden", !modelConfig.modelsDevError);
   const filter = modelFilter.trim().toLowerCase();
   let shown = 0;
   for (const g of buildModelGroups(modelConfig)) {
@@ -3529,18 +3550,27 @@ function renderModelList(): void {
       name.className = "mm-model-name";
       name.textContent = m.model;
       row.appendChild(name);
-      if (m.contextLength) {
-        const ctx = document.createElement("span");
-        ctx.className = "mm-ctx";
-        ctx.textContent = formatContext(m.contextLength);
-        row.appendChild(ctx);
-      }
-      if (isCurrent) {
-        const check = document.createElement("span");
-        check.className = "mm-check";
-        check.textContent = "✓";
-        row.appendChild(check);
-      }
+      // Two value cells (context | output), each right-aligned in its own SHARED
+      // subgrid column (so they line up across rows), plus a fixed "out" label;
+      // an unknown limit shows "-".
+      const ctxValue = document.createElement("span");
+      ctxValue.className = "mm-ctx mm-ctx-value";
+      ctxValue.textContent = m.contextLength ? formatContext(m.contextLength) : "-";
+      row.appendChild(ctxValue);
+      const outLabel = document.createElement("span");
+      outLabel.className = "mm-ctx mm-out-label";
+      outLabel.textContent = "out";
+      row.appendChild(outLabel);
+      const outValue = document.createElement("span");
+      outValue.className = "mm-ctx mm-out-value";
+      outValue.textContent = m.maxOutputTokens ? formatContext(m.maxOutputTokens) : "-";
+      row.appendChild(outValue);
+      // ALWAYS render the check cell (empty when not current) so the context and
+      // output columns stay aligned across every row.
+      const check = document.createElement("span");
+      check.className = "mm-check";
+      check.textContent = isCurrent ? "✓" : "";
+      row.appendChild(check);
       row.addEventListener("click", () => selectModel(m.model, g.provider || undefined));
       modelListEl.appendChild(row);
     }
@@ -3672,8 +3702,23 @@ function rafThrottle(fn: () => void): () => void {
 }
 
 // Context-window slider ──
+// The slider MAXIMUM follows the model: its DETECTED window when known, else the
+// global ceiling — so you can only DECREASE the value, never exceed the model.
+let currentCtxMax = MAX_CONTEXT_WINDOW;
+let currentOutMax = MAX_OUTPUT_TOKENS;
+
+/**
+ * A step that makes `max` REACHABLE: the nominal step when it divides the range
+ * (nice snapping), otherwise 1. A step that does not divide made the thumb stop
+ * just short of a model's detected maximum (e.g. max 7 963 with step 256).
+ */
+function reachableStep(min: number, max: number, nominal: number): number {
+  const span = max - min;
+  return span > 0 && span % nominal === 0 ? nominal : 1;
+}
+
 function sendContextWindow(value: number): void {
-  const v = clampContextWindow(value);
+  const v = clampContextWindow(value, currentCtxMax);
   ctxRange.value = String(v);
   ctxValue.textContent = String(v);
   vscode.postMessage({ type: "setContextWindow", value: v });
@@ -3682,21 +3727,29 @@ function sendContextWindow(value: number): void {
 /** Show a host-pushed window value: the LABEL keeps the exact value while the
  * slider sits on the nearest step (dragging afterwards moves by steps). */
 function renderContextWindow(c: ConfigState): void {
-  const v = clampContextWindow(c.contextWindow || DEFAULT_CONTEXT_WINDOW);
+  currentCtxMax = clampContextWindow(c.maxContextWindow ?? MAX_CONTEXT_WINDOW);
+  ctxRange.max = String(currentCtxMax);
+  ctxRange.step = String(reachableStep(MIN_CONTEXT_WINDOW, currentCtxMax, 1000));
+  ctxRangeLabel.textContent = `(${formatContext(MIN_CONTEXT_WINDOW)} → ${formatContext(currentCtxMax)})`;
+  const v = clampContextWindow(c.contextWindow || DEFAULT_CONTEXT_WINDOW, currentCtxMax);
   ctxRange.value = String(v);
   ctxValue.textContent = String(v);
 }
 
 // ── Output-tokens slider (max tokens per response) ──
 function sendOutputTokens(value: number): void {
-  const v = clampOutputTokens(value);
+  const v = clampOutputTokens(value, currentOutMax);
   outRange.value = String(v);
   outValue.textContent = String(v);
   vscode.postMessage({ type: "setOutputTokens", value: v });
 }
 
 function renderOutputTokens(c: ConfigState): void {
-  const v = clampOutputTokens(c.outputTokens ?? DEFAULT_OUTPUT_TOKENS);
+  currentOutMax = clampOutputTokens(c.maxOutputTokens ?? MAX_OUTPUT_TOKENS);
+  outRange.max = String(currentOutMax);
+  outRange.step = String(reachableStep(MIN_OUTPUT_TOKENS, currentOutMax, 256));
+  outRangeLabel.textContent = `(${formatContext(MIN_OUTPUT_TOKENS)} → ${formatContext(currentOutMax)})`;
+  const v = clampOutputTokens(c.outputTokens ?? DEFAULT_OUTPUT_TOKENS, currentOutMax);
   outRange.value = String(v);
   outValue.textContent = String(v);
 }
@@ -3771,16 +3824,36 @@ const samplerControl = createFloatControl(
   samplerClamp,
 );
 
+/**
+ * The sampler slider's SCALE follows the selected radio: Temperature spans
+ * 0.0–2.0, Top-P spans 0.0–1.0. Re-adapting on every switch keeps the WHOLE
+ * track usable (a fixed 0–2 max made Top-P use only half of it).
+ */
+function applySamplerScale(active: "temperature" | "topP"): void {
+  const max = active === "topP" ? 1 : TEMPERATURE_MAX;
+  sampRange.min = String(TEMPERATURE_MIN);
+  sampRange.max = String(max);
+  sampRange.step = String(TEMPERATURE_STEP);
+  sampRangeLabel.textContent = `(${TEMPERATURE_MIN.toFixed(1)} → ${max.toFixed(1)})`;
+}
+
 /** Sampler radios: brand the active option; show its value in the shared stepper. */
 function renderSamplerControl(c: ConfigState): void {
   const active = c.sampler === "topP" ? "topP" : "temperature"; // default = temperature
   samplerTemp.checked = active === "temperature";
   samplerTopp.checked = active === "topP";
+  applySamplerScale(active);
   samplerControl.render(active === "topP" ? c.topP : c.temperature);
 }
 
-samplerTemp.addEventListener("change", () => vscode.postMessage({ type: "setSamplerMode", mode: "temperature" }));
-samplerTopp.addEventListener("change", () => vscode.postMessage({ type: "setSamplerMode", mode: "topP" }));
+samplerTemp.addEventListener("change", () => {
+  applySamplerScale("temperature");
+  vscode.postMessage({ type: "setSamplerMode", mode: "temperature" });
+});
+samplerTopp.addEventListener("change", () => {
+  applySamplerScale("topP");
+  vscode.postMessage({ type: "setSamplerMode", mode: "topP" });
+});
 
 const presenceControl = createFloatControl({ range: "presence-range", value: "presence-value", auto: "presence-auto" }, "setPresencePenalty", clampTemperature, 0);
 const freqControl = createFloatControl({ range: "freq-range", value: "freq-value", auto: "freq-auto" }, "setFrequencyPenalty", clampTemperature, 0);

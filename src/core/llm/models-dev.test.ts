@@ -58,3 +58,48 @@ describe("ModelsDevCatalog", () => {
     expect(await offline.getContext("m", ["p"])).toBeUndefined();
   });
 });
+
+describe("ModelsDevCatalog.getLimits", () => {
+  it("returns BOTH the context window and the max output", async () => {
+    const get = vi.fn(async () =>
+      jsonResponse(200, { p: { models: { m: { limit: { context: 200000, output: 8192 } } } } }),
+    );
+    const catalog = new ModelsDevCatalog({ post: vi.fn(), get } as unknown as HttpClient);
+    expect(await catalog.getLimits("m", ["p"])).toEqual({ context: 200000, output: 8192 });
+    expect(await catalog.getLimits("nope", ["p"])).toEqual({});
+  });
+});
+
+describe("ModelsDevCatalog.getLimits — partial data", () => {
+  it("returns only the side that is present (context-only / output-only)", async () => {
+    const get = vi.fn(async () =>
+      jsonResponse(200, {
+        p: { models: { c: { limit: { context: 1000 } }, o: { limit: { output: 500 } } } },
+      }),
+    );
+    const catalog = new ModelsDevCatalog({ post: vi.fn(), get } as unknown as HttpClient);
+    expect(await catalog.getLimits("c", ["p"])).toEqual({ context: 1000 });
+    expect(await catalog.getLimits("o", ["p"])).toEqual({ output: 500 });
+  });
+});
+
+describe("ModelsDevCatalog.isReachable", () => {
+  it("is true after a successful load and false after a failure", async () => {
+    const ok = new ModelsDevCatalog({
+      post: vi.fn(),
+      get: vi.fn(async () => jsonResponse(200, { p: { models: {} } })),
+    } as unknown as HttpClient);
+    expect(ok.isReachable()).toBe(true);
+    await ok.getLimits("m", ["p"]);
+    expect(ok.isReachable()).toBe(true);
+
+    const bad = new ModelsDevCatalog({
+      post: vi.fn(),
+      get: vi.fn(async () => {
+        throw new Error("offline");
+      }),
+    } as unknown as HttpClient);
+    await bad.getLimits("m", ["p"]);
+    expect(bad.isReachable()).toBe(false);
+  });
+});

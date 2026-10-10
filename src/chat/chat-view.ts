@@ -18,7 +18,7 @@ import { debugLog, infoLog } from "../logger";
 import { preprocessJsonc } from "../core/config/jsonc";
 import { renderViewHtml } from "./view-html";
 import { toTemperature, toTopP } from "./temperature";
-import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, toContextWindow, toOutputTokens } from "./context-window";
+import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, MAX_CONTEXT_WINDOW, MAX_OUTPUT_TOKENS, clampContextWindow, clampOutputTokens, toContextWindow, toOutputTokens } from "./context-window";
 import { PanelModalQueue } from "./panel-modal-queue";
 import { Compactor, DEFAULT_COMPACTION, CompactionSettings, planManualCompaction, shouldCompact, estimateTokens, serializeConversation, estimateContextTokens, realWindowTokens, splitSummary, toCompactionThresholdPercent } from "../core/sessions/compactor";
 import type { SkillRegistry } from "../core/skills/skill-registry";
@@ -61,6 +61,8 @@ export class ChatViewProvider implements WebviewViewProvider {
    * (e.g. opencode-go), keyed by `provider|model`. Filled in the background so
    * the model LIST shows the same window that selecting the model adopts. */
   private readonly modelsDevContext = new Map<string, number>();
+  /** models.dev MAX OUTPUT tokens, parallel to {@link modelsDevContext}. */
+  private readonly modelsDevOutput = new Map<string, number>();
   /** `provider|model` keys already looked up this session (avoid re-hitting the
    * catalog on every config push). */
   private readonly modelsDevAttempted = new Set<string>();
@@ -106,7 +108,11 @@ export class ChatViewProvider implements WebviewViewProvider {
       configHome?: string;
       /** Optional models.dev catalog: fallback context window for hosts that
        * do not report it in `/models` (e.g. OpenCode Go). */
-      modelsDev?: { getContext(modelId: string, providerCandidates: readonly string[]): Promise<number | undefined> };
+      modelsDev?: {
+        getLimits(modelId: string, providerCandidates: readonly string[]): Promise<{ context?: number; output?: number }>;
+        /** False when the catalog is currently UNREACHABLE (for the UI warning). */
+        isReachable?(): boolean;
+      };
       /** Agent Skills registry: catalog for the UI + manual `/skill` activation. */
       skills?: SkillRegistry;
       /** MCP manager: status for the MCP card + reconnect after a save. */
@@ -897,33 +903,43 @@ export class ChatViewProvider implements WebviewViewProvider {
           const mode = entry?.thinkingMode ?? this.config.get().thinkingMode;
           if (mode === "bool" || mode === "effort" || mode === "type" || mode === "reasoning") rt.thinkingLevel = "medium";
         }
-        // If the host reports this model's context window, adopt it (the
-        // compaction ceiling follows the real model size). Host unreachable →
+        // If the host reports this model's limits, adopt them (the compaction
+        // ceiling + the output cap follow the real model). Host unreachable →
         // keep whatever the session already had.
-        let adoptedWindow: number | undefined;
+        let adoptedCtx: number | undefined;
+        let adoptedOut: number | undefined;
         if (provider) {
           try {
             const infos = await this.fetchHostModels(provider);
             const info = infos.find((m) => m.id === model);
-            if (info?.contextLength && info.contextLength > 0) adoptedWindow = info.contextLength;
+            if (info?.contextLength && info.contextLength > 0) adoptedCtx = clampContextWindow(info.contextLength);
+            if (info?.maxOutputTokens && info.maxOutputTokens > 0) adoptedOut = clampOutputTokens(info.maxOutputTokens);
           } catch {
-            /* keep the current window */
+            /* keep the current limits */
           }
         }
-        if (adoptedWindow) rt.contextWindow = adoptedWindow;
+        if (adoptedCtx) {
+          rt.contextWindow = adoptedCtx;
+          if (provider) this.modelsDevContext.set(`${provider}|${model}`, adoptedCtx);
+        }
+        if (adoptedOut) {
+          rt.outputTokens = adoptedOut;
+          if (provider) this.modelsDevOutput.set(`${provider}|${model}`, adoptedOut);
+        }
         this.sessions.saveSettings(rt.sessionId, {
           model,
           ...(provider ? { modelProvider: provider } : {}),
           ...(rt.thinkingLevel ? { thinkingLevel: rt.thinkingLevel } : {}),
-          ...(adoptedWindow ? { contextWindow: adoptedWindow } : {}),
+          ...(adoptedCtx ? { contextWindow: adoptedCtx } : {}),
+          ...(adoptedOut ? { outputTokens: adoptedOut } : {}),
         });
         this.modelSelector.set(this.computeOverrides(model, provider));
         // Lightweight config push (no full HTML rebuild: the typed prompt,
         // scroll and streaming state are preserved).
         void this.pushConfig();
-        // Host did not report a context window (e.g. OpenCode Go): resolve it
-        // from models.dev in the background and update the panel when loaded.
-        if (!adoptedWindow) void this.ensureContextWindow(rt, model, provider);
+        // The host did not report one/both limits (e.g. OpenCode Go): resolve
+        // them from models.dev in the background and update the panel.
+        if (!adoptedCtx || !adoptedOut) void this.ensureModelLimits(rt, model, provider);
         break;
       }
 
@@ -1241,7 +1257,7 @@ export class ChatViewProvider implements WebviewViewProvider {
    */
   private needsAutoCompact(rt: SessionRuntime): boolean {
     if (!this.options.compactor) return false;
-    const window = rt.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+    const window = clampContextWindow(rt.contextWindow ?? DEFAULT_CONTEXT_WINDOW);
     const estimated = estimateTokens(serializeConversation(rt.history.conversation()));
     const tokens = Math.max(rt.contextTokens ?? 0, estimated);
     return shouldCompact(tokens, window, this.compactionSettings(rt));
@@ -1455,7 +1471,10 @@ export class ChatViewProvider implements WebviewViewProvider {
         if (typeof entry.enableThinking === "boolean") overrides.enableThinking = entry.enableThinking;
         // Explicit undefined clears a stale value from a previously active provider.
         overrides.thinkingMode = entry.thinkingMode;
-        if (typeof entry.maxTokens === "number") overrides.maxTokens = entry.maxTokens;
+        // Config-suggested max output: CAP at the scale maximum (never above the
+        // slider ceiling) but keep smaller values as-is.
+        if (typeof entry.maxTokens === "number")
+          overrides.maxTokens = Math.min(MAX_OUTPUT_TOKENS, Math.max(1, Math.round(entry.maxTokens)));
         // Declared extra headers + the per-conversation session header name.
         if (entry.extraHeaders) overrides.extraHeaders = entry.extraHeaders;
         overrides.sessionHeader = entry.sessionHeader;
@@ -1471,7 +1490,9 @@ export class ChatViewProvider implements WebviewViewProvider {
       overrides.thinkingLevel = rt.thinkingLevel;
     }
     // The per-session output-token budget wins over the provider's default.
-    if (typeof rt?.outputTokens === "number") overrides.maxTokens = rt.outputTokens;
+    // CLAMPED to the editable scale: a config/session value above the maximum
+    // is capped, never sent as-is.
+    if (typeof rt?.outputTokens === "number") overrides.maxTokens = clampOutputTokens(rt.outputTokens);
     if (typeof rt?.presencePenalty === "number") overrides.presencePenalty = rt.presencePenalty;
     if (typeof rt?.frequencyPenalty === "number") overrides.frequencyPenalty = rt.frequencyPenalty;
     // Sampler pick: ONLY the ACTIVE sampler keeps a value; the other is
@@ -1635,6 +1656,8 @@ export class ChatViewProvider implements WebviewViewProvider {
     models: string[];
     providerModels: { provider: string; model: string; contextLength?: number }[];
     modelMissing: boolean;
+    /** True when the models.dev fallback is unreachable and a limit is missing. */
+    modelsDevError?: boolean;
     hostModelErrors: { provider: string; error: string }[];
     noModels: boolean;
     configHome: string;
@@ -1656,8 +1679,12 @@ export class ChatViewProvider implements WebviewViewProvider {
     /** MCP servers + their connection status (MCP card). */
     mcp?: { servers: Record<string, McpServerConfig>; statuses: { name: string; ok: boolean; error?: string; toolCount: number }[] };
     contextWindow: number;
+    /** Upper bound of the context slider: the model's DETECTED window, else the global max. */
+    maxContextWindow: number;
     compactionThresholdPercent?: number;
     outputTokens: number;
+    /** Upper bound of the output slider: the model's DETECTED max output, else the global max. */
+    maxOutputTokens: number;
     temperature?: number;
     presencePenalty?: number;
     frequencyPenalty?: number;
@@ -1692,20 +1719,37 @@ export class ChatViewProvider implements WebviewViewProvider {
 
     // Dropdown lists come from the fetched hosts ONLY (no stale declared
     // model lists mixed in).
-    const providerModels: { provider: string; model: string; contextLength?: number }[] = [];
+    const providerModels: { provider: string; model: string; contextLength?: number; maxOutputTokens?: number }[] = [];
     for (const [name, models] of fetched) {
       for (const m of models) {
-        providerModels.push({ provider: name, model: m.id, ...(m.contextLength ? { contextLength: m.contextLength } : {}) });
+        providerModels.push({
+          provider: name,
+          model: m.id,
+          ...(m.contextLength ? { contextLength: m.contextLength } : {}),
+          ...(m.maxOutputTokens ? { maxOutputTokens: m.maxOutputTokens } : {}),
+        });
       }
     }
-    // Fill in the context window from models.dev for hosts that do not report it
-    // (opencode-go & friends), so the LIST matches what selecting adopts. Cached
-    // values are applied now; the still-missing ones are resolved in background.
+    // Fill in what the host did NOT report from models.dev (opencode-go &
+    // friends), so the LIST matches what selecting adopts. Cached values are
+    // applied now; the still-missing ones are resolved in the background.
     for (const m of providerModels) {
-      const known = this.modelsDevContext.get(`${m.provider}|${m.model}`);
-      if (!m.contextLength && known) m.contextLength = known;
+      const key = `${m.provider}|${m.model}`;
+      if (!m.contextLength) {
+        const known = this.modelsDevContext.get(key);
+        if (known) m.contextLength = known;
+      }
+      if (!m.maxOutputTokens) {
+        const known = this.modelsDevOutput.get(key);
+        if (known) m.maxOutputTokens = known;
+      }
+      // Cache the RESOLVED limits so buildConfig derives the current model's
+      // slider MAXIMA from the same maps. The host models are re-fetched on
+      // every config build, so this also survives a reload.
+      if (m.contextLength) this.modelsDevContext.set(key, m.contextLength);
+      if (m.maxOutputTokens) this.modelsDevOutput.set(key, m.maxOutputTokens);
     }
-    this.enrichContextFromModelsDev(providerModels);
+    this.enrichLimitsFromModelsDev(providerModels);
 
     let modelMissing = false;
     const rt = this.activeRuntime();
@@ -1719,6 +1763,19 @@ export class ChatViewProvider implements WebviewViewProvider {
     // or every host unreachable) -> the dropdown would be silently empty.
     const noModels = providerModels.length === 0 && (cfg.availableModels ?? []).length === 0;
 
+    // The model's DETECTED limits become the SLIDER MAXIMA (so you can only
+    // DECREASE from them, never ask for more than the model supports); when the
+    // limit is unknown the global ceiling applies.
+    const curKey = sessionProvider && sessionModel ? `${sessionProvider}|${sessionModel}` : "";
+    const ctxMax = (curKey ? this.modelsDevContext.get(curKey) : undefined) ?? MAX_CONTEXT_WINDOW;
+    const outMax = (curKey ? this.modelsDevOutput.get(curKey) : undefined) ?? MAX_OUTPUT_TOKENS;
+
+    // Warn ONLY when the models.dev fallback is unreachable AND some model is
+    // still missing a limit (otherwise the warning would be pure noise).
+    const modelsDevError =
+      this.options.modelsDev?.isReachable?.() === false &&
+      providerModels.some((m) => !m.contextLength || !m.maxOutputTokens);
+
     return {
       provider: cfg.provider,
       activeProvider: sessionProvider,
@@ -1728,6 +1785,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       models: cfg.availableModels ?? [],
       providerModels,
       modelMissing,
+      ...(modelsDevError ? { modelsDevError: true } : {}),
       hostModelErrors,
       noModels,
       configHome: this.options.configHome ?? "",
@@ -1749,11 +1807,13 @@ export class ChatViewProvider implements WebviewViewProvider {
       loopGuardRanges: LOOP_GUARD_FIELD_RANGES,
       skills: this.skillCatalog(),
       mcp: { servers: this.providers.readMcpServers?.() ?? {}, statuses: this.options.mcp?.getStatuses() ?? [] },
-      contextWindow: this.activeRuntime()?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+      contextWindow: clampContextWindow(this.activeRuntime()?.contextWindow ?? DEFAULT_CONTEXT_WINDOW, ctxMax),
+      maxContextWindow: clampContextWindow(ctxMax, MAX_CONTEXT_WINDOW),
       // Only the session override, so the UI can show "Auto" (undefined) vs
       // an explicit value. Config-file defaults stay effective but hidden.
       compactionThresholdPercent: this.activeRuntime()?.compactionThresholdPercent,
-      outputTokens: this.activeRuntime()?.outputTokens ?? DEFAULT_OUTPUT_TOKENS,
+      outputTokens: clampOutputTokens(this.activeRuntime()?.outputTokens ?? DEFAULT_OUTPUT_TOKENS, outMax),
+      maxOutputTokens: clampOutputTokens(outMax, MAX_OUTPUT_TOKENS),
       // Only the session override, so the UI can show "Auto" (undefined) vs
       // an explicit value. Config-file defaults stay effective but hidden.
       temperature: this.activeRuntime()?.temperature,
@@ -1772,48 +1832,67 @@ export class ChatViewProvider implements WebviewViewProvider {
    * models.dev value, then the catalog itself; when NEITHER source knows it,
    * alert the user (in-panel modal) to set the correct window manually.
    */
-  private async ensureContextWindow(rt: SessionRuntime, model: string, provider?: string): Promise<void> {
+  private async ensureModelLimits(rt: SessionRuntime, model: string, provider?: string): Promise<void> {
     const key = provider ? `${provider}|${model}` : "";
+    let ctx = provider ? this.modelsDevContext.get(key) : undefined;
+    let out = provider ? this.modelsDevOutput.get(key) : undefined;
     // 1) Already resolved (e.g. by the list enrichment): apply it immediately.
-    const known = provider ? this.modelsDevContext.get(key) : undefined;
-    if (known) {
-      this.applyContextWindow(rt, model, known);
-      return;
+    if (ctx || out) {
+      this.applyLimits(rt, model, { context: ctx, output: out });
+      if (ctx && out) return;
     }
-    // 2) Ask models.dev (cached catalog).
-    let ctx: number | undefined;
+    // 2) Ask models.dev (cached catalog) for whatever is still missing.
     const catalog = this.options.modelsDev;
-    if (catalog && provider) {
+    if (catalog && provider && (!ctx || !out)) {
       const entry = this.providers.getProvider(provider);
-      ctx = await catalog
-        .getContext(model, modelsDevProviderCandidates(provider, entry?.baseUrl))
-        .catch(() => undefined);
-      if (ctx) this.modelsDevContext.set(key, ctx);
+      const limits = await catalog
+        .getLimits(model, modelsDevProviderCandidates(provider, entry?.baseUrl))
+        .catch((): { context?: number; output?: number } => ({}));
+      if (limits.context && !ctx) {
+        ctx = limits.context;
+        this.modelsDevContext.set(key, limits.context);
+      }
+      if (limits.output && !out) {
+        out = limits.output;
+        this.modelsDevOutput.set(key, limits.output);
+      }
     }
-    if (ctx) {
-      this.applyContextWindow(rt, model, ctx);
-      return;
+    if (ctx || out) {
+      this.applyLimits(rt, model, { context: ctx, output: out });
+      if (ctx && out) return;
     }
-    // 3) Unknown everywhere: prompt the user (once per session+model).
+    // 3) Unknown everywhere: prompt the user (once per session+model) to set
+    //    BOTH values when neither is known.
     if (this.activeRuntime() !== rt || rt.model !== model) return; // raced
     const alertKey = `${rt.sessionId}|${model}`;
     if (this.contextAlerts.has(alertKey)) return;
     this.contextAlerts.add(alertKey);
+    const missing = [ctx ? "" : "context window", out ? "" : "max output tokens"].filter(Boolean).join(" and ");
     await this.inPanelAlert({
       kind: "info",
-      title: "Context window unknown",
+      title: "Model limits unknown",
       message:
-        `Harny could not determine the context window for "${model}" (the host did not report it and it is ` +
-        `not in models.dev). Set the correct value from the Window control to keep auto-compaction accurate.`,
+        `Harny could not determine the ${missing} for "${model}" (the host did not report it and it is not in ` +
+        `models.dev). Set it from the Window / Output controls to keep auto-compaction and the output cap accurate.`,
     });
   }
 
-  /** Apply a resolved context window to the session (only if still current). */
-  private applyContextWindow(rt: SessionRuntime, model: string, ctx: number): void {
-    // A fast model switch may have raced: only apply to the current model.
+  /** Apply resolved limits to the session (only if the model is still current). */
+  private applyLimits(rt: SessionRuntime, model: string, limits: { context?: number; output?: number }): void {
     if (this.activeRuntime() !== rt || rt.model !== model) return;
-    rt.contextWindow = ctx;
-    this.sessions.saveSettings(rt.sessionId, { contextWindow: ctx });
+    const patch: SessionSettingsPatch = {};
+    if (limits.context) {
+      rt.contextWindow = clampContextWindow(limits.context);
+      patch.contextWindow = rt.contextWindow;
+      if (rt.modelProvider) this.modelsDevContext.set(`${rt.modelProvider}|${model}`, rt.contextWindow);
+    }
+    if (limits.output) {
+      rt.outputTokens = clampOutputTokens(limits.output);
+      patch.outputTokens = rt.outputTokens;
+      if (rt.modelProvider) this.modelsDevOutput.set(`${rt.modelProvider}|${model}`, rt.outputTokens);
+    }
+    if (patch.contextWindow === undefined && patch.outputTokens === undefined) return;
+    this.sessions.saveSettings(rt.sessionId, patch);
     void this.pushConfig();
   }
 
@@ -1823,14 +1902,14 @@ export class ChatViewProvider implements WebviewViewProvider {
    * `provider|model` is attempted at most once per session; when something
    * resolves, a config push refreshes the list.
    */
-  private enrichContextFromModelsDev(
-    providerModels: { provider: string; model: string; contextLength?: number }[],
+  private enrichLimitsFromModelsDev(
+    providerModels: { provider: string; model: string; contextLength?: number; maxOutputTokens?: number }[],
   ): void {
     const catalog = this.options.modelsDev;
     if (!catalog) return;
     const missing = providerModels.filter((m) => {
       const key = `${m.provider}|${m.model}`;
-      return !m.contextLength && !this.modelsDevAttempted.has(key);
+      return (!m.contextLength || !m.maxOutputTokens) && !this.modelsDevAttempted.has(key);
     });
     if (missing.length === 0) return;
     for (const m of missing) this.modelsDevAttempted.add(`${m.provider}|${m.model}`);
@@ -1838,11 +1917,15 @@ export class ChatViewProvider implements WebviewViewProvider {
       let resolved = 0;
       for (const m of missing) {
         const entry = this.providers.getProvider(m.provider);
-        const ctx = await catalog
-          .getContext(m.model, modelsDevProviderCandidates(m.provider, entry?.baseUrl))
-          .catch(() => undefined);
-        if (ctx) {
-          this.modelsDevContext.set(`${m.provider}|${m.model}`, ctx);
+        const limits = await catalog
+          .getLimits(m.model, modelsDevProviderCandidates(m.provider, entry?.baseUrl))
+          .catch((): { context?: number; output?: number } => ({}));
+        if (limits.context) {
+          this.modelsDevContext.set(`${m.provider}|${m.model}`, limits.context);
+          resolved++;
+        }
+        if (limits.output) {
+          this.modelsDevOutput.set(`${m.provider}|${m.model}`, limits.output);
           resolved++;
         }
       }

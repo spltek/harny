@@ -65,7 +65,7 @@ function setupDom(
         <div id="attachment-chips" class="hidden"></div>
       </div>
     </div>
-    <div id="status">AI Model: <button id="model-btn"><span id="model-btn-label">Select a model</span></button><button id="gear-btn">⚙</button><input type="range" id="ctx-range" min="32000" max="2000000" step="1000"><span id="ctx-value"></span><input type="range" id="out-range" min="256" max="65536" step="256"><span id="out-value"></span><input id="sampler-temp" type="radio" name="sampler" checked><input id="sampler-topp" type="radio" name="sampler"><input type="range" id="samp-range" min="0" max="2" step="0.1"><span id="samp-value">Auto</span><button id="samp-auto">Auto</button><input type="range" id="presence-range" min="0" max="2" step="0.1"><span id="presence-value">Auto</span><button id="presence-auto">Auto</button><input type="range" id="freq-range" min="0" max="2" step="0.1"><span id="freq-value">Auto</span><button id="freq-auto">Auto</button></div>
+    <div id="status">AI Model: <button id="model-btn"><span id="model-btn-label">Select a model</span><span id="model-warn" class="hidden"></span></button><button id="gear-btn">⚙</button><input type="range" id="ctx-range" min="32000" max="2000000" step="1000"><span id="ctx-value"></span><span id="ctx-range-label"></span><input type="range" id="out-range" min="256" max="262144" step="256"><span id="out-value"></span><span id="out-range-label"></span><input id="sampler-temp" type="radio" name="sampler" checked><input id="sampler-topp" type="radio" name="sampler"><input type="range" id="samp-range" min="0" max="2" step="0.1"><span id="samp-value">Auto</span><span id="samp-range-label"></span><button id="samp-auto">Auto</button><input type="range" id="presence-range" min="0" max="2" step="0.1"><span id="presence-value">Auto</span><button id="presence-auto">Auto</button><input type="range" id="freq-range" min="0" max="2" step="0.1"><span id="freq-value">Auto</span><button id="freq-auto">Auto</button></div>
     <div id="ctl-cards"><input type="range" id="par-range" min="0" max="100" step="1" /><span id="par-value">4</span><button id="lg-reset"></button><div id="lg-head"><div id="lg-toggle" class="sampler-toggle"><input type="radio" name="lg-level" id="lg-high" value="high" /><input type="radio" name="lg-level" id="lg-normal" value="normal" checked /><input type="radio" name="lg-level" id="lg-low" value="low" /><input type="checkbox" id="lg-response" /></div><button id="lg-collapse"></button></div><div id="lg-params-field"><div id="lg-fields"></div></div><div id="skills-card" class="hidden"><div id="skills-list"></div></div><div id="mcp-card" class="hidden"><div id="mcp-list"></div><button id="mcp-configure"></button></div></div>
     <div id="metrics"><input type="radio" name="thinking-level" id="thinking-off" value="off" /><input type="radio" name="thinking-level" id="thinking-low" value="low" /><input type="radio" name="thinking-level" id="thinking-medium" value="medium" /><input type="radio" name="thinking-level" id="thinking-high" value="high" /><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button><span id="compact-threshold-label"></span><button id="compact-settings-btn">⚙</button></div>
     <div id="compact-settings-modal" class="hidden">
@@ -192,8 +192,9 @@ function setupDom(
     <div id="model-modal" class="hidden">
       <div class="mm-backdrop"></div>
       <div class="mm-card">
-        <div class="mm-head"><h3>Select model</h3><button id="model-close">✕</button></div>
-        <div class="mm-search"><input id="model-search" type="search" placeholder="Search models" /></div>
+        <div class="mm-head"><h3>Select model</h3></div>
+        <div class="mm-footer"><button id="model-close">Cancel</button></div>
+        <div class="mm-search"><input id="model-search" type="search" placeholder="Search models" /><div id="mm-modelsdev-warn" class="hidden"></div></div>
         <div id="model-list"></div>
       </div>
     </div>
@@ -2397,8 +2398,8 @@ describe("view webview client", () => {
         hasKey: true,
         models: [],
         providerModels: [
-          { provider: "openrouter", model: "openrouter/x", contextLength: 128000 },
-          { provider: "openrouter", model: "openrouter/big", contextLength: 1000000 },
+          { provider: "openrouter", model: "openrouter/x", contextLength: 128000, maxOutputTokens: 16384 },
+          { provider: "openrouter", model: "openrouter/big", contextLength: 1000000, maxOutputTokens: 32000 },
           { provider: "openrouter", model: "openrouter/plain" },
         ],
       },
@@ -2409,9 +2410,20 @@ describe("view webview client", () => {
       [...list.querySelectorAll<HTMLButtonElement>(".mm-model")].find(
         (m) => m.querySelector(".mm-model-name")?.textContent === name,
       )!;
-    expect(row("openrouter/x").querySelector(".mm-ctx")?.textContent).toBe("128k");
-    expect(row("openrouter/big").querySelector(".mm-ctx")?.textContent).toBe("1M");
-    expect(row("openrouter/plain").querySelector(".mm-ctx")).toBeNull();
+    expect(row("openrouter/x").querySelector(".mm-ctx-value")?.textContent).toBe("128k");
+    expect(row("openrouter/big").querySelector(".mm-ctx-value")?.textContent).toBe("1M");
+    expect(row("openrouter/plain").querySelector(".mm-ctx-value")?.textContent).toBe("-");
+    // Output tokens next to the context: NO labels, just the two right-aligned
+    // values in their own shared columns.
+    expect(row("openrouter/x").querySelector(".mm-out-label")?.textContent).toBe("out");
+    expect(row("openrouter/x").querySelector(".mm-out-value")?.textContent).toBe("16k");
+    expect(row("openrouter/big").querySelector(".mm-out-value")?.textContent).toBe("32k");
+    expect(row("openrouter/plain").querySelector(".mm-out-value")?.textContent).toBe("-");
+    // Only the "out" label is back; there is NO "ctx" label.
+    expect(row("openrouter/x").querySelector(".mm-ctx-label")).toBeNull();
+    // The check cell is ALWAYS present (empty when not current) so the value
+    // columns line up across rows.
+    expect(row("openrouter/plain").querySelector(".mm-check")).toBeTruthy();
   });
 
   it("orders provider groups alphabetically and merges failed providers into their sorted position", async () => {
@@ -3707,14 +3719,14 @@ describe("context window slider", () => {
 describe("output tokens slider", () => {
   beforeEach(() => { posted.length = 0; setupDom(); });
 
-  it("renders the value from config (default 8192) and posts on drag", async () => {
+  it("renders the value from config (default 16384) and posts on drag", async () => {
     await loadView();
     const range = document.getElementById("out-range") as HTMLInputElement;
     const label = document.getElementById("out-value") as HTMLElement;
-    expect(label.textContent).toBe("8192");
-
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], outputTokens: 16384 } });
     expect(label.textContent).toBe("16384");
+
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], outputTokens: 32768 } });
+    expect(label.textContent).toBe("32768");
 
     range.value = "20000";
     range.dispatchEvent(new Event("input"));
@@ -3766,9 +3778,12 @@ describe("sampler (radio + slider)", () => {
     expect(posted).toContainEqual({ type: "setSamplerValue", value: 2 });
     expect(label.textContent).toBe("2");
 
-    // Switch to Top-P: the radio posts the mode; the host resets the value.
+    // Switch to Top-P: the radio posts the mode AND the scale re-adapts
+    // IMMEDIATELY (before the host config push), so the whole track is usable.
     (document.getElementById("sampler-topp") as HTMLInputElement).click();
     expect(posted).toContainEqual({ type: "setSamplerMode", mode: "topP" });
+    expect(range.max).toBe("1");
+    expect((document.getElementById("samp-range-label") as HTMLElement).textContent).toBe("(0.0 → 1.0)");
 
     hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], sampler: "topP", topP: 0.9 } });
     expect(label.textContent).toBe("0.9");
@@ -4560,5 +4575,150 @@ describe("DB vacuum — sliders, info-only modal, live settings", () => {
     hostMessage({ type: "modal", modalId: 7, kind: "dbVacuum", stats });
     hostMessage({ type: "dbVacuumRunning" });
     expect((document.getElementById("db-vacuum-msg") as HTMLElement).textContent).toContain("idle");
+  });
+});
+
+describe("slider maxima follow the model's detected limits", () => {
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
+
+  it("sets the slider MAX (and value) to the detected limits (so you can only decrease)", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: { provider: "openai", model: "m", hasKey: true, models: [], providerModels: [], contextWindow: 128000, maxContextWindow: 128000, outputTokens: 16384, maxOutputTokens: 16384 },
+    });
+    const ctx = document.getElementById("ctx-range") as HTMLInputElement;
+    const out = document.getElementById("out-range") as HTMLInputElement;
+    expect(ctx.max).toBe("128000");
+    expect(ctx.value).toBe("128000");
+    expect(out.max).toBe("16384");
+    expect(out.value).toBe("16384");
+  });
+
+  it("falls back to the GLOBAL maxima when the model is unknown", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: { provider: "openai", model: "m", hasKey: true, models: [], providerModels: [], contextWindow: 128000, maxContextWindow: 2000000, outputTokens: 16384, maxOutputTokens: 262144 },
+    });
+    expect((document.getElementById("ctx-range") as HTMLInputElement).max).toBe("2000000");
+    expect((document.getElementById("out-range") as HTMLInputElement).max).toBe("262144");
+  });
+});
+
+describe("slider step makes the exact model maximum reachable", () => {
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
+  const cfg = (o: Record<string, unknown>) => ({
+    type: "config",
+    config: { provider: "openai", model: "m", hasKey: true, models: [], providerModels: [], ...o },
+  });
+
+  it("drops the step to 1 when the nominal step does NOT divide the range (out 7963, ctx 131072)", async () => {
+    await loadView();
+    hostMessage(cfg({ contextWindow: 131072, maxContextWindow: 131072, outputTokens: 7963, maxOutputTokens: 7963 }));
+    const ctx = document.getElementById("ctx-range") as HTMLInputElement;
+    const out = document.getElementById("out-range") as HTMLInputElement;
+    expect(ctx.max).toBe("131072");
+    expect(ctx.step).toBe("1"); // 131072 - 32000 = 99072, not a multiple of 1000
+    expect(ctx.value).toBe("131072");
+    expect(out.max).toBe("7963");
+    expect(out.step).toBe("1"); // 7963 - 256 = 7707, not a multiple of 256
+    expect(out.value).toBe("7963");
+  });
+
+  it("keeps the nominal step when it divides the range", async () => {
+    await loadView();
+    hostMessage(cfg({ contextWindow: 128000, maxContextWindow: 128000, outputTokens: 16384, maxOutputTokens: 16384 }));
+    expect((document.getElementById("ctx-range") as HTMLInputElement).step).toBe("1000");
+    expect((document.getElementById("out-range") as HTMLInputElement).step).toBe("256");
+  });
+});
+
+describe("control range labels + sampler scale", () => {
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
+  const cfg = (o: Record<string, unknown>) => ({
+    type: "config",
+    config: { provider: "openai", model: "m", hasKey: true, models: [], providerModels: [], ...o },
+  });
+
+  it("adapts the sampler scale to the selected control and shows its (min → max)", async () => {
+    await loadView();
+    hostMessage(cfg({ sampler: "temperature", temperature: 0.7, contextWindow: 128000, maxContextWindow: 128000, outputTokens: 16384, maxOutputTokens: 16384 }));
+    const samp = document.getElementById("samp-range") as HTMLInputElement;
+    expect(samp.max).toBe("2");
+    expect(samp.value).toBe("0.7");
+    expect((document.getElementById("samp-range-label") as HTMLElement).textContent).toBe("(0.0 → 2.0)");
+
+    // Switching to Top-P re-adapts the scale to the WHOLE track (0.0–1.0).
+    hostMessage(cfg({ sampler: "topP", topP: 0.9, contextWindow: 128000, maxContextWindow: 128000, outputTokens: 16384, maxOutputTokens: 16384 }));
+    expect(samp.max).toBe("1");
+    expect(samp.value).toBe("0.9");
+    expect((document.getElementById("samp-range-label") as HTMLElement).textContent).toBe("(0.0 → 1.0)");
+  });
+
+  it("shows (min → max) for the context and output controls (model max included)", async () => {
+    await loadView();
+    hostMessage(cfg({ contextWindow: 131072, maxContextWindow: 131072, outputTokens: 7963, maxOutputTokens: 7963 }));
+    expect((document.getElementById("ctx-range-label") as HTMLElement).textContent).toBe("(32k → 131k)");
+    expect((document.getElementById("out-range-label") as HTMLElement).textContent).toBe("(256 → 8k)");
+  });
+});
+
+describe("model selector button shows the limits", () => {
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
+  const cfg = (pm: Record<string, unknown>) => ({
+    type: "config",
+    config: { provider: "openai", activeProvider: "p", model: "m1", hasKey: true, models: [], providerModels: [pm] },
+  });
+
+  it("shows the detected context + output next to the model", async () => {
+    await loadView();
+    hostMessage(cfg({ provider: "p", model: "m1", contextLength: 128000, maxOutputTokens: 16384 }));
+    expect((document.getElementById("model-btn-label") as HTMLElement).textContent).toBe("m1 · 128k · out 16k");
+  });
+
+  it("shows '-' for an unrecognized model (unknown limits)", async () => {
+    await loadView();
+    hostMessage(cfg({ provider: "p", model: "m1" }));
+    expect((document.getElementById("model-btn-label") as HTMLElement).textContent).toBe("m1 · - · out -");
+  });
+});
+
+describe("models.dev unreachable warning", () => {
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
+  const cfg = (extra: Record<string, unknown>) => ({
+    type: "config",
+    config: { provider: "openai", model: "m", hasKey: true, models: [], providerModels: [{ provider: "p", model: "m" }], ...extra },
+  });
+
+  it("shows the ⚠ badge and the modal warning row when modelsDevError is set", async () => {
+    await loadView();
+    hostMessage(cfg({ modelsDevError: true }));
+    expect((document.getElementById("model-warn") as HTMLElement).classList.contains("hidden")).toBe(false);
+    (document.getElementById("model-btn") as HTMLButtonElement).click();
+    expect((document.getElementById("mm-modelsdev-warn") as HTMLElement).classList.contains("hidden")).toBe(false);
+  });
+
+  it("hides BOTH when the fallback is fine (no noise)", async () => {
+    await loadView();
+    hostMessage(cfg({}));
+    expect((document.getElementById("model-warn") as HTMLElement).classList.contains("hidden")).toBe(true);
+    (document.getElementById("model-btn") as HTMLButtonElement).click();
+    expect((document.getElementById("mm-modelsdev-warn") as HTMLElement).classList.contains("hidden")).toBe(true);
   });
 });

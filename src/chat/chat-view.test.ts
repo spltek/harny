@@ -1977,7 +1977,7 @@ describe("ChatViewProvider compaction", () => {
     const { registry, provider } = buildHarness({
       providerEntry: { name: "opencode-go", baseUrl: "https://opencode.ai/zen/go/v1", models: [] },
       fetchModelInfos: async () => [{ id: "kimi-k3" }], // host reports NO context
-      modelsDev: { getContext: vi.fn(async () => 1048576) },
+      modelsDev: { getLimits: vi.fn(async () => ({ context: 1048576 })) },
     });
     const { handler } = resolveWith(provider);
     await provider.createNew(); // s1
@@ -1991,7 +1991,7 @@ describe("ChatViewProvider compaction", () => {
     const { provider } = buildHarness({
       providerEntry: { name: "opencode-go", baseUrl: "https://opencode.ai/zen/go/v1", models: [] },
       fetchModelInfos: async () => [{ id: "unknown-model" }], // host reports NO context
-      modelsDev: { getContext: vi.fn(async () => undefined) }, // catalog does not know it
+      modelsDev: { getLimits: vi.fn(async () => ({})) }, // catalog does not know it
     });
     const { handler, view } = resolveWith(provider);
     await provider.createNew(); // s1
@@ -2004,7 +2004,7 @@ describe("ChatViewProvider compaction", () => {
         expect.objectContaining({
           type: "modal",
           kind: "alert",
-          title: "Context window unknown",
+          title: "Model limits unknown",
           message: expect.stringContaining("unknown-model"),
         }),
       ),
@@ -2012,7 +2012,7 @@ describe("ChatViewProvider compaction", () => {
 
     // Re-selecting the SAME unknown model must NOT alert again (once per model).
     const isContextAlert = (m: unknown): boolean =>
-      !!m && typeof m === "object" && (m as { title?: string }).title === "Context window unknown";
+      !!m && typeof m === "object" && (m as { title?: string }).title === "Model limits unknown";
     view.webview.postMessage.mockClear();
     await handler({ type: "setModel", model: "unknown-model", provider: "opencode-go" });
     await new Promise((r) => setTimeout(r, 0));
@@ -2020,12 +2020,12 @@ describe("ChatViewProvider compaction", () => {
   });
 
   it("enriches the model LIST with the models.dev context window (host reports none)", async () => {
-    const getContext = vi.fn(async () => 1048576);
+    const getLimits = vi.fn(async () => ({ context: 1048576 }));
     const { provider } = buildHarness({
       config: { ...CONFIG, hostModelProviders: ["opencode-go"] },
       providerEntry: { name: "opencode-go", baseUrl: "https://opencode.ai/zen/go/v1", models: [] },
       fetchModelInfos: async () => [{ id: "kimi-k3" }], // host reports NO context
-      modelsDev: { getContext },
+      modelsDev: { getLimits },
     });
     const { view } = resolveWith(provider);
 
@@ -2038,7 +2038,7 @@ describe("ChatViewProvider compaction", () => {
       const models = configs.flatMap((c) => c.config?.providerModels ?? []);
       expect(models.some((m) => m.model === "kimi-k3" && m.contextLength === 1048576)).toBe(true);
     });
-    expect(getContext).toHaveBeenCalled();
+    expect(getLimits).toHaveBeenCalled();
   });
 
   it("setCompactionThreshold stores the session override (clamped) and persists it", async () => {
@@ -2742,4 +2742,132 @@ describe("ChatViewProvider DB vacuum — a bocce ferme", () => {
     expect(store.maintain).toHaveBeenCalledWith({ freeRatioThreshold: 0 });
     expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "dbVacuumResult" }));
   }, 10_000);
+});
+
+describe("ChatViewProvider model limits (context + output)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.noAutoName = false;
+    state.autoName = "New Session";
+  });
+
+  it("adopts BOTH the context window and the max output tokens the host reports", async () => {
+    const { registry, provider } = buildHarness({
+      providerEntry: { name: "openrouter", baseUrl: "https://x/v1", models: [] },
+      fetchModelInfos: async () => [{ id: "m1", contextLength: 128000, maxOutputTokens: 16384 }],
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    await handler({ type: "setModel", model: "m1", provider: "openrouter" });
+    expect(rt.contextWindow).toBe(128000);
+    expect(rt.outputTokens).toBe(16384);
+  });
+
+  it("caps a config maxTokens above the scale maximum (never above 256k)", async () => {
+    const { provider, modelSelector } = buildHarness({
+      providerEntry: { name: "p", baseUrl: "https://x/v1", maxTokens: 999_999, models: [{ id: "m1" }] },
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew();
+    await handler({ type: "setModel", model: "m1", provider: "p" });
+    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ maxTokens: 262_144 }));
+  });
+
+  it("adopts the models.dev output too when the host reports neither limit", async () => {
+    const { registry, provider } = buildHarness({
+      providerEntry: { name: "opencode-go", baseUrl: "https://opencode.ai/zen/go/v1", models: [] },
+      fetchModelInfos: async () => [{ id: "kimi-k3" }],
+      modelsDev: { getLimits: vi.fn(async () => ({ context: 1048576, output: 32000 })) },
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    await handler({ type: "setModel", model: "kimi-k3", provider: "opencode-go" });
+    await vi.waitFor(() => expect(rt.outputTokens).toBe(32000));
+    expect(rt.contextWindow).toBe(1048576);
+  });
+
+  it("mentions BOTH context and output in the unknown-model alert", async () => {
+    const { provider } = buildHarness({
+      providerEntry: { name: "opencode-go", baseUrl: "https://opencode.ai/zen/go/v1", models: [] },
+      fetchModelInfos: async () => [{ id: "unknown-model" }],
+      modelsDev: { getLimits: vi.fn(async () => ({})) },
+    });
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew();
+    view.webview.postMessage.mockClear();
+    await handler({ type: "setModel", model: "unknown-model", provider: "opencode-go" });
+    await vi.waitFor(() =>
+      expect(view.webview.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "modal",
+          kind: "alert",
+          message: expect.stringMatching(/context window and max output tokens/),
+        }),
+      ),
+    );
+  });
+});
+
+describe("ChatViewProvider slider maxima", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.noAutoName = false;
+    state.autoName = "New Session";
+  });
+
+  it("pushes the model's DETECTED limits as the slider MAXIMA", async () => {
+    const { provider } = buildHarness({
+      providerEntry: { name: "openrouter", baseUrl: "https://x/v1", models: [] },
+      fetchModelInfos: async () => [{ id: "m1", contextLength: 128000, maxOutputTokens: 16384 }],
+    });
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew();
+    await handler({ type: "setModel", model: "m1", provider: "openrouter" });
+    await vi.waitFor(() => {
+      const configs = view.webview.postMessage.mock.calls
+        .map((c: unknown[]) => c[0] as { type?: string; config?: { maxContextWindow?: number; maxOutputTokens?: number } })
+        .filter((m) => m?.type === "config");
+      expect(configs.some((c) => c.config?.maxContextWindow === 128000 && c.config?.maxOutputTokens === 16384)).toBe(true);
+    });
+  });
+});
+
+describe("ChatViewProvider models.dev unreachable warning", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.noAutoName = false;
+    state.autoName = "New Session";
+  });
+
+  const harness = (reachable: boolean, limits: { context?: number; output?: number }) =>
+    buildHarness({
+      config: { ...CONFIG, hostModelProviders: ["opencode-go"] },
+      providerEntry: { name: "opencode-go", baseUrl: "https://opencode.ai/zen/go/v1", models: [] },
+      fetchModelInfos: async () => [{ id: "kimi-k3" }], // host reports NO limits
+      modelsDev: { getLimits: vi.fn(async () => limits), isReachable: () => reachable },
+    });
+
+  it("flags modelsDevError when the fallback is UNREACHABLE and a limit is missing", async () => {
+    const { provider } = harness(false, {});
+    const { handler, view } = resolveWith(provider);
+    await handler({ type: "getConfig" });
+    const configs = view.webview.postMessage.mock.calls
+      .map((c: unknown[]) => c[0] as { type?: string; config?: { modelsDevError?: boolean } })
+      .filter((m) => m?.type === "config");
+    expect(configs.some((c) => c.config?.modelsDevError === true)).toBe(true);
+  });
+
+  it("does NOT flag it when the catalog is reachable (limits resolved)", async () => {
+    const { provider } = harness(true, { context: 1000, output: 100 });
+    const { view } = resolveWith(provider);
+    await vi.waitFor(() => {
+      const configs = view.webview.postMessage.mock.calls
+        .map((c: unknown[]) => c[0] as { type?: string; config?: { modelsDevError?: boolean } })
+        .filter((m) => m?.type === "config");
+      expect(configs.length).toBeGreaterThan(0);
+      expect(configs.some((c) => c.config?.modelsDevError === true)).toBe(false);
+    });
+  });
 });

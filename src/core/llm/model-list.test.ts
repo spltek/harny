@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { extractContextLength, HttpModelListProvider } from "./model-list";
+import { extractContextLength, extractMaxOutput, HttpModelListProvider } from "./model-list";
 import type { HttpClient, HttpResponse } from "./http-client";
 
 function fakeHttp(response: HttpResponse): HttpClient {
@@ -140,5 +140,16 @@ describe("HttpModelListProvider", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("extractMaxOutput", () => {
+  it("reads the max output tokens across the common shapes", () => {
+    expect(extractMaxOutput({ id: "a", max_output_tokens: 16384 })).toBe(16384);
+    expect(extractMaxOutput({ id: "b", max_completion_tokens: 4096 })).toBe(4096);
+    expect(extractMaxOutput({ id: "c", top_provider: { max_completion_tokens: 32000 } })).toBe(32000);
+    expect(extractMaxOutput({ id: "d", limit: { output: 8192 } })).toBe(8192);
+    expect(extractMaxOutput({ id: "e" })).toBeUndefined();
+    expect(extractMaxOutput("just-an-id")).toBeUndefined();
   });
 });

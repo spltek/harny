@@ -1168,6 +1168,8 @@ ${renderViewConfig(deps)}
     #ctl-cards { --ctl-row: 1.4rem; }
     #ctl-cards .field-label { display: flex; align-items: center; min-height: var(--ctl-row); }
     .field-label { font-size: var(--fs-sm); color: #9a9a9a; }
+    /* "(min → max)" of the selected control, shown next to its label/radio. */
+    .range-label { font-size: var(--fs-sm); color: #9a9a9a; font-weight: 400; }
     /* Working state: the PLAY (send) button blinks in sync with the chat's
        "Working..." bubble — same harny-pulse 1.2s animation, applied in the
        same tick (send/compactStart), so the two pulse together. */
@@ -1652,15 +1654,25 @@ ${renderViewConfig(deps)}
       box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5); font-size: var(--fs-lg);
     }
     #model-modal .mm-head { display: flex; align-items: center; justify-content: space-between; }
+    #model-modal .mm-footer { display: flex; justify-content: flex-end; }
     #model-modal h3 { margin: 0; font-size: var(--fs-xl); font-weight: 700; color: var(--fg-strong); }
     #model-modal .mm-search { display: flex; }
+    /* Discreet warning: the models.dev fallback is unreachable and some model is
+       missing a limit (the alert is NOT a modal — it is a soft fallback miss). */
+    .mm-warn { font-size: var(--fs-sm); color: #e5c07b; line-height: 1.35; }
+    .mm-warn.hidden { display: none; }
+    .warn-badge { color: #e5c07b; font-size: var(--fs-sm); margin-left: 2px; }
+    .warn-badge.hidden { display: none; }
     #model-search {
       width: 100%; background: var(--surface-2); color: var(--fg);
       border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
       font-size: var(--fs-lg); outline: none;
     }
     #model-search:focus { border-color: var(--accent); }
-    #model-list { display: flex; flex-direction: column; gap: 5px; overflow-y: auto; min-height: 160px; flex: 1; }
+    #model-list { display: grid; grid-template-columns: 1fr max-content max-content max-content 1.1rem; column-gap: 6px; row-gap: 5px; align-items: center; align-content: start; overflow-y: auto; min-height: 160px; flex: 1; }
+    /* Full-width items: the provider header + any single-row message spans every
+       column (only the model rows participate in the value columns). */
+    #model-list .mm-provider, #model-list .mm-error, #model-list .mm-empty { grid-column: 1 / -1; }
     /* Provider header: the tree is PRESERVED when filtering (only matching
        models remain, empty providers drop out). */
     .mm-provider {
@@ -1673,9 +1685,14 @@ ${renderViewConfig(deps)}
        Hover just lightens the background. Id-prefixed so it beats the
        button:not(:disabled):hover filter. */
     #model-list .mm-model {
-      display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+      /* SUBGRID: the row spans the list's columns, so the context / "out" /
+         value columns share ONE width across rows (the widest value) while the
+         row keeps its own box (padding, hover, radius). */
+      grid-column: 1 / -1;
+      display: grid; grid-template-columns: subgrid; column-gap: 6px; align-items: center;
+      width: 100%; text-align: left;
       padding: 9px 12px 9px 18px; border-radius: 8px; min-height: 0;
-      justify-content: flex-start; box-shadow: none;
+      box-shadow: none;
       background: transparent; border: 1px solid transparent; color: var(--fg);
       cursor: pointer; font-size: var(--fs-lg);
       transition: background-color 0.12s;
@@ -1686,10 +1703,11 @@ ${renderViewConfig(deps)}
     /* The current model: a light accent tint so it reads as "selected". */
     #model-list .mm-model.is-current { background: rgba(217, 95, 39, 0.16); }
     #model-list .mm-model.is-current:hover { background: rgba(217, 95, 39, 0.24); }
-    .mm-model .mm-model-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .mm-model .mm-ctx { flex: none; font-size: var(--fs-sm); color: #888; }
+    .mm-model .mm-model-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mm-model .mm-ctx { font-size: var(--fs-sm); color: #888; text-align: right; font-variant-numeric: tabular-nums; }
+    .mm-model .mm-out-label { text-align: right; }
     .mm-model.is-current { color: var(--accent); font-weight: 600; }
-    .mm-model .mm-check { flex: none; color: var(--accent); }
+    .mm-model .mm-check { color: var(--accent); text-align: center; }
     .mm-error { padding: 4px 8px 4px 20px; font-size: var(--fs-sm); color: var(--error); }
     .mm-empty { padding: 18px; text-align: center; color: #888; font-size: var(--fs-lg); }
   </style>
@@ -1778,6 +1796,7 @@ ${renderViewConfig(deps)}
       <span class="model-label">AI Model:</span>
       <button type="button" id="model-btn" class="model-btn" title="Select a model" aria-haspopup="dialog">
         <span id="model-btn-label">Select a model</span>
+        <span id="model-warn" class="warn-badge hidden" title="models.dev unreachable — some model limits may be unknown">⚠</span>
         <svg class="model-btn-chevron" width="10" height="10" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
       </button>
       <button id="gear-btn" class="gear-btn" title="Configure providers & models"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
@@ -1791,14 +1810,14 @@ ${renderViewConfig(deps)}
       <div class="ctl-card">
         <span class="card-title">Window</span>
         <div class="field">
-          <label class="field-label" for="ctx-range">Context window</label>
+          <label class="field-label" for="ctx-range">Context window <span class="range-label" id="ctx-range-label"></span></label>
           <div class="num-row">
             <input type="range" id="ctx-range" class="num-range" min="${MIN_CONTEXT_WINDOW}" max="${MAX_CONTEXT_WINDOW}" step="1000" aria-label="Context window" />
             <span class="num-value" id="ctx-value">${DEFAULT_CONTEXT_WINDOW}</span>
           </div>
         </div>
         <div class="field">
-          <label class="field-label" for="out-range">Output tokens</label>
+          <label class="field-label" for="out-range">Output tokens <span class="range-label" id="out-range-label"></span></label>
           <div class="num-row">
             <input type="range" id="out-range" class="num-range" min="${MIN_OUTPUT_TOKENS}" max="${MAX_OUTPUT_TOKENS}" step="256" aria-label="Output tokens" />
             <span class="num-value" id="out-value">${DEFAULT_OUTPUT_TOKENS}</span>
@@ -1820,6 +1839,7 @@ ${renderViewConfig(deps)}
           <div class="sampler-toggle" id="sampler-toggle">
             <label class="sampler-opt"><input type="radio" name="sampler" id="sampler-temp" value="temperature" checked />Temperature</label>
             <label class="sampler-opt"><input type="radio" name="sampler" id="sampler-topp" value="topP" />Top-P</label>
+            <span class="range-label" id="samp-range-label"></span>
           </div>
           <div class="num-row">
             <input type="range" id="samp-range" class="num-range" min="0" max="2" step="0.1" aria-label="Sampler value" />
@@ -1991,12 +2011,15 @@ ${renderViewConfig(deps)}
     <div class="mm-card">
       <div class="mm-head">
         <h3>Select model</h3>
-        <button id="model-close" class="secondary-ghost" title="Close" aria-label="Close">✕</button>
       </div>
       <div class="mm-search">
         <input id="model-search" type="search" placeholder="Search models" spellcheck="false" autocomplete="off" aria-label="Search models" />
       </div>
+      <div id="mm-modelsdev-warn" class="mm-warn hidden">⚠ models.dev unreachable — context/output may show “-” for hosts that don’t report them.</div>
       <div id="model-list"></div>
+      <div class="mm-footer">
+        <button id="model-close" class="secondary">Cancel</button>
+      </div>
     </div>
   </div>
   <div id="providers-modal" class="hidden">
