@@ -2574,7 +2574,7 @@ describe("ChatViewProvider DB vacuum suggestion", () => {
     state.dbVacuumThreshold = undefined;
   });
 
-  const stats = (freeMB: number, totalMB = 100) => ({
+  const stats = (freeMB: number, totalMB = 1000) => ({
     pageCount: Math.round((totalMB * 1024 * 1024) / 4096),
     freePages: Math.round((freeMB * 1024 * 1024) / 4096),
     pageSize: 4096,
@@ -2589,7 +2589,7 @@ describe("ChatViewProvider DB vacuum suggestion", () => {
     const { store, provider } = buildHarness();
     const { handler, view } = resolveWith(provider);
     await provider.createNew(); // s1
-    (store.dbVacuumStats as any).mockReturnValue(stats(50)); // 50% >= 20%
+    (store.dbVacuumStats as any).mockReturnValue(stats(500)); // 50% >= 20% and 500 MB >= 128 MB
     await handler({ type: "deleteSession", id: "s1" });
     await vi.waitFor(() => expect(openedVacuum(view)).toBe(true));
   });
@@ -2598,7 +2598,7 @@ describe("ChatViewProvider DB vacuum suggestion", () => {
     const { store, provider } = buildHarness();
     const { handler, view } = resolveWith(provider);
     await provider.createNew();
-    (store.dbVacuumStats as any).mockReturnValue(stats(5)); // 5% < 20%
+    (store.dbVacuumStats as any).mockReturnValue(stats(50)); // 5% < 20%
     await handler({ type: "deleteSession", id: "s1" });
     await new Promise((r) => setTimeout(r, 30));
     expect(openedVacuum(view)).toBe(false);
@@ -2608,8 +2608,8 @@ describe("ChatViewProvider DB vacuum suggestion", () => {
     const { store, provider } = buildHarness();
     const { handler, view } = resolveWith(provider);
     await provider.createNew();
-    // 90% free but only 0.9 MB reclaimable (< 10 MB minimum) -> no nagging.
-    (store.dbVacuumStats as any).mockReturnValue(stats(0.9, 1));
+    // 90% free but only 90 MB reclaimable (< 128 MB minimum) -> no nagging.
+    (store.dbVacuumStats as any).mockReturnValue(stats(90, 100));
     await handler({ type: "deleteSession", id: "s1" });
     await new Promise((r) => setTimeout(r, 30));
     expect(openedVacuum(view)).toBe(false);
@@ -2624,7 +2624,7 @@ describe("ChatViewProvider DB vacuum suggestion", () => {
       { role: "user", content: "q", timestamp: 1 },
       { role: "assistant", content: "a", timestamp: 2 },
     ]);
-    (store.dbVacuumStats as any).mockReturnValue(stats(50));
+    (store.dbVacuumStats as any).mockReturnValue(stats(500));
     await handler({ type: "truncateAt", index: 1 });
     await vi.waitFor(() => expect(openedVacuum(view)).toBe(true));
   });
@@ -2632,7 +2632,7 @@ describe("ChatViewProvider DB vacuum suggestion", () => {
   it("the manual button opens the SAME modal", async () => {
     const { store, provider } = buildHarness();
     const { handler, view } = resolveWith(provider);
-    (store.dbVacuumStats as any).mockReturnValue(stats(50));
+    (store.dbVacuumStats as any).mockReturnValue(stats(500));
     await handler({ type: "openVacuumModal" });
     await vi.waitFor(() => expect(openedVacuum(view)).toBe(true));
   });
@@ -2640,7 +2640,7 @@ describe("ChatViewProvider DB vacuum suggestion", () => {
   it("runVacuum FORCES a compaction and reports the result", async () => {
     const { store, provider } = buildHarness();
     const { handler, view } = resolveWith(provider);
-    (store.maintain as any).mockReturnValue({ vacuumed: true, before: stats(50), after: stats(0), durationMs: 42 });
+    (store.maintain as any).mockReturnValue({ vacuumed: true, before: stats(500), after: stats(0), durationMs: 42 });
     await handler({ type: "runVacuum" });
     expect(store.maintain).toHaveBeenCalledWith({ freeRatioThreshold: 0 });
     expect(view.webview.postMessage).toHaveBeenCalledWith(
@@ -2670,7 +2670,7 @@ describe("ChatViewProvider DB vacuum — re-ask + clamping", () => {
     state.autoName = "New Session";
     state.dbVacuumThreshold = undefined;
   });
-  const stats = (freeMB: number, totalMB = 100) => ({
+  const stats = (freeMB: number, totalMB = 1000) => ({
     pageCount: Math.round((totalMB * 1024 * 1024) / 4096),
     freePages: Math.round((freeMB * 1024 * 1024) / 4096),
     pageSize: 4096,
@@ -2686,7 +2686,7 @@ describe("ChatViewProvider DB vacuum — re-ask + clamping", () => {
     const { handler, view } = resolveWith(provider);
     await provider.createNew(); // s1
     await provider.createNew(); // s2
-    (store.dbVacuumStats as any).mockReturnValue(stats(50));
+    (store.dbVacuumStats as any).mockReturnValue(stats(500));
     await handler({ type: "deleteSession", id: "s1" });
     await vi.waitFor(() => expect(openedVacuum(view)).toBe(true));
     const first = view.webview.postMessage.mock.calls.map((c: any[]) => c[0]).find((m: any) => m?.kind === "dbVacuum");

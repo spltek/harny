@@ -4496,7 +4496,7 @@ describe("DB vacuum modal (webview)", () => {
       result: { vacuumed: true, before: stats, after: { ...stats, freePages: 0, bytesFree: 0, ratio: 0 }, durationMs: 1200 },
     });
     expect((document.getElementById("db-vacuum-msg") as HTMLElement).textContent).toContain("1.2s");
-    expect((document.getElementById("db-vacuum-run") as HTMLButtonElement).textContent).toBe("Compact again");
+    expect((document.getElementById("db-vacuum-run") as HTMLButtonElement).textContent).toBe("Compact & optimize again");
   });
 
   it("the All-Sessions footer renders the stats + both settings and posts the manual open", async () => {
@@ -4550,6 +4550,8 @@ describe("DB vacuum — sliders, info-only modal, live settings", () => {
     await loadView();
     hostMessage({ type: "modal", modalId: 7, kind: "dbVacuum", threshold: 20, minFreeMB: 10, stats });
     expect(document.querySelector("#db-vacuum-modal input")).toBeNull();
+    // The message says it OPTIMIZES the indexes, not only compacts.
+    expect((document.getElementById("db-vacuum-msg") as HTMLElement).textContent).toContain("OPTIMIZES");
     expect((document.getElementById("db-vacuum-info") as HTMLElement).textContent).toContain("All sessions");
   });
 

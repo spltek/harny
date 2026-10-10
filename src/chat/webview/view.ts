@@ -2123,13 +2123,13 @@ let dbVacuumModalId = -1;
 function openDbVacuumModal(msg: { modalId?: number; stats?: VacuumStats; threshold?: number; minFreeMB?: number }): void {
   dbVacuumModalId = typeof msg.modalId === "number" ? msg.modalId : -1;
   dbVacuumMsg.textContent =
-    "Compacting rewrites the database to reclaim the free pages left by deleted sessions and cut conversations. It runs when the chat is idle.";
+    "Compacting rewrites the database to reclaim the free pages left by deleted sessions and cut conversations, and OPTIMIZES the indexes (query-planner stats + full-text segments). It runs when the chat is idle.";
   dbVacuumStatsEl.innerHTML = vacuumStatsHtml(msg.stats);
   dbVacuumInfo.innerHTML =
-    `Suggests compaction above <b>${msg.threshold ?? 20}%</b> when at least <b>${msg.minFreeMB ?? 10} MB</b> are reclaimable ` +
+    `Suggests compaction above <b>${msg.threshold ?? 20}%</b> when at least <b>${msg.minFreeMB ?? 128} MB</b> are reclaimable ` +
     "(change them in All sessions).";
   dbVacuumRun.disabled = false;
-  dbVacuumRun.textContent = "Compact now";
+  dbVacuumRun.textContent = "Compact & optimize indexes";
   dbVacuumModal.classList.remove("hidden");
   dbVacuumRun.focus();
 }
@@ -2144,8 +2144,8 @@ function closeDbVacuumModal(): void {
 
 dbVacuumRun.addEventListener("click", () => {
   dbVacuumRun.disabled = true;
-  dbVacuumRun.textContent = "Compacting…";
-  dbVacuumMsg.textContent = "Compacting…";
+  dbVacuumRun.textContent = "Compacting & optimizing…";
+  dbVacuumMsg.textContent = "Compacting & optimizing…";
   vscode.postMessage({ type: "runVacuum" });
 });
 dbVacuumClose.addEventListener("click", () => closeDbVacuumModal());
@@ -4182,12 +4182,12 @@ window.addEventListener("message", (e) => {
       if (r) {
         dbVacuumStatsEl.innerHTML = vacuumStatsHtml(r.before) + "<div>↓ after compaction</div>" + vacuumStatsHtml(r.after);
         dbVacuumMsg.textContent = r.vacuumed
-          ? `Compacted in ${(r.durationMs / 1000).toFixed(1)}s.`
-          : "Nothing to reclaim — the database was already compact.";
+          ? `Compacted & optimized in ${(r.durationMs / 1000).toFixed(1)}s.`
+          : "Nothing to reclaim — the database was already compact and the indexes optimal.";
         smVacuumStats.innerHTML = vacuumStatsHtml(r.after);
       }
       dbVacuumRun.disabled = false;
-      dbVacuumRun.textContent = "Compact again";
+      dbVacuumRun.textContent = "Compact & optimize again";
       break;
     }
     case "sessionsManager":

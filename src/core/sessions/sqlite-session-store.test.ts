@@ -334,3 +334,20 @@ describe("SqliteSessionStore — vacuum force", () => {
     expect(r.vacuumed).toBe(true);
   });
 });
+
+describe("SqliteSessionStore — vacuum also optimizes the indexes", () => {
+  it("maintain runs the FTS5 optimize without breaking search", () => {
+    const { store } = makeStore();
+    store.create(); // s1
+    store.saveMessages("s1", [msg("user", "hello world"), msg("assistant", "hi there")]);
+    store.remove("s1"); // free pages + FTS segments to merge
+
+    const r = store.maintain({ freeRatioThreshold: 0 });
+    expect(r.vacuumed).toBe(true);
+
+    // The full-text index survived the optimize and still matches NEW rows.
+    store.create(); // s2
+    store.saveMessages("s2", [msg("user", "hello again")]);
+    expect(store.search("hello").some((h) => h.sessionId === "s2")).toBe(true);
+  });
+});

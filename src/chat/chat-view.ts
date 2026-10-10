@@ -529,7 +529,7 @@ export class ChatViewProvider implements WebviewViewProvider {
   /** Minimum RECLAIMABLE megabytes below which we never SUGGEST compaction. */
   private vacuumMinFreeMB(): number {
     const mb = workspace.getConfiguration("harny").get<number>("dbVacuumMinFreeMB");
-    return typeof mb === "number" && Number.isFinite(mb) ? Math.max(0, Math.round(mb)) : 10;
+    return typeof mb === "number" && Number.isFinite(mb) ? Math.max(0, Math.round(mb)) : 128;
   }
 
   /**

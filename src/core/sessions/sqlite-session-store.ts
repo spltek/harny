@@ -317,14 +317,32 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   /**
-   * Best-effort compaction: VACUUM when the free-page ratio reaches the
-   * threshold (0 = force), then truncate the WAL. Returns before/after stats
-   * for the UI. NEVER throws.
+   * Best-effort maintenance: VACUUM when the free-page ratio reaches the
+   * threshold (0 = force), then OPTIMIZE the indexes and truncate the WAL.
+   * Index work is kept here because VACUUM does NOT merge FTS5 segments:
+   *  · `PRAGMA optimize` refreshes the query-planner statistics when useful;
+   *  · the FTS5 `optimize` command merges the full-text segments accumulated
+   *    by many inserts/deletes (smaller + faster full-text search).
+   * Returns before/after stats for the UI. NEVER throws.
    */
   maintain(options: { freeRatioThreshold?: number } = {}): DbVacuumResult {
     const threshold = options.freeRatioThreshold ?? 0.2;
     const before = this.dbVacuumStats();
     const startedAt = Date.now();
+    // 1) Optimize the INDEXES FIRST: merging FTS5 segments and refreshing the
+    //    planner stats FREES/REWRITES pages, so the VACUUM below reclaims them
+    //    too (doing it after the VACUUM would leave new holes behind).
+    try {
+      this.deps.db.exec("PRAGMA optimize");
+    } catch {
+      /* best effort */
+    }
+    try {
+      this.deps.db.exec("INSERT INTO messages_fts(messages_fts) VALUES('optimize')");
+    } catch {
+      /* best effort (no FTS table / already optimal) */
+    }
+    // 2) Page compaction, when the free-page ratio reaches the threshold.
     let vacuumed = false;
     try {
       if (before.pageCount > 0 && before.ratio >= threshold) {

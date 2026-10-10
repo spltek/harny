@@ -1954,7 +1954,7 @@ ${renderViewConfig(deps)}
         <div class="sm-vacuum-head">
           <span>Database compaction</span>
           <span class="spacer"></span>
-          <button id="sm-vacuum-btn" class="secondary">Compact now…</button>
+          <button id="sm-vacuum-btn" class="secondary">Compact &amp; optimize indexes…</button>
         </div>
         <div class="sm-vacuum-slider">
           <label for="sm-vacuum-threshold">Suggest above</label>
@@ -1976,13 +1976,13 @@ ${renderViewConfig(deps)}
   <div id="db-vacuum-modal" class="hidden">
     <div class="dv-backdrop"></div>
     <div class="dv-card">
-      <h3>Compact sessions database</h3>
+      <h3>Compact &amp; optimize database</h3>
       <p id="db-vacuum-msg" class="sm-hint"></p>
       <div id="db-vacuum-stats" class="db-vacuum-stats"></div>
       <div id="db-vacuum-info" class="sm-vacuum-info"></div>
       <div class="dv-footer">
         <button id="db-vacuum-close" class="secondary">Close</button>
-        <button id="db-vacuum-run">Compact now</button>
+        <button id="db-vacuum-run">Compact &amp; optimize indexes</button>
       </div>
     </div>
   </div>
