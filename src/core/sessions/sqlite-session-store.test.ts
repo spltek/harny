@@ -198,24 +198,6 @@ describe("SqliteSessionStore — per-session settings", () => {
     });
   });
 
-  it("the per-field save* wrappers all delegate to saveSettings", () => {
-    const { store } = makeStore();
-    store.create();
-    store.saveModel("s1", "m", "p");
-    store.saveThinkingLevel("s1", "low");
-    store.saveContextWindow("s1", 100000);
-    store.saveContextTokens("s1", 555);
-    store.saveOutputTokens("s1", 2048);
-    expect(store.load("s1").summary).toMatchObject({
-      model: "m",
-      modelProvider: "p",
-      thinkingLevel: "low",
-      contextWindow: 100000,
-      contextTokens: 555,
-      outputTokens: 2048,
-    });
-  });
-
   it("contextTokens: 0 survives a cut + reload (an explicit clear beats the carry-over)", () => {
     const { store } = makeStore();
     store.create();
@@ -236,11 +218,14 @@ describe("SqliteSessionStore — per-session settings", () => {
     const { store } = makeStore();
     store.create();
     store.saveSettings("s1", { temperature: 0.7, presencePenalty: 1, frequencyPenalty: 1, topP: 0.5, sampler: "topP" });
-    store.saveTemperature("s1", undefined);
-    store.savePresencePenalty("s1", undefined);
-    store.saveFrequencyPenalty("s1", undefined);
-    store.saveTopP("s1", undefined);
-    store.saveSampler("s1", undefined);
+    // A key PRESENT with value undefined clears the field (the "Auto" semantics).
+    store.saveSettings("s1", {
+      temperature: undefined,
+      presencePenalty: undefined,
+      frequencyPenalty: undefined,
+      topP: undefined,
+      sampler: undefined,
+    });
 
     const s = store.load("s1").summary;
     expect(s.temperature).toBeUndefined();

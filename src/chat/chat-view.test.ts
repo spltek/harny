@@ -87,15 +87,6 @@ function makeStore(): SessionStore {
     saveSettings: vi.fn((id, patch) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...patch })),
     rename: vi.fn((id, name) => ({ id, name, createdAt: 1, updatedAt: 2, messageCount: 0 })),
     remove: vi.fn(() => true),
-    saveModel: vi.fn((id, model, provider) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(model ? { model } : {}), ...(provider ? { modelProvider: provider } : {}) })),
-    saveThinkingLevel: vi.fn((id, level) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, thinkingLevel: level })),
-    saveContextWindow: vi.fn((id, window) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(window ? { contextWindow: window } : {}) })),
-    saveOutputTokens: vi.fn((id, tokens) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(tokens ? { outputTokens: tokens } : {}) })),
-    saveTemperature: vi.fn((id, temp) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(temp !== undefined ? { temperature: temp } : {}) })),
-    savePresencePenalty: vi.fn((id, value) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(value !== undefined ? { presencePenalty: value } : {}) })),
-    saveFrequencyPenalty: vi.fn((id, value) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(value !== undefined ? { frequencyPenalty: value } : {}) })),
-    saveTopP: vi.fn((id, value) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(value !== undefined ? { topP: value } : {}) })),
-    saveSampler: vi.fn((id, mode) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(mode ? { sampler: mode } : {}) })),
     dbVacuumStats: vi.fn(() => ({ pageCount: 100, freePages: 0, pageSize: 4096, bytesFree: 0, bytesTotal: 409600, ratio: 0 })),
     maintain: vi.fn(() => ({
       vacuumed: false,
@@ -103,7 +94,6 @@ function makeStore(): SessionStore {
       after: { pageCount: 100, freePages: 0, pageSize: 4096, bytesFree: 0, bytesTotal: 409600, ratio: 0 },
       durationMs: 0,
     })),
-    saveContextTokens: vi.fn((id, tokens) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(tokens ? { contextTokens: tokens } : {}) })),
   } as unknown as SessionStore;
 }
 

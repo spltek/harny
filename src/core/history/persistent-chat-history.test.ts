@@ -15,9 +15,6 @@ function makeStore(): SessionStore {
     saveMessages: vi.fn((id: string, messages: ChatMessage[]) => ({ id, name: "S", createdAt: 1, updatedAt: 2, messageCount: messages.length })),
     rename: vi.fn(),
     remove: vi.fn(),
-    saveModel: vi.fn(),
-    saveContextWindow: vi.fn(),
-    saveContextTokens: vi.fn(),
   } as unknown as SessionStore;
 }
 

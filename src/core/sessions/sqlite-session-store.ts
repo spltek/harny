@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { FileSystem } from "../tools/file-system";
 import type { ChatMessage } from "../history/types";
-import { isThinkingLevel, type ThinkingLevel } from "../config/types";
+import { isThinkingLevel } from "../config/types";
 import { clampLoopGuardOverrides, normalizeLoopGuardSensitivity, type LoopGuardOptions } from "../agent/loop-guard";
 import type { DbVacuumResult, DbVacuumStats, LoadedSession, SessionSettingsPatch, SessionStore, SessionSummary } from "./types";
 
@@ -249,49 +249,6 @@ export class SqliteSessionStore implements SessionStore {
       snippet: String(r.snippet ?? ""),
       score: Number(r.score ?? 0),
     }));
-  }
-
-  saveModel(id: string, model?: string, provider?: string): SessionSummary {
-    return this.saveSettings(id, {
-      ...(model ? { model } : {}),
-      ...(provider ? { modelProvider: provider } : {}),
-    });
-  }
-
-  saveThinkingLevel(id: string, level?: ThinkingLevel): SessionSummary {
-    return this.saveSettings(id, { ...(isThinkingLevel(level) ? { thinkingLevel: level } : {}) });
-  }
-
-  saveContextWindow(id: string, window?: number): SessionSummary {
-    return this.saveSettings(id, { ...(typeof window === "number" ? { contextWindow: window } : {}) });
-  }
-
-  saveContextTokens(id: string, tokens?: number): SessionSummary {
-    return this.saveSettings(id, { ...(typeof tokens === "number" ? { contextTokens: tokens } : {}) });
-  }
-
-  saveOutputTokens(id: string, tokens?: number): SessionSummary {
-    return this.saveSettings(id, { ...(typeof tokens === "number" ? { outputTokens: tokens } : {}) });
-  }
-
-  saveTemperature(id: string, temp?: number): SessionSummary {
-    return this.saveSettings(id, { temperature: temp });
-  }
-
-  savePresencePenalty(id: string, value?: number): SessionSummary {
-    return this.saveSettings(id, { presencePenalty: value });
-  }
-
-  saveFrequencyPenalty(id: string, value?: number): SessionSummary {
-    return this.saveSettings(id, { frequencyPenalty: value });
-  }
-
-  saveTopP(id: string, value?: number): SessionSummary {
-    return this.saveSettings(id, { topP: value });
-  }
-
-  saveSampler(id: string, sampler?: "temperature" | "topP"): SessionSummary {
-    return this.saveSettings(id, { sampler });
   }
 
   /** Close the underlying database (tests / shutdown). */

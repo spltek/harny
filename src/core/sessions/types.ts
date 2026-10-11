@@ -90,15 +90,6 @@ export type SessionSettings = Pick<
  */
 export type SessionSettingsPatch = Partial<SessionSettings>;
 
-/**
- * Persistence for chat sessions. Implementations own the serialization format
- * and storage location; the SessionManager owns the "current session" state.
- *
- * Production settings writes go through the single `saveSettings(id, patch)`
- * primitive (atomic single-write). The per-field save* methods below are thin
- * convenience wrappers over it, retained for the store's per-field unit tests
- * and callers that set exactly one field.
- */
 /** Cheap DB-size stats (free vs total pages) for the vacuum UI. */
 export interface DbVacuumStats {
   pageCount: number;
@@ -130,6 +121,13 @@ export const EMPTY_DB_VACUUM_STATS: DbVacuumStats = {
   ratio: 0,
 };
 
+/**
+ * Persistence for chat sessions. Implementations own the serialization format
+ * and storage location; the SessionManager owns the "current session" state.
+ *
+ * Production settings writes go through the single `saveSettings(id, patch)`
+ * primitive (atomic single-write).
+ */
 export interface SessionStore {
   list(): SessionSummary[];
   create(name?: string): SessionSummary;
@@ -146,25 +144,6 @@ export interface SessionStore {
   remove(id: string): boolean;
   /** Atomically persist any subset of the per-session settings (single write). */
   saveSettings(id: string, patch: SessionSettingsPatch): SessionSummary;
-  /** Persist the session's last selected model (and optional provider). */
-  saveModel(id: string, model?: string, provider?: string): SessionSummary;
-  /** Persist the session's thinking level (reasoning effort). */
-  saveThinkingLevel(id: string, level?: import("../config/types").ThinkingLevel): SessionSummary;
-  /** Persist the session's context window (tokens). */
-  saveContextWindow(id: string, window?: number): SessionSummary;
-  saveContextTokens(id: string, tokens?: number): SessionSummary;
-  /** Persist the session's max output tokens per response. */
-  saveOutputTokens(id: string, tokens?: number): SessionSummary;
-  /** Persist the session's sampling temperature (undefined = Auto, not sent). */
-  saveTemperature(id: string, temp?: number): SessionSummary;
-  /** Persist the session's presence penalty (undefined = Auto, not sent). */
-  savePresencePenalty(id: string, value?: number): SessionSummary;
-  /** Persist the session's frequency penalty (undefined = Auto, not sent). */
-  saveFrequencyPenalty(id: string, value?: number): SessionSummary;
-  /** Persist the session's top_p threshold (undefined = Auto). */
-  saveTopP(id: string, value?: number): SessionSummary;
-  /** Persist the ACTIVE sampler (temperature | topP). */
-  saveSampler(id: string, sampler?: "temperature" | "topP"): SessionSummary;
   /**
    * OPTIONAL: cheap (O(1), header-only) DB-size stats for the vacuum UI.
    */

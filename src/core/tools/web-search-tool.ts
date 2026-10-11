@@ -7,7 +7,7 @@ export class WebSearchTool implements Tool {
   readonly definition: ToolDefinition = {
     name: "WebSearch",
     description:
-      "Search web for real-time info on any topic; use for up-to-date facts not in training data, like current events or tech updates. Results include snippets and URLs.",
+      "Search web for real-time info on any topic; use for up-to-date facts not in training data, like current events or tech updates. Returns short text snippets from the top results.",
     parameters: {
       type: "object",
       properties: {

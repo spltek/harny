@@ -14,9 +14,6 @@ function makeStore(): SessionStore {
     saveMessages: vi.fn((id: string, messages: { role: string; content: string; timestamp: number }[]) => ({ id, name: "S", createdAt: 1, updatedAt: 2, messageCount: messages.length })),
     rename: vi.fn((id, name) => ({ id, name, createdAt: 1, updatedAt: 2, messageCount: 0 })),
     remove: vi.fn(() => true),
-    saveModel: vi.fn((id, model, provider) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(model ? { model } : {}), ...(provider ? { modelProvider: provider } : {}) })),
-    saveContextWindow: vi.fn((id, window) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(window ? { contextWindow: window } : {}) })),
-    saveContextTokens: vi.fn((id, tokens) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...(tokens ? { contextTokens: tokens } : {}) })),
   } as unknown as SessionStore;
 }
 
