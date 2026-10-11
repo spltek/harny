@@ -6,6 +6,8 @@ import {
   DEFAULT_OUTPUT_TOKENS,
   MAX_OUTPUT_TOKENS,
   MIN_OUTPUT_TOKENS,
+  clampAdoptedContextWindow,
+  clampAdoptedOutputTokens,
   clampContextWindow,
   clampOutputTokens,
   toContextWindow,
@@ -51,5 +53,20 @@ describe("output-token bounds", () => {
   it("toOutputTokens coerces JSON values", () => {
     expect(toOutputTokens("16384")).toBe(16_384);
     expect(toOutputTokens(undefined)).toBe(DEFAULT_OUTPUT_TOKENS);
+  });
+});
+
+describe("adopted (model-reported) values bypass the slider MINIMUM", () => {
+  it("keeps a small model's real context instead of raising it to MIN", () => {
+    expect(clampAdoptedContextWindow(8000)).toBe(8000);
+    expect(clampAdoptedContextWindow(4000)).toBe(4000);
+    expect(clampAdoptedContextWindow(9_999_999)).toBe(MAX_CONTEXT_WINDOW);
+    expect(clampAdoptedContextWindow(Number.NaN)).toBe(DEFAULT_CONTEXT_WINDOW);
+  });
+
+  it("keeps a small model's real max output", () => {
+    expect(clampAdoptedOutputTokens(128)).toBe(128);
+    expect(clampAdoptedOutputTokens(9_999_999)).toBe(MAX_OUTPUT_TOKENS);
+    expect(clampAdoptedOutputTokens(Number.NaN)).toBe(DEFAULT_OUTPUT_TOKENS);
   });
 });

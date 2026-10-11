@@ -18,7 +18,7 @@ import { debugLog, infoLog } from "../logger";
 import { preprocessJsonc } from "../core/config/jsonc";
 import { renderViewHtml } from "./view-html";
 import { toTemperature, toTopP } from "./temperature";
-import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, MAX_CONTEXT_WINDOW, MAX_OUTPUT_TOKENS, clampContextWindow, clampOutputTokens, toContextWindow, toOutputTokens } from "./context-window";
+import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, MAX_CONTEXT_WINDOW, MAX_OUTPUT_TOKENS, clampAdoptedContextWindow, clampAdoptedOutputTokens, clampContextWindow, clampOutputTokens, toContextWindow, toOutputTokens } from "./context-window";
 import { PanelModalQueue } from "./panel-modal-queue";
 import { Compactor, DEFAULT_COMPACTION, CompactionSettings, planManualCompaction, shouldCompact, estimateTokens, serializeConversation, estimateContextTokens, realWindowTokens, splitSummary, toCompactionThresholdPercent } from "../core/sessions/compactor";
 import type { SkillRegistry } from "../core/skills/skill-registry";
@@ -66,9 +66,6 @@ export class ChatViewProvider implements WebviewViewProvider {
   /** `provider|model` keys already looked up this session (avoid re-hitting the
    * catalog on every config push). */
   private readonly modelsDevAttempted = new Set<string>();
-  /** `sessionId|model` for which the "context window unknown" alert was shown
-   * (so re-selecting the same model does not re-alert). */
-  private readonly contextAlerts = new Set<string>();
   // Short host-model cache: the dropdown re-fetches on open (view sends
   // getConfig on mousedown/focus), so a host that comes up later (e.g. llama.cpp
   // started after the panel) shows up on the next open. Kept short because the
@@ -134,7 +131,10 @@ export class ChatViewProvider implements WebviewViewProvider {
     // open must rebuild the HTML for the new size to take effect.
     context.subscriptions.push(
       workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration("editor.fontSize")) this.refresh();
+        // editor.fontSize drives the root font; any `harny.*` setting may change
+        // the provider/model limits, so both trigger a refresh (which also
+        // re-applies the runtime overrides).
+        if (e.affectsConfiguration("editor.fontSize") || e.affectsConfiguration("harny")) this.refresh();
       }),
     );
   }
@@ -655,6 +655,10 @@ export class ChatViewProvider implements WebviewViewProvider {
   /** Rebuild the whole view (host-side refresh after any change). */
   refresh(): void {
     if (!this.view) return;
+    // Re-apply the per-model overrides FIRST: a CONFIG edit (baseUrl / apiKey /
+    // maxTokens / thinkingMode…) must take effect immediately — the composite
+    // lets runtime overrides win, so a stale override would shadow the file.
+    this.applyActiveModel();
     void this.buildHtml().then((html) => {
       if (this.view) this.view.webview.html = html;
     });
@@ -903,12 +907,17 @@ export class ChatViewProvider implements WebviewViewProvider {
           typeof msg.provider === "string" && msg.provider.trim() ? msg.provider.trim() : undefined;
         rt.model = model;
         rt.modelProvider = provider;
-        // Models on reasoning-capable providers (thinking bool/effort) default
-        // to Medium effort unless the session already has an explicit level.
-        if (!rt.thinkingLevel && provider) {
+        // Reasoning provider: default to Medium only when the session has no
+        // explicit level. NON-reasoning provider: drop a stale level so it is
+        // never sent as an unsupported param.
+        if (provider) {
           const entry = this.providers.getProvider(provider);
-          const mode = entry?.thinkingMode ?? this.config.get().thinkingMode;
-          if (mode === "bool" || mode === "effort" || mode === "type" || mode === "reasoning") rt.thinkingLevel = "medium";
+          // The PROVIDER's declared thinking mode is authoritative here: the
+          // composite config may still carry the PREVIOUS provider's override.
+          const mode = entry?.thinkingMode;
+          const reasoning = mode === "bool" || mode === "effort" || mode === "type" || mode === "reasoning";
+          if (!reasoning) rt.thinkingLevel = undefined;
+          else if (!rt.thinkingLevel) rt.thinkingLevel = "medium";
         }
         // If the host reports this model's limits, adopt them (the compaction
         // ceiling + the output cap follow the real model). Host unreachable →
@@ -919,26 +928,32 @@ export class ChatViewProvider implements WebviewViewProvider {
           try {
             const infos = await this.fetchHostModels(provider);
             const info = infos.find((m) => m.id === model);
-            if (info?.contextLength && info.contextLength > 0) adoptedCtx = clampContextWindow(info.contextLength);
-            if (info?.maxOutputTokens && info.maxOutputTokens > 0) adoptedOut = clampOutputTokens(info.maxOutputTokens);
+            if (info?.contextLength && info.contextLength > 0) adoptedCtx = clampAdoptedContextWindow(info.contextLength);
+            if (info?.maxOutputTokens && info.maxOutputTokens > 0) adoptedOut = clampAdoptedOutputTokens(info.maxOutputTokens);
           } catch {
             /* keep the current limits */
           }
         }
-        if (adoptedCtx) {
-          rt.contextWindow = adoptedCtx;
-          if (provider) this.modelsDevContext.set(`${provider}|${model}`, adoptedCtx);
-        }
-        if (adoptedOut) {
-          rt.outputTokens = adoptedOut;
-          if (provider) this.modelsDevOutput.set(`${provider}|${model}`, adoptedOut);
-        }
+        // KNOWN model: adopt its real limits. UNKNOWN model: fall back to the
+        // DEFAULTS (context 128k / output = the provider's maxTokens or 16 384)
+        // — never keep the PREVIOUS model's values.
+        const entryMaxTokens = provider ? this.providers.getProvider(provider)?.maxTokens : undefined;
+        rt.contextWindow = adoptedCtx ?? DEFAULT_CONTEXT_WINDOW;
+        rt.outputTokens =
+          adoptedOut ??
+          (typeof entryMaxTokens === "number"
+            ? Math.min(MAX_OUTPUT_TOKENS, Math.max(1, Math.round(entryMaxTokens)))
+            : DEFAULT_OUTPUT_TOKENS);
+        if (adoptedCtx && provider) this.modelsDevContext.set(`${provider}|${model}`, adoptedCtx);
+        if (adoptedOut && provider) this.modelsDevOutput.set(`${provider}|${model}`, adoptedOut);
         this.sessions.saveSettings(rt.sessionId, {
           model,
           ...(provider ? { modelProvider: provider } : {}),
-          ...(rt.thinkingLevel ? { thinkingLevel: rt.thinkingLevel } : {}),
-          ...(adoptedCtx ? { contextWindow: adoptedCtx } : {}),
-          ...(adoptedOut ? { outputTokens: adoptedOut } : {}),
+          // Always sent so switching to a NON-reasoning provider CLEARS a stale
+          // level instead of leaving it in the DB.
+          thinkingLevel: rt.thinkingLevel,
+          contextWindow: rt.contextWindow,
+          outputTokens: rt.outputTokens,
         });
         this.modelSelector.set(this.computeOverrides(model, provider));
         // Lightweight config push (no full HTML rebuild: the typed prompt,
@@ -1492,14 +1507,19 @@ export class ChatViewProvider implements WebviewViewProvider {
         if (Object.keys(modalities).length > 0) overrides.modelModalities = modalities;
       }
       // The per-session thinking level wins over the provider's declared default.
-      overrides.thinkingLevel = rt?.thinkingLevel ?? entry?.thinkingLevel;
+      // A NON-reasoning provider must NOT receive a stale thinking level (it
+      // would be sent as an unsupported param), so it is cleared here.
+      const thinkMode = entry?.thinkingMode;
+      const reasoningProvider =
+        thinkMode === "bool" || thinkMode === "effort" || thinkMode === "type" || thinkMode === "reasoning";
+      overrides.thinkingLevel = reasoningProvider ? rt?.thinkingLevel ?? entry?.thinkingLevel : undefined;
     } else if (rt?.thinkingLevel) {
       overrides.thinkingLevel = rt.thinkingLevel;
     }
     // The per-session output-token budget wins over the provider's default.
-    // CLAMPED to the editable scale: a config/session value above the maximum
-    // is capped, never sent as-is.
-    if (typeof rt?.outputTokens === "number") overrides.maxTokens = clampOutputTokens(rt.outputTokens);
+    // Capped at the scale MAXIMUM (never sent as-is) but NOT raised to the MIN:
+    // a provider entry's small maxTokens (e.g. 123) must be honoured.
+    if (typeof rt?.outputTokens === "number") overrides.maxTokens = clampAdoptedOutputTokens(rt.outputTokens);
     if (typeof rt?.presencePenalty === "number") overrides.presencePenalty = rt.presencePenalty;
     if (typeof rt?.frequencyPenalty === "number") overrides.frequencyPenalty = rt.frequencyPenalty;
     // Sampler pick: ONLY the ACTIVE sampler keeps a value; the other is
@@ -1868,13 +1888,11 @@ export class ChatViewProvider implements WebviewViewProvider {
       this.applyLimits(rt, model, { context: ctx, output: out });
       if (ctx && out) return;
     }
-    // 3) Unknown everywhere: prompt the user (once per session+model) to set
-    //    BOTH values when neither is known. Skipped for a SILENT (on-open) pass.
+    // 3) Unknown everywhere: prompt the user. Shown on EVERY selection of such a
+    //    model (returning to it must remind you again). Skipped for a SILENT
+    //    (on-open) pass.
     if (!alert) return;
     if (this.activeRuntime() !== rt || rt.model !== model) return; // raced
-    const alertKey = `${rt.sessionId}|${model}`;
-    if (this.contextAlerts.has(alertKey)) return;
-    this.contextAlerts.add(alertKey);
     const missing = [ctx ? "" : "context window", out ? "" : "max output tokens"].filter(Boolean).join(" and ");
     await this.inPanelAlert({
       kind: "info",
@@ -1890,12 +1908,12 @@ export class ChatViewProvider implements WebviewViewProvider {
     if (this.activeRuntime() !== rt || rt.model !== model) return;
     const patch: SessionSettingsPatch = {};
     if (limits.context) {
-      rt.contextWindow = clampContextWindow(limits.context);
+      rt.contextWindow = clampAdoptedContextWindow(limits.context);
       patch.contextWindow = rt.contextWindow;
       if (rt.modelProvider) this.modelsDevContext.set(`${rt.modelProvider}|${model}`, rt.contextWindow);
     }
     if (limits.output) {
-      rt.outputTokens = clampOutputTokens(limits.output);
+      rt.outputTokens = clampAdoptedOutputTokens(limits.output);
       patch.outputTokens = rt.outputTokens;
       if (rt.modelProvider) this.modelsDevOutput.set(`${rt.modelProvider}|${model}`, rt.outputTokens);
     }

@@ -423,8 +423,10 @@ export class SqliteSessionStore implements SessionStore {
     if (folder) out.folder = folder;
     if (patch.model) out.model = patch.model;
     if (patch.modelProvider) out.modelProvider = patch.modelProvider;
-    if (patch.thinkingLevel !== undefined && isThinkingLevel(patch.thinkingLevel)) {
-      out.thinkingLevel = patch.thinkingLevel;
+    // An EXPLICIT key CLEARS when it is not a valid level (mirrors the
+    // temperature/penalties handling): `{ thinkingLevel: undefined }` clears it.
+    if ("thinkingLevel" in patch) {
+      out.thinkingLevel = isThinkingLevel(patch.thinkingLevel) ? patch.thinkingLevel : undefined;
     }
     if (typeof patch.contextWindow === "number") out.contextWindow = patch.contextWindow;
     if (typeof patch.compactionThresholdPercent === "number") {

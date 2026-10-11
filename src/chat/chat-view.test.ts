@@ -35,6 +35,8 @@ const state = vi.hoisted(() => ({
   fsReadFile: vi.fn(async () => new Uint8Array()),
   // VS Code settings write + the vacuum threshold (undefined = default 20).
   updateConfiguration: vi.fn(async () => {}),
+  // The extension host's config-change listener (captured for tests).
+  configListener: undefined as ((e: { affectsConfiguration: (s: string) => boolean }) => void) | undefined,
   dbVacuumThreshold: undefined as number | undefined,
 }));
 
@@ -54,7 +56,10 @@ vi.mock("vscode", () => ({
         key === "fontSize" ? 14 : key === "dbVacuumThresholdPercent" ? state.dbVacuumThreshold : undefined,
       update: state.updateConfiguration,
     }),
-    onDidChangeConfiguration: () => ({ dispose: () => {} }),
+    onDidChangeConfiguration: (cb: (e: { affectsConfiguration: (s: string) => boolean }) => void) => {
+      state.configListener = cb;
+      return { dispose: () => {} };
+    },
     fs: { writeFile: state.fsWriteFile, readFile: state.fsReadFile },
   },
   Uri: { joinPath: () => ({}), file: (p: string) => ({ fsPath: p }) },
@@ -1298,7 +1303,10 @@ describe("ChatViewProvider", () => {
     expect(modelSelector.set).toHaveBeenCalledWith(
       expect.objectContaining({ thinkingMode: "unspecified", thinkingLevel: undefined }),
     );
-    expect(store.saveSettings).toHaveBeenCalledWith("s1", { model: "m1", modelProvider: "plain" });
+    expect(store.saveSettings).toHaveBeenCalledWith(
+      "s1",
+      expect.objectContaining({ model: "m1", modelProvider: "plain" }),
+    );
   });
 
   it("buildConfig fetches and caches the host model list", async () => {
@@ -1584,7 +1592,10 @@ describe("ChatViewProvider per-session model", () => {
     const rt = registry.get("s1")!;
     expect(rt.model).toBe("gemma.gguf");
     expect(rt.modelProvider).toBe("llamacpp");
-    expect(store.saveSettings).toHaveBeenCalledWith("s1", { model: "gemma.gguf", modelProvider: "llamacpp" });
+    expect(store.saveSettings).toHaveBeenCalledWith(
+      "s1",
+      expect.objectContaining({ model: "gemma.gguf", modelProvider: "llamacpp" }),
+    );
   });
 
   it("setModel carries the stable session id + the provider's declared session/static headers into the runtime config", async () => {
@@ -1968,9 +1979,9 @@ describe("ChatViewProvider compaction", () => {
       ),
     );
 
-    // A model WITHOUT a reported window keeps the current one.
+    // A model WITHOUT a reported window RESETS to the default (not the previous model's).
     await handler({ type: "setModel", model: "openrouter/plain", provider: "openrouter" });
-    expect(rt.contextWindow).toBe(131072);
+    expect(rt.contextWindow).toBe(128000);
   });
 
   it("falls back to models.dev for the context window when the host does not report it", async () => {
@@ -2010,13 +2021,15 @@ describe("ChatViewProvider compaction", () => {
       ),
     );
 
-    // Re-selecting the SAME unknown model must NOT alert again (once per model).
+    // Re-selecting the SAME unknown model DOES alert again (returning to it must
+    // remind you).
     const isContextAlert = (m: unknown): boolean =>
       !!m && typeof m === "object" && (m as { title?: string }).title === "Model limits unknown";
     view.webview.postMessage.mockClear();
     await handler({ type: "setModel", model: "unknown-model", provider: "opencode-go" });
-    await new Promise((r) => setTimeout(r, 0));
-    expect(view.webview.postMessage.mock.calls.some((c: unknown[]) => isContextAlert(c[0]))).toBe(false);
+    await vi.waitFor(() =>
+      expect(view.webview.postMessage.mock.calls.some((c: unknown[]) => isContextAlert(c[0]))).toBe(true),
+    );
   });
 
   it("enriches the model LIST with the models.dev context window (host reports none)", async () => {
@@ -2341,7 +2354,7 @@ describe("ChatViewProvider compaction", () => {
     await provider.createNew(); // s1
     await handler({ type: "setModel", model: "m", provider: "p" });
     const rt = registry.get("s1")!;
-    expect(rt.contextWindow).toBeUndefined(); // brand-new session, as in practice
+    expect(rt.contextWindow).toBe(128000); // the DEFAULT window applies
     rt.contextTokens = 110000; // > 80% of the default 128k window
     rt.history.replace([
       { role: "user", content: "let's go", timestamp: 1 },
@@ -2900,5 +2913,122 @@ describe("ChatViewProvider adopts limits on session open", () => {
 
     await vi.waitFor(() => expect(rt.outputTokens).toBe(262144));
     expect(rt.contextWindow).toBe(1000000);
+  });
+});
+
+describe("ChatViewProvider model/config switch hygiene", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.noAutoName = false;
+    state.autoName = "New Session";
+  });
+
+  it("refresh() re-applies the per-model overrides so a CONFIG edit takes effect", async () => {
+    const { provider, modelSelector } = buildHarness({
+      providerEntry: { name: "p", baseUrl: "https://x/v1", models: [{ id: "m1" }] },
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew();
+    await handler({ type: "setModel", model: "m1", provider: "p" });
+    (modelSelector.set as any).mockClear();
+
+    provider.refresh(); // the config-watcher path
+
+    // The runtime overrides (baseUrl/apiKey/maxTokens/…) are recomputed from the
+    // CURRENT config, so a file/settings edit is not shadowed by stale values.
+    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ model: "m1" }));
+  });
+
+  it("clears a stale thinking level when switching to a NON-reasoning provider", async () => {
+    const entries: Record<string, unknown> = {
+      reason: { name: "reason", baseUrl: "https://x/v1", thinkingMode: "effort", models: [{ id: "m1" }] },
+      plain: { name: "plain", baseUrl: "https://y/v1", models: [{ id: "m1" }] },
+    };
+    const providers = {
+      getProvider: (n: string) => entries[n],
+      saveModelSelection: vi.fn(),
+      readProvidersEditor: vi.fn(() => ({ providers: {} })),
+      saveProvidersEditor: vi.fn(() => true),
+      readMcpServers: vi.fn(() => ({})),
+      saveMcpServers: vi.fn(() => true),
+    } as unknown as import("../core/config/types").ProviderCatalog;
+    const { registry, provider } = buildHarness({ providers });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+
+    await handler({ type: "setModel", model: "m1", provider: "reason" });
+    expect(rt.thinkingLevel).toBe("medium");
+
+    await handler({ type: "setModel", model: "m1", provider: "plain" });
+    expect(rt.thinkingLevel).toBeUndefined();
+  });
+});
+
+describe("ChatViewProvider limits on switching to an UNKNOWN model", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.noAutoName = false;
+    state.autoName = "New Session";
+  });
+
+  it("resets context + output to the DEFAULTS (128k / 16384), not the previous model's", async () => {
+    const { registry, provider } = buildHarness({
+      providerEntry: { name: "opencode-go", baseUrl: "https://opencode.ai/zen/go/v1", models: [] },
+      fetchModelInfos: async () => [{ id: "known", contextLength: 1000000, maxOutputTokens: 262144 }],
+      modelsDev: { getLimits: vi.fn(async () => ({})) },
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+
+    await handler({ type: "setModel", model: "known", provider: "opencode-go" });
+    expect(rt.contextWindow).toBe(1000000);
+    expect(rt.outputTokens).toBe(262144);
+
+    // A model the host does NOT report and models.dev does not know.
+    await handler({ type: "setModel", model: "mystery", provider: "opencode-go" });
+    await vi.waitFor(() => expect(rt.contextWindow).toBe(128000));
+    expect(rt.outputTokens).toBe(16384);
+  });
+});
+
+describe("ChatViewProvider config-change + enrichment robustness", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.noAutoName = false;
+    state.autoName = "New Session";
+  });
+
+  it("re-applies the model overrides when a harny.* setting changes", async () => {
+    const { provider, modelSelector } = buildHarness({
+      providerEntry: { name: "p", baseUrl: "https://x/v1", models: [{ id: "m1" }] },
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew();
+    await handler({ type: "setModel", model: "m1", provider: "p" });
+    (modelSelector.set as any).mockClear();
+
+    // The host fires onDidChangeConfiguration for a harny.* setting.
+    state.configListener?.({ affectsConfiguration: (s: string) => s === "harny" });
+
+    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ model: "m1" }));
+  });
+
+  it("survives a models.dev failure during the background list enrichment", async () => {
+    const { provider } = buildHarness({
+      config: { ...CONFIG, hostModelProviders: ["opencode-go"] },
+      providerEntry: { name: "opencode-go", baseUrl: "https://opencode.ai/zen/go/v1", models: [] },
+      fetchModelInfos: async () => [{ id: "m1" }],
+      modelsDev: {
+        getLimits: vi.fn(async () => {
+          throw new Error("offline");
+        }),
+      },
+    });
+    const { view } = resolveWith(provider);
+    await new Promise((r) => setTimeout(r, 30));
+    // No crash: the HTML was still produced (the enrichment is best-effort).
+    expect(view.webview.html).toContain('id="sessions"');
   });
 });

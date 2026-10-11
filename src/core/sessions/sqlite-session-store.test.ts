@@ -369,3 +369,15 @@ describe("SqliteSessionStore — misc", () => {
     expect(() => db.prepare("SELECT 1").get()).toThrow();
   });
 });
+
+describe("SqliteSessionStore — thinkingLevel clear", () => {
+  it("an explicit thinkingLevel: undefined CLEARS it (mirrors temperature)", () => {
+    const { store } = makeStore();
+    store.create();
+    store.saveSettings("s1", { thinkingLevel: "high" });
+    expect(store.load("s1").summary.thinkingLevel).toBe("high");
+
+    store.saveSettings("s1", { thinkingLevel: undefined });
+    expect(store.load("s1").summary.thinkingLevel).toBeUndefined();
+  });
+});
