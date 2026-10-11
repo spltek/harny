@@ -168,8 +168,6 @@ function buildHarness(opts: Record<string, unknown> = {}) {
     const agent: any = {
       streaming: false,
       getMessages: vi.fn(() => history.conversation()),
-      reset: vi.fn(),
-      load: vi.fn(),
       addUserMessage: vi.fn(),
       send: vi.fn(async () => {
         // Mirrors the real Agent: streaming flips synchronously on send start.

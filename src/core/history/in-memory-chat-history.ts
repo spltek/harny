@@ -16,10 +16,6 @@ export class InMemoryChatHistory implements ChatHistory {
     this.messages = [...messages];
   }
 
-  clear(): void {
-    this.messages = [];
-  }
-
   conversation(): ChatMessage[] {
     return this.messages.filter((m) => !m.uiOnly);
   }

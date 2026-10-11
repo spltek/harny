@@ -204,14 +204,6 @@ export class Agent implements ChatController {
     return this.deps.history.all();
   }
 
-  reset(): void {
-    this.deps.history.clear();
-  }
-
-  load(messages: ChatMessage[]): void {
-    this.deps.history.replace(messages);
-  }
-
   onEvent(handler: (event: AgentEvent) => void): () => void {
     return this.deps.events.subscribe(handler);
   }

@@ -1071,25 +1071,6 @@ describe("Agent", () => {
     expect(eventsLog.some((e) => e.type === "error")).toBe(false);
     expect(agent.streaming).toBe(false);
   });
-
-  it("reset() clears the history", () => {
-    const { agent, history } = buildHarness();
-    history.add({ role: "user", content: "x", timestamp: 1 });
-    agent.reset();
-    expect(history.all()).toHaveLength(0);
-  });
-
-  it("load() replaces the history with a session's messages", () => {
-    const { agent, history } = buildHarness();
-    history.add({ role: "user", content: "old", timestamp: 1 });
-
-    agent.load([
-      { role: "user", content: "loaded", timestamp: 2 },
-      { role: "assistant", content: "resp", timestamp: 3 },
-    ]);
-
-    expect(history.all().map((m) => m.content)).toEqual(["loaded", "resp"]);
-  });
 });
 
 describe("ToolCallAccumulator", () => {

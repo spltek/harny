@@ -27,10 +27,6 @@ export class PersistentChatHistory implements ChatHistory {
     this.inner.replace(messages);
   }
 
-  clear(): void {
-    this.inner.clear();
-  }
-
   conversation(): ChatMessage[] {
     return this.inner.conversation();
   }

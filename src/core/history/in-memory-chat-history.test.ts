@@ -34,12 +34,4 @@ describe("InMemoryChatHistory", () => {
     const conversation = history.conversation();
     expect(conversation.map((m) => m.role)).toEqual(["system", "user"]);
   });
-
-  it("clear() empties the history", () => {
-    const history = new InMemoryChatHistory();
-    history.add(msg({ content: "a" }));
-    history.clear();
-
-    expect(history.all()).toHaveLength(0);
-  });
 });

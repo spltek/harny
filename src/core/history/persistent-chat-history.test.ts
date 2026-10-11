@@ -52,16 +52,4 @@ describe("PersistentChatHistory", () => {
 
     expect(history.conversation().map((m) => m.role)).toEqual(["system", "user", "tool"]);
   });
-
-  it("clear() empties the bound history without saving", () => {
-    const store = makeStore();
-    const history = new PersistentChatHistory(store, "sess-1");
-    history.add(msg({ content: "a" }));
-    vi.clearAllMocks();
-
-    history.clear();
-
-    expect(history.all()).toHaveLength(0);
-    expect(store.saveMessages).not.toHaveBeenCalled();
-  });
 });

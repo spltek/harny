@@ -24,9 +24,6 @@ export interface SendOptions {
 export interface ChatController {
   readonly streaming: boolean;
   getMessages(): ChatMessage[];
-  reset(): void;
-  /** Replace the whole conversation with a loaded session (no autosave). */
-  load(messages: ChatMessage[]): void;
   send(text: string, options?: SendOptions): Promise<void>;
   /**
    * Inject a user message into the RUNNING loop (soft steering): it is added to
