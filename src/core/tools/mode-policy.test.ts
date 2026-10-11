@@ -90,6 +90,10 @@ describe("mode policy", () => {
       "brew install node",
       "make",
       "cmake ..",
+      // A device is a REAL sink: only /dev/null, /dev/stdout, /dev/stderr,
+      // /dev/fd/N and /dev/tty are exempt, not the whole /dev tree.
+      "cat model > /dev/sda",
+      "command <>rwfile",
     ];
     for (const cmd of writeCommands) {
       expect(isWriteCommand(cmd), `should refuse: ${cmd}`).toBe(true);
@@ -149,6 +153,14 @@ describe("mode policy", () => {
       // /dev/* sinks are not real files: allowed even with redirection.
       "echo hello > /dev/null",
       "cat foo 2>/dev/null",
+      // Redirection operators INSIDE a quoted argument are not writes.
+      "grep -n 'a>b' src",
+      'git log --pretty=format:"%h => %s"',
+      "echo 'a > b'",
+      // file-descriptor duplication is not a write.
+      "ls -la 2>&1",
+      "tool --serve 1>&2",
+      "run 3>&-",
       // Windows null device (`>nul`) is also not a real file.
       "dir nonexistent 2>nul",
       "tool --check >NUL",
@@ -168,6 +180,20 @@ describe("mode policy", () => {
     // `git diff` (a word starting with the muted verb `diff`) must not be
     // caught by the write-verb list.
     expect(isWriteCommand("git diff --stat")).toBe(false);
+  });
+
+  it("redirection detection is quoting-, fd- and sink-aware", () => {
+    // A `>` inside a quoted argument is not a redirection.
+    expect(isWriteCommand('grep "a>b" file')).toBe(false);
+    expect(isWriteCommand('echo "x => y"')).toBe(false);
+    // File-descriptor duplication is not a write.
+    expect(isWriteCommand("ls -la 2>&1")).toBe(false);
+    expect(isWriteCommand("cmd 1>&2")).toBe(false);
+    expect(isWriteCommand("cmd 3>&-")).toBe(false);
+    // Only the harmless sinks are exempt; a real device is still a write.
+    expect(isWriteCommand("echo x > /dev/null")).toBe(false);
+    expect(isWriteCommand("echo x > out.txt")).toBe(true);
+    expect(isWriteCommand("echo x > /dev/sda")).toBe(true);
   });
 
   it("isAnalyzeMode: only analyze is read-only; agent is full access", () => {

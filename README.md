@@ -103,7 +103,7 @@ The header has a mode selector:
 - **Analyze** — read-only **preview**. The file-modifying tools (Write, StrReplace, Edit, Delete) still run, but in **dry-run**: they validate the change and return the exact **diff**, writing NOTHING to disk. So you can ask "fix X", review the proposed diffs in the tool bubbles, then apply them. When changes were prepared, the host appends a footer that lists **exactly what needs Build** (`Edit src/a.ts`, `Write src/b.ts`, …) plus a prominent, clickable **"Switch to Build"** banner (the host adds the note even if the model claims it "fixed" something it only previewed, and removes any superfluous switch note when nothing was prepared).
 - **Build** — full tool use: the same tools **write to disk**.
 
-The Shell tool is read-only in Analyze (commands that would modify the filesystem are refused before running) and sub-agents launched in Analyze must be `access: "read"`.
+The Shell tool is guarded in Analyze: the common commands that would modify the filesystem (redirection to real files, mutating verbs, package managers, git writes, build drivers) are refused before running. This is a **best-effort filter, not a filesystem sandbox** — a script or an interpreter (`python -c`, `sh x.sh`, `npm run <script>`) is not detected, so don't rely on it for safety. Sub-agents launched in Analyze must be `access: "read"`.
 
 ## Parallel: sub-agents (orchestration)
 

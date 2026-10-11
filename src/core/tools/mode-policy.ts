@@ -79,15 +79,71 @@ export const FILE_PREVIEW_NOTE =
   "user must switch to Build mode — never claim the change was applied.";
 
 export const SHELL_READ_ONLY_NOTE =
-  "\n\nREAD-ONLY MODE: commands run with NO ability to modify the filesystem. " +
-  "Any command that writes, deletes, moves, renames, creates, or installs is refused before running. " +
-  "Only read-only inspection is allowed (POSIX: ls, cat, find, grep; Windows: dir, type, where, findstr; either: git status/diff/log). " +
-  "Prefer the Read/Grep/Glob tools for file inspection.";
+  "\n\nREAD-ONLY MODE (best effort, NOT a sandbox): Harny refuses the common commands that write, delete, " +
+  "move, rename, create or install (file redirection, mutating verbs, package managers, git writes, build " +
+  "drivers). This is a heuristic, not a filesystem sandbox — a script or a language interpreter (e.g. " +
+  "`python -c …`, `sh script.sh`) is NOT covered. Do NOT attempt any write in this mode: use Read/Grep/Glob " +
+  "for inspection, and switch to Build to apply changes.";
 
 export const ANALYZE_BLOCKED_SHELL_MESSAGE = (command: string): string =>
-  `⛔ Analyze mode is READ-ONLY: the command "${command}" could modify the filesystem and was refused without running. ` +
-  "Only read-only commands are allowed (POSIX: ls, cat, find; Windows: dir, type, where, findstr; either: git status/diff/log). " +
-  "Prefer the Read/Grep/Glob tools for inspection.";
+  `⛔ Analyze mode is READ-ONLY: the command "${command}" looks like it could modify the filesystem and was refused without running. ` +
+  "This is a best-effort filter, not a sandbox. Only read-only inspection is allowed (POSIX: ls, cat, find; " +
+  "Windows: dir, type, where, findstr; either: git status/diff/log). Prefer the Read/Grep/Glob tools.";
+
+/**
+ * Blank out the CONTENTS of quoted strings (and backslash-escaped characters)
+ * so a redirection operator INSIDE an argument (e.g. `grep "a>b"`) is not read
+ * as a file write. The quote characters themselves are kept as delimiters.
+ */
+function stripQuoted(text: string): string {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "\\") {
+      // An escaped character is a literal, never an operator.
+      out += "  ";
+      i += 2;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      const quote = c;
+      out += quote;
+      i++;
+      while (i < text.length && text[i] !== quote) {
+        // Inside double quotes a backslash escapes the next char.
+        if (quote === '"' && text[i] === "\\") {
+          out += "  ";
+          i += 2;
+          continue;
+        }
+        out += " ";
+        i++;
+      }
+      if (i < text.length) {
+        out += quote;
+        i++;
+      }
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+/**
+ * True when a command contains a redirection that could write a REAL file.
+ *  · quoted text is ignored (`grep "a>b"` is not a write);
+ *  · file-descriptor duplications are not writes (`2>&1`, `1>&-`);
+ *  · only the harmless sinks are exempt (`/dev/null|stdout|stderr|fd/N|tty`,
+ *    Windows `nul`). Note `> /dev/sda` is NOT exempt (it is a real device).
+ */
+function hasFileRedirection(command: string): boolean {
+  const bare = stripQuoted(command);
+  const redirect = /(?<![=\-])>+(?!\s*(?:&\s*(?:\d+|-)|=\s*|\/dev\/(?:null|stdout|stderr|fd\/\d+|tty)\b|nul\b))/i;
+  return redirect.test(bare);
+}
 
 /**
  * Heuristic "does this shell command modify the filesystem?" check used to
@@ -96,15 +152,16 @@ export const ANALYZE_BLOCKED_SHELL_MESSAGE = (command: string): string =>
  * prompt: it catches the common write idioms (redirection, mutating verbs,
  * package-manager/git write subcommands, build drivers) and refuses them
  * before the command runs.
+ *
+ * Known limits (deliberate): a script or an interpreter (`python -c`, `node -e`,
+ * `sh x.sh`, `npm run <script>`, …) is opaque and is NOT detected. The goal is
+ * to stop ACCIDENTAL writes, not to sandbox the shell.
  */
 export function isWriteCommand(command: string): boolean {
   const cmd = command.trim();
   if (!cmd) return false;
 
-  // File redirection / truncation / append (write or capture-to-file), except
-  // the POSIX `> /dev/…` sinks AND the Windows `>nul` / `> NUL` null device,
-  // which are not real files.
-  if (/>(?!\s*(?:\/dev\/|nul\b))/i.test(cmd)) return true;
+  if (hasFileRedirection(cmd)) return true;
 
   // Mutating file verbs.
   if (
