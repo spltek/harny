@@ -6,6 +6,11 @@ interface TodoItem {
   status: string;
 }
 
+/** Cap on the per-owner lists kept (LRU): each session AND each sub-agent run
+ * owns one, so without a bound the shared tool instance would leak state for
+ * the whole extension lifetime. */
+const MAX_OWNER_STATES = 200;
+
 export class TodoTool implements Tool {
   readonly name = "TodoWrite";
   readonly definition: ToolDefinition = {
@@ -44,12 +49,20 @@ export class TodoTool implements Tool {
 
   private stateFor(ctx?: ToolContext): TodoItem[] {
     const key = ctx?.ownerId ?? "default";
-    let s = this.states.get(key);
-    if (!s) {
-      s = [];
-      this.states.set(key, s);
+    const existing = this.states.get(key);
+    if (existing) {
+      // LRU touch: re-insert so this owner becomes the most recently used.
+      this.states.delete(key);
+      this.states.set(key, existing);
+      return existing;
     }
-    return s;
+    const created: TodoItem[] = [];
+    this.states.set(key, created);
+    if (this.states.size > MAX_OWNER_STATES) {
+      const oldest = this.states.keys().next().value;
+      if (oldest !== undefined) this.states.delete(oldest);
+    }
+    return created;
   }
 
   execute(args: Record<string, unknown>, ctx?: ToolContext): ToolResult {
@@ -82,6 +95,10 @@ export class TodoTool implements Tool {
       state = todos.map((t) => ({ id: t.id, content: t.content, status: t.status }));
     }
     this.states.set(ctx?.ownerId ?? "default", state);
+    // Keep the just-written owner at the MRU position after the reassignment.
+    const key = ctx?.ownerId ?? "default";
+    this.states.delete(key);
+    this.states.set(key, state);
 
     const lines = state.map((t) => {
       const icon =

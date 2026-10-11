@@ -78,8 +78,9 @@ function buildHarness(
     tools?: Tool[];
     maxTurns?: number;
     log?: (message: string) => void;
-    onTurnBoundary?: () => Promise<void> | void;
+    onTurnBoundary?: (signal: AbortSignal) => Promise<void> | void;
     loopGuard?: LoopGuardOptions;
+    streamIdleTimeoutMs?: number;
   } = {},
 ): Harness {
   const config = new StaticConfigProvider(opts.config ?? VALID_CONFIG);
@@ -102,11 +103,46 @@ function buildHarness(
     log: opts.log,
     onTurnBoundary: opts.onTurnBoundary,
     loopGuard: opts.loopGuard,
+    streamIdleTimeoutMs: opts.streamIdleTimeoutMs,
   });
   return { agent, factory, events: eventsLog, history };
 }
 
 describe("Agent", () => {
+  it("aborts a stalled provider stream after the idle timeout and reports an explicit error", async () => {
+    // A provider that accepts the request and then sends NOTHING (dead server).
+    const hanging = {
+      create: () => ({
+        protocol: "chat" as const,
+        async *stream(_m: unknown, signal?: AbortSignal) {
+          await new Promise<void>((resolve) => {
+            if (signal?.aborted) return resolve();
+            signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+        },
+      }),
+    } as unknown as LLMProviderFactory;
+    const history = new InMemoryChatHistory();
+    const events = new InMemoryEventBus<AgentEvent>();
+    const log: AgentEvent[] = [];
+    events.subscribe((e) => log.push(e));
+    const tools = new ToolRegistry([]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: hanging,
+      tools,
+      history,
+      events,
+      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/workspace"),
+      streamIdleTimeoutMs: 20,
+    });
+
+    await agent.send("hi");
+
+    // The run ends with an actionable error instead of hanging forever.
+    expect(log.some((e) => e.type === "error" && /stalled/i.test((e as { error: string }).error))).toBe(true);
+    expect(history.all().some((m) => m.role === "assistant" && /stalled/i.test(m.content))).toBe(true);
+  });
   it("emits error + done and stores a uiOnly message when no API key", async () => {
     const { agent, events, history } = buildHarness({ config: NO_KEY_CONFIG });
 
@@ -696,15 +732,17 @@ describe("Agent", () => {
     expect(factory.calls).toBeGreaterThanOrEqual(3);
   });
 
-  it("awaits onTurnBoundary before EVERY turn (mid-run hook)", async () => {
+  it("awaits onTurnBoundary before EVERY turn (mid-run hook) with the run's abort signal", async () => {
     let boundaries = 0;
+    const signals: AbortSignal[] = [];
     const { agent } = buildHarness({
       chunks: [
         [{ type: "tool_call_start", index: 0, id: "c", name: "FakeTool" }, { type: "tool_call_end", index: 0 }],
         [{ type: "text", content: "done" }],
       ],
-      onTurnBoundary: () => {
+      onTurnBoundary: (signal) => {
         boundaries++;
+        signals.push(signal);
       },
     });
 
@@ -712,6 +750,9 @@ describe("Agent", () => {
 
     // Once before turn 0 (tool call) and once before turn 1 (final answer).
     expect(boundaries).toBe(2);
+    // The host receives the run's signal so a mid-run compaction can be aborted.
+    expect(signals).toHaveLength(2);
+    expect(signals.every((s) => typeof s?.aborted === "boolean" && s.aborted === false)).toBe(true);
   });
 
   it("emits a per-turn diagnostic line to the injected log", async () => {
@@ -1197,7 +1238,7 @@ describe("Analyze (read-only) mode", () => {
     // The tool RUNS, but with the dryRun context — it must not touch disk.
     expect(writeTool.execute as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
       expect.objectContaining({ path: "a.txt" }),
-      { dryRun: true },
+      expect.objectContaining({ dryRun: true, signal: expect.anything() }),
     );
     const toolResult = history.all().find((m) => m.role === "tool");
     expect(toolResult?.content).toContain("PROPOSED");
@@ -1214,10 +1255,10 @@ describe("Analyze (read-only) mode", () => {
     await agent.send("write a file");
 
     expect(writeTool.execute as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
-    // Agent mode = real write: NO dryRun context.
+    // Agent mode = real write: NO dryRun context (only the run signal).
     expect(writeTool.execute as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
       expect.objectContaining({ path: "a.txt" }),
-      undefined,
+      expect.not.objectContaining({ dryRun: true }),
     );
     expect(history.all().find((m) => m.role === "tool")?.content).toBe("wrote");
   });
@@ -1480,6 +1521,71 @@ describe("Orchestration (Delegate)", () => {
       resources: ["src/a.ts"],
       parallel: true,
     });
+  });
+
+  it("a repeated read-only Delegate is RE-RUN, never served from the loop-guard cache", async () => {
+    let spawned = 0;
+    const dArgs = { id: "A", goal: "analyze x", access: "read", resources: [] };
+    const factory = fakeFactory(delegateTurn([dArgs]), delegateTurn([dArgs]), [{ type: "text", content: "done" }]);
+    const tools = new ToolRegistry([makeTool("Delegate")]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history: new InMemoryChatHistory(),
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      spawnSubAgent: async () => {
+        spawned++;
+        return { content: "r", isError: false };
+      },
+    });
+    agent.setMode("agent");
+    agent.setDelegation(true);
+
+    await agent.send("go");
+
+    // The SAME read-only Delegate twice must run TWICE: a Delegate is
+    // side-effecting/non-deterministic, so the guard must not cache it.
+    expect(spawned).toBe(2);
+  });
+
+  it("an INVALID Delegate does NOT lift the delegate-first restriction", async () => {
+    const spawned: DelegateSpec[] = [];
+    const readCall: StreamChunk[] = [
+      { type: "tool_call_start", index: 0, id: "r0", name: "Read" },
+      { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts"}' },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const factory = fakeFactory(
+      delegateTurn([{ goal: "missing access" }]), // invalid: no `access`
+      readCall,
+      delegateTurn([{ id: "A", goal: "g", access: "read", resources: [] }]),
+      [{ type: "text", content: "done" }],
+    );
+    const tools = new ToolRegistry([makeTool("Delegate"), makeTool("Read")]);
+    const history = new InMemoryChatHistory();
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history,
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      spawnSubAgent: async (spec) => {
+        spawned.push(spec);
+        return { content: "r", isError: false };
+      },
+    });
+    agent.setMode("agent");
+    agent.setDelegation(true);
+
+    await agent.send("go");
+
+    // The invalid Delegate did not count: the following non-Delegate call was
+    // still blocked, and the model had to emit a VALID Delegate.
+    expect(history.all().some((m) => m.role === "tool" && /Blocked: Parallel is ON/.test(m.content))).toBe(true);
+    expect(spawned).toHaveLength(1);
   });
 
   it("Parallel ON: a direct answer (no tools) is accepted — no forced sub-agent", async () => {

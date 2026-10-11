@@ -30,4 +30,19 @@ describe("PanelModalQueue (FIFO)", () => {
     q.respond(1, true);
     expect(await p).toBe(true);
   });
+
+  it("cancelAll resolves every pending request (webview rebuilt with a modal open)", async () => {
+    const posted: unknown[] = [];
+    const q = new PanelModalQueue((m) => posted.push(m));
+    const p1 = q.request({ kind: "name", mode: "create", current: undefined });
+    const p2 = q.request({ kind: "alert", alertKind: "confirm", title: "Delete" });
+    q.cancelAll();
+    expect(await p1).toBeUndefined();
+    expect(await p2).toBeUndefined();
+    // The queue is empty: a later request shows immediately.
+    const p3 = q.request({ kind: "alert", title: "t", message: "m" });
+    expect(posted[posted.length - 1]).toMatchObject({ type: "modal", kind: "alert", title: "t" });
+    q.respond(3, true);
+    expect(await p3).toBe(true);
+  });
 });

@@ -40,9 +40,11 @@ export interface SubAgentRunnerDeps {
 /**
  * Runs delegated sub-agents for ONE session. Each run gets a fresh in-memory
  * history (ephemeral — never written to the session file), the SHARED tool
- * registry and LLM factory, its own system prompt and a bounded turn budget.
- * Sub-agents cannot delegate further (depth 1). The runner tracks active
- * sub-agents so the parent's Stop aborts them all (cascade).
+ * registry and LLM factory, its own system prompt and (by default) NO turn
+ * cap — like the orchestrator, a sub-agent runs until it finishes or is
+ * stopped; the loop guard breaks degenerate loops. Sub-agents cannot delegate
+ * further (depth 1). The runner tracks active sub-agents so the parent's Stop
+ * aborts them all (cascade).
  */
 export class SubAgentRunner {
   /** Running sub-agents keyed by the Delegate tool-call id, so ONE can be
@@ -132,14 +134,19 @@ export class SubAgentRunner {
     // Forward the sub-agent's live activity (thinking / text / tools) to the
     // caller, tagged by the Delegate tool call — nested streaming in the UI.
     // On abort we DROP the sub-agent's own "done" (it was aborted, not
-    // finished) so the UI can mark it aborted instead of done.
-    if (onEvent) {
-      events.subscribe((e) => {
-        if (e.type === "done" && this.abortedAgents.has(agent)) return;
-        const sub = toSubAgentEvent(e);
-        if (sub) onEvent(sub);
-      });
-    }
+    // finished) so the UI can mark it aborted instead of done. We ALWAYS
+    // subscribe (even without `onEvent`) to detect a failed run: the Agent
+    // reports a fatal error (API/loop stop) as an `error` event and does NOT
+    // throw, so without this a failed sub-agent would be reported as a
+    // successful report.
+    let hadError = false;
+    events.subscribe((e) => {
+      if (e.type === "error") hadError = true;
+      if (!onEvent) return;
+      if (e.type === "done" && this.abortedAgents.has(agent)) return;
+      const sub = toSubAgentEvent(e);
+      if (sub) onEvent(sub);
+    });
 
     this.active.set(key, agent);
     // Link the parent abort signal so a sub-agent that starts JUST as the user
@@ -166,7 +173,13 @@ export class SubAgentRunner {
       if (this.abortedAgents.has(agent) || signal?.aborted) {
         return { content: formatSubAgentAborted(spec), isError: true };
       }
-      return { content: formatSubAgentReport(spec, lastAssistantReport(agent.getMessages())), isError: false };
+      // A fatal error (API failure, loop guard stop, no API key) reached the
+      // transcript as an `error` event: report it as an ERROR result so the
+      // orchestrator knows the sub-task did NOT complete (it must not treat the
+      // text as a finished report).
+      const report = lastAssistantReport(agent.getMessages());
+      if (hadError) return { content: formatSubAgentError(spec, report), isError: true };
+      return { content: formatSubAgentReport(spec, report), isError: false };
     } catch (e) {
       this.deps.log?.(`subagent "${spec.id}" error in ${Date.now() - startedAt}ms: ${e instanceof Error ? e.message : String(e)}`);
       return { content: formatSubAgentError(spec, e instanceof Error ? e.message : String(e)), isError: true };

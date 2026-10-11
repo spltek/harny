@@ -711,6 +711,19 @@ describe("view webview client", () => {
     expect(posted).not.toContainEqual({ type: "abort" });
   });
 
+  it("Esc in the PROMPT does not abort while an overlay is open (textarea handler)", async () => {
+    await loadView();
+    hostMessage({ type: "status", active: true, workingIds: [] });
+    hostMessage({ type: "modal", modalId: 9, kind: "alert", alertKind: "info", title: "t", message: "m" });
+    posted.length = 0;
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    // The textarea's own Escape handler must defer to the overlay.
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(posted).not.toContainEqual({ type: "abort" });
+    // The LIFO dispatcher closed the alert (response posted with its id).
+    expect(posted.some((m) => (m as { type?: string; id?: number }).type === "modalResponse" && (m as { id?: number }).id === 9)).toBe(true);
+  });
+
   it("attaches a pasted absolute path via the host", async () => {
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;

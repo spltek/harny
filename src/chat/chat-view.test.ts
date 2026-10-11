@@ -425,6 +425,91 @@ describe("ChatViewProvider", () => {
     expect(view.webview.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "refresh" }));
   });
 
+  it("queues a second send arriving during the async preamble (no overlapping run)", async () => {
+    let release!: (v: { text: string; images: string[] }) => void;
+    const gate = new Promise<{ text: string; images: string[] }>((r) => (release = r));
+    const attachments = {
+      pick: vi.fn(async () => []),
+      buildContext: vi.fn(() => gate),
+    } as unknown as AttachmentService;
+    const { registry, provider } = buildHarness({ attachments });
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew();
+    await handler({ type: "setModel", model: "m", provider: "p" });
+    const agent = registry.get("s1")!.agent as any;
+
+    // First message: its preamble (attachment build) is in flight.
+    const first = handler({
+      type: "send",
+      text: "first",
+      attachments: [{ name: "a.txt", path: "/tmp/a", size: 1, isImage: false }],
+    });
+    // A second message must be QUEUED (the send lock), not start a second run.
+    await handler({ type: "send", text: "second" });
+    expect(agent.send).not.toHaveBeenCalled();
+    const pending = view.webview.postMessage.mock.calls
+      .map((c) => c[0])
+      .filter((m) => m.type === "pending")
+      .at(-1);
+    expect(pending.items.map((i: { text: string }) => i.text)).toContain("second");
+
+    release({ text: "", images: [] });
+    await first;
+    // Only the first run started; the queued one did not overlap it.
+    expect(agent.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("runVacuum SKIPS (never freezes a live turn) when the chat is still busy", async () => {
+    const { store, registry, provider } = buildHarness({ vacuumWaitMs: 20 });
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew();
+    await handler({ type: "setModel", model: "m", provider: "p" });
+    (registry.get("s1")!.agent as any).streaming = true; // session busy
+
+    await handler({ type: "runVacuum" });
+
+    expect(store.maintain as unknown as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "dbVacuumSkipped" });
+  });
+
+  it("persists the model selection to the config as the comment-preserving default", async () => {
+    const saveModelSelection = vi.fn(() => true);
+    const providers = {
+      getProvider: vi.fn(() => undefined),
+      saveModelSelection,
+      readProvidersEditor: vi.fn(() => ({ providers: {} })),
+      saveProvidersEditor: vi.fn(() => true),
+      readMcpServers: vi.fn(() => ({})),
+      saveMcpServers: vi.fn(() => true),
+    } as unknown as import("../core/config/types").ProviderCatalog;
+    const { provider } = buildHarness({ providers });
+    const { handler } = resolveWith(provider);
+    await provider.createNew();
+
+    await handler({ type: "setModel", model: "gpt-4o", provider: "openai" });
+
+    // The choice is also written back to config.json (top-level `model`),
+    // preserving comments — the documented default for new sessions.
+    expect(saveModelSelection).toHaveBeenCalledWith("gpt-4o", "openai");
+  });
+
+  it("reports the EFFECTIVE output tokens (config default) for a session with no override", async () => {
+    const { provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // fresh session: no output override
+    view.webview.postMessage.mockClear();
+
+    await handler({ type: "getConfig" });
+
+    const configMsg = view.webview.postMessage.mock.calls
+      .map((c) => c[0])
+      .filter((m) => m.type === "config")
+      .at(-1);
+    // The slider must show what the request really sends (CONFIG.maxTokens=100),
+    // not the bare DEFAULT_OUTPUT_TOKENS (16 384).
+    expect(configMsg.config.outputTokens).toBe(100);
+  });
+
   it("newSession message creates and activates a session", async () => {
     const { provider, registry } = buildHarness();
     const { handler } = resolveWith(provider);
@@ -1039,7 +1124,7 @@ describe("ChatViewProvider", () => {
     await handler({ type: "truncateAt", index: 2 }); // cut the q2 prompt -> [q1, a1]
 
     const kept = [msgs[0], msgs[1]];
-    expect(store.saveMessages).toHaveBeenCalledWith("s1", kept);
+    expect(store.saveMessages).toHaveBeenCalledWith("s1", kept, { replace: true });
     expect(rt.history.all()).toEqual(kept);
     expect(rt.agent.getMessages()).toEqual(kept);
     // Asked for confirmation (danger) and re-rendered the cut conversation.
@@ -1125,7 +1210,7 @@ describe("ChatViewProvider", () => {
 
     await handler({ type: "truncateAt", index: 0 });
 
-    expect(store.saveMessages).toHaveBeenCalledWith("s1", []);
+    expect(store.saveMessages).toHaveBeenCalledWith("s1", [], { replace: true });
     expect(rt.history.all()).toEqual([]);
   });
 
@@ -1896,6 +1981,9 @@ describe("ChatViewProvider compaction", () => {
     expect(conv[0].role).toBe("user"); // the summary was injected
     expect(String(conv[1].content)).toContain("## Goal");
     expect((store.saveSettings as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
+    // A compaction REBUILDS the history: the store must be told to REPLACE
+    // (the rebuilt history can have the same length as the old one).
+    expect(store.saveMessages).toHaveBeenCalledWith("s1", expect.any(Array), { replace: true });
     // stale cache hits from the pre-compaction turn are reset (no >100% ratio)
     expect(rt.cachedTokens).toBe(0);
     // final bubble posted (the UI shows completion, no toast needed)

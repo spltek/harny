@@ -53,6 +53,19 @@ describe("TodoTool", () => {
     expect(b2.content).toContain("beta");
     expect(b2.content).not.toContain("alpha");
   });
+
+  it("bounds the per-owner state map (LRU) so long sessions do not leak", () => {
+    const tool = new TodoTool();
+    // Seed the FIRST owner's list, then touch many later owners to evict it.
+    tool.execute({ todos: [{ id: "1", content: "first-item", status: "pending" }], merge: false }, { ownerId: "first" });
+    for (let i = 0; i < 250; i++) {
+      tool.execute({ todos: [{ id: "x", content: "x", status: "pending" }], merge: false }, { ownerId: `o${i}` });
+    }
+    // "first" was evicted: a merge starts from an EMPTY list (no stale "first-item").
+    const res = tool.execute({ todos: [{ id: "2", content: "second-item", status: "pending" }], merge: true }, { ownerId: "first" });
+    expect(res.content).not.toContain("first-item");
+    expect(res.content).toContain("second-item");
+  });
 });
 
 function httpResponse(body: string, headers: Record<string, string> = {}): HttpResponse {

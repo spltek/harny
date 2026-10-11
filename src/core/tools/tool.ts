@@ -45,6 +45,9 @@ export interface ToolContext {
    * per-conversation state (e.g. TodoWrite) key their state by it, so
    * concurrent sessions/sub-agents never clobber each other. */
   ownerId?: string;
+  /** The run's abort signal: long-running tools (Shell) cancel their work when
+   * the user presses Stop. Absent in contexts that have no run. */
+  signal?: AbortSignal;
 }
 
 export interface Tool {

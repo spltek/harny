@@ -32,8 +32,8 @@ export class SessionManager {
     return this.store.remove(id);
   }
 
-  saveMessages(id: string, messages: ChatMessage[]): SessionSummary {
-    return this.store.saveMessages(id, messages);
+  saveMessages(id: string, messages: ChatMessage[], options?: { replace?: boolean }): SessionSummary {
+    return options ? this.store.saveMessages(id, messages, options) : this.store.saveMessages(id, messages);
   }
 
   /**

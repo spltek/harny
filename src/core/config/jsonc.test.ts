@@ -76,4 +76,20 @@ describe("setTopLevelString", () => {
     const out = setTopLevelString(input, "note", 'say \"hi\" /a/b');
     expect(JSON.parse(out)).toEqual({ model: "m", note: 'say "hi" /a/b' });
   });
+
+  it("leaves a non-scalar value untouched instead of corrupting the file", () => {
+    const input = `{\n  "model": { "id": "m" },\n  "nested": { "model": "untouched" }\n}`;
+    const out = setTopLevelString(input, "model", "new-model");
+    // The object value is not spliced over: the file remains valid and intact.
+    expect(out).toBe(input);
+    expect(JSON.parse(preprocessJsonc(out))).toEqual({ model: { id: "m" }, nested: { model: "untouched" } });
+  });
+
+  it("does not match a later member's colon when a key has no colon", () => {
+    // Malformed on purpose: `"model"` has no colon. The old loose scan could
+    // grab `"apiKey"`'s colon and rewrite the wrong value.
+    const input = `{\n  "model",\n  "apiKey": "sk-x"\n}`;
+    const out = setTopLevelString(input, "model", "m");
+    expect(out).toBe(input);
+  });
 });

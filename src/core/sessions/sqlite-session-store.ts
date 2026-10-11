@@ -132,19 +132,27 @@ export class SqliteSessionStore implements SessionStore {
 
   /**
    * Persist the session's messages. The caller always passes the WHOLE history,
-   * so we APPEND only the new tail when it grew (the common per-turn case) and
-   * replace everything when it shrank (a ✂ cut or a compaction) — never rewrite
-   * the whole session on an ordinary save.
+   * so we APPEND only the new tail when it grew and the stored rows are still a
+   * valid prefix (the common per-turn case), and REPLACE everything otherwise
+   * (a ✂ cut or a COMPACTION) — never rewrite the whole session on an ordinary
+   * save.
+   *
+   * `options.replace` is the authoritative signal for a rebuild: a compaction
+   * can rewrite the head while keeping the SAME length (or even growing by
+   * one, when a single span is summarized into two synthetic messages), so a
+   * length-only check would silently keep the stale rows. The prefix guard is
+   * a safety net for a caller that forgets the flag.
    */
-  saveMessages(id: string, messages: ChatMessage[]): SessionSummary {
+  saveMessages(id: string, messages: ChatMessage[], options: { replace?: boolean } = {}): SessionSummary {
     const existing = this.getSummary(id);
     const storedCount = this.countMessages(id);
+    const replace = options.replace === true || !this.storedMessagesArePrefix(id, messages, storedCount);
     this.deps.db.exec("BEGIN");
     try {
-      if (messages.length < storedCount) {
+      if (replace) {
         this.deps.db.prepare("DELETE FROM messages WHERE session_id = ?").run(id);
       }
-      const from = messages.length < storedCount ? 0 : storedCount;
+      const from = replace ? 0 : storedCount;
       const insert = this.deps.db.prepare(
         "INSERT INTO messages(session_id, seq, role, content, timestamp, data) VALUES (?, ?, ?, ?, ?, ?)",
       );
@@ -361,6 +369,33 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   // ── internals ──────────────────────────────────────────────────────────
+
+  /**
+   * True when the stored rows are a byte-for-byte PREFIX of `messages`, i.e. the
+   * new array is a pure append and the fast path is safe. A shrink is never a
+   * prefix. For an equal count (the ambiguous rebuild case) every row is
+   * compared, so a compaction that keeps the same length is still detected.
+   */
+  private storedMessagesArePrefix(id: string, messages: ChatMessage[], storedCount: number): boolean {
+    if (storedCount === 0) return true;
+    if (messages.length < storedCount) return false;
+    const last = this.deps.db
+      .prepare("SELECT data FROM messages WHERE session_id = ? AND seq = ?")
+      .get(id, storedCount - 1) as Row | undefined;
+    if (!last || String(last.data) !== JSON.stringify(messages[storedCount - 1])) return false;
+    // Grew by at least one and the boundary message matches: trust the append
+    // (the app never edits a middle message in place).
+    if (messages.length > storedCount) return true;
+    // Equal length: verify the whole prefix (the compaction-rebuild shape).
+    const rows = this.deps.db
+      .prepare("SELECT data FROM messages WHERE session_id = ? ORDER BY seq")
+      .all(id) as Row[];
+    if (rows.length !== storedCount) return false;
+    for (let i = 0; i < storedCount; i++) {
+      if (String(rows[i].data) !== JSON.stringify(messages[i])) return false;
+    }
+    return true;
+  }
 
   private countMessages(id: string): number {
     const row = this.deps.db.prepare("SELECT COUNT(*) AS c FROM messages WHERE session_id = ?").get(id) as Row;

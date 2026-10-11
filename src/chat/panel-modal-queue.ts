@@ -32,4 +32,15 @@ export class PanelModalQueue {
     const next = this.queue[0];
     if (next) this.post({ type: "modal", modalId: next.id, ...next.req });
   }
+
+  /**
+   * Cancel every pending request. Called when the webview page is rebuilt
+   * (refresh/reload) with a modal open: the DOM modal is wiped, so its promise
+   * would otherwise never resolve and the host flow (create/rename/delete…)
+   * would hang forever. Each request resolves with `undefined` (= cancelled).
+   */
+  cancelAll(): void {
+    const pending = this.queue.splice(0);
+    for (const m of pending) m.resolve(undefined);
+  }
 }

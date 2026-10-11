@@ -175,12 +175,13 @@ export class Compactor {
     private buildConfig: () => HarnyConfig,
   ) {}
 
-  async summarize(toSummarize: ChatMessage[], previousSummary?: string): Promise<string> {
+  async summarize(toSummarize: ChatMessage[], previousSummary?: string, signal?: AbortSignal): Promise<string> {
     const provider = this.factory.create(this.buildConfig());
     let out = "";
     // No tools for a summary turn: pass [] so the provider never advertises
-    // the (possibly orchestration) tool set during compaction.
-    for await (const chunk of provider.stream(buildSummaryMessages(toSummarize, previousSummary), undefined, [])) {
+    // the (possibly orchestration) tool set during compaction. `signal` lets a
+    // user Stop (or the agent's turn abort) cancel the summary request too.
+    for await (const chunk of provider.stream(buildSummaryMessages(toSummarize, previousSummary), signal, [])) {
       if (chunk.type === "text") out += chunk.content;
       if (out.length > 40000) break;
     }

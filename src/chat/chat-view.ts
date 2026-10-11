@@ -80,6 +80,11 @@ export class ChatViewProvider implements WebviewViewProvider {
   private parallelEnabled = false;
   /** Per-session queue of messages typed while the agent works (queue/steer). */
   private readonly pendingQueue: PendingInputQueue;
+  /** True while an async SEND PREAMBLE is in flight for a session (attachment
+   * build / auto-compaction), before `agent.send` flips `streaming` to true.
+   * Without it a second message arriving in that window would start a second
+   * overlapping run on the same agent. */
+  private readonly sending = new Set<string>();
   /** FIFO queue for in-panel modals (name dialog, alerts, confirms…). */
   private modals: PanelModalQueue;
   /** True while the shared "compact database" modal is open (avoid re-prompts). */
@@ -110,6 +115,9 @@ export class ChatViewProvider implements WebviewViewProvider {
         /** False when the catalog is currently UNREACHABLE (for the UI warning). */
         isReachable?(): boolean;
       };
+      /** How long `runVacuum` waits for the sessions to go idle before giving up
+       * (default 5 min; overridable for tests). */
+      vacuumWaitMs?: number;
       /** Agent Skills registry: catalog for the UI + manual `/skill` activation. */
       skills?: SkillRegistry;
       /** MCP manager: status for the MCP card + reconnect after a save. */
@@ -361,7 +369,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     });
     if (!ok) return;
     rt.history.replace(kept);
-    this.sessions.saveMessages(rt.sessionId, kept);
+    this.sessions.saveMessages(rt.sessionId, kept, { replace: true });
     // Per-interaction accounting: providers report only the TOTAL input per
     // turn, never per message, so we ESTIMATE each interaction and, after a cut,
     // keep the tokens of the KEPT messages only — i.e. subtract the removed
@@ -583,8 +591,15 @@ export class ChatViewProvider implements WebviewViewProvider {
    */
   private async runVacuum(): Promise<void> {
     if (this.dbBusy()) this.view?.webview.postMessage({ type: "dbVacuumRunning" });
-    const deadline = Date.now() + 5 * 60_000;
+    const deadline = Date.now() + (this.options.vacuumWaitMs ?? 5 * 60_000);
     while (this.dbBusy() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 1000));
+    // Still busy after waiting: NEVER run a synchronous VACUUM over a live turn
+    // (it would freeze the extension host mid-stream). Report that it was
+    // skipped so the user can retry once the chat is idle.
+    if (this.dbBusy()) {
+      this.view?.webview.postMessage({ type: "dbVacuumSkipped" });
+      return;
+    }
     const result = this.sessions.maintain({ freeRatioThreshold: 0 });
     this.view?.webview.postMessage({ type: "dbVacuumResult", result });
   }
@@ -655,6 +670,9 @@ export class ChatViewProvider implements WebviewViewProvider {
   /** Rebuild the whole view (host-side refresh after any change). */
   refresh(): void {
     if (!this.view) return;
+    // Rebuilding the page wipes any open modal, so cancel its host-side promise
+    // (otherwise the create/rename/delete flow that awaited it hangs forever).
+    this.modals.cancelAll();
     // Re-apply the per-model overrides FIRST: a CONFIG edit (baseUrl / apiKey /
     // maxTokens / thinkingMode…) must take effect immediately — the composite
     // lets runtime overrides win, so a stale override would shadow the file.
@@ -920,8 +938,9 @@ export class ChatViewProvider implements WebviewViewProvider {
           else if (!rt.thinkingLevel) rt.thinkingLevel = "medium";
         }
         // If the host reports this model's limits, adopt them (the compaction
-        // ceiling + the output cap follow the real model). Host unreachable →
-        // keep whatever the session already had.
+        // ceiling + the output cap follow the real model). When the host is
+        // unreachable the limits stay UNKNOWN, so the DEFAULT fallback below
+        // applies (never the previous model's values).
         let adoptedCtx: number | undefined;
         let adoptedOut: number | undefined;
         if (provider) {
@@ -931,7 +950,7 @@ export class ChatViewProvider implements WebviewViewProvider {
             if (info?.contextLength && info.contextLength > 0) adoptedCtx = clampAdoptedContextWindow(info.contextLength);
             if (info?.maxOutputTokens && info.maxOutputTokens > 0) adoptedOut = clampAdoptedOutputTokens(info.maxOutputTokens);
           } catch {
-            /* keep the current limits */
+            /* host unreachable: leave the limits unknown (default below) */
           }
         }
         // KNOWN model: adopt its real limits. UNKNOWN model: fall back to the
@@ -955,6 +974,11 @@ export class ChatViewProvider implements WebviewViewProvider {
           contextWindow: rt.contextWindow,
           outputTokens: rt.outputTokens,
         });
+        // ALSO persist the choice as the config default (top-level `model`,
+        // comment-preserving): the README's promise, and it is what new
+        // consumers/other windows read. The session value above still wins at
+        // runtime.
+        this.providers.saveModelSelection?.(model, provider);
         this.modelSelector.set(this.computeOverrides(model, provider));
         // Lightweight config push (no full HTML rebuild: the typed prompt,
         // scroll and streaming state are preserved).
@@ -1204,7 +1228,7 @@ export class ChatViewProvider implements WebviewViewProvider {
    * note at the end). Auto-compaction just triggers it. UI messages reach
    * only the ACTIVE tab; a background session's compaction stays silent.
    */
-  private async compactNow(rt: SessionRuntime): Promise<void> {
+  private async compactNow(rt: SessionRuntime, signal?: AbortSignal): Promise<void> {
     this.compacting = true;
     const isActive = this.activeId === rt.sessionId;
     if (isActive) {
@@ -1212,7 +1236,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       this.view?.webview.postMessage({ type: "status", active: true, message: "Compacting…" });
     }
     try {
-      await this.performCompaction(rt);
+      await this.performCompaction(rt, signal);
     } finally {
       this.compacting = false;
       if (isActive) {
@@ -1233,19 +1257,19 @@ export class ChatViewProvider implements WebviewViewProvider {
    * agent resume with the compacted history (the run continues). The global
    * "working" status is deliberately NOT touched: the agent is still running.
    */
-  async maybeCompactDuringRun(sessionId: string): Promise<void> {
+  async maybeCompactDuringRun(sessionId: string, signal?: AbortSignal): Promise<void> {
     const rt = this.registry.get(sessionId);
     if (!rt || this.compacting) return;
     if (!this.needsAutoCompact(rt)) return;
-    await this.compactDuringRun(rt);
+    await this.compactDuringRun(rt, signal);
   }
 
-  private async compactDuringRun(rt: SessionRuntime): Promise<void> {
+  private async compactDuringRun(rt: SessionRuntime, signal?: AbortSignal): Promise<void> {
     this.compacting = true;
     const isActive = this.activeId === rt.sessionId;
     if (isActive) this.view?.webview.postMessage({ type: "compactStart" });
     try {
-      await this.performCompaction(rt);
+      await this.performCompaction(rt, signal);
     } catch (e: any) {
       infoLog("mid-run auto-compaction failed; continuing:", e?.message || String(e));
     } finally {
@@ -1319,12 +1343,24 @@ export class ChatViewProvider implements WebviewViewProvider {
    * being dropped; otherwise it runs a full send and then drains the queue.
    */
   private async send(rt: SessionRuntime, msg: any): Promise<void> {
-    if (rt.agent.streaming || this.pendingQueue.isDraining(rt.sessionId)) {
+    if (rt.agent.streaming || this.sending.has(rt.sessionId) || this.pendingQueue.isDraining(rt.sessionId)) {
       this.pendingQueue.enqueue(rt, msg);
       return;
     }
-    await this.dispatchSend(rt, msg);
-    await this.pendingQueue.drain(rt, (item) => this.dispatchSend(rt, item));
+    await this.dispatchSendTracked(rt, msg);
+    await this.pendingQueue.drain(rt, (item) => this.dispatchSendTracked(rt, item));
+  }
+
+  /** `dispatchSend` with the per-session SEND lock held for its whole async
+   * preamble, so a second send arriving before `agent.send` starts is queued
+   * instead of launching an overlapping run. */
+  private async dispatchSendTracked(rt: SessionRuntime, msg: any): Promise<void> {
+    this.sending.add(rt.sessionId);
+    try {
+      await this.dispatchSend(rt, msg);
+    } finally {
+      this.sending.delete(rt.sessionId);
+    }
   }
 
   /** Run ONE message to completion (the original send body). */
@@ -1428,7 +1464,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       displayText,
       attachmentParts: attachmentParts,
     });
-    this.postStatus(true);
+    this.postStatus(rt, true);
     let hadError = false;
     const unsub = rt.agent.onEvent((e) => {
       if (e.type === "error") hadError = true;
@@ -1441,7 +1477,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       // user may have switched to another session while this one streamed
       // (parallel work), and their refresh/status must not clobber it.
       if (this.activeId === rt.sessionId) {
-        this.postStatus(false);
+        this.postStatus(rt, false);
         if (!hadError) this.view?.webview.postMessage({ type: "refresh", messages: rt.agent.getMessages(), skills: this.skillCatalog() });
       }
     }
@@ -1457,8 +1493,15 @@ export class ChatViewProvider implements WebviewViewProvider {
     }
   }
 
-  private postStatus(active: boolean): void {
-    this.view?.webview.postMessage({ type: "status", active, workingIds: this.workingIds() });
+  private postStatus(rt: SessionRuntime, active: boolean): void {
+    // `active` drives the VIEW's streaming lock, so it is true only when THIS
+    // session is the visible tab; `workingIds` still locks every row in the
+    // list (background sessions must show as working too).
+    this.view?.webview.postMessage({
+      type: "status",
+      active: active && this.activeId === rt.sessionId,
+      workingIds: this.workingIds(),
+    });
   }
 
   /** Push a session's pending list to the webview (only when it is active). */
@@ -1590,7 +1633,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     this.pushSessionsManager();
   }
 
-  private async performCompaction(rt: SessionRuntime): Promise<void> {
+  private async performCompaction(rt: SessionRuntime, signal?: AbortSignal): Promise<void> {
     const compactor = this.options.compactor;
     if (!compactor) return;
     const messages = rt.history.conversation();
@@ -1598,7 +1641,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     // the current context (never a silent no-op).
     const plan = planManualCompaction(messages, this.options.manualKeepFraction ?? 0.6);
     if (plan.toSummarize.length === 0) return;
-    const summary = await compactor.summarize(plan.toSummarize);
+    const summary = await compactor.summarize(plan.toSummarize, undefined, signal);
     // Represent the summarized span as a synthetic USER prompt + ASSISTANT
     // response, so the transcript ALWAYS starts with an orange user bubble.
     const { prompt: synthPrompt, response: synthResponse } = splitSummary(summary);
@@ -1609,7 +1652,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       ...plan.kept,
     ];
     rt.history.replace(newHistory);
-    this.sessions.saveMessages(rt.sessionId, newHistory);
+    this.sessions.saveMessages(rt.sessionId, newHistory, { replace: true });
     // Prefer REAL data for the KEPT window (the cumulative `meta.inputTokens`
     // delta across it): the summary rewrote the prefix, so re-estimating the
     // whole history would no longer match the provider's numbers.
@@ -1796,6 +1839,11 @@ export class ChatViewProvider implements WebviewViewProvider {
     const curKey = sessionProvider && sessionModel ? `${sessionProvider}|${sessionModel}` : "";
     const ctxMax = (curKey ? this.modelsDevContext.get(curKey) : undefined) ?? MAX_CONTEXT_WINDOW;
     const outMax = (curKey ? this.modelsDevOutput.get(curKey) : undefined) ?? MAX_OUTPUT_TOKENS;
+    // The value the request will actually send: the session override when set,
+    // otherwise the config/provider default. The UI must show THIS (not a bare
+    // 16 384) so the slider matches the real max_tokens.
+    const cfgOutputDefault = typeof cfg.maxTokens === "number" ? cfg.maxTokens : DEFAULT_OUTPUT_TOKENS;
+    const effectiveOutput = clampAdoptedOutputTokens(rt?.outputTokens ?? cfgOutputDefault);
 
     // Warn ONLY when the models.dev fallback is unreachable AND some model is
     // still missing a limit (otherwise the warning would be pure noise).
@@ -1839,7 +1887,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       // Only the session override, so the UI can show "Auto" (undefined) vs
       // an explicit value. Config-file defaults stay effective but hidden.
       compactionThresholdPercent: this.activeRuntime()?.compactionThresholdPercent,
-      outputTokens: clampOutputTokens(this.activeRuntime()?.outputTokens ?? DEFAULT_OUTPUT_TOKENS, outMax),
+      outputTokens: Math.min(effectiveOutput, clampAdoptedOutputTokens(outMax)),
       maxOutputTokens: clampOutputTokens(outMax, MAX_OUTPUT_TOKENS),
       // Only the session override, so the UI can show "Auto" (undefined) vs
       // an explicit value. Config-file defaults stay effective but hidden.

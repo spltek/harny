@@ -12,7 +12,7 @@ function fakeRunner(results: CommandResult[]): CommandRunner {
   const calls: Array<{ command: string; options: { cwd: string; timeoutMs: number } }> = [];
   return {
     calls,
-    run(command, options) {
+    async run(command, options) {
       calls.push({ command, options });
       return results.shift() ?? { stdout: "", stderr: "", code: 0, timedOut: false };
     },
@@ -64,53 +64,74 @@ function memFs(files: Record<string, string>, mtimes: Record<string, number> = {
 }
 
 describe("ShellTool", () => {
-  it("returns stdout on success", () => {
+  it("returns stdout on success", async () => {
     const runner = fakeRunner([{ stdout: "hello", stderr: "", code: 0, timedOut: false }]);
     const tool = new ShellTool(runner, cwd);
 
-    const result = tool.execute({ command: "echo hello" });
+    const result = await tool.execute({ command: "echo hello" });
 
     expect(result.isError).toBe(false);
     expect(result.content).toBe("hello");
   });
 
-  it("returns an error with stdout+stderr on non-zero exit", () => {
+  it("returns an error with stdout+stderr on non-zero exit", async () => {
     const runner = fakeRunner([{ stdout: "out", stderr: "err", code: 2, timedOut: false }]);
     const tool = new ShellTool(runner, cwd);
 
-    const result = tool.execute({ command: "false" });
+    const result = await tool.execute({ command: "false" });
 
     expect(result.isError).toBe(true);
     expect(result.content).toContain("exited with code 2");
     expect(result.content).toContain("err");
   });
 
-  it("reports timeouts", () => {
+  it("reports timeouts", async () => {
     const runner = fakeRunner([{ stdout: "", stderr: "", code: -1, timedOut: true }]);
     const tool = new ShellTool(runner, cwd);
 
-    const result = tool.execute({ command: "sleep 100" });
+    const result = await tool.execute({ command: "sleep 100" });
 
     expect(result.isError).toBe(true);
     expect(result.content).toContain("timed out");
   });
 
-  it("keeps stderr on SUCCESS (exit 0) — warnings must not vanish", () => {
+  it("reports a user abort (Stop) distinctly from a timeout", async () => {
+    const runner = fakeRunner([{ stdout: "", stderr: "", code: -1, timedOut: false, aborted: true }]);
+    const tool = new ShellTool(runner, cwd);
+
+    const result = await tool.execute({ command: "sleep 100" });
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("aborted");
+  });
+
+  it("clamps block_until_ms to the hard ceiling (a model cannot freeze the host)", async () => {
+    const runner = fakeRunner([{ stdout: "", stderr: "", code: 0, timedOut: false }]);
+    const tool = new ShellTool(runner, cwd);
+
+    await tool.execute({ command: "ls", block_until_ms: 99_999_999 });
+
+    expect(runner.calls[0].options.timeoutMs).toBe(300_000);
+    await tool.execute({ command: "ls", block_until_ms: 10 });
+    expect(runner.calls[1].options.timeoutMs).toBe(1000);
+  });
+
+  it("keeps stderr on SUCCESS (exit 0) — warnings must not vanish", async () => {
     const runner = fakeRunner([{ stdout: "done", stderr: "npm warn deprecated x", code: 0, timedOut: false }]);
     const tool = new ShellTool(runner, cwd);
 
-    const result = tool.execute({ command: "npm install" });
+    const result = await tool.execute({ command: "npm install" });
 
     expect(result.isError).toBe(false);
     expect(result.content).toContain("done");
     expect(result.content).toContain("npm warn deprecated x");
   });
 
-  it("collapses runs of identical lines BEFORE the output cap", () => {
+  it("collapses runs of identical lines BEFORE the output cap", async () => {
     const runner = fakeRunner([{ stdout: "riga di output\n".repeat(100), stderr: "", code: 0, timedOut: false }]);
     const tool = new ShellTool(runner, cwd);
 
-    const result = tool.execute({ command: 'yes "riga di output" | head -c 200000' });
+    const result = await tool.execute({ command: 'yes "riga di output" | head -c 200000' });
 
     expect(result.isError).toBe(false);
     expect(result.content).toContain("riga di output");
@@ -118,11 +139,11 @@ describe("ShellTool", () => {
     expect(result.content.length).toBeLessThan(200); // not 50KB of copies
   });
 
-  it("ignores legacy permission arguments (no sandbox or permission gate)", () => {
+  it("ignores legacy permission arguments (no sandbox or permission gate)", async () => {
     const runner = fakeRunner([{ stdout: "ok", stderr: "", code: 0, timedOut: false }]);
     const tool = new ShellTool(runner, cwd);
 
-    const result = tool.execute({ command: "echo ok", required_permissions: ["all"] });
+    const result = await tool.execute({ command: "echo ok", required_permissions: ["all"] });
 
     // harny has no sandbox: the command runs as-is and the permission request
     // is inert (it is not part of the schema the model sees).
@@ -130,11 +151,11 @@ describe("ShellTool", () => {
     expect(runner.calls).toHaveLength(1);
   });
 
-  it("passes working_directory and timeout to the runner", () => {
+  it("passes working_directory and timeout to the runner", async () => {
     const runner = fakeRunner([{ stdout: "", stderr: "", code: 0, timedOut: false }]);
     const tool = new ShellTool(runner, cwd);
 
-    tool.execute({ command: "ls", working_directory: "/tmp", block_until_ms: 5000 });
+    await tool.execute({ command: "ls", working_directory: "/tmp", block_until_ms: 5000 });
 
     expect(runner.calls[0].options).toEqual({ cwd: "/tmp", timeoutMs: 5000 });
   });

@@ -134,7 +134,14 @@ export interface SessionStore {
   list(): SessionSummary[];
   create(name?: string): SessionSummary;
   load(id: string): LoadedSession;
-  saveMessages(id: string, messages: ChatMessage[]): SessionSummary;
+  /**
+   * Persist the session's messages. By default this APPENDS the new tail when
+   * the stored rows are still a prefix of `messages` (the common per-turn
+   * case); pass `{ replace: true }` when the history was REBUILT (a ✂ cut or a
+   * compaction) so the whole table is rewritten even if the length did not
+   * shrink.
+   */
+  saveMessages(id: string, messages: ChatMessage[], options?: { replace?: boolean }): SessionSummary;
   rename(id: string, name: string): SessionSummary;
   remove(id: string): boolean;
   /** Atomically persist any subset of the per-session settings (single write). */

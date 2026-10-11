@@ -1,8 +1,11 @@
 import type { CommandRunner } from "./command-runner";
 import { resolvePath } from "./path-utils";
-import type { Tool, ToolDefinition, ToolResult } from "./tool";
+import type { Tool, ToolContext, ToolDefinition, ToolResult } from "./tool";
 
 const MAX_OUTPUT = 50000;
+/** Hard ceiling for a single command: the model can ask for less, never more
+ * (an unbounded wait would keep a tool call pending for hours). */
+export const MAX_SHELL_TIMEOUT_MS = 300000;
 
 /**
  * Collapse runs of consecutive identical lines (e.g. `yes … | head` floods)
@@ -61,7 +64,7 @@ export class ShellTool implements Tool {
     private cwd: () => string,
   ) {}
 
-  execute(args: Record<string, unknown>): ToolResult {
+  async execute(args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolResult> {
     const command = args.command as string | undefined;
     if (!command) {
       return {
@@ -73,9 +76,15 @@ export class ShellTool implements Tool {
     const workingDir = args.working_directory as string | undefined;
     const wd = workingDir ? resolvePath(workingDir, this.cwd()) : this.cwd();
 
-    const timeout = Math.max((args.block_until_ms as number | undefined) || 30000, 1000);
-    const result = this.runner.run(command, { cwd: wd, timeoutMs: timeout });
+    // Clamp the requested wait into [1s, MAX_SHELL_TIMEOUT_MS] so a model cannot
+    // freeze the host (or leave the call pending) with an extreme value.
+    const requested = typeof args.block_until_ms === "number" ? args.block_until_ms : 30000;
+    const timeout = Math.min(Math.max(requested, 1000), MAX_SHELL_TIMEOUT_MS);
+    const result = await this.runner.run(command, { cwd: wd, timeoutMs: timeout, signal: ctx?.signal });
 
+    if (result.aborted) {
+      return { content: `Command aborted by the user (Stop): ${command}`, isError: true };
+    }
     if (result.timedOut) {
       return { content: `Command timed out after ${timeout}ms: ${command}`, isError: true };
     }

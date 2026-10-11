@@ -53,6 +53,21 @@ const PREVIEW_FOOTER_MARKER = "Nothing has been applied";
  * the config sets one (the "Parallel sub-agents" control defaults to ON/4). */
 export const DEFAULT_MAX_PARALLEL_SUB_AGENTS = 4;
 
+/** If NO chunk arrives for this long, the provider stream is considered dead
+ * (accepted-but-silent connection, crashed server, stuck model load) and the
+ * turn is aborted with an explicit error instead of hanging the run forever.
+ * Deliberately generous so a slow local model warming up is not killed. */
+export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 5 * 60_000;
+
+function streamIdleError(ms: number): Error {
+  const e = new Error(
+    `The provider stream stalled: no data for ${Math.round(ms / 1000)}s. ` +
+      "Check that the server/model is up (it may have crashed or be stuck loading), then retry.",
+  );
+  e.name = "StreamIdleTimeout";
+  return e;
+}
+
 function isSyntheticToolSummary(content: string): boolean {
   return TOOL_SUMMARY_RE.test(content);
 }
@@ -96,13 +111,17 @@ export interface AgentDeps {
    * line per turn + one per loop/stop decision, so a run can be diagnosed
    * after the fact without the in-memory raw stream. Never throws. */
   log?: (message: string) => void;
+  /** Idle-stream watchdog: abort a turn when the provider sends NO chunk for
+   * this long (undefined = {@link DEFAULT_STREAM_IDLE_TIMEOUT_MS}). */
+  streamIdleTimeoutMs?: number;
   /** Optional per-session Loop Guard options (resolved from the session's three
    * knobs). Undefined = the "normal" preset. */
   loopGuard?: LoopGuardOptions;
   /** Called (and awaited) at the START of every turn, before the LLM request.
    * The host uses it to auto-compact MID-RUN when the context threshold is
-   * exceeded: it compacts at a step boundary, then the run continues. */
-  onTurnBoundary?: () => Promise<void> | void;
+   * exceeded: it compacts at a step boundary, then the run continues. It
+   * receives the run's abort signal so a user Stop cancels the compaction. */
+  onTurnBoundary?: (signal: AbortSignal) => Promise<void> | void;
   /** Working directory, used to resolve delegate `resources` for the safe
    * parallelism decision (relative vs absolute paths must MATCH). */
   cwd?: () => string;
@@ -342,7 +361,7 @@ export class Agent implements ChatController {
     // LLM request already sees the compacted history.
     if (this.deps.onTurnBoundary) {
       try {
-        await this.deps.onTurnBoundary();
+        await this.deps.onTurnBoundary(this.abortController!.signal);
       } catch (err: any) {
         this.log(`onTurnBoundary failed: ${err?.message ?? String(err)}`);
       }
@@ -588,10 +607,11 @@ export class Agent implements ChatController {
     // re-run). This BREAKS tool loops at the source instead of only nudging.
     const runOne = async (index: number): Promise<void> => {
       const tc = toolCalls[index];
-      // A Delegate is read-only exactly when its parsed spec says so (a
-      // read-only delegate must get the read-cache / dedup of a read tool).
-      const readOnly =
-        tc.name === DELEGATE_TOOL_NAME ? planned[index]?.spec?.access === "read" : isReadOnlyTool(tc.name);
+      // A Delegate is NEVER cached/deduped: it is an expensive, non-deterministic
+      // nested run whose failure must remain retryable, so the loop guard treats
+      // it as a side-effecting call (idempotent-read caching would replay a
+      // stale/failed sub-agent instead of re-running it).
+      const readOnly = tc.name === DELEGATE_TOOL_NAME ? false : isReadOnlyTool(tc.name);
       const decision = this.guard.beforeToolCall(tc, readOnly);
       let r: ToolResult;
       if (decision.mode === "run") {
@@ -899,10 +919,27 @@ export class Agent implements ChatController {
         }, 15000)
       : undefined;
 
+    // Idle watchdog: abort the turn if the provider sends NOTHING for too long
+    // (dead connection / stuck server). Reset on every chunk; armed BEFORE the
+    // first chunk so a hung CONNECT (no response headers) is covered too.
+    const idleTimeoutMs = this.deps.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS;
+    let idleTimedOut = false;
+    let idleTimer: NodeJS.Timeout | undefined;
+    const armIdle = (): void => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        idleTimedOut = true;
+        this.log(`stream: idle for ${idleTimeoutMs}ms — aborting the turn`);
+        turnAbort.abort();
+      }, idleTimeoutMs);
+    };
+    armIdle();
+
     try {
       for await (const chunk of provider.stream(messages, turnAbort.signal, toolDefinitions)) {
         chunkCount++;
         lastChunkAt = Date.now();
+        armIdle();
         if (chunk.type === "text") {
           // Time to first token: the first CONTENT chunk, not any chunk.
           if (firstTokenAt === undefined) firstTokenAt = Date.now();
@@ -969,11 +1006,14 @@ export class Agent implements ChatController {
         }
       }
     } catch (err) {
-      // A real user Stop must propagate; a guard-initiated cut must not.
+      // A real user Stop must propagate; an idle-timeout must be reported as an
+      // error; a guard-initiated cut must not.
       if (this.abortController!.signal.aborted) throw err;
+      if (idleTimedOut) throw streamIdleError(idleTimeoutMs);
       if (!reasoningLoop && !answerLoop) throw err;
     } finally {
       if (heartbeat) clearInterval(heartbeat);
+      if (idleTimer) clearTimeout(idleTimer);
       this.abortController!.signal.removeEventListener("abort", linkMainAbort);
     }
 
@@ -984,6 +1024,8 @@ export class Agent implements ChatController {
       abortErr.name = "AbortError";
       throw abortErr;
     }
+    // Same for an idle timeout that a mock provider may not have surfaced.
+    if (idleTimedOut) throw streamIdleError(idleTimeoutMs);
 
     this.log(
       `stream: end after ${Math.round((Date.now() - streamStart) / 1000)}s chunks=${chunkCount} ` +
@@ -1034,11 +1076,13 @@ export class Agent implements ChatController {
     }
     try {
       // `ownerId` lets stateful tools (TodoWrite) keep PER-conversation state,
-      // so concurrent sub-agents never clobber each other's list.
-      const ctx =
-        dryRun || this.deps.ownerId
-          ? { ...(dryRun ? { dryRun: true } : {}), ...(this.deps.ownerId ? { ownerId: this.deps.ownerId } : {}) }
-          : undefined;
+      // so concurrent sub-agents never clobber each other's list. `signal` lets
+      // long-running tools (Shell) be cancelled by a user Stop.
+      const ctx: import("../tools/tool").ToolContext = {
+        ...(dryRun ? { dryRun: true } : {}),
+        ...(this.deps.ownerId ? { ownerId: this.deps.ownerId } : {}),
+        ...(this.abortController ? { signal: this.abortController.signal } : {}),
+      };
       const result = await tool.execute(tc.arguments, ctx);
       // Remember that a preview was prepared so the final answer can be made
       // unambiguous (the model may still claim it "applied" the change).
@@ -1156,9 +1200,6 @@ export class Agent implements ChatController {
    * session's runner (which builds and drives a separate Agent).
    */
   private async executeDelegate(tc: ToolCall): Promise<ToolResult> {
-    // Mark that the model DID delegate this run (used by the Parallel hard
-    // guarantee: at least one Delegate per user message when Parallel is ON).
-    this.delegatedThisRun = true;
     if (!this.mayDelegate) {
       return { content: "Sub-agents cannot delegate further (orchestration depth is 1).", isError: true };
     }
@@ -1174,19 +1215,27 @@ export class Agent implements ChatController {
     const parsed = parseDelegateSpec(tc.arguments);
     const spec = parsed.spec;
     if (!spec) return { content: parsed.error ?? "Invalid Delegate call.", isError: true };
-    // The user aborted THIS sub-task from its bubble: never start it (covers a
-    // sub-agent still QUEUED behind the concurrency cap) and tell the
-    // orchestrator it was aborted so it can adjust its plan.
-    if (this.abortedDelegates.has(tc.id)) {
-      return { content: formatSubAgentAborted(spec), isError: true };
-    }
-    // Read-only (Analyze) mode must never delegate a WRITER: that would
-    // bypass the read-only guarantee.
+    // Read-only (Analyze) mode must never delegate a WRITER: that would bypass
+    // the read-only guarantee. An invalid/mode-refused Delegate does NOT set
+    // `delegatedThisRun`, so the orchestrator stays restricted to Delegate and
+    // can retry with a read-only spec.
     if (isAnalyzeMode(this._mode) && spec.access !== "read") {
       return {
         content: '⛔ Analyze (read-only) mode: sub-agents may only be delegated with access "read".',
         isError: true,
       };
+    }
+    // A VALID, mode-allowed delegation: record it now (this drives the Parallel
+    // hard guarantee — at least one Delegate per user message). It is set AFTER
+    // validation so an invalid/mode-refused Delegate does NOT lift the
+    // "delegate first" restriction, and BEFORE the abort check because the
+    // model DID delegate even when the user stops that particular sub-task.
+    this.delegatedThisRun = true;
+    // The user aborted THIS sub-task from its bubble: never start it (covers a
+    // sub-agent still QUEUED behind the concurrency cap) and tell the
+    // orchestrator it was aborted so it can adjust its plan.
+    if (this.abortedDelegates.has(tc.id)) {
+      return { content: formatSubAgentAborted(spec), isError: true };
     }
     // Forward to the sub-agent the attachments its sub-task needs (by number),
     // defaulting to ALL of them when the orchestrator did not specify any.

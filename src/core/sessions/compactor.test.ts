@@ -102,6 +102,22 @@ describe("Compactor", () => {
     expect(summary).toContain("## Goal");
     expect(summary).toContain("Refactor auth");
   });
+
+  it("forwards the abort signal to the provider (Stop cancels the summary)", async () => {
+    const seen: (AbortSignal | undefined)[] = [];
+    const factory = {
+      create: () => ({
+        protocol: "chat" as const,
+        async *stream(_m: unknown, signal?: AbortSignal) {
+          seen.push(signal);
+          yield { type: "text", content: "ok" };
+        },
+      }),
+    } as unknown as LLMProviderFactory;
+    const controller = new AbortController();
+    await new Compactor(factory, () => CONFIG).summarize([u("x")], undefined, controller.signal);
+    expect(seen).toEqual([controller.signal]);
+  });
 });
 
 describe("planManualCompaction", () => {

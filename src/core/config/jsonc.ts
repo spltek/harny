@@ -186,19 +186,27 @@ export function setTopLevelString(text: string, key: string, value: string): str
   if (openBrace === -1) return text;
 
   let keyIndex = -1;
+  let keyTokenSeen = false;
   for (let t = 0; t < tokens.length; t++) {
     const tok = tokens[t];
     if (tok.depth !== 1) continue;
     if (tok.type !== "string") continue;
     if (parseStringToken(tok.raw) !== key) continue;
-    // The key must be followed (skipping comments/whitespace) by a colon.
-    const colon = findNextMeaningful(tokens, t + 1, ":");
-    if (colon === -1) continue;
-    keyIndex = t;
-    break;
+    keyTokenSeen = true;
+    // The key must be followed IMMEDIATELY (whitespace/comments are not
+    // tokenized) by a colon; a loose scan could match a LATER member's colon.
+    const next = tokens[t + 1];
+    if (next?.type === "symbol" && next.raw === ":") {
+      keyIndex = t;
+      break;
+    }
   }
 
   const quoted = JSON.stringify(value);
+
+  // A depth-1 key TOKEN exists but has no colon (malformed input): leave the
+  // file alone rather than inserting a duplicate or rewriting a later value.
+  if (keyIndex === -1 && keyTokenSeen) return text;
 
   if (keyIndex === -1) {
     // Key not found: insert right after the opening brace.
@@ -211,18 +219,14 @@ export function setTopLevelString(text: string, key: string, value: string): str
     return text.slice(0, openBrace + 1) + insert + after;
   }
 
-  // Replace the value token after `key:` (whitespace/comments are not
-  // tokenized, so the token right after the colon IS the value).
-  const colon = findNextMeaningful(tokens, keyIndex + 1, ":");
-  if (colon === -1) return text;
-  const valueEnd = tokens[colon + 1]?.end ?? colon;
-  const valueStart = tokens[colon + 1]?.start ?? colon;
-  return text.slice(0, valueStart) + quoted + text.slice(valueEnd);
+  // Replace the value token after `key:`. The token right after the colon IS
+  // the value (whitespace/comments are not tokenized). Only SCALAR values are
+  // rewritten: an object/array value must be left untouched, or we would
+  // splice a string over its opening brace and corrupt the file.
+  const colon = keyIndex + 1;
+  const valueToken = tokens[colon + 1];
+  if (!valueToken) return text;
+  if (valueToken.type === "symbol" && (valueToken.raw === "{" || valueToken.raw === "[")) return text;
+  return text.slice(0, valueToken.start) + quoted + text.slice(valueToken.end);
 }
 
-function findNextMeaningful(tokens: JsoncToken[], from: number, symbol: string): number {
-  for (let t = from; t < tokens.length; t++) {
-    if (tokens[t].type === "symbol" && tokens[t].raw === symbol) return t;
-  }
-  return -1;
-}

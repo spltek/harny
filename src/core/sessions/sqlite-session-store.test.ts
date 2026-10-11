@@ -85,6 +85,45 @@ describe("SqliteSessionStore — sessions & messages", () => {
     expect(loaded.summary.messageCount).toBe(1);
   });
 
+  it("REWRITES the head when a rebuild keeps the SAME length (compaction regression)", () => {
+    const { store } = makeStore();
+    store.create();
+    store.saveMessages("s1", [msg("user", "old-A"), msg("assistant", "old-B"), msg("user", "old-C")]);
+    // A 1-message span summarized into 2 synthetic messages, keeping 2: the new
+    // history has MORE messages than the stored one, so a length-only check
+    // would append instead of rewriting.
+    const compacted = [msg("user", "SUMMARY"), msg("assistant", "SUMMARY-BODY"), msg("assistant", "old-B"), msg("user", "old-C")];
+    store.saveMessages("s1", compacted);
+    expect(store.load("s1").messages.map((m) => m.content)).toEqual([
+      "SUMMARY",
+      "SUMMARY-BODY",
+      "old-B",
+      "old-C",
+    ]);
+  });
+
+  it("REWRITES when a rebuild keeps the same length and the last message coincides", () => {
+    const { store } = makeStore();
+    store.create();
+    store.saveMessages("s1", [msg("user", "a"), msg("assistant", "b"), msg("user", "c"), msg("assistant", "d")]);
+    // Same length, same TAIL, different head: the prefix guard must catch it.
+    const compacted = [msg("user", "S1"), msg("assistant", "S2"), msg("user", "c"), msg("assistant", "d")];
+    store.saveMessages("s1", compacted);
+    expect(store.load("s1").messages.map((m) => m.content)).toEqual(["S1", "S2", "c", "d"]);
+  });
+
+  it("does not rewrite when the history is identical (idempotent save)", () => {
+    const { store, db } = makeStore();
+    store.create();
+    const all = [msg("user", "one"), msg("assistant", "two")];
+    store.saveMessages("s1", all);
+    const before = db.prepare("SELECT rowid FROM messages WHERE session_id=? ORDER BY seq").all("s1") as { rowid: number }[];
+    store.saveMessages("s1", all);
+    const after = db.prepare("SELECT rowid FROM messages WHERE session_id=? ORDER BY seq").all("s1") as { rowid: number }[];
+    expect(after.map((r) => r.rowid)).toEqual(before.map((r) => r.rowid));
+    expect(store.load("s1").messages.map((m) => m.content)).toEqual(["one", "two"]);
+  });
+
   it("preserves EVERY field of a message (JSON data column)", () => {
     const { store } = makeStore();
     store.create();

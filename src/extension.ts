@@ -143,7 +143,7 @@ export async function activate(context: ExtensionContext) {
   // Mid-run auto-compaction hook, wired once the view provider exists (below):
   // the agent awaits it at every turn boundary so a long run compacts then
   // continues.
-  let midRunCompact: ((sessionId: string) => Promise<void>) | undefined;
+  let midRunCompact: ((sessionId: string, signal?: AbortSignal) => Promise<void>) | undefined;
   const createAgent = (history: ChatHistory, sessionId: string): ChatController => {
     // One sub-agent runner per session: it owns the ephemeral sub-agent
     // histories and cascades Stop to any in-flight sub-agent.
@@ -160,7 +160,7 @@ export async function activate(context: ExtensionContext) {
       onAbort: () => subAgents.abortAll(),
       abortSubAgent: (toolCallId) => subAgents.abort(toolCallId),
       log: (m) => infoLog(`[agent] ${m}`),
-      onTurnBoundary: () => midRunCompact?.(sessionId),
+      onTurnBoundary: (signal) => midRunCompact?.(sessionId, signal),
       cwd,
       // Per-session identity: stateful tools (TodoWrite) keep separate state.
       ownerId: sessionId,

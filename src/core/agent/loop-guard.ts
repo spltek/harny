@@ -463,12 +463,16 @@ export class LoopGuard {
             `(it already ran this run and no file has changed since; not executed again).\n${cached}`,
         };
       }
-      if (this.inFlight.has(sig)) {
-        return {
-          mode: "refuse",
-          content: `⛔ Loop guard: an identical ${tc.name} call is already running this turn; not started twice.`,
-        };
-      }
+    }
+    // An identical call already IN FLIGHT this turn (parallel batch) is never
+    // started twice. This applies to EVERY kind — two identical Delegates in
+    // one turn are deduped WITHOUT caching the result (a Delegate is not
+    // read-cacheable and must stay retryable on a later turn).
+    if (this.inFlight.has(sig)) {
+      return {
+        mode: "refuse",
+        content: `⛔ Loop guard: an identical ${tc.name} call is already running this turn; not started twice.`,
+      };
     }
     this.inFlight.add(sig);
     return { mode: "run" };

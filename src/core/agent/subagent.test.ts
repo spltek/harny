@@ -357,8 +357,10 @@ describe("SubAgentRunner", () => {
       },
     };
     // The Agent reports mid-run fetch errors into the transcript; the runner
-    // still produces a report/error result without throwing.
+    // still produces a result WITHOUT throwing, but it must be marked as an
+    // ERROR (the sub-task did not complete) so the orchestrator can react.
     const res = await buildRunner(failing).run(spec({ id: "Z" }));
+    expect(res.isError).toBe(true);
     expect(res.content).toContain('Sub-agent "Z"');
   });
 

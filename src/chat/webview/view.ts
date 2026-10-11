@@ -1901,7 +1901,13 @@ inputEl.addEventListener("keydown", (e) => {
     steerModifierHeld = steerModifierHeld || e.ctrlKey || e.metaKey;
     send();
   }
-  if (e.key === "Escape") vscode.postMessage({ type: "abort" });
+  if (e.key === "Escape") {
+    // An open modal/overlay owns Esc (the LIFO dispatcher closes the top-most
+    // one); it must NOT also stop the run. When no overlay is open, Esc in the
+    // prompt is the Stop shortcut.
+    if (anyOverlayVisible()) return;
+    if (!abortBtn.disabled) vscode.postMessage({ type: "abort" });
+  }
 });
 // GLOBAL Esc = Stop. The textarea is no longer disabled while working, but Esc
 // in a modal/overlay must still take precedence. Modals/overlays take
@@ -1916,15 +1922,7 @@ window.addEventListener("keydown", (e) => {
   // a focused input/button): that is the user dismissing something, not Stop.
   const target = e.target as HTMLElement | null;
   if (target?.closest?.("input, textarea, select, button, [contenteditable='true']")) return;
-  const overlay =
-    !nameModal.classList.contains("hidden") ||
-    !alertModal.classList.contains("hidden") ||
-    !providersModal.classList.contains("hidden") ||
-    !sessionsModal.classList.contains("hidden") ||
-    !compactSettingsModal.classList.contains("hidden") ||
-    !modeMenu.classList.contains("hidden") ||
-    (lightboxEl !== null && !lightboxEl.classList.contains("hidden"));
-  if (overlay) return;
+  if (anyOverlayVisible()) return;
   e.preventDefault();
   vscode.postMessage({ type: "abort" });
 });
@@ -4204,6 +4202,13 @@ window.addEventListener("message", (e) => {
     case "dbVacuumRunning":
       dbVacuumMsg.textContent = "Waiting for the chat to be idle…";
       break;
+    case "dbVacuumSkipped":
+      // The host refused to run the synchronous VACUUM over a live session.
+      dbVacuumMsg.textContent =
+        "Still working — compaction was not run. Stop the run (or close other sessions) and try again.";
+      dbVacuumRun.disabled = false;
+      dbVacuumRun.textContent = "Compact & optimize indexes";
+      break;
     case "dbVacuumSettings":
       smVacuumThreshold.value = String(msg.threshold);
       smVacuumThresholdVal.textContent = msg.threshold + "%";
@@ -4457,11 +4462,7 @@ function restoreLiveStream(state: { streaming?: boolean; liveThinking?: string; 
 
 // ── Session-name modal (in-panel name prompt) ──
 nameOk.addEventListener("click", submitName);
-nameCancel.addEventListener("click", () => {
-  const modalId = nameModalId;
-  closeNameModal();
-  vscode.postMessage({ type: "modalResponse", id: modalId, value: undefined });
-});
+nameCancel.addEventListener("click", cancelNameModal);
 nameInput.addEventListener("input", validateNameInput);
 nameInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
@@ -4469,9 +4470,7 @@ nameInput.addEventListener("keydown", (e) => {
     submitName();
   } else if (e.key === "Escape") {
     e.preventDefault();
-    const modalId = nameModalId;
-    closeNameModal();
-    vscode.postMessage({ type: "modalResponse", id: modalId, value: undefined });
+    cancelNameModal();
   }
 });
 
@@ -4505,9 +4504,37 @@ if (activeId) focusPrompt();
 // ONE dispatcher instead of a listener per modal: with nested modals open (e.g.
 // All sessions → Compact) Esc must close the LAST one opened, not whichever
 // listener happens to fire first (which also left the inner modal open).
+
+/** Cancel the name dialog (Esc / Cancel): resolves the host's modal promise
+ * with `undefined` (= cancelled). */
+function cancelNameModal(): void {
+  const modalId = nameModalId;
+  closeNameModal();
+  vscode.postMessage({ type: "modalResponse", id: modalId, value: undefined });
+}
+
+/** True when ANY modal/overlay is open: Esc must close the top-most one and must
+ * NOT be interpreted as "stop the run". Single source of truth shared by the
+ * prompt/global Esc handlers and the LIFO dispatcher. */
+function anyOverlayVisible(): boolean {
+  return (
+    !nameModal.classList.contains("hidden") ||
+    !alertModal.classList.contains("hidden") ||
+    !dbVacuumModal.classList.contains("hidden") ||
+    !compactSettingsModal.classList.contains("hidden") ||
+    !providersModal.classList.contains("hidden") ||
+    !mcpModal.classList.contains("hidden") ||
+    !modelModal.classList.contains("hidden") ||
+    !sessionsModal.classList.contains("hidden") ||
+    !modeMenu.classList.contains("hidden") ||
+    (lightboxEl !== null && !lightboxEl.classList.contains("hidden"))
+  );
+}
+
 const ESC_OVERLAYS: { visible: () => boolean; close: () => void }[] = [
   { visible: () => !!lightboxEl && !lightboxEl.classList.contains("hidden"), close: () => closeImageLightbox() },
   { visible: () => alertId >= 0, close: () => closeAlert(false) },
+  { visible: () => !nameModal.classList.contains("hidden"), close: () => cancelNameModal() },
   { visible: () => !dbVacuumModal.classList.contains("hidden"), close: () => closeDbVacuumModal() },
   { visible: () => !compactSettingsModal.classList.contains("hidden"), close: () => closeCompactionSettings() },
   { visible: () => !providersModal.classList.contains("hidden"), close: () => closeProvidersEditor() },

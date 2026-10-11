@@ -18,7 +18,7 @@ const fakeFs: FileSystem = {
   delete: () => {},
 };
 const fakeRunner: CommandRunner = {
-  run: () => ({ stdout: "", stderr: "", code: 0, timedOut: false }),
+  run: async () => ({ stdout: "", stderr: "", code: 0, timedOut: false }),
 };
 const fakeDiagnostics: DiagnosticsProvider = { getDiagnostics: () => [] };
 const fakeSkills = new SkillRegistry(fakeFs, () => []);
