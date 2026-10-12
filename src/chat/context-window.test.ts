@@ -56,17 +56,18 @@ describe("output-token bounds", () => {
   });
 });
 
-describe("adopted (model-reported) values bypass the slider MINIMUM", () => {
-  it("keeps a small model's real context instead of raising it to MIN", () => {
+describe("adopted (model-reported) values follow the model (no MIN, no global cap)", () => {
+  it("keeps a model's REAL context", () => {
     expect(clampAdoptedContextWindow(8000)).toBe(8000);
     expect(clampAdoptedContextWindow(4000)).toBe(4000);
-    expect(clampAdoptedContextWindow(9_999_999)).toBe(MAX_CONTEXT_WINDOW);
+    // The scale follows the model: a large real context is NOT capped.
+    expect(clampAdoptedContextWindow(9_999_999)).toBe(9_999_999);
     expect(clampAdoptedContextWindow(Number.NaN)).toBe(DEFAULT_CONTEXT_WINDOW);
   });
 
-  it("keeps a small model's real max output", () => {
+  it("keeps a model's REAL max output", () => {
     expect(clampAdoptedOutputTokens(128)).toBe(128);
-    expect(clampAdoptedOutputTokens(9_999_999)).toBe(MAX_OUTPUT_TOKENS);
+    expect(clampAdoptedOutputTokens(9_999_999)).toBe(9_999_999);
     expect(clampAdoptedOutputTokens(Number.NaN)).toBe(DEFAULT_OUTPUT_TOKENS);
   });
 });

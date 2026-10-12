@@ -3691,7 +3691,7 @@ function sendContextWindow(value: number): void {
 /** Show a host-pushed window value: the LABEL keeps the exact value while the
  * slider sits on the nearest step (dragging afterwards moves by steps). */
 function renderContextWindow(c: ConfigState): void {
-  currentCtxMax = clampContextWindow(c.maxContextWindow ?? MAX_CONTEXT_WINDOW);
+  currentCtxMax = c.maxContextWindow ?? MAX_CONTEXT_WINDOW;
   ctxRange.max = String(currentCtxMax);
   ctxRange.step = String(reachableStep(MIN_CONTEXT_WINDOW, currentCtxMax, 1000));
   ctxRangeLabel.textContent = `(${formatContext(MIN_CONTEXT_WINDOW)} → ${formatContext(currentCtxMax)})`;
@@ -3709,7 +3709,7 @@ function sendOutputTokens(value: number): void {
 }
 
 function renderOutputTokens(c: ConfigState): void {
-  currentOutMax = clampOutputTokens(c.maxOutputTokens ?? MAX_OUTPUT_TOKENS);
+  currentOutMax = c.maxOutputTokens ?? MAX_OUTPUT_TOKENS;
   outRange.max = String(currentOutMax);
   outRange.step = String(reachableStep(MIN_OUTPUT_TOKENS, currentOutMax, 256));
   outRangeLabel.textContent = `(${formatContext(MIN_OUTPUT_TOKENS)} → ${formatContext(currentOutMax)})`;

@@ -2853,14 +2853,14 @@ describe("ChatViewProvider model limits (context + output)", () => {
     expect(rt.outputTokens).toBe(16384);
   });
 
-  it("caps a config maxTokens above the scale maximum (never above 256k)", async () => {
+  it("caps a config maxTokens above the scale maximum (never above the 512k fallback)", async () => {
     const { provider, modelSelector } = buildHarness({
       providerEntry: { name: "p", baseUrl: "https://x/v1", maxTokens: 999_999, models: [{ id: "m1" }] },
     });
     const { handler } = resolveWith(provider);
     await provider.createNew();
     await handler({ type: "setModel", model: "m1", provider: "p" });
-    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ maxTokens: 262_144 }));
+    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ maxTokens: 512_000 }));
   });
 
   it("adopts the models.dev output too when the host reports neither limit", async () => {

@@ -1843,7 +1843,6 @@ export class ChatViewProvider implements WebviewViewProvider {
     // otherwise the config/provider default. The UI must show THIS (not a bare
     // 16 384) so the slider matches the real max_tokens.
     const cfgOutputDefault = typeof cfg.maxTokens === "number" ? cfg.maxTokens : DEFAULT_OUTPUT_TOKENS;
-    const effectiveOutput = clampAdoptedOutputTokens(rt?.outputTokens ?? cfgOutputDefault);
 
     // Warn ONLY when the models.dev fallback is unreachable AND some model is
     // still missing a limit (otherwise the warning would be pure noise).
@@ -1883,12 +1882,18 @@ export class ChatViewProvider implements WebviewViewProvider {
       skills: this.skillCatalog(),
       mcp: { servers: this.providers.readMcpServers?.() ?? {}, statuses: this.options.mcp?.getStatuses() ?? [] },
       contextWindow: clampContextWindow(this.activeRuntime()?.contextWindow ?? DEFAULT_CONTEXT_WINDOW, ctxMax),
-      maxContextWindow: clampContextWindow(ctxMax, MAX_CONTEXT_WINDOW),
+      // The slider SCALE is the model's real max (no global cap): an identified
+      // model can go up to its own limit, an unknown one uses the fallback.
+      maxContextWindow: clampContextWindow(ctxMax, ctxMax),
       // Only the session override, so the UI can show "Auto" (undefined) vs
       // an explicit value. Config-file defaults stay effective but hidden.
       compactionThresholdPercent: this.activeRuntime()?.compactionThresholdPercent,
-      outputTokens: Math.min(effectiveOutput, clampAdoptedOutputTokens(outMax)),
-      maxOutputTokens: clampOutputTokens(outMax, MAX_OUTPUT_TOKENS),
+      // The displayed value may be SMALLER than the slider MIN (a provider's
+      // declared maxTokens like 123 must be honoured) but never above the
+      // model's real max (`outMax`).
+      outputTokens: Math.min(clampAdoptedOutputTokens(rt?.outputTokens ?? cfgOutputDefault), outMax),
+      // Same rule for the output scale: the model's real max, else the fallback.
+      maxOutputTokens: clampOutputTokens(outMax, outMax),
       // Only the session override, so the UI can show "Auto" (undefined) vs
       // an explicit value. Config-file defaults stay effective but hidden.
       temperature: this.activeRuntime()?.temperature,
