@@ -36,6 +36,12 @@ describe("renderViewHtml", () => {
     // User bubbles have a MINIMUM width so the ✂ tab (~26px) never sticks out
     // of a one-character message.
     expect(html).toMatch(/\.msg\.user \{[^}]*min-width: 48px/);
+    // The bubble text is centered (a single character sits in the middle of the
+    // min-width bubble instead of hugging the left edge).
+    expect(html).toMatch(/\.msg\.user \{[^}]*text-align: center/);
+    // Disabled action tabs are hidden even WITHOUT hover (the global
+    // `button:disabled` opacity must not leak through during a run).
+    expect(html).toMatch(/\.branch-at:disabled,\s*\.truncate-at:disabled \{[^}]*opacity: 0/);
     // The Compact key sits in the stats row, right after the cache indicator.
     expect(html).toMatch(/id="met-cache"[\s\S]*?<button id="compact-btn"/);
     // Its gear (compaction settings) sits right after Compact; the threshold

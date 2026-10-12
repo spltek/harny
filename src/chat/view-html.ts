@@ -253,12 +253,12 @@ ${renderViewConfig(deps)}
     /* The ✂ tab is ~26px wide anchored 8px from the right, so a one-character
        message (bubble ≈ 28px) would be narrower than the tab and it would stick
        out to the left. This floor keeps the tab inside the bubble. */
-    .msg.user { align-self: flex-end; background: var(--user-msg); color: #fff; white-space: pre-wrap; position: relative; min-width: 48px; }
+    .msg.user { align-self: flex-end; background: var(--user-msg); color: #fff; white-space: pre-wrap; position: relative; min-width: 48px; text-align: center; }
     /* Harness-injected prompts (loop guard / delegation / budget): a LIGHT-BLUE
        bubble with a "Nudge" label, so they read as SYSTEM messages and can't be
        confused with the user's orange bubbles. Rendered as Markdown. */
     .msg.user.harness {
-      align-self: stretch; max-width: 100%; white-space: normal;
+      align-self: stretch; max-width: 100%; white-space: normal; text-align: left;
       background: rgba(97, 175, 239, 0.12);
       border: 1px solid rgba(97, 175, 239, 0.45);
       color: #dbeafe;
@@ -336,6 +336,11 @@ ${renderViewConfig(deps)}
     /* Disabled (session working): fully inert — no hover reaction, hidden. */
     .msg.assistant:hover .branch-at:disabled,
     .msg.user:hover .truncate-at:disabled { opacity: 0; pointer-events: none; }
+    /* Disabled (session working): hidden even WITHOUT hover. The global
+       button:disabled opacity (0.3) outranks the base .truncate-at opacity 0,
+       which left the tab faintly visible during a run. */
+    .branch-at:disabled,
+    .truncate-at:disabled { opacity: 0; pointer-events: none; }
     .branch-at:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); background: #2c241f; }
     .truncate-at:hover:not(:disabled) { color: #fff; border-color: #fff; background: var(--accent-strong); }
     .msg.assistant.error { background: rgba(244, 71, 71, 0.15); border: 1px solid var(--error); }
