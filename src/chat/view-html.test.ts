@@ -33,6 +33,9 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/<button id="attach-btn"[^>]*>\s*<svg[\s\S]*?<\/svg>\s*<\/button>/);
     expect(html).not.toMatch(/<button id="attach-btn"[^>]*>\s*\+\s*<\/button>/);
     expect(html).toMatch(/#input-main button\s*\{[^}]*height: 2\.31rem;[\s\S]*?min-width: 2\.77rem/s);
+    // User bubbles have a MINIMUM width so the ✂ tab (~26px) never sticks out
+    // of a one-character message.
+    expect(html).toMatch(/\.msg\.user \{[^}]*min-width: 48px/);
     // The Compact key sits in the stats row, right after the cache indicator.
     expect(html).toMatch(/id="met-cache"[\s\S]*?<button id="compact-btn"/);
     // Its gear (compaction settings) sits right after Compact; the threshold

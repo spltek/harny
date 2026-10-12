@@ -250,7 +250,10 @@ ${renderViewConfig(deps)}
     /* pre-wrap only for plain-text bubbles (user messages); markdown bubbles
        (assistant/tool) use breaks:true and white-space normal to avoid the
        ghost blank lines produced by markdown's structural newlines. */
-    .msg.user { align-self: flex-end; background: var(--user-msg); color: #fff; white-space: pre-wrap; position: relative; }
+    /* The ✂ tab is ~26px wide anchored 8px from the right, so a one-character
+       message (bubble ≈ 28px) would be narrower than the tab and it would stick
+       out to the left. This floor keeps the tab inside the bubble. */
+    .msg.user { align-self: flex-end; background: var(--user-msg); color: #fff; white-space: pre-wrap; position: relative; min-width: 48px; }
     /* Harness-injected prompts (loop guard / delegation / budget): a LIGHT-BLUE
        bubble with a "Nudge" label, so they read as SYSTEM messages and can't be
        confused with the user's orange bubbles. Rendered as Markdown. */
