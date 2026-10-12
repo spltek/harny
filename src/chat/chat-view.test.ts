@@ -2108,6 +2108,60 @@ describe("ChatViewProvider compaction", () => {
     );
   });
 
+  it("alerts when ONLY the output is unknown (host reports the context — the llama case)", async () => {
+    const { registry, provider } = buildHarness({
+      providerEntry: { name: "llama-cpp", baseUrl: "http://localhost:8090/v1", models: [] },
+      fetchModelInfos: async () => [{ id: "qwen.gguf", contextLength: 32768 }], // context only
+      modelsDev: { getLimits: vi.fn(async () => ({})) },
+    });
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew();
+    view.webview.postMessage.mockClear();
+
+    await handler({ type: "setModel", model: "qwen.gguf", provider: "llama-cpp" });
+
+    await vi.waitFor(() =>
+      expect(view.webview.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "modal",
+          kind: "alert",
+          title: "Model limits unknown",
+          message: expect.stringContaining("max output tokens"),
+        }),
+      ),
+    );
+    // The host-identified context is KEPT; the unknown output gets the default.
+    expect(registry.get("s1")!.contextWindow).toBe(32768);
+    expect(registry.get("s1")!.outputTokens).toBe(16384);
+  });
+
+  it("alerts when ONLY the context is unknown (host reports the output)", async () => {
+    const { registry, provider } = buildHarness({
+      providerEntry: { name: "p", baseUrl: "https://x/v1", models: [] },
+      fetchModelInfos: async () => [{ id: "m1", maxOutputTokens: 8192 }], // output only
+      modelsDev: { getLimits: vi.fn(async () => ({})) },
+    });
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew();
+    view.webview.postMessage.mockClear();
+
+    await handler({ type: "setModel", model: "m1", provider: "p" });
+
+    await vi.waitFor(() =>
+      expect(view.webview.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "modal",
+          kind: "alert",
+          title: "Model limits unknown",
+          message: expect.stringContaining("context window"),
+        }),
+      ),
+    );
+    // The host-identified output is KEPT; the unknown context gets the default.
+    expect(registry.get("s1")!.outputTokens).toBe(8192);
+    expect(registry.get("s1")!.contextWindow).toBe(128000);
+  });
+
   it("enriches the model LIST with the models.dev context window (host reports none)", async () => {
     const getLimits = vi.fn(async () => ({ context: 1048576 }));
     const { provider } = buildHarness({

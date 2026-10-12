@@ -985,7 +985,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         void this.pushConfig();
         // The host did not report one/both limits (e.g. OpenCode Go): resolve
         // them from models.dev in the background and update the panel.
-        if (!adoptedCtx || !adoptedOut) void this.ensureModelLimits(rt, model, provider);
+        if (!adoptedCtx || !adoptedOut) void this.ensureModelLimits(rt, model, provider, true, adoptedCtx, adoptedOut);
         break;
       }
 
@@ -1912,11 +1912,20 @@ export class ChatViewProvider implements WebviewViewProvider {
    * models.dev value, then the catalog itself; when NEITHER source knows it,
    * alert the user (in-panel modal) to set the correct window manually.
    */
-  private async ensureModelLimits(rt: SessionRuntime, model: string, provider?: string, alert = true): Promise<void> {
+  private async ensureModelLimits(
+    rt: SessionRuntime,
+    model: string,
+    provider?: string,
+    alert = true,
+    adoptedCtx?: number,
+    adoptedOut?: number,
+  ): Promise<void> {
     const key = provider ? `${provider}|${model}` : "";
-    let ctx = provider ? this.modelsDevContext.get(key) : undefined;
-    let out = provider ? this.modelsDevOutput.get(key) : undefined;
-    // 1) Already resolved (e.g. by the list enrichment): apply it immediately.
+    // "Identified" comes from BOTH sources: the values the HOST reported (passed
+    // in) and the models.dev cache (list enrichment / a previous resolution).
+    let ctx = adoptedCtx ?? (provider ? this.modelsDevContext.get(key) : undefined);
+    let out = adoptedOut ?? (provider ? this.modelsDevOutput.get(key) : undefined);
+    // 1) Already resolved (host and/or enrichment): apply it immediately.
     if (ctx || out) {
       this.applyLimits(rt, model, { context: ctx, output: out });
       if (ctx && out) return;
@@ -1941,9 +1950,10 @@ export class ChatViewProvider implements WebviewViewProvider {
       this.applyLimits(rt, model, { context: ctx, output: out });
       if (ctx && out) return;
     }
-    // 3) Unknown everywhere: prompt the user. Shown on EVERY selection of such a
-    //    model (returning to it must remind you again). Skipped for a SILENT
-    //    (on-open) pass.
+    // 3) At least ONE side is unknown everywhere: prompt the user. The missing
+    //    side already carries its DEFAULT value, so the alert says exactly what
+    //    to fix. Shown on EVERY selection (returning to it must remind you
+    //    again); skipped for a SILENT (on-open) pass.
     if (!alert) return;
     if (this.activeRuntime() !== rt || rt.model !== model) return; // raced
     const missing = [ctx ? "" : "context window", out ? "" : "max output tokens"].filter(Boolean).join(" and ");
@@ -1952,7 +1962,8 @@ export class ChatViewProvider implements WebviewViewProvider {
       title: "Model limits unknown",
       message:
         `Harny could not determine the ${missing} for "${model}" (the host did not report it and it is not in ` +
-        `models.dev). Set it from the Window / Output controls to keep auto-compaction and the output cap accurate.`,
+        "models.dev). A default value was applied — set the correct one from the Window / Output controls so " +
+        "auto-compaction and the output cap stay accurate.",
     });
   }
 
