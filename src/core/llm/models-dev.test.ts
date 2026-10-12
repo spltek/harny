@@ -40,12 +40,11 @@ describe("ModelsDevCatalog", () => {
     expect(get).toHaveBeenCalledTimes(1); // cached after the first load
   });
 
-  it("returns undefined for unknown models/providers", async () => {
+  it("returns undefined only for a truly unknown model id", async () => {
     const catalog = new ModelsDevCatalog(
       fakeHttp(jsonResponse(200, { p: { models: { m: { limit: { context: 5000 } } } } })),
     );
     expect(await catalog.getContext("nope", ["p"])).toBeUndefined();
-    expect(await catalog.getContext("m", ["other"])).toBeUndefined();
   });
 
   it("is best-effort when the host is offline (no throw, undefined)", async () => {
@@ -80,6 +79,53 @@ describe("ModelsDevCatalog.getLimits — partial data", () => {
     const catalog = new ModelsDevCatalog({ post: vi.fn(), get } as unknown as HttpClient);
     expect(await catalog.getLimits("c", ["p"])).toEqual({ context: 1000 });
     expect(await catalog.getLimits("o", ["p"])).toEqual({ output: 500 });
+  });
+});
+
+describe("ModelsDevCatalog.getLimits — generic cross-provider fallback", () => {
+  // The host (OpenCode Go) exposes `deepseek-flash`, but models.dev lists it
+  // under the `deepseek` provider (and `302ai`), while `opencode-go` uses the
+  // id `deepseek-v4.1-flash`. No family list: the fallback matches the ID.
+  const CATALOG = {
+    "opencode-go": { models: { "deepseek-v4.1-flash": { limit: { context: 1000000, output: 393216 } } } },
+    deepseek: { models: { "deepseek-flash": { limit: { context: 1000000, output: 393216 } } } },
+    "302ai": { models: { "deepseek-flash": { limit: { context: 64000, output: 4096 } } } },
+  };
+
+  it("finds a model whose (provider, id) naming differs from the host", async () => {
+    const catalog = new ModelsDevCatalog(fakeHttp(jsonResponse(200, CATALOG)));
+    expect(await catalog.getLimits("deepseek-flash", ["opencode-go", "opencode"])).toEqual({
+      context: 1000000,
+      output: 393216,
+    });
+  });
+
+  it("prefers the provider whose NAME appears in the id (deepseek over 302ai)", async () => {
+    const catalog = new ModelsDevCatalog(fakeHttp(jsonResponse(200, CATALOG)));
+    // 302ai also declares `deepseek-flash` (64000/4096) but is NOT chosen.
+    expect(await catalog.getLimits("deepseek-flash", ["opencode-go"])).toEqual({ context: 1000000, output: 393216 });
+  });
+
+  it("is case-tolerant on the model id", async () => {
+    const catalog = new ModelsDevCatalog(fakeHttp(jsonResponse(200, CATALOG)));
+    expect(await catalog.getContext("DeepSeek-Flash", ["opencode-go"])).toBe(1000000);
+  });
+
+  it("the provider candidate stays AUTHORITATIVE over the fallback", async () => {
+    const catalog = new ModelsDevCatalog(
+      fakeHttp(
+        jsonResponse(200, {
+          deepseek: { models: { "deepseek-flash": { limit: { context: 111 } } } },
+          other: { models: { "deepseek-flash": { limit: { context: 222 } } } },
+        }),
+      ),
+    );
+    expect(await catalog.getLimits("deepseek-flash", ["deepseek"])).toEqual({ context: 111 });
+  });
+
+  it("still returns {} when the id is nowhere in the catalog", async () => {
+    const catalog = new ModelsDevCatalog(fakeHttp(jsonResponse(200, CATALOG)));
+    expect(await catalog.getLimits("totally-unknown", ["opencode-go"])).toEqual({});
   });
 });
 
