@@ -31,6 +31,15 @@ describe("PanelModalQueue (FIFO)", () => {
     expect(await p).toBe(true);
   });
 
+  it("hasPending reflects whether any modal is waiting", () => {
+    const q = new PanelModalQueue(() => {});
+    expect(q.hasPending()).toBe(false);
+    void q.request({ kind: "alert", title: "t", message: "m" });
+    expect(q.hasPending()).toBe(true);
+    q.respond(1, true);
+    expect(q.hasPending()).toBe(false);
+  });
+
   it("cancelAll resolves every pending request (webview rebuilt with a modal open)", async () => {
     const posted: unknown[] = [];
     const q = new PanelModalQueue((m) => posted.push(m));

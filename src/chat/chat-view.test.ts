@@ -2162,6 +2162,39 @@ describe("ChatViewProvider compaction", () => {
     expect(registry.get("s1")!.contextWindow).toBe(128000);
   });
 
+  it("defers a page rebuild while a modal is open, then applies it (the alert must not flash away)", async () => {
+    state.noAutoAlert = true; // keep the "Model limits unknown" alert OPEN
+    try {
+      const { provider } = buildHarness({
+        providerEntry: { name: "p", baseUrl: "https://x/v1", models: [] },
+        fetchModelInfos: async () => [{ id: "unknown" }],
+        modelsDev: { getLimits: vi.fn(async () => ({})) },
+      });
+      const { handler, view } = resolveWith(provider);
+      await vi.waitFor(() => expect(view.webview.html).toBeTruthy()); // initial render done
+      await provider.createNew();
+      await handler({ type: "setModel", model: "unknown", provider: "p" });
+
+      const posts = (): { title?: string; modalId?: number }[] =>
+        view.webview.postMessage.mock.calls.map((c: unknown[]) => c[0] as { title?: string; modalId?: number });
+      await vi.waitFor(() => expect(posts().some((m) => m?.title === "Model limits unknown")).toBe(true));
+      const htmlBefore = view.webview.html;
+
+      // A rebuild while the modal is open is DEFERRED: the page is NOT replaced
+      // (replacing it wipes the modal DOM, which is the flash the user saw).
+      provider.refresh();
+      await new Promise((r) => setTimeout(r, 30));
+      expect(view.webview.html).toBe(htmlBefore);
+
+      // Answering the modal runs the deferred rebuild.
+      const alert = posts().find((m) => m?.title === "Model limits unknown")!;
+      await handler({ type: "modalResponse", id: alert.modalId, value: true });
+      await vi.waitFor(() => expect(view.webview.html).not.toBe(htmlBefore));
+    } finally {
+      state.noAutoAlert = false;
+    }
+  });
+
   it("enriches the model LIST with the models.dev context window (host reports none)", async () => {
     const getLimits = vi.fn(async () => ({ context: 1048576 }));
     const { provider } = buildHarness({

@@ -33,6 +33,11 @@ export class PanelModalQueue {
     if (next) this.post({ type: "modal", modalId: next.id, ...next.req });
   }
 
+  /** True when at least one modal is waiting (shown or queued). */
+  hasPending(): boolean {
+    return this.queue.length > 0;
+  }
+
   /**
    * Cancel every pending request. Called when the webview page is rebuilt
    * (refresh/reload) with a modal open: the DOM modal is wiped, so its promise

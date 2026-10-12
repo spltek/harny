@@ -89,6 +89,9 @@ export class ChatViewProvider implements WebviewViewProvider {
   private modals: PanelModalQueue;
   /** True while the shared "compact database" modal is open (avoid re-prompts). */
   private vacuumPromptOpen = false;
+  /** A refresh was requested while a modal was open: run it once the queue
+   * drains, instead of rebuilding the page (which would wipe the modal). */
+  private refreshDeferred = false;
 
   constructor(
     private config: ConfigProvider,
@@ -424,6 +427,12 @@ export class ChatViewProvider implements WebviewViewProvider {
   /** Drains the queue entry and shows the next queued modal, if any. */
   private onPanelModalResponse(id: number, value: unknown): void {
     this.modals.respond(id, value);
+    // A refresh was deferred while this modal was open: apply it now that the
+    // queue is empty (never rebuild the page over a live modal).
+    if (this.refreshDeferred && !this.modals.hasPending()) {
+      this.refreshDeferred = false;
+      this.refresh();
+    }
   }
 
   /**
@@ -670,9 +679,15 @@ export class ChatViewProvider implements WebviewViewProvider {
   /** Rebuild the whole view (host-side refresh after any change). */
   refresh(): void {
     if (!this.view) return;
-    // Rebuilding the page wipes any open modal, so cancel its host-side promise
-    // (otherwise the create/rename/delete flow that awaited it hangs forever).
-    this.modals.cancelAll();
+    // A modal is OPEN: DEFER the rebuild. Replacing the page HTML wipes the
+    // modal DOM, so it would flash and vanish (e.g. the "Model limits unknown"
+    // alert right after a model switch — which writes config.json and triggers
+    // this refresh via the config watcher). It runs when the queue drains.
+    if (this.modals.hasPending()) {
+      this.refreshDeferred = true;
+      return;
+    }
+    this.refreshDeferred = false; // this run satisfies any deferred request
     // Re-apply the per-model overrides FIRST: a CONFIG edit (baseUrl / apiKey /
     // maxTokens / thinkingMode…) must take effect immediately — the composite
     // lets runtime overrides win, so a stale override would shadow the file.
