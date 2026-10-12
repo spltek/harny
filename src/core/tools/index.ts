@@ -28,7 +28,7 @@ export {
   isFullAccessMode,
   isFileMutatingTool,
   isReadOnlyTool,
-  isWriteCommand,
+  isSafeReadCommand,
   toolDefinitionsForMode,
   toolsForMode,
   type ChatMode,

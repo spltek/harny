@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isAnalyzeMode,
   isFileMutatingTool,
-  isWriteCommand,
+  isSafeReadCommand,
   toolDefinitionsForMode,
   toolsForMode,
 } from "./mode-policy";
@@ -58,142 +58,169 @@ describe("mode policy", () => {
     }
   });
 
-  it("isWriteCommand refuses redirection, mutating verbs, installers, git writes and build drivers", () => {
-    const writeCommands = [
+  it("isSafeReadCommand ALLOWS the read-only allowlist (POSIX + git read + Windows)", () => {
+    const allowed = [
+      // file inspection / search
+      "ls -la",
+      "cat src/index.ts",
+      "head -50 file.ts",
+      "tail -n 20 log.txt",
+      "wc -l file.ts",
+      "sort file.txt",
+      "uniq file.txt",
+      "diff a.txt b.txt",
+      "file image.png",
+      "stat src/index.ts",
+      "find . -name '*.ts'",
+      "grep -rn export src",
+      "rg --hidden foo",
+      "pwd && which node",
+      "env",
+      "printenv PATH",
+      "echo hello",
+      "node --version",
+      "python3 --version",
+      "curl -s https://example.com/api",
+      // git READ commands
+      "git status",
+      "git log --oneline -5",
+      "git diff HEAD~1",
+      "git diff --stat",
+      "git show HEAD",
+      "git blame src/a.ts",
+      "git branch",
+      "git branch -a",
+      "git tag -l",
+      "git remote -v",
+      "git stash list",
+      "git config --get user.name",
+      "git rev-parse HEAD",
+      "git ls-files",
+      "git ls-tree HEAD",
+      "git show-ref",
+      // package info (read-only subcommands)
+      "npm list",
+      "npm outdated",
+      "yarn info react",
+      // pipelines of safe commands
+      "git log --oneline | head -20",
+      "cat a.txt | grep foo",
+      // sinks / fd-duplication / quoting
+      "ls 2>/dev/null",
+      "echo hello > /dev/null",
+      "cat foo 2>/dev/null",
+      "ls -la 2>&1",
+      "ls 1>&2",
+      "ls 3>&-",
+      "grep -n 'a>b' src",
+      'git log --pretty=format:"%h => %s"',
+      // Windows cmd.exe / PowerShell read
+      "dir /b",
+      "type notes.md",
+      "where node",
+      "findstr /s foo *.ts",
+      "dir nonexistent 2>nul",
+      "type file.txt >NUL",
+      "Get-Content file.txt",
+      "Select-String -Pattern foo",
+      "Get-ChildItem -Recurse",
+    ];
+    for (const cmd of allowed) {
+      expect(isSafeReadCommand(cmd), `should allow: ${cmd}`).toBe(true);
+    }
+  });
+
+  it("isSafeReadCommand REFUSES writes, installers, git writes and build drivers", () => {
+    const refused = [
       "echo hello > out.txt",
       "ls >> log",
-      "cat a b > merged && rm b",
+      "cat a b > merged",
       "rm -rf dist",
       "touch index.html",
       "mkdir -p src",
       "mv a.txt b.txt",
       "cp a b",
       "ln -s a b",
-      "sed -i s/x/y/ file",
-      "perl -i -pe 's/a/b/g' file",
-      "awk -i inplace '{print}' file",
       "tee out.txt < in.txt",
       "chmod +x run.sh",
       "dd if=x of=y",
       "truncate -s 0 log",
       "npm install typescript",
-      "npm ci",
+      "npm run test",
       "bun add lodash",
       "pip install requests",
       "cargo build",
+      "make",
+      "cmake ..",
+      "apt-get install vim",
+      // git WRITES (the same command has read and write forms)
       "git add .",
       "git commit -m x",
       "git push origin main",
       "git reset --hard",
       "git clean -fd",
-      "apt-get install vim",
-      "brew install node",
-      "make",
-      "cmake ..",
-      // A device is a REAL sink: only /dev/null, /dev/stdout, /dev/stderr,
-      // /dev/fd/N and /dev/tty are exempt, not the whole /dev tree.
+      "git stash",
+      "git checkout main",
+      "git branch -d feature",
+      "git branch newbranch",
+      "git tag v1",
+      "git remote add origin url",
+      "git config user.name x",
+      // Windows writes
+      "del file.txt",
+      "copy a.txt b.txt",
+      "move a.txt b.txt",
+      "Remove-Item -Recurse dist",
+      "Set-Content out.txt hello",
+      "Out-File -FilePath out.txt",
+      // devices / real-file redirection
       "cat model > /dev/sda",
       "command <>rwfile",
     ];
-    for (const cmd of writeCommands) {
-      expect(isWriteCommand(cmd), `should refuse: ${cmd}`).toBe(true);
+    for (const cmd of refused) {
+      expect(isSafeReadCommand(cmd), `should refuse: ${cmd}`).toBe(false);
     }
   });
 
-  it("isWriteCommand refuses Windows cmd / PowerShell mutating verbs", () => {
-    const writeCommands = [
-      "del file.txt",
-      "erase file.txt",
-      "copy a.txt b.txt",
-      "xcopy /E src dst",
-      "robocopy src dst /MIR",
-      "move a.txt b.txt",
-      "ren a.txt b.txt",
-      "rmdir /s /q dist",
-      "mklink link target",
-      "icacls file /grant user:F",
-      "Remove-Item -Recurse dist",
-      "New-Item -ItemType Directory src",
-      "Set-Content out.txt hello",
-      "Add-Content log.txt hello",
-      "Out-File -FilePath out.txt",
-      "Move-Item a b",
-      "Copy-Item a b",
-      "Rename-Item a b",
-      "Invoke-WebRequest https://x -OutFile out.bin",
-      "reg add HKLM\\Software\\X /v y",
+  it("isSafeReadCommand REFUSES unknown commands, interpreters and exec/write flags", () => {
+    const refused = [
+      "python -c \"open('x','w')\"",
+      "node -e \"require('fs').writeFileSync('x','y')\"",
+      "sh script.sh",
+      "bash build.sh",
+      "docker ps",
+      "kubectl get pods",
+      "sudo ls",
+      "go test ./...",
+      "xargs rm",
+      "env rm -rf x",
+      "find . -exec rm {} \\;",
+      "find . -delete",
+      "sort -o out.txt in.txt",
+      "tree -o out.txt",
+      "fd -x rm",
+      "rg --pre 'cmd' foo",
+      "curl -o out.json https://x",
+      "cat a.txt | python -c \"open('x','w')\"",
+      "echo \"$(rm -rf x)\"",
+      "git diff --output=patch.diff",
     ];
-    for (const cmd of writeCommands) {
-      expect(isWriteCommand(cmd), `should refuse: ${cmd}`).toBe(true);
+    for (const cmd of refused) {
+      expect(isSafeReadCommand(cmd), `should refuse: ${cmd}`).toBe(false);
     }
   });
 
-  it("isWriteCommand allows Windows read-only inspection (no false positive on .md/.rd paths)", () => {
-    const readCommands = ["dir", "dir /b", "type notes.md", "where node", "findstr /s foo *.ts", "git diff", "notes.rd"];
-    for (const cmd of readCommands) {
-      expect(isWriteCommand(cmd), `should allow: ${cmd}`).toBe(false);
-    }
-  });
-
-  it("isWriteCommand allows read-only inspection commands", () => {
-    const readCommands = [
-      "ls -la",
-      "cat src/index.ts",
-      "find . -name '*.ts'",
-      "grep -rn export src",
-      "pwd && which node",
-      "git status",
-      "git log --oneline -5",
-      "git diff HEAD~1",
-      "curl -s https://example.com/api",
-      "env",
-      "echo hello",
-      "head -50 file.ts",
-      "ls 2>/dev/null",
-      // /dev/* sinks are not real files: allowed even with redirection.
-      "echo hello > /dev/null",
-      "cat foo 2>/dev/null",
-      // Redirection operators INSIDE a quoted argument are not writes.
-      "grep -n 'a>b' src",
-      'git log --pretty=format:"%h => %s"',
-      "echo 'a > b'",
-      // file-descriptor duplication is not a write.
-      "ls -la 2>&1",
-      "tool --serve 1>&2",
-      "run 3>&-",
-      // Windows null device (`>nul`) is also not a real file.
-      "dir nonexistent 2>nul",
-      "tool --check >NUL",
-      // package-manager RUN (not install): allowed (e.g. node server, bun run test)
-      "npm run test",
-      "bun run index.ts",
-      "node --version",
-    ];
-    for (const cmd of readCommands) {
-      expect(isWriteCommand(cmd), `should allow: ${cmd}`).toBe(false);
-    }
-  });
-
-  it("handles empty and package-manager-run edge cases", () => {
-    expect(isWriteCommand("")).toBe(false);
-    expect(isWriteCommand("   ")).toBe(false);
-    // `git diff` (a word starting with the muted verb `diff`) must not be
-    // caught by the write-verb list.
-    expect(isWriteCommand("git diff --stat")).toBe(false);
-  });
-
-  it("redirection detection is quoting-, fd- and sink-aware", () => {
-    // A `>` inside a quoted argument is not a redirection.
-    expect(isWriteCommand('grep "a>b" file')).toBe(false);
-    expect(isWriteCommand('echo "x => y"')).toBe(false);
-    // File-descriptor duplication is not a write.
-    expect(isWriteCommand("ls -la 2>&1")).toBe(false);
-    expect(isWriteCommand("cmd 1>&2")).toBe(false);
-    expect(isWriteCommand("cmd 3>&-")).toBe(false);
-    // Only the harmless sinks are exempt; a real device is still a write.
-    expect(isWriteCommand("echo x > /dev/null")).toBe(false);
-    expect(isWriteCommand("echo x > out.txt")).toBe(true);
-    expect(isWriteCommand("echo x > /dev/sda")).toBe(true);
+  it("isSafeReadCommand is quoting-, fd- and sink-aware; empty is refused", () => {
+    expect(isSafeReadCommand("")).toBe(false);
+    expect(isSafeReadCommand("   ")).toBe(false);
+    expect(isSafeReadCommand('grep "a>b" file')).toBe(true);
+    expect(isSafeReadCommand('echo "x => y"')).toBe(true);
+    expect(isSafeReadCommand("ls -la 2>&1")).toBe(true);
+    expect(isSafeReadCommand("ls 1>&2")).toBe(true);
+    expect(isSafeReadCommand("ls 3>&-")).toBe(true);
+    expect(isSafeReadCommand("echo x > /dev/null")).toBe(true);
+    expect(isSafeReadCommand("echo x > out.txt")).toBe(false);
+    expect(isSafeReadCommand("echo x > /dev/sda")).toBe(false);
   });
 
   it("isAnalyzeMode: only analyze is read-only; agent is full access", () => {

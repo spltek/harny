@@ -25,7 +25,7 @@ export function isFullAccessMode(mode: ChatMode | undefined): boolean {
  * change and return the exact diff, but write NOTHING to disk. Applying them
  * requires switching to Build mode (the model is told to instruct the user).
  * Shell stays available but is guarded read-only at execution time (see
- * isWriteCommand). */
+ * isSafeReadCommand). */
 const FILE_MUTATING_TOOLS = new Set(["Write", "StrReplace", "Edit", "Delete"]);
 
 /** True for a tool that would modify the filesystem (Write/StrReplace/Edit/Delete). */
@@ -79,16 +79,17 @@ export const FILE_PREVIEW_NOTE =
   "user must switch to Build mode — never claim the change was applied.";
 
 export const SHELL_READ_ONLY_NOTE =
-  "\n\nREAD-ONLY MODE (best effort, NOT a sandbox): Harny refuses the common commands that write, delete, " +
-  "move, rename, create or install (file redirection, mutating verbs, package managers, git writes, build " +
-  "drivers). This is a heuristic, not a filesystem sandbox — a script or a language interpreter (e.g. " +
-  "`python -c …`, `sh script.sh`) is NOT covered. Do NOT attempt any write in this mode: use Read/Grep/Glob " +
-  "for inspection, and switch to Build to apply changes.";
+  "\n\nREAD-ONLY MODE (allowlist, NOT a sandbox): only a curated set of read-only commands is allowed — " +
+  "file inspection (ls, cat, head, tail, wc, diff, file, stat, tree), search (grep, rg, find), " +
+  "git READ commands (status, log, diff, show, blame, branch -l, tag -l, remote -v, stash list, …), " +
+  "package info (npm list/outdated/audit) and a few system commands (uname, whoami, ps, env). " +
+  "EVERYTHING ELSE is refused, including scripts, interpreters (python -c, node -e, sh x.sh) and any " +
+  "state-changing command. This is a best-effort filter, not a filesystem sandbox. Use Read/Grep/Glob " +
+  "for inspection; switch to Build to run or change anything.";
 
 export const ANALYZE_BLOCKED_SHELL_MESSAGE = (command: string): string =>
-  `⛔ Analyze mode is READ-ONLY: the command "${command}" looks like it could modify the filesystem and was refused without running. ` +
-  "This is a best-effort filter, not a sandbox. Only read-only inspection is allowed (POSIX: ls, cat, find; " +
-  "Windows: dir, type, where, findstr; either: git status/diff/log). Prefer the Read/Grep/Glob tools.";
+  `⛔ Analyze is READ-ONLY: "${command}" is not in the read-only command allowlist and was refused without running. ` +
+  "Use the Read/Grep/Glob tools for inspection, or switch to Build to run it.";
 
 /**
  * Blank out the CONTENTS of quoted strings (and backslash-escaped characters)
@@ -146,81 +147,240 @@ function hasFileRedirection(command: string): boolean {
 }
 
 /**
- * Heuristic "does this shell command modify the filesystem?" check used to
- * keep the Shell tool read-only in Analyze mode. NOT a sandbox — it is
- * defense in depth on top of the filtered tool set + the read-only system
- * prompt: it catches the common write idioms (redirection, mutating verbs,
- * package-manager/git write subcommands, build drivers) and refuses them
- * before the command runs.
- *
- * Known limits (deliberate): a script or an interpreter (`python -c`, `node -e`,
- * `sh x.sh`, `npm run <script>`, …) is opaque and is NOT detected. The goal is
- * to stop ACCIDENTAL writes, not to sandbox the shell.
+ * Split a command line into TOP-LEVEL segments on the unquoted separators
+ * `|`, `||`, `&&`, `;`, a newline and a background `&`. The `&` of a
+ * file-descriptor duplication (`2>&1`, `>&2`, `3>&-`) is NOT a separator.
+ * Quoting is respected, so `grep "a|b"` stays one segment.
  */
-export function isWriteCommand(command: string): boolean {
+function splitSegments(command: string): string[] {
+  const segments: string[] = [];
+  let current = "";
+  let quote: string | null = null;
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    if (quote) {
+      current += c;
+      if (c === "\\" && quote === '"') {
+        current += command[i + 1] ?? "";
+        i++;
+      } else if (c === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      quote = c;
+      current += c;
+      continue;
+    }
+    if (c === "\\") {
+      current += c + (command[i + 1] ?? "");
+      i++;
+      continue;
+    }
+    const background = c === "&" && !current.endsWith(">");
+    if (c === "|" || c === ";" || c === "\n" || background) {
+      segments.push(current);
+      current = "";
+      continue;
+    }
+    current += c;
+  }
+  segments.push(current);
+  return segments.map((s) => s.trim()).filter((s) => s.length > 0);
+}
+
+/** Tokenize one shell segment into words, respecting quotes and escapes. */
+function tokenize(segment: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: string | null = null;
+  for (let i = 0; i < segment.length; i++) {
+    const c = segment[i];
+    if (quote) {
+      if (c === "\\" && quote === '"') {
+        current += segment[i + 1] ?? "";
+        i++;
+        continue;
+      }
+      if (c === quote) {
+        quote = null;
+        continue;
+      }
+      current += c;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      quote = c;
+      continue;
+    }
+    if (c === "\\") {
+      current += segment[i + 1] ?? "";
+      i++;
+      continue;
+    }
+    if (/\s/.test(c)) {
+      if (current) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += c;
+  }
+  if (current) tokens.push(current);
+  return tokens;
+}
+
+/** Plain read-only commands whose default invocation cannot write a real file
+ * or execute another command. Commands with write/exec FLAGS are handled
+ * separately in {@link isSafeReadSegment}. Matched case-insensitively so the
+ * Windows/PowerShell names (`DIR`, `Get-Content`) work too. */
+const SAFE_COMMANDS = new Set([
+  // POSIX
+  "cat", "head", "tail", "less", "more", "grep", "ls", "pwd", "echo", "printf",
+  "wc", "uniq", "diff", "file", "stat", "du", "df", "which", "whereis", "type",
+  "printenv", "uname", "whoami", "id", "date", "cal", "uptime", "ps", "top",
+  "htop", "free", "jq", "bat", "eza",
+  // Windows cmd.exe
+  "dir", "where", "findstr", "systeminfo", "tasklist", "ipconfig", "netstat", "ver", "hostname",
+  // PowerShell read cmdlets
+  "get-childitem", "get-content", "get-item", "get-command", "select-string", "test-path",
+  "get-location", "get-process", "get-help", "get-date", "get-member", "get-itemproperty",
+  "get-service", "measure-object", "select-object", "sort-object", "convertto-json",
+  "convertfrom-json", "out-string",
+]);
+
+/** `find` actions that execute or write. */
+const FIND_WRITE_ACTIONS = new Set([
+  "-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls",
+]);
+/** `fd` actions that execute. */
+const FD_EXEC_FLAGS = new Set(["-x", "-X", "--exec", "--exec-batch"]);
+/** Package-manager subcommands that only READ. */
+const PACKAGE_READ_SUBCOMMANDS = new Set(["list", "ls", "view", "info", "search", "outdated", "audit", "why", "explain"]);
+/** Git subcommands that only READ (no write variant). */
+const GIT_READ_SUBCOMMANDS = new Set([
+  "status", "log", "diff", "show", "blame", "reflog", "shortlog", "describe",
+  "rev-parse", "rev-list", "show-ref", "for-each-ref", "cat-file", "ls-files",
+  "ls-tree", "merge-base", "diff-tree", "diff-index", "name-rev",
+  "check-ignore", "check-attr", "count-objects", "version", "help", "grep",
+  "whatchanged",
+]);
+/** Git flags that can WRITE a file or EXECUTE a helper (blocked everywhere). */
+const GIT_DANGEROUS_FLAGS = /^(--output(=|$)|--ext-diff$|--textconv$|--open-files-in-pager(=|$)|-O$|--filters$|--filter=)/;
+const GIT_BRANCH_READ_FLAGS = new Set(["-l", "--list", "-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose", "--show-current"]);
+const GIT_BRANCH_VALUE_FLAGS = new Set(["--contains", "--merged", "--no-merged", "--points-at", "--sort"]);
+const GIT_TAG_READ_FLAGS = new Set(["-l", "--list", "-n", "-v", "--verify", "--contains", "--merged", "--no-merged", "--points-at", "--sort"]);
+const GIT_REMOTE_READ = new Set(["-v", "--verbose", "show", "get-url"]);
+const GIT_FLAG_WITH_VALUE = /^--(sort|contains|merged|no-merged|points-at)=/;
+
+/** True when every argument is a READ flag (or the value of a value-flag).
+ * A positional argument (e.g. `git branch foo`) creates/renames → rejected. */
+function gitReadFlags(args: string[], readFlags: Set<string>, valueFlags: Set<string>): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (!a.startsWith("-")) return false;
+    if (valueFlags.has(a)) {
+      i++; // skip its value
+      continue;
+    }
+    if (readFlags.has(a) || GIT_FLAG_WITH_VALUE.test(a)) continue;
+    return false;
+  }
+  return true;
+}
+
+/** True when a `git …` invocation is a read-only operation. */
+function isSafeGit(args: string[]): boolean {
+  if (args.length === 0) return false;
+  if (args.some((a) => GIT_DANGEROUS_FLAGS.test(a))) return false;
+  const [sub, ...rest] = args;
+  if (GIT_READ_SUBCOMMANDS.has(sub)) return true;
+  switch (sub) {
+    case "stash":
+      return rest[0] === "list" || rest[0] === "show";
+    case "worktree":
+      return rest[0] === "list";
+    case "submodule":
+      return rest[0] === "status" || rest[0] === "summary";
+    case "config":
+      return rest.some((a) => a === "--get" || a === "--get-all" || a === "--get-regexp" || a === "--list" || a === "-l");
+    case "branch":
+      return rest.length === 0 || gitReadFlags(rest, GIT_BRANCH_READ_FLAGS, GIT_BRANCH_VALUE_FLAGS);
+    case "tag":
+      return rest.length === 0 || gitReadFlags(rest, GIT_TAG_READ_FLAGS, GIT_BRANCH_VALUE_FLAGS);
+    case "remote":
+      return rest.length === 0 || GIT_REMOTE_READ.has(rest[0]);
+    case "symbolic-ref":
+      // Reads with 0–1 args; WRITES when given a new value.
+      return rest.length <= 1;
+    default:
+      return false;
+  }
+}
+
+/** True when one top-level segment is a known read-only command. */
+function isSafeReadSegment(segment: string): boolean {
+  // Command/process substitution can smuggle an arbitrary command
+  // (`echo "$(rm -rf x)"`, `cat >(...)`): refused outright.
+  if (segment.includes("$(") || segment.includes("`") || segment.includes(">(")) return false;
+  const tokens = tokenize(segment);
+  const cmd = tokens[0]?.toLowerCase();
+  const args = tokens.slice(1);
+  if (!cmd) return false;
+  switch (cmd) {
+    case "git":
+      return isSafeGit(args);
+    case "find":
+      return !args.some((a) => FIND_WRITE_ACTIONS.has(a));
+    case "fd":
+      return !args.some((a) => FD_EXEC_FLAGS.has(a));
+    case "sort":
+    case "tree":
+      // `-o/--output` writes the result to a FILE.
+      return !args.some((a) => /^(-o|--output)/.test(a));
+    case "rg":
+      // `--pre <cmd>` runs a preprocessor command.
+      return !args.some((a) => a === "--pre" || a.startsWith("--pre="));
+    case "env":
+      // `env` alone (or with VAR=… assignments) lists; `env <cmd>` EXECUTES it.
+      return args.every((a) => a.startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(a));
+    case "node":
+    case "python":
+    case "python3":
+      return args.length > 0 && args.every((a) => a === "--version" || a === "-V" || a === "-v");
+    case "curl":
+      // Flags that write a local file / upload.
+      return !args.some((a) => /^(-o|--output|-O|--remote-name|-T|--upload-file)$/.test(a) || /^--(output|upload-file)=/.test(a));
+    case "npm":
+    case "yarn":
+    case "pnpm":
+      return args.length > 0 && PACKAGE_READ_SUBCOMMANDS.has(args[0]);
+    default:
+      return SAFE_COMMANDS.has(cmd);
+  }
+}
+
+/**
+ * Allowlist-first read-only check for the Shell tool in Analyze mode.
+ *
+ * A command is allowed ONLY when it is split into top-level segments and
+ * EVERY segment is a known read-only command, AND the whole line has no
+ * redirection to a real file. This is the OPPOSITE of a denylist: an unknown
+ * command (`python -c …`, `docker ps`, `sh x.sh`) is REFUSED, not "allowed
+ * because it was not recognized as a write".
+ *
+ * It is a best-effort filter, NOT a filesystem sandbox: a read-only command
+ * can still have an obscure write/exec flag, and a language interpreter is
+ * opaque. Its purpose is to keep Analyze read-only for the common cases, not
+ * to contain a hostile command.
+ */
+export function isSafeReadCommand(command: string): boolean {
   const cmd = command.trim();
   if (!cmd) return false;
-
-  if (hasFileRedirection(cmd)) return true;
-
-  // Mutating file verbs.
-  if (
-    /\b(?:rm|rmdir|mv|cp|ln|touch|mkdir|truncate|shred|unlink|chmod|chown|chgrp|chattr|mknod|mkfs|mkswap|dd)\b/.test(
-      cmd,
-    ) ||
-    /\b(?:sed|perl)\s+-i\b/.test(cmd) ||
-    /\bawk\s+-i\s+(?:inplace|in-place)\b/.test(cmd) ||
-    /\btee\b/.test(cmd)
-  ) {
-    return true;
-  }
-
-  // Windows (cmd.exe) and PowerShell mutating verbs. Bare 2-letter commands
-  // (`md`, `rd`) are deliberately NOT matched: they false-positive on paths
-  // like `notes.md`. Quoted PowerShell cmdlets (Remove-Item) and their `-OutFile`
-  // variants are covered too.
-  if (
-    /\b(?:del|erase|copy|xcopy|robocopy|move|ren|rename|rmdir|mklink|attrib|icacls|takeown|cacls)\b/i.test(cmd) ||
-    /\b(?:remove-item|new-item|set-content|add-content|clear-content|out-file|move-item|copy-item|rename-item|set-itemproperty|new-itemproperty|remove-itemproperty|invoke-expression|clear-item)\b/i.test(
-      cmd,
-    ) ||
-    /\breg\s+(?:add|delete|import|copy|save|restore)\b/i.test(cmd) ||
-    /-outfile\b/i.test(cmd)
-  ) {
-    return true;
-  }
-
-  // Archive/compress writers (reading archives is fine; creation/extraction
-  // modifies the filesystem, and detecting flags reliably is fragile, so the
-  // whole family is refused in read-only mode).
-  if (/\b(?:tar|zip|unzip|gzip|bzip2|xz|7z|rar|zstd)\b(?:[ \t]|$)/.test(cmd)) return true;
-
-  // Package managers / installers (they write to disk and can run hooks).
-  if (
-    /\b(?:npm|pnpm|yarn|bun)\s+(?:install|add|init|ci|uninstall|remove|update|link|set-script|patch)\b/.test(
-      cmd,
-    ) ||
-    /\b(?:pip|pip3|pipx|uv|poetry|conda|gem|composer|go|gradle)\s+(?:install|add|init|remove|uninstall|update|build)\b/.test(
-      cmd,
-    ) ||
-    /\b(?:cargo)\s+(?:add|install|new|init|remove|build|run)\b/.test(cmd) ||
-    /\b(?:apt|apt-get|dnf|yum|pacman|apk|brew|port)\b/.test(cmd)
-  ) {
-    return true;
-  }
-
-  // Git write subcommands (push/pull/fetch touch network+state; the read-only
-  // status/log/diff remain usable).
-  if (
-    /\bgit\s+(?:add|commit|push|pull|fetch|merge|rebase|reset|clean|restore|rm|mv|stash|checkout|switch|tag|clone|init|gc|prune|remote\s+(?:add|set-url|remove|rename))\b/.test(
-      cmd,
-    )
-  ) {
-    return true;
-  }
-
-  // Build/test drivers that run arbitrary file-producing commands.
-  if (/\b(?:make|cmake|ninja|meson|configure|gradlew?|mvn)\b/.test(cmd)) return true;
-
-  return false;
+  if (hasFileRedirection(cmd)) return false;
+  const segments = splitSegments(cmd);
+  if (segments.length === 0) return false;
+  return segments.every(isSafeReadSegment);
 }

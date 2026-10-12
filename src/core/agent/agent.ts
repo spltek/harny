@@ -12,7 +12,7 @@ import {
   isAnalyzeMode,
   isFileMutatingTool,
   isReadOnlyTool,
-  isWriteCommand,
+  isSafeReadCommand,
   toolDefinitionsForMode,
   type ChatMode,
 } from "../tools/mode-policy";
@@ -1046,12 +1046,13 @@ export class Agent implements ChatController {
     if (!tool) return { content: `Unknown tool: ${tc.name}`, isError: true };
     // Analyze (read-only PREVIEW) mode, defense in depth — never trust the
     // model even though the prompt tells it how to behave:
-    //  · Shell is refused when the command could modify the filesystem;
+    //  · Shell runs ONLY an allowlisted read-only command (anything else,
+    //    including interpreters/scripts, is refused before running);
     //  · the file-mutating tools (Write/StrReplace/Edit/Delete) run DRY-RUN:
     //    they validate the change and return the diff, but write NOTHING.
     let dryRun = false;
     if (isAnalyzeMode(this._mode)) {
-      if (tc.name === "Shell" && isWriteCommand(String(tc.arguments.command ?? ""))) {
+      if (tc.name === "Shell" && !isSafeReadCommand(String(tc.arguments.command ?? ""))) {
         return { content: ANALYZE_BLOCKED_SHELL_MESSAGE(String(tc.arguments.command ?? "")), isError: true };
       }
       dryRun = isFileMutatingTool(tc.name);
