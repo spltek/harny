@@ -37,6 +37,7 @@ function memFs(files: Record<string, string>, mtimes: Record<string, number> = {
       if (!(k in files)) throw new Error(`ENOENT: ${k}`);
       return files[k];
     },
+    readBytes: (p) => Buffer.from(files[norm(p)] ?? "", "utf-8"),
     writeText: () => {},
     exists: (p) => {
       const k = norm(p);
@@ -545,6 +546,7 @@ describe("GlobTool (pure Node, cross-platform)", () => {
     const dirs = new Set(["/r", "/r/loop"]);
     const fs: FileSystem = {
       readText: (p) => (p === "/r/a.ts" ? "" : (() => { throw new Error("ENOENT"); })()),
+      readBytes: () => Buffer.alloc(0),
       writeText: () => {},
       exists: (p) => p === "/r/a.ts" || dirs.has(p),
       isDirectory: (p) => dirs.has(p),

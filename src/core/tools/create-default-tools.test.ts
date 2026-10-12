@@ -8,6 +8,7 @@ import type { FileSystem } from "./file-system";
 
 const fakeFs: FileSystem = {
   readText: () => "",
+  readBytes: () => Buffer.alloc(0),
   writeText: () => {},
   exists: () => false,
   isDirectory: () => false,

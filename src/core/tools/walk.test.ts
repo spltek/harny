@@ -16,6 +16,7 @@ function memFs(files: Record<string, string>): FileSystem {
       if (!(k in files)) throw new Error(`ENOENT: ${k}`);
       return files[k];
     },
+    readBytes: (p) => Buffer.from(files[norm(p)] ?? "", "utf-8"),
     writeText: () => {},
     exists: (p) => {
       const k = norm(p);

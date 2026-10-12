@@ -2,6 +2,7 @@ import { basename, extname } from "node:path";
 import { readFileSync } from "node:fs";
 import type { FileSystem } from "../core/tools/file-system";
 import { formatSize, isImagePath } from "../core/tools/path-utils";
+import { detectBinary, describeBinary, isBinaryText, type BinaryInfo } from "../core/tools/binary";
 import type { AttachmentInfo, AttachmentPart } from "./attachment-types";
 
 const MAX_ATTACHMENT_CHARS = 30000;
@@ -82,6 +83,16 @@ export class AttachmentService {
       }
       // Inline text (a pasted text file) OR a real file read from disk.
       let content: string | undefined = f.content;
+      // Content-based detection BEFORE decoding: never inline binary garbage.
+      // The model is told WHAT the file is so it can plan (read it in Build).
+      if (content === undefined && f.path) {
+        const info = this.detect(f.path);
+        if (info.binary) {
+          parts.push({ name: f.name, isImage: false });
+          textParts.push(this.binaryNote(f.name, f.size, info));
+          continue;
+        }
+      }
       if (content === undefined) {
         if (!f.path) {
           parts.push({ name: f.name, isImage: false });
@@ -98,6 +109,12 @@ export class AttachmentService {
           textParts.push(`[Could not read file: ${f.name}]`);
           continue;
         }
+      }
+      // Fallback for a binary whose signature is beyond the sampled head.
+      if (isBinaryText(content)) {
+        parts.push({ name: f.name, isImage: false });
+        textParts.push(this.binaryNote(f.name, f.size, { binary: true }));
+        continue;
       }
       if (content.length > MAX_ATTACHMENT_CHARS) {
         content = content.slice(0, MAX_ATTACHMENT_CHARS) + "\n\n[Content truncated...]";
@@ -127,5 +144,23 @@ export class AttachmentService {
     } catch {
       return undefined;
     }
+  }
+
+  /** Sniff a file's content TYPE from its first bytes (best-effort). */
+  private detect(path: string): BinaryInfo {
+    try {
+      return detectBinary(this.fs.readBytes(path, 8192));
+    } catch {
+      return { binary: false };
+    }
+  }
+
+  /** Clear, actionable note for a binary attachment: says WHAT it is and how to
+   * proceed (Build), instead of inlining undecodable bytes. */
+  private binaryNote(name: string, size: number, info: BinaryInfo): string {
+    return (
+      `[Attached ${describeBinary(info)} file "${name}" (${formatSize(size)}) — binary, content not inlined. ` +
+      "To read or change it, switch to Build and use a script/tool for that format.]"
+    );
   }
 }

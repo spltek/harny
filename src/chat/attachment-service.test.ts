@@ -109,6 +109,35 @@ describe("AttachmentService", () => {
     expect(ctx.text).toContain("binary");
   });
 
+  it("detects an attached BINARY file from its content and never inlines it", async () => {
+    dir = mkdtempSync(join(tmpdir(), "harny-att-"));
+    const pdf = join(dir, "report.pdf");
+    writeFileSync(pdf, "%PDF-1.7\n1 0 obj\nstream\n\u0000\u0001binary\nendstream");
+
+    const service = makeService(async () => []);
+    const ctx = await service.buildContext([{ name: "report.pdf", path: pdf, size: 40, isImage: false }]);
+
+    expect(ctx.text).toContain("PDF");
+    expect(ctx.text).toContain("not inlined");
+    // The undecodable bytes are NOT inlined into the model context.
+    expect(ctx.text).not.toContain("%PDF-1.7");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("reports a ZIP container as ZIP (the model knows a .docx is a ZIP)", async () => {
+    dir = mkdtempSync(join(tmpdir(), "harny-att-"));
+    const docx = join(dir, "memo.docx");
+    writeFileSync(docx, Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00]));
+
+    const service = makeService(async () => []);
+    const ctx = await service.buildContext([{ name: "memo.docx", path: docx, size: 8, isImage: false }]);
+
+    expect(ctx.text).toContain("ZIP");
+    expect(ctx.text).toContain("memo.docx");
+    expect(ctx.text).toContain("not inlined");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("fromPaths returns metadata only for existing paths", () => {
     dir = mkdtempSync(join(tmpdir(), "harny-att-"));
     const txt = join(dir, "a.txt");

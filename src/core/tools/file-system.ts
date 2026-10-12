@@ -1,7 +1,10 @@
 import {
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
   readdirSync,
   realpathSync,
   renameSync,
@@ -17,6 +20,9 @@ function sleepSync(ms: number): void {
 
 export interface FileSystem {
   readText(path: string): string;
+  /** Read the first `maxBytes` bytes of a file (default 8192). Used to sniff
+   * the content TYPE (magic bytes) without loading a huge binary. */
+  readBytes(path: string, maxBytes?: number): Buffer;
   writeText(path: string, content: string): void;
   exists(path: string): boolean;
   /** True when the path is an existing directory (false for files/missing). */
@@ -33,6 +39,17 @@ export interface FileSystem {
 
 export const nodeFileSystem: FileSystem = {
   readText: (p) => readFileSync(p, "utf-8"),
+  readBytes: (p, maxBytes = 8192) => {
+    const fd = openSync(p, "r");
+    try {
+      const size = Math.max(0, Math.min(maxBytes, statSync(p).size));
+      const buf = Buffer.alloc(size);
+      const read = readSync(fd, buf, 0, size, 0);
+      return buf.subarray(0, read);
+    } finally {
+      closeSync(fd);
+    }
+  },
   // ATOMIC write: write a sibling temp file then rename over the target, so a
   // crash/power-loss never leaves a half-written session/config file. On
   // Windows the rename can be refused while the target is briefly locked (AV,

@@ -20,6 +20,7 @@ function memFs(files: Record<string, string>): FileSystem {
       if (k in map) return map[k];
       throw new Error("ENOENT " + p);
     },
+    readBytes: (p) => Buffer.from(map[norm(p)] ?? "", "utf-8"),
     writeText: () => {},
     exists: (p) => norm(p) in map,
     isDirectory: (p) => dirs.has(norm(p)),

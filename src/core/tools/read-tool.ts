@@ -1,6 +1,6 @@
 import type { FileSystem } from "./file-system";
 import { formatSize, isImagePath, resolvePath } from "./path-utils";
-import { isBinaryText } from "./binary";
+import { detectBinary, describeBinary, isBinaryText } from "./binary";
 import type { Tool, ToolDefinition, ToolResult } from "./tool";
 
 export class ReadTool implements Tool {
@@ -52,8 +52,17 @@ export class ReadTool implements Tool {
     }
 
     try {
+      // Content-based detection first: the magic bytes identify the type (so
+      // the model knows WHAT it is) and stop binary garbage from being shown.
+      const info = detectBinary(this.fs.readBytes(filePath, 8192));
+      if (info.binary) {
+        return {
+          content: `⚠️ ${describeBinary(info)} file (${formatSize(this.fs.size(filePath))}) — content not displayed.`,
+          isError: false,
+        };
+      }
       const content = this.fs.readText(filePath);
-      // Binary files read as garbage: never feed raw bytes to the model.
+      // Fallback for a binary whose signature is beyond the sampled head.
       if (isBinaryText(content)) {
         return {
           content: `⚠️ Binary file (${formatSize(this.fs.size(filePath))}) — content not displayed.`,

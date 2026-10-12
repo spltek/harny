@@ -93,6 +93,18 @@ describe("file tools", () => {
       expect(result.content).not.toContain("\u0000");
     });
 
+    it("names the binary TYPE from the content (magic bytes), not the extension", () => {
+      const p = join(dir, "report.pdf");
+      writeFileSync(p, "%PDF-1.7\n1 0 obj\nstream\nbinary");
+      const tool = new ReadTool(nodeFileSystem, cwd);
+
+      const result = tool.execute({ path: p });
+
+      expect(result.isError).toBe(false);
+      expect(result.content).toContain("PDF file");
+      expect(result.content).toContain("content not displayed");
+    });
+
     it("resolves relative paths against the workspace root", () => {
       writeFileSync(join(dir, "rel.txt"), "hello");
       const tool = new ReadTool(nodeFileSystem, cwd);

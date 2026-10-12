@@ -9,6 +9,7 @@ function fakeFs(existing: string[] = []): FileSystem {
   const set = new Set(existing);
   return {
     readText: () => "",
+    readBytes: () => Buffer.alloc(0),
     writeText: () => {},
     exists: (p: string) => set.has(p),
     list: () => [],

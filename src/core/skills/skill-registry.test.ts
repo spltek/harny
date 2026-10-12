@@ -15,6 +15,11 @@ function memFs(files: Record<string, string>): FileSystem {
       if (hit) return hit[1];
       throw new Error("ENOENT " + p);
     },
+    readBytes: (p) => {
+      const k = norm(p);
+      const hit = entries().find(([kk]) => kk === k);
+      return Buffer.from(hit?.[1] ?? "", "utf-8");
+    },
     writeText: () => {},
     exists: (p) => {
       const k = norm(p);
