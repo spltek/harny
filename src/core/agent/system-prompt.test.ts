@@ -123,7 +123,8 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
       // MUST + heterogeneous tasks + decision-to-action rule.
       expect(p).toContain("you MUST use Delegate");
       expect(p).toContain("INDEPENDENCE, NOT SAMENESS");
-      expect(p).toContain("do not step on each other");
+      expect(p).toContain("target the same resource");
+      expect(p).toContain("There are exactly TWO reasons to NOT parallelize");
       expect(p).toContain("HARD RULE");
       expect(p).toContain("MEANINGFUL");
       expect(p).toContain("deleting/moving its folder");

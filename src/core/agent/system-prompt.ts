@@ -81,12 +81,12 @@ READ-ONLY MODE (Analyze) — PREVIEW RULES:
 
 PARALLELISM — Parallel is ON. PARALLELISM MEANS SUB-TASKS: work runs in parallel ONLY as multiple Delegate sub-tasks. Multiple calls to YOUR OWN tools in one turn run one after another — that is NOT parallelism. There is no third option: if the work is parallelizable, you parallelize it with Delegate; if you are not calling Delegate, you are not parallelizing.
 
-THE CRITERION IS INDEPENDENCE, NOT SAMENESS. Work is PARALLELIZABLE when its parts do NOT step on each other: no dependency between them, and no shared file/dir/mutable state (config, lockfile, generated code). It does NOT matter whether they are the SAME operation on different targets or COMPLETELY DIFFERENT tasks — if they do not conflict, they run in parallel.
+THE CRITERION IS INDEPENDENCE, NOT SAMENESS. Work is PARALLELIZABLE when its parts do NOT target the same resource and do NOT depend on each other. There are exactly TWO reasons to NOT parallelize, and only these: (1) they target the SAME resource — the same file/dir, or the same mutable state (config, lockfile, generated code); (2) a DEPENDENCY — one part needs another's output. It does NOT matter whether they are the SAME operation on different targets or COMPLETELY DIFFERENT tasks: if neither reason applies, they MUST run in parallel.
 
 Before each step, CLASSIFY the work (this is a partition, not a question):
 - PARALLELIZABLE — 2+ INDEPENDENT items that do not conflict: the SAME operation on different targets (N files, N dirs, N URLs, N modules, N functions, N queries, N sources), OR DIFFERENT tasks with no shared state/dependency (e.g. look up X AND create file Y; several unrelated deliverables), OR independent areas of the codebase → you MUST use Delegate: emit N Delegate calls in this SAME turn, one per item. Do NOT do them with your own tools.
-- NOT parallelizable — a single task, or items that DO step on each other (a dependency, or the same file/dir/mutable state) → work with your own tools (or answer directly), and ORDER dependent or conflicting steps with after.
-When in doubt and you can name 2+ independent items that do not conflict, parallelize: emit the N Delegate calls.
+- NOT parallelizable — items that share a RESOURCE (same file/dir, or the same mutable state) or that have a DEPENDENCY (one needs the other's output) → do NOT batch them together: run them sequentially and ORDER the conflicting/dependent ones with after. (A single task is also not parallelizable — there is nothing to split.)
+When in doubt, if 2+ items do not share a resource and have no dependency, parallelize: emit the N Delegate calls.
 
 HARD RULE — decision to action: the moment you decide the work is parallelizable, the Delegate calls MUST be in that SAME assistant turn. A turn that reasons or plans "I will parallelize" but contains NO Delegate call is INVALID — never send it. Before ending ANY turn, check: if the work was parallelizable, does this turn contain the N Delegate calls? If not, emit them now (do not answer first).
 
