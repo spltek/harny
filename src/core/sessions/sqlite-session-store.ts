@@ -46,6 +46,11 @@ type Row = Record<string, unknown>;
  * a `messages` table (one row each, incremental appends) with an FTS5 index for
  * full-text search. The full `ChatMessage` is stored as a JSON `data` column, so
  * no field (thinking / images / tool calls …) is lost, while `content` feeds FTS.
+ *
+ * SCHEMA: versioned via `migrations.ts` (`PRAGMA user_version`). To add a
+ * per-session field: a NEW migration + the four store touch points
+ * (`normalizePatch`, `carrySummary`, `upsertSummary`, `rowToSummary`) + the
+ * schema snapshot in `migrations.test.ts`. Never edit the baseline migration.
  */
 export class SqliteSessionStore implements SessionStore {
   private readonly idGen: () => string;

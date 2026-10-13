@@ -16,6 +16,10 @@ function tableExists(db: DatabaseSync, name: string): boolean {
   return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
 }
 
+function triggerExists(db: DatabaseSync, name: string): boolean {
+  return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name=?").get(name);
+}
+
 describe("runMigrations — the shipped schema", () => {
   it("creates the baseline on a fresh database and stamps the version", () => {
     const db = makeDb();
@@ -71,6 +75,50 @@ describe("runMigrations — the shipped schema", () => {
     const db = makeDb();
     db.exec("PRAGMA user_version = 999");
     expect(() => runMigrations(db)).toThrow(/newer than this Harny build/);
+  });
+});
+
+describe("schema contract (drift guard)", () => {
+  const columns = (db: DatabaseSync, table: string): string[] =>
+    (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((r) => r.name);
+
+  it("migrations produce EXACTLY the columns the code relies on", () => {
+    const db = makeDb();
+    runMigrations(db);
+
+    // Adding a per-session field means: a NEW migration + the store mapper
+    // (normalizePatch/carrySummary/upsertSummary/rowToSummary) + THIS list.
+    // If you add a column here without a migration, the store fails at runtime;
+    // if you add a migration without updating this list, the test fails.
+    expect(columns(db, "sessions")).toEqual([
+      "id",
+      "name",
+      "folder",
+      "created_at",
+      "updated_at",
+      "message_count",
+      "model",
+      "model_provider",
+      "thinking_level",
+      "context_window",
+      "compaction_threshold_percent",
+      "context_tokens",
+      "output_tokens",
+      "temperature",
+      "presence_penalty",
+      "frequency_penalty",
+      "top_p",
+      "sampler",
+      "max_parallel_sub_agents",
+      "loop_guard",
+      "loop_guard_response",
+      "loop_guard_params",
+    ]);
+    expect(columns(db, "messages")).toEqual(["session_id", "seq", "role", "content", "timestamp", "data"]);
+    // The full-text index + its sync triggers exist.
+    expect(tableExists(db, "messages_fts")).toBe(true);
+    expect(triggerExists(db, "messages_ai")).toBe(true);
+    expect(triggerExists(db, "messages_ad")).toBe(true);
   });
 });
 
