@@ -79,10 +79,6 @@ export class StreamTee {
             this.deps.onPreviewReady?.(rt.sessionId);
           }
           break;
-        case "run_undoable":
-          // A writer run was snapshotted: offer "undo this run".
-          if (active) post({ type: "runUndoable" });
-          break;
         case "loop_intervention":
           // A degenerate loop was broken and the run continues: drop the
           // interrupted live text so the next turn starts fresh.

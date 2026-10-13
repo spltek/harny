@@ -84,9 +84,6 @@ interface ConfigState {
   mode?: "analyze" | "agent";
   /** Per-session "Parallel" switch: orchestration/sub-agents enabled. */
   parallel?: boolean;
-  /** True when the ACTIVE session still has an undoable writer snapshot: the UI
-   * re-renders the "Undo run" button after a tab switch / reload. */
-  canUndo?: boolean;
   /** True when the models.dev fallback is unreachable and a limit is missing. */
   modelsDevError?: boolean;
   contextWindow?: number;
@@ -227,8 +224,6 @@ let activeId: string | undefined = init.activeId;
 let openIds: string[] = init.openIds || [];
 let currentSessions: SessionInfo[] = init.sessions || [];
 let workingIds = new Set<string>(init.workingIds || []);
-/** The ACTIVE session has an undoable writer snapshot (from the host config). */
-let canUndoActive = false;
 /** Current auto-compaction threshold % of the context window (updated from config pushes). */
 let compactionThresholdPct = 80;
 
@@ -619,35 +614,6 @@ function addSwitchToBuildBanner(): void {
   text.className = "build-cta-text";
   text.textContent = "Prepared as previews in Analyze — switch to Build to apply.";
   el.appendChild(text);
-  messagesEl.appendChild(el);
-  scrollDown();
-}
-
-/**
- * Offer "undo this run" after a writer run changed files. Only the LAST run is
- * undoable, so a new offer REPLACES the previous one.
- */
-function addUndoRunBanner(): void {
-  messagesEl.querySelectorAll(".run-undo").forEach((el) => el.remove());
-  const el = document.createElement("div");
-  el.className = "run-undo";
-  const text = document.createElement("span");
-  text.className = "run-undo-text";
-  text.textContent = "This run changed files on disk.";
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "run-undo-btn";
-  btn.textContent = "Undo run";
-  // Never clickable while the ACTIVE session is working (the host would refuse
-  // it anyway); the lock is refreshed by applyWorkingLock on every status.
-  const undoBusy = activeId ? workingIds.has(activeId) : false;
-  btn.disabled = undoBusy;
-  if (undoBusy) btn.title = "Stop the current run before undoing";
-  btn.addEventListener("click", () => {
-    vscode.postMessage({ type: "undoRun" });
-    el.remove();
-  });
-  el.append(text, btn);
   messagesEl.appendChild(el);
   scrollDown();
 }
@@ -1309,9 +1275,6 @@ function renderMessages(msgs: ChatMsg[]): boolean {
   // appended AFTER the last bubble: scroll once more so auto-scroll includes
   // its height (otherwise the badge is left just below the fold).
   if (hasVisible) scrollDown();
-  // Re-render the "Undo run" offer for the active session (survives a tab
-  // switch / reload); the host says whether a snapshot is still available.
-  if (canUndoActive) addUndoRunBanner();
   return hasVisible;
 }
 
@@ -4140,11 +4103,6 @@ window.addEventListener("message", (e) => {
       addSwitchToBuildBanner();
       break;
     }
-    case "runUndoable": {
-      // A writer run was snapshotted: offer to undo it.
-      addUndoRunBanner();
-      break;
-    }
     case "loopIntervention": {
       // The loop guard broke a degenerate loop and the run CONTINUES: settle
       // the interrupted segment and show an amber notice (not a red error).
@@ -4361,7 +4319,6 @@ window.addEventListener("message", (e) => {
         if (msg.configSeq < lastConfigSeq) break;
         lastConfigSeq = msg.configSeq;
       }
-      canUndoActive = (msg.config as { canUndo?: boolean } | undefined)?.canUndo === true;
       renderModelSelect(msg.config || {});
       renderThinkingSelect(msg.config || {});
       if (msg.config && isChatMode(msg.config.mode)) {
@@ -4435,13 +4392,6 @@ function applyWorkingLock(): void {
   gearBtn.title = busy
     ? "Stop the current work before configuring providers & models"
     : "Configure providers & models";
-  // The "Undo run" button (if present) follows the ACTIVE session's lock: it is
-  // disabled while that session is working, enabled again once it stops.
-  const undoBusy = activeId ? workingIds.has(activeId) : false;
-  for (const b of messagesEl.querySelectorAll<HTMLButtonElement>(".run-undo-btn")) {
-    b.disabled = undoBusy;
-    b.title = undoBusy ? "Stop the current run before undoing" : "Undo this run";
-  }
 }
 
 function renderViewState(state: {
@@ -4459,7 +4409,6 @@ function renderViewState(state: {
   if (prevActiveId !== activeId) clearAttachments();
   currentSessions = state.sessions || [];
   workingIds = new Set(state.workingIds || []);
-  canUndoActive = (state.config as { canUndo?: boolean } | undefined)?.canUndo === true;
   renderSessions(currentSessions);
   renderTabs(currentSessions);
   renderModelSelect(state.config || {});

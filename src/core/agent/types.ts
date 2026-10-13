@@ -53,7 +53,4 @@ export type AgentEvent =
   /** Analyze finished with prepared changes that are NOT applied: the UI
    * shows a highlighted "Switch to Build" call to action. */
   | { type: "preview_ready" }
-  /** A writer run just finished and its files were snapshotted: the UI can
-   * offer "undo this run". */
-  | { type: "run_undoable" }
   | { type: "raw_chunk"; chunk: string; kind: "text" | "thinking" | "tool_start" | "tool_args" | "tool_end" };

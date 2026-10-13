@@ -1350,54 +1350,6 @@ describe("view webview client", () => {
     expect(document.querySelector(".build-cta-btn")).toBeFalsy();
   });
 
-  it("offers an 'Undo run' button after a writer run and posts undoRun on click", async () => {
-    await loadView();
-    hostMessage({ type: "runUndoable" });
-    const btn = document.querySelector(".run-undo-btn") as HTMLButtonElement;
-    expect(btn?.textContent).toBe("Undo run");
-
-    posted.length = 0;
-    btn.click();
-    expect(posted).toContainEqual({ type: "undoRun" });
-  });
-
-  it("a new runUndoable replaces the previous undo offer", async () => {
-    await loadView();
-    hostMessage({ type: "runUndoable" });
-    hostMessage({ type: "runUndoable" });
-    expect(document.querySelectorAll(".run-undo").length).toBe(1);
-  });
-
-  it("re-renders the Undo run button from the config flag (survives a tab switch/reload)", async () => {
-    await loadView();
-    hostMessage({ type: "config", config: { mode: "analyze", canUndo: true }, configSeq: 1 });
-    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "done", timestamp: 1 }] });
-    expect(document.querySelector(".run-undo-btn")?.textContent).toBe("Undo run");
-
-    // A later config without canUndo removes the offer on the next render.
-    hostMessage({ type: "config", config: { mode: "analyze", canUndo: false }, configSeq: 2 });
-    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "done", timestamp: 1 }] });
-    expect(document.querySelector(".run-undo")).toBeFalsy();
-  });
-
-  it("disables the Undo run button while the active session is working", async () => {
-    await loadView();
-    hostMessage({
-      type: "switchView",
-      sessions: [],
-      openIds: ["s1"],
-      activeId: "s1",
-      messages: [{ role: "assistant", content: "done", timestamp: 1 }],
-      config: { mode: "analyze", canUndo: true },
-      workingIds: ["s1"],
-    });
-    expect((document.querySelector(".run-undo-btn") as HTMLButtonElement)?.disabled).toBe(true);
-
-    // The run ends: the session is no longer working → the button is enabled.
-    hostMessage({ type: "status", workingIds: [] });
-    expect((document.querySelector(".run-undo-btn") as HTMLButtonElement)?.disabled).toBe(false);
-  });
-
   it("does NOT show the CTA from the text alone (no preview flag)", async () => {
     await loadView();
     hostMessage({

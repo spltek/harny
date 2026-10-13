@@ -9,11 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Undo last run**: before a writer run touches files, Harny snapshots the
-  declared resources (files; declared directories are walked, vendored/build dirs
-  skipped). After a run that changed files, an **Undo run** button restores the
-  previous contents and deletes the files it created. Text-only and best-effort
-  (binaries and oversized files are left untouched), and one-shot.
 - **Per-session Analyze/Build mode and Parallel switch**: both are now persisted
   in the session row (new baseline columns `mode` and `parallel`) and restored on
   reopen. Each new session starts in **Analyze** with **Parallel OFF**. Parallel
@@ -67,14 +62,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fire-and-forget config pushes cannot become unhandled rejections**:
   `pushConfig` / `postSwitchView` now catch and log a failure; the next push
   recovers the UI.
-- **"Undo run" is refused (and greyed out) while a run is in flight**: clicking
-  it during a run would restore files under a writing agent (same class as the
-  `closeTab` guard). The host refuses with a clear message, and the button is
-  disabled in the UI until the run stops.
-- **Undo snapshots are released + the "Undo run" button survives a tab switch**:
-  closing or deleting a session now frees its in-memory file snapshot (it was
-  retained for the whole window lifetime), and the button is re-rendered from a
-  `canUndo` config flag, so it no longer disappears on a tab switch or reload.
 - **Changing the model no longer clears the prompt**: switching model persists the
   choice to `config.json`, and the config-file watcher used to rebuild the whole
   webview (wiping the typed prompt, scroll and streaming state). Config changes

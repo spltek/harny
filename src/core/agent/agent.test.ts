@@ -69,21 +69,6 @@ interface Harness {
   history: InMemoryChatHistory;
 }
 
-/** Fake RunSnapshot recording calls, for the rollback wiring tests. */
-function fakeSnapshot(has = true) {
-  const captured: string[][] = [];
-  return {
-    captured,
-    beginRun: vi.fn(),
-    capture: vi.fn((paths: readonly string[]) => {
-      captured.push([...paths]);
-    }),
-    commitRun: vi.fn(),
-    hasSnapshot: vi.fn(() => has),
-    restore: vi.fn(() => ({ restored: [], removed: [], skipped: [] })),
-  };
-}
-
 function buildHarness(
   opts: {
     config?: HarnyConfig;
@@ -94,7 +79,6 @@ function buildHarness(
     onTurnBoundary?: (signal: AbortSignal) => Promise<void> | void;
     loopGuard?: LoopGuardOptions;
     streamIdleTimeoutMs?: number;
-    snapshot?: import("./run-snapshot").RunSnapshot;
     onFileChanged?: (change: { path: string; tool: string }) => void;
   } = {},
 ): Harness {
@@ -119,7 +103,6 @@ function buildHarness(
     onTurnBoundary: opts.onTurnBoundary,
     loopGuard: opts.loopGuard,
     streamIdleTimeoutMs: opts.streamIdleTimeoutMs,
-    snapshot: opts.snapshot,
     onFileChanged: opts.onFileChanged,
   });
   return { agent, factory, events: eventsLog, history };
@@ -959,50 +942,6 @@ describe("Agent", () => {
     expect(previews).toEqual([]);
   });
 
-  it("snapshots the target of a real file change and emits run_undoable", async () => {
-    const snap = fakeSnapshot();
-    const { agent, events } = buildHarness({
-      tools: [makeTool("Write")],
-      snapshot: snap,
-      chunks: [
-        [
-          { type: "tool_call_start", index: 0, id: "c", name: "Write" },
-          { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts","contents":"x"}' },
-          { type: "tool_call_end", index: 0 },
-        ],
-        [{ type: "text", content: "done" }],
-      ],
-    });
-    agent.setMode("agent");
-
-    await agent.send("write it");
-
-    expect(snap.beginRun).toHaveBeenCalled();
-    expect(snap.capture).toHaveBeenCalledWith(["a.ts"]);
-    expect(snap.commitRun).toHaveBeenCalled();
-    expect(events.some((e) => e.type === "run_undoable")).toBe(true);
-  });
-
-  it("does NOT snapshot Analyze previews (nothing is written)", async () => {
-    const snap = fakeSnapshot();
-    const { agent } = buildHarness({
-      tools: [makeTool("Write")],
-      snapshot: snap,
-      chunks: [
-        [
-          { type: "tool_call_start", index: 0, id: "c", name: "Write" },
-          { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts","contents":"x"}' },
-          { type: "tool_call_end", index: 0 },
-        ],
-        [{ type: "text", content: "done" }],
-      ],
-    });
-
-    await agent.send("write it"); // default = Analyze
-
-    expect(snap.capture).not.toHaveBeenCalled();
-  });
-
   it("emits a loop_intervention event when it breaks a loop", async () => {
     const repeated = (): StreamChunk[] => [
       { type: "tool_call_start", index: 0, id: "c", name: "Shell" },
@@ -1569,7 +1508,6 @@ describe("Orchestration (Delegate)", () => {
       onPreviewPrepared?: (change: { path: string; tool: string }) => void,
     ) => Promise<ToolResult>;
     abortSubAgent?: (toolCallId: string) => void;
-    snapshot?: import("./run-snapshot").RunSnapshot;
   }): { agent: Agent; history: InMemoryChatHistory; eventLog: AgentEvent[] } {
     const config = new StaticConfigProvider(
       opts.maxParallel ? { ...VALID_CONFIG, maxParallelSubAgents: opts.maxParallel } : VALID_CONFIG,
@@ -1591,7 +1529,6 @@ describe("Orchestration (Delegate)", () => {
       allowDelegation: opts.allowDelegation,
       spawnSubAgent: opts.spawn ?? (async () => ({ content: "default report", isError: false })),
       abortSubAgent: opts.abortSubAgent,
-      snapshot: opts.snapshot,
     });
     agent.setMode(opts.mode ?? "agent");
     agent.setDelegation(opts.delegate !== false); // orchestration tests: ON by default
@@ -1637,19 +1574,6 @@ describe("Orchestration (Delegate)", () => {
     expect(eventLog.some((e) => e.type === "preview_ready")).toBe(true);
     // The footer LISTS the file prepared by the sub-agent (not an empty list).
     expect(final?.content).toContain("src/a.ts");
-  });
-
-  it("snapshots a writer sub-agent's declared resources before it runs", async () => {
-    const snap = fakeSnapshot();
-    const { agent } = build({
-      calls: [{ id: "A", goal: "edit", access: "write", resources: ["src/a.ts"] }],
-      snapshot: snap,
-      spawn: async () => ({ content: "report", isError: false }),
-    });
-
-    await agent.send("go");
-
-    expect(snap.capture).toHaveBeenCalledWith(["src/a.ts"]);
   });
 
   it("a repeated read-only Delegate is RE-RUN, never served from the loop-guard cache", async () => {

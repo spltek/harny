@@ -19,7 +19,6 @@ import {
 import type { ToolDefinition } from "../tools/tool";
 import type { ChatController, SendOptions } from "./chat-controller";
 import type { PreparedChange } from "./types";
-import type { RunSnapshot } from "./run-snapshot";
 import {
   DELEGATE_TOOL_NAME,
   formatSubAgentAborted,
@@ -138,8 +137,6 @@ export interface AgentDeps {
   /** Called when a tool ACTUALLY changed a file (Build mode, not a preview):
    * lets the parent track what a run/sub-agent touched. */
   onFileChanged?: (change: PreparedChange) => void;
-  /** Snapshot of the files a writer run may change, for "undo last run". */
-  snapshot?: RunSnapshot;
 }
 
 /**
@@ -310,7 +307,6 @@ export class Agent implements ChatController {
 
     this.abortController = new AbortController();
     this._streaming = true;
-    this.deps.snapshot?.beginRun();
     this.log(`send: mode=${this._mode} parallel=${this.delegationEnabled ? "ON" : "OFF"}`);
     this.guard.reset();
     this.preparedChanges.clear();
@@ -333,10 +329,6 @@ export class Agent implements ChatController {
     } finally {
       this._streaming = false;
       this.abortController = null;
-      // Rollback: close the run's file snapshot and, when it captured
-      // something, tell the UI that this run can be undone.
-      this.deps.snapshot?.commitRun();
-      if (this.deps.snapshot?.hasSnapshot()) this.deps.events.emit({ type: "run_undoable" });
     }
   }
 
@@ -1051,11 +1043,6 @@ export class Agent implements ChatController {
         ...(this.deps.ownerId ? { ownerId: this.deps.ownerId } : {}),
         ...(this.abortController ? { signal: this.abortController.signal } : {}),
       };
-      // Rollback: capture the target BEFORE a REAL (non-preview) file change.
-      if (!dryRun && isFileMutatingTool(tc.name)) {
-        const target = String(tc.arguments.path ?? "").trim();
-        if (target) this.deps.snapshot?.capture([target]);
-      }
       const result = await tool.execute(tc.arguments, ctx);
       // Remember that a preview was prepared so the final answer can be made
       // unambiguous (the model may still claim it "applied" the change).
@@ -1159,8 +1146,6 @@ export class Agent implements ChatController {
     // defaulting to ALL of them when the orchestrator did not specify any.
     const forwarded = this.resolveAttachments(spec.attachments);
     const resolvedSpec: DelegateSpec = { ...spec, images: forwarded.images, attachmentText: forwarded.text };
-    // Rollback: snapshot the declared resources BEFORE a writer touches them.
-    if (resolvedSpec.access !== "read") this.deps.snapshot?.capture(resolvedSpec.resources);
     try {
       // Signal the UI that this sub-agent is STARTING now (queued → running):
       // with a concurrency cap, several delegates may be queued behind others.

@@ -35,7 +35,6 @@ import { ChatViewProvider } from "./chat/chat-view";
 import { SessionRegistry } from "./chat/session-registry";
 import { AttachmentService } from "./chat/attachment-service";
 import { resolveHome } from "./core/storage/home";
-import { FileRunSnapshot } from "./core/agent/run-snapshot";
 import { debugLog, infoLog } from "./logger";
 
 /**
@@ -156,16 +155,11 @@ export async function activate(context: ExtensionContext) {
   // the agent awaits it at every turn boundary so a long run compacts then
   // continues.
   let midRunCompact: ((sessionId: string, signal?: AbortSignal) => Promise<void>) | undefined;
-  // Per-session file snapshots for "undo last run" (created in createAgent).
-  const snapshots = new Map<string, FileRunSnapshot>();
 
   const createAgent = (history: ChatHistory, sessionId: string): ChatController => {
     // One sub-agent runner per session: it owns the ephemeral sub-agent
     // histories and cascades Stop to any in-flight sub-agent.
     const subAgents = new SubAgentRunner({ config, llmFactory, tools, cwd, log: (m) => infoLog(`[agent] ${m}`) });
-    // One file snapshot per session: lets the user "undo last run".
-    const snapshot = new FileRunSnapshot(nodeFileSystem, cwd);
-    snapshots.set(sessionId, snapshot);
     return new Agent({
       config,
       llmFactory,
@@ -183,7 +177,6 @@ export async function activate(context: ExtensionContext) {
       cwd,
       // Per-session identity: stateful tools (TodoWrite) keep separate state.
       ownerId: sessionId,
-      snapshot,
     });
   };
 
@@ -211,17 +204,6 @@ export async function activate(context: ExtensionContext) {
       mcp,
       // Full-text search across session messages (SQLite FTS5).
       searchSessions: (query) => store.search(query).map((h) => ({ sessionId: h.sessionId, snippet: h.snippet })),
-      // "Undo last run": restore the active session's file snapshot.
-      restoreSnapshot: (id) => {
-        const s = snapshots.get(id);
-        return s?.hasSnapshot() ? s.restore() : undefined;
-      },
-      // Release the snapshot (and the file contents it holds) when the session
-      // is closed/deleted — it would otherwise stay in memory forever.
-      forgetSnapshot: (id) => {
-        snapshots.delete(id);
-      },
-      canUndo: (id) => snapshots.get(id)?.hasSnapshot() === true,
     },
   );
   viewProvider.setContext(context);

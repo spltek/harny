@@ -125,17 +125,6 @@ export class ChatViewProvider implements WebviewViewProvider {
       mcp?: McpManager;
       /** Full-text search across sessions (SQLite FTS5). Absent = no search. */
       searchSessions?: (query: string) => { sessionId: string; snippet: string }[];
-      /** Undo the last writer run of a session: restores its file snapshot.
-       * Absent = the feature is unavailable. */
-      restoreSnapshot?: (sessionId: string) =>
-        | { restored: string[]; removed: string[]; skipped: string[] }
-        | undefined;
-      /** Release a session's file snapshot when it is closed/deleted, so the
-       * retained file contents are not kept in memory. */
-      forgetSnapshot?: (sessionId: string) => void;
-      /** True when the session still has an undoable snapshot: lets the UI
-       * re-render the "Undo run" button after a tab switch / reload. */
-      canUndo?: (sessionId: string) => boolean;
     } = {},
   ) {
     this.modals = new PanelModalQueue((msg) => this.view?.webview.postMessage(msg));
@@ -541,7 +530,6 @@ export class ChatViewProvider implements WebviewViewProvider {
     if (this.isWorking(id)) return;
     this.streamTee.detach(id);
     this.registry.close(id);
-    this.options.forgetSnapshot?.(id);
     this.pendingQueue.drop(id);
     if (this.activeId === id) {
       this.activeId = undefined;
@@ -558,27 +546,6 @@ export class ChatViewProvider implements WebviewViewProvider {
   /** Session ids whose agent is currently streaming (blocks delete, drives the lock). */
   private workingIds(): string[] {
     return this.registry.listOpenIds().filter((id) => this.registry.get(id)?.agent.streaming);
-  }
-
-  /** Undo the active session's last writer run (restore its file snapshot). */
-  private async undoLastRun(): Promise<void> {
-    const id = this.activeId;
-    if (!id) return;
-    // Never restore files UNDER a running agent (a writer could be mid-write).
-    if (this.isWorking(id)) {
-      void window.showInformationMessage("Harny: stop the current run before undoing it.");
-      return;
-    }
-    const res = this.options.restoreSnapshot?.(id);
-    if (!res || (res.restored.length === 0 && res.removed.length === 0)) {
-      void window.showInformationMessage("Harny: nothing to undo.");
-      return;
-    }
-    void window.showInformationMessage(
-      `Harny: run undone — ${res.restored.length} file(s) restored, ${res.removed.length} removed` +
-        (res.skipped.length > 0 ? `, ${res.skipped.length} skipped.` : "."),
-    );
-    await this.postSwitchView();
   }
 
   /**
@@ -816,9 +783,6 @@ export class ChatViewProvider implements WebviewViewProvider {
         break;
       case "deleteSession":
         if (typeof msg.id === "string") await this.deleteSession(msg.id);
-        break;
-      case "undoRun":
-        await this.undoLastRun();
         break;
       case "getAllSessions":
         // show:true — the user clicked the gear: the form opens with this data.
@@ -1742,7 +1706,6 @@ export class ChatViewProvider implements WebviewViewProvider {
     });
     if (!ok) return;
     this.registry.close(id);
-    this.options.forgetSnapshot?.(id);
     if (this.activeId === id) {
       this.activeId = undefined;
       if (this.registry.listOpenIds().length > 0) {
@@ -1863,8 +1826,6 @@ export class ChatViewProvider implements WebviewViewProvider {
     thinkingLevel?: "off" | "low" | "medium" | "high";
     mode?: "analyze" | "agent";
     parallel?: boolean;
-    /** True when the active session has an undoable writer snapshot. */
-    canUndo: boolean;
     maxParallelSubAgents: number;
     loopGuard?: "low" | "normal" | "high";
     loopGuardResponse?: boolean;
@@ -1998,7 +1959,6 @@ export class ChatViewProvider implements WebviewViewProvider {
       // always mirrors what the agent actually enforces (no stale read-only).
       mode: this.activeRuntime()?.mode ?? "analyze",
       parallel: this.activeRuntime()?.parallel === true,
-      canUndo: this.options.canUndo?.(this.activeRuntime()?.sessionId ?? "") === true,
       // The EFFECTIVE cap the agent will use (session override > config > 4).
       maxParallelSubAgents: this.effectiveParallelCap(),
       loopGuard: this.activeRuntime()?.loopGuard,
