@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Dead config flags `contextFiles` / `autoApprove`**: parsed but never used
+  (placeholders from the first commit — Harny has no auto-context and no
+  tool-confirmation flow). Removed from `HarnyConfig`, the VS Code settings, the
+  `config.json` schema and the README.
 - **`subagentMaxTurns` config knob**: the optional cap on a sub-agent's tool
   turns is gone from `HarnyConfig`, the VS Code settings, the `config.json`
   schema and the README. Sub-agents are UNBOUNDED by default (like the

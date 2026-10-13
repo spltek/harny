@@ -11,8 +11,6 @@ const BASE: HarnyConfig = {
   model: "gemma.gguf",
   maxTokens: 100,
   temperature: 0,
-  contextFiles: true,
-  autoApprove: false,
   autoOpen: false,
   availableModels: ["gemma.gguf", "qwen-moe.gguf"],
 };

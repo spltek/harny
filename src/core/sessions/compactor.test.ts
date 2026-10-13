@@ -11,8 +11,6 @@ const CONFIG: HarnyConfig = {
   model: "gpt-4o",
   maxTokens: 100,
   temperature: 0,
-  contextFiles: true,
-  autoApprove: false,
   autoOpen: false,
 };
 

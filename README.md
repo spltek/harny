@@ -492,8 +492,6 @@ For providers that expose their model list (OpenAI, OpenRouter, opencode-go, lla
 | `harny.temperature` | not set | Sampling temperature (omitted when unset; required by strict models) |
 | `harny.thinkingMode` | not set | How the reasoning phase is expressed (`bool`, `effort`, `type`, `reasoning`, `unspecified`); the provider's `thinking` field and the per-session radio group override it — see the Thinking section |
 | `harny.thinkingLevel` | `medium` | Default thinking level (`off`/`low`/`medium`/`high`); per provider entry you can also set `thinkingLevel` — the radio group only unlocks for providers that declare `thinking` |
-| `harny.contextFiles` | `true` | Auto-include project files as context |
-| `harny.autoApprove` | `false` | Auto-approve tool calls |
 | `harny.autoOpen` | `false` | Open the chat panel on startup |
 | `harny.dbVacuumThresholdPercent` | `20` | Free-page percentage above which Harny **suggests** compacting the sessions database (VACUUM) |
 | `harny.dbVacuumMinFreeMB` | `128` | Minimum **reclaimable** megabytes below which Harny never suggests compacting (`0` = no minimum) |

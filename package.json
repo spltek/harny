@@ -106,16 +106,6 @@
           "default": false,
           "description": "Automatically open the chat panel when VS Code starts"
         },
-        "harny.contextFiles": {
-          "type": "boolean",
-          "default": true,
-          "description": "Auto-include relevant project files as context"
-        },
-        "harny.autoApprove": {
-          "type": "boolean",
-          "default": false,
-          "description": "Auto-approve tool calls without confirmation"
-        },
         "harny.dbVacuumThresholdPercent": {
           "type": "number",
           "default": 20,

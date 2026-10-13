@@ -42,8 +42,6 @@ export interface HarnyConfig {
   topP?: number;
   /** Which sampler is ACTIVE per session: only its value is sent. */
   sampler?: "temperature" | "topP";
-  contextFiles: boolean;
-  autoApprove: boolean;
   /** Open the chat panel automatically when VS Code starts. */
   autoOpen: boolean;
   /** Model ids exposed by the active provider (optional, for UI pickers). */
@@ -92,8 +90,6 @@ export const DEFAULT_CONFIG: HarnyConfig = {
   baseUrl: "https://api.openai.com",
   model: "gpt-4o",
   maxTokens: 8192,
-  contextFiles: true,
-  autoApprove: false,
   autoOpen: false,
 };
 

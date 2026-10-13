@@ -25,8 +25,6 @@ export class VscodeConfigProvider implements ConfigProvider {
       model: cfg.get<string>("model", DEFAULT_CONFIG.model),
       maxTokens: cfg.get<number>("maxTokens", DEFAULT_CONFIG.maxTokens),
       temperature: cfg.get<number | undefined>("temperature", DEFAULT_CONFIG.temperature),
-      contextFiles: cfg.get<boolean>("contextFiles", DEFAULT_CONFIG.contextFiles),
-      autoApprove: cfg.get<boolean>("autoApprove", DEFAULT_CONFIG.autoApprove),
       autoOpen: cfg.get<boolean>("autoOpen", DEFAULT_CONFIG.autoOpen),
       enableThinking: cfg.get<boolean | undefined>("enableThinking", undefined),
       thinkingMode: (() => {

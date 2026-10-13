@@ -430,8 +430,6 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
     if (typeof data.model === "string") out.model = data.model;
     if (typeof data.maxTokens === "number") out.maxTokens = data.maxTokens;
     if (typeof data.temperature === "number") out.temperature = data.temperature;
-    if (typeof data.contextFiles === "boolean") out.contextFiles = data.contextFiles;
-    if (typeof data.autoApprove === "boolean") out.autoApprove = data.autoApprove;
     if (typeof data.autoOpen === "boolean") out.autoOpen = data.autoOpen;
     if (typeof data.enableThinking === "boolean") out.enableThinking = data.enableThinking;
     if (isThinkingMode(data.thinkingMode)) out.thinkingMode = data.thinkingMode;

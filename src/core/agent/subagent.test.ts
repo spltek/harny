@@ -17,8 +17,6 @@ const CONFIG: HarnyConfig = {
   maxTokens: 4096,
   temperature: 0.1,
   thinkingLevel: "off",
-  contextFiles: true,
-  autoApprove: false,
   autoOpen: false,
 };
 
