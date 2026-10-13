@@ -52,13 +52,6 @@ describe("VscodeConfigProvider", () => {
     expect(config.maxTokens).toBe(2048);
   });
 
-  it("reads the optional subagentMaxTurns setting (unset = undefined = no cap)", () => {
-    expect(new VscodeConfigProvider().get().subagentMaxTurns).toBeUndefined();
-
-    configValues["subagentMaxTurns"] = 7;
-    expect(new VscodeConfigProvider().get().subagentMaxTurns).toBe(7);
-  });
-
   it("falls back to OPENAI_API_KEY env var when apiKey is empty", () => {
     process.env.OPENAI_API_KEY = "sk-env-key";
 

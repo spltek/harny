@@ -21,17 +21,13 @@ import { SubAgentSystemPromptBuilder } from "./system-prompt";
 /** Turn budget for a sub-agent: bounded work, but generous enough for real
  * exploration with verbose models (DeepSeek and friends). When the budget is
  * exhausted the agent still runs ONE forced, tool-less report turn. */
-/** Fallback when no budget is configured and no explicit dep is given:
- * sub-agents are UNBOUNDED by default, exactly like the orchestrator (the
- * loop guard + Stop are the safeguards, not an arbitrary turn cap). */
-export const SUBAGENT_MAX_TURNS: number | undefined = undefined;
-
 export interface SubAgentRunnerDeps {
   config: ConfigProvider;
   llmFactory: LLMProviderFactory;
   tools: ToolRegistry;
   cwd: () => string;
-  /** Turn budget per sub-agent (default SUBAGENT_MAX_TURNS). */
+  /** Optional turn budget per sub-agent (undefined = UNBOUNDED, like the
+   * orchestrator: the loop guard + Stop are the safeguards). */
   maxTurns?: number;
   /** Optional diagnostic sink; sub-agent lines are tagged with their id. */
   log?: (message: string) => void;
@@ -103,11 +99,9 @@ export class SubAgentRunner {
     const mode: ChatMode = spec.access === "read" ? "analyze" : "agent";
     const history = new InMemoryChatHistory();
     const events = new InMemoryEventBus<AgentEvent>();
-    // Explicit dep (tests) wins; otherwise the configured cap, where 0/absent
-    // means NO cap (undefined -> Agent runs unbounded, like the orchestrator).
-    const configuredTurns = this.deps.config.get().subagentMaxTurns;
-    const maxTurns =
-      this.deps.maxTurns ?? (configuredTurns && configuredTurns > 0 ? configuredTurns : SUBAGENT_MAX_TURNS);
+    // Optional per-run cap (internal/test knob). Undefined = UNBOUNDED, like the
+    // orchestrator: the loop guard + Stop are the safeguards, not a turn cap.
+    const maxTurns = this.deps.maxTurns;
     const systemPrompt = new SubAgentSystemPromptBuilder(
       (m) => toolDefinitionsForMode(this.deps.tools.getAll(), m, { exclude: [DELEGATE_TOOL_NAME] }),
       this.deps.cwd,

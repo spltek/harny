@@ -587,18 +587,17 @@ describe("HarnyFileConfigProvider multi-provider format", () => {
     expect("maxParallelSubAgents" in raw).toBe(false);
   });
 
-  it("reads the optional subagentMaxTurns setting and preserves it on save", () => {
+  it("preserves unknown top-level keys when saving the providers editor (lossless)", () => {
     writeFileSync(
       join(dir, "config.json"),
-      JSON.stringify({ providers: { p: { baseUrl: "http://x/v1" } }, subagentMaxTurns: 7 }),
+      JSON.stringify({ providers: { p: { baseUrl: "http://x/v1" } }, futureFlag: true }),
     );
     const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
-    expect(provider.read().subagentMaxTurns).toBe(7);
 
-    // Saving the providers editor preserves unknown top-level keys (lossless).
+    // Saving the providers editor preserves unknown top-level keys.
     const editor = provider.readProvidersEditor();
     expect(provider.saveProvidersEditor(editor)).toBe(true);
-    expect(provider.read().subagentMaxTurns).toBe(7);
+    expect(readFileSync(join(dir, "config.json"), "utf-8")).toContain("futureFlag");
   });
 
   it("ignores invalid maxParallelSubAgents values (0, negative, non-integer)", () => {

@@ -84,13 +84,6 @@ export interface HarnyConfig {
    * Undefined = no cap. Set from the gear form.
    */
   maxParallelSubAgents?: number;
-  /**
-   * Optional cap on the tool turns a single sub-agent may use before it is
-   * asked for its report. Undefined/0 = NO cap (sub-agents run until they
-   * finish or the user presses Stop, exactly like the orchestrator). The loop
-   * guard still stops degenerate loops independently of this value.
-   */
-  subagentMaxTurns?: number;
 }
 
 export const DEFAULT_CONFIG: HarnyConfig = {

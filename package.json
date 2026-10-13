@@ -75,10 +75,6 @@
           "default": 16384,
           "description": "Maximum tokens per response"
         },
-        "harny.subagentMaxTurns": {
-          "type": "number",
-          "description": "Optional cap on the tool turns a single sub-agent may use before it is asked for its report. 0 or unset = no cap (sub-agents run until they finish or you press Stop, like the orchestrator). The loop guard still stops degenerate loops."
-        },
         "harny.temperature": {
           "type": "number",
           "description": "Sampling temperature"

@@ -202,32 +202,6 @@ describe("SubAgentRunner", () => {
     expect(res.content).toContain("forced report");
   });
 
-  it("uses the configured subagentMaxTurns as the turn budget", async () => {
-    let systemPrompt = "";
-    const captureFactory: LLMProviderFactory = {
-      create() {
-        return {
-          protocol: "chat" as const,
-          async *stream(messages: LLMMessage[]) {
-            if (!systemPrompt) systemPrompt = String(messages[0]?.content ?? "");
-            yield { type: "text", content: "report" };
-          },
-        };
-      },
-    };
-    const runner = new SubAgentRunner({
-      config: new StaticConfigProvider({ ...CONFIG, subagentMaxTurns: 7 }),
-      llmFactory: captureFactory,
-      tools: new ToolRegistry([]),
-      cwd: () => "/workspace",
-    });
-
-    await runner.run(spec({ access: "read" }));
-
-    expect(systemPrompt).toContain("BUDGET");
-    expect(systemPrompt).toContain("7");
-  });
-
   it("is UNBOUNDED by default (no turn cap, like the orchestrator)", async () => {
     let systemPrompt = "";
     const captureFactory: LLMProviderFactory = {
@@ -251,17 +225,6 @@ describe("SubAgentRunner", () => {
     await runner.run(spec({ access: "read" }));
 
     // No budget configured -> no BUDGET hint and no finite cap.
-    expect(systemPrompt).not.toContain("BUDGET");
-
-    // An explicit 0 also means "no cap".
-    const zeroRunner = new SubAgentRunner({
-      config: new StaticConfigProvider({ ...CONFIG, subagentMaxTurns: 0 }),
-      llmFactory: captureFactory,
-      tools: new ToolRegistry([]),
-      cwd: () => "/workspace",
-    });
-    systemPrompt = "";
-    await zeroRunner.run(spec({ access: "read" }));
     expect(systemPrompt).not.toContain("BUDGET");
   });
 

@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   product is unreleased, so no migration: an existing `sessions.db` must be
   deleted.)
 
+### Removed
+
+- **`subagentMaxTurns` config knob**: the optional cap on a sub-agent's tool
+  turns is gone from `HarnyConfig`, the VS Code settings, the `config.json`
+  schema and the README. Sub-agents are UNBOUNDED by default (like the
+  orchestrator); the loop guard and Stop are the safeguards. The internal
+  per-run `maxTurns` mechanism is kept (tests / future UI).
+
 ### Changed
 
 - **"Parallelism means sub-tasks" (Parallel ON)**: the prompt now states it as an
