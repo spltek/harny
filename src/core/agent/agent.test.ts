@@ -97,6 +97,7 @@ function buildHarness(
     loopGuard?: LoopGuardOptions;
     streamIdleTimeoutMs?: number;
     snapshot?: import("./run-snapshot").RunSnapshot;
+    onFileChanged?: (change: { path: string; tool: string }) => void;
   } = {},
 ): Harness {
   const config = new StaticConfigProvider(opts.config ?? VALID_CONFIG);
@@ -121,6 +122,7 @@ function buildHarness(
     loopGuard: opts.loopGuard,
     streamIdleTimeoutMs: opts.streamIdleTimeoutMs,
     snapshot: opts.snapshot,
+    onFileChanged: opts.onFileChanged,
   });
   return { agent, factory, events: eventsLog, history };
 }
@@ -925,6 +927,38 @@ describe("Agent", () => {
     expect(events.some((e) => e.type === "preview_ready")).toBe(true);
     const final = history.all().filter((m) => m.role === "assistant").at(-1);
     expect(final?.previewPrepared).toBe(true);
+  });
+
+  it("reports a real file change via onFileChanged only in Build (not on Analyze previews)", async () => {
+    const writeChunks: StreamChunk[][] = [
+      [
+        { type: "tool_call_start", index: 0, id: "c", name: "Write" },
+        { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts","contents":"x"}' },
+        { type: "tool_call_end", index: 0 },
+      ],
+      [{ type: "text", content: "done" }],
+    ];
+
+    // Build: a real write fires onFileChanged.
+    const changes: { path: string; tool: string }[] = [];
+    const { agent } = buildHarness({
+      tools: [makeTool("Write")],
+      chunks: writeChunks,
+      onFileChanged: (c) => changes.push(c),
+    });
+    agent.setMode("agent");
+    await agent.send("write it");
+    expect(changes).toEqual([{ path: "a.ts", tool: "Write" }]);
+
+    // Analyze: the same tool runs as a PREVIEW → no file-change event.
+    const previews: { path: string; tool: string }[] = [];
+    const { agent: a2 } = buildHarness({
+      tools: [makeTool("Write")],
+      chunks: writeChunks,
+      onFileChanged: (c) => previews.push(c),
+    });
+    await a2.send("write it"); // default = Analyze
+    expect(previews).toEqual([]);
   });
 
   it("snapshots the target of a real file change and emits run_undoable", async () => {

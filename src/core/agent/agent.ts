@@ -135,6 +135,9 @@ export interface AgentDeps {
   ownerId?: string;
   /** Called when a SUB-AGENT prepared an Analyze preview (dry-run). */
   onPreviewPrepared?: (change: PreparedChange) => void;
+  /** Called when a tool ACTUALLY changed a file (Build mode, not a preview):
+   * lets the parent track what a run/sub-agent touched. */
+  onFileChanged?: (change: PreparedChange) => void;
   /** Snapshot of the files a writer run may change, for "undo last run". */
   snapshot?: RunSnapshot;
 }
@@ -1062,6 +1065,11 @@ export class Agent implements ChatController {
         // Tell the parent (when this agent is a sub-agent) that a preview was
         // prepared, so the orchestrator surfaces the "Switch to Build" CTA.
         this.deps.onPreviewPrepared?.({ path, tool: tc.name });
+      }
+      // A REAL file change (Build, not a preview): let the parent track it.
+      if (!dryRun && !result.isError && isFileMutatingTool(tc.name)) {
+        const changed = String(tc.arguments.path ?? "").trim();
+        if (changed) this.deps.onFileChanged?.({ path: changed, tool: tc.name });
       }
       return result;
     } catch (err: any) {

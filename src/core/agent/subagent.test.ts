@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SubAgentRunner, lastAssistantReport, toSubAgentEvent } from "./subagent";
+import { SubAgentRunner, SUBAGENT_REPORT_MARKER, lastAssistantReport, toSubAgentEvent } from "./subagent";
 import { StaticConfigProvider } from "../config/static-config-provider";
 import { ToolRegistry } from "../tools/tool-registry";
 import type { Tool, ToolResult } from "../tools/tool";
@@ -88,7 +88,9 @@ describe("SubAgentRunner", () => {
     const runner = buildRunner(factory([[{ type: "text", content: "I analysed a.ts; no issues." }]]));
     const res = await runner.run(spec({ id: "A", role: "analyst" }));
     expect(res.isError).toBe(false);
-    expect(res.content).toBe('🔁 Sub-agent "A" [analyst] report:\nI analysed a.ts; no issues.');
+    expect(res.content).toContain('🔁 Sub-agent "A" [analyst] report:\nI analysed a.ts; no issues.');
+    // Host-generated facts are appended after the prose.
+    expect(res.content).toContain(SUBAGENT_REPORT_MARKER);
   });
 
   it("read sub-agents are read-only: Write runs as a DRY-RUN preview (nothing written)", async () => {
@@ -130,6 +132,37 @@ describe("SubAgentRunner", () => {
     const res = await runner.run(spec({ access: "write", resources: ["a.ts"] }));
 
     expect(res.content).not.toContain("ran READ-ONLY");
+  });
+
+  it("appends a machine-readable footer with status + filesTouched (writer)", async () => {
+    const write = makeWriteTool();
+    const runner = buildRunner(factory([writeCall(), [{ type: "text", content: "report" }]]), [write]);
+
+    const res = await runner.run(spec({ access: "write", resources: ["a.ts"] }));
+
+    expect(res.content).toContain(SUBAGENT_REPORT_MARKER);
+    const json = res.content.slice(res.content.indexOf(SUBAGENT_REPORT_MARKER) + SUBAGENT_REPORT_MARKER.length).trim();
+    expect(JSON.parse(json)).toEqual({ status: "done", filesTouched: ["a.ts"], previews: [] });
+  });
+
+  it("marks a READ sub-agent that prepared previews as needs-write", async () => {
+    const write = makeWriteTool();
+    const runner = buildRunner(factory([writeCall(), [{ type: "text", content: "report" }]]), [write]);
+
+    const res = await runner.run(spec({ access: "read" }));
+
+    const json = res.content.slice(res.content.indexOf(SUBAGENT_REPORT_MARKER) + SUBAGENT_REPORT_MARKER.length).trim();
+    expect(JSON.parse(json)).toEqual({ status: "needs-write", filesTouched: [], previews: ["a.ts"] });
+  });
+
+  it("marks an aborted sub-agent report as aborted", async () => {
+    const runner = buildRunner(factory([[{ type: "text", content: "report" }]]));
+    const c = new AbortController();
+    c.abort();
+
+    const res = await runner.run(spec({ access: "read" }), undefined, c.signal);
+
+    expect(res.content).toContain('"status":"aborted"');
   });
 
   it("does not call onPreviewPrepared when the sub-agent prepares nothing", async () => {

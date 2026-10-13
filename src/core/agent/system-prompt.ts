@@ -94,6 +94,7 @@ PLANNING A DELEGATE:
 AFTER DELEGATING:
 - Wait for the reports (they arrive as tool results). Do NOT re-run a sub-task that is already running.
 - Synthesize ONE final answer from the reports: what was done, key results, files touched, blockers. Never claim what no sub-agent reported.
+- Every report ends with a machine-readable line starting with [harny-subagent-report] (JSON: status, filesTouched, previews). TRUST these facts over the prose: needs-write → re-delegate with write access; error/aborted → the sub-task did NOT complete.
 - If a report says a sub-agent ran READ-ONLY and prepared previews (or otherwise needs write access), RE-DELEGATE that sub-task with access "write" and the same resources.`
       : "";
 

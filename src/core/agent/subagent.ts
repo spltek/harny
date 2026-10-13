@@ -97,7 +97,7 @@ export class SubAgentRunner {
     onPreviewPrepared?: (change: PreparedChange) => void,
   ): Promise<ToolResult> {
     // Stop arrived BEFORE this sub-agent started: never start it (queued -> aborted).
-    if (signal?.aborted) return { content: formatSubAgentAborted(spec), isError: true };
+    if (signal?.aborted) return { content: formatSubAgentAborted(spec) + structuredFooter("aborted", [], []), isError: true };
     const key = toolCallId ?? `sub-${this.nextKey++}`;
     // Analyze-style read-only sub-agent, or a full agent for writers.
     const mode: ChatMode = spec.access === "read" ? "analyze" : "agent";
@@ -121,6 +121,8 @@ export class SubAgentRunner {
       prepared.push(change);
       onPreviewPrepared?.(change);
     };
+    // Files the sub-agent ACTUALLY wrote (Build mode), for the structured report.
+    const touched = new Set<string>();
 
     const agent = new Agent({
       config: this.deps.config,
@@ -140,6 +142,8 @@ export class SubAgentRunner {
       ownerId: `sub-${key}`,
       // Bubble an Analyze preview up to the orchestrator (CTA for delegated work).
       onPreviewPrepared: forwardPreview,
+      // Track the files it actually wrote (Build), for the report footer.
+      onFileChanged: (change) => touched.add(change.path),
       log: this.deps.log ? (m) => this.deps.log!(`subagent "${spec.id}": ${m}`) : undefined,
     });
     agent.setMode(mode);
@@ -184,28 +188,55 @@ export class SubAgentRunner {
       // Any user stop (whole-run Stop or a per-sub-task abort) is reported as
       // ABORTED — sub-agents have a single terminal stop state.
       if (this.abortedAgents.has(agent) || signal?.aborted) {
-        return { content: formatSubAgentAborted(spec), isError: true };
+        return { content: formatSubAgentAborted(spec) + structuredFooter("aborted", touched, prepared), isError: true };
       }
       // A fatal error (API failure, loop guard stop, no API key) reached the
       // transcript as an `error` event: report it as an ERROR result so the
       // orchestrator knows the sub-task did NOT complete (it must not treat the
       // text as a finished report).
       const report = lastAssistantReport(agent.getMessages());
-      if (hadError) return { content: formatSubAgentError(spec, report), isError: true };
+      if (hadError) {
+        return { content: formatSubAgentError(spec, report) + structuredFooter("error", touched, prepared), isError: true };
+      }
       const base = formatSubAgentReport(spec, report);
       // A READ-ONLY sub-agent that prepared previews could not write: make that
       // explicit and machine-obvious so the orchestrator re-delegates a writer.
-      const content = mode === "analyze" && prepared.length > 0 ? base + subAgentEscalationNote(prepared) : base;
+      const needsWrite = mode === "analyze" && prepared.length > 0;
+      const content =
+        (needsWrite ? base + subAgentEscalationNote(prepared) : base) +
+        structuredFooter(needsWrite ? "needs-write" : "done", touched, prepared);
       return { content, isError: false };
     } catch (e) {
       this.deps.log?.(`subagent "${spec.id}" error in ${Date.now() - startedAt}ms: ${e instanceof Error ? e.message : String(e)}`);
-      return { content: formatSubAgentError(spec, e instanceof Error ? e.message : String(e)), isError: true };
+      return {
+        content: formatSubAgentError(spec, e instanceof Error ? e.message : String(e)) + structuredFooter("error", touched, prepared),
+        isError: true,
+      };
     } finally {
       this.deps.log?.(`subagent "${spec.id}" end in ${Date.now() - startedAt}ms`);
       signal?.removeEventListener("abort", onParentAbort);
       this.active.delete(key);
     }
   }
+}
+
+/** Marker prefixing the machine-readable facts appended to every sub-agent
+ * report. The orchestrator can trust these over the prose, and tooling can
+ * parse them (JSON after the marker). */
+export const SUBAGENT_REPORT_MARKER = "[harny-subagent-report]";
+
+/** Append host-generated FACTS (status + touched files + prepared previews) to a
+ * sub-agent report, so the orchestrator reads facts instead of interpreting
+ * free text. */
+function structuredFooter(
+  status: "done" | "needs-write" | "error" | "aborted",
+  filesTouched: Iterable<string>,
+  previews: readonly PreparedChange[],
+): string {
+  return (
+    `\n\n${SUBAGENT_REPORT_MARKER} ` +
+    JSON.stringify({ status, filesTouched: [...filesTouched], previews: previews.map((p) => p.path) })
+  );
 }
 
 /** Deterministic note appended to a READ-ONLY sub-agent's report when it
