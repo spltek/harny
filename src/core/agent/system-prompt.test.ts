@@ -132,6 +132,10 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     const analyze = withDelegate.build("analyze");
     expect(analyze).toContain("NOTHING is written");
     expect(analyze).toContain("can NEVER conflict");
+    // Analyze: sub-agents are read-only, so a write task is delegated as "read"
+    // (a write/create delegate is refused) and PREPARES previews.
+    expect(analyze).toContain("every sub-agent is READ-ONLY");
+    expect(analyze).toContain('"write"/"create" delegate is REFUSED');
     const build = withDelegate.build("agent");
     expect(build).toContain("at least one of them WRITES it");
     expect(build).toContain("Two different files never conflict");

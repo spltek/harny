@@ -79,10 +79,11 @@ READ-ONLY MODE (Analyze) — PREVIEW RULES:
     // Mode-aware conflict rule, written for BOTH strong and small models: short
     // sentences, ordered questions, concrete examples.
     const parallelConflict = isAnalyzeMode(mode)
-      ? `2. RESOURCE CONFLICT — in Analyze NOTHING is written (every file change is only a preview), so two parts can NEVER conflict, not even on the same file. There is no conflict question here.`
+      ? `2. RESOURCE CONFLICT — in Analyze NOTHING is written (every file change is only a preview), so two parts can NEVER conflict, not even on the same file. IMPORTANT: in Analyze every sub-agent is READ-ONLY — delegate with access "read" (a "write"/"create" delegate is REFUSED); the parallel parts still PREPARE the changes as previews.`
       : `2. RESOURCE CONFLICT — do two parts touch the SAME file/dir AND at least one of them WRITES it (write+write, or write+read)? YES → not splittable: run them one at a time, or order them with after. Two parts that only READ never conflict. Two different files never conflict.`;
     const parallelExamples = isAnalyzeMode(mode)
       ? `- "check the weather" AND "read config.ts" → no dependency, nothing is written → 2 Delegate calls.\n` +
+        `- "write file A" AND "write file B" → 2 Delegate calls, BOTH with access "read" (they PREPARE the previews; nothing is written).\n` +
         `- two parts that both READ the same file → no conflict → 2 Delegate calls.\n` +
         `- "find X" then "summarize X" → the second needs the first's result (DEPENDENCY) → order with after.`
       : `- "check the weather" AND "write a poem to a file" → different resources → 2 Delegate calls.\n` +
