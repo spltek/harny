@@ -151,10 +151,11 @@ export class ChatViewProvider implements WebviewViewProvider {
     // open must rebuild the HTML for the new size to take effect.
     context.subscriptions.push(
       workspace.onDidChangeConfiguration((e) => {
-        // editor.fontSize drives the root font; any `harny.*` setting may change
-        // the provider/model limits, so both trigger a refresh (which also
-        // re-applies the runtime overrides).
-        if (e.affectsConfiguration("editor.fontSize") || e.affectsConfiguration("harny")) this.refresh();
+        // editor.fontSize drives the root font, so ONLY that needs a full
+        // rebuild. Any other `harny.*` change (model/limits/providers) is
+        // applied with a LIGHTWEIGHT refresh so the typed prompt survives.
+        if (e.affectsConfiguration("editor.fontSize")) this.refresh();
+        else if (e.affectsConfiguration("harny")) this.refreshConfig();
       }),
     );
   }
@@ -762,6 +763,19 @@ export class ChatViewProvider implements WebviewViewProvider {
     void this.buildHtml().then((html) => {
       if (this.view) this.view.webview.html = html;
     });
+  }
+
+  /**
+   * Lightweight refresh for a CONFIG change (config-file watcher / `harny.*`
+   * settings): re-apply the per-model overrides and push the config WITHOUT
+   * rebuilding the page. A full `refresh()` here would wipe the typed prompt,
+   * the scroll position and the streaming state — e.g. switching model persists
+   * the choice to `config.json`, which triggers the watcher.
+   */
+  refreshConfig(): void {
+    if (!this.view) return;
+    this.applyActiveModel();
+    void this.pushConfig();
   }
 
   private async onMessage(msg: any): Promise<void> {

@@ -1077,6 +1077,21 @@ describe("ChatViewProvider", () => {
     expect(configs.every((m) => typeof m.configSeq === "number")).toBe(true);
   });
 
+  it("refreshConfig pushes config WITHOUT rebuilding the page (prompt preserved)", async () => {
+    const { provider } = buildHarness();
+    const { view } = resolveWith(provider);
+    await provider.createNew();
+    view.webview.html = "ORIGINAL";
+    view.webview.postMessage.mockClear();
+
+    provider.refreshConfig();
+    await new Promise((r) => setTimeout(r, 0));
+
+    // No full HTML rebuild: a typed prompt / scroll survive.
+    expect(view.webview.html).toBe("ORIGINAL");
+    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "config" }));
+  });
+
   it("openSession opens an existing session", async () => {
     const { provider, registry } = buildHarness();
     const { handler } = resolveWith(provider);

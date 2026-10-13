@@ -247,10 +247,11 @@ export async function activate(context: ExtensionContext) {
     await commands.executeCommand("harny.chatView.focus");
   }
 
-  // Live-reload config on file change.
+  // Live-reload config on file change: a LIGHTWEIGHT refresh, so a typed prompt
+  // is not wiped (switching model persists the choice to config.json).
   const reload = () => {
-    debugLog("config file changed, refreshing");
-    viewProvider.refresh();
+    debugLog("config file changed, refreshing config");
+    viewProvider.refreshConfig();
   };
   let reloadTimer: NodeJS.Timeout | undefined;
   try {
