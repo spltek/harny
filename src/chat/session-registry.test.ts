@@ -118,16 +118,23 @@ describe("SessionRegistry per-session model", () => {
       messages: [],
     });
     const sessions = new SessionManager(store);
+    let agent: { setMode: ReturnType<typeof vi.fn>; setDelegation: ReturnType<typeof vi.fn> } | undefined;
     const registry = new SessionRegistry({
       sessions,
       store,
-      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() } as unknown as ChatController)),
+      createAgent: vi.fn(() => {
+        agent = { addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() } as never;
+        return agent as unknown as ChatController;
+      }),
     });
 
     const rt = registry.openOrCreate("s9");
 
     expect(rt.mode).toBe("agent");
     expect(rt.parallel).toBe(true);
+    // The FRESH agent is synced immediately (not only at the first send).
+    expect(agent!.setMode).toHaveBeenCalledWith("agent");
+    expect(agent!.setDelegation).toHaveBeenCalledWith(true);
   });
 
   it("loads the persisted output tokens onto the runtime when opening", () => {
