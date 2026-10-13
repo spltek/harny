@@ -1,6 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { isAbsolute } from "node:path";
 import { createInterface } from "node:readline";
+import { isWindows } from "../platform";
+import { killTree } from "../process/kill-tree";
 import type { McpClient, McpToolInfo } from "./types";
 
 /** MCP protocol version Harny speaks (tools only). */
@@ -45,6 +47,8 @@ export class McpStdioClient implements McpClient {
       cwd: this.opts.cwd,
       env: { ...process.env, ...(this.opts.env ?? {}) },
       stdio: ["pipe", "pipe", "pipe"],
+      // POSIX: process-GROUP leader so close() can signal the whole tree.
+      detached: !isWindows,
       // Windows ships `npx`/`node` as `.cmd` shims that plain spawn cannot run,
       // so bare commands need a shell there. An ABSOLUTE path (e.g. node.exe)
       // does NOT: a shell would mangle quoted/`-e` args. The command comes from
@@ -110,11 +114,9 @@ export class McpStdioClient implements McpClient {
   close(): void {
     this.closed = true;
     this.failAll(new Error("MCP client closed"));
-    try {
-      this.child?.kill();
-    } catch {
-      /* ignore */
-    }
+    // Kill the server AND any children it spawned (a bare kill() would leave the
+    // descendants alive).
+    if (this.child) killTree(this.child);
     this.child = undefined;
   }
 

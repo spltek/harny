@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { defaultShell, isWindows } from "../platform";
+import { killTree } from "../process/kill-tree";
 
 export interface CommandResult {
   stdout: string;
@@ -20,30 +21,6 @@ export interface CommandRunOptions {
 
 export interface CommandRunner {
   run(command: string, options: CommandRunOptions): Promise<CommandResult>;
-}
-
-/**
- * Kill the spawned shell AND its descendants. A plain `child.kill()` only
- * signals the shell, leaving grandchildren (a dev server, a watcher…) alive;
- * on POSIX the child is a process-group leader (`detached`) so the whole group
- * can be signalled, on Windows `taskkill /T` walks the tree.
- */
-function killTree(child: { pid?: number; kill: (signal?: NodeJS.Signals) => boolean }): void {
-  const pid = child.pid;
-  if (!pid) return;
-  try {
-    if (isWindows) {
-      spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true });
-    } else {
-      process.kill(-pid, "SIGKILL");
-    }
-  } catch {
-    try {
-      child.kill("SIGKILL");
-    } catch {
-      /* already gone */
-    }
-  }
 }
 
 /**

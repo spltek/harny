@@ -60,6 +60,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **MCP stdio servers are killed with their process tree**: `McpStdioClient.close()`
+  used a bare `child.kill()`, leaving the server's own children alive. It now
+  uses the shared `killTree` (process group on POSIX, `taskkill /T /F` on
+  Windows), and the server is spawned as a process-group leader.
+- **Fire-and-forget config pushes cannot become unhandled rejections**:
+  `pushConfig` / `postSwitchView` now catch and log a failure; the next push
+  recovers the UI.
 - **"Undo run" is refused (and greyed out) while a run is in flight**: clicking
   it during a run would restore files under a writing agent (same class as the
   `closeTab` guard). The host refuses with a clear message, and the button is

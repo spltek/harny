@@ -711,24 +711,28 @@ export class ChatViewProvider implements WebviewViewProvider {
   /** Push the full view state WITHOUT reloading the webview page. */
   private async postSwitchView(): Promise<void> {
     if (!this.view) return;
-    const active = this.activeRuntime();
-    const seq = ++this.configSeq;
-    const config = await this.buildConfig();
-    const live = this.streamTee.liveOf(this.activeId ?? "");
-    this.view.webview.postMessage({
-      type: "switchView",
-      activeId: this.activeId,
-      openIds: this.registry.listOpenIds(),
-      sessions: this.currentFolderSessions(),
-      messages: active ? active.agent.getMessages() : [],
-      config,
-      configSeq: seq,
-      workingIds: this.workingIds(),
-      streaming: !!active?.agent.streaming,
-      pending: active ? this.pendingQueue.items(active.sessionId) : [],
-      liveThinking: live?.thinking ?? "",
-      liveAnswer: live?.answer ?? "",
-    });
+    try {
+      const active = this.activeRuntime();
+      const seq = ++this.configSeq;
+      const config = await this.buildConfig();
+      const live = this.streamTee.liveOf(this.activeId ?? "");
+      this.view.webview.postMessage({
+        type: "switchView",
+        activeId: this.activeId,
+        openIds: this.registry.listOpenIds(),
+        sessions: this.currentFolderSessions(),
+        messages: active ? active.agent.getMessages() : [],
+        config,
+        configSeq: seq,
+        workingIds: this.workingIds(),
+        streaming: !!active?.agent.streaming,
+        pending: active ? this.pendingQueue.items(active.sessionId) : [],
+        liveThinking: live?.thinking ?? "",
+        liveAnswer: live?.answer ?? "",
+      });
+    } catch (e) {
+      debugLog("postSwitchView failed", e);
+    }
   }
 
   resolveWebviewView(
@@ -2169,11 +2173,17 @@ export class ChatViewProvider implements WebviewViewProvider {
   }
 
   private async pushConfig(): Promise<void> {
-    const seq = ++this.configSeq;
-    const config = await this.buildConfig();
-    // Drop a STALE result: an older `buildConfig` can resolve after a newer one.
-    if (seq !== this.configSeq) return;
-    this.view?.webview.postMessage({ type: "config", config, configSeq: seq });
+    try {
+      const seq = ++this.configSeq;
+      const config = await this.buildConfig();
+      // Drop a STALE result: an older `buildConfig` can resolve after a newer one.
+      if (seq !== this.configSeq) return;
+      this.view?.webview.postMessage({ type: "config", config, configSeq: seq });
+    } catch (e) {
+      // `pushConfig` is fire-and-forget: never let a failure become an
+      // unhandled rejection (the next push recovers the UI).
+      debugLog("pushConfig failed", e);
+    }
   }
 
   /** The editor font size in px (editor.fontSize). Harny's root font follows

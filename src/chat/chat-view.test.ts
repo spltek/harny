@@ -1141,6 +1141,17 @@ describe("ChatViewProvider", () => {
     expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "config" }));
   });
 
+  it("pushConfig swallows a buildConfig failure (no unhandled rejection)", async () => {
+    const { provider } = buildHarness();
+    const { view } = resolveWith(provider);
+    const p = provider as unknown as { buildConfig: () => Promise<unknown>; pushConfig: () => Promise<void> };
+    p.buildConfig = vi.fn().mockRejectedValue(new Error("boom"));
+
+    await expect(p.pushConfig()).resolves.toBeUndefined();
+
+    expect(view.webview.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "config" }));
+  });
+
   it("openSession opens an existing session", async () => {
     const { provider, registry } = buildHarness();
     const { handler } = resolveWith(provider);
