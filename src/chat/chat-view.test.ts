@@ -1042,6 +1042,19 @@ describe("ChatViewProvider", () => {
     expect(restoreSnapshot).toHaveBeenCalled();
   });
 
+  it("refuses to undo while the active session is working", async () => {
+    const restoreSnapshot = vi.fn(() => ({ restored: ["/w/a.ts"], removed: [], skipped: [] }));
+    const { registry, provider } = buildHarness({ restoreSnapshot });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    (registry.get("s1")!.agent as { streaming: boolean }).streaming = true;
+
+    await handler({ type: "undoRun" });
+
+    // Never restore files under a running agent.
+    expect(restoreSnapshot).not.toHaveBeenCalled();
+  });
+
   it("releases a session's undo snapshot on closeTab and deleteSession", async () => {
     const forgetSnapshot = vi.fn();
     const { provider } = buildHarness({ forgetSnapshot });

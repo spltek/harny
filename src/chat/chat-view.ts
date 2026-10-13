@@ -564,6 +564,11 @@ export class ChatViewProvider implements WebviewViewProvider {
   private async undoLastRun(): Promise<void> {
     const id = this.activeId;
     if (!id) return;
+    // Never restore files UNDER a running agent (a writer could be mid-write).
+    if (this.isWorking(id)) {
+      void window.showInformationMessage("Harny: stop the current run before undoing it.");
+      return;
+    }
     const res = this.options.restoreSnapshot?.(id);
     if (!res || (res.restored.length === 0 && res.removed.length === 0)) {
       void window.showInformationMessage("Harny: nothing to undo.");
