@@ -110,6 +110,8 @@ describe("schema contract (drift guard)", () => {
       "top_p",
       "sampler",
       "max_parallel_sub_agents",
+      "mode",
+      "parallel",
       "loop_guard",
       "loop_guard_response",
       "loop_guard_params",

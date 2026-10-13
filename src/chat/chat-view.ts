@@ -76,12 +76,6 @@ export class ChatViewProvider implements WebviewViewProvider {
   // fetch itself is bounded by HOST_MODEL_TIMEOUT_MS anyway.
   private static readonly HOST_CACHE_TTL = 5_000;
   private compacting = false;
-  /**
-   * Orchestration (sub-agents) master switch — the UI "Parallel" toggle.
-   * GLOBAL on purpose: it is a UI-level switch, so it must never diverge from
-   * the agent. The webview re-asserts it on load.
-   */
-  private parallelEnabled = false;
   /** Per-session queue of messages typed while the agent works (queue/steer). */
   private readonly pendingQueue: PendingInputQueue;
   /** True while an async SEND PREAMBLE is in flight for a session (attachment
@@ -278,7 +272,6 @@ export class ChatViewProvider implements WebviewViewProvider {
     }
     const rt = this.registry.create(name);
     // A NEW session always starts with Parallel OFF (orchestration is opt-in).
-    this.parallelEnabled = false;
     rt.agent.setDelegation(false);
     await this.setActive(rt.sessionId);
   }
@@ -1111,17 +1104,20 @@ export class ChatViewProvider implements WebviewViewProvider {
         rt.mode = msg.mode as "analyze" | "agent";
         // The agent enforces it: analyze = read-only; agent = full tools.
         rt.agent.setMode(rt.mode);
-        void this.pushConfig();
+        // Persist the mode PER SESSION so reopening restores it.
+        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { mode: rt.mode }), false);
         break;
       }
 
       case "setParallel": {
         if (typeof msg.parallel !== "boolean") break;
-        // Global master switch: applies to the active agent now, and to every
-        // session from here on (also re-synced at send time).
-        this.parallelEnabled = msg.parallel;
-        this.activeRuntime()?.agent.setDelegation(this.parallelEnabled);
-        void this.pushConfig();
+        const rt = this.activeRuntime();
+        if (!rt) break;
+        // PER-SESSION Parallel switch (persisted): applies to this session's
+        // agent now and is re-synced at send time.
+        rt.parallel = msg.parallel === true ? true : undefined;
+        rt.agent.setDelegation(rt.parallel === true);
+        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { parallel: rt.parallel }), false);
         break;
       }
 
@@ -1475,7 +1471,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     // created before a UI toggle (or a reloaded panel) must not send with
     // stale mode/parallel state.
     rt.agent.setMode(rt.mode ?? "analyze");
-    rt.agent.setDelegation(this.parallelEnabled);
+    rt.agent.setDelegation(rt.parallel === true);
     rt.agent.setMaxParallelSubAgents(rt.maxParallelSubAgents);
     this.applyLoopGuard(rt);
     const rawText = typeof msg.text === "string" ? msg.text : "";
@@ -1975,7 +1971,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       // CONCRETE mode (never undefined): a fresh session is analyze, so the UI
       // always mirrors what the agent actually enforces (no stale read-only).
       mode: this.activeRuntime()?.mode ?? "analyze",
-      parallel: this.parallelEnabled,
+      parallel: this.activeRuntime()?.parallel === true,
       // The EFFECTIVE cap the agent will use (session override > config > 4).
       maxParallelSubAgents: this.effectiveParallelCap(),
       loopGuard: this.activeRuntime()?.loopGuard,

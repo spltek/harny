@@ -175,6 +175,8 @@ describe("SqliteSessionStore — per-session settings", () => {
       loopGuard: "high",
       loopGuardResponse: true,
       loopGuardParams: { maxNudges: 3 },
+      mode: "agent",
+      parallel: true,
       folder: "/proj/a",
     });
     store.saveMessages("s1", [msg("user", "hello")]);
@@ -195,6 +197,8 @@ describe("SqliteSessionStore — per-session settings", () => {
       loopGuard: "high",
       loopGuardResponse: true,
       loopGuardParams: { maxNudges: 3 },
+      mode: "agent",
+      parallel: true,
       folder: "/proj/a",
     });
   });

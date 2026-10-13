@@ -366,6 +366,8 @@ export class SqliteSessionStore implements SessionStore {
       ...(existing?.topP !== undefined ? { topP: existing.topP } : {}),
       ...(existing?.sampler ? { sampler: existing.sampler } : {}),
       ...(existing?.maxParallelSubAgents !== undefined ? { maxParallelSubAgents: existing.maxParallelSubAgents } : {}),
+      ...(existing?.mode ? { mode: existing.mode } : {}),
+      ...(existing?.parallel !== undefined ? { parallel: existing.parallel } : {}),
       ...(existing?.loopGuard ? { loopGuard: existing.loopGuard } : {}),
       ...(existing?.loopGuardResponse ? { loopGuardResponse: existing.loopGuardResponse } : {}),
       ...(existing?.loopGuardParams ? { loopGuardParams: existing.loopGuardParams } : {}),
@@ -397,6 +399,8 @@ export class SqliteSessionStore implements SessionStore {
     if ("topP" in patch) out.topP = patch.topP;
     if ("sampler" in patch) out.sampler = patch.sampler;
     if ("maxParallelSubAgents" in patch) out.maxParallelSubAgents = toMaxParallelSubAgents(patch.maxParallelSubAgents);
+    if ("mode" in patch) out.mode = patch.mode === "agent" || patch.mode === "analyze" ? patch.mode : undefined;
+    if ("parallel" in patch) out.parallel = patch.parallel === true ? true : undefined;
     if ("loopGuard" in patch) out.loopGuard = normalizeLoopGuardSensitivity(patch.loopGuard);
     if ("loopGuardResponse" in patch) out.loopGuardResponse = patch.loopGuardResponse === true ? true : undefined;
     if ("loopGuardParams" in patch) out.loopGuardParams = clampLoopGuardOverrides(patch.loopGuardParams);
@@ -411,8 +415,8 @@ export class SqliteSessionStore implements SessionStore {
            id, name, folder, created_at, updated_at, message_count,
            model, model_provider, thinking_level, context_window, compaction_threshold_percent,
            context_tokens, output_tokens, temperature, presence_penalty, frequency_penalty,
-           top_p, sampler, max_parallel_sub_agents, loop_guard, loop_guard_response, loop_guard_params
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           top_p, sampler, max_parallel_sub_agents, mode, parallel, loop_guard, loop_guard_response, loop_guard_params
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            name=excluded.name, folder=excluded.folder, created_at=excluded.created_at,
            updated_at=excluded.updated_at, message_count=excluded.message_count,
@@ -423,6 +427,7 @@ export class SqliteSessionStore implements SessionStore {
            temperature=excluded.temperature, presence_penalty=excluded.presence_penalty,
            frequency_penalty=excluded.frequency_penalty, top_p=excluded.top_p,
            sampler=excluded.sampler, max_parallel_sub_agents=excluded.max_parallel_sub_agents,
+           mode=excluded.mode, parallel=excluded.parallel,
            loop_guard=excluded.loop_guard, loop_guard_response=excluded.loop_guard_response,
            loop_guard_params=excluded.loop_guard_params`,
       )
@@ -446,6 +451,8 @@ export class SqliteSessionStore implements SessionStore {
         s.topP ?? null,
         s.sampler ?? null,
         s.maxParallelSubAgents ?? null,
+        s.mode ?? null,
+        s.parallel === true ? 1 : null,
         s.loopGuard ?? null,
         s.loopGuardResponse === true ? 1 : null,
         s.loopGuardParams ? JSON.stringify(s.loopGuardParams) : null,
@@ -490,6 +497,8 @@ export class SqliteSessionStore implements SessionStore {
       ...(num(r.top_p) !== undefined ? { topP: num(r.top_p) } : {}),
       ...(r.sampler === "temperature" || r.sampler === "topP" ? { sampler: r.sampler } : {}),
       ...(cap !== undefined ? { maxParallelSubAgents: cap } : {}),
+      ...(r.mode === "analyze" || r.mode === "agent" ? { mode: r.mode } : {}),
+      ...(r.parallel === 1 ? { parallel: true } : {}),
       ...(loopGuard ? { loopGuard } : {}),
       ...(r.loop_guard_response === 1 ? { loopGuardResponse: true } : {}),
       ...(loopGuardParams ? { loopGuardParams } : {}),

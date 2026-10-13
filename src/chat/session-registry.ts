@@ -44,8 +44,10 @@ export interface SessionRuntime {
    * session nor in the config), so tuning is throw-away. Cleared whenever the
    * sensitivity level changes (the preset becomes the new baseline). */
   loopGuardOverrides?: Partial<LoopGuardOptions>;
-  /** Chat mode chosen in this session (in-memory; default "analyze"). */
+  /** Chat mode chosen in this session (persisted; default "analyze"). */
   mode?: "analyze" | "agent";
+  /** Per-session Parallel (sub-agents) switch (persisted; absent = OFF). */
+  parallel?: boolean;
   /** Current context tokens in use (fill metric). */
   contextTokens?: number;
   /** Input tokens served from the provider's prompt cache (informational). */
@@ -110,6 +112,8 @@ export class SessionRegistry {
     // guard starts from the tuned parameters, not the bare preset.
     rt.loopGuardOverrides = loaded.summary.loopGuardParams;
     rt.contextTokens = loaded.summary.contextTokens;
+    rt.mode = loaded.summary.mode;
+    rt.parallel = loaded.summary.parallel;
     return rt;
   }
 

@@ -633,8 +633,8 @@ describe("ChatViewProvider", () => {
     expect(configPosts[configPosts.length - 1].config.thinkingLevel).toBe("high");
   });
 
-  it("setMode stores the mode on the runtime, propagates it to the agent and pushes config", async () => {
-    const { provider, registry } = buildHarness();
+  it("setMode stores the mode on the runtime, propagates it to the agent, persists and pushes config", async () => {
+    const { provider, registry, store } = buildHarness();
     const { handler, view } = resolveWith(provider);
     await provider.createNew(); // s1
     const rt = registry.get("s1")!;
@@ -642,6 +642,7 @@ describe("ChatViewProvider", () => {
     await handler({ type: "setMode", mode: "agent" });
     expect(rt.mode).toBe("agent");
     expect(rt.agent.setMode).toHaveBeenCalledWith("agent");
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { mode: "agent" });
 
     await handler({ type: "setMode", mode: "analyze" });
     expect(rt.mode).toBe("analyze");
@@ -657,14 +658,16 @@ describe("ChatViewProvider", () => {
     expect(rt.mode).toBe("analyze");
   });
 
-  it("setParallel applies to the active agent and pushes config", async () => {
-    const { provider, registry } = buildHarness();
+  it("setParallel is PER-SESSION, persists and pushes config", async () => {
+    const { provider, registry, store } = buildHarness();
     const { handler, view } = resolveWith(provider);
     await provider.createNew(); // s1
     const rt = registry.get("s1")!;
 
     await handler({ type: "setParallel", parallel: true });
+    expect(rt.parallel).toBe(true);
     expect(rt.agent.setDelegation).toHaveBeenCalledWith(true);
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { parallel: true });
     const configPosts = view.webview.postMessage.mock.calls
       .map((c) => c[0] as any)
       .filter((m) => m.type === "config");
@@ -678,19 +681,25 @@ describe("ChatViewProvider", () => {
     expect(after[after.length - 1].config.parallel).toBe(true);
   });
 
-  it("a NEW session resets Parallel OFF", async () => {
-    const { provider } = buildHarness();
+  it("Parallel is per-session: a NEW session starts OFF, switching back restores it", async () => {
+    const { provider, registry } = buildHarness();
     const { handler, view } = resolveWith(provider);
-    // Turn Parallel on globally (no active session yet).
-    await handler({ type: "setParallel", parallel: true });
+    await provider.createNew(); // s1
+    await handler({ type: "setParallel", parallel: true }); // s1 → ON
+    expect(registry.get("s1")!.parallel).toBe(true);
 
-    // Creating a session must force Parallel off (the switchView config).
-    await provider.createNew();
-
+    await provider.createNew(); // s2 (active)
     const switchPosts = view.webview.postMessage.mock.calls
       .map((c) => c[0] as any)
       .filter((m) => m.type === "switchView");
     expect(switchPosts[switchPosts.length - 1].config.parallel).toBe(false);
+
+    // Switching back to s1 restores ITS Parallel ON.
+    await handler({ type: "switchTab", id: "s1" });
+    const back = view.webview.postMessage.mock.calls
+      .map((c) => c[0] as any)
+      .filter((m) => m.type === "switchView");
+    expect(back[back.length - 1].config.parallel).toBe(true);
   });
 
   it("reports a CONCRETE mode: a fresh session is analyze even after another was agent", async () => {

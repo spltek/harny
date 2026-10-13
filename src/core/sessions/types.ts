@@ -53,6 +53,10 @@ export interface SessionSummary {
   /** Per-session Loop Guard PARAMETER overrides (the editable fields), saved
    * on the session. Absent keys fall back to the sensitivity preset. */
   loopGuardParams?: Partial<LoopGuardOptions>;
+  /** Per-session chat mode (Analyze/Build). Persisted; absent = "analyze". */
+  mode?: "analyze" | "agent";
+  /** Per-session Parallel (sub-agents) switch. Persisted; absent = OFF. */
+  parallel?: boolean;
 }
 
 /** A session file plus its loaded messages. */
@@ -80,6 +84,8 @@ export type SessionSettings = Pick<
   | "loopGuard"
   | "loopGuardResponse"
   | "loopGuardParams"
+  | "mode"
+  | "parallel"
   | "folder"
 >;
 

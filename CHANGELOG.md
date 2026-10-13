@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   skipped). After a run that changed files, an **Undo run** button restores the
   previous contents and deletes the files it created. Text-only and best-effort
   (binaries and oversized files are left untouched), and one-shot.
+- **Per-session Analyze/Build mode and Parallel switch**: both are now persisted
+  in the session row (new baseline columns `mode` and `parallel`) and restored on
+  reopen. Each new session starts in **Analyze** with **Parallel OFF**. Parallel
+  is no longer a single global switch. (Baseline schema edited in place — the
+  product is unreleased, so no migration: an existing `sessions.db` must be
+  deleted.)
 
 ### Changed
 

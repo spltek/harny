@@ -59,6 +59,8 @@ const MIGRATIONS: readonly Migration[] = [
           top_p REAL,
           sampler TEXT,
           max_parallel_sub_agents INTEGER,
+          mode TEXT,
+          parallel INTEGER,
           loop_guard TEXT,
           loop_guard_response INTEGER,
           loop_guard_params TEXT
