@@ -122,6 +122,8 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
       expect(p).toContain("SAME operation on different targets");
       expect(p).toContain("MEANINGFUL");
       expect(p).toContain("deleting/moving its folder");
+      // resources are a coordination contract, not a sandbox.
+      expect(p).toContain("NOT a sandbox");
       // The old permissive wording is GONE.
       expect(p).not.toContain("YOU DO NOT HAVE TO DELEGATE");
       expect(p).not.toContain("judgment call");

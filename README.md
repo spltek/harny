@@ -121,6 +121,8 @@ Then it emits the `Delegate` calls together, each with a **meaningful `id`** (`f
 
 **With Parallel OFF the concept is hidden entirely**: `Delegate` is not advertised, the prompt never mentions sub-agents (or even the word "Parallel"), and past `Delegate` turns are filtered out of the conversation — so the model does not know sub-tasks exist and simply works with its own tools.
 
+**`resources` are a coordination declaration, not a sandbox.** Declaring them lets the host **serialize** overlapping writers (and order dependencies with `after`); it does **not** restrict what a sub-agent may read or write. A sub-agent is a full agent on the same working directory, so declare honestly — an inaccurate `resources` list can defeat the conflict analysis, and nothing blocks it at runtime.
+
 Sub-agents share all tools (except `Delegate`) and the loop guard.
 
 **Stop vs per-sub-task abort.** The global **Stop** aborts the whole run (every sub-agent together). The **⏹ abort** button on a single sub-agent bubble stops **only that one** — running or still queued behind the concurrency cap — and leaves the run alive. Either way a stopped sub-agent is reported as `aborted`: the orchestrator still receives that Delegate's tool result, marked `aborted` so it KNOWS the sub-task did not finish and can continue with the remaining work (never treating it as a completed report).

@@ -35,8 +35,9 @@ export class DelegateTool implements Tool {
       "file/dir, with DELETING/MOVING a parent folder, and with a concurrent reader of the same file. Shared " +
       "config/manifests/lockfiles/generated code and the same module/feature are conflicts too. If unsure, ORDER " +
       "the tasks (use after) — do not parallelize uncertain conflicts.\n" +
-      "- Declare resources (files AND/OR directories) and access honestly: the host serializes overlapping " +
-      "writers and refuses undeclared delegates, but YOU own a correct conflict-free plan.\n" +
+      "- Declare resources (files AND/OR directories) and access honestly: resources are a COORDINATION " +
+      "contract, NOT a sandbox — they let the host serialize overlapping writers, but they do NOT restrict what " +
+      "a sub-agent may touch. YOU own a correct conflict-free plan.\n" +
       "- Emit ALL independent Delegate calls in the SAME turn so they run in parallel (up to the configured max); " +
       "use after for dependencies. WRITE/CREATE sub-agents on DIFFERENT files run in parallel too.\n" +
       "- You may also do a single, small or sequential task yourself; but when the work IS parallelizable, " +

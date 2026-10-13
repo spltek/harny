@@ -23,6 +23,8 @@ describe("DelegateTool", () => {
     expect(d.description).toContain("PARALLELISM MEANS SUB-TASKS");
     expect(d.description).toContain("PARALLELIZABLE");
     expect(d.description).toContain("resources");
+    // resources are a coordination contract, not a sandbox.
+    expect(d.description).toContain("NOT a sandbox");
   });
 
   it("refuses direct execution (only the agent loop runs it)", () => {

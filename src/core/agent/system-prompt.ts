@@ -89,7 +89,7 @@ PLANNING A DELEGATE:
 - id: SHORT and MEANINGFUL (e.g. "api", "ui-tests" — never "A"/"1").
 - resources: the files AND/OR dirs the sub-task reads or writes (relative to the working directory; EMPTY only for read-only tasks that touch no files, e.g. web research — writers MUST list what they touch).
 - access: "read" (inspect only), "write" (modify existing files) or "create" (new files).
-- Conflicts (the host serializes overlapping writers, but YOU own a conflict-free plan): two writers on the same file/dir conflict; writing a file conflicts with a concurrent reader of it and with deleting/moving its folder; a resource of "." conflicts with EVERYTHING; when unsure, ORDER with after.
+- Conflicts (the host serializes overlapping writers, but YOU own a conflict-free plan; declaring resources is a COORDINATION contract, NOT a sandbox — it does not restrict what a sub-agent may touch): two writers on the same file/dir conflict; writing a file conflicts with a concurrent reader of it and with deleting/moving its folder; a resource of "." conflicts with EVERYTHING; when unsure, ORDER with after.
 
 AFTER DELEGATING:
 - Wait for the reports (they arrive as tool results). Do NOT re-run a sub-task that is already running.

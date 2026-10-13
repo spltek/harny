@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { nodeFileSystem } from "../tools/file-system";
-import { FileRunSnapshot } from "./run-snapshot";
+import { nodeFileSystem, type FileSystem } from "../tools/file-system";
+import { FileRunSnapshot, MAX_SNAPSHOT_FILES } from "./run-snapshot";
 
 describe("FileRunSnapshot", () => {
   let dir: string;
@@ -142,5 +142,106 @@ describe("FileRunSnapshot", () => {
     snap.commitRun();
     snap.restore();
     expect(readFileSync(f, "utf-8")).toBe("before");
+  });
+});
+
+/** In-memory FileSystem for the edge cases (cross-platform: keys are normalised
+ * to forward slashes, so `path.join` output matches on Windows too). */
+function fakeFs(
+  entries: Record<string, string | "dir">,
+  opts: { readTextThrows?: Set<string>; writeTextThrows?: Set<string> } = {},
+) {
+  const norm = (p: string): string => p.replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+  const dirs = new Set<string>();
+  const files = new Map<string, string>();
+  for (const [p, v] of Object.entries(entries)) {
+    if (v === "dir") dirs.add(norm(p));
+    else files.set(norm(p), v);
+  }
+  const fs = {
+    exists: (p: string) => files.has(norm(p)) || dirs.has(norm(p)),
+    isDirectory: (p: string) => dirs.has(norm(p)),
+    list: (d: string) => {
+      const prefix = norm(d) + "/";
+      const out = new Set<string>();
+      for (const p of [...files.keys(), ...dirs]) {
+        if (!p.startsWith(prefix)) continue;
+        const rest = p.slice(prefix.length);
+        if (rest && !rest.includes("/")) out.add(rest);
+      }
+      return [...out];
+    },
+    size: (p: string) => (files.get(norm(p)) ?? "").length,
+    readBytes: (p: string, max = 8192) => Buffer.from((files.get(norm(p)) ?? "").slice(0, max)),
+    readText: (p: string) => {
+      if (opts.readTextThrows?.has(norm(p))) throw new Error("EACCES");
+      return files.get(norm(p)) ?? "";
+    },
+    writeText: (p: string, c: string) => {
+      if (opts.writeTextThrows?.has(norm(p))) throw new Error("EPERM");
+      files.set(norm(p), c);
+    },
+    delete: (p: string) => {
+      files.delete(norm(p));
+    },
+    realpath: (p: string) => p,
+    mtimeMs: () => 0,
+    mkdirRecursive: (p: string) => {
+      dirs.add(norm(p));
+    },
+  } as unknown as FileSystem;
+  return { fs, files, dirs };
+}
+
+describe("FileRunSnapshot edge cases", () => {
+  it("caps the number of captured files (extra files are not captured)", () => {
+    const entries: Record<string, string | "dir"> = { "/root": "dir" };
+    for (let i = 0; i < MAX_SNAPSHOT_FILES + 5; i++) entries[`/root/f${i}.txt`] = "x";
+    const { fs } = fakeFs(entries);
+    const snap = new FileRunSnapshot(fs, () => "/root");
+
+    snap.beginRun();
+    snap.capture(["/root"]);
+    snap.commitRun();
+
+    // Exactly MAX files were captured (all existed + text) → all restored.
+    expect(snap.restore().restored.length).toBe(MAX_SNAPSHOT_FILES);
+  });
+
+  it("leaves an unreadable file untouched on restore (never deletes it)", () => {
+    const { fs } = fakeFs(
+      { "/root": "dir", "/root/locked.bin": "secret" },
+      { readTextThrows: new Set(["/root/locked.bin"]) },
+    );
+    const snap = new FileRunSnapshot(fs, () => "/root");
+
+    snap.beginRun();
+    snap.capture(["/root/locked.bin"]);
+    snap.commitRun();
+
+    const res = snap.restore();
+
+    // Unreadable before → recorded as existing without content → skipped.
+    expect(res.restored).toEqual([]);
+    expect(res.removed).toEqual([]);
+  });
+
+  it("reports a file as skipped when restore cannot write it", () => {
+    const writeErrors = new Set<string>();
+    const { fs, files } = fakeFs(
+      { "/root": "dir", "/root/a.txt": "v1" },
+      { writeTextThrows: writeErrors },
+    );
+    const snap = new FileRunSnapshot(fs, () => "/root");
+
+    snap.beginRun();
+    snap.capture(["/root/a.txt"]);
+    files.set("/root/a.txt", "v2"); // the run changed it
+    snap.commitRun();
+
+    writeErrors.add("/root/a.txt"); // restore write fails
+    const res = snap.restore();
+
+    expect(res.skipped).toContain("/root/a.txt");
   });
 });
