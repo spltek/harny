@@ -1042,6 +1042,33 @@ describe("ChatViewProvider", () => {
     expect(restoreSnapshot).toHaveBeenCalled();
   });
 
+  it("releases a session's undo snapshot on closeTab and deleteSession", async () => {
+    const forgetSnapshot = vi.fn();
+    const { provider } = buildHarness({ forgetSnapshot });
+    const { handler } = resolveWith(provider);
+
+    await provider.createNew(); // s1
+    await handler({ type: "closeTab", id: "s1" });
+    expect(forgetSnapshot).toHaveBeenCalledWith("s1");
+
+    await provider.createNew(); // s2
+    await handler({ type: "deleteSession", id: "s2" });
+    expect(forgetSnapshot).toHaveBeenCalledWith("s2");
+  });
+
+  it("exposes canUndo in the view config for the active session", async () => {
+    const canUndo = vi.fn((id: string) => id === "s1");
+    const { provider } = buildHarness({ canUndo });
+    const { view } = resolveWith(provider);
+    await provider.createNew(); // s1
+
+    const switchPosts = view.webview.postMessage.mock.calls
+      .map((c) => c[0] as { type?: string; config?: { canUndo?: boolean } })
+      .filter((m) => m.type === "switchView");
+    expect(switchPosts[switchPosts.length - 1].config?.canUndo).toBe(true);
+    expect(canUndo).toHaveBeenCalledWith("s1");
+  });
+
   it("asks ONCE to switch to Build when Analyze prepared previews (with a restart tip)", async () => {
     const { registry, provider, store } = buildHarness({ emitEvents: true });
     const { view } = resolveWith(provider);

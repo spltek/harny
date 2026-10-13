@@ -130,6 +130,12 @@ export class ChatViewProvider implements WebviewViewProvider {
       restoreSnapshot?: (sessionId: string) =>
         | { restored: string[]; removed: string[]; skipped: string[] }
         | undefined;
+      /** Release a session's file snapshot when it is closed/deleted, so the
+       * retained file contents are not kept in memory. */
+      forgetSnapshot?: (sessionId: string) => void;
+      /** True when the session still has an undoable snapshot: lets the UI
+       * re-render the "Undo run" button after a tab switch / reload. */
+      canUndo?: (sessionId: string) => boolean;
     } = {},
   ) {
     this.modals = new PanelModalQueue((msg) => this.view?.webview.postMessage(msg));
@@ -535,6 +541,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     if (this.isWorking(id)) return;
     this.streamTee.detach(id);
     this.registry.close(id);
+    this.options.forgetSnapshot?.(id);
     this.pendingQueue.drop(id);
     if (this.activeId === id) {
       this.activeId = undefined;
@@ -1726,6 +1733,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     });
     if (!ok) return;
     this.registry.close(id);
+    this.options.forgetSnapshot?.(id);
     if (this.activeId === id) {
       this.activeId = undefined;
       if (this.registry.listOpenIds().length > 0) {
@@ -1846,6 +1854,8 @@ export class ChatViewProvider implements WebviewViewProvider {
     thinkingLevel?: "off" | "low" | "medium" | "high";
     mode?: "analyze" | "agent";
     parallel?: boolean;
+    /** True when the active session has an undoable writer snapshot. */
+    canUndo: boolean;
     maxParallelSubAgents: number;
     loopGuard?: "low" | "normal" | "high";
     loopGuardResponse?: boolean;
@@ -1979,6 +1989,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       // always mirrors what the agent actually enforces (no stale read-only).
       mode: this.activeRuntime()?.mode ?? "analyze",
       parallel: this.activeRuntime()?.parallel === true,
+      canUndo: this.options.canUndo?.(this.activeRuntime()?.sessionId ?? "") === true,
       // The EFFECTIVE cap the agent will use (session override > config > 4).
       maxParallelSubAgents: this.effectiveParallelCap(),
       loopGuard: this.activeRuntime()?.loopGuard,

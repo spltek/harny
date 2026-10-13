@@ -1368,6 +1368,18 @@ describe("view webview client", () => {
     expect(document.querySelectorAll(".run-undo").length).toBe(1);
   });
 
+  it("re-renders the Undo run button from the config flag (survives a tab switch/reload)", async () => {
+    await loadView();
+    hostMessage({ type: "config", config: { mode: "analyze", canUndo: true }, configSeq: 1 });
+    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "done", timestamp: 1 }] });
+    expect(document.querySelector(".run-undo-btn")?.textContent).toBe("Undo run");
+
+    // A later config without canUndo removes the offer on the next render.
+    hostMessage({ type: "config", config: { mode: "analyze", canUndo: false }, configSeq: 2 });
+    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "done", timestamp: 1 }] });
+    expect(document.querySelector(".run-undo")).toBeFalsy();
+  });
+
   it("does NOT show the CTA from the text alone (no preview flag)", async () => {
     await loadView();
     hostMessage({

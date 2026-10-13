@@ -82,8 +82,11 @@ interface ConfigState {
   thinkingLevel?: string;
   /** Per-session chat mode (host truth): analyze (default) or agent. */
   mode?: "analyze" | "agent";
-  /** Global "Parallel" switch: orchestration/sub-agents enabled. */
+  /** Per-session "Parallel" switch: orchestration/sub-agents enabled. */
   parallel?: boolean;
+  /** True when the ACTIVE session still has an undoable writer snapshot: the UI
+   * re-renders the "Undo run" button after a tab switch / reload. */
+  canUndo?: boolean;
   /** True when the models.dev fallback is unreachable and a limit is missing. */
   modelsDevError?: boolean;
   contextWindow?: number;
@@ -224,6 +227,8 @@ let activeId: string | undefined = init.activeId;
 let openIds: string[] = init.openIds || [];
 let currentSessions: SessionInfo[] = init.sessions || [];
 let workingIds = new Set<string>(init.workingIds || []);
+/** The ACTIVE session has an undoable writer snapshot (from the host config). */
+let canUndoActive = false;
 /** Current auto-compaction threshold % of the context window (updated from config pushes). */
 let compactionThresholdPct = 80;
 
@@ -1299,6 +1304,9 @@ function renderMessages(msgs: ChatMsg[]): boolean {
   // appended AFTER the last bubble: scroll once more so auto-scroll includes
   // its height (otherwise the badge is left just below the fold).
   if (hasVisible) scrollDown();
+  // Re-render the "Undo run" offer for the active session (survives a tab
+  // switch / reload); the host says whether a snapshot is still available.
+  if (canUndoActive) addUndoRunBanner();
   return hasVisible;
 }
 
@@ -4348,6 +4356,7 @@ window.addEventListener("message", (e) => {
         if (msg.configSeq < lastConfigSeq) break;
         lastConfigSeq = msg.configSeq;
       }
+      canUndoActive = (msg.config as { canUndo?: boolean } | undefined)?.canUndo === true;
       renderModelSelect(msg.config || {});
       renderThinkingSelect(msg.config || {});
       if (msg.config && isChatMode(msg.config.mode)) {
@@ -4438,6 +4447,7 @@ function renderViewState(state: {
   if (prevActiveId !== activeId) clearAttachments();
   currentSessions = state.sessions || [];
   workingIds = new Set(state.workingIds || []);
+  canUndoActive = (state.config as { canUndo?: boolean } | undefined)?.canUndo === true;
   renderSessions(currentSessions);
   renderTabs(currentSessions);
   renderModelSelect(state.config || {});

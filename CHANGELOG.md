@@ -60,6 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Undo snapshots are released + the "Undo run" button survives a tab switch**:
+  closing or deleting a session now frees its in-memory file snapshot (it was
+  retained for the whole window lifetime), and the button is re-rendered from a
+  `canUndo` config flag, so it no longer disappears on a tab switch or reload.
 - **Changing the model no longer clears the prompt**: switching model persists the
   choice to `config.json`, and the config-file watcher used to rebuild the whole
   webview (wiping the typed prompt, scroll and streaming state). Config changes

@@ -216,6 +216,12 @@ export async function activate(context: ExtensionContext) {
         const s = snapshots.get(id);
         return s?.hasSnapshot() ? s.restore() : undefined;
       },
+      // Release the snapshot (and the file contents it holds) when the session
+      // is closed/deleted — it would otherwise stay in memory forever.
+      forgetSnapshot: (id) => {
+        snapshots.delete(id);
+      },
+      canUndo: (id) => snapshots.get(id)?.hasSnapshot() === true,
     },
   );
   viewProvider.setContext(context);
