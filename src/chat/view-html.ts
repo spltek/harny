@@ -353,6 +353,8 @@ ${renderViewConfig(deps)}
     .run-undo-text { color: var(--fg-muted); font-size: 13px; }
     .run-undo-btn { flex: 0 0 auto; background: transparent; color: var(--fg-strong); border: 1px solid var(--border); border-radius: 5px; padding: 5px 10px; font-size: 13px; cursor: pointer; white-space: nowrap; }
     .run-undo-btn:hover { border-color: #f5a623; color: #f5a623; }
+    .run-undo-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .run-undo-btn:disabled:hover { border-color: var(--border); color: var(--fg-strong); }
     .build-cta-text { color: var(--fg-strong); font-size: 13px; }
     .build-cta-btn { flex: 0 0 auto; background: #f5a623; color: #1a1a1a; border: none; border-radius: 5px; padding: 6px 12px; font-weight: 600; font-size: 13px; cursor: pointer; white-space: nowrap; }
     .build-cta-btn:hover { background: #ffb84d; }

@@ -60,9 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **"Undo run" is refused while a run is in flight**: clicking it during a run
-  would restore files under a writing agent (same class as the `closeTab`
-  guard). The host now refuses with a clear message (stop the run first).
+- **"Undo run" is refused (and greyed out) while a run is in flight**: clicking
+  it during a run would restore files under a writing agent (same class as the
+  `closeTab` guard). The host refuses with a clear message, and the button is
+  disabled in the UI until the run stops.
 - **Undo snapshots are released + the "Undo run" button survives a tab switch**:
   closing or deleting a session now frees its in-memory file snapshot (it was
   retained for the whole window lifetime), and the button is re-rendered from a

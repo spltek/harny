@@ -638,6 +638,11 @@ function addUndoRunBanner(): void {
   btn.type = "button";
   btn.className = "run-undo-btn";
   btn.textContent = "Undo run";
+  // Never clickable while the ACTIVE session is working (the host would refuse
+  // it anyway); the lock is refreshed by applyWorkingLock on every status.
+  const undoBusy = activeId ? workingIds.has(activeId) : false;
+  btn.disabled = undoBusy;
+  if (undoBusy) btn.title = "Stop the current run before undoing";
   btn.addEventListener("click", () => {
     vscode.postMessage({ type: "undoRun" });
     el.remove();
@@ -4430,6 +4435,13 @@ function applyWorkingLock(): void {
   gearBtn.title = busy
     ? "Stop the current work before configuring providers & models"
     : "Configure providers & models";
+  // The "Undo run" button (if present) follows the ACTIVE session's lock: it is
+  // disabled while that session is working, enabled again once it stops.
+  const undoBusy = activeId ? workingIds.has(activeId) : false;
+  for (const b of messagesEl.querySelectorAll<HTMLButtonElement>(".run-undo-btn")) {
+    b.disabled = undoBusy;
+    b.title = undoBusy ? "Stop the current run before undoing" : "Undo this run";
+  }
 }
 
 function renderViewState(state: {

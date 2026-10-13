@@ -1380,6 +1380,24 @@ describe("view webview client", () => {
     expect(document.querySelector(".run-undo")).toBeFalsy();
   });
 
+  it("disables the Undo run button while the active session is working", async () => {
+    await loadView();
+    hostMessage({
+      type: "switchView",
+      sessions: [],
+      openIds: ["s1"],
+      activeId: "s1",
+      messages: [{ role: "assistant", content: "done", timestamp: 1 }],
+      config: { mode: "analyze", canUndo: true },
+      workingIds: ["s1"],
+    });
+    expect((document.querySelector(".run-undo-btn") as HTMLButtonElement)?.disabled).toBe(true);
+
+    // The run ends: the session is no longer working → the button is enabled.
+    hostMessage({ type: "status", workingIds: [] });
+    expect((document.querySelector(".run-undo-btn") as HTMLButtonElement)?.disabled).toBe(false);
+  });
+
   it("does NOT show the CTA from the text alone (no preview flag)", async () => {
     await loadView();
     hostMessage({
