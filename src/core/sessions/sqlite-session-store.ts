@@ -51,6 +51,7 @@ type Row = Record<string, unknown>;
  * per-session field: a NEW migration + the four store touch points
  * (`normalizePatch`, `carrySummary`, `upsertSummary`, `rowToSummary`) + the
  * schema snapshot in `migrations.test.ts`. Never edit the baseline migration.
+ * Full guide: docs/MIGRATIONS.md.
  */
 export class SqliteSessionStore implements SessionStore {
   private readonly idGen: () => string;

@@ -16,6 +16,9 @@ import type { DatabaseSync } from "node:sqlite";
  *  · a migration that rewrites `messages` IN PLACE must also refresh the
  *    external-content FTS index, since it has no UPDATE trigger:
  *    `INSERT INTO messages_fts(messages_fts) VALUES('rebuild');`
+ *
+ * Step-by-step guide (add a field, table rebuilds, backfills, destructive
+ * migrations, testing): docs/MIGRATIONS.md.
  */
 export interface Migration {
   /** Strictly increasing (1, 2, 3 …). Never reused or reordered. */
