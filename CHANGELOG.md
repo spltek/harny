@@ -18,14 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **"Parallelism means sub-tasks" (Parallel ON)**: the prompt now states it as an
-  identity **and a MUST**, with independence as the criterion: there are exactly
-  **two** reasons to sequence — the **same resource** (same file/dir or mutable
-  state) and a **dependency** (one needs another's output). Anything else (same
-  operation on different targets OR different tasks) → you **MUST** emit N
-  `Delegate` calls in the SAME turn, and a turn that plans to parallelize but
-  contains no `Delegate` call is INVALID. Own tool calls in one turn run
-  serially (calling several tools at once is **not** parallelism). The permissive
-  wording ("you do not have to delegate", "judgment call") was removed.
+  identity **and a MUST**, with independence as the criterion and a MODE-AWARE
+  conflict rule: only two blockers — a **dependency**, and (in **Build** only) a
+  **write conflict** (same file/dir with at least one writer). In **Analyze
+  nothing is written**, so the same resource is never a conflict and two readers
+  always run together. When there is no dependency and no write conflict → you
+  **MUST** emit N `Delegate` calls in the SAME turn, and a turn that plans to
+  parallelize but contains no `Delegate` call is INVALID. Own tool calls run
+  serially. The prompt is written for both strong and small models (short
+  sentences, ordered questions, examples).
 - **Parallel OFF hides the concept**: no `Delegate` tool, no mention of
   sub-agents or "Parallel" anywhere in the model-facing prompt, and past
   `Delegate` turns filtered out of the conversation — the model does not know

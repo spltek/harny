@@ -70,32 +70,49 @@ READ-ONLY MODE (Analyze) — PREVIEW RULES:
         : "";
 
     const orchestratorIntro = hasDelegate
-      ? `\nPARALLEL IS ON. PARALLELISM MEANS SUB-TASKS. If the request has 2+ INDEPENDENT items that do not step ` +
-        `on each other — the same operation on different targets, OR different tasks with no shared state — you MUST ` +
-        `use Delegate: one Delegate call per item, all in the SAME turn. Doing them with your own tools is NOT ` +
-        `parallel and is NOT allowed. Multiple calls to YOUR OWN tools run one after another. See the PARALLELISM ` +
-        `section at the end.`
+      ? `\nPARALLEL IS ON. PARALLELISM MEANS SUB-TASKS: to run work in parallel you MUST call Delegate — one ` +
+        `Delegate per part, ALL in the SAME turn. Your own tool calls run one after another and are NOT parallel. ` +
+        `Split the request into parts that do not depend on each other${
+          isAnalyzeMode(mode) ? "" : " and do not write the same file/dir"
+        }; then emit the Delegate calls now. See the PARALLELISM section at the end.`
       : "";
+    // Mode-aware conflict rule, written for BOTH strong and small models: short
+    // sentences, ordered questions, concrete examples.
+    const parallelConflict = isAnalyzeMode(mode)
+      ? `2. RESOURCE CONFLICT — in Analyze NOTHING is written (every file change is only a preview), so two parts can NEVER conflict, not even on the same file. There is no conflict question here.`
+      : `2. RESOURCE CONFLICT — do two parts touch the SAME file/dir AND at least one of them WRITES it (write+write, or write+read)? YES → not splittable: run them one at a time, or order them with after. Two parts that only READ never conflict. Two different files never conflict.`;
+    const parallelExamples = isAnalyzeMode(mode)
+      ? `- "check the weather" AND "read config.ts" → no dependency, nothing is written → 2 Delegate calls.\n` +
+        `- two parts that both READ the same file → no conflict → 2 Delegate calls.\n` +
+        `- "find X" then "summarize X" → the second needs the first's result (DEPENDENCY) → order with after.`
+      : `- "check the weather" AND "write a poem to a file" → different resources → 2 Delegate calls.\n` +
+        `- "edit a.ts" AND "edit b.ts" → different files → 2 Delegate calls.\n` +
+        `- "edit a.ts" AND "read a.ts" → same file, one writes → CONFLICT → one at a time.\n` +
+        `- two parts that both only READ the same file → no conflict → 2 Delegate calls.`;
     const delegateRules = hasDelegate
       ? `
 
-PARALLELISM — Parallel is ON. PARALLELISM MEANS SUB-TASKS: work runs in parallel ONLY as multiple Delegate sub-tasks. Multiple calls to YOUR OWN tools in one turn run one after another — that is NOT parallelism. There is no third option: if the work is parallelizable, you parallelize it with Delegate; if you are not calling Delegate, you are not parallelizing.
+PARALLELISM — Parallel is ON.
 
-THE CRITERION IS INDEPENDENCE, NOT SAMENESS. Work is PARALLELIZABLE when its parts do NOT target the same resource and do NOT depend on each other. There are exactly TWO reasons to NOT parallelize, and only these: (1) they target the SAME resource — the same file/dir, or the same mutable state (config, lockfile, generated code); (2) a DEPENDENCY — one part needs another's output. It does NOT matter whether they are the SAME operation on different targets or COMPLETELY DIFFERENT tasks: if neither reason applies, they MUST run in parallel.
+A sub-agent is called Delegate. PARALLEL work runs ONLY as multiple Delegate calls: your own tool calls in one turn run one after another and are NOT parallel. So to go parallel, you MUST call Delegate.
 
-Before each step, CLASSIFY the work (this is a partition, not a question):
-- PARALLELIZABLE — 2+ INDEPENDENT items that do not conflict: the SAME operation on different targets (N files, N dirs, N URLs, N modules, N functions, N queries, N sources), OR DIFFERENT tasks with no shared state/dependency (e.g. look up X AND create file Y; several unrelated deliverables), OR independent areas of the codebase → you MUST use Delegate: emit N Delegate calls in this SAME turn, one per item. Do NOT do them with your own tools.
-- NOT parallelizable — items that share a RESOURCE (same file/dir, or the same mutable state) or that have a DEPENDENCY (one needs the other's output) → do NOT batch them together: run them sequentially and ORDER the conflicting/dependent ones with after. (A single task is also not parallelizable — there is nothing to split.)
-When in doubt, if 2+ items do not share a resource and have no dependency, parallelize: emit the N Delegate calls.
+SPLIT DECISION — answer these questions in order; if there is no problem, the work IS splittable and you MUST delegate:
+1. DEPENDENCY — does one part need another part's result? YES → not splittable: do it yourself, or order the sub-tasks with after.
+${parallelConflict}
 
-HARD RULE — decision to action: the moment you decide the work is parallelizable, the Delegate calls MUST be in that SAME assistant turn. A turn that reasons or plans "I will parallelize" but contains NO Delegate call is INVALID — never send it. Before ending ANY turn, check: if the work was parallelizable, does this turn contain the N Delegate calls? If not, emit them now (do not answer first).
+If there is no dependency and no conflict → the work IS splittable → emit ONE Delegate call per part, ALL in this SAME turn. Do NOT do the parts with your own tools. It does not matter whether the parts are the SAME operation on different targets or COMPLETELY DIFFERENT tasks.
+
+EXAMPLES
+${parallelExamples}
+
+HARD RULE — from decision to action: if the work is splittable, the Delegate calls MUST be in the SAME turn in which you decide it. A turn that says or thinks "I will parallelize" but contains NO Delegate call is WRONG — never send it. Before you end ANY turn, check: was the work splittable? If yes, does this turn contain one Delegate call per part? If not, emit them NOW.
 
 PLANNING A DELEGATE:
 - Emit ALL independent Delegate calls in the SAME assistant turn (up to the configured cap); use after: ["id"] for dependencies. A short plan before the calls is welcome.
 - id: SHORT and MEANINGFUL (e.g. "api", "ui-tests" — never "A"/"1").
-- resources: the files AND/OR dirs the sub-task reads or writes (relative to the working directory; EMPTY only for read-only tasks that touch no files, e.g. web research — writers MUST list what they touch).
+- resources: the files AND/OR dirs the sub-task reads or writes (relative to the working directory; EMPTY only for read-only tasks that touch no files, e.g. web research — writers MUST list what they touch). Declaring resources is a coordination contract, NOT a sandbox: it lets the host avoid write conflicts, but it does not restrict what a sub-agent may touch.
 - access: "read" (inspect only), "write" (modify existing files) or "create" (new files).
-- Conflicts (the host serializes overlapping writers, but YOU own a conflict-free plan; declaring resources is a COORDINATION contract, NOT a sandbox — it does not restrict what a sub-agent may touch): two writers on the same file/dir conflict; writing a file conflicts with a concurrent reader of it and with deleting/moving its folder; a resource of "." conflicts with EVERYTHING; when unsure, ORDER with after.
+- Conflict rule the host applies: it serializes two sub-tasks ONLY when they share a resource AND at least one WRITES it; two readers, or two different files, always run together.
 
 AFTER DELEGATING:
 - Wait for the reports (they arrive as tool results). Do NOT re-run a sub-task that is already running.

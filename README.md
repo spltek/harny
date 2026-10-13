@@ -112,10 +112,12 @@ The **Parallel** toggle enables the `Delegate` tool: the main agent becomes an *
 
 **With Parallel ON, the model is told that PARALLELISM MEANS SUB-TASKS.** The prompt states it as an identity, not a preference: work runs in parallel **only** as multiple `Delegate` sub-tasks, and the model's own tool calls in one turn run **one after another (serially)** — so "calling several tools at once" is **not** parallelism. There is no third option: if the work is parallelizable, it is parallelized with `Delegate`.
 
-Before each step the model **classifies** the work. The criterion is **independence**: there are exactly **two** reasons to sequence — the **same resource** (same file/dir or mutable state) and a **dependency** (one needs another's output). Anything else — the same operation on different targets, or completely different tasks — is parallelizable.
+Before each step the model **classifies** the work. The criterion is **independence**, with two **mode-aware** blockers:
+- a **dependency** (one part needs another's output) — always a blocker;
+- a **write conflict** — two parts touching the same file/dir with **at least one writer**. This exists **only in Build**: in **Analyze nothing is written** (edits are previews), so the same resource is never a conflict and two readers always run together.
 
-1. **PARALLELIZABLE** — 2+ **independent** items that do not conflict: the **same operation on different targets** (files, dirs, URLs, modules, functions, queries, sources), **or different tasks** (e.g. look something up *and* create a file), or independent codebase areas → it **MUST** emit **N `Delegate` calls in the same turn**, one per item. Doing them with its own tools is not parallel and is not allowed.
-2. **NOT parallelizable** — a single small task, or steps that depend on each other → the model uses its **own tools** (or answers directly) and orders dependent steps with `after`.
+1. **SPLITTABLE** (no dependency, no write conflict) → it **MUST** emit **N `Delegate` calls in the same turn**, one per part — whether the same operation on different targets or completely different tasks.
+2. **NOT splittable** (a dependency, or — in Build — a shared written resource) → the model uses its **own tools** (or answers) and orders dependent/conflicting steps with `after`.
 
 **HARD RULE — decision → action:** the moment the model decides the work is parallelizable, the `Delegate` calls **must be in that same turn**. A turn that reasons "I will parallelize" but contains no `Delegate` call is invalid.
 

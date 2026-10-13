@@ -99,43 +99,42 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     expect(prompt).toContain("READ-ONLY MODE (Analyze)");
     expect(prompt).toContain("they MUST be read-only");
     expect(prompt).toContain("PARALLELISM MEANS SUB-TASKS");
-    expect(prompt).toContain("There is no third option");
+    expect(prompt).toContain("you MUST call Delegate");
     expect(prompt).toContain("sub-agent");
     // Read-only preview: writers are advertised (they run as previews).
     const listSection = prompt.slice(prompt.indexOf("You have access to these tools:"), prompt.indexOf("\nGuidelines:"));
     expect(listSection).toContain("- Write:");
   });
 
-  it("states the identity 'parallelism = sub-tasks' when Parallel is ON, in BOTH modes", () => {
+  it("states the mode-aware split rule when Parallel is ON", () => {
     const withDelegate = new DefaultSystemPromptBuilder(
       (mode) => toolDefinitionsForMode(toolsWithDelegate(), mode),
       () => "/w",
     );
     for (const mode of ["analyze", "agent"] as const) {
       const p = withDelegate.build(mode);
-      // The IDENTITY: parallel work = sub-tasks; own tool calls are serial.
+      // The IDENTITY: parallel work = Delegate; own tool calls are serial.
       expect(p).toContain("PARALLELISM MEANS SUB-TASKS");
-      expect(p).toContain("that is NOT parallelism");
-      expect(p).toContain("There is no third option");
-      // The classification → action.
-      expect(p).toContain("PARALLELIZABLE");
-      expect(p).toContain("SAME operation on different targets");
-      // MUST + heterogeneous tasks + decision-to-action rule.
-      expect(p).toContain("you MUST use Delegate");
-      expect(p).toContain("INDEPENDENCE, NOT SAMENESS");
-      expect(p).toContain("target the same resource");
-      expect(p).toContain("There are exactly TWO reasons to NOT parallelize");
+      expect(p).toContain("you MUST call Delegate");
+      // The ordered decision + HARD RULE.
+      expect(p).toContain("SPLIT DECISION");
+      expect(p).toContain("DEPENDENCY");
       expect(p).toContain("HARD RULE");
+      // Planning details + report footer + resources hint.
       expect(p).toContain("MEANINGFUL");
-      expect(p).toContain("deleting/moving its folder");
-      // resources are a coordination contract, not a sandbox.
       expect(p).toContain("NOT a sandbox");
-      // The structured report footer is documented for the orchestrator.
       expect(p).toContain("[harny-subagent-report]");
       // The old permissive wording is GONE.
       expect(p).not.toContain("YOU DO NOT HAVE TO DELEGATE");
       expect(p).not.toContain("judgment call");
     }
+    // The conflict rule is MODE-AWARE.
+    const analyze = withDelegate.build("analyze");
+    expect(analyze).toContain("NOTHING is written");
+    expect(analyze).toContain("can NEVER conflict");
+    const build = withDelegate.build("agent");
+    expect(build).toContain("at least one of them WRITES it");
+    expect(build).toContain("Two different files never conflict");
   });
 
   it("Parallel OFF never mentions sub-agents / Delegate / Parallel (both modes)", () => {
