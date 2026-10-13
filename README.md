@@ -114,8 +114,10 @@ The **Parallel** toggle enables the `Delegate` tool: the main agent becomes an *
 
 Before each step the model **classifies** the work (a partition, not a question):
 
-1. **PARALLELIZABLE** — N ≥ 2 INDEPENDENT items: the **same operation on different targets** (files, dirs, URLs, modules, functions, queries, sources), independent research threads, or independent codebase areas → the action is **N `Delegate` calls in the same turn**, one per item.
+1. **PARALLELIZABLE** — 2+ INDEPENDENT items: the **same operation on different targets** (files, dirs, URLs, modules, functions, queries, sources), **or different tasks that do not depend on each other** (e.g. look something up *and* create a file), or independent codebase areas → it **MUST** emit **N `Delegate` calls in the same turn**, one per item. Doing them with its own tools is not parallel and is not allowed.
 2. **NOT parallelizable** — a single small task, or steps that depend on each other → the model uses its **own tools** (or answers directly) and orders dependent steps with `after`.
+
+**HARD RULE — decision → action:** the moment the model decides the work is parallelizable, the `Delegate` calls **must be in that same turn**. A turn that reasons "I will parallelize" but contains no `Delegate` call is invalid.
 
 Then it emits the `Delegate` calls together, each with a **meaningful `id`** (`frontend`, `api-tests`, …), declared `resources` + `access`, and — when the user attached files — `attachments: [n]` selecting **only the attachments that sub-task needs** (omit to forward all). After the reports arrive it synthesizes one final answer; it never claims what no sub-agent reported.
 

@@ -70,9 +70,11 @@ READ-ONLY MODE (Analyze) — PREVIEW RULES:
         : "";
 
     const orchestratorIntro = hasDelegate
-      ? `\nPARALLEL IS ON. PARALLELISM MEANS SUB-TASKS: in this harness, work runs in parallel ONLY as multiple ` +
-        `Delegate sub-tasks. Multiple calls to YOUR OWN tools in one turn are executed one after another — that is ` +
-        `NOT parallelism. See the PARALLELISM section at the end.`
+      ? `\nPARALLEL IS ON. PARALLELISM MEANS SUB-TASKS. If the request has 2+ INDEPENDENT items — the same ` +
+        `operation on different targets, OR different tasks that do not depend on each other (e.g. look up X AND ` +
+        `create file Y) — you MUST use Delegate: one Delegate call per item, all in the SAME turn. Doing them with ` +
+        `your own tools is NOT parallel and is NOT allowed. Multiple calls to YOUR OWN tools run one after another. ` +
+        `See the PARALLELISM section at the end.`
       : "";
     const delegateRules = hasDelegate
       ? `
@@ -80,9 +82,11 @@ READ-ONLY MODE (Analyze) — PREVIEW RULES:
 PARALLELISM — Parallel is ON. PARALLELISM MEANS SUB-TASKS: work runs in parallel ONLY as multiple Delegate sub-tasks. Multiple calls to YOUR OWN tools in one turn run one after another — that is NOT parallelism. There is no third option: if the work is parallelizable, you parallelize it with Delegate; if you are not calling Delegate, you are not parallelizing.
 
 Before each step, CLASSIFY the work (this is a partition, not a question):
-- PARALLELIZABLE — N ≥ 2 INDEPENDENT items: the SAME operation on different targets (N files, N dirs, N URLs, N modules, N functions, N queries, N sources), independent research/investigation threads, or independent areas of the codebase → the action is N Delegate calls in this SAME turn, one per item.
+- PARALLELIZABLE — 2+ INDEPENDENT items: the SAME operation on different targets (N files, N dirs, N URLs, N modules, N functions, N queries, N sources), OR DIFFERENT tasks that do not depend on each other (e.g. research one thing AND create a file; several unrelated questions/deliverables), OR independent areas of the codebase → you MUST use Delegate: emit N Delegate calls in this SAME turn, one per item. Do NOT do them with your own tools.
 - NOT parallelizable — a single small task, or steps that depend on each other → work with your own tools (or answer directly), and ORDER dependent steps with after.
 When in doubt and you can name N ≥ 2 independent items, it IS parallelizable: emit the N Delegate calls.
+
+HARD RULE — decision to action: the moment you decide the work is parallelizable, the Delegate calls MUST be in that SAME assistant turn. A turn that reasons or plans "I will parallelize" but contains NO Delegate call is INVALID — never send it. Before ending ANY turn, check: if the work was parallelizable, does this turn contain the N Delegate calls? If not, emit them now (do not answer first).
 
 PLANNING A DELEGATE:
 - Emit ALL independent Delegate calls in the SAME assistant turn (up to the configured cap); use after: ["id"] for dependencies. A short plan before the calls is welcome.

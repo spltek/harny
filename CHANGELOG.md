@@ -18,12 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **"Parallelism means sub-tasks" (Parallel ON)**: the prompt now states it as an
-  identity, not a preference — work runs in parallel **only** as multiple
-  `Delegate` sub-tasks, and the model's own tool calls in one turn run serially
-  (calling several tools at once is **not** parallelism). The check became a
-  classification: PARALLELIZABLE (N ≥ 2 independent items) → N `Delegate` calls
-  in the same turn; NOT parallelizable → the model's own tools. The permissive
-  wording ("you do not have to delegate", "judgment call") was removed.
+  identity **and a MUST**: PARALLELIZABLE (2+ independent items — the same
+  operation on different targets, OR different tasks that do not depend on each
+  other, e.g. look something up and create a file) → you **MUST** emit N
+  `Delegate` calls in the SAME turn, and a turn that plans to parallelize but
+  contains no `Delegate` call is INVALID. Own tool calls in one turn run serially
+  (calling several tools at once is **not** parallelism). The permissive wording
+  ("you do not have to delegate", "judgment call") was removed.
 - **Parallel OFF hides the concept**: no `Delegate` tool, no mention of
   sub-agents or "Parallel" anywhere in the model-facing prompt, and past
   `Delegate` turns filtered out of the conversation — the model does not know
