@@ -1045,7 +1045,7 @@ describe("ChatViewProvider", () => {
   });
 
   it("asks ONCE to switch to Build when Analyze prepared previews (with a restart tip)", async () => {
-    const { registry, provider } = buildHarness({ emitEvents: true });
+    const { registry, provider, store } = buildHarness({ emitEvents: true });
     const { view } = resolveWith(provider);
     await provider.createNew(); // s1 (active; Analyze by default)
     const rt = registry.get("s1")!;
@@ -1064,9 +1064,11 @@ describe("ChatViewProvider", () => {
         message: expect.stringContaining("restart the chat"),
       }),
     );
-    // Confirmed (auto-reply true) → the session switched to Build.
+    // Confirmed (auto-reply true) → the session switched to Build AND persists it
+    // (same single path as the mode toggle).
     expect(rt.mode).toBe("agent");
     expect((rt.agent as unknown as { setMode: ReturnType<typeof vi.fn> }).setMode).toHaveBeenCalledWith("agent");
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { mode: "agent" });
   });
 
   it("tags config pushes with a configSeq (stale-drop support)", async () => {

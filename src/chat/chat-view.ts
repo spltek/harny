@@ -593,9 +593,8 @@ export class ChatViewProvider implements WebviewViewProvider {
     // The session may have been closed or switched while the modal was open.
     const rt = this.registry.get(sessionId);
     if (!rt || rt.mode === "agent") return;
-    rt.mode = "agent";
-    rt.agent.setMode("agent");
-    if (this.activeId === sessionId) void this.pushConfig();
+    // Same single path as the mode toggle: sets the agent AND persists it.
+    this.setSessionMode(rt, "agent");
   }
 
   /** True when a session is mid-run (streaming, sending or draining its queue):
@@ -1101,11 +1100,7 @@ export class ChatViewProvider implements WebviewViewProvider {
           void this.pushConfig();
           break;
         }
-        rt.mode = msg.mode as "analyze" | "agent";
-        // The agent enforces it: analyze = read-only; agent = full tools.
-        rt.agent.setMode(rt.mode);
-        // Persist the mode PER SESSION so reopening restores it.
-        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { mode: rt.mode }), false);
+        this.setSessionMode(rt, msg.mode);
         break;
       }
 
@@ -1431,6 +1426,18 @@ export class ChatViewProvider implements WebviewViewProvider {
    * runtime config reflects the new settings; context-window changes skip it
    * because they do not affect the model overrides.
    */
+  /**
+   * Set a session's chat mode (Analyze/Build): applies it to the agent AND
+   * persists it PER SESSION. Single source of truth for BOTH the mode toggle
+   * and the "Switch to Build" modal, so they can never diverge.
+   */
+  private setSessionMode(rt: SessionRuntime, mode: "analyze" | "agent"): void {
+    rt.mode = mode;
+    // The agent enforces it: analyze = read-only; agent = full tools.
+    rt.agent.setMode(mode);
+    this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { mode }), false);
+  }
+
   private commitSetting(rt: SessionRuntime, persist: () => void, recomputeOverrides = true): void {
     persist();
     if (recomputeOverrides && rt.model) {

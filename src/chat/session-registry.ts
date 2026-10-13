@@ -114,6 +114,10 @@ export class SessionRegistry {
     rt.contextTokens = loaded.summary.contextTokens;
     rt.mode = loaded.summary.mode;
     rt.parallel = loaded.summary.parallel;
+    // Sync the fresh agent immediately (it defaults to analyze / no delegation),
+    // so its state matches the restored session even before the first send.
+    rt.agent.setMode(rt.mode ?? "analyze");
+    rt.agent.setDelegation(rt.parallel === true);
     return rt;
   }
 

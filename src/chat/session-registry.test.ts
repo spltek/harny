@@ -22,7 +22,7 @@ function build() {
   const sessions = new SessionManager(store);
   const createAgent = vi.fn((h: ChatHistory): ChatController => {
     const history = h;
-    return { getMessages: vi.fn(() => history.conversation()), addUserMessage: vi.fn() } as unknown as ChatController;
+    return { getMessages: vi.fn(() => history.conversation()), addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() } as unknown as ChatController;
   });
   const registry = new SessionRegistry({ sessions, store, createAgent });
   return { store, sessions, createAgent, registry };
@@ -102,7 +102,7 @@ describe("SessionRegistry per-session model", () => {
     const registry = new SessionRegistry({
       sessions,
       store,
-      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn() } as unknown as ChatController)),
+      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() } as unknown as ChatController)),
     });
 
     const rt = registry.openOrCreate("s9");
@@ -121,7 +121,7 @@ describe("SessionRegistry per-session model", () => {
     const registry = new SessionRegistry({
       sessions,
       store,
-      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn() } as unknown as ChatController)),
+      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() } as unknown as ChatController)),
     });
 
     const rt = registry.openOrCreate("s9");
@@ -140,7 +140,7 @@ describe("SessionRegistry per-session model", () => {
     const registry = new SessionRegistry({
       sessions,
       store,
-      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn() } as unknown as ChatController)),
+      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() } as unknown as ChatController)),
     });
 
     const rt = registry.openOrCreate("s9");
@@ -158,7 +158,7 @@ describe("SessionRegistry per-session model", () => {
     const registry = new SessionRegistry({
       sessions,
       store,
-      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn() } as unknown as ChatController)),
+      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() } as unknown as ChatController)),
     });
 
     const rt = registry.openOrCreate("s9");
@@ -176,7 +176,7 @@ describe("SessionRegistry per-session model", () => {
     const registry = new SessionRegistry({
       sessions,
       store,
-      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn() } as unknown as ChatController)),
+      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() } as unknown as ChatController)),
     });
 
     const rt = registry.openOrCreate("s9");
@@ -194,7 +194,7 @@ describe("SessionRegistry per-session model", () => {
     const registry = new SessionRegistry({
       sessions,
       store,
-      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn() } as unknown as ChatController)),
+      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() } as unknown as ChatController)),
     });
 
     const rt = registry.openOrCreate("s9");
@@ -213,7 +213,7 @@ describe("SessionRegistry per-session model", () => {
     const registry = new SessionRegistry({
       sessions,
       store,
-      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn() } as unknown as ChatController)),
+      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() } as unknown as ChatController)),
     });
 
     const rt = registry.openOrCreate("s9");
@@ -242,7 +242,7 @@ describe("SessionRegistry per-session model", () => {
     const registry = new SessionRegistry({
       sessions,
       store,
-      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn() } as unknown as ChatController)),
+      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() } as unknown as ChatController)),
     });
 
     const rt = registry.openOrCreate("s9");
