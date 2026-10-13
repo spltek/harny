@@ -1287,21 +1287,50 @@ describe("view webview client", () => {
     expect(diff?.querySelector(".fd-del")?.textContent).toBe("-old");
   });
 
-  it("shows a highlighted 'Switch to Build' CTA on previewReady and switches mode on click", async () => {
+  it("previewReady renders a STATIC 'switch to Build' note (no button)", async () => {
     await loadView();
     hostMessage({ type: "previewReady" });
     const cta = document.querySelector(".build-cta") as HTMLElement;
     expect(cta).toBeTruthy();
-    const btn = cta.querySelector(".build-cta-btn") as HTMLButtonElement;
-    expect(btn.textContent).toBe("Switch to Build");
+    expect(cta.classList.contains("build-cta-static")).toBe(true);
+    expect(cta.querySelector(".build-cta-text")?.textContent).toContain("switch to Build");
+    // The ACTION is the one-shot host modal, not a persistent button.
+    expect(document.querySelector(".build-cta-btn")).toBeFalsy();
+  });
 
-    posted.length = 0;
-    btn.click();
-    expect(posted).toContainEqual({ type: "setMode", mode: "agent" });
+  it("ignores a STALE config push (out-of-order async responses)", async () => {
+    await loadView();
+    hostMessage({ type: "config", config: { mode: "agent" }, configSeq: 5 });
+    expect(document.getElementById("mode-btn-label")?.textContent).toBe("Build");
+
+    // A slower, OLDER response arrives late: it must NOT revert the mode.
+    hostMessage({ type: "config", config: { mode: "analyze" }, configSeq: 4 });
+    expect(document.getElementById("mode-btn-label")?.textContent).toBe("Build");
+
+    // A NEWER one still applies.
+    hostMessage({ type: "config", config: { mode: "analyze" }, configSeq: 6 });
+    expect(document.getElementById("mode-btn-label")?.textContent).toBe("Analyze");
+  });
+
+  it("a switchView advances the config sequence (later stale configs ignored)", async () => {
+    await loadView();
+    hostMessage({
+      type: "switchView",
+      sessions: [],
+      openIds: [],
+      activeId: "a",
+      messages: [],
+      config: { mode: "agent" },
+      configSeq: 10,
+      workingIds: [],
+    });
+    expect(document.getElementById("mode-btn-label")?.textContent).toBe("Build");
+
+    hostMessage({ type: "config", config: { mode: "analyze" }, configSeq: 9 });
     expect(document.getElementById("mode-btn-label")?.textContent).toBe("Build");
   });
 
-  it("re-renders the Switch to Build CTA on refresh from the stored footer", async () => {
+  it("re-renders the static note on refresh from the message flag (no button)", async () => {
     await loadView();
     hostMessage({
       type: "refresh",
@@ -1309,13 +1338,46 @@ describe("view webview client", () => {
         { role: "user", content: "fix it", timestamp: 1 },
         {
           role: "assistant",
-          content:
-            "Done.\n\n---\n⚠️ Nothing has been applied: the changes above were prepared as **previews** and are NOT on disk. ➡️ Switch to **Build** to apply the changes.",
+          // The model wrote its OWN hint line: the static note still appears
+          // because the FLAG says a preview was prepared.
+          content: "Done.\n\n➡️ Switch to **Build** to apply the changes.",
+          previewPrepared: true,
           timestamp: 2,
         },
       ],
     });
-    expect(document.querySelector(".build-cta .build-cta-btn")?.textContent).toBe("Switch to Build");
+    expect(document.querySelector(".build-cta-static")).toBeTruthy();
+    expect(document.querySelector(".build-cta-btn")).toBeFalsy();
+  });
+
+  it("offers an 'Undo run' button after a writer run and posts undoRun on click", async () => {
+    await loadView();
+    hostMessage({ type: "runUndoable" });
+    const btn = document.querySelector(".run-undo-btn") as HTMLButtonElement;
+    expect(btn?.textContent).toBe("Undo run");
+
+    posted.length = 0;
+    btn.click();
+    expect(posted).toContainEqual({ type: "undoRun" });
+  });
+
+  it("a new runUndoable replaces the previous undo offer", async () => {
+    await loadView();
+    hostMessage({ type: "runUndoable" });
+    hostMessage({ type: "runUndoable" });
+    expect(document.querySelectorAll(".run-undo").length).toBe(1);
+  });
+
+  it("does NOT show the CTA from the text alone (no preview flag)", async () => {
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "user", content: "answer", timestamp: 1 },
+        { role: "assistant", content: "➡️ Switch to **Build** to apply the changes.", timestamp: 2 },
+      ],
+    });
+    expect(document.querySelector(".build-cta")).toBeFalsy();
   });
 
   it("renders a loop-intervention notice as an amber (non-error) bubble", async () => {

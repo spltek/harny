@@ -98,65 +98,45 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     const prompt = builder.build("analyze");
     expect(prompt).toContain("READ-ONLY MODE (Analyze)");
     expect(prompt).toContain("they MUST be read-only");
-    expect(prompt).toContain("ORCHESTRATION");
-    // The SAME 4-step orchestration flow applies in Analyze too (Parallel ON).
-    expect(prompt).toContain("STEP 1 — DECIDE");
-    expect(prompt).toContain("STEP 2 — MAXIMIZE PARALLELISM");
+    expect(prompt).toContain("PARALLELISM MEANS SUB-TASKS");
+    expect(prompt).toContain("There is no third option");
     expect(prompt).toContain("sub-agent");
     // Read-only preview: writers are advertised (they run as previews).
     const listSection = prompt.slice(prompt.indexOf("You have access to these tools:"), prompt.indexOf("\nGuidelines:"));
     expect(listSection).toContain("- Write:");
   });
 
-  it("pre-delegation (only Delegate advertised) forbids every other tool by name", () => {
-    const delegateOnly: Tool[] = [
-      {
-        name: DELEGATE_TOOL_NAME,
-        definition: { name: DELEGATE_TOOL_NAME, description: "Delegate a sub-task.", parameters: { type: "object", properties: {} } },
-        execute: async () => ({ content: "ok", isError: false }),
-      },
-    ];
-    const builder = new DefaultSystemPromptBuilder((m) => toolDefinitionsForMode(delegateOnly, m), () => "/w");
-    const prompt = builder.build("agent");
-    expect(prompt).toContain("DELEGATION TURN");
-    expect(prompt).toContain("MAXIMIZE PARALLELISM");
-    expect(prompt).toContain("ONLY tool you may call is Delegate");
-    expect(prompt).toContain("Do NOT call TodoWrite");
-    expect(prompt).toContain("any such call is refused");
-    // The reasoning is SCOPED to delegation on this turn: the model must not
-    // start solving the task in its thinking.
-    expect(prompt).toContain("Think ONLY about how to orchestrate");
-    expect(prompt).toContain("Do NOT start solving");
-    // The focused prompt does not drag the general guidelines in.
-    expect(prompt).not.toContain("Guidelines:");
-  });
-
-  it("adds the same 4-step orchestration rules when Parallel is ON, in BOTH modes", () => {
+  it("states the identity 'parallelism = sub-tasks' when Parallel is ON, in BOTH modes", () => {
     const withDelegate = new DefaultSystemPromptBuilder(
       (mode) => toolDefinitionsForMode(toolsWithDelegate(), mode),
       () => "/w",
     );
-    // The delegation flow is IDENTICAL in Analyze and Build: don't answer →
-    // think how to split into 1..N sub-tasks → launch the Delegate call(s).
     for (const mode of ["analyze", "agent"] as const) {
       const p = withDelegate.build(mode);
-      expect(p).toContain("ORCHESTRATION MODE (PARALLEL ON)");
-      // A pure question is answered directly; a tool-needing request is delegated.
-      expect(p).toContain("ANSWER it directly");
-      expect(p).toContain("STEP 1 — DECIDE");
-      expect(p).toContain("STEP 2 — MAXIMIZE PARALLELISM");
-      expect(p).toContain("STEP 3 — PLAN + LAUNCH");
-      expect(p).toContain("STEP 4 — COLLECT + ANSWER");
-      // The explicit MAXIMIZE-PARALLELISM phase: N independent items = N sub-agents.
-      expect(p).toContain("LARGEST set of INDEPENDENT sub-tasks");
-      expect(p).toContain("ONE sub-agent EACH");
-      // Conflict reasoning about resources (not just files) + meaningful ids.
-      expect(p).toContain("containing folder");
-      expect(p).toContain("MEANINGFUL id");
+      // The IDENTITY: parallel work = sub-tasks; own tool calls are serial.
+      expect(p).toContain("PARALLELISM MEANS SUB-TASKS");
+      expect(p).toContain("that is NOT parallelism");
+      expect(p).toContain("There is no third option");
+      // The classification → action.
+      expect(p).toContain("PARALLELIZABLE");
+      expect(p).toContain("SAME operation on different targets");
+      expect(p).toContain("MEANINGFUL");
+      expect(p).toContain("deleting/moving its folder");
+      // The old permissive wording is GONE.
+      expect(p).not.toContain("YOU DO NOT HAVE TO DELEGATE");
+      expect(p).not.toContain("judgment call");
     }
+  });
 
-    const without = new DefaultSystemPromptBuilder((mode) => toolDefinitionsForMode(tools(), mode), () => "/w");
-    expect(without.build("agent")).not.toContain("ORCHESTRATION");
+  it("Parallel OFF never mentions sub-agents / Delegate / Parallel (both modes)", () => {
+    const builder = new DefaultSystemPromptBuilder((mode) => toolDefinitionsForMode(tools(), mode), () => "/w");
+    for (const mode of ["analyze", "agent"] as const) {
+      const p = builder.build(mode);
+      expect(p).not.toContain("PARALLELISM");
+      expect(p).not.toContain("sub-agent");
+      expect(p).not.toContain("Delegate");
+      expect(p).not.toContain("delegate");
+    }
   });
 });
 

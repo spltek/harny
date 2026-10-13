@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Undo last run**: before a writer run touches files, Harny snapshots the
+  declared resources (files; declared directories are walked, vendored/build dirs
+  skipped). After a run that changed files, an **Undo run** button restores the
+  previous contents and deletes the files it created. Text-only and best-effort
+  (binaries and oversized files are left untouched), and one-shot.
+
+### Changed
+
+- **"Parallelism means sub-tasks" (Parallel ON)**: the prompt now states it as an
+  identity, not a preference — work runs in parallel **only** as multiple
+  `Delegate` sub-tasks, and the model's own tool calls in one turn run serially
+  (calling several tools at once is **not** parallelism). The check became a
+  classification: PARALLELIZABLE (N ≥ 2 independent items) → N `Delegate` calls
+  in the same turn; NOT parallelizable → the model's own tools. The permissive
+  wording ("you do not have to delegate", "judgment call") was removed.
+- **Parallel OFF hides the concept**: no `Delegate` tool, no mention of
+  sub-agents or "Parallel" anywhere in the model-facing prompt, and past
+  `Delegate` turns filtered out of the conversation — the model does not know
+  sub-tasks exist.
+- **Parallel enforcement removed**: the old hard rules are gone (the
+  delegate-only first turn, the blocking of non-Delegate calls, the
+  "must delegate" nudge and the host-forced sub-agent). The model has its full
+  tool set from the first turn, plus `Delegate`. Conflict analysis and backend
+  serialization are unchanged.
+- **Dev build watches both bundles**: `npm run dev` now builds and watches the
+  extension host AND the webview, so `dist/extension.js` and `media/view.js` no
+  longer go stale while developing. A rebuild still needs a window reload.
+
+### Fixed
+
+- **Mode/controls stay in sync (Analyze vs Build)**: `pushConfig` is async, so
+  an older config response could resolve AFTER a newer one and revert the UI —
+  e.g. show **Build** while the host/agent was still in Analyze, making every
+  tool behave as read-only. Config pushes now carry a monotonic `configSeq`;
+  the host drops stale results and the webview ignores any config older than the
+  last applied. A `setMode` with no active runtime re-pushes the host's truth
+  instead of leaving the UI optimistically out of sync.
+- **Reliable "Switch to Build" call to action**: the highlighted banner was
+  triggered by a marker string in the answer, so it disappeared whenever the
+  model wrote its own "switch to Build" line (exactly what the prompt asks for)
+  and never appeared for previews prepared by delegated sub-agents. It is now
+  driven by the real condition (a preview was prepared, directly or by a
+  sub-agent) and persisted as a message flag, so it also survives a transcript
+  reload.
+- **"Switch to Build" is now a one-shot modal**: when Analyze prepares previews,
+  the host asks **once** whether to switch to Build — with a tip to restart the
+  chat (new session + repeat the request) so the changes are applied from a
+  clean Build context. The transcript keeps only a static, non-clickable note,
+  so a stale button can no longer be clicked on a past turn.
+- **The preview footer LISTS what sub-agents prepared**, and a read-only
+  sub-agent that could not write now reports it explicitly, so the orchestrator
+  can re-delegate it with write access.
+- **A working session's tab cannot be closed**: the × was already disabled in
+  the UI, but the host now also refuses `closeTab` while a run is in flight
+  (streaming/sending/draining), closing the start-of-run race. Closing VS Code
+  still stops everything.
+
 ## [0.1.0] - 2026-08-25
 
 First release: an AI coding harness for VS Code over the OpenAI Chat

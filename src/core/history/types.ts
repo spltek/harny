@@ -51,6 +51,10 @@ export interface ChatMessage {
    * rendered as an orange bubble + an assistant reply, but NOT a real user turn
    * (so it gets no ✂ cut / ⎇ branch key). */
   synthetic?: boolean;
+  /** Analyze prepared changes (previews) that are NOT applied: the UI shows the
+   * highlighted "Switch to Build" call to action. Driven by the real condition
+   * (a preview was prepared), not by a marker in the text. */
+  previewPrepared?: boolean;
   /** A HARNESS-injected prompt (loop guard / delegation / budget), NOT the user
    * typing: rendered with the Harny robot at the start. */
   harness?: boolean;

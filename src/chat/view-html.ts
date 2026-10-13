@@ -347,6 +347,12 @@ ${renderViewConfig(deps)}
     .msg.assistant.loop { background: rgba(245, 166, 35, 0.12); border: 1px solid #f5a623; }
     /* Prominent "Switch to Build" call to action (Analyze prepared previews). */
     .build-cta { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; margin: 8px 0; padding: 10px 12px; border: 1px solid #f5a623; border-radius: 6px; background: rgba(245, 166, 35, 0.16); }
+    .build-cta-static { background: rgba(245, 166, 35, 0.07); border-color: rgba(245, 166, 35, 0.4); }
+    .build-cta-static .build-cta-text { color: var(--fg-muted); }
+    .run-undo { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; margin: 8px 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-elev); }
+    .run-undo-text { color: var(--fg-muted); font-size: 13px; }
+    .run-undo-btn { flex: 0 0 auto; background: transparent; color: var(--fg-strong); border: 1px solid var(--border); border-radius: 5px; padding: 5px 10px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+    .run-undo-btn:hover { border-color: #f5a623; color: #f5a623; }
     .build-cta-text { color: var(--fg-strong); font-size: 13px; }
     .build-cta-btn { flex: 0 0 auto; background: #f5a623; color: #1a1a1a; border: none; border-radius: 5px; padding: 6px 12px; font-weight: 600; font-size: 13px; cursor: pointer; white-space: nowrap; }
     .build-cta-btn:hover { background: #ffb84d; }

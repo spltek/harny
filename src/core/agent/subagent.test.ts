@@ -100,6 +100,49 @@ describe("SubAgentRunner", () => {
     expect(res.content).toContain("report");
   });
 
+  it("forwards onPreviewPrepared when the sub-agent prepares an Analyze preview", async () => {
+    const write = makeWriteTool();
+    const runner = buildRunner(factory([writeCall(), [{ type: "text", content: "report" }]]), [write]);
+    let previewed: { path: string; tool: string } | undefined;
+
+    await runner.run(spec({ access: "read" }), undefined, undefined, undefined, (change) => {
+      previewed = change;
+    });
+
+    expect(previewed).toEqual({ path: "a.ts", tool: "Write" });
+  });
+
+  it("appends a read-only escalation note when a READ sub-agent prepared previews", async () => {
+    const write = makeWriteTool();
+    const runner = buildRunner(factory([writeCall(), [{ type: "text", content: "report" }]]), [write]);
+
+    const res = await runner.run(spec({ access: "read" }));
+
+    expect(res.content).toContain("ran READ-ONLY");
+    expect(res.content).toContain("a.ts");
+    expect(res.content).toContain('access "write"');
+  });
+
+  it("does NOT append the escalation note to a WRITER sub-agent", async () => {
+    const write = makeWriteTool();
+    const runner = buildRunner(factory([writeCall(), [{ type: "text", content: "report" }]]), [write]);
+
+    const res = await runner.run(spec({ access: "write", resources: ["a.ts"] }));
+
+    expect(res.content).not.toContain("ran READ-ONLY");
+  });
+
+  it("does not call onPreviewPrepared when the sub-agent prepares nothing", async () => {
+    const runner = buildRunner(factory([[{ type: "text", content: "report" }]]));
+    let previewed = false;
+
+    await runner.run(spec({ access: "read" }), undefined, undefined, undefined, () => {
+      previewed = true;
+    });
+
+    expect(previewed).toBe(false);
+  });
+
   it("honours a custom turn budget from deps (and still returns a report)", async () => {
     const toolCall = (): StreamChunk[] => [
       { type: "tool_call_start", index: 0, id: "c1", name: "Read" },

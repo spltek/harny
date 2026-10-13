@@ -18,15 +18,11 @@ describe("DelegateTool", () => {
     expect(props.role?.type).toBe("string");
     expect(props.context?.type).toBe("string");
     expect(props.id?.type).toBe("string");
-    // The description steers the orchestrator on parallelism and edits.
+    // The description states the identity (parallelism = sub-tasks) + the schema.
     expect(d.description).toContain("WRITE/CREATE sub-agents on DIFFERENT files");
-    expect(d.description).toContain("FIRST STEP");
+    expect(d.description).toContain("PARALLELISM MEANS SUB-TASKS");
+    expect(d.description).toContain("PARALLELIZABLE");
     expect(d.description).toContain("resources");
-    // With Parallel ON, orchestration is the job: every tool-needing request is
-    // delegated (never work yourself), but a pure question is answered directly.
-    expect(d.description).toContain("your job is orchestration");
-    expect(d.description).toContain("Delegate every request that needs tools");
-    expect(d.description).toContain("a PURE question/explanation you answer directly");
   });
 
   it("refuses direct execution (only the agent loop runs it)", () => {

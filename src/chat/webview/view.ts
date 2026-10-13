@@ -49,6 +49,9 @@ interface ChatMsg {
   steer?: boolean;
   /** Synthetic compacted prompt/response pair: no ✂ cut / ⎇ branch key. */
   synthetic?: boolean;
+  /** Analyze prepared previews that are NOT applied: show the "Switch to Build"
+   * CTA after this message. */
+  previewPrepared?: boolean;
   /** REAL per-turn usage + timings (assistant messages): shown as a badge. */
   meta?: MsgMeta;
 }
@@ -598,17 +601,42 @@ function appendTurnBadge(meta: MsgMeta | undefined): void {
  * that are NOT applied. Makes the mandatory "switch to Build" step obvious
  * instead of burying it in a line of text.
  */
+/**
+ * Static note shown when Analyze prepared changes that are NOT applied. It is
+ * purely informational: the ACTION (switch to Build) is asked ONCE through the
+ * in-panel modal when the previews are created (host side), so no stale button
+ * lingers in the transcript or can be clicked on an old turn.
+ */
 function addSwitchToBuildBanner(): void {
   const el = document.createElement("div");
-  el.className = "build-cta";
+  el.className = "build-cta build-cta-static";
   const text = document.createElement("span");
   text.className = "build-cta-text";
-  text.textContent = "Changes are ready as previews — nothing has been written to disk yet.";
+  text.textContent = "Prepared as previews in Analyze — switch to Build to apply.";
+  el.appendChild(text);
+  messagesEl.appendChild(el);
+  scrollDown();
+}
+
+/**
+ * Offer "undo this run" after a writer run changed files. Only the LAST run is
+ * undoable, so a new offer REPLACES the previous one.
+ */
+function addUndoRunBanner(): void {
+  messagesEl.querySelectorAll(".run-undo").forEach((el) => el.remove());
+  const el = document.createElement("div");
+  el.className = "run-undo";
+  const text = document.createElement("span");
+  text.className = "run-undo-text";
+  text.textContent = "This run changed files on disk.";
   const btn = document.createElement("button");
   btn.type = "button";
-  btn.className = "build-cta-btn";
-  btn.textContent = "Switch to Build";
-  btn.addEventListener("click", () => applyMode("agent", { notify: true }));
+  btn.className = "run-undo-btn";
+  btn.textContent = "Undo run";
+  btn.addEventListener("click", () => {
+    vscode.postMessage({ type: "undoRun" });
+    el.remove();
+  });
   el.append(text, btn);
   messagesEl.appendChild(el);
   scrollDown();
@@ -1212,8 +1240,10 @@ function renderMessages(msgs: ChatMsg[]): boolean {
         else if (content.startsWith("🔁")) bubble.classList.add("loop");
         // Loop notices are system annotations, not branchable messages.
         if (!content.startsWith("🔁")) attachBranchAt(bubble, i);
-        // Prepared-but-not-applied changes: re-render the highlighted CTA.
-        if (content.includes("Nothing has been applied")) addSwitchToBuildBanner();
+        // Prepared-but-not-applied changes: re-render the static note from the
+        // message FLAG (reliable on reload). The ACTION is the one-shot host
+        // modal; the transcript keeps only the informational note.
+        if (m.previewPrepared) addSwitchToBuildBanner();
       }
       if (m.toolCalls && m.toolCalls.length > 0) {
         for (const tc of m.toolCalls) {
@@ -3325,6 +3355,9 @@ function setStreaming(active: boolean): void {
 type ChatMode = "analyze" | "agent";
 const DEFAULT_MODE: ChatMode = "analyze";
 let currentMode: ChatMode = DEFAULT_MODE;
+/** Highest config sequence applied: older async config pushes are IGNORED, so a
+ * slow response can never clobber the current mode/controls with a stale one. */
+let lastConfigSeq = -1;
 
 function isChatMode(v: unknown): v is ChatMode {
   return v === "analyze" || v === "agent";
@@ -3344,7 +3377,7 @@ function applyMode(mode: ChatMode, opts?: { notify?: boolean }): void {
     const on = item.dataset.mode === mode;
     item.classList.toggle("is-active", on);
     item.setAttribute("aria-selected", String(on));
-  }
+  }  
   if (opts?.notify) vscode.postMessage({ type: "setMode", mode });
 }
 
@@ -4094,6 +4127,11 @@ window.addEventListener("message", (e) => {
       addSwitchToBuildBanner();
       break;
     }
+    case "runUndoable": {
+      // A writer run was snapshotted: offer to undo it.
+      addUndoRunBanner();
+      break;
+    }
     case "loopIntervention": {
       // The loop guard broke a degenerate loop and the run CONTINUES: settle
       // the interrupted segment and show an amber notice (not a red error).
@@ -4271,6 +4309,7 @@ window.addEventListener("message", (e) => {
       // Incremental tab switch WITHOUT reloading the page: the streaming state
       // (working bubble, buffers) survives, so returning to a session that is
       // still working relocks and keeps streaming.
+      if (typeof msg.configSeq === "number") lastConfigSeq = Math.max(lastConfigSeq, msg.configSeq);
       renderViewState({
         sessions: msg.sessions || [],
         openIds: msg.openIds || [],
@@ -4303,6 +4342,12 @@ window.addEventListener("message", (e) => {
         : `❌ ${msg.error ?? "failed"}`;
       break;
     case "config":
+      // Ignore a STALE config push: an older async response can resolve after a
+      // newer one and would otherwise revert the mode/controls it carries.
+      if (typeof msg.configSeq === "number") {
+        if (msg.configSeq < lastConfigSeq) break;
+        lastConfigSeq = msg.configSeq;
+      }
       renderModelSelect(msg.config || {});
       renderThinkingSelect(msg.config || {});
       if (msg.config && isChatMode(msg.config.mode)) {

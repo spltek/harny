@@ -12,6 +12,9 @@ export interface StreamTeeDeps {
   /** Soft-steer messages were applied (merged) at a turn boundary: the host
    * drops them all from the session's pending list. Called for EVERY session. */
   onSteerApplied: (sessionId: string, ids: string[]) => void;
+  /** Analyze prepared previews that are NOT applied (ACTIVE session only): the
+   * host asks ONCE whether to switch to Build. */
+  onPreviewReady?: (sessionId: string) => void;
 }
 
 /**
@@ -69,8 +72,16 @@ export class StreamTee {
           if (active) post({ type: "toolResult", toolCallId: event.toolResult.toolCallId, output: event.toolResult.output, isError: event.toolResult.isError });
           break;
         case "preview_ready":
-          // Analyze prepared changes that are NOT applied: surface the CTA.
-          if (active) post({ type: "previewReady" });
+          // Analyze prepared changes that are NOT applied: a static note in the
+          // transcript, plus a ONE-SHOT host prompt to switch to Build.
+          if (active) {
+            post({ type: "previewReady" });
+            this.deps.onPreviewReady?.(rt.sessionId);
+          }
+          break;
+        case "run_undoable":
+          // A writer run was snapshotted: offer "undo this run".
+          if (active) post({ type: "runUndoable" });
           break;
         case "loop_intervention":
           // A degenerate loop was broken and the run continues: drop the

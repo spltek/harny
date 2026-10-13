@@ -142,7 +142,7 @@
     "build": "node scripts/build-extension.mjs && node scripts/build-webview.mjs",
     "typecheck": "npx tsc --noEmit && npx tsc -p tsconfig.webview.json",
     "watch": "npx tsc -p tsconfig.json --watch",
-    "dev": "bun run watch",
+    "dev": "node scripts/dev.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "coverage": "vitest run --coverage",

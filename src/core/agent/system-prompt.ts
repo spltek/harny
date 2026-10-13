@@ -48,6 +48,13 @@ export class DefaultSystemPromptBuilder implements SystemPromptBuilder {
         ? `\n\n## Skills\nWhen the task matches one of these skills, ACTIVATE it first by calling the ${SKILL_TOOL_NAME} tool with its exact name, then follow the returned instructions:\n` +
           installedSkills.map((s) => `- ${s.name}: ${s.description}`).join("\n")
         : "";
+    const hasDelegate = definitions.some((d) => d.name === DELEGATE_TOOL_NAME);
+    // The sub-agent read-only note is only meaningful when Delegate is actually
+    // available (Parallel ON); with Parallel OFF the model must not even know
+    // that sub-tasks exist.
+    const delegateReadOnlyRule = hasDelegate
+      ? `\n- If you delegate sub-agents, they MUST be read-only too (access: "read") — a write/create delegate is refused in this mode.`
+      : "";
     const analyzeRules =
       isAnalyzeMode(mode)
         ? `
@@ -58,65 +65,36 @@ READ-ONLY MODE (Analyze) — PREVIEW RULES:
 - When the user asks for a modification, PREPARE it for real: Read the target files first, then call the file tools with the exact edits. The result is a validated PROPOSAL shown in the chat — not a written change.
 - NEVER claim a change was applied: it was only prepared. ONLY if you actually PREPARED changes (you ran Write/Edit/StrReplace/Delete and got a preview), END your reply with this exact line on its own:
   "${BUILD_SWITCH_HINT}"
-- If the request needs no code change (a pure question, research or explanation), just answer: do NOT prepare edits and do NOT mention Build or applying changes — there is nothing to apply.
-- If you delegate sub-agents, they MUST be read-only too (access: "read") — a write/create delegate is refused in this mode.
+- If the request needs no code change (a pure question, research or explanation), just answer: do NOT prepare edits and do NOT mention Build or applying changes — there is nothing to apply.${delegateReadOnlyRule}
 - The Shell tool runs read-only: any command that would write, delete, move, rename, create, install or build files is refused before it runs. Do not try to work around it (no redirection, no scripts that write). Prefer the Read/Grep/Glob tools for inspection.`
         : "";
 
-    // Orchestration guidance appears only when the Delegate tool is available
-    // (i.e. when the "Parallel" toggle is ON). It is deliberately DIRECTIVE:
-    // the agent must act as an orchestrator and actually use sub-agents.
-    const hasDelegate = definitions.some((d) => d.name === DELEGATE_TOOL_NAME);
-    // "Pre-delegation" turn: only the Delegate tool is advertised. Spell out the
-    // tools the model must NOT call, or weak/local models hallucinate one
-    // (e.g. TodoWrite) and get blocked instead of delegating straight away.
-    const delegateOnly = hasDelegate && definitions.length === 1;
-
-    // PRE-DELEGATION TURN (Parallel ON, nothing delegated yet): the ONLY tool is
-    // Delegate. Return a FOCUSED, short prompt that SCOPES the reasoning to
-    // delegation. A long general prompt (guidelines, "Read files", the full
-    // task framing) makes models start SOLVING the task in their thinking
-    // instead of planning the sub-tasks — so this turn deliberately omits it.
-    if (delegateOnly) {
-      const readOnlyNote = isAnalyzeMode(mode)
-        ? ` Analyze mode is READ-ONLY: every Delegate MUST use access "read".`
-        : "";
-      return (
-        `You are Harny, an expert AI coding agent embedded in VS Code.\n` +
-        `Working directory: ${cwd}${readOnlyNote}\n\n` +
-        `ORCHESTRATION MODE (PARALLEL ON) — DELEGATION TURN.\n` +
-        `The ONLY tool you may call is Delegate. Do NOT call TodoWrite, WebSearch, WebFetch, Read, Grep, Glob, ` +
-        `Shell, Edit, Write, StrReplace, Delete or ReadLints — they are NOT available yet and any such call is refused.\n` +
-        `Your reply MUST be the Delegate call(s): never a text answer.\n\n` +
-        `Think ONLY about how to orchestrate. Do NOT start solving the request in your reasoning — no code analysis, ` +
-        `no design, no drafting the answer: the sub-agents do the work. Your ONLY goal is orchestration and you never do ` +
-        `the work yourself; even a single, whole or trivial task MUST be delegated to ONE sub-agent. Decide:\n` +
-        `1. MAXIMIZE PARALLELISM: split the request into the LARGEST set of INDEPENDENT sub-tasks — N INDEPENDENT items (cities, files, URLs, modules, queries…) = N sub-tasks, one Delegate EACH in this same turn. NEVER collapse independent items into one Delegate; NEVER 0 — only a genuinely single/whole request goes to ONE sub-agent.\n` +
-        `2. For each sub-task: what it touches (resources = files/dirs) and how (access = read/write/create), and its ` +
-        `dependencies/conflicts — when unsure whether two conflict, ORDER them with after.\n` +
-        `Then emit one Delegate call per sub-task, ALL the independent ones in this SAME turn, each with a short ` +
-        `meaningful id.`
-      );
-    }
     const orchestratorIntro = hasDelegate
-      ? `\nORCHESTRATION MODE (PARALLEL ON) — you are the ORCHESTRATOR: you never do the work yourself. Delegate every request that needs tools; a PURE question/explanation you answer directly. See the ORCHESTRATION section at the end for the exact steps.`
+      ? `\nPARALLEL IS ON. PARALLELISM MEANS SUB-TASKS: in this harness, work runs in parallel ONLY as multiple ` +
+        `Delegate sub-tasks. Multiple calls to YOUR OWN tools in one turn are executed one after another — that is ` +
+        `NOT parallelism. See the PARALLELISM section at the end.`
       : "";
     const delegateRules = hasDelegate
       ? `
 
-ORCHESTRATION — Parallel is ON. You are the ORCHESTRATOR. Repeat these 4 steps on EVERY request; never answer the user before delegating.
-- STEP 1 — DECIDE: if the request needs NO tools (a pure question, an explanation, a definition), just ANSWER it directly and stop — do NOT delegate. Otherwise you never do the work yourself: every request that needs tools is delegated.
-- STEP 2 — MAXIMIZE PARALLELISM (an EXPLICIT phase on every request — do NOT skip it): ACTIVELY look for the LARGEST set of INDEPENDENT sub-tasks and split the request into as many as it genuinely contains. N INDEPENDENT items (N cities, N files, N URLs, N modules, N queries, N sources…) = N sub-tasks → ONE sub-agent EACH, all launched together. NEVER collapse independent items into one sub-agent and NEVER "avoid flooding" by merging them: merging is correct ONLY for the SEQUENTIAL steps of the SAME sub-task (e.g. fetch → parse → summarize). A genuinely single/whole/non-splittable request goes to ONE sub-agent (N ≥ 1, never 0). While splitting, reason about resources so parallel tasks cannot collide:
-  · two writers on the same file/dir conflict;
-  · writing a file conflicts with a concurrent reader of it, and with deleting/moving a containing folder;
-  · a task that consumes another's artifact must be ORDERED (use after);
-  · shared config / manifests / lockfiles / generated code / the same module are conflicts;
-  · a resource of "." (the working directory) conflicts with EVERYTHING — never parallelize two writers when one owns it;
-  · resources are paths relative to the working directory (absolute paths are resolved against it);
-  · when unsure, ORDER instead of parallelizing.
-  State the count explicitly in the plan ("N independent sub-tasks: …").
-- STEP 3 — PLAN + LAUNCH (SAME assistant turn): write a SHORT plan for the user (a few bullets: the sub-tasks, what each does, parallel vs ordered, and why the split is conflict-free), THEN emit one Delegate call per sub-task — ALL the independent ones in this one turn so they run in parallel. Give each a SHORT, MEANINGFUL id (e.g. "api", "ui-tests" — never "A"/"1"), declare resources (files AND/OR dirs; EMPTY is allowed for read-only tasks that touch no files, e.g. web research — but writers MUST list what they touch) and access (read/write/create), use after: ["id"] for dependencies, and pass attachments: [n] with ONLY the needed numbers when files are attached. Writes to DISJOINT files run in parallel; overlapping writers, or a reader of a file being written, are serialized automatically.
-- STEP 4 — COLLECT + ANSWER: wait for the reports (they arrive as tool results); do not re-run a sub-task already running. Then synthesize ONE final answer from the reports — what was done, key results, files touched, blockers. Never claim what no sub-agent reported.`
+PARALLELISM — Parallel is ON. PARALLELISM MEANS SUB-TASKS: work runs in parallel ONLY as multiple Delegate sub-tasks. Multiple calls to YOUR OWN tools in one turn run one after another — that is NOT parallelism. There is no third option: if the work is parallelizable, you parallelize it with Delegate; if you are not calling Delegate, you are not parallelizing.
+
+Before each step, CLASSIFY the work (this is a partition, not a question):
+- PARALLELIZABLE — N ≥ 2 INDEPENDENT items: the SAME operation on different targets (N files, N dirs, N URLs, N modules, N functions, N queries, N sources), independent research/investigation threads, or independent areas of the codebase → the action is N Delegate calls in this SAME turn, one per item.
+- NOT parallelizable — a single small task, or steps that depend on each other → work with your own tools (or answer directly), and ORDER dependent steps with after.
+When in doubt and you can name N ≥ 2 independent items, it IS parallelizable: emit the N Delegate calls.
+
+PLANNING A DELEGATE:
+- Emit ALL independent Delegate calls in the SAME assistant turn (up to the configured cap); use after: ["id"] for dependencies. A short plan before the calls is welcome.
+- id: SHORT and MEANINGFUL (e.g. "api", "ui-tests" — never "A"/"1").
+- resources: the files AND/OR dirs the sub-task reads or writes (relative to the working directory; EMPTY only for read-only tasks that touch no files, e.g. web research — writers MUST list what they touch).
+- access: "read" (inspect only), "write" (modify existing files) or "create" (new files).
+- Conflicts (the host serializes overlapping writers, but YOU own a conflict-free plan): two writers on the same file/dir conflict; writing a file conflicts with a concurrent reader of it and with deleting/moving its folder; a resource of "." conflicts with EVERYTHING; when unsure, ORDER with after.
+
+AFTER DELEGATING:
+- Wait for the reports (they arrive as tool results). Do NOT re-run a sub-task that is already running.
+- Synthesize ONE final answer from the reports: what was done, key results, files touched, blockers. Never claim what no sub-agent reported.
+- If a report says a sub-agent ran READ-ONLY and prepared previews (or otherwise needs write access), RE-DELEGATE that sub-task with access "write" and the same resources.`
       : "";
 
     return `You are Harny, an expert AI coding agent embedded in VS Code.
@@ -140,7 +118,7 @@ Guidelines:
 - Edit: surgical, atomic multi-edits. Each edit's oldText must match a UNIQUE region exactly (trailing-space/Unicode tolerated). The result shows the applied diff — always re-check it. StrReplace is the strict single-edit variant.
 - Use Shell for running commands (tests, builds, git operations).
 - Use Grep/Glob to search and explore the codebase.
-- Use TodoWrite to track progress on complex multi-step tasks (with Parallel ON, only AFTER you have delegated).
+- Use TodoWrite to track progress on complex multi-step tasks.
 - Use ReadLints only on files you've edited or are about to edit.
 - When broadly exploring the codebase, prefer Grep and Glob over Shell find/grep.
 - Never repeat the same tool call with identical arguments: if it failed or returned nothing, change approach (Glob/Grep/Read or different arguments) instead of retrying it.${delegateRules}${analyzeRules}${skillsSection}`;

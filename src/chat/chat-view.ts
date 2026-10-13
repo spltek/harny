@@ -56,6 +56,10 @@ export class ChatViewProvider implements WebviewViewProvider {
   private view: WebviewView | undefined;
   private context: ExtensionContext | undefined;
   private activeId: string | undefined;
+  /** Monotonic id for config pushes: `buildConfig` awaits, so an older push can
+   * resolve AFTER a newer one and would clobber the UI (e.g. revert the mode).
+   * Every push gets a seq; stale results are dropped. */
+  private configSeq = 0;
   private hostCache = new Map<string, { at: number; models: ModelInfo[] }>();
   /** models.dev context windows resolved for hosts that do NOT report one
    * (e.g. opencode-go), keyed by `provider|model`. Filled in the background so
@@ -127,6 +131,11 @@ export class ChatViewProvider implements WebviewViewProvider {
       mcp?: McpManager;
       /** Full-text search across sessions (SQLite FTS5). Absent = no search. */
       searchSessions?: (query: string) => { sessionId: string; snippet: string }[];
+      /** Undo the last writer run of a session: restores its file snapshot.
+       * Absent = the feature is unavailable. */
+      restoreSnapshot?: (sessionId: string) =>
+        | { restored: string[]; removed: string[]; skipped: string[] }
+        | undefined;
     } = {},
   ) {
     this.modals = new PanelModalQueue((msg) => this.view?.webview.postMessage(msg));
@@ -525,6 +534,11 @@ export class ChatViewProvider implements WebviewViewProvider {
   }
 
   async closeTab(id: string): Promise<void> {
+    // A WORKING session's tab must NOT be closed. The × is disabled in the UI
+    // (view.ts applyTabLocks), but this host-side guard is defense-in-depth and
+    // covers the start-of-run race, when the webview's workingIds is still
+    // stale. Closing VS Code still kills everything, of course.
+    if (this.isWorking(id)) return;
     this.streamTee.detach(id);
     this.registry.close(id);
     this.pendingQueue.drop(id);
@@ -543,6 +557,57 @@ export class ChatViewProvider implements WebviewViewProvider {
   /** Session ids whose agent is currently streaming (blocks delete, drives the lock). */
   private workingIds(): string[] {
     return this.registry.listOpenIds().filter((id) => this.registry.get(id)?.agent.streaming);
+  }
+
+  /** Undo the active session's last writer run (restore its file snapshot). */
+  private async undoLastRun(): Promise<void> {
+    const id = this.activeId;
+    if (!id) return;
+    const res = this.options.restoreSnapshot?.(id);
+    if (!res || (res.restored.length === 0 && res.removed.length === 0)) {
+      void window.showInformationMessage("Harny: nothing to undo.");
+      return;
+    }
+    void window.showInformationMessage(
+      `Harny: run undone — ${res.restored.length} file(s) restored, ${res.removed.length} removed` +
+        (res.skipped.length > 0 ? `, ${res.skipped.length} skipped.` : "."),
+    );
+    await this.postSwitchView();
+  }
+
+  /**
+   * Analyze just prepared previews (nothing written): ask ONCE whether to switch
+   * to Build. This replaces the old persistent in-chat button, so the action can
+   * never be clicked on a stale turn. Declining is fine — the mode button in the
+   * header still switches later.
+   */
+  private async promptSwitchToBuild(sessionId: string): Promise<void> {
+    const before = this.registry.get(sessionId);
+    if (!before || before.mode === "agent") return; // already in Build (or gone)
+    const ok = await this.inPanelAlert({
+      kind: "confirm",
+      title: "Switch to Build?",
+      message:
+        "Changes were prepared as previews — nothing has been written to disk yet.\n\n" +
+        "Switch to Build to apply them.\n\n" +
+        "Tip: restart the chat — start a NEW session and repeat your request. Applying the " +
+        "changes from a clean Build context is more reliable than continuing this Analyze " +
+        "transcript, where the previews can make the model think the work is already done.",
+      confirmText: "Switch to Build",
+    });
+    if (!ok) return;
+    // The session may have been closed or switched while the modal was open.
+    const rt = this.registry.get(sessionId);
+    if (!rt || rt.mode === "agent") return;
+    rt.mode = "agent";
+    rt.agent.setMode("agent");
+    if (this.activeId === sessionId) void this.pushConfig();
+  }
+
+  /** True when a session is mid-run (streaming, sending or draining its queue):
+   * it must not be closed. Mirrors the condition used to guard send(). */
+  private isWorking(id: string): boolean {
+    return !!this.registry.get(id)?.agent.streaming || this.sending.has(id) || this.pendingQueue.isDraining(id);
   }
 
   /** True when a SYNCHRONOUS VACUUM would freeze something live. */
@@ -642,6 +707,7 @@ export class ChatViewProvider implements WebviewViewProvider {
   private async postSwitchView(): Promise<void> {
     if (!this.view) return;
     const active = this.activeRuntime();
+    const seq = ++this.configSeq;
     const config = await this.buildConfig();
     const live = this.streamTee.liveOf(this.activeId ?? "");
     this.view.webview.postMessage({
@@ -651,6 +717,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       sessions: this.currentFolderSessions(),
       messages: active ? active.agent.getMessages() : [],
       config,
+      configSeq: seq,
       workingIds: this.workingIds(),
       streaming: !!active?.agent.streaming,
       pending: active ? this.pendingQueue.items(active.sessionId) : [],
@@ -727,6 +794,9 @@ export class ChatViewProvider implements WebviewViewProvider {
         break;
       case "deleteSession":
         if (typeof msg.id === "string") await this.deleteSession(msg.id);
+        break;
+      case "undoRun":
+        await this.undoLastRun();
         break;
       case "getAllSessions":
         // show:true — the user clicked the gear: the form opens with this data.
@@ -1016,7 +1086,14 @@ export class ChatViewProvider implements WebviewViewProvider {
 
       case "setMode": {
         const rt = this.activeRuntime();
-        if (!rt || (msg.mode !== "analyze" && msg.mode !== "agent")) break;
+        if (msg.mode !== "analyze" && msg.mode !== "agent") break;
+        if (!rt) {
+          // No active runtime (raced with a tab switch/close): re-push the host's
+          // truth so the UI cannot stay optimistically on a mode the host will
+          // not use on the next send.
+          void this.pushConfig();
+          break;
+        }
         rt.mode = msg.mode as "analyze" | "agent";
         // The agent enforces it: analyze = read-only; agent = full tools.
         rt.agent.setMode(rt.mode);
@@ -1704,6 +1781,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       void this.pushConfig();
     },
     onSteerApplied: (sessionId, ids) => this.pendingQueue.onSteerApplied(sessionId, ids),
+    onPreviewReady: (sessionId) => void this.promptSwitchToBuild(sessionId),
   });
 
   private resubscribe(): void {
@@ -2058,8 +2136,11 @@ export class ChatViewProvider implements WebviewViewProvider {
   }
 
   private async pushConfig(): Promise<void> {
+    const seq = ++this.configSeq;
     const config = await this.buildConfig();
-    this.view?.webview.postMessage({ type: "config", config });
+    // Drop a STALE result: an older `buildConfig` can resolve after a newer one.
+    if (seq !== this.configSeq) return;
+    this.view?.webview.postMessage({ type: "config", config, configSeq: seq });
   }
 
   /** The editor font size in px (editor.fontSize). Harny's root font follows

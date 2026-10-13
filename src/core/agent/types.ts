@@ -2,6 +2,16 @@ import type { ToolCall } from "../tools/tool";
 import type { Usage } from "../llm/types";
 import type { MessageMeta } from "../history/types";
 
+/** A change the model prepared as a preview in Analyze mode: it was validated
+ * (the diff computed) but NOT written to disk. Carries enough to tell the user
+ * and the orchestrator exactly WHAT still needs Build. */
+export interface PreparedChange {
+  /** Path the change targets (as the model supplied it). */
+  path: string;
+  /** Tool that prepared it (Write / Edit / StrReplace / Delete). */
+  tool: string;
+}
+
 /** Sub-agent events worth streaming live into the Delegate bubble. */
 export type SubAgentEvent =
   | { type: "text_delta"; content: string }
@@ -43,4 +53,7 @@ export type AgentEvent =
   /** Analyze finished with prepared changes that are NOT applied: the UI
    * shows a highlighted "Switch to Build" call to action. */
   | { type: "preview_ready" }
+  /** A writer run just finished and its files were snapshotted: the UI can
+   * offer "undo this run". */
+  | { type: "run_undoable" }
   | { type: "raw_chunk"; chunk: string; kind: "text" | "thinking" | "tool_start" | "tool_args" | "tool_end" };

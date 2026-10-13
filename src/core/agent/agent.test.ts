@@ -71,6 +71,21 @@ interface Harness {
   history: InMemoryChatHistory;
 }
 
+/** Fake RunSnapshot recording calls, for the rollback wiring tests. */
+function fakeSnapshot(has = true) {
+  const captured: string[][] = [];
+  return {
+    captured,
+    beginRun: vi.fn(),
+    capture: vi.fn((paths: readonly string[]) => {
+      captured.push([...paths]);
+    }),
+    commitRun: vi.fn(),
+    hasSnapshot: vi.fn(() => has),
+    restore: vi.fn(() => ({ restored: [], removed: [], skipped: [] })),
+  };
+}
+
 function buildHarness(
   opts: {
     config?: HarnyConfig;
@@ -81,6 +96,7 @@ function buildHarness(
     onTurnBoundary?: (signal: AbortSignal) => Promise<void> | void;
     loopGuard?: LoopGuardOptions;
     streamIdleTimeoutMs?: number;
+    snapshot?: import("./run-snapshot").RunSnapshot;
   } = {},
 ): Harness {
   const config = new StaticConfigProvider(opts.config ?? VALID_CONFIG);
@@ -104,6 +120,7 @@ function buildHarness(
     onTurnBoundary: opts.onTurnBoundary,
     loopGuard: opts.loopGuard,
     streamIdleTimeoutMs: opts.streamIdleTimeoutMs,
+    snapshot: opts.snapshot,
   });
   return { agent, factory, events: eventsLog, history };
 }
@@ -890,6 +907,70 @@ describe("Agent", () => {
     expect(events.some((e) => e.type === "preview_ready")).toBe(false);
   });
 
+  it("emits preview_ready + flags the message even when the model wrote its OWN switch line", async () => {
+    const { agent, events, history } = buildHarness({
+      tools: [makeTool("Edit")],
+      chunks: [
+        [
+          { type: "tool_call_start", index: 0, id: "c", name: "Edit" },
+          { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts","edits":[]}' },
+          { type: "tool_call_end", index: 0 },
+        ],
+        [{ type: "text", content: "Done.\n\n➡️ Switch to **Build** to apply the changes." }],
+      ],
+    });
+
+    await agent.send("fix it");
+
+    expect(events.some((e) => e.type === "preview_ready")).toBe(true);
+    const final = history.all().filter((m) => m.role === "assistant").at(-1);
+    expect(final?.previewPrepared).toBe(true);
+  });
+
+  it("snapshots the target of a real file change and emits run_undoable", async () => {
+    const snap = fakeSnapshot();
+    const { agent, events } = buildHarness({
+      tools: [makeTool("Write")],
+      snapshot: snap,
+      chunks: [
+        [
+          { type: "tool_call_start", index: 0, id: "c", name: "Write" },
+          { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts","contents":"x"}' },
+          { type: "tool_call_end", index: 0 },
+        ],
+        [{ type: "text", content: "done" }],
+      ],
+    });
+    agent.setMode("agent");
+
+    await agent.send("write it");
+
+    expect(snap.beginRun).toHaveBeenCalled();
+    expect(snap.capture).toHaveBeenCalledWith(["a.ts"]);
+    expect(snap.commitRun).toHaveBeenCalled();
+    expect(events.some((e) => e.type === "run_undoable")).toBe(true);
+  });
+
+  it("does NOT snapshot Analyze previews (nothing is written)", async () => {
+    const snap = fakeSnapshot();
+    const { agent } = buildHarness({
+      tools: [makeTool("Write")],
+      snapshot: snap,
+      chunks: [
+        [
+          { type: "tool_call_start", index: 0, id: "c", name: "Write" },
+          { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts","contents":"x"}' },
+          { type: "tool_call_end", index: 0 },
+        ],
+        [{ type: "text", content: "done" }],
+      ],
+    });
+
+    await agent.send("write it"); // default = Analyze
+
+    expect(snap.capture).not.toHaveBeenCalled();
+  });
+
   it("emits a loop_intervention event when it breaks a loop", async () => {
     const repeated = (): StreamChunk[] => [
       { type: "tool_call_start", index: 0, id: "c", name: "Shell" },
@@ -1453,8 +1534,10 @@ describe("Orchestration (Delegate)", () => {
       onEvent?: (e: SubAgentEvent) => void,
       signal?: AbortSignal,
       toolCallId?: string,
+      onPreviewPrepared?: (change: { path: string; tool: string }) => void,
     ) => Promise<ToolResult>;
     abortSubAgent?: (toolCallId: string) => void;
+    snapshot?: import("./run-snapshot").RunSnapshot;
   }): { agent: Agent; history: InMemoryChatHistory; eventLog: AgentEvent[] } {
     const config = new StaticConfigProvider(
       opts.maxParallel ? { ...VALID_CONFIG, maxParallelSubAgents: opts.maxParallel } : VALID_CONFIG,
@@ -1476,6 +1559,7 @@ describe("Orchestration (Delegate)", () => {
       allowDelegation: opts.allowDelegation,
       spawnSubAgent: opts.spawn ?? (async () => ({ content: "default report", isError: false })),
       abortSubAgent: opts.abortSubAgent,
+      snapshot: opts.snapshot,
     });
     agent.setMode(opts.mode ?? "agent");
     agent.setDelegation(opts.delegate !== false); // orchestration tests: ON by default
@@ -1502,6 +1586,38 @@ describe("Orchestration (Delegate)", () => {
       resources: ["src/a.ts"],
       parallel: true,
     });
+  });
+
+  it("shows the Switch to Build CTA for DELEGATED previews (sub-agent bubbles it up)", async () => {
+    const { agent, history, eventLog } = build({
+      calls: [{ id: "A", goal: "edit x", access: "read", resources: ["src/a.ts"] }],
+      mode: "analyze",
+      spawn: async (_spec, _onEvent, _signal, _toolCallId, onPreviewPrepared) => {
+        onPreviewPrepared?.({ path: "src/a.ts", tool: "Edit" });
+        return { content: "🔁 report A", isError: false };
+      },
+    });
+
+    await agent.send("go");
+
+    const final = history.all().filter((m) => m.role === "assistant").at(-1);
+    expect(final?.previewPrepared).toBe(true);
+    expect(eventLog.some((e) => e.type === "preview_ready")).toBe(true);
+    // The footer LISTS the file prepared by the sub-agent (not an empty list).
+    expect(final?.content).toContain("src/a.ts");
+  });
+
+  it("snapshots a writer sub-agent's declared resources before it runs", async () => {
+    const snap = fakeSnapshot();
+    const { agent } = build({
+      calls: [{ id: "A", goal: "edit", access: "write", resources: ["src/a.ts"] }],
+      snapshot: snap,
+      spawn: async () => ({ content: "report", isError: false }),
+    });
+
+    await agent.send("go");
+
+    expect(snap.capture).toHaveBeenCalledWith(["src/a.ts"]);
   });
 
   it("a repeated read-only Delegate is RE-RUN, never served from the loop-guard cache", async () => {
@@ -1531,7 +1647,7 @@ describe("Orchestration (Delegate)", () => {
     expect(spawned).toBe(2);
   });
 
-  it("an INVALID Delegate does NOT lift the delegate-first restriction", async () => {
+  it("an INVALID Delegate just returns an error (no delegate-first restriction)", async () => {
     const spawned: DelegateSpec[] = [];
     const readCall: StreamChunk[] = [
       { type: "tool_call_start", index: 0, id: "r0", name: "Read" },
@@ -1563,9 +1679,9 @@ describe("Orchestration (Delegate)", () => {
 
     await agent.send("go");
 
-    // The invalid Delegate did not count: the following non-Delegate call was
-    // still blocked, and the model had to emit a VALID Delegate.
-    expect(history.all().some((m) => m.role === "tool" && /Blocked: Parallel is ON/.test(m.content))).toBe(true);
+    // Nothing is blocked now: the invalid Delegate returned an error, the model
+    // read a file with its own tool, then delegated successfully.
+    expect(history.all().some((m) => m.role === "tool" && /Blocked/.test(m.content))).toBe(false);
     expect(spawned).toHaveLength(1);
   });
 
@@ -1597,7 +1713,7 @@ describe("Orchestration (Delegate)", () => {
     expect(history.all().some((m) => m.role === "assistant" && m.content === "here is your answer")).toBe(true);
   });
 
-  it("Parallel ON: the FIRST turn advertises ONLY the Delegate tool", async () => {
+  it("Parallel ON: the FULL tool set is advertised from the first turn (plus Delegate)", async () => {
     const seenDefs: ToolDefinition[][] = [];
     let call = 0;
     const factory: LLMProviderFactory = {
@@ -1631,56 +1747,13 @@ describe("Orchestration (Delegate)", () => {
 
     await agent.send("x");
 
-    // First turn: ONLY Delegate is advertised (no way to search/read first).
-    expect(seenDefs[0].map((d) => d.name)).toEqual(["Delegate"]);
-    // After delegating, the full tool set is available again.
+    // From the FIRST turn the FULL tool set is advertised: the model may work
+    // directly AND delegate — there is no "delegate-first" restriction.
+    expect(seenDefs[0].map((d) => d.name).sort()).toEqual(["Delegate", "Read", "WebSearch"].sort());
     expect(seenDefs[1].map((d) => d.name).sort()).toEqual(["Delegate", "Read", "WebSearch"].sort());
   });
 
-  it("Parallel ON hard fallback: the HOST forces ONE read-only sub-agent if the model keeps using other tools", async () => {
-    const spawned: DelegateSpec[] = [];
-    const history = new InMemoryChatHistory();
-    const readTurn: StreamChunk[] = [
-      { type: "tool_call_start", index: 0, id: "r1", name: "Read" },
-      { type: "tool_call_delta", index: 0, delta: '{"path":"a.txt"}' },
-      { type: "tool_call_end", index: 0 },
-    ];
-    // The model keeps trying to Read (never delegates): turn 0 is blocked and
-    // nudged, turn 1 is blocked again → the host forces ONE sub-agent.
-    const factory = fakeFactory(readTurn, readTurn, [{ type: "text", content: "done" }]);
-    const tools = new ToolRegistry([makeTool("Read")]);
-    const agent = new Agent({
-      config: new StaticConfigProvider(VALID_CONFIG),
-      llmFactory: factory,
-      tools,
-      history,
-      events: new InMemoryEventBus<AgentEvent>(),
-      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
-      spawnSubAgent: async (spec) => {
-        spawned.push(spec);
-        return { content: "auto report", isError: false };
-      },
-    });
-    agent.setMode("agent");
-    agent.setDelegation(true);
-
-    await agent.send("do the thing");
-
-    // The nudge was injected ONCE, then the host dispatched exactly one sub-agent.
-    expect(history.all().filter((m) => m.role === "user" && /STOP\. Parallel/.test(m.content))).toHaveLength(1);
-    expect(spawned).toHaveLength(1);
-    expect(spawned[0].goal).toBe("do the thing");
-    // SAFE fallback: read-only, no broad write grant on the whole project.
-    expect(spawned[0].access).toBe("read");
-    expect(spawned[0].resources).toEqual([]);
-    // The report is in the transcript as a tool result of a synthetic Delegate call.
-    expect(history.all().some((m) => m.role === "tool" && /auto report/.test(m.content))).toBe(true);
-    expect(
-      history.all().some((m) => m.role === "assistant" && m.toolCalls?.some((tc) => tc.name === "Delegate")),
-    ).toBe(true);
-  });
-
-  it("Parallel ON: blocks non-Delegate tools until the model delegates FIRST", async () => {
+  it("Parallel ON: the model MAY use its own tools first (no blocking) and still delegates", async () => {
     const web = makeTool("WebSearch", { content: "search result", isError: false });
     const spawned: DelegateSpec[] = [];
     const history = new InMemoryChatHistory();
@@ -1712,44 +1785,10 @@ describe("Orchestration (Delegate)", () => {
 
     await agent.send("dammi dati su 3 modelli");
 
-    // The pre-delegation WebSearch was BLOCKED (never executed) and corrected.
-    expect(web.called).toBe(false);
-    expect(history.all().some((m) => m.role === "tool" && /Blocked: Parallel is ON/.test(m.content))).toBe(true);
-    expect(history.all().some((m) => m.role === "user" && /ONLY move now is the Delegate/.test(m.content))).toBe(true);
-    // After the correction the model delegated and the sub-agent ran.
-    expect(spawned).toHaveLength(1);
-  });
-
-  it("Parallel ON: if the model keeps using other tools, the HOST delegates", async () => {
-    const web = makeTool("WebSearch", { content: "search result", isError: false });
-    const spawned: DelegateSpec[] = [];
-    const history = new InMemoryChatHistory();
-    const webCall = (): StreamChunk[] => [
-      { type: "tool_call_start", index: 0, id: "w1", name: "WebSearch" },
-      { type: "tool_call_delta", index: 0, delta: '{"query":"q"}' },
-      { type: "tool_call_end", index: 0 },
-    ];
-    const factory = fakeFactory(webCall(), webCall(), [{ type: "text", content: "final" }]);
-    const tools = new ToolRegistry([web]);
-    const agent = new Agent({
-      config: new StaticConfigProvider(VALID_CONFIG),
-      llmFactory: factory,
-      tools,
-      history,
-      events: new InMemoryEventBus<AgentEvent>(),
-      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
-      spawnSubAgent: async (spec) => {
-        spawned.push(spec);
-        return { content: "report", isError: false };
-      },
-    });
-    agent.setMode("agent");
-    agent.setDelegation(true);
-
-    await agent.send("x");
-
-    expect(web.called).toBe(false);
-    // Nudge once, then the host dispatches one sub-agent itself.
+    // The WebSearch RAN (not blocked), the model then delegated, and no
+    // "delegate-first" nudge was injected.
+    expect(web.called).toBe(true);
+    expect(history.all().some((m) => m.role === "user" && /ONLY move now is the Delegate/.test(m.content))).toBe(false);
     expect(spawned).toHaveLength(1);
   });
 
@@ -2518,13 +2557,14 @@ describe("Orchestration (Delegate)", () => {
     await agent.send("a");
     expect(seen[0]).toContain("[CURRENT STATE]");
     expect(seen[0]).toContain("Analyze — READ-ONLY");
-    expect(seen[0]).toContain("Parallel: OFF");
+    // Parallel OFF: the banner says NOTHING about sub-tasks / Parallel.
+    expect(seen[0]).not.toContain("Parallel");
 
     agent.setMode("agent");
     agent.setDelegation(true);
     await agent.send("b");
     expect(seen[1]).toContain("Build");
-    expect(seen[1]).toContain("Parallel: ON");
+    expect(seen[1]).toContain("PARALLELISM MEANS SUB-TASKS");
   });
 
   it("REAL runner: sub-agents run concurrently up to maxParallelSubAgents", async () => {
@@ -2770,44 +2810,6 @@ describe("Orchestration (Delegate)", () => {
     expect(spawned).toEqual(["A"]);
   });
 
-  it("aborts the HOST-forced sub-agent if aborted before it starts", async () => {
-    const spawned: number[] = [];
-    const readTurn = (): StreamChunk[] => [
-      { type: "tool_call_start", index: 0, id: "r1", name: "Read" },
-      { type: "tool_call_delta", index: 0, delta: '{"path":"a.txt"}' },
-      { type: "tool_call_end", index: 0 },
-    ];
-    const tools = new ToolRegistry([makeTool("Read")]);
-    const events = new InMemoryEventBus<AgentEvent>();
-    const history = new InMemoryChatHistory();
-    const agent = new Agent({
-      config: new StaticConfigProvider(VALID_CONFIG),
-      // The model keeps using a non-Delegate tool → blocked, nudged, then forced.
-      llmFactory: fakeFactory(readTurn(), readTurn(), [{ type: "text", content: "done" }]),
-      tools,
-      history,
-      events,
-      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
-      spawnSubAgent: async () => {
-        spawned.push(1);
-        return { content: "report", isError: false };
-      },
-    });
-    agent.setMode("agent");
-    agent.setDelegation(true);
-    // The host announces the forced delegate, then checks the abort set: abort
-    // it in the announcement so it is skipped BEFORE it ever starts.
-    events.subscribe((e) => {
-      if (e.type === "tool_call" && e.toolCall.id === "auto-delegate") agent.abortSubAgent("auto-delegate");
-    });
-
-    await agent.send("do it");
-
-    expect(spawned).toHaveLength(0);
-    const toolMsgs = history.all().filter((m) => m.role === "tool").map((m) => m.content ?? "");
-    expect(toolMsgs.some((c) => /Sub-agent "auto" aborted/i.test(c))).toBe(true);
-  });
-
   it("rejects a WRITER delegate with missing resources without spawning", async () => {
     let spawned = 0;
     const { agent, history } = build({
@@ -2965,14 +2967,14 @@ describe("Orchestration (Delegate)", () => {
     agent.setDelegation(false);
     await agent.send("off");
     expect(seen[0]).not.toContain("- Delegate:");
-    expect(seen[0]).not.toContain("ORCHESTRATION");
+    expect(seen[0]).not.toContain("PARALLELISM");
+    expect(seen[0]).not.toContain("sub-agent");
 
-    // Parallel ON: the pre-delegation turn uses the FOCUSED DELEGATION TURN
-    // prompt (only Delegate is available), so no general tool list appears.
+    // Parallel ON: the identity is stated and Delegate is advertised.
     agent.setDelegation(true);
     await agent.send("on");
-    expect(seen[1]).toContain("DELEGATION TURN");
-    expect(seen[1]).toContain("ORCHESTRATION");
+    expect(seen[1]).toContain("PARALLELISM MEANS SUB-TASKS");
+    expect(seen[1]).toContain("- Delegate:");
   });
 });
 

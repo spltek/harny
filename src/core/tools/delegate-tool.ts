@@ -15,9 +15,10 @@ export class DelegateTool implements Tool {
     name: "Delegate",
     description:
       "Launch a sub-agent to work on ONE sub-task and return its report. " +
-      "You are the ORCHESTRATOR: with Parallel ON your job is orchestration — you NEVER do the work yourself. " +
-      "Every request that NEEDS TOOLS (read/search/run/change) MUST run as sub-agent(s), even a single, whole or " +
-      "non-splittable task (delegate it to ONE sub-agent); a PURE question/explanation you answer directly. " +
+      "PARALLELISM MEANS SUB-TASKS: work runs in parallel ONLY as multiple Delegate sub-tasks — multiple calls to " +
+      "your OWN tools in one turn run one after another, that is NOT parallelism. So when the work is " +
+      "parallelizable (N ≥ 2 independent items, above all the SAME operation over N different files/URLs/modules/" +
+      "queries), the action is ONE Delegate per item, all in the SAME turn. " +
       "The sub-agent runs its own agent loop with the full tool set on the SAME working directory.\n\n" +
       "DECLARE EXACTLY what the sub-agent will touch so the system can parallelize safely:\n" +
       "- resources: the files/dirs it will read or write (paths relative to the working directory).\n" +
@@ -27,8 +28,9 @@ export class DelegateTool implements Tool {
       "(or overlapping dirs) are serialized automatically (use `after` to order them).\n" +
       "- after: ids of sibling sub-tasks that must finish first (use it when a sub-agent needs another's output).\n\n" +
       "RULES:\n" +
-      "- You are the ORCHESTRATOR: YOU organize the sub-tasks and decide what runs in parallel. FIRST STEP " +
-      "(every tool-needing request): decompose the task and analyze conflicts BEFORE acting.\n" +
+      "- FIRST, CLASSIFY the work: PARALLELIZABLE (N ≥ 2 independent items — the SAME operation over different " +
+      "targets) → ONE Delegate per item in the SAME turn; NOT parallelizable (a single small or sequential task) " +
+      "→ do it with your own tools.\n" +
       "- Reason about RESOURCES, not only exact file paths: a writer conflicts with another writer on the same " +
       "file/dir, with DELETING/MOVING a parent folder, and with a concurrent reader of the same file. Shared " +
       "config/manifests/lockfiles/generated code and the same module/feature are conflicts too. If unsure, ORDER " +
@@ -36,10 +38,9 @@ export class DelegateTool implements Tool {
       "- Declare resources (files AND/OR directories) and access honestly: the host serializes overlapping " +
       "writers and refuses undeclared delegates, but YOU own a correct conflict-free plan.\n" +
       "- Emit ALL independent Delegate calls in the SAME turn so they run in parallel (up to the configured max); " +
-      "use after for dependencies. Do not flood: group tiny steps. WRITE/CREATE sub-agents on DIFFERENT files " +
-      "run in parallel too.\n" +
-      "- Delegate every request that needs tools (never do the work yourself): even a monolithic, single or " +
-      "non-splittable task goes WHOLE to ONE sub-agent. A pure question/explanation needs no tools: answer it directly.",
+      "use after for dependencies. WRITE/CREATE sub-agents on DIFFERENT files run in parallel too.\n" +
+      "- You may also do a single, small or sequential task yourself; but when the work IS parallelizable, " +
+      "delegating the independent parts is expected.",
     parameters: {
       type: "object",
       properties: {

@@ -18,6 +18,8 @@ import {
 } from "../tools/mode-policy";
 import type { ToolDefinition } from "../tools/tool";
 import type { ChatController, SendOptions } from "./chat-controller";
+import type { PreparedChange } from "./types";
+import type { RunSnapshot } from "./run-snapshot";
 import {
   DELEGATE_TOOL_NAME,
   formatSubAgentAborted,
@@ -33,7 +35,7 @@ import type { AttachmentPart } from "../../chat/attachment-types";
 import { LoopGuard, DEFAULT_LOOP_GUARD_OPTIONS, type LoopDecision, type LoopGuardOptions } from "./loop-guard";
 import { ToolCallAccumulator } from "./tool-call-accumulator";
 import { ThinkingTagParser } from "./thinking-parser";
-import type { AgentEvent, SubAgentEvent } from "./types";
+import type { AgentEvent } from "./types";
 
 /**
  * The host writes a synthetic label as the assistant content of a turn that
@@ -97,6 +99,9 @@ export interface AgentDeps {
     /** The Delegate tool-call id: registers the sub-agent so the host can abort
      * JUST this one from its UI bubble. */
     toolCallId?: string,
+    /** Called when the sub-agent prepares an Analyze preview, so the
+     * orchestrator can surface the "Switch to Build" CTA for delegated work. */
+    onPreviewPrepared?: (change: PreparedChange) => void,
   ) => Promise<ToolResult>;
   /** Called by abort() so the parent can cascade Stop to active sub-agents. */
   onAbort?: () => void;
@@ -128,6 +133,10 @@ export interface AgentDeps {
   /** Identity of this agent, passed to tools that keep per-conversation state
    * (e.g. TodoWrite): each session and each sub-agent gets its OWN state. */
   ownerId?: string;
+  /** Called when a SUB-AGENT prepared an Analyze preview (dry-run). */
+  onPreviewPrepared?: (change: PreparedChange) => void;
+  /** Snapshot of the files a writer run may change, for "undo last run". */
+  snapshot?: RunSnapshot;
 }
 
 /**
@@ -147,12 +156,10 @@ export class Agent implements ChatController {
   /** Analyze mode: changes PREPARED as dry-run previews, keyed by path (so the
    * "switch to Build" notice can say exactly WHAT still needs Build). */
   private readonly preparedChanges = new Map<string, string>();
-  /** Parallel ON: at least one Delegate call was emitted for this user message. */
-  private delegatedThisRun = false;
-  /** Parallel ON: the "you must delegate" corrective was already injected. */
-  private forcedDelegationNudge = false;
-  /** The user message that started the current run (goal for the forced sub-agent). */
-  private runGoal = "";
+  /** Parallel ON + Analyze: changes a SUB-AGENT prepared as a preview, keyed by
+   * path (its own Agent tracks them; they bubble up so the orchestrator can
+   * show the CTA AND list exactly WHAT still needs Build). */
+  private readonly subAgentChanges = new Map<string, string>();
   /** Per-attachment parts of the CURRENT user message, forwarded to sub-agents. */
   private currentAttachmentParts: AttachmentPart[] = [];
   /** Delegate tool-call ids the user aborted from the UI. A running one is
@@ -284,7 +291,6 @@ export class Agent implements ChatController {
       displayText: options.displayText,
       timestamp: Date.now(),
     });
-    this.runGoal = userMessage.trim() || options.displayText?.trim() || "";
     this.currentAttachmentParts = options.attachmentParts ?? [];
 
     const config = this.deps.config.get();
@@ -301,11 +307,11 @@ export class Agent implements ChatController {
 
     this.abortController = new AbortController();
     this._streaming = true;
+    this.deps.snapshot?.beginRun();
     this.log(`send: mode=${this._mode} parallel=${this.delegationEnabled ? "ON" : "OFF"}`);
     this.guard.reset();
     this.preparedChanges.clear();
-    this.delegatedThisRun = false;
-    this.forcedDelegationNudge = false;
+    this.subAgentChanges.clear();
     this.forcedFinalReport = false;
     this.abortedDelegates.clear();
     this.pendingSteers = [];
@@ -324,6 +330,10 @@ export class Agent implements ChatController {
     } finally {
       this._streaming = false;
       this.abortController = null;
+      // Rollback: close the run's file snapshot and, when it captured
+      // something, tell the UI that this run can be undone.
+      this.deps.snapshot?.commitRun();
+      if (this.deps.snapshot?.hasSnapshot()) this.deps.events.emit({ type: "run_undoable" });
     }
   }
 
@@ -460,6 +470,11 @@ export class Agent implements ChatController {
     // to an intermediate tool turn (the run continues) would be premature.
     const finalContent = toolCalls.length === 0 ? this.withPreviewFooter(withTruncation) : withTruncation;
     const meta = this.turnMeta(turnResult);
+    // Analyze prepared previews that are not applied: flag the FINAL answer so
+    // the UI shows the highlighted "Switch to Build" CTA. Driven by the REAL
+    // condition (a preview was prepared), not by a marker in the text — the
+    // model's own "switch to Build" line is not a reliable signal.
+    const previewPrepared = toolCalls.length === 0 && this.hasUnappliedPreviews();
     this.deps.history.add({
       role: "assistant",
       content: finalContent,
@@ -467,6 +482,7 @@ export class Agent implements ChatController {
       timestamp: Date.now(),
       ...(thinking.trim() ? { thinking } : {}),
       ...(reasoningDetails && reasoningDetails.length > 0 ? { reasoningDetails } : {}),
+      ...(previewPrepared ? { previewPrepared: true } : {}),
       meta,
     });
     // Publish the turn's REAL metrics NOW (right after it is committed), so the
@@ -474,15 +490,14 @@ export class Agent implements ChatController {
     // end-of-run refresh.
     this.deps.events.emit({ type: "turn_meta", meta });
     // Changes prepared as previews: highlight the "Switch to Build" CTA in the UI.
-    if (finalContent.includes(PREVIEW_FOOTER_MARKER)) {
+    if (previewPrepared) {
       this.deps.events.emit({ type: "preview_ready" });
     }
 
     if (toolCalls.length === 0) {
-      // A no-tool turn is the FINAL answer. In Parallel ON the orchestrator may
-      // answer a pure question directly (it cannot use other tools before
-      // delegating anyway, so this can only be text); a request that needs
-      // tools is delegated via the block below. No forced sub-agent here.
+      // A no-tool turn is the FINAL answer. The parallel decision is
+      // prompt-driven (no host enforcement): the model may answer directly,
+      // work with its own tools, and/or delegate the parallelizable parts.
       // A steer that arrived while THIS final answer was streaming had no turn
       // boundary left to be applied at. Apply it NOW, at the end of the run and
       // BEFORE the host's queued messages, instead of ending: one more turn
@@ -495,42 +510,6 @@ export class Agent implements ChatController {
       // in the same turn and that a no-tool turn counts as the final answer.
       // This keeps the guard model- and language-agnostic (no word lists, no
       // per-model patches) and costs zero extra LLM turns.
-      return;
-    }
-
-    // Parallel ON: delegation comes FIRST. If the model tries to use ANY other
-    // tool before it has delegated (e.g. it starts with WebSearch/Read), BLOCK
-    // those calls and force it to delegate first — otherwise it does the work
-    // itself and then re-does it via sub-agents (duplicated effort).
-    if (
-      this.delegationEnabled &&
-      !this.delegatedThisRun &&
-      !toolCalls.some((tc) => tc.name === DELEGATE_TOOL_NAME)
-    ) {
-      const names = toolCalls.map((t) => t.name).join(", ");
-      this.log(`parallel ON: blocked ${toolCalls.length} non-Delegate call(s) before delegation (${names})`);
-      for (const tc of toolCalls) {
-        const content =
-          "⛔ Blocked: Parallel is ON and you have NOT delegated yet. Your FIRST move must be the Delegate " +
-          "call(s): split the request into 1..N independent sub-tasks (check resource conflicts) and emit them " +
-          "in this turn — before any other tool.";
-        this.deps.events.emit({
-          type: "tool_result",
-          toolResult: { toolCallId: tc.id, output: content, isError: true },
-        });
-        this.deps.history.add({ role: "tool", content, toolCallId: tc.id, timestamp: Date.now() });
-      }
-      if (!this.forcedDelegationNudge && turn + 1 < maxTurns) {
-        this.forcedDelegationNudge = true;
-        this.addHarnessNudge(
-          "STOP. Parallel is ON: do NOT answer and do NOT call any other tool. Your ONLY move now is the " +
-            "Delegate call(s): split the request into 1..N independent sub-tasks (check resource conflicts), " +
-            "expose a SHORT plan, then emit the Delegate call(s) in this turn.",
-        );
-        return this.runTurns(turn + 1);
-      }
-      // Already nudged once and still no delegation: the HOST delegates.
-      await this.forceDelegate(turn);
       return;
     }
 
@@ -784,13 +763,13 @@ export class Agent implements ChatController {
       ? "Analyze — READ-ONLY PREVIEW: you can PREPARE changes (Write/Edit/StrReplace/Delete run as " +
         "VALIDATED diff previews) but nothing is applied; finish by telling the user to switch to Build to apply"
       : "Build — you CAN create, modify and delete files";
-    const parallel = this.delegationEnabled
-      ? "ON — ORCHESTRATOR: do NOT answer and do NOT call any other tool first. Think ONLY about delegation " +
-        "(do NOT start solving the task): split the request into 1..N independent sub-tasks, then emit the Delegate " +
-        "call(s) — all independent ones in the SAME turn (N ≥ 1; NEVER 0 — even a single whole or trivial task goes " +
-        "to ONE sub-agent). You never do the work yourself; answer only after the sub-agents report"
-      : "OFF — no sub-agents: use your own tools only";
-    return `[CURRENT STATE] Mode: ${mode}. Parallel: ${parallel}.`;
+    // Parallel OFF: the model must not even know that sub-tasks exist, so the
+    // state banner says nothing about Parallel.
+    if (!this.delegationEnabled) return `[CURRENT STATE] Mode: ${mode}.`;
+    return (
+      `[CURRENT STATE] Mode: ${mode}. Parallel: ON — PARALLELISM MEANS SUB-TASKS: the ONLY way to run work in ` +
+      `parallel is one Delegate per independent item; your own tool calls run one after another (serially).`
+    );
   }
 
   /** Build the per-turn `meta` (REAL usage + wall-clock timings) for an assistant message. */
@@ -844,14 +823,7 @@ export class Agent implements ChatController {
     const modeDefs = toolDefinitionsForMode(this.deps.tools.getAll(), this._mode, {
       exclude: this.delegationEnabled ? [] : [DELEGATE_TOOL_NAME],
     });
-    // Parallel ON and not delegated yet: advertise ONLY the Delegate tool, so
-    // the orchestrator CANNOT start with WebSearch/Read/Shell/etc. — its first
-    // action is forced to be delegation, with no block/reaction needed. The
-    // full tool set returns as soon as it has delegated.
-    const pendingDelegation = this.delegationEnabled && !this.delegatedThisRun;
-    const toolDefinitions: ToolDefinition[] =
-      toolDefinitionsOverride ??
-      (pendingDelegation ? modeDefs.filter((d) => d.name === DELEGATE_TOOL_NAME) : modeDefs);
+    const toolDefinitions: ToolDefinition[] = toolDefinitionsOverride ?? modeDefs;
 
     const messages: LLMMessage[] = [
       { role: "system", content: `${this.stateLine()}\n\n${this.deps.systemPrompt.build(this._mode, toolDefinitions)}` },
@@ -1076,17 +1048,32 @@ export class Agent implements ChatController {
         ...(this.deps.ownerId ? { ownerId: this.deps.ownerId } : {}),
         ...(this.abortController ? { signal: this.abortController.signal } : {}),
       };
+      // Rollback: capture the target BEFORE a REAL (non-preview) file change.
+      if (!dryRun && isFileMutatingTool(tc.name)) {
+        const target = String(tc.arguments.path ?? "").trim();
+        if (target) this.deps.snapshot?.capture([target]);
+      }
       const result = await tool.execute(tc.arguments, ctx);
       // Remember that a preview was prepared so the final answer can be made
       // unambiguous (the model may still claim it "applied" the change).
       if (dryRun && !result.isError) {
         const path = String(tc.arguments.path ?? "").trim() || "(unknown)";
         if (!this.preparedChanges.has(path)) this.preparedChanges.set(path, tc.name);
+        // Tell the parent (when this agent is a sub-agent) that a preview was
+        // prepared, so the orchestrator surfaces the "Switch to Build" CTA.
+        this.deps.onPreviewPrepared?.({ path, tool: tc.name });
       }
       return result;
     } catch (err: any) {
       return { content: `Tool error (${tc.name}): ${err.message || String(err)}`, isError: true };
     }
+  }
+
+  /** Analyze prepared changes (by this agent OR one of its sub-agents) that are
+   * NOT applied: the final answer gets the "Switch to Build" call to action. */
+  private hasUnappliedPreviews(): boolean {
+    if (!this.mayDelegate || !isAnalyzeMode(this._mode)) return false;
+    return this.preparedChanges.size > 0 || this.subAgentChanges.size > 0;
   }
 
   /**
@@ -1103,8 +1090,7 @@ export class Agent implements ChatController {
     // No preview was prepared (or not in Analyze): a "switch to Build / apply"
     // note is superfluous — the model often adds it on its own. DROP it so a
     // pure question/analysis answer does not end with a bogus call to action.
-    const prepared = this.preparedChanges.size > 0;
-    if (!prepared || !isAnalyzeMode(this._mode)) {
+    if (!this.hasUnappliedPreviews()) {
       if (!hasSwitchLine) return content;
       return content
         .split("\n")
@@ -1114,77 +1100,16 @@ export class Agent implements ChatController {
         .trimEnd();
     }
     // Changes WERE prepared: guarantee the explicit "nothing applied" footer,
-    // without duplicating the hint if the model already included it.
+    // without duplicating the hint if the model already included it. (The CTA
+    // in the UI is triggered by the message flag, NOT by this text.)
     if (hasSwitchLine) return content;
-    const list = [...this.preparedChanges.entries()].map(([path, name]) => `- ${name} \`${path}\``).join("\n");
-    return (
-      `${content}\n\n---\n⚠️ Nothing has been applied: these changes were prepared as **previews** ` +
-      `and are NOT on disk:\n${list}\n${BUILD_SWITCH_HINT}`
-    );
-  }
-
-  /**
-   * HARD guarantee for Parallel ON: the model refused to delegate even after
-   * the corrective nudge, so the HOST dispatches ONE sub-agent with the whole
-   * user request. It is recorded as a synthetic Delegate tool call (so the
-   * transcript, the UI bubble and the LLM story all stay coherent), then the
-   * orchestrator is asked to answer from the report.
-   */
-  private async forceDelegate(turn: number): Promise<void> {
-    if (!this.deps.spawnSubAgent || !this.runGoal) return;
-    // SAFE fallback: READ-ONLY research, no resources. Granting a fallback
-    // sub-agent write access to the WHOLE project (write + ["."]) for any
-    // request the model refused to delegate is too broad; if the task really
-    // needs writes, the orchestrator can delegate a proper writer right after
-    // (it has the full tool set once it has delegated).
-    const spec: DelegateSpec = {
-      id: "auto",
-      goal: this.runGoal,
-      access: "read",
-      resources: [],
-      parallel: false,
-      after: [],
-    };
-    const toolCallId = "auto-delegate";
-    const args: Record<string, unknown> = {
-      id: spec.id,
-      goal: spec.goal,
-      access: spec.access,
-      resources: spec.resources,
-    };
-    this.delegatedThisRun = true;
-    this.log(`parallel hard fallback: host dispatched one READ-ONLY sub-agent ("${spec.id}")`);
-    this.deps.history.add({
-      role: "assistant",
-      content: "",
-      toolCalls: [{ id: toolCallId, name: DELEGATE_TOOL_NAME, arguments: args }],
-      timestamp: Date.now(),
-    });
-    this.deps.events.emit({
-      type: "tool_call",
-      toolCall: { id: toolCallId, name: DELEGATE_TOOL_NAME, arguments: args },
-    });
-    let result: ToolResult;
-    if (this.abortedDelegates.has(toolCallId)) {
-      // The host-dispatched sub-agent was aborted before it started.
-      result = { content: formatSubAgentAborted(spec), isError: true };
-    } else {
-      try {
-        this.deps.events.emit({ type: "subagent_start", toolCallId });
-        const onEvent = (event: SubAgentEvent) =>
-          this.deps.events.emit({ type: "subagent_event", toolCallId, event });
-        result = await this.deps.spawnSubAgent(spec, onEvent, this.abortController?.signal, toolCallId);
-      } catch (err: any) {
-        result = { content: formatSubAgentError(spec, err?.message || String(err)), isError: true };
-      }
-    }
-    this.deps.events.emit({
-      type: "tool_result",
-      toolResult: { toolCallId, output: result.content, isError: result.isError },
-    });
-    this.deps.history.add({ role: "tool", content: result.content, toolCallId, timestamp: Date.now() });
-    if (this.abortController?.signal.aborted) return;
-    await this.runTurns(turn + 1);
+    const merged = new Map<string, string>(this.preparedChanges);
+    for (const [p, n] of this.subAgentChanges) if (!merged.has(p)) merged.set(p, n);
+    const list = [...merged.entries()].map(([path, name]) => `- ${name} \`${path}\``).join("\n");
+    const detail = list
+      ? `these changes were prepared as **previews** and are NOT on disk:\n${list}`
+      : "the changes prepared by the sub-agents are **previews** and are NOT on disk.";
+    return `${content}\n\n---\n⚠️ ${PREVIEW_FOOTER_MARKER}: ${detail}\n${BUILD_SWITCH_HINT}`;
   }
 
   /**
@@ -1209,21 +1134,13 @@ export class Agent implements ChatController {
     const spec = parsed.spec;
     if (!spec) return { content: parsed.error ?? "Invalid Delegate call.", isError: true };
     // Read-only (Analyze) mode must never delegate a WRITER: that would bypass
-    // the read-only guarantee. An invalid/mode-refused Delegate does NOT set
-    // `delegatedThisRun`, so the orchestrator stays restricted to Delegate and
-    // can retry with a read-only spec.
+    // the read-only guarantee.
     if (isAnalyzeMode(this._mode) && spec.access !== "read") {
       return {
         content: '⛔ Analyze (read-only) mode: sub-agents may only be delegated with access "read".',
         isError: true,
       };
     }
-    // A VALID, mode-allowed delegation: record it now (this drives the Parallel
-    // hard guarantee — at least one Delegate per user message). It is set AFTER
-    // validation so an invalid/mode-refused Delegate does NOT lift the
-    // "delegate first" restriction, and BEFORE the abort check because the
-    // model DID delegate even when the user stops that particular sub-task.
-    this.delegatedThisRun = true;
     // The user aborted THIS sub-task from its bubble: never start it (covers a
     // sub-agent still QUEUED behind the concurrency cap) and tell the
     // orchestrator it was aborted so it can adjust its plan.
@@ -1234,6 +1151,8 @@ export class Agent implements ChatController {
     // defaulting to ALL of them when the orchestrator did not specify any.
     const forwarded = this.resolveAttachments(spec.attachments);
     const resolvedSpec: DelegateSpec = { ...spec, images: forwarded.images, attachmentText: forwarded.text };
+    // Rollback: snapshot the declared resources BEFORE a writer touches them.
+    if (resolvedSpec.access !== "read") this.deps.snapshot?.capture(resolvedSpec.resources);
     try {
       // Signal the UI that this sub-agent is STARTING now (queued → running):
       // with a concurrency cap, several delegates may be queued behind others.
@@ -1241,7 +1160,9 @@ export class Agent implements ChatController {
       // Forward the sub-agent's live events into its bubble (nested streaming).
       const onEvent = (event: import("./types").SubAgentEvent) =>
         this.deps.events.emit({ type: "subagent_event", toolCallId: tc.id, event });
-      return await this.deps.spawnSubAgent(resolvedSpec, onEvent, this.abortController?.signal, tc.id);
+      return await this.deps.spawnSubAgent(resolvedSpec, onEvent, this.abortController?.signal, tc.id, (change) => {
+        if (!this.subAgentChanges.has(change.path)) this.subAgentChanges.set(change.path, change.tool);
+      });
     } catch (err: any) {
       return { content: formatSubAgentError(resolvedSpec, err?.message || String(err)), isError: true };
     }

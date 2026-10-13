@@ -999,6 +999,84 @@ describe("ChatViewProvider", () => {
     );
   });
 
+  it("refuses to close the tab of a session that is still working", async () => {
+    const { registry, provider } = buildHarness();
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    (rt.agent as { streaming: boolean }).streaming = true;
+
+    await handler({ type: "closeTab", id: "s1" });
+
+    // The runtime stays open: the close was refused (defense-in-depth; the UI
+    // already disables the ×). Closing VS Code still kills everything.
+    expect(registry.isOpen("s1")).toBe(true);
+  });
+
+  it("undoRun restores the active session's snapshot", async () => {
+    const restoreSnapshot = vi.fn(() => ({ restored: ["/w/a.ts"], removed: [], skipped: [] }));
+    const { provider } = buildHarness({ restoreSnapshot });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1 (active)
+
+    await handler({ type: "undoRun" });
+
+    expect(restoreSnapshot).toHaveBeenCalledWith("s1");
+  });
+
+  it("undoRun reports when there is nothing to undo", async () => {
+    const restoreSnapshot = vi.fn(() => undefined);
+    const { provider } = buildHarness({ restoreSnapshot });
+    const { handler } = resolveWith(provider);
+    await provider.createNew();
+
+    await handler({ type: "undoRun" });
+
+    expect(restoreSnapshot).toHaveBeenCalled();
+  });
+
+  it("asks ONCE to switch to Build when Analyze prepared previews (with a restart tip)", async () => {
+    const { registry, provider } = buildHarness({ emitEvents: true });
+    const { view } = resolveWith(provider);
+    await provider.createNew(); // s1 (active; Analyze by default)
+    const rt = registry.get("s1")!;
+
+    (rt.agent as unknown as { emit: (e: unknown) => void }).emit({ type: "preview_ready" });
+    // Flush the auto-replied modal + the async mode switch.
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The confirm modal is shown, with the sensible "restart the chat" tip.
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "modal",
+        kind: "alert",
+        alertKind: "confirm",
+        title: "Switch to Build?",
+        message: expect.stringContaining("restart the chat"),
+      }),
+    );
+    // Confirmed (auto-reply true) → the session switched to Build.
+    expect(rt.mode).toBe("agent");
+    expect((rt.agent as unknown as { setMode: ReturnType<typeof vi.fn> }).setMode).toHaveBeenCalledWith("agent");
+  });
+
+  it("tags config pushes with a configSeq (stale-drop support)", async () => {
+    const { provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew();
+    view.webview.postMessage.mockClear();
+
+    await handler({ type: "setMode", mode: "agent" });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const configs = view.webview.postMessage.mock.calls
+      .map((c: unknown[]) => c[0] as { type?: string; configSeq?: unknown })
+      .filter((m) => m.type === "config");
+
+    expect(configs.length).toBeGreaterThan(0);
+    expect(configs.every((m) => typeof m.configSeq === "number")).toBe(true);
+  });
+
   it("openSession opens an existing session", async () => {
     const { provider, registry } = buildHarness();
     const { handler } = resolveWith(provider);

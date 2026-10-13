@@ -7,7 +7,7 @@ import type { ToolRegistry, ToolResult } from "../tools";
 import { toolDefinitionsForMode, type ChatMode } from "../tools/mode-policy";
 import { Agent } from "./agent";
 import type { ChatController } from "./chat-controller";
-import type { AgentEvent, SubAgentEvent } from "./types";
+import type { AgentEvent, SubAgentEvent, PreparedChange } from "./types";
 import {
   DELEGATE_TOOL_NAME,
   buildSubAgentTask,
@@ -92,6 +92,9 @@ export class SubAgentRunner {
     /** The Delegate tool-call id: the key that lets the host abort THIS
      * sub-agent from its UI bubble. Absent for direct/test calls. */
     toolCallId?: string,
+    /** Forwarded to the sub-agent: called when it prepares an Analyze preview,
+     * so the orchestrator can surface the "Switch to Build" CTA. */
+    onPreviewPrepared?: (change: PreparedChange) => void,
   ): Promise<ToolResult> {
     // Stop arrived BEFORE this sub-agent started: never start it (queued -> aborted).
     if (signal?.aborted) return { content: formatSubAgentAborted(spec), isError: true };
@@ -111,6 +114,14 @@ export class SubAgentRunner {
       { role: spec.role, access: spec.access, resources: spec.resources, turnBudget: maxTurns },
     );
 
+    // Preview changes this sub-agent prepares (Analyze only): forwarded to the
+    // orchestrator (CTA) AND used to tell it the sub-task needed write access.
+    const prepared: PreparedChange[] = [];
+    const forwardPreview = (change: PreparedChange): void => {
+      prepared.push(change);
+      onPreviewPrepared?.(change);
+    };
+
     const agent = new Agent({
       config: this.deps.config,
       llmFactory: this.deps.llmFactory,
@@ -127,6 +138,8 @@ export class SubAgentRunner {
       // Each sub-agent has its OWN tool state (TodoWrite): concurrent sub-agents
       // must never clobber each other's list.
       ownerId: `sub-${key}`,
+      // Bubble an Analyze preview up to the orchestrator (CTA for delegated work).
+      onPreviewPrepared: forwardPreview,
       log: this.deps.log ? (m) => this.deps.log!(`subagent "${spec.id}": ${m}`) : undefined,
     });
     agent.setMode(mode);
@@ -179,7 +192,11 @@ export class SubAgentRunner {
       // text as a finished report).
       const report = lastAssistantReport(agent.getMessages());
       if (hadError) return { content: formatSubAgentError(spec, report), isError: true };
-      return { content: formatSubAgentReport(spec, report), isError: false };
+      const base = formatSubAgentReport(spec, report);
+      // A READ-ONLY sub-agent that prepared previews could not write: make that
+      // explicit and machine-obvious so the orchestrator re-delegates a writer.
+      const content = mode === "analyze" && prepared.length > 0 ? base + subAgentEscalationNote(prepared) : base;
+      return { content, isError: false };
     } catch (e) {
       this.deps.log?.(`subagent "${spec.id}" error in ${Date.now() - startedAt}ms: ${e instanceof Error ? e.message : String(e)}`);
       return { content: formatSubAgentError(spec, e instanceof Error ? e.message : String(e)), isError: true };
@@ -189,6 +206,18 @@ export class SubAgentRunner {
       this.active.delete(key);
     }
   }
+}
+
+/** Deterministic note appended to a READ-ONLY sub-agent's report when it
+ * prepared previews: it could not write, so the orchestrator must re-delegate
+ * with access "write" to apply them. Host-generated, so it cannot be forgotten
+ * by a weak model. */
+function subAgentEscalationNote(changes: readonly PreparedChange[]): string {
+  const list = changes.map((c) => `- ${c.tool} \`${c.path}\``).join("\n");
+  return (
+    `\n\n⛔ This sub-agent ran READ-ONLY and could NOT write: it prepared previews for\n${list}\n` +
+    `Re-delegate this sub-task with access "write" (and those resources) to apply them in Build.`
+  );
 }
 
 /** Keep only the sub-agent events worth streaming (drop usage / raw chunks). */
