@@ -16,9 +16,10 @@ export class DelegateTool implements Tool {
     description:
       "Launch a sub-agent to work on ONE sub-task and return its report. " +
       "PARALLELISM MEANS SUB-TASKS: work runs in parallel ONLY as multiple Delegate sub-tasks — multiple calls to " +
-      "your OWN tools in one turn run one after another, that is NOT parallelism. When the request has 2+ INDEPENDENT " +
-      "items (the same operation on different targets, OR different tasks that do not depend on each other), you " +
-      "MUST emit ONE Delegate per item, all in the SAME turn. " +
+      "your OWN tools in one turn run one after another, that is NOT parallelism. The criterion is INDEPENDENCE: " +
+      "when the request has 2+ items that do NOT step on each other (no dependency, no shared file/dir/mutable " +
+      "state — whether the SAME operation on different targets or DIFFERENT tasks), you MUST emit ONE Delegate per " +
+      "item, all in the SAME turn. " +
       "The sub-agent runs its own agent loop with the full tool set on the SAME working directory.\n\n" +
       "DECLARE EXACTLY what the sub-agent will touch so the system can parallelize safely:\n" +
       "- resources: the files/dirs it will read or write (paths relative to the working directory).\n" +
