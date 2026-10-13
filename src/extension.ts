@@ -127,11 +127,22 @@ export async function activate(context: ExtensionContext) {
     );
     return;
   }
-  const store = new SqliteSessionStore({
-    db,
-    fs: nodeFileSystem,
-    currentFolder: () => root,
-  });
+  let store: SqliteSessionStore;
+  try {
+    store = new SqliteSessionStore({
+      db,
+      fs: nodeFileSystem,
+      currentFolder: () => root,
+      log: (m) => infoLog(m),
+    });
+  } catch (e) {
+    infoLog("session database migration failed:", e);
+    void window.showErrorMessage(
+      `Harny could not open the sessions database: ${e instanceof Error ? e.message : String(e)}. ` +
+        "The database may come from a newer Harny version, or be corrupted.",
+    );
+    return;
+  }
   context.subscriptions.push({ dispose: () => store.close() });
   const sessions = new SessionManager(store);
 

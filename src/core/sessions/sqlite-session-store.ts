@@ -4,6 +4,7 @@ import type { FileSystem } from "../tools/file-system";
 import type { ChatMessage } from "../history/types";
 import { isThinkingLevel } from "../config/types";
 import { clampLoopGuardOverrides, normalizeLoopGuardSensitivity, type LoopGuardOptions } from "../agent/loop-guard";
+import { runMigrations } from "./migrations";
 import type { DbVacuumResult, DbVacuumStats, LoadedSession, SessionSettingsPatch, SessionStore, SessionSummary } from "./types";
 
 /** One full-text search hit: which message matched, its snippet and BM25 rank. */
@@ -31,6 +32,8 @@ export interface SqliteSessionStoreDeps {
   /** The current workspace root: stamped on new sessions (per-folder bucketing). */
   currentFolder?: () => string | undefined;
   idGen?: () => string;
+  /** Diagnostic sink for schema migrations (Output > Harny). */
+  log?: (message: string) => void;
 }
 
 type Row = Record<string, unknown>;
@@ -49,54 +52,10 @@ export class SqliteSessionStore implements SessionStore {
 
   constructor(private deps: SqliteSessionStoreDeps) {
     this.idGen = deps.idGen ?? (() => randomUUID());
-    this.migrate();
-  }
-
-  /** Create the schema once (idempotent). FTS5 + triggers keep the index in sync. */
-  private migrate(): void {
-    this.deps.db.exec(`
-      PRAGMA journal_mode = WAL;
-      CREATE TABLE IF NOT EXISTS sessions (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        folder TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        message_count INTEGER NOT NULL DEFAULT 0,
-        model TEXT,
-        model_provider TEXT,
-        thinking_level TEXT,
-        context_window INTEGER,
-        compaction_threshold_percent INTEGER,
-        context_tokens INTEGER,
-        output_tokens INTEGER,
-        temperature REAL,
-        presence_penalty REAL,
-        frequency_penalty REAL,
-        top_p REAL,
-        sampler TEXT,
-        max_parallel_sub_agents INTEGER,
-        loop_guard TEXT,
-        loop_guard_response INTEGER,
-        loop_guard_params TEXT
-      );
-      CREATE TABLE IF NOT EXISTS messages (
-        session_id TEXT NOT NULL,
-        seq INTEGER NOT NULL,
-        role TEXT NOT NULL,
-        content TEXT,
-        timestamp INTEGER,
-        data TEXT NOT NULL,
-        PRIMARY KEY (session_id, seq)
-      );
-      CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(content, content='messages', content_rowid='rowid');
-      CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
-        INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
-      END;
-      CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
-        INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
-      END;
-    `);
+    // Connection pragma (persistent; must run OUTSIDE a transaction).
+    this.deps.db.exec("PRAGMA journal_mode = WAL;");
+    // Versioned schema migrations (PRAGMA user_version) — see migrations.ts.
+    runMigrations(this.deps.db, { log: deps.log });
   }
 
   list(): SessionSummary[] {
