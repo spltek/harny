@@ -525,8 +525,9 @@ npm run package    # → harny-0.1.0.vsix
 
 Releases are cut from a `vX.Y.Z` git tag: the workflow typechecks, tests, builds,
 packages, creates the GitHub Release and publishes to the **VS Code Marketplace**
-and **Open VSX** (so VS Code and VSCodium auto-update). The full guide — versioning,
-publishers/tokens, pre-releases, troubleshooting — is in
+and **Open VSX** via **trusted publishing** (OIDC, no token — so VS Code and
+VSCodium auto-update). The full guide — versioning, publishers/trusted
+publishing, pre-releases, troubleshooting — is in
 **[docs/RELEASE.md](docs/RELEASE.md)**; notable changes are tracked in
 [CHANGELOG.md](CHANGELOG.md).
 

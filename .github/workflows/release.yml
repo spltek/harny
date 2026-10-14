@@ -14,6 +14,8 @@ on:
 
 permissions:
   contents: write
+  # OIDC: lets the Open VSX step publish via TRUSTED PUBLISHING (no PAT secret).
+  id-token: write
 
 jobs:
   release:
@@ -50,15 +52,15 @@ jobs:
             gh release create "${TAG}" --title "${TAG}" --generate-notes ./*.vsix
           fi
       # Both galleries auto-update installed extensions (VS Code / VSCodium).
-      # These steps are OPT-IN: without the secret they are skipped and the
-      # GitHub Release above is still created.
+      # The Marketplace step is OPT-IN (skipped without the VSCE_PAT secret).
+      # Open VSX uses trusted publishing (OIDC): no secret, but it requires a
+      # trusted publisher registered for `spltek` (repo + this workflow file).
       - name: Publish to the VS Code Marketplace
         if: ${{ secrets.VSCE_PAT != '' }}
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: npx @vscode/vsce publish --packagePath ./*.vsix -p "$VSCE_PAT"
       - name: Publish to Open VSX (VSCodium)
-        if: ${{ secrets.OVSX_PAT != '' }}
-        env:
-          OVSX_PAT: ${{ secrets.OVSX_PAT }}
-        run: npx --yes ovsx publish ./*.vsix -p "$OVSX_PAT"
+        # `--trusted-publishing` exchanges the workflow's OIDC ID token for a
+        # short-lived publishing token (fails if no ID token is available).
+        run: npx --yes ovsx@^1.2.0 publish ./*.vsix --trusted-publishing
