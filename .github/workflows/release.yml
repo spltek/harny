@@ -52,14 +52,19 @@ jobs:
             gh release create "${TAG}" --title "${TAG}" --generate-notes ./*.vsix
           fi
       # Both galleries auto-update installed extensions (VS Code / VSCodium).
-      # The Marketplace step is OPT-IN (skipped without the VSCE_PAT secret).
+      # The Marketplace step is OPT-IN: it no-ops when VSCE_PAT is not set
+      # (`secrets` cannot be used in a step `if`, so the guard is in the script).
       # Open VSX uses trusted publishing (OIDC): no secret, but it requires a
       # trusted publisher registered for `spltek` (repo + this workflow file).
       - name: Publish to the VS Code Marketplace
-        if: ${{ secrets.VSCE_PAT != '' }}
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: npx @vscode/vsce publish --packagePath ./*.vsix -p "$VSCE_PAT"
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "VSCE_PAT is not set — skipping the VS Code Marketplace publish."
+            exit 0
+          fi
+          npx @vscode/vsce publish --packagePath ./*.vsix -p "$VSCE_PAT"
       - name: Publish to Open VSX (VSCodium)
         # `--trusted-publishing` exchanges the workflow's OIDC ID token for a
         # short-lived publishing token (fails if no ID token is available).
