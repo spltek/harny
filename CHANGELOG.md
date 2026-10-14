@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-14
+
+### Fixed
+
+- **Release workflow never ran**: `release.yml` was rejected by GitHub as a
+  "workflow file issue" (zero jobs) because a step condition referenced the
+  `secrets` context, which GitHub does not allow in a step `if`. The Marketplace
+  guard now runs inside the step, so GitHub Releases and gallery publishing
+  actually happen.
+- **Version step is idempotent**: releasing a tag created by `npm version` no
+  longer fails with `npm error Version not changed`.
+
+### Changed
+
+- **Open VSX publishing uses trusted publishing (OIDC)**: the release workflow
+  no longer needs a long-lived `OVSX_PAT` secret.
+
+## [0.2.0] - 2026-10-14
+
 ### Added
 
 - **Per-session Analyze/Build mode and Parallel switch**: both are now persisted
@@ -132,5 +151,7 @@ Completions protocol.
 - **Diagnostics**: per-turn lines in *Output > Harny*, an optional request log
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
-[Unreleased]: https://github.com/spltek/harny/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/spltek/harny/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/spltek/harny/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/spltek/harny/releases/tag/v0.2.0
 [0.1.0]: https://github.com/spltek/harny/releases/tag/v0.1.0
