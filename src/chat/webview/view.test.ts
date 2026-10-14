@@ -433,6 +433,16 @@ describe("view webview client", () => {
     expect(document.querySelector(".msg.user")?.textContent).toBe("hello");
   });
 
+  it("wraps the user text in a left-aligned shrink-to-fit block (centered by the bubble)", async () => {
+    await loadView();
+    const bubble = document.querySelector(".msg.user") as HTMLElement;
+    const text = bubble.querySelector(".user-text") as HTMLElement;
+    expect(text).toBeTruthy();
+    expect(text.textContent).toBe("hello");
+    // The text block is the FIRST child of the bubble (attachments follow it).
+    expect(bubble.firstElementChild).toBe(text);
+  });
+
   it("shows creation and last-modified dates BEFORE the session name", async () => {
     await loadView();
     const row = document.querySelector(".srow") as HTMLElement;

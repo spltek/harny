@@ -37,8 +37,11 @@ describe("renderViewHtml", () => {
     // of a one-character message.
     expect(html).toMatch(/\.msg\.user \{[^}]*min-width: 48px/);
     // The bubble text is centered (a single character sits in the middle of the
-    // min-width bubble instead of hugging the left edge).
+    // min-width bubble instead of hugging the left edge) via a shrink-to-fit,
+    // LEFT-aligned inner block.
     expect(html).toMatch(/\.msg\.user \{[^}]*text-align: center/);
+    expect(html).toMatch(/\.msg\.user > \.user-text \{[^}]*display: inline-block/);
+    expect(html).toMatch(/\.msg\.user > \.user-text \{[^}]*text-align: left/);
     // Disabled action tabs are hidden even WITHOUT hover (the global
     // `button:disabled` opacity must not leak through during a run).
     expect(html).toMatch(/\.branch-at:disabled,\s*\.truncate-at:disabled \{[^}]*opacity: 0/);

@@ -538,7 +538,17 @@ function addMessage(
   if (role === "assistant" || role === "tool") {
     div.innerHTML = renderMarkdown(content || "");
   } else {
-    div.textContent = content || "";
+    if (role === "user") {
+      // Left-aligned, shrink-to-fit text INSIDE a centered bubble: a single
+      // character sits in the middle of the min-width bubble, and longer text
+      // grows to the bubble edges but stays left-aligned.
+      const text = document.createElement("span");
+      text.className = "user-text";
+      text.textContent = content || "";
+      div.appendChild(text);
+    } else {
+      div.textContent = content || "";
+    }
     if (role === "user" && attachments && attachments.length > 0) {
       div.appendChild(messageAttachmentRow(attachments, images));
     }

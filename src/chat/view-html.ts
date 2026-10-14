@@ -254,6 +254,10 @@ ${renderViewConfig(deps)}
        message (bubble ≈ 28px) would be narrower than the tab and it would stick
        out to the left. This floor keeps the tab inside the bubble. */
     .msg.user { align-self: flex-end; background: var(--user-msg); color: #fff; white-space: pre-wrap; position: relative; min-width: 48px; text-align: center; }
+    /* The user text is a shrink-to-fit, LEFT-aligned block CENTERED in the bubble:
+       a single character sits in the middle of the min-width bubble; as the text
+       grows it reaches the bubble edges and stays left-aligned. */
+    .msg.user > .user-text { display: inline-block; max-width: 100%; text-align: left; white-space: pre-wrap; }
     /* Harness-injected prompts (loop guard / delegation / budget): a LIGHT-BLUE
        bubble with a "Nudge" label, so they read as SYSTEM messages and can't be
        confused with the user's orange bubbles. Rendered as Markdown. */
