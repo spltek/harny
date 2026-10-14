@@ -2,7 +2,7 @@
   "name": "harny",
   "displayName": "Harny - AI Coding Harness",
   "description": "AI coding harness for VS Code — fast like pi, with a SOLID core. OpenAI chat completions, tool-calling and streaming.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "spltek",
   "license": "MIT",
   "repository": "https://github.com/spltek/harny",
