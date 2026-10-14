@@ -37,9 +37,18 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       # Version the extension from the tag (v0.2.0 -> 0.2.0) so the shipped
-      # .vsix is named and carries that exact version.
+      # .vsix is named and carries that exact version. Usually the tag already
+      # points at the `npm version` commit, so this is a no-op then; it only
+      # rewrites package.json when tag and manifest diverge (manual tagging).
       - name: Set the version from the tag
-        run: npm version "${TAG#v}" --no-git-tag-version
+        run: |
+          want="${TAG#v}"
+          have="$(node -p "require('./package.json').version")"
+          if [ "$want" = "$have" ]; then
+            echo "package.json is already at ${want}."
+          else
+            npm version "$want" --no-git-tag-version
+          fi
       - run: npm run build
       - run: npm run package
       - name: Publish the .vsix to the GitHub Release
