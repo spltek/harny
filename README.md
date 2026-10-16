@@ -96,8 +96,8 @@ Download it from the [Open VSX page](https://open-vsx.org/extension/spltek/harny
 
 1. Install Harny and click the **Harny icon** in the Activity Bar.
 2. Open **exactly one folder** (Harny is per-workspace: without a single folder it shows a hint instead of a chat).
-3. Add your key: `Cmd/Ctrl+Shift+P` → **Preferences: Open Settings (JSON)** → `"harny.apiKey": "sk-..."`.
-   Using a local model? Set `harny.provider`, `harny.baseUrl` and `harny.model` — see [Setup](#setup).
+3. Add your provider **in the panel**: the **gear in the AI Model row** opens **Providers & Models** → **+ New**, paste your key, pick a model (each host's list is fetched live; **Test** checks the entry). It lives in Harny's own data folder, never in your project.
+   Prefer files? `harny.apiKey` in VS Code settings, or a `config.json` — see [Setup](#setup).
 4. Type a request and press **Enter**.
 
 New sessions start in **Analyze**, so your first run is a preview, not a surprise.
@@ -106,7 +106,9 @@ New sessions start in **Analyze**, so your first run is a preview, not a surpris
 
 ### Pick your model
 
-The simplest setup is VS Code settings:
+Open the panel and use the **gear in the AI Model row** → **Providers & Models** → **+ New**: a name, the base URL, the key, and **Test** to check it. That is the whole setup, and it keeps keys outside your project.
+
+By hand, the same thing is two VS Code settings (**Cmd/Ctrl+Shift+P** → **Preferences: Open Settings (JSON)**):
 
 ```jsonc
 {
@@ -130,7 +132,7 @@ For a **local model** you don't need any API key:
 
 ### Several providers at once (recommended)
 
-For real work, use a dedicated **`config.json`** in Harny's data folder, outside your project (so keys never risk being committed). It supports a **`providers` map**: the model dropdown then lists **every model of every provider**, grouped by name, and picking a local one switches base URL, key and protocol automatically.
+For real work, use several providers: build the map in the panel's **Providers & Models** editor (**+ New**, **Test**, **Export/Import models configuration**), or hand-edit the dedicated **`config.json`** (or `config.jsonc`) it writes in Harny's data folder, outside your project (so keys never risk being committed). It holds a **`providers` map**: the model dropdown then lists **every model of every provider**, grouped by name, and picking a local one switches base URL, key and protocol automatically.
 
 ```jsonc
 {
@@ -354,7 +356,7 @@ just want to use Harny, you can stop reading here.
 
 **MCP servers**
 
-- Speaks the **Model Context Protocol**; configure in `~/.harny/config.json` or from the panel
+- Speaks the **Model Context Protocol**; add servers from the panel's **MCP** card (gear: add/edit/delete + **Test**), or in `~/.harny/config.json` — the editor covers everything except the `analyze` declaration below, which is file-only for now
 
 ```json
 {
@@ -456,6 +458,8 @@ npm run coverage  # with coverage report
 #### Sources and precedence
 
 Harny reads configuration from **three sources**, in this order:
+
+> Most of what follows has a **form in the panel**, and that is the normal way in: the **Providers & Models** editor, the **AI Model row** (mode, Parallel, model, thinking), the sampling/context/output sliders, **Guardrails** (parallel cap + Loop Guard) and the **Compaction**/**DB** gears. Those save **per session** (each session keeps its own), while the three sources below are the **global** ones, read at startup — and the only way to set what has no control (`harny.autoOpen`, for instance).
 
 1. **`config.json`** in the extension data folder (`context.globalStorageUri`, or `HARNY_HOME`) — dedicated, **not** in the working folder
 2. **VS Code settings** (`harny.*`) — User or Workspace settings
