@@ -131,55 +131,17 @@ The order things come up in — and, more useful, **where each one lives**. Some
 
 Open the panel and use the gear at the **right end of the AI Model row** → **Providers & Models** → **+ New**: a name, the base URL, the key, and **Test connection** to check it. That is the whole setup, and it keeps keys outside your project.
 
-By hand, the same thing is two VS Code settings (**Cmd/Ctrl+Shift+P** → **Preferences: Open Settings (JSON)**):
-
-```jsonc
-{
-  "harny.apiKey": "sk-...",
-  "harny.model": "gpt-4o"
-}
-```
-
-For a **local model** you don't need any API key:
-
-```jsonc
-{
-  "harny.provider": "openai-compatible",
-  "harny.baseUrl": "http://localhost:11434",
-  "harny.apiKey": "ollama",
-  "harny.model": "llama3.2"
-}
-```
-
-> Prefer `127.0.0.1` over `localhost` for local servers — Harny rewrites it for you, but configuring it directly avoids a rare DNS stall inside the extension host.
+- **A local model needs no key** — anything non-empty will do, e.g. `ollama` or `llamacpp`. The base URL is the one the **server** listens on: `http://127.0.0.1:11434/v1` for Ollama, `http://127.0.0.1:8090/v1` for llama.cpp.
+- **Prefer `127.0.0.1` over `localhost`** in that URL — Harny rewrites it for you, but typing it directly avoids a rare DNS stall inside the extension host.
 
 ### Several providers at once (recommended)
 
-For real work, use several providers: build the map in the panel's **Providers & Models** editor (**+ New**, **Test**, **Export/Import models configuration**), or hand-edit the dedicated **`config.json`** (or `config.jsonc`) it writes in Harny's data folder, outside your project (so keys never risk being committed). It holds a **`providers` map**: the model dropdown then lists **every model of every provider**, grouped by name, and picking a local one switches base URL, key and protocol automatically.
+For real work, add more providers **in the same editor**: **+ New** once per provider, **Test connection** for each, and **Export/Import models configuration** to carry the whole set to another machine.
 
-```jsonc
-{
-  "provider": "llamacpp",                       // the one selected at startup
-  "providers": {
-    "openai": {
-      "baseUrl": "https://api.openai.com/v1",
-      "apiKey": "sk-...",
-      "thinking": "effort"                      // reasoning_effort
-    },
-    "llamacpp": {
-      "baseUrl": "http://127.0.0.1:8090/v1",
-      "apiKey": "llamacpp",
-      "thinking": "bool",                       // enable_thinking (Qwen3, Gemma)
-      "models": [{ "id": "Qwen3.8-27B-Q6_K.gguf", "input": ["text"] }]
-    },
-    "ollama": {
-      "baseUrl": "http://localhost:11434/v1",
-      "apiKey": "ollama"
-      // no "thinking": Harny sends nothing, provider default
-    }
-  }
-}
-```
+Every provider stays active at once: the model dropdown then lists **every model of every provider**, grouped by name, and picking one switches base URL, key and protocol automatically. Two fields in that form are worth knowing:
+
+- **Reasoning** — `effort` (the provider's `reasoning_effort`) or `bool` (an `enable_thinking` flag, for Qwen3/Gemma-style templates). Left unset, Harny sends nothing and the provider's own default applies.
+- **Session header** — only when the host needs one (e.g. opencode's `x-opencode-session`).
 
 The data folder follows the VS Code convention (or set `HARNY_HOME` to move it):
 
@@ -187,7 +149,7 @@ The data folder follows the VS Code convention (or set `HARNY_HOME` to move it):
 - **Windows** `%APPDATA%\Code\User\globalStorage\spltek.harny`
 - **Linux** `~/.config/Code/User/globalStorage/spltek.harny`
 
-The file is **re-read live** — no reload needed. `config.example.jsonc` in the repo is a ready starting point.
+Everything the panel saves lands here, and it is **re-read live** — no reload, and no need to open the file.
 
 ### Sessions
 
@@ -379,22 +341,11 @@ just want to use Harny, you can stop reading here.
 
 **MCP servers**
 
-- Speaks the **Model Context Protocol**; add servers from the panel's **MCP** card (gear: add/edit/delete + **Test**), or in `~/.harny/config.json` — the editor covers everything except the `analyze` declaration below, which is file-only for now
-
-```json
-{
-  "mcpServers": {
-    "sqlite": { "command": "npx", "args": ["-y", "mcp-sqlite", "/path/db.sqlite"], "analyze": "read-only" },
-    "remote": { "url": "https://example.com/mcp", "headers": { "Authorization": "Bearer …" } }
-  }
-}
-```
-
-- **What each server is allowed to do in Analyze** is a per-server declaration, `analyze`: `"read-only"` (every tool of it — use it for servers that send no hints) or `"trusted"` (believe its own `readOnlyHint: true`). Omitted — like `remote` above — means **none** of its tools runs in Analyze. It is read **live**, so a change lands on the next turn; today it is a config file field (the panel's editor does not offer it yet).
-
+- Speaks the **Model Context Protocol**: add servers from the panel's **MCP** card — the gear has **add / edit / delete** and a **Test** button, and a server takes a name, a command (stdio) or a URL (HTTP), with optional args, headers and env. That is the whole setup.
 - **Transports**: **stdio** (spawned process) and **Streamable HTTP** (POST; JSON or `text/event-stream`; **stateless** by default, **stateful** via `Mcp-Session-Id`)
 - Tools are exposed as `mcp__<server>__<tool>` (input schema = the server's)
-- **UI**: an **MCP** card lists servers with live status; **click the server name to enable/disable** it, **`(N tools)`** opens a popover with each tool, a gear opens an editor (add/edit/delete + **Test**)
+- **UI**: clicking a server's name toggles it on/off, and **`(N tools)`** opens a popover listing the tools it exposes
+- **What each server is allowed to do in Analyze** is a per-server declaration, `analyze`: `"read-only"` (every tool of it — for servers that send no hints) or `"trusted"` (believe its own `readOnlyHint: true`); omitted means **none** of its tools runs in Analyze. It is read **live**, so a change lands on the next turn. It is the one setting the panel's editor does not offer yet, so it goes in the file — and that is safe: a save from the panel is **lossless** (it preserves the keys it does not manage), so `analyze` survives you editing that server in the UI later.
 - Diagnostic logs at the critical points (`[mcp]` / `[mcp-http]`) in **Output > Harny**
 - **Known gaps** (found while wiring the Analyze gate, not done yet): an in-flight MCP call cannot be cancelled by **Stop** (it gets no abort signal) and an MCP result has **no window-scaled output cap** like Shell's — only *old* results are masked, so the newest can be arbitrarily large. Both want the same fix: the cap and the signal belong at the **execution boundary** (where a result enters the conversation), not inside each tool.
 
@@ -482,7 +433,7 @@ npm run coverage  # with coverage report
 
 Harny reads configuration from **three sources**, in this order:
 
-> Most of what follows has a **form in the panel**, and that is the normal way in. Two kinds live there, and the difference is worth knowing: the **Providers & Models** editor and the **DB** gear (in the sessions manager) write the **GLOBAL** config — the same `config.json` / `harny.*` settings described below, so the setup you do once stays done — while the **AI Model row**, the sliders, **Guardrails** and the **Compaction** gear are **per session** (each session keeps its own). The three sources below are the global ones, read at startup, and the only way to set what has no control at all (`harny.autoOpen`, for instance).
+> **Use the panel.** Everything here has a form in the panel unless stated otherwise, and a save from it is **lossless** — the keys it does not manage survive, so the file and the UI cannot fight. Open the file only to script a machine, to read where a value ended up, or to set the one field without a control (`analyze` on an MCP server); `config.example.jsonc` in the repo is then a starting point. Two kinds live there, and the difference is worth knowing: the **Providers & Models** editor and the **DB** gear (in the sessions manager) write the **GLOBAL** config — the same `config.json` / `harny.*` settings described below, so the setup you do once stays done — while the **AI Model row**, the sliders, **Guardrails** and the **Compaction** gear are **per session** (each session keeps its own). The three sources below are the global ones, read at startup, and the only way to set what has no control at all (`harny.autoOpen`, for instance).
 
 1. **`config.json`** in the extension data folder (`context.globalStorageUri`, or `HARNY_HOME`) — dedicated, **not** in the working folder
 2. **VS Code settings** (`harny.*`) — User or Workspace settings
@@ -504,109 +455,32 @@ Harny reads configuration from **three sources**, in this order:
 | `harny.dbVacuumThresholdPercent` | `20` | Free-page percentage above which Harny **suggests** compacting the sessions database (VACUUM) |
 | `harny.dbVacuumMinFreeMB` | `128` | Minimum **reclaimable** megabytes below which Harny never suggests compacting (`0` = no minimum) |
 
-#### Provider entry examples — `thinking` per provider
+#### Reasoning, per host
 
-The `thinking` field declares how the reasoning phase is expressed in the request; combine it with `thinkingLevel` (the default level, overridable per session — `off`/`low`/`medium`/`high`).
+The **Reasoning** select in the provider form (the `thinking` field) says how the reasoning phase is expressed in the request. It is what the per-session **Thinking** radio group needs: those radios stay disabled unless the provider declares one, and `Off` means "send nothing", which is the right answer only for hosts that keep it off by default.
 
-**1. Local llama.cpp / MLX with a Jinja template** — `thinking: "bool"` sends `chat_template_kwargs.enable_thinking` + `reasoning_effort`:
+| Reasoning in the form | what is sent | for which host |
+|---|---|---|
+| `bool` | `chat_template_kwargs.enable_thinking` + `reasoning_effort` | llama.cpp / MLX with a Jinja template (Qwen3, Gemma) |
+| `effort` | top-level `reasoning_effort: low/medium/high`; `Off` omits it | OpenAI-style hosts — and the only option for reasoning-**mandatory** models (the gpt-5 family rejects `Off` with a 400) |
+| `reasoning` | `reasoning: { effort }`, or `{ enabled: false }` for `Off` | OpenRouter-native, and the *reliable* way to disable models whose default is thinking-on (e.g. `deepseek/deepseek-v4-flash`) |
+| `type` | `thinking: { type: "enabled" \| "disabled" }` | DeepSeek/Anthropic-style toggle: on/off, no tiers — the switch that actually works on opencode-go for DeepSeek/Qwen/Kimi |
+| *unset* | nothing | Harny sends nothing, the radio group stays disabled, the host default applies |
 
-```jsonc
-"llamacpp": {
-  "baseUrl": "http://127.0.0.1:8090/v1",
-  "api": "openai-completions",
-  "apiKey": "lamacpp",
-  "thinking": "bool",
-  "thinkingLevel": "medium",          // default level for this provider
-  "models": [
-    { "id": "Qwen3.8-27B-Q6_K.gguf", "input": ["text"] }
-  ]
-}
-```
+- The level always travels as the standard `reasoning_effort`; `enable_thinking` is only llama.cpp's on/off toggle. The legacy boolean `enableThinking` is still honored and maps to `bool` with a `medium`/`off` level.
+- Reasoning is **passed back** on later turns so tool-call chains keep their chain of thought: `reasoning_content` (llama.cpp / DeepSeek / opencode-go) and the full `reasoning_details` blocks for OpenRouter, captured from the stream and replayed verbatim.
+- A provider entry also carries a **default level** (overridable per session) and an optional **`maxTokens`**, which acts as that provider's cap until the session's **Output tokens** control is set — that one then wins.
 
-**2. OpenAI-style host** — `thinking: "effort"` sends top-level `reasoning_effort`; with no `models` the dropdown auto-fills from `GET /v1/models`:
+#### Model lists: let the host answer first
 
-```jsonc
-"openai": {
-  "baseUrl": "https://api.openai.com/v1",
-  "api": "openai-completions",
-  "apiKey": "sk-...",
-  "thinking": "effort",
-  "thinkingLevel": "medium"
-}
-```
-
-**2a. OpenRouter-native** — `thinking: "reasoning"` sends `reasoning: { effort }`, and `reasoning: { enabled: false }` for **Off**. This is the *reliable* disable on OpenRouter for models whose default is thinking-on (e.g. `deepseek/deepseek-v4-flash`, where omitting the field still reasons sometimes):
-
-```jsonc
-"openrouter": {
-  "baseUrl": "https://openrouter.ai/api/v1",
-  "api": "openai-completions",
-  "apiKey": "sk-or-...",
-  "thinking": "reasoning",
-  "thinkingLevel": "medium"
-}
-```
-
-> Reasoning-mandatory models on OpenRouter (gpt-5 family) reject Off with HTTP 400 ("Reasoning is mandatory…"). Use `"effort"` for those — Off then leaves the model default.
-
-**2b. DeepSeek/Anthropic-style toggle** — `thinking: "type"` sends `thinking: { type: "enabled" | "disabled" }`. OpenCode Go ignores `reasoning_effort` levels for DeepSeek/Qwen/Kimi, so this is the switch that actually turns thinking off and on (on `deepseek-v4.1-flash` it is 100% reliable; `deepseek-v4-flash` is flaky regardless of the field):
-
-```jsonc
-"opencode-go": {
-  "baseUrl": "https://opencode.ai/zen/go/v1",
-  "api": "openai-completions",
-  "apiKey": "sk-...",
-  "thinking": "type",
-  "thinkingLevel": "medium"
-}
-```
-
-**3. Host you don't want to touch** — omit `thinking` (or set `"unspecified"`): Harny sends nothing and the Thinking radio group stays disabled:
-
-```jsonc
-"ollama": {
-  "baseUrl": "http://localhost:11434/v1",
-  "api": "openai-completions",
-  "apiKey": "ollama"
-  // no "thinking": nothing sent, radio group disabled — provider default only
-}
-```
-
-> `maxTokens` per entry is optional: it acts as the provider's default cap until the per-session **Output tokens** control is set, which then wins and is persisted. Leave it out to always use the session default.
-
-#### How the thinking level maps to each provider
-
-- `"bool"` → `chat_template_kwargs.enable_thinking` + `reasoning_effort` (standard OpenAI field, read by the model's Jinja template)
-- `"effort"` → `reasoning_effort: low/medium/high` (top-level); Off omits it
-- `"reasoning"` → `reasoning: { effort }` for levels; `reasoning: { enabled: false }` for Off
-- `"type"` → `thinking: { type: "enabled" | "disabled" }` (on/off, no effort tiers)
-- absent / `"unspecified"` → nothing (provider default)
-
-- The level uses the **standard OpenAI field name** `reasoning_effort` in both modes; `enable_thinking` is only the llama.cpp on/off toggle.
-- The radio group is **enabled only for providers that declare** `thinking` — otherwise it stays disabled at the provider default.
-- `Off` disables the phase where the provider allows it. Some models default to reasoning ON and cannot be disabled (reasoning-mandatory, e.g. the gpt-5 family rejects effort `"none"` with a 400); for models whose default is OFF, omitting is exactly what keeps it off.
-- Reasoning is **passed back** on later turns so tool-call chains keep their chain of thought: `reasoning_content` for llama.cpp/DeepSeek/opencode-go, and the full `reasoning_details` blocks (encrypted/summarized) for OpenRouter, captured from the stream and replayed verbatim.
-- The legacy boolean `enableThinking: true/false` is still honored and maps to `thinking: "bool"` with a `medium`/`off` level.
-
-With the multi-provider format the model dropdown shows **all** models from **all** declared providers (grouped by name). Picking a local model automatically switches base URL, API key and protocol: `provider` in the file only indicates the initial one.
-
-#### Dynamic models from the host (`GET /v1/models`)
-
-For providers that expose their model list (OpenAI, OpenRouter, opencode-go, llama.cpp, Ollama, …) configure **only `apiKey` and `baseUrl`**, without listing models:
-
-```jsonc
-"opencode-go": {
-  "baseUrl": "https://opencode.ai/zen/go/v1",
-  "api": "openai-completions",
-  "apiKey": "sk-..." // no "models"
-}
-```
+For any host that exposes `GET /v1/models` — OpenAI, OpenRouter, opencode-go, llama.cpp, Ollama, … — there is nothing else to fill: **name + base URL + key** is the whole entry, and the dropdown fills itself. (The top-level `provider` key just picks which one starts selected; every provider stays available.)
 
 - When opening the chat (or on every refresh) Harny fetches the list from `GET {baseUrl}/v1/models` and shows it in the dropdown, grouped by provider.
-- The choice is **saved to the config file** (top-level `model`, and `provider` if you switch provider), preserving comments and formatting.
+- The choice is **saved in the config** (top-level `model`, and `provider` if you switch provider), preserving comments and formatting.
 - On reopen Harny verifies the saved model still exists: if it was removed it reports it (invalid highlighted option + warning) and invites you to pick a new one.
 - If the server is unreachable (e.g. llama.cpp is off) a "host models unavailable" warning appears instead of an empty dropdown.
 - When the host reports each model's **context window** (OpenRouter `context_length`, vLLM `max_model_len`, llama.cpp `meta.n_ctx_train`, …) it is shown next to the model (`model · 128k`) and **adopted as the session's context window** on selection. If the host does **not** report it (e.g. **OpenCode Go**, whose `/models` has only `id/object/created/owned_by`), Harny falls back to the **models.dev** catalog (`<provider>.models.<id>.limit.context`, fetched lazily and cached for hours).
+- An explicit **`models` list** per provider covers hosts whose list is missing or unhelpful. It is the one provider setting the form does not manage, so it goes in the file — and that is safe: a save from the panel **preserves it**.
 
 #### Window & sampling controls (per session)
 
