@@ -96,7 +96,7 @@ Download it from the [Open VSX page](https://open-vsx.org/extension/spltek/harny
 
 1. Install Harny and click the **Harny icon** in the Activity Bar.
 2. Open **exactly one folder** (Harny is per-workspace: without a single folder it shows a hint instead of a chat).
-3. Add your provider **in the panel**: the **gear in the AI Model row** opens **Providers & Models** → **+ New**, paste your key, pick a model (each host's list is fetched live; **Test** checks the entry). It lives in Harny's own data folder, never in your project.
+3. Add your provider **in the panel**: the gear at the **right end of the AI Model row** (⚙, after the model selector) opens **Providers & Models** → **+ New**, paste your key, pick a model (each host's list is fetched live; **Test connection** checks the entry). It lives in Harny's own data folder, never in your project.
    Prefer files? `harny.apiKey` in VS Code settings, or a `config.json` — see [Setup](#setup).
 4. Type a request and press **Enter**.
 
@@ -106,7 +106,7 @@ New sessions start in **Analyze**, so your first run is a preview, not a surpris
 
 ### Pick your model
 
-Open the panel and use the **gear in the AI Model row** → **Providers & Models** → **+ New**: a name, the base URL, the key, and **Test** to check it. That is the whole setup, and it keeps keys outside your project.
+Open the panel and use the gear at the **right end of the AI Model row** → **Providers & Models** → **+ New**: a name, the base URL, the key, and **Test connection** to check it. That is the whole setup, and it keeps keys outside your project.
 
 By hand, the same thing is two VS Code settings (**Cmd/Ctrl+Shift+P** → **Preferences: Open Settings (JSON)**):
 
@@ -459,7 +459,7 @@ npm run coverage  # with coverage report
 
 Harny reads configuration from **three sources**, in this order:
 
-> Most of what follows has a **form in the panel**, and that is the normal way in: the **Providers & Models** editor, the **AI Model row** (mode, Parallel, model, thinking), the sampling/context/output sliders, **Guardrails** (parallel cap + Loop Guard) and the **Compaction**/**DB** gears. Those save **per session** (each session keeps its own), while the three sources below are the **global** ones, read at startup — and the only way to set what has no control (`harny.autoOpen`, for instance).
+> Most of what follows has a **form in the panel**, and that is the normal way in: the **Providers & Models** editor (the gear at the right end of the AI Model row), the **AI Model row** itself (mode, Parallel, model, thinking), the sampling/context/output sliders, **Guardrails** (parallel cap + Loop Guard), the **Compaction** gear (after **Compact**) and the **DB** one inside the sessions manager (the gear in the **Sessions** header, *Manage all sessions*). Those save **per session** (each session keeps its own), while the three sources below are the **global** ones, read at startup — and the only way to set what has no control (`harny.autoOpen`, for instance).
 
 1. **`config.json`** in the extension data folder (`context.globalStorageUri`, or `HARNY_HOME`) — dedicated, **not** in the working folder
 2. **VS Code settings** (`harny.*`) — User or Workspace settings
