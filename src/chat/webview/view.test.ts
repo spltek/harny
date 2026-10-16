@@ -4369,6 +4369,27 @@ describe("soft steering + pending bubbles (webview)", () => {
     expect(last.classList.contains("steer-msg")).toBe(true);
   });
 
+  it("renders a STEERED message's attachments in the live bubble", async () => {
+    await loadView();
+    hostMessage({
+      type: "steerApplied",
+      ids: ["s1"],
+      content: "look at this",
+      images: ["data:image/png;base64,iVBORw0KGgo="],
+      attachments: [
+        { name: "report.pdf", path: "/tmp/report.pdf", size: 12, isImage: false },
+        { name: "shot.png", path: "", size: 3, isImage: true },
+      ],
+    });
+    const last = document.querySelector("#messages .msg.user:last-of-type") as HTMLElement;
+    // The bug: the files reached the model but the bubble was built with the
+    // text alone, so no attachment row was rendered at all.
+    expect(last.querySelector(".msg-attachments")).not.toBeNull();
+    expect(last.querySelector(".msg-attach-file-name")?.textContent).toBe("report.pdf");
+    expect(last.textContent).toContain("look at this");
+  });
+
+
   it("marks a historical steer message with the steer class", async () => {
     setupDom({
       messages: [

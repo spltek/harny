@@ -4234,7 +4234,9 @@ window.addEventListener("message", (e) => {
     case "steerApplied": {
       // The soft-steer message reached a turn boundary: show it as a real user
       // bubble now (the end-of-run refresh rebuilds the transcript anyway).
-      const el = addMessage("user", String(msg.content || ""));
+      // The attachments ride along: without them the files reached the model but
+      // the bubble showed the text only.
+      const el = addMessage("user", String(msg.content || ""), msg.attachments, msg.images);
       el.classList.add("steer-msg");
       scrollDown();
       break;

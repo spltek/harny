@@ -261,7 +261,16 @@ export class Agent implements ChatController {
       steer: true,
       timestamp: Date.now(),
     });
-    this.deps.events.emit({ type: "steer_applied", ids: steers.map((s) => s.id), content: displayText });
+    // Carry the SAME two fields the history entry above got, so the LIVE bubble
+    // is rendered from the same data as the one rebuilt from the transcript.
+    // Without them the attachments reached the model but never the bubble.
+    this.deps.events.emit({
+      type: "steer_applied",
+      ids: steers.map((s) => s.id),
+      content: displayText,
+      ...(images.length > 0 ? { images } : {}),
+      ...(attachments.length > 0 ? { attachments } : {}),
+    });
   }
 
   abort(): void {

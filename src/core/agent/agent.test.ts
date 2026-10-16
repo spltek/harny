@@ -3262,6 +3262,31 @@ describe("Agent soft steering — fragility", () => {
     expect(applied && applied.type === "steer_applied" ? applied.ids : []).toEqual(["a", "b"]);
   });
 
+  it("carries a steer's attachments in BOTH the history entry and the event", async () => {
+    const { agent, history, events } = buildHarness({
+      chunks: [toolCall(), [{ type: "text", content: "done" }]],
+    });
+    const attachments = [{ name: "relazione.pdf", path: "/tmp/relazione.pdf", size: 42, isImage: false }];
+    const images = ["data:image/png;base64,iVBORw0KGgo="];
+    agent.onEvent((e) => {
+      if (e.type === "tool_result") {
+        agent.steer("s1", "guarda qui", { images, attachments, displayText: "guarda qui" });
+      }
+    });
+
+    await agent.send("x");
+
+    // The model already got them (this always worked)…
+    const steer = history.all().find((m) => m.steer);
+    expect(steer?.attachments).toEqual(attachments);
+    expect(steer?.images).toEqual(images);
+    // …and now the EVENT carries the same two fields, which is what the view
+    // needs to render the live bubble with them.
+    const applied = events.find((e) => e.type === "steer_applied");
+    expect(applied && applied.type === "steer_applied" ? applied.images : undefined).toEqual(images);
+    expect(applied && applied.type === "steer_applied" ? applied.attachments : undefined).toEqual(attachments);
+  });
+
   it("does not apply a steer queued after the final turn (no boundary left)", async () => {
     const { agent, history } = buildHarness({ chunks: [[{ type: "text", content: "final" }]] });
     agent.onEvent((e) => {

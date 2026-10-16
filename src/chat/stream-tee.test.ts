@@ -85,6 +85,30 @@ describe("StreamTee", () => {
     expect(deps.onPost).not.toHaveBeenCalledWith(expect.objectContaining({ ids: ["s2"] }));
   });
 
+  it("forwards a steer's attachments to the view so the live bubble can render them", () => {
+    const { tee, deps } = makeTee();
+    deps.isActive.mockImplementation(() => true);
+    const a = fakeRuntime("a");
+    tee.attachAll([a.rt]);
+    const attachments = [{ name: "relazione.pdf", path: "/tmp/relazione.pdf", size: 42, isImage: false }];
+
+    a.emit({
+      type: "steer_applied",
+      ids: ["s1"],
+      content: "guarda qui",
+      images: ["data:image/png;base64,iVBORw0KGgo="],
+      attachments,
+    });
+
+    expect(deps.onPost).toHaveBeenCalledWith({
+      type: "steerApplied",
+      ids: ["s1"],
+      content: "guarda qui",
+      images: ["data:image/png;base64,iVBORw0KGgo="],
+      attachments,
+    });
+  });
+
   it("forwards loop_intervention to the view and resets the live buffer", () => {
     const { tee, deps } = makeTee();
     const a = fakeRuntime("a");

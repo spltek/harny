@@ -1,6 +1,6 @@
 import type { ToolCall } from "../tools/tool";
 import type { Usage } from "../llm/types";
-import type { MessageMeta } from "../history/types";
+import type { MessageAttachment, MessageMeta } from "../history/types";
 
 /** A change the model prepared as a preview in Analyze mode: it was validated
  * (the diff computed) but NOT written to disk. Carries enough to tell the user
@@ -48,8 +48,17 @@ export type AgentEvent =
   | { type: "harness_nudge"; content: string }
   /** Soft-steer messages reached a turn boundary and were MERGED into a single
    * user message: `ids` are all the drafts consumed (the UI clears them), and
-   * `content` is the merged text shown as one bubble. */
-  | { type: "steer_applied"; ids: string[]; content: string }
+   * `content` is the merged text shown as one bubble.
+   * `images` and `attachments` are the SAME two fields the history entry above
+   * got, so the LIVE bubble is built from the same data as the one rebuilt from
+   * the transcript on refresh - they can no longer diverge. */
+  | {
+      type: "steer_applied";
+      ids: string[];
+      content: string;
+      images?: string[];
+      attachments?: MessageAttachment[];
+    }
   /** Analyze finished with prepared changes that are NOT applied: the UI
    * shows a highlighted "Switch to Build" call to action. */
   | { type: "preview_ready" }

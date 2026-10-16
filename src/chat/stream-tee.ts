@@ -100,7 +100,16 @@ export class StreamTee {
           live.thinking = "";
           live.answer = "";
           this.deps.onSteerApplied(rt.sessionId, event.ids);
-          if (active) post({ type: "steerApplied", ids: event.ids, content: event.content });
+          // Forward the attachments too: the view renders the live steer bubble
+          // with them, exactly as the refresh path does from the transcript.
+          if (active)
+            post({
+              type: "steerApplied",
+              ids: event.ids,
+              content: event.content,
+              ...(event.images?.length ? { images: event.images } : {}),
+              ...(event.attachments?.length ? { attachments: event.attachments } : {}),
+            });
           break;
         case "done":
           live.thinking = "";
