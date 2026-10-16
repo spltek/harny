@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The mode pill on the AI Model row is quiet, like the controls next to it.** It was a
+  saturated gradient (terracotta / violet) with a white icon + label and a glow, which made
+  the row's quietest element the loudest thing in it. It is now the same dark pill as
+  `Queue` / `Parallel`, and the mode travels in the COLOUR OF ITS ICON — the magnifier for
+  Analyze and the sparkle for Build, in the very pair of colours the dropdown items already
+  use for theirs.
+- **The `Build` / `Analyze` chip in the per-turn badge is now gray like the rest of the
+  badge.** An accent-tinted `Build` turned half the lines of a long transcript into the
+  loudest text in the panel, competing with the answer it only annotates; the word itself
+  already says which mode the turn ran in.
+
 ### Fixed
 
 - **The panel no longer gets stuck when the window is resized during a run** (visible on

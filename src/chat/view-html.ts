@@ -352,14 +352,15 @@ ${renderViewConfig(deps)}
       font-size: var(--fs-sm); color: var(--muted); font-variant-numeric: tabular-nums;
       user-select: text; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    /* The mode chip leading the badge: quiet for Analyze (the default, so it must not
-       shout on every turn) and accent-tinted for Build (the turns that WROTE, which is
-       what you scan a long transcript for). */
+    /* The mode chip leading the badge: the SAME quiet gray as the model and the
+       counts that follow it, for Analyze and Build alike — the WORD is what tells
+       the two modes apart. An accent-tinted "Build" turned half the lines of a
+       long transcript into the loudest thing in the panel, competing with the
+       answer it exists to annotate. */
     .msg-meta .meta-mode {
       padding: 0 4px; border-radius: 3px; background: rgba(255, 255, 255, 0.06);
       font-size: var(--fs-sm);
     }
-    .msg-meta .meta-mode.build { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
     /* Bubble action tabs: the ⎇ branch key on assistant replies and the ✂ cut
        key on user prompts become little "linguette" anchored to the bubble's
        TOP-RIGHT. On hover they SLIDE UP out of the bubble (same fade/reveal as
@@ -1159,10 +1160,13 @@ ${renderViewConfig(deps)}
 
     /* Mode select (Analyze / Agent): ONE compact pill button showing the
        current mode; clicking opens a small VERTICAL dropdown with the two
-       choices. The button is painted in the mode accent (terracotta for
-       Analyze, violet for Agent) with WHITE icon + label on top — maximum
-       contrast on the colored surface. It sits on the AI Model row, so the
-       dropdown is anchored to the button (z-index keeps it above the cards). */
+       choices. It sits on the AI Model row, next to the other controls, so it
+       follows THEIR visual language — quiet dark pill, light-gray label, muted
+       chevron — and carries the mode in the COLOUR OF ITS ICON (terracotta for
+       Analyze, violet for Agent: the same pair the dropdown items use). A white
+       icon + label on a saturated gradient made the row's quietest element
+       shout loudest. The dropdown is anchored to the button (z-index keeps it
+       above the cards). */
     #mode-select {
       position: relative;
       width: max-content;
@@ -1177,29 +1181,31 @@ ${renderViewConfig(deps)}
       min-width: 0;
       height: 1.85rem;
       padding: 0 9px 0 8px;
-      border: none;
+      border: 1px solid var(--border);
       border-radius: 999px;
-      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-      color: #ffffff;
+      background: var(--surface-2);
+      color: var(--fg);
       font-size: var(--fs-sm);
       font-weight: 600;
       letter-spacing: 0.01em;
       cursor: pointer;
       white-space: nowrap;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 10px rgba(217, 95, 39, 0.28);
-      transition: box-shadow 0.18s, transform 0.12s, opacity 0.18s;
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+      transition: background 0.18s, box-shadow 0.18s, color 0.18s, border-color 0.18s, transform 0.12s, opacity 0.18s;
     }
-    #mode-btn:hover { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45), 0 0 14px rgba(217, 95, 39, 0.42); }
+    #mode-btn:hover { border-color: rgba(255, 255, 255, 0.25); color: var(--fg-strong); }
     #mode-btn:active { transform: scale(0.96); }
     #mode-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-    /* Agent mode: violet (white icon stays). */
-    #mode-btn.is-agent { background: linear-gradient(135deg, #8b6cff, #5a3df0); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 12px rgba(124, 92, 255, 0.4); }
-    #mode-btn.is-agent:hover { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45), 0 0 16px rgba(124, 92, 255, 0.52); }
-    #mode-btn:disabled { opacity: 0.55; cursor: default; transform: none; box-shadow: none; }
-    #mode-btn-icon-analyze, #mode-btn-icon-agent { flex-shrink: 0; }
+    #mode-btn:disabled { opacity: 0.45; cursor: default; transform: none; box-shadow: none; }
+    /* The mode is the ICON: magnifier (Analyze) or sparkle (Agent), each in its
+       own colour — never in the label, which stays the row's normal text. */
+    #mode-btn-icon-analyze, #mode-btn-icon-agent { flex-shrink: 0; transition: color 0.18s; }
+    #mode-btn-icon-analyze { color: var(--accent); }
+    #mode-btn.is-agent #mode-btn-icon-agent { color: #a98dff; }
     #mode-btn-icon-analyze.hidden, #mode-btn-icon-agent.hidden { display: none; }
     /* Chevron rotates when the dropdown is open. */
-    #mode-btn .mode-btn-chevron { flex-shrink: 0; color: rgba(255, 255, 255, 0.85); transition: transform 0.18s; }
+    #mode-btn .mode-btn-chevron { flex-shrink: 0; color: var(--muted); transition: color 0.18s, transform 0.18s; }
+    #mode-btn:hover .mode-btn-chevron { color: var(--fg); }
     #mode-select.open #mode-btn .mode-btn-chevron { transform: rotate(180deg); }
     /* The vertical dropdown: stacks the two choices under the button. */
     #mode-menu {
