@@ -459,7 +459,7 @@ npm run coverage  # with coverage report
 
 Harny reads configuration from **three sources**, in this order:
 
-> Most of what follows has a **form in the panel**, and that is the normal way in: the **Providers & Models** editor (the gear at the right end of the AI Model row), the **AI Model row** itself (mode, Parallel, model, thinking), the sampling/context/output sliders, **Guardrails** (parallel cap + Loop Guard), the **Compaction** gear (after **Compact**) and the **DB** one inside the sessions manager (the gear in the **Sessions** header, *Manage all sessions*). Those save **per session** (each session keeps its own), while the three sources below are the **global** ones, read at startup — and the only way to set what has no control (`harny.autoOpen`, for instance).
+> Most of what follows has a **form in the panel**, and that is the normal way in. Two kinds live there, and the difference is worth knowing: the **Providers & Models** editor and the **DB** gear (in the sessions manager) write the **GLOBAL** config — the same `config.json` / `harny.*` settings described below, so the setup you do once stays done — while the **AI Model row**, the sliders, **Guardrails** and the **Compaction** gear are **per session** (each session keeps its own). The three sources below are the global ones, read at startup, and the only way to set what has no control at all (`harny.autoOpen`, for instance).
 
 1. **`config.json`** in the extension data folder (`context.globalStorageUri`, or `HARNY_HOME`) — dedicated, **not** in the working folder
 2. **VS Code settings** (`harny.*`) — User or Workspace settings
