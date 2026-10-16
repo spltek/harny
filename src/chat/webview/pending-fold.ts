@@ -1,12 +1,15 @@
 /**
- * Does a rendered message need a collapse control?
+ * Does a rendered message need a fold control?
+ *
+ * NOT to be confused with context-overflow.ts, which is about the model's token
+ * limit: this one is about a LINE of text not fitting the panel.
  *
  * The question is about LAYOUT — "does this text take more than one line?" — so it
  * has one correct answer only for a GIVEN width: the same message fits on a wide
  * panel and wraps on a narrow one. That rules out counting characters (a guess
  * that is wrong in both directions) and makes the decision a measured one: the
  * caller reads the line height and the content height off the rendered element
- * (see view.ts: measurePendingOverflow) and asks this predicate.
+ * (see pending-section.ts) and asks this predicate.
  *
  * It is a separate module so the RULE is testable without a layout engine: jsdom
  * computes no layout at all, so a DOM-level test could only ever assert the

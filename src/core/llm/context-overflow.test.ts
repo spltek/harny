@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isContextOverflowError, isRequestRejection, matchedOverflowSignature, providerErrorStatus } from "./context-overflow";
+import { isContextOverflowError, isRequestRejection, matchedOverflowSignature, overflowLimitFromError, MIN_PLAUSIBLE_LIMIT_TOKENS, providerErrorStatus } from "./context-overflow";
 
 /**
  * The REAL rejection texts of the backends Harny talks to, pasted as they arrive
@@ -78,6 +78,46 @@ const OVERFLOWS: Array<{ from: string; message: string }> = [
     message: 'OpenAI API error 400: {"error":{"message":"This model\'s maximum context length is 65536 tokens. However, you requested 68000 tokens","type":"invalid_request_error","code":"context_length_exceeded"}}',
   },
 ];
+
+describe("overflowLimitFromError — learn the real window from the rejection", () => {
+  it("reads the limit from each family's wording", () => {
+    const cases: Array<[string, number]> = [
+      ["This model's maximum context length is 128000 tokens. However, your messages resulted in 132184 tokens.", 128000],
+      ["this model's maximum context length is 16384 tokens", 16384],
+      ["This endpoint's maximum context length is 200000 tokens.", 200000],
+      ["the request exceeds the available context size. n_ctx=4096", 4096],
+      ["The input token count (30500) exceeds the maximum number of tokens allowed (20480).", 20480],
+      ["The engine's maximum model length is 8192", 8192],
+      ["Requested 40,000 tokens but the model only supports 32,768.", 32768],
+      ["context length exceeded: 135000 > 128000", 128000],
+      ["prompt is too long: 250123 tokens > 200000 maximum", 200000],
+      ["the maximum context is 128k tokens", 128000],
+    ];
+    for (const [text, expected] of cases) {
+      expect(overflowLimitFromError(new Error(text)), text).toBe(expected);
+    }
+  });
+
+  it("never mistakes the REQUESTED size for the limit", () => {
+    // The dangerous mistake would be adopting 250123 (what we sent) as the window:
+    // that would raise the budget and cause the very rejection we are recovering from.
+    expect(overflowLimitFromError(new Error("prompt is too long: 250123 tokens > 200000 maximum"))).toBe(200000);
+    expect(overflowLimitFromError(new Error("context length exceeded: 135000 > 128000"))).toBe(128000);
+    expect(overflowLimitFromError(new Error("Requested 40,000 tokens but the model only supports 32,768"))).toBe(32768);
+  });
+
+  it("says nothing when the message states no limit", () => {
+    expect(overflowLimitFromError(new Error("Please reduce the length of the messages."))).toBeUndefined();
+    expect(overflowLimitFromError(new Error('OpenAI API error 400: {"error":{"message":"Invalid schema for function Shell"}}'))).toBeUndefined();
+    expect(overflowLimitFromError(new Error("fetch failed"))).toBeUndefined();
+    expect(overflowLimitFromError(undefined)).toBeUndefined();
+  });
+
+  it("rejects a value too small to be a window (a stray number in the text)", () => {
+    expect(overflowLimitFromError(new Error("maximum context length is 42 tokens"))).toBeUndefined();
+    expect(MIN_PLAUSIBLE_LIMIT_TOKENS).toBeGreaterThanOrEqual(256);
+  });
+});
 
 /** Rejections that are NOT about size: compacting would be wasted work. */
 const NOT_OVERFLOWS: Array<{ why: string; message: string }> = [

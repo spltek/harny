@@ -958,7 +958,76 @@ describe("view webview client", () => {
     expect(final?.classList.contains("settling")).toBe(true);
   });
 
-  it("stops the streaming pulse when a new thinking phase starts", async () => {
+  it("keeps ONE answer bubble when the model reasons MID-answer (the reported split)", async () => {
+    // Reported: a response began mid-word. The turn carried 10.9k characters of
+    // reasoning, emitted after the first half of the sentence: the view closed the
+    // bubble there and opened a new one for the rest, so the answer read as if it
+    // had lost its beginning. Now the answer is ONE bubble and the reasoning is a
+    // collapsible line just above it.
+    await loadView();
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+
+    hostMessage({ type: "textDelta", content: "Ho tutto per descriverli senza inventare. Scrivo la se" });
+    hostMessage({ type: "thinkingDelta", content: "sto pensando a come dirlo meglio" });
+    hostMessage({ type: "textDelta", content: "zione [Unreleased] — copre tutto il ciclo." });
+    await new Promise((r) => setTimeout(r, 40)); // let the throttled renderer paint
+
+    const answers = [...document.querySelectorAll(".msg.assistant")];
+    expect(answers).toHaveLength(1); // ONE answer, not two
+    expect(answers[0].textContent).toContain(
+      "Ho tutto per descriverli senza inventare. Scrivo la sezione [Unreleased] — copre tutto il ciclo.",
+    );
+    // The reasoning is still there, one line above, collapsible.
+    const marker = document.querySelector(".thinking-block") as HTMLElement;
+    expect(marker).toBeTruthy();
+    expect(marker.textContent).toContain("Thought during this answer");
+    expect(marker.compareDocumentPosition(answers[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("keeps the reasoning readable: expanding the mid-answer marker shows it", async () => {
+    await loadView();
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+
+    hostMessage({ type: "textDelta", content: "prima parte" });
+    hostMessage({ type: "thinkingDelta", content: "il ragionamento di mezzo" });
+    await new Promise((r) => setTimeout(r, 40));
+
+    const marker = document.querySelector(".thinking-block") as HTMLElement;
+    const header = marker?.querySelector(".thinking-header") as HTMLElement;
+    const body = marker?.querySelector(".thinking-body") as HTMLElement;
+    expect(body.classList.contains("collapsed")).toBe(true); // quiet by default
+    header.click();
+    expect(body.classList.contains("collapsed")).toBe(false);
+    expect(body.textContent).toContain("il ragionamento di mezzo");
+  });
+
+  it("still gives reasoning its OWN block when it comes BEFORE the answer (the common case)", async () => {
+    // The fix must not swallow the normal order: reason first, then answer. The
+    // block stands on its own and the answer that follows is its own bubble.
+    await loadView();
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+
+    hostMessage({ type: "thinkingDelta", content: "ragiono prima" });
+    hostMessage({ type: "textDelta", content: "la risposta" });
+    await new Promise((r) => setTimeout(r, 40));
+
+    const marker = document.querySelector(".thinking-block") as HTMLElement;
+    const answer = document.querySelector(".msg.assistant") as HTMLElement;
+    expect(marker.textContent).toContain("Thinking");
+    expect(marker.textContent).not.toContain("during this answer");
+    expect(answer.textContent).toContain("la risposta");
+    // …and the answer is a SEPARATE bubble after it, not merged into the block.
+    expect(marker.contains(answer)).toBe(false);
+  });
+
+  it("moves the pulse to the marker and KEEPS the answer streaming (mid-answer reasoning)", async () => {
+    // This used to close the answer bubble on any new thinking phase. That is right
+    // when the reasoning comes BEFORE the answer, and wrong while the answer is being
+    // written: closing it there cut the sentence in two. The answer keeps streaming
+    // and the pulse belongs to the reasoning marker until the turn ends.
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
     input.value = "go";
@@ -966,8 +1035,81 @@ describe("view webview client", () => {
 
     hostMessage({ type: "textDelta", content: "partial" });
     expect(document.querySelector(".msg.assistant.streaming")).toBeTruthy();
+
     hostMessage({ type: "thinkingDelta", content: "reasoning..." });
-    expect(document.querySelector(".msg.assistant.streaming")).toBe(null);
+
+    const answer = document.querySelector(".msg.assistant.streaming") as HTMLElement;
+    expect(answer).toBeTruthy(); // the answer continues in the SAME bubble
+    expect(answer.textContent).toContain("partial");
+    const marker = document.querySelector(".thinking-block") as HTMLElement;
+    expect(marker.classList.contains("streaming")).toBe(true); // the pulse moved here
+  });
+
+  describe("the answer never loses its beginning (reported: text starting mid-word)", () => {
+    const FRASE =
+      "Ho tutto per descriverli senza inventare. Scrivo la sezione [Unreleased] — copre tutto il ciclo non rilasciato (16 commit), non solo il mio pezzo:";
+    /** The real stream arrives in many small chunks, not in one piece. */
+    const chunks = (text: string, size = 8): string[] => {
+      const out: string[] = [];
+      for (let i = 0; i < text.length; i += size) out.push(text.slice(i, i + size));
+      return out;
+    };
+    /** Let the throttled renderer paint (it coalesces within 16ms). */
+    const frame = (): Promise<void> => new Promise((r) => setTimeout(r, 40));
+    const showAssistant = (): string =>
+      [...document.querySelectorAll(".msg.assistant")].map((e) => e.textContent ?? "").join("\n");
+
+    async function startWorking(): Promise<void> {
+      await loadView();
+      (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
+      (document.getElementById("send-btn") as HTMLButtonElement).click();
+    }
+
+    it("keeps the whole first segment when the stream is chunked and a tool follows", async () => {
+      await startWorking();
+      for (const c of chunks(FRASE)) hostMessage({ type: "textDelta", content: c });
+      hostMessage({ type: "toolCall", id: "c1", name: "Shell", arguments: { command: "ls" } });
+      await frame();
+
+      const shown = showAssistant();
+      expect(shown).toContain(FRASE);
+      expect(shown).not.toMatch(/^\s*zione/);
+    });
+
+    it("keeps it across a full turn (text, tool, text)", async () => {
+      await startWorking();
+      for (const c of chunks(FRASE)) hostMessage({ type: "textDelta", content: c });
+      hostMessage({ type: "toolCall", id: "c1", name: "Shell", arguments: { command: "ls" } });
+      hostMessage({ type: "toolResult", toolCallId: "c1", output: "ok", isError: false });
+      hostMessage({ type: "textDelta", content: "Dopo il tool." });
+      await frame();
+
+      const shown = showAssistant();
+      expect(shown).toContain(FRASE);
+      expect(shown).toContain("Dopo il tool.");
+    });
+
+    it("does NOT lose the live answer when a transcript REFRESH lands mid-stream", async () => {
+      // A refresh rebuilds from COMMITTED messages only. The turn still streaming is
+      // not committed: unless its live text travels with the refresh, the bubble is
+      // rebuilt without it and the following deltas start a NEW one mid-word. The
+      // host KNOWS that text (StreamTee.liveOf) — it has to come along.
+      await startWorking();
+      for (const c of chunks(FRASE)) hostMessage({ type: "textDelta", content: c });
+      await frame();
+
+      hostMessage({
+        type: "refresh",
+        messages: [{ role: "user", content: "guarda il readme", timestamp: 1 }],
+        streaming: true,
+        liveAnswer: FRASE,
+        liveThinking: "",
+      });
+      await frame();
+
+      const shown = showAssistant();
+      expect(shown).toContain(FRASE); // the live text survived the rebuild
+    });
   });
 
   it("ignores empty / whitespace-only text deltas (no empty bubble)", async () => {
@@ -1989,6 +2131,25 @@ describe("view webview client", () => {
     expect(tool.textContent).toContain("Read");
     expect(tool.classList.contains("ok")).toBe(true);
     expect(bubble.querySelector(".sa-answer")?.textContent).toContain("partial answer");
+  });
+
+  it("keeps the nested answer in ONE block when the sub-agent reasons mid-answer (same rule as the chat)", async () => {
+    // The nested stream and the main transcript must follow the SAME rule: a reasoning
+    // phase never splits an answer. This one was already right (it accumulates into one
+    // .sa-answer); the chat stream was not. Pinned here so they cannot drift apart again.
+    await loadView();
+    hostMessage(PARALLEL_ON);
+    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({ type: "subagentStart", toolCallId: "s1" });
+
+    hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "text_delta", content: "Ho letto i file e " } });
+    hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "thinking_delta", content: "ora riordino le idee" } });
+    hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "text_delta", content: "concludo che va bene." } });
+
+    const answers = document.querySelectorAll(".sa-answer");
+    expect(answers).toHaveLength(1);
+    expect(answers[0].textContent).toContain("Ho letto i file e concludo che va bene.");
+    expect(document.querySelector(".sa-thinking")?.textContent).toContain("ora riordino le idee");
   });
 
   it("sub-agent bubbles are collapsed by default and expand on click", async () => {
@@ -4519,7 +4680,7 @@ describe("soft steering + pending bubbles (webview)", () => {
   /**
    * The DECISION ("does this text wrap?") is measured on the rendered element, and
    * jsdom computes no layout — so its rule lives in a pure module with its own
-   * tests (pending-overflow.test.ts: fits / wraps / no-measurement). What is tested
+   * tests (pending-fold.test.ts: fits / wraps / no-measurement). What is tested
    * here is the WIRING: one control per bubble, hidden until a measurement says
    * otherwise, folding the text on click, and never stranding a collapsed message.
    */
@@ -4552,11 +4713,15 @@ describe("soft steering + pending bubbles (webview)", () => {
       expect(row.classList.contains("text-collapsed")).toBe(true);
       expect(more.textContent).toBe("▶");
       expect(more.title).toMatch(/whole/i);
+      // It is a disclosure control: its state is announced, not just drawn.
+      expect(more.getAttribute("aria-expanded")).toBe("false");
+      expect(more.getAttribute("aria-label")).toMatch(/whole/i);
 
       more.click();
       expect(row.classList.contains("text-collapsed")).toBe(false);
       expect(more.textContent).toBe("▼");
       expect(more.title).toMatch(/collapse/i);
+      expect(more.getAttribute("aria-expanded")).toBe("true");
     });
 
     it("never strands a collapsed bubble when the panel is resized", async () => {

@@ -39,7 +39,7 @@ describe("renderViewHtml", () => {
     expect(pendingText).not.toContain("text-overflow: ellipsis");
     expect(pendingText).not.toContain("white-space: nowrap");
     // …and an EXPANDED message is not capped at all: one line is exactly 1.4em
-    // (the number the overflow measurement uses — see pending-overflow.ts).
+    // (the number the overflow measurement uses — see pending-fold.ts).
     expect(pendingText).not.toContain("max-height");
     expect(pendingText).toContain("line-height: 1.4;");
     // The SECTION owns the scroll, so a huge paste cannot eat the panel…

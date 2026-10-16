@@ -21,7 +21,7 @@ import { renderViewHtml } from "./view-html";
 import { toTemperature, toTopP } from "./temperature";
 import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, MAX_CONTEXT_WINDOW, MAX_OUTPUT_TOKENS, MIN_OUTPUT_TOKENS, REQUEST_SAFETY_MARGIN, REQUEST_SAFETY_MARGIN_SHARE, clampAdoptedContextWindow, clampAdoptedOutputTokens, clampContextWindow, clampOutputTokens, toContextWindow, toOutputTokens, usableContext } from "./context-window";
 import { PanelModalQueue } from "./panel-modal-queue";
-import { Compactor, DEFAULT_COMPACTION, CompactionSettings, keepRecentTokensFor, planCompactionToBudget, shouldCompact, estimateTokens, serializeConversation, estimateContextTokens, realWindowTokens, splitSummary, summaryBudgetTokens, toCompactionThresholdPercent } from "../core/sessions/compactor";
+import { Compactor, DEFAULT_COMPACTION, CompactionSettings, compactHistory, shouldCompact, estimateTokens, serializeConversation, estimateContextTokens, realWindowTokens, toCompactionThresholdPercent } from "../core/sessions/compactor";
 import type { SkillRegistry } from "../core/skills/skill-registry";
 import type { McpManager } from "../core/mcp";
 import { McpStdioClient, McpHttpClient, type McpClient } from "../core/mcp";
@@ -29,6 +29,8 @@ import type { McpServerConfig, McpStdioServerConfig, McpHttpServerConfig } from 
 import { LOOP_GUARD_FIELD_RANGES, clampLoopGuardOverrides, loopGuardPresets, normalizeLoopGuardSensitivity, resolveLoopGuardOptions } from "../core/agent/loop-guard";
 import type { LoopGuardOptions } from "../core/agent/loop-guard";
 import { DEFAULT_MAX_PARALLEL_SUB_AGENTS } from "../core/agent/agent";
+import type { ContextOverflowEvidence } from "../core/agent/agent";
+import type { ChatHistory } from "../core/history/chat-history";
 
 /**
  * Single side-view (webview view) hosting: a hideable sessions list, a tab bar
@@ -401,7 +403,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     rt.cachedTokens = 0;
     rt.cachedWriteTokens = 0;
     void this.pushConfig();
-    this.view?.webview.postMessage({ type: "refresh", messages: rt.agent.getMessages(), skills: this.skillCatalog() });
+    this.refreshTranscript(rt, true);
   }
 
   /** Shared branch core: new session + slicing done by the caller. */
@@ -1349,7 +1351,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       if (isActive) {
         // Re-render the transcript so the SYNTHETIC user prompt (orange) +
         // assistant response that replaced the summarized span are visible.
-        this.view?.webview.postMessage({ type: "refresh", messages: rt.agent.getMessages() });
+        this.refreshTranscript(rt);
         this.view?.webview.postMessage({ type: "status", active: false });
       }
     }
@@ -1642,7 +1644,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         rt.history.add({ role: "user", content: rawText.trim(), timestamp: Date.now() });
         rt.history.add({ role: "assistant", content, timestamp: Date.now() });
         this.sessions.saveMessages(rt.sessionId, rt.agent.getMessages());
-        this.view?.webview.postMessage({ type: "refresh", messages: rt.agent.getMessages(), skills: this.skillCatalog() });
+        this.refreshTranscript(rt, true);
         return;
       }
       const task = skillCmd[2].trim().slice(name.length).trim() || "Apply this skill to the current task.";
@@ -1703,7 +1705,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       // (parallel work), and their refresh/status must not clobber it.
       if (this.activeId === rt.sessionId) {
         this.postStatus(rt, false);
-        if (!hadError) this.view?.webview.postMessage({ type: "refresh", messages: rt.agent.getMessages(), skills: this.skillCatalog() });
+        if (!hadError) this.refreshTranscript(rt, true);
       }
     }
     // Post-response auto-compaction: evaluate the CURRENT fill right after
@@ -1877,52 +1879,33 @@ export class ChatViewProvider implements WebviewViewProvider {
     const compactor = this.options.compactor;
     if (!compactor) return false;
     const messages = rt.history.conversation();
-    // WHAT to cut: an ABSOLUTE recent budget, not a fraction of the history. A
-    // fraction keeps most of a big window (600k of 1M) and frees almost nothing —
-    // the compaction then buys a few turns instead of a long stretch. What must
-    // stay verbatim is the work in flight, and that is bounded whatever the window
-    // (pi keeps ~20k recent tokens, OpenCode ~15k); the tail is snapped to whole
-    // turn groups.
     const usable = usableContext(this.budgetWindow(rt), this.budgetReserve(rt));
-    const keepBudget = keepRecentTokensFor(usable);
-    const plan = planCompactionToBudget(messages, keepBudget);
-    if (plan.toSummarize.length === 0) return false;
-    // HOW MUCH the summary may take: the room left between the kept part and the
-    // post-compaction target. A verbose summary eats the context the compaction
-    // just freed, and the same text is a far larger share on a small model.
-    const keptTokensEstimate = estimateTokens(serializeConversation(plan.kept));
-    const summaryBudget = summaryBudgetTokens(usable, keptTokensEstimate);
-    // Tell the summarizer what the session still has in FULL, so it does not
-    // re-state work the next turns can already see (paid twice otherwise).
-    const keptPreview = plan.kept.find((m) => (m.content ?? "").trim())?.content;
-    const summary = await compactor.summarize(plan.toSummarize, undefined, signal, {
-      maxSummaryTokens: summaryBudget,
-      keptPreview,
-    });
+    // THE compaction strategy lives in core/sessions and is shared with the sub-agents
+    // (which compact their own ephemeral history the same way). What stays HERE is what
+    // only the session has: persistence, the context counter and the UI.
+    const result = await compactHistory(messages, { compactor, usableTokens: usable, signal });
+    if (!result) return false;
     infoLog(
-      `compaction: usable=${usable}t kept≈${keptTokensEstimate}t (budget ${keepBudget}t) -> summary budget=${summaryBudget}t, ` +
-        `produced=${estimateTokens(summary)}t, was=${estimateTokens(serializeConversation(messages))}t`,
+      `compaction: usable=${usable}t kept≈${estimateTokens(serializeConversation(result.kept))}t ` +
+        `(budget ${result.keepBudgetTokens}t) -> summary budget=${result.summaryBudgetTokens}t, ` +
+        `produced=${result.summaryTokens}t, was=${estimateTokens(serializeConversation(messages))}t`,
     );
-    // Represent the summarized span as a synthetic USER prompt + ASSISTANT
-    // response, so the transcript ALWAYS starts with an orange user bubble.
-    const { prompt: synthPrompt, response: synthResponse } = splitSummary(summary);
-    const now = Date.now();
-    const newHistory = [
-      { role: "user" as const, content: synthPrompt, timestamp: now, synthetic: true },
-      { role: "assistant" as const, content: synthResponse, timestamp: now + 1, synthetic: true },
-      ...plan.kept,
-    ];
+    const newHistory = result.history;
     rt.history.replace(newHistory);
     this.sessions.saveMessages(rt.sessionId, newHistory, { replace: true });
     // Prefer REAL data for the KEPT window (the cumulative `meta.inputTokens`
     // delta across it): the summary rewrote the prefix, so re-estimating the
     // whole history would no longer match the provider's numbers.
-    const keptFrom = plan.kept.length > 0 ? messages.indexOf(plan.kept[0]) : -1;
+    const keptFrom = result.kept.length > 0 ? messages.indexOf(result.kept[0]) : -1;
     const keptTokens =
       keptFrom >= 0
-        ? realWindowTokens(messages, keptFrom) ?? estimateTokens(serializeConversation(plan.kept))
+        ? realWindowTokens(messages, keptFrom) ?? estimateTokens(serializeConversation(result.kept))
         : 0;
-    const next = estimateTokens(synthPrompt) + estimateTokens(synthResponse) + keptTokens;
+    // The synthetic pair is the first two messages of the rebuilt history.
+    const next =
+      estimateTokens(String(newHistory[0]?.content ?? "")) +
+      estimateTokens(String(newHistory[1]?.content ?? "")) +
+      keptTokens;
     rt.contextTokens = next;
     this.sessions.saveSettings(rt.sessionId, { contextTokens: next });
     // The context was rebuilt: any previously reported cache hit is meaningless
@@ -1942,15 +1925,24 @@ export class ChatViewProvider implements WebviewViewProvider {
    * Silent: the run is still going, so the "working" status is untouched. A
    * failure here must not mask the original error — the agent falls back to it.
    */
-  async compactForOverflow(sessionId: string, signal?: AbortSignal): Promise<boolean> {
+  async compactForOverflow(
+    sessionId: string,
+    signal?: AbortSignal,
+    evidence?: ContextOverflowEvidence,
+  ): Promise<boolean> {
     const rt = this.registry.get(sessionId);
     if (!rt || this.compacting) return false;
+    // FIRST, before the budget math below reads the window: adopt the limit the
+    // provider itself stated. An unknown local model otherwise keeps a guessed
+    // (optimistic) 128k for the whole session, so the threshold never fires and
+    // every request risks the same rejection.
+    if (evidence?.limitTokens) this.adoptContextWindow(rt, evidence.limitTokens);
     this.compacting = true;
     try {
       const compacted = await this.performCompaction(rt, signal);
       infoLog(`context overflow: compaction ${compacted ? "rewrote the session" : "had nothing to summarize"}`);
       if (compacted && this.activeId === rt.sessionId) {
-        this.view?.webview.postMessage({ type: "refresh", messages: rt.agent.getMessages() });
+        this.refreshTranscript(rt);
         void this.pushConfig();
       }
       return compacted;
@@ -1960,6 +1952,49 @@ export class ChatViewProvider implements WebviewViewProvider {
     } finally {
       this.compacting = false;
     }
+  }
+
+  /**
+   * Adopt a context window the PROVIDER stated (see ContextOverflowEvidence).
+   * Persisted, because it is a property of the model, not of this run: the next
+   * session with the same model starts from the truth instead of from the fallback.
+   */
+  private adoptContextWindow(rt: SessionRuntime, limitTokens: number): void {
+    const adopted = clampAdoptedContextWindow(limitTokens);
+    if (adopted === rt.contextWindow) return;
+    infoLog(`context window adopted from the provider: ${rt.contextWindow} -> ${adopted} tokens (session ${rt.sessionId})`);
+    rt.contextWindow = adopted;
+    this.sessions.saveSettings(rt.sessionId, { contextWindow: adopted });
+    if (this.activeId === rt.sessionId) void this.pushConfig();
+  }
+
+  /**
+   * Overflow recovery for a SUB-AGENT: a sub-agent's history is EPHEMERAL (its runner
+   * owns it), so the session's compaction cannot act on it — but the STRATEGY must be
+   * the same one, or the two would drift into two behaviours. Same `compactHistory`,
+   * same model, therefore the same window: only what is stored differs (nothing here).
+   */
+  async compactSubAgentHistory(
+    history: ChatHistory,
+    sessionId: string,
+    signal?: AbortSignal,
+    evidence?: ContextOverflowEvidence,
+  ): Promise<boolean> {
+    const rt = this.registry.get(sessionId);
+    const compactor = this.options.compactor;
+    if (!rt || !compactor) return false;
+    // Same model as the session: a limit the provider stated applies to it too.
+    if (evidence?.limitTokens) this.adoptContextWindow(rt, evidence.limitTokens);
+    const messages = history.conversation();
+    const usable = usableContext(this.budgetWindow(rt), this.budgetReserve(rt));
+    const result = await compactHistory(messages, { compactor, usableTokens: usable, signal });
+    if (!result) return false;
+    history.replace(result.history);
+    infoLog(
+      `sub-agent context overflow: compacted ${result.summarized.length} messages into ${result.summaryTokens}t ` +
+        `(kept ${result.kept.length}, budget ${result.keepBudgetTokens}t)`,
+    );
+    return true;
   }
 
   /** The USABLE context of a session (window − output reserve): the number every
@@ -2351,6 +2386,26 @@ export class ChatViewProvider implements WebviewViewProvider {
         (withCtx[0] ? ` (e.g. ${withCtx[0].id} = ${withCtx[0].contextLength})` : ""),
     );
     return models;
+  }
+
+  /**
+   * Rebuild the transcript in the view, WITHOUT losing a turn that is still
+   * streaming.
+   *
+   * The committed messages come from history, but the text of the in-flight turn
+   * lives in the StreamTee (nothing has committed it yet): a refresh carrying only
+   * `messages` would wipe the answer being written, and the deltas that follow would
+   * start a NEW bubble mid-word. So every refresh goes through here and carries the
+   * live text whenever this session is running — one place to get it right.
+   */
+  private refreshTranscript(rt: SessionRuntime, withSkills = false): void {
+    const live = this.streamTee.liveOf(rt.sessionId);
+    this.view?.webview.postMessage({
+      type: "refresh",
+      messages: rt.agent.getMessages(),
+      ...(withSkills ? { skills: this.skillCatalog() } : {}),
+      ...(rt.agent.streaming && live ? { streaming: true, liveThinking: live.thinking, liveAnswer: live.answer } : {}),
+    });
   }
 
   private async pushConfig(): Promise<void> {

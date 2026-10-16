@@ -2178,6 +2178,136 @@ describe("ChatViewProvider compaction", () => {
     expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "refresh" }));
   });
 
+  it("a SECOND compaction UPDATES the previous state instead of re-deriving it", async () => {
+    // The failure mode on long sessions: summarize a summary, generation after
+    // generation, losing a fact each time. The state the first compaction left behind
+    // is passed as such — and its own messages are NOT re-summarized (they carry no
+    // new information).
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\ncarried");
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 200000;
+    const state = "## Goal\nship the parser\n## Facts\nsrc/parser.ts is the entry point";
+    rt.history.replace([
+      // What a previous compaction left: the synthetic pair.
+      { role: "user", content: "Summary of past interactions", timestamp: 1, synthetic: true },
+      { role: "assistant", content: state, timestamp: 2, synthetic: true },
+      // …plus the work done since (enough of it that the span is not just the pair).
+      { role: "user", content: "now add the lexer", timestamp: 3 },
+      { role: "assistant", content: "adding it", timestamp: 4 },
+      { role: "user", content: "and the tests", timestamp: 5 },
+      { role: "assistant", content: "writing them", timestamp: 6 },
+      { role: "user", content: "run them", timestamp: 7 },
+      { role: "assistant", content: "all green", timestamp: 8 },
+    ]);
+
+    await handler({ type: "compact" });
+
+    expect(summarize).toHaveBeenCalledTimes(1);
+    const [span, previousState] = summarize.mock.calls[0] as unknown as [ChatMessage[], string];
+    // The state is handed over AS the state…
+    expect(previousState).toBe(state);
+    // …and it is NOT part of the span to summarize again.
+    expect(span.some((m) => m.synthetic)).toBe(false);
+    expect(span.some((m) => m.content === state)).toBe(false);
+    expect(span.some((m) => m.content === "now add the lexer")).toBe(true);
+    // The new history still starts with a synthetic pair carrying the new state.
+    const conv = registry.get("s1")!.history.conversation();
+    expect(conv[0].synthetic).toBe(true);
+    expect(conv[1].synthetic).toBe(true);
+  });
+
+  it("compacts a SUB-AGENT's ephemeral history with the session's strategy (and adopts a stated limit)", async () => {
+    // The sub-agent's history belongs to its runner and is never stored: the host
+    // compacts THAT array and answers whether it changed anything, using the same
+    // routine the session uses.
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\nsub work\n## Facts\na.ts");
+    const { provider, registry, store } = buildHarness({
+      compactor: { summarize } as unknown as Compactor,
+      compaction: DEFAULT_COMPACTION,
+    });
+    resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 200_000;
+    // The sub-agent's own history: enough turns that the planner has a span to cut.
+    const subHistory = {
+      messages: [
+        { role: "user", content: "task", timestamp: 1 },
+        { role: "assistant", content: "read a.ts", timestamp: 2 },
+        { role: "user", content: "more", timestamp: 3 },
+        { role: "assistant", content: "read b.ts", timestamp: 4 },
+        { role: "user", content: "more", timestamp: 5 },
+        { role: "assistant", content: "read c.ts", timestamp: 6 },
+        { role: "user", content: "more", timestamp: 7 },
+        { role: "assistant", content: "done", timestamp: 8 },
+      ] as ChatMessage[],
+      conversation(): ChatMessage[] {
+        return this.messages;
+      },
+      replace(next: ChatMessage[]): void {
+        this.messages = next;
+      },
+    };
+    store.saveMessages.mockClear();
+
+    const compacted = await provider.compactSubAgentHistory(subHistory as never, "s1", undefined, { limitTokens: 8_192 } as never);
+
+    expect(compacted).toBe(true);
+    // The ephemeral history was rewritten in place: a synthetic pair + the kept tail.
+    expect(subHistory.messages[0].synthetic).toBe(true);
+    expect(String(subHistory.messages[1].content)).toContain("sub work");
+    // Nothing is PERSISTED: a sub-agent's history is not a session transcript.
+    expect(store.saveMessages).not.toHaveBeenCalled();
+    // The stated limit is the same model as the session, so the session adopts it.
+    expect(rt.contextWindow).toBe(8_192);
+  });
+
+  it("says no when a sub-agent's history has nothing worth summarizing", async () => {
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\nx");
+    const { provider } = buildHarness({ compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION });
+    resolveWith(provider);
+    await provider.createNew();
+    const short = {
+      messages: [{ role: "user", content: "hi", timestamp: 1 }] as ChatMessage[],
+      conversation(): ChatMessage[] {
+        return this.messages;
+      },
+      replace(): void {},
+    };
+
+    expect(await provider.compactSubAgentHistory(short as never, "s1")).toBe(false);
+    expect(summarize).not.toHaveBeenCalled();
+  });
+
+  it("a FIRST compaction has no state to carry", async () => {
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\nx");
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    const { handler } = resolveWith(provider);
+    await provider.createNew();
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 200000;
+    rt.history.replace([
+      { role: "user", content: "hi", timestamp: 1 },
+      { role: "assistant", content: "ok", timestamp: 2 },
+      { role: "user", content: "go", timestamp: 3 },
+      { role: "assistant", content: "done", timestamp: 4 },
+      { role: "user", content: "more", timestamp: 5 },
+      { role: "assistant", content: "still here", timestamp: 6 },
+      { role: "user", content: "last", timestamp: 7 },
+      { role: "assistant", content: "finished", timestamp: 8 },
+    ]);
+
+    await handler({ type: "compact" });
+
+    const [, previousState] = summarize.mock.calls[0] as unknown as [ChatMessage[], string | undefined];
+    expect(previousState).toBeUndefined();
+  });
+
   it("feeds the summarizer a budget derived from the room left after the kept part", async () => {
     const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\nx");
     const options = {
@@ -2944,6 +3074,137 @@ describe("ChatViewProvider soft steering + queue", () => {
       (provider as unknown as { pendingQueue: { items(id: string): unknown[] } }).pendingQueue.items("s1"),
     ).toEqual([]);
     expect(agent.steer).not.toHaveBeenCalled();
+  });
+
+  it("adopts the context window the provider STATES, so the budget math stops guessing", async () => {
+    // An unknown (local) model falls back to the 128k default, which is OPTIMISTIC:
+    // the compaction threshold never fires and every request risks a rejection. The
+    // rejection itself names the truth, so the session adopts it — before compacting,
+    // so the compaction math below already uses the real window.
+    const { provider, registry, store } = buildHarness({
+      providerEntry: { name: "p", baseUrl: "https://x/v1", models: [{ id: "m1" }] },
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew();
+    await handler({ type: "setModel", model: "m1", provider: "p" });
+    const rt = registry.get("s1")!;
+    expect(rt.contextWindow).toBe(128000); // the fallback
+
+    const compacted = await provider.compactForOverflow("s1", undefined, { limitTokens: 8192, signature: "llama.cpp" });
+
+    expect(rt.contextWindow).toBe(8192);
+    // Persisted: it is a property of the MODEL, so the next session with it starts
+    // from the truth instead of from the fallback.
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", expect.objectContaining({ contextWindow: 8192 }));
+    // Nothing to summarize here, so the agent is told not to retry.
+    expect(compacted).toBe(false);
+  });
+
+  it("adopts a LARGER stated window too, and ignores a redundant one", async () => {
+    const { provider, registry, store } = buildHarness({
+      providerEntry: { name: "p", baseUrl: "https://x/v1", models: [{ id: "m1" }] },
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew();
+    await handler({ type: "setModel", model: "m1", provider: "p" });
+    const rt = registry.get("s1")!;
+
+    await provider.compactForOverflow("s1", undefined, { limitTokens: 200000 });
+    expect(rt.contextWindow).toBe(200000); // the model really is bigger: use it
+    store.saveSettings.mockClear();
+
+    await provider.compactForOverflow("s1", undefined, { limitTokens: 200000 });
+    expect(store.saveSettings).not.toHaveBeenCalled(); // no redundant write
+  });
+
+  it("does NOT touch the window when the rejection stated no limit", async () => {
+    const { provider, registry, store } = buildHarness({
+      providerEntry: { name: "p", baseUrl: "https://x/v1", models: [{ id: "m1" }] },
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew();
+    await handler({ type: "setModel", model: "m1", provider: "p" });
+    const rt = registry.get("s1")!;
+    store.saveSettings.mockClear();
+
+    // Unrecognised wording: we compact (the caller decided it was an overflow) but we
+    // do not invent a window we were not told.
+    await provider.compactForOverflow("s1", undefined, { signature: "generic" });
+
+    expect(rt.contextWindow).toBe(128000);
+    expect(store.saveSettings).not.toHaveBeenCalledWith("s1", expect.objectContaining({ contextWindow: expect.anything() }));
+  });
+
+  it("a MID-RUN refresh carries the live answer (a rebuild must not eat it)", async () => {
+    // Reported bug: a response began mid-word. The host was fine (the text is in the
+    // session DB) and the streaming path is fine (see the webview tests); what lost it
+    // was a refresh landing mid-run: the view rebuilds from committed messages, and
+    // the in-flight turn is not committed. It now travels with the refresh.
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\nx");
+    const { provider, registry } = buildHarness({
+      compactor: { summarize } as unknown as Compactor,
+      compaction: DEFAULT_COMPACTION,
+      emitEvents: true,
+    });
+    const { view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    const agent: any = rt.agent;
+    rt.history.replace([
+      { role: "user", content: "a", timestamp: 1 },
+      { role: "assistant", content: "b", timestamp: 2 },
+      { role: "user", content: "c", timestamp: 3 },
+      { role: "assistant", content: "d", timestamp: 4 },
+      { role: "user", content: "e", timestamp: 5 },
+      { role: "assistant", content: "f", timestamp: 6 },
+      { role: "user", content: "g", timestamp: 7 },
+      { role: "assistant", content: "h", timestamp: 8 },
+    ]);
+    const frase = "Ho tutto per descriverli senza inventare. Scrivo la sezione";
+    agent.streaming = true;
+    agent.emit({ type: "text_delta", content: frase }); // the StreamTee accumulates it
+    view.webview.postMessage.mockClear();
+
+    const compacted = await provider.compactForOverflow("s1");
+
+    expect(compacted).toBe(true);
+    const refresh = view.webview.postMessage.mock.calls
+      .map((c) => c[0])
+      .find((m: any) => m?.type === "refresh");
+    expect(refresh).toMatchObject({ streaming: true, liveAnswer: frase });
+  });
+
+  it("does NOT ship a live buffer on a refresh when nothing is running", async () => {
+    // The live text belongs to a RUN. A refresh at rest (a ✂ cut, a skill, the end
+    // of a run) must not resurrect a bubble that is no longer being written.
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\nx");
+    const { provider, registry } = buildHarness({
+      compactor: { summarize } as unknown as Compactor,
+      compaction: DEFAULT_COMPACTION,
+      emitEvents: true,
+    });
+    const { view } = resolveWith(provider);
+    await provider.createNew();
+    const rt = registry.get("s1")!;
+    rt.history.replace([
+      { role: "user", content: "a", timestamp: 1 },
+      { role: "assistant", content: "b", timestamp: 2 },
+      { role: "user", content: "c", timestamp: 3 },
+      { role: "assistant", content: "d", timestamp: 4 },
+      { role: "user", content: "e", timestamp: 5 },
+      { role: "assistant", content: "f", timestamp: 6 },
+      { role: "user", content: "g", timestamp: 7 },
+      { role: "assistant", content: "h", timestamp: 8 },
+    ]);
+    (rt.agent as any).streaming = false;
+
+    await provider.compactForOverflow("s1");
+
+    const refresh = view.webview.postMessage.mock.calls
+      .map((c) => c[0])
+      .find((m: any) => m?.type === "refresh");
+    expect(refresh).toBeTruthy();
+    expect(refresh).not.toHaveProperty("liveAnswer");
   });
 
   it("cancels a queued message without touching the agent", async () => {

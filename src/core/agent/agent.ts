@@ -6,7 +6,7 @@ import type { ChatHistory } from "../history/chat-history";
 import type { ChatMessage, MessageMeta } from "../history/types";
 import { conversationFaults, describeFaults } from "../history/conversation-validity";
 import { maskKeepTokens, maskOldToolResults } from "../history/observation-masking";
-import { isContextOverflowError, isRequestRejection, matchedOverflowSignature } from "../llm/context-overflow";
+import { isContextOverflowError, isRequestRejection, matchedOverflowSignature, overflowLimitFromError } from "../llm/context-overflow";
 import { estimateTokens } from "../sessions/compactor";
 import type { LLMProviderFactory, LLMMessage, Usage } from "../llm/types";
 import type { Tool, ToolCall, ToolRegistry, ToolResult } from "../tools";
@@ -134,8 +134,10 @@ export interface AgentDeps {
    * the host compacts the session in place and answers whether anything changed.
    * When it did, the agent sends the SAME turn again — the safety net under every
    * budget calculation, since our estimate is a heuristic and the declared window
-   * can be wrong. See {@link Agent.runLlmTurnWithOverflowRecovery}. */
-  onContextOverflow?: (signal: AbortSignal) => Promise<boolean> | boolean;
+   * can be wrong. See {@link Agent.runLlmTurnWithOverflowRecovery}.
+   * `evidence` carries what the rejection revealed: the provider's own wording
+   * family, and the context LIMIT when it stated one (let the host adopt it). */
+  onContextOverflow?: (signal: AbortSignal, evidence: ContextOverflowEvidence) => Promise<boolean> | boolean;
   /** The USABLE context of the current turn (window − output reserve). Used to
    * decide whether a rejection we cannot read was about size, and to size the
    * masking of old tool results. Absent = those two features stay off. */
@@ -151,6 +153,16 @@ export interface AgentDeps {
   /** Called when a tool ACTUALLY changed a file (Build mode, not a preview):
    * lets the parent track what a run/sub-agent touched. */
   onFileChanged?: (change: PreparedChange) => void;
+}
+
+/** What a context-overflow rejection revealed. */
+export interface ContextOverflowEvidence {
+  /** Which provider family's wording matched (for the dev log). */
+  signature?: string;
+  /** The context limit the provider STATED, when its message carried one. The
+   * caller should adopt it: it is the model's real window, where the configured
+   * one may be a guess (see context-overflow.ts: overflowLimitFromError). */
+  limitTokens?: number;
 }
 
 /**
@@ -869,11 +881,17 @@ export class Agent implements ChatController {
         const signal = this.abortController?.signal;
         if (attempt >= maxRecoveries || !signal || signal.aborted || !this.deps.onContextOverflow) throw err;
         if (!this.isOverflowRejection(err)) throw err;
+        const signature = matchedOverflowSignature(err);
+        const limitTokens = overflowLimitFromError(err);
         this.log(
-          `context overflow (${matchedOverflowSignature(err) ?? "wording not recognised"}) -> compacting and retrying the turn ` +
-            `(${attempt + 1}/${maxRecoveries})`,
+          `context overflow (${signature ?? "wording not recognised"}${
+            limitTokens ? `, provider states ${limitTokens} tokens` : ""
+          }) -> compacting and retrying the turn (${attempt + 1}/${maxRecoveries})`,
         );
-        const compacted = await this.deps.onContextOverflow(signal);
+        const compacted = await this.deps.onContextOverflow(signal, {
+          ...(signature ? { signature } : {}),
+          ...(limitTokens ? { limitTokens } : {}),
+        });
         // Nothing to compact (or it failed): do not retry the same request twice.
         if (!compacted) throw err;
       }
@@ -1199,6 +1217,9 @@ export class Agent implements ChatController {
         ...(dryRun ? { dryRun: true } : {}),
         ...(this.deps.ownerId ? { ownerId: this.deps.ownerId } : {}),
         ...(this.abortController ? { signal: this.abortController.signal } : {}),
+        // The session's usable window, so a tool that emits large output sizes its
+        // cap against THIS model instead of a constant (see output-budget.ts).
+        ...(this.deps.contextBudget ? { contextBudget: this.deps.contextBudget() } : {}),
       };
       let result = await tool.execute(tc.arguments, ctx);
       // A tool result is NEVER blank: `grep` with no match, `mkdir -p`, a silent

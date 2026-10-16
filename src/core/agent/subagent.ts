@@ -1,11 +1,13 @@
 import type { ConfigProvider } from "../config/types";
 import type { ChatMessage } from "../history/types";
+import type { ChatHistory } from "../history/chat-history";
 import { InMemoryChatHistory } from "../history/in-memory-chat-history";
 import { InMemoryEventBus } from "../events/in-memory-event-bus";
 import type { LLMProviderFactory } from "../llm/types";
 import type { ToolRegistry, ToolResult } from "../tools";
 import { toolDefinitionsForMode, type ChatMode } from "../tools/mode-policy";
 import { Agent } from "./agent";
+import type { ContextOverflowEvidence } from "./agent";
 import type { ChatController } from "./chat-controller";
 import type { AgentEvent, SubAgentEvent, PreparedChange } from "./types";
 import {
@@ -29,6 +31,18 @@ export interface SubAgentRunnerDeps {
   /** Optional turn budget per sub-agent (undefined = UNBOUNDED, like the
    * orchestrator: the loop guard + Stop are the safeguards). */
   maxTurns?: number;
+  /** The SESSION's usable context (window − output reserve), in tokens. A sub-agent
+   * runs on the same model as its session, so it must size its own memory of the
+   * window the same way: without it, a sub-agent gets no observation masking, keeps
+   * the FIXED tool-output caps (50KB is an entire 8k context) and can only detect an
+   * overflow from the provider's wording (see core/agent/agent.ts). Absent = the
+   * pre-budget behaviour. */
+  contextBudget?: () => number;
+  /** Why an overflow reaches the host here too: the sub-agent's history is EPHEMERAL
+   * (the runner owns it), so the session's compaction routine cannot act on it — the
+   * host compacts THIS history with the same strategy a session uses and answers
+   * whether it changed anything. Absent = an overflow ends the sub-agent. */
+  onContextOverflow?: (history: ChatHistory, signal: AbortSignal, evidence: ContextOverflowEvidence) => Promise<boolean>;
   /** Optional diagnostic sink; sub-agent lines are tagged with their id. */
   log?: (message: string) => void;
 }
@@ -131,6 +145,14 @@ export class SubAgentRunner {
       // tool-less report turn so the caller always gets a usable synthesis.
       forceFinalReportOnLimit: true,
       cwd: this.deps.cwd,
+      // Same session, same window: the sub-agent sizes its masking and its tool
+      // caps on the budget the host knows (see SubAgentRunnerDeps.contextBudget).
+      contextBudget: this.deps.contextBudget,
+      // …and the SAME recovery as its session, applied to ITS OWN history: the host
+      // compacts it (one strategy, see core/sessions/compactHistory) and the turn is
+      // retried. Without this an overflow would end the sub-task instead.
+      onContextOverflow: (signal, evidence) =>
+        this.deps.onContextOverflow ? this.deps.onContextOverflow(history, signal, evidence) : false,
       // Each sub-agent has its OWN tool state (TodoWrite): concurrent sub-agents
       // must never clobber each other's list.
       ownerId: `sub-${key}`,

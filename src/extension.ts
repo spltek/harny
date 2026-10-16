@@ -4,6 +4,7 @@ import { mkdirSync, watch } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Agent } from "./core/agent/agent";
+import type { ContextOverflowEvidence } from "./core/agent/agent";
 import { SubAgentRunner } from "./core/agent/subagent";
 import { DefaultSystemPromptBuilder } from "./core/agent/system-prompt";
 import type { ChatController } from "./core/agent/chat-controller";
@@ -160,13 +161,31 @@ export async function activate(context: ExtensionContext) {
   let midRunCompact: ((sessionId: string, signal?: AbortSignal) => Promise<void>) | undefined;
   // Context-overflow recovery (agent -> host) and the session's usable budget
   // (host -> agent). Same single assignment point, once the view provider exists.
-  let overflowCompact: ((sessionId: string, signal?: AbortSignal) => Promise<boolean>) | undefined;
+  let overflowCompact: ((sessionId: string, signal?: AbortSignal, evidence?: ContextOverflowEvidence) => Promise<boolean>) | undefined;
   let sessionBudget: ((sessionId: string) => number) | undefined;
+  // Overflow recovery for a SUB-AGENT: same routine as the session, applied to the
+  // sub-agent's ephemeral history (see ChatViewProvider.compactSubAgentHistory).
+  let subAgentOverflow:
+    | ((history: ChatHistory, sessionId: string, signal?: AbortSignal, evidence?: ContextOverflowEvidence) => Promise<boolean>)
+    | undefined;
 
   const createAgent = (history: ChatHistory, sessionId: string): ChatController => {
     // One sub-agent runner per session: it owns the ephemeral sub-agent
     // histories and cascades Stop to any in-flight sub-agent.
-    const subAgents = new SubAgentRunner({ config, llmFactory, tools, cwd, log: (m) => infoLog(`[agent] ${m}`) });
+    const subAgents = new SubAgentRunner({
+      config,
+      llmFactory,
+      tools,
+      cwd,
+      log: (m) => infoLog(`[agent] ${m}`),
+      // Sub-agents run on THIS session's model, so they size their own masking and
+      // tool-output caps on the same window (see SubAgentRunnerDeps.contextBudget).
+      contextBudget: () => sessionBudget?.(sessionId) ?? 0,
+      // …and an overflow inside a sub-agent is recovered the SAME way: the host
+      // compacts the sub-agent's own history with the session's strategy.
+      onContextOverflow: (history, signal, evidence) =>
+        subAgentOverflow?.(history, sessionId, signal, evidence) ?? Promise.resolve(false),
+    });
     return new Agent({
       config,
       llmFactory,
@@ -182,7 +201,7 @@ export async function activate(context: ExtensionContext) {
       log: (m) => infoLog(`[agent] ${m}`),
       onTurnBoundary: (signal) => midRunCompact?.(sessionId, signal),
       // The provider rejected a request as too big: compact and let the turn retry.
-      onContextOverflow: (signal) => overflowCompact?.(sessionId, signal) ?? false,
+      onContextOverflow: (signal, evidence) => overflowCompact?.(sessionId, signal, evidence) ?? false,
       // The USABLE context of this session: the agent sizes its masking and its
       // own overflow check against it, without knowing which model it serves.
       contextBudget: () => sessionBudget?.(sessionId) ?? 0,
@@ -220,8 +239,9 @@ export async function activate(context: ExtensionContext) {
   );
   viewProvider.setContext(context);
   midRunCompact = (id) => viewProvider.maybeCompactDuringRun(id);
-  overflowCompact = (id, signal) => viewProvider.compactForOverflow(id, signal);
+  overflowCompact = (id, signal, evidence) => viewProvider.compactForOverflow(id, signal, evidence);
   sessionBudget = (id) => viewProvider.usableBudgetFor(id);
+  subAgentOverflow = (history, id, signal, evidence) => viewProvider.compactSubAgentHistory(history, id, signal, evidence);
 
   // The sessions live in the CENTRAL home bucket keyed by the root: when the
   // open folder set changes, re-derive the single root and rebuild the view

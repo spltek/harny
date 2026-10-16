@@ -41,6 +41,26 @@ function abortError(): Error {
 }
 
 /**
+ * Models that refused `max_tokens` and demand `max_completion_tokens`, keyed by
+ * endpoint + model: the rule is learned from the provider's own answer ONCE, then
+ * the field is right from the first request of every later turn (otherwise every
+ * single turn would burn a rejected round trip first). A Set is enough — the rule
+ * never goes back.
+ */
+const NEEDS_MAX_COMPLETION_TOKENS = new Set<string>();
+
+/** Key for the learned quirk above (endpoint included: two backends can serve the
+ * same model name under different rules). */
+function completionTokensKey(baseUrl: string, model: string): string {
+  return `${baseUrl}|${model}`;
+}
+
+/** Test seam: the cache is process-wide, so a suite must be able to clear it. */
+export function resetMaxCompletionTokensCache(): void {
+  NEEDS_MAX_COMPLETION_TOKENS.clear();
+}
+
+/**
  * True when the provider rejected the request ONLY because of the output-length
  * field's NAME — the signal being its own hint. Pure, so the rule is testable
  * without a server (see openai-chat-provider.test.ts).
@@ -95,7 +115,11 @@ export class OpenAIChatProvider implements LLMProvider {
     const body: Record<string, unknown> = {
       model: this.config.model,
       messages: toOpenAIMessages(messages),
-      max_tokens: this.config.maxTokens,
+      // The field name this model wants: learned from a rejection before, or
+      // `max_tokens` (what every other backend expects) on the first try.
+      ...(NEEDS_MAX_COMPLETION_TOKENS.has(completionTokensKey(this.config.baseUrl, this.config.model))
+        ? { max_completion_tokens: this.config.maxTokens }
+        : { max_tokens: this.config.maxTokens }),
       stream: true,
       stream_options: { include_usage: true },
     };
@@ -246,6 +270,8 @@ export class OpenAIChatProvider implements LLMProvider {
       // in the response and not in a model table, any backend that behaves this way
       // works without being known in advance.
       if (needsMaxCompletionTokens(response.status, text) && "max_tokens" in body) {
+        // Remember it for every later request to this model (endpoint included).
+        NEEDS_MAX_COMPLETION_TOKENS.add(completionTokensKey(this.config.baseUrl, this.config.model));
         const patched: Record<string, unknown> = { ...body, max_completion_tokens: body.max_tokens };
         delete patched.max_tokens;
         const retry = await this.http.post(url, JSON.stringify(patched), headers, signal);

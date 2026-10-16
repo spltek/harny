@@ -215,7 +215,13 @@ export function planCompactionToBudget(messages: ChatMessage[], keepTokens: numb
   // A cut must never leave half a turn: what is KEPT is a sequence of complete
   // groups (input → final answer, everything in between).
   start = snapCutToGroup(visible, start);
-  return { toSummarize: visible.slice(0, start), kept: visible.slice(start), tokensBefore };
+  // The synthetic pair a PREVIOUS compaction left is the STATE of the work, not
+  // content to summarize again: it is handed to the summarizer separately (see
+  // carriedState) and re-reading it is how a summary of a summary loses facts.
+  // Decided HERE, with the rest of the strategy, so every entry point (manual and
+  // automatic) gets the same rule.
+  const toSummarize = visible.slice(0, start).filter((m) => !m.synthetic);
+  return { toSummarize, kept: visible.slice(start), tokensBefore };
 }
 
 /**
@@ -229,6 +235,73 @@ export function planManualCompaction(messages: ChatMessage[], keepRecentFraction
   const tokensBefore = estimateTokens(serializeConversation(visible));
   if (visible.length <= 2) return { toSummarize: [], kept: visible, tokensBefore };
   return planCompactionToBudget(messages, Math.max(1, tokensBefore * keepRecentFraction));
+}
+
+export interface CompactedHistory {
+  /** The rebuilt conversation: the synthetic summary pair + the kept tail. */
+  history: ChatMessage[];
+  /** The span that was summarized (non-empty by contract). */
+  summarized: ChatMessage[];
+  /** What survived verbatim. */
+  kept: ChatMessage[];
+  /** Tokens of the produced summary. */
+  summaryTokens: number;
+  /** The budgets behind the decision, for the caller's diagnostics. */
+  keepBudgetTokens: number;
+  summaryBudgetTokens: number;
+}
+
+/**
+ * ONE compaction: from the plan to the rebuilt conversation.
+ *
+ * It owns the STRATEGY — what stays verbatim (an absolute recent budget, snapped to
+ * turn boundaries), what gets summarized, how large the summary may be, and the state
+ * carried forward — and NOTHING else. Persisting the result, updating the context
+ * counter and refreshing the UI stay with the caller.
+ *
+ * That split is the point: the SAME rule serves a session and a sub-agent's ephemeral
+ * history, so the two cannot drift into two behaviours to keep in step.
+ *
+ * Returns null when there is nothing worth summarizing (the caller then does nothing).
+ */
+export async function compactHistory(
+  messages: ChatMessage[],
+  opts: { compactor: Compactor; usableTokens: number; signal?: AbortSignal },
+): Promise<CompactedHistory | null> {
+  const keepBudgetTokens = keepRecentTokensFor(opts.usableTokens);
+  const plan = planCompactionToBudget(messages, keepBudgetTokens);
+  if (plan.toSummarize.length === 0) return null;
+  // HOW MUCH the summary may take: the room left between the kept part and the
+  // post-compaction target. A verbose summary eats the context the compaction just
+  // freed, and the same text is a far larger share on a small model.
+  const keptTokensEstimate = estimateTokens(serializeConversation(plan.kept));
+  const summaryBudget = summaryBudgetTokens(opts.usableTokens, keptTokensEstimate);
+  // Tell the summarizer what the conversation still has in FULL, so it does not
+  // re-state work the next turns can already see (paid twice otherwise)…
+  const keptPreview = plan.kept.find((m) => (m.content ?? "").trim())?.content;
+  // …and the state a previous compaction left: the summary UPDATES it instead of
+  // summarizing a summary (the planner already keeps it out of the span).
+  const carried = carriedState(messages);
+  const summary = await opts.compactor.summarize(plan.toSummarize, carried, opts.signal, {
+    maxSummaryTokens: summaryBudget,
+    keptPreview,
+  });
+  // The span becomes a synthetic USER prompt + ASSISTANT response, so a transcript
+  // always starts with an orange user bubble (and the state is recognizable later).
+  const { prompt, response } = splitSummary(summary);
+  const now = Date.now();
+  return {
+    history: [
+      { role: "user" as const, content: prompt, timestamp: now, synthetic: true },
+      { role: "assistant" as const, content: response, timestamp: now + 1, synthetic: true },
+      ...plan.kept,
+    ],
+    summarized: plan.toSummarize,
+    kept: plan.kept,
+    summaryTokens: estimateTokens(summary),
+    keepBudgetTokens,
+    summaryBudgetTokens: summaryBudget,
+  };
 }
 
 const SUMMARY_PROMPT = `You are summarizing an OLD part of a coding session. The summary REPLACES that span, so it must stand alone — but it is also CONTEXT: every token you write is a token the session cannot spend on real work. Its only job is to let the next turns reconstruct what was decided and what comes next.
@@ -271,6 +344,28 @@ export function splitSummary(text: string): { prompt: string; response: string }
   };
 }
 
+/**
+ * The STATE DOCUMENT a previous compaction left in the transcript, if any.
+ *
+ * Each compaction replaces the summarized prefix with a synthetic pair
+ * (`synthetic: true`): a user message carrying the fixed label and an assistant
+ * message carrying the summary itself. That assistant message IS the state of the
+ * work so far — the one thing whose loss nothing can recover, because it is the
+ * only place the older context still exists.
+ *
+ * Returning it lets the next compaction UPDATE it instead of summarizing a summary
+ * of a summary: that repetition is where facts quietly decay ("the phone game"),
+ * and it happens precisely on the long sessions that need them.
+ */
+export function carriedState(messages: ChatMessage[]): string | undefined {
+  // The NEWEST one wins: older pairs are already folded into it.
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.synthetic && m.role === "assistant" && (m.content ?? "").trim()) return m.content.trim();
+  }
+  return undefined;
+}
+
 /** Builds the one-shot summary request (optionally passing the previous summary). */
 export function buildSummaryMessages(
   toSummarize: ChatMessage[],
@@ -293,7 +388,19 @@ export function buildSummaryMessages(
     keptPreview && keptPreview.trim()
       ? `\nThe transcript CONTINUES after this span; do NOT summarize what it already shows (first message that follows):\n${keptPreview.trim().slice(0, 600)}\n`
       : "";
-  return [{ role: "system", content: SUMMARY_PROMPT + budget + kept + (previousSummary ? `\nPrevious summary:\n${previousSummary}\n` : "") }, { role: "user", content: text }];
+  // UPDATE, do not re-derive. Without this instruction the model treats the old
+  // summary as one more document to summarize, and each generation quietly loses
+  // facts — the failure mode that shows up only on the long sessions that need them.
+  const state =
+    previousSummary && previousSummary.trim()
+      ? `\nA STATE DOCUMENT from the previous compaction follows. You are UPDATING it, not writing a new one:
+- keep every fact that is still true, in the SAME words (it is already paid for);
+- add what the span below changed, in the same style;
+- DROP what the span shows as done or abandoned: a finished thread is noise;
+- never re-derive from scratch and never keep two copies of one fact.
+\n<state>\n${previousSummary.trim()}\n</state>\n`
+      : "";
+  return [{ role: "system", content: SUMMARY_PROMPT + budget + kept + state }, { role: "user", content: text }];
 }
 
 /**

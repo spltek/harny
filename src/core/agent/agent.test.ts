@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { Agent } from "./agent";
+import type { ContextOverflowEvidence } from "./agent";
 import { ToolCallAccumulator } from "./tool-call-accumulator";
 import { BUILD_SWITCH_HINT, DefaultSystemPromptBuilder } from "./system-prompt";
 import { InMemoryEventBus } from "../events/in-memory-event-bus";
@@ -3428,6 +3429,39 @@ describe("Agent — per-turn meta (real usage + timings)", () => {
   });
 });
 
+describe("tool context wiring", () => {
+  it("hands the tool the session's usable window, so big output is capped to the model", async () => {
+    // The wiring that makes output-budget.ts work end to end: the agent fills
+    // ctx.contextBudget on EVERY tool call (a tool cannot know the model).
+    let seen: number | undefined;
+    const spy: Tool = {
+      name: "SpyTool",
+      definition: { name: "SpyTool", description: "spy", parameters: { type: "object", properties: {} } },
+      execute: (_args, ctx) => {
+        seen = ctx?.contextBudget;
+        return { content: "ok", isError: false };
+      },
+    };
+    const { agent } = buildHarness({
+      tools: [spy],
+      contextBudget: () => 12_345,
+      // The model must actually CALL the tool, otherwise nothing is executed.
+      chunks: [
+        [
+          { type: "tool_call_start", index: 0, id: "c1", name: "SpyTool" },
+          { type: "tool_call_delta", index: 0, delta: "{}" },
+          { type: "tool_call_end", index: 0 },
+        ],
+        [{ type: "text", content: "done" }],
+      ],
+    });
+
+    await agent.send("go");
+
+    expect(seen).toBe(12_345);
+  });
+});
+
 describe("context-overflow recovery (cross-provider)", () => {
   /** A factory that rejects the FIRST request with `boom` and answers later. */
   function flakyFactory(boom: string | undefined, answer = "recovered") {
@@ -3451,7 +3485,7 @@ describe("context-overflow recovery (cross-provider)", () => {
 
   function build(opts: {
     factory: ReturnType<typeof fakeFactory>;
-    onContextOverflow?: (signal: AbortSignal) => boolean;
+    onContextOverflow?: (signal: AbortSignal, evidence: ContextOverflowEvidence) => boolean;
     contextBudget?: () => number;
   }) {
     const history = new InMemoryChatHistory();
@@ -3472,10 +3506,12 @@ describe("context-overflow recovery (cross-provider)", () => {
   it("compacts and retries the SAME turn when the provider says the input is too big", async () => {
     const { factory, requests } = flakyFactory(OPENAI_OVERFLOW);
     let compactions = 0;
+    const evidences: ContextOverflowEvidence[] = [];
     const { agent, history } = build({
       factory,
-      onContextOverflow: () => {
+      onContextOverflow: (_signal, evidence) => {
         compactions++;
+        evidences.push(evidence);
         // What the host does: the history really shrinks (that is what makes a
         // retry meaningful).
         history.replace([
@@ -3490,6 +3526,9 @@ describe("context-overflow recovery (cross-provider)", () => {
 
     expect(compactions).toBe(1); // asked the host exactly once
     expect(requests).toHaveLength(2); // …and sent the same turn again
+    // The host is told WHAT the rejection revealed: the wording family, and the
+    // limit the provider itself stated (so it can adopt the real window).
+    expect(evidences).toEqual([{ signature: "OpenAI error code", limitTokens: 128000 }]);
     // The retry went out with the COMPACTED history, not the one that was rejected.
     expect(requests[1].some((m: any) => m.content === "summary of past work")).toBe(true);
     // The run finished normally: the user sees an answer, not an error.

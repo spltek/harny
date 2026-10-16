@@ -103,3 +103,53 @@ export function matchedOverflowSignature(err: unknown): string | undefined {
   const text = errorText(err);
   return OVERFLOW_SIGNATURES.find((s) => s.re.test(text))?.from;
 }
+
+/**
+ * The context limit the provider ITSELF stated, when its message carries one.
+ *
+ * This is the honest answer to "how big is this model?": the declared window can be
+ * missing (an unknown local model falls back to a 128k default, which is OPTIMISTIC
+ * and means the compaction threshold never fires until the provider refuses), while
+ * the rejection names the real number. Adopting it makes the trigger and the output
+ * clamp exact for the rest of the session — the same "follow the server's own
+ * instruction" rule the max_completion_tokens adaptation follows.
+ *
+ * The patterns are ordered most-specific-first and, crucially, each one captures the
+ * LIMIT and not the requested size: in "250123 tokens > 200000 maximum" the answer
+ * is 200000, and in "you requested 68000 tokens"-style texts nothing is captured by
+ * the limit patterns.
+ */
+const LIMIT_PATTERNS: RegExp[] = [
+  /maximum context length is ([\d.,_]+\s*k?)/i, // OpenAI, Azure, vLLM, Together, DeepSeek
+  /n_ctx=(\d[\d.,_]*)/i, // llama.cpp
+  /maximum number of tokens allowed \(([\d.,_]+\s*k?)\)/i, // Gemini
+  /maximum (?:model|sequence) length is ([\d.,_]+\s*k?)/i, // vLLM
+  /model only supports ([\d.,_]+\s*k?)/i, // Groq
+  /exceeded:\s*[\d.,_]+\s*>\s*([\d.,_]+\s*k?)/i, // "context length exceeded: 135000 > 128000"
+  /[\d.,_]+\s*tokens?\s*>\s*([\d.,_]+\s*k?)\s*maximum/i, // Anthropic: "250000 tokens > 200000 maximum"
+  /(?:max|maximum|limit)[a-z ]{0,12}?([\d.,_]+\s*k?)\s*tokens?\b/i, // generic "limit is N tokens"
+];
+
+/** "128,000" / "32_768" / "128k" -> 128000 / 32768 / 128000. */
+function parseCount(raw: string): number | undefined {
+  const cleaned = raw.replace(/[,_\s]/g, "").toLowerCase();
+  const m = /^([\d.]+)(k?)$/.exec(cleaned);
+  if (!m) return undefined;
+  const n = Number(m[1]) * (m[2] === "k" ? 1000 : 1);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : undefined;
+}
+
+/** A limit below this is not a real context window (it would be a stray number). */
+export const MIN_PLAUSIBLE_LIMIT_TOKENS = 256;
+
+export function overflowLimitFromError(err: unknown): number | undefined {
+  const text = errorText(err);
+  if (!text) return undefined;
+  for (const re of LIMIT_PATTERNS) {
+    const m = re.exec(text);
+    if (!m) continue;
+    const n = parseCount(m[1]);
+    if (n !== undefined && n >= MIN_PLAUSIBLE_LIMIT_TOKENS) return n;
+  }
+  return undefined;
+}

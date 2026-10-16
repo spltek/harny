@@ -65,11 +65,7 @@ function makeWriteTool(): Tool & { called: boolean; lastDryRun?: boolean } {
 }
 
 function writeCall(): StreamChunk[] {
-  return [
-    { type: "tool_call_start", index: 0, id: "c1", name: "Write" },
-    { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts","content":"x"}' },
-    { type: "tool_call_end", index: 0 },
-  ];
+  return toolCallChunks("c1", "Write", { path: "a.ts", content: "x" });
 }
 
 function buildRunner(llmFactory: LLMProviderFactory, tools: Tool[] = []) {
@@ -80,6 +76,169 @@ function buildRunner(llmFactory: LLMProviderFactory, tools: Tool[] = []) {
     cwd: () => "/workspace",
   });
 }
+
+/** The wire shape of a tool call, written ONCE: every test below used to carry its
+ * own copy of these three chunks (five copies, drifting). */
+function toolCallChunks(id: string, name: string, args: Record<string, unknown>): StreamChunk[] {
+  return [
+    { type: "tool_call_start", index: 0, id, name },
+    { type: "tool_call_delta", index: 0, delta: JSON.stringify(args) },
+    { type: "tool_call_end", index: 0 },
+  ];
+}
+
+/** The Read stub: counts its calls, returns `output` (default "CONTENT") and
+ * records the context budget it was handed. */
+function makeReadTool(opts: { output?: string } = {}): Tool & { calls: number; budget?: number } {
+  const tool = {
+    name: "Read",
+    definition: { name: "Read", description: "read", parameters: { type: "object", properties: {} } },
+    calls: 0,
+    budget: undefined as number | undefined,
+    execute: (_args: Record<string, unknown>, ctx?: { contextBudget?: number }): ToolResult => {
+      tool.calls++;
+      tool.budget = ctx?.contextBudget;
+      return { content: opts.output ?? "CONTENT", isError: false };
+    },
+  };
+  return tool;
+}
+
+describe("sub-agents inherit the session's context discipline", () => {
+  /** One read of `tokens` tokens, at a DISTINCT path per call: two identical calls
+   * would be served from the loop guard's cache and never reach the wire. */
+  const bigRead = (id: string, path: string): StreamChunk[] => toolCallChunks(id, "Read", { path });
+
+  it("hands its tool calls the SESSION's usable window (so their output is capped to the model)", async () => {
+    // A sub-agent does the heavy reading: without the budget its Shell/Grep caps stay
+    // FIXED (50KB is an entire 8k context) while the main agent's scale down.
+    const read = makeReadTool({ output: "small" });
+    const runner = new SubAgentRunner({
+      config: new StaticConfigProvider(CONFIG),
+      llmFactory: factory([[...bigRead("c1", "a.ts"), { type: "text", content: "done" }]]),
+      tools: new ToolRegistry([read]),
+      cwd: () => "/workspace",
+      contextBudget: () => 12_345,
+    });
+
+    await runner.run(spec({ access: "read" }));
+
+    expect(read.budget).toBe(12_345);
+  });
+
+  it("MASKS its own old tool output: a sub-agent session cannot fill the window either", async () => {
+    // The masking rule is in the Agent core, so it applies to a sub-agent as soon as
+    // the budget is known — and a sub-agent's history is exactly the one that grows
+    // with huge reads and greps. The request for the LAST turn must carry a stub in
+    // place of the oldest output, and the newest one verbatim.
+    const seen: LLMMessage[][] = [];
+    const read = makeReadTool({ output: "x".repeat(5000 * 4) }); // ~5k tokens per read
+    const base = factory([bigRead("c1", "a.ts"), bigRead("c2", "b.ts"), [{ type: "text", content: "done" }]]);
+    const recording: LLMProviderFactory = {
+      create: () => {
+        const inner = base.create();
+        return {
+          protocol: "chat" as const,
+          async *stream(messages: LLMMessage[], signal?: AbortSignal, tools?: never) {
+            seen.push(messages);
+            yield* inner.stream(messages, signal, tools as never);
+          },
+        };
+      },
+    };
+    const runner = new SubAgentRunner({
+      config: new StaticConfigProvider(CONFIG),
+      llmFactory: recording,
+      tools: new ToolRegistry([read]),
+      cwd: () => "/workspace",
+      contextBudget: () => 32_000,
+    });
+
+    await runner.run(spec({ access: "read" }));
+
+    const last = seen[seen.length - 1];
+    const toolMsgs = last.filter((m) => (m as { role: string }).role === "tool");
+    expect(toolMsgs.length).toBe(2);
+    // Oldest: a one-line stub naming the tool. Newest: the full output.
+    expect(String(toolMsgs[0].content)).toContain("masked to save context");
+    expect(String(toolMsgs[0].content)).toContain("Read");
+    expect(String(toolMsgs[1].content)).toBe("x".repeat(5000 * 4));
+  });
+
+  it("an OVERFLOW inside a sub-agent is recovered the same way as in a session", async () => {
+    // One strategy, two consumers: the host compacts the SUB-AGENT's history with the
+    // same routine a session uses, and the turn is retried. The history handed over is
+    // the sub-agent's OWN (ephemeral) one.
+    const OVERFLOW =
+      'OpenAI API error 400: {"error":{"code":"context_length_exceeded","message":"This model\'s maximum context length is 8192 tokens."}}';
+    const requests: number[] = [];
+    let calls = 0;
+    const flaky: LLMProviderFactory = {
+      create: () => ({
+        protocol: "chat" as const,
+        async *stream() {
+          requests.push(++calls);
+          if (calls === 1) throw new Error(OVERFLOW);
+          yield { type: "text", content: "report after recovery" };
+        },
+      }),
+    };
+    const histories: ChatMessage[][] = [];
+    const runner = new SubAgentRunner({
+      config: new StaticConfigProvider(CONFIG),
+      llmFactory: flaky,
+      tools: new ToolRegistry([]),
+      cwd: () => "/workspace",
+      onContextOverflow: async (history) => {
+        histories.push(history.conversation());
+        history.replace([
+          { role: "user", content: "summary of the sub-agent's work", timestamp: 1 },
+          { role: "assistant", content: "noted", timestamp: 2 },
+        ]);
+        return true;
+      },
+    });
+
+    const res = await runner.run(spec({ access: "read" }));
+
+    // Recovered: the sub-agent finished instead of dying on the rejection.
+    expect(res.isError).toBe(false);
+    expect(res.content).toContain("report after recovery");
+    expect(requests).toHaveLength(2);
+    // The callback saw a real, non-empty history (the sub-agent's own).
+    expect(histories).toHaveLength(1);
+    expect(histories[0].length).toBeGreaterThan(0);
+  });
+
+  it("without a recovery callback an overflow still ends the sub-agent (no silent behaviour)", async () => {
+    const OVERFLOW =
+      'OpenAI API error 400: {"error":{"code":"context_length_exceeded","message":"This model\'s maximum context length is 8192 tokens."}}';
+    const failing: LLMProviderFactory = {
+      create: () => ({
+        protocol: "chat" as const,
+        async *stream() {
+          throw new Error(OVERFLOW);
+        },
+      }),
+    };
+    const runner = buildRunner(failing);
+
+    const res = await runner.run(spec({ access: "read" }));
+
+    expect(res.isError).toBe(true);
+  });
+
+  it("without a budget it behaves exactly as before (no masking, no cap)", async () => {
+    // The deps are optional: a runner built without them (tests, a future CLI) must not
+    // change behaviour just because the feature exists.
+    const read = makeReadTool({ output: "x".repeat(5000 * 4) });
+    const runner = buildRunner(factory([bigRead("c1", "a.ts"), [{ type: "text", content: "done" }]]), [read]);
+
+    await runner.run(spec({ access: "read" }));
+
+    expect(read.budget).toBeUndefined();
+  });
+});
 
 describe("SubAgentRunner", () => {
   it("runs the sub-agent and returns its final text as a wrapped report", async () => {
@@ -175,11 +334,7 @@ describe("SubAgentRunner", () => {
   });
 
   it("honours a custom turn budget from deps (and still returns a report)", async () => {
-    const toolCall = (): StreamChunk[] => [
-      { type: "tool_call_start", index: 0, id: "c1", name: "Read" },
-      { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts"}' },
-      { type: "tool_call_end", index: 0 },
-    ];
+    const toolCall = (): StreamChunk[] => toolCallChunks("c1", "Read", { path: "a.ts" });
     const read: Tool = {
       name: "Read",
       definition: { name: "Read", description: "read", parameters: { type: "object", properties: {} } },
@@ -502,18 +657,6 @@ describe("SubAgentRunner", () => {
 });
 
 describe("SubAgentRunner — loop guard parity", () => {
-  function makeReadTool(): Tool & { calls: number } {
-    const tool = {
-      name: "Read",
-      definition: { name: "Read", description: "read", parameters: { type: "object", properties: {} } },
-      calls: 0,
-      execute: (): ToolResult => {
-        tool.calls++;
-        return { content: "CONTENT", isError: false };
-      },
-    };
-    return tool;
-  }
 
   it("applies the EMPTY-turn guard (sub-agent cannot stall forever)", async () => {
     const logs: string[] = [];
@@ -556,11 +699,7 @@ describe("SubAgentRunner — loop guard parity", () => {
 
   it("reuses an identical read-only call INSIDE a sub-agent (source dedup)", async () => {
     const read = makeReadTool();
-    const readCall = (id: string): StreamChunk[] => [
-      { type: "tool_call_start", index: 0, id, name: "Read" },
-      { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts"}' },
-      { type: "tool_call_end", index: 0 },
-    ];
+    const readCall = (id: string): StreamChunk[] => toolCallChunks(id, "Read", { path: "a.ts" });
     const runner = buildRunner(
       factory([readCall("r1"), readCall("r2"), [{ type: "text", content: "report" }]]),
       [read],

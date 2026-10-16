@@ -1,5 +1,6 @@
 import { renderMarkdown } from "./markdown";
-import { needsCollapseControl } from "./pending-overflow";
+import { createPendingSection } from "./pending-section";
+import type { PendingViewItem } from "./pending-section";
 import { splitDiffFence, countDiff } from "./diff-fence";
 import Prism from "./prism";
 import { langIdForPath } from "./lang-map";
@@ -184,10 +185,6 @@ const messagesEl = document.getElementById("messages") as HTMLDivElement;
 // The pulsing working indicator: a REAL footer glued below the transcript (NOT
 // a bubble in the flow), shown/hidden instead of being appended/removed.
 const workingBar = document.getElementById("working-bar") as HTMLDivElement;
-const pendingSection = document.getElementById("pending-section") as HTMLDivElement;
-const pendingHead = document.getElementById("pending-head") as HTMLDivElement;
-const pendingHeadText = document.getElementById("pending-head-text") as HTMLSpanElement;
-const pendingArea = document.getElementById("pending-area") as HTMLDivElement;
 const inputEl = document.getElementById("user-input") as HTMLTextAreaElement;
 const slashMenu = document.getElementById("slash-menu") as HTMLDivElement;
 /** Installed skills (kept for the slash menu; set by renderSkills). */
@@ -275,15 +272,8 @@ const pendingToolCalls = new Map<string, HTMLDivElement>();
 interface AttachedFile { name: string; path: string; size: number; isImage: boolean; dataUri?: string; content?: string; }
 let attachedFiles: AttachedFile[] = [];
 
-// ── Pending messages (queue/steer) typed while the session works. Rendered as
-// a real footer; the host is the source of truth (it re-pushes on reload). ──
-interface PendingViewItem {
-  id: string;
-  mode: "queue" | "steer";
-  text: string;
-  attachments?: { name: string; size: number; isImage?: boolean; dataUri?: string }[];
-}
-let pendingItems: PendingViewItem[] = [];
+// ── Pending messages (queue/steer) typed while the session works: rendered by
+// pending-section.ts; the host is the source of truth (it re-pushes on reload). ──
 /** Client id counter for the pending messages this panel sends. */
 let pendingSeq = 0;
 /** History length at the last full render; the LIVE user bubble's index for the
@@ -796,8 +786,8 @@ function closeImageLightbox(): void {
   lightboxEl?.classList.add("hidden");
 }
 
-function addThinkingBlock(text: string, beforeEl?: HTMLElement | null, opts?: { pulse?: boolean }): HTMLDivElement {
-  const block = makeThinkingBlock("🤔 Thinking...", text, undefined, beforeEl);
+function addThinkingBlock(text: string, beforeEl?: HTMLElement | null, opts?: { pulse?: boolean; label?: string }): HTMLDivElement {
+  const block = makeThinkingBlock(opts?.label ?? "🤔 Thinking...", text, undefined, beforeEl);
   // Live reasoning in progress: the block pulses (accent edges) until done.
   // Historical blocks re-rendered from the transcript pass pulse:false —
   // they are not animating and must stay quiet (otherwise they pulse forever).
@@ -1657,155 +1647,16 @@ function clearAttachments(): void {
   renderAttachmentChips();
 }
 
-/** Pending section collapse state + the count seen at the last render (a NEW
- * item re-opens the section; delivering one does not). */
-let pendingExpanded = true;
-let pendingCount = 0;
-
-/**
- * Show the per-bubble collapse control ONLY where the text really overflows one
- * line, and hide it where it fits. MEASURED on the rendered element, because the
- * answer depends on the panel WIDTH too: narrowing the panel wraps a message that
- * used to fit, and a character-count guess would be wrong in both directions.
- * Called after every render and on every resize (see the hooks below).
- */
-function measurePendingOverflow(): void {
-  for (const row of pendingArea.querySelectorAll<HTMLElement>(".pending-msg")) {
-    const body = row.querySelector<HTMLElement>(".pending-text");
-    const more = row.querySelector<HTMLButtonElement>(".pending-more");
-    if (!body || !more) continue;
-    // While collapsed, `scrollHeight` still reports the FULL content height (the
-    // cap only clips the view), so "does it overflow?" keeps the same answer.
-    const lineHeight = parseFloat(getComputedStyle(body).lineHeight) || 0;
-    const overflows = needsCollapseControl(lineHeight, body.scrollHeight);
-    // Never hide the control while the bubble IS collapsed: that would strand the
-    // text with no way back.
-    more.classList.toggle("hidden", !(overflows || row.classList.contains("text-collapsed")));
-  }
-}
-
-// Re-evaluate on every panel resize: the control appears/disappears as the text
-// starts or stops wrapping. A ResizeObserver catches container-only resizes
-// (dragging the panel edge) and the window event covers engines without it.
-if (typeof ResizeObserver !== "undefined") {
-  new ResizeObserver(() => measurePendingOverflow()).observe(pendingArea);
-}
-window.addEventListener("resize", () => measurePendingOverflow());
-
-/**
- * Expand/collapse the queue/steer section, keeping the header arrow and
- * `aria-expanded` in sync. ONE path for every visibility change (the header click
- * and the auto-expand), so what is on screen can never contradict the state —
- * the same rule the sessions header follows.
- */
-function setPendingExpanded(expanded: boolean): void {
-  pendingExpanded = expanded;
-  pendingArea.classList.toggle("hidden", !expanded);
-  pendingHead.setAttribute("aria-expanded", String(expanded));
-  const toggle = pendingHead.querySelector(".toggle");
-  if (toggle) toggle.textContent = expanded ? "▼" : "▶";
-}
-
-pendingHead.addEventListener("click", () => setPendingExpanded(!pendingExpanded));
-// Keyboard: the header is a control, so it must answer to Enter/Space like one
-// (a div with a click handler is otherwise mouse-only).
-pendingHead.addEventListener("keydown", (e) => {
-  if (e.key !== "Enter" && e.key !== " ") return;
-  e.preventDefault();
-  setPendingExpanded(!pendingExpanded);
+// The queue/steer footer lives in its own module (pending-section.ts): the section
+// with its counts, the per-bubble fold and the two commands. It is built once at
+// load, with the DOM it owns and the ONE way it may talk to the host.
+const pending = createPendingSection({
+  section: document.getElementById("pending-section") as HTMLElement,
+  head: document.getElementById("pending-head") as HTMLElement,
+  headText: document.getElementById("pending-head-text") as HTMLElement,
+  area: document.getElementById("pending-area") as HTMLElement,
+  post: (message) => vscode.postMessage(message),
 });
-
-/** Render the queue/steer messages typed while working (host-driven).
- * Steer bubbles ALWAYS sit above queued ones (they are applied ASAP at the
- * next turn boundary); within each group, arrival order is preserved. */
-function renderPending(items: PendingViewItem[]): void {
-  pendingItems = items || [];
-  const ordered = [...pendingItems].sort((a, b) =>
-    a.mode === b.mode ? 0 : a.mode === "steer" ? -1 : 1,
-  );
-  // The section appears only when there is something to show (and disappears
-  // when the last item is delivered or cancelled).
-  pendingSection.classList.toggle("hidden", ordered.length === 0);
-  // A NEW message re-opens a collapsed section: the user just typed it and must
-  // see it (the opposite of surprising). Collapsing is for getting the block out
-  // of the way, not for hiding the next thing you send.
-  if (ordered.length > pendingCount) setPendingExpanded(true);
-  pendingCount = ordered.length;
-  setPendingExpanded(pendingExpanded);
-  // The header carries the COUNTS, so a collapsed section still says what is
-  // waiting: "Steer 1 · Queued 2".
-  const steers = ordered.filter((it) => it.mode === "steer").length;
-  const queued = ordered.length - steers;
-  pendingHeadText.textContent = [
-    steers > 0 ? `Steer ${steers}` : "",
-    queued > 0 ? `Queued ${queued}` : "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  pendingArea.innerHTML = "";
-  for (const it of ordered) {
-    const el = document.createElement("div");
-    el.className = "pending-msg " + (it.mode === "steer" ? "pending-steer" : "pending-queue");
-    const badge = document.createElement("span");
-    badge.className = "pending-badge";
-    badge.textContent = it.mode === "steer" ? "Steer" : "Queued";
-    const body = document.createElement("span");
-    body.className = "pending-text";
-    // A paperclip prefix whenever at least one file is attached. The names alone
-    // used to be swallowed as soon as the message ALSO had text, so the row said
-    // nothing about them. Names stay in the tooltip, and become the body when
-    // there is no text at all (as before).
-    const files = it.attachments ?? [];
-    const names = files.map((a) => a.name).join(", ");
-    body.textContent = (files.length > 0 ? "📎 " : "") + (it.text || names || "(empty)");
-    body.title = files.length > 0 && it.text ? `${it.text}\n${names}` : body.textContent;
-    const cancel = document.createElement("button");
-    cancel.type = "button";
-    cancel.className = "pending-cancel";
-    cancel.textContent = "×";
-    cancel.title = it.mode === "steer" ? "Cancel this steer" : "Cancel this queued message";
-    cancel.addEventListener("click", () => vscode.postMessage({ type: "cancelPending", id: it.id }));
-    // Convert between the two delivery modes. The label states the EFFECT, not the
-    // mode: they are not two views of the same message, they are delivered at
-    // different moments (steer joins the running loop at its next step and goes
-    // first at the end; queued waits for the run and keeps FIFO order).
-    const convert = document.createElement("button");
-    convert.type = "button";
-    convert.className = "pending-convert";
-    convert.textContent = it.mode === "steer" ? "→ Queued" : "→ Steer";
-    convert.title =
-      it.mode === "steer"
-        ? "Deliver it after the run: it waits in the queue with the other messages"
-        : "Deliver it first: injected into the running loop at its next step";
-    convert.addEventListener("click", () =>
-      vscode.postMessage({ type: "setPendingMode", id: it.id, mode: it.mode === "steer" ? "queue" : "steer" }),
-    );
-    // Per-bubble collapse, FIRST in the row — the disclosure arrow goes at the
-    // START of what it opens, like every other toggle in Harny (thinking, tool,
-    // subagent). It is added here but only becomes VISIBLE if the text really
-    // overflows a line: see measurePendingOverflow (measured, not guessed —
-    // narrowing the panel can wrap a message that used to fit).
-    const more = document.createElement("button");
-    more.type = "button";
-    more.className = "pending-more hidden";
-    more.textContent = "▼";
-    more.title = "Collapse this message";
-    more.addEventListener("click", () => {
-      const nowCollapsed = el.classList.toggle("text-collapsed");
-      more.textContent = nowCollapsed ? "▶" : "▼";
-      more.title = nowCollapsed ? "Show the whole message" : "Collapse this message";
-    });
-    // Actions in the TOP-RIGHT corner: with multi-line text they must stay put at
-    // the head of the row instead of drifting to the middle.
-    const actions = document.createElement("span");
-    actions.className = "pending-actions";
-    actions.append(convert, cancel);
-    el.append(more, badge, body, actions);
-    pendingArea.appendChild(el);
-  }
-  // Decide—AFTER the rows exist—which bubbles actually need the collapse control.
-  measurePendingOverflow();
-}
 
 /**
  * The Queue/Steer pill is a pure INDICATOR (never clicked): it shows Steer
@@ -4261,14 +4112,26 @@ window.addEventListener("message", (e) => {
       // Empty thinking chunks must not create an empty thinking block.
       if (!msg.content) break;
       if (!currentThinkingBlock) {
-        // A thinking phase starts a NEW segment: commit any pending renders and
-        // close the previous answer bubble — the next text emission will get a
-        // fresh blue bubble (chronology, nothing moves).
+        // A reasoning phase BEFORE the answer opens its own block (the common case:
+        // reason, then answer) and the answer that follows gets its own bubble.
+        // One that arrives DURING the answer is a different thing: closing the bubble
+        // there cuts the sentence in two, and the continuation reads like a response
+        // that lost its beginning (the model reasoned mid-sentence). So the answer
+        // keeps ONE bubble and the reasoning becomes a collapsible line just ABOVE
+        // it — where the model actually paused — with the text continuing below.
+        const duringAnswer = Boolean(currentResultEl && currentRawText.trim());
         flushStreamingMd();
-        currentThinkingBlock = addThinkingBlock("");
-        currentThinkingText = "";
-        clearStreamingBubble();
-        currentRawText = "";
+        if (duringAnswer) {
+          currentThinkingBlock = addThinkingBlock("", currentResultEl, { label: "💭 Thought during this answer" });
+          currentThinkingText = "";
+          // NOTE: the bubble is NOT closed and `currentRawText` is NOT reset: the
+          // next deltas repaint the SAME bubble with the whole answer.
+        } else {
+          currentThinkingBlock = addThinkingBlock("");
+          currentThinkingText = "";
+          clearStreamingBubble();
+          currentRawText = "";
+        }
       }
       if (currentThinkingBlock) {
         currentThinkingText += msg.content;
@@ -4406,7 +4269,7 @@ window.addEventListener("message", (e) => {
       break;
     }
     case "pending":
-      renderPending((msg.items as PendingViewItem[]) || []);
+      pending.render((msg.items as PendingViewItem[]) || []);
       break;
     case "userMessage": {
       // A QUEUED message just started running. The view never appended its bubble
@@ -4467,6 +4330,12 @@ window.addEventListener("message", (e) => {
       } else if (!renderMessages(msg.messages || [])) {
         addWelcome();
       }
+      // A refresh can land MID-RUN (a compaction, a ✂ cut, a new model): the turn
+      // still streaming is not in the committed messages, so rebuilding from them
+      // alone would drop the answer being written — and the deltas that follow
+      // would start a NEW bubble mid-word. The host sends its live text along; put
+      // it back before anything else touches the transcript.
+      restoreLiveStream(msg);
       // A refresh (e.g. after a ✂ cut) rebuilds the transcript: return the caret
       // to the prompt so the user can keep typing from the clean point.
       if (Array.isArray(msg.skills)) renderSkills(msg.skills);
@@ -4585,7 +4454,7 @@ window.addEventListener("message", (e) => {
       });
       restoreLiveStream(msg); // replay the in-flight thinking/answer
       setStreaming(!!msg.streaming);
-      renderPending((msg.pending as PendingViewItem[]) || []);
+      pending.render((msg.pending as PendingViewItem[]) || []);
       // Opening/switching a session always lands the caret in the prompt, so
       // the user can type immediately.
       focusPrompt();
@@ -4805,7 +4674,7 @@ renderViewState({
 });
 restoreLiveStream(init);
 setStreaming(!!init.streaming);
-renderPending(init.pending || []);
+pending.render(init.pending || []);
 if (activeId) vscode.postMessage({ type: "getConfig" });
 // Opening the panel on a session lands the caret in the prompt.
 if (activeId) focusPrompt();

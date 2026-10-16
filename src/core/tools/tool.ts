@@ -48,6 +48,11 @@ export interface ToolContext {
   /** The run's abort signal: long-running tools (Shell) cancel their work when
    * the user presses Stop. Absent in contexts that have no run. */
   signal?: AbortSignal;
+  /** The session's USABLE context (window − output reserve), in tokens. Tools that
+   * emit large output size their cap against it, so a single result cannot eat the
+   * whole window of a small local model (see output-budget.ts). Absent = the tool's
+   * own fixed ceiling, i.e. the behaviour outside a session. */
+  contextBudget?: number;
 }
 
 export interface Tool {

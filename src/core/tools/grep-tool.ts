@@ -4,10 +4,14 @@ import { isBinaryText } from "./binary";
 import { globstarToRegex } from "./glob-tool";
 import { walkFiles } from "./walk";
 import { matchAll, RegexTimeoutError } from "./regex-worker";
-import type { Tool, ToolDefinition, ToolResult } from "./tool";
+import type { Tool, ToolContext, ToolDefinition, ToolResult } from "./tool";
+import { toolOutputCapChars } from "./output-budget";
 
 /** Max file size read while grepping (perf guard). */
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
+/** Ceiling for one Grep result, in characters: the cap scales DOWN with the
+ * model's window from here (see output-budget.ts). */
+const MAX_RESULT_CHARS = 30_000;
 /** Total bytes read per call before stopping early (OOM/hang guard). */
 const SCAN_BUDGET_BYTES = 64 * 1024 * 1024;
 /** Hard cap on regex evaluation in the worker (anti-ReDoS). */
@@ -105,7 +109,7 @@ export class GrepTool implements Tool {
     private cwd: () => string,
   ) {}
 
-  async execute(args: Record<string, unknown>): Promise<ToolResult> {
+  async execute(args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolResult> {
     const pattern = args.pattern as string | undefined;
     if (!pattern) {
       return {
@@ -290,6 +294,9 @@ export class GrepTool implements Tool {
         ? `${joined}\n\n[Showing ${offset + 1}-${offset + sliced.length} of at least ${raw.length} matches]`
         : joined;
 
-    return { content: (truncated + incomplete).slice(0, 30000), isError: false };
+    // Same rule as Shell: a fixed 30KB is ~7.5k tokens, i.e. the whole window of a
+    // small local model, and this is the NEWEST result (masking cannot touch it).
+    const cap = toolOutputCapChars(MAX_RESULT_CHARS, ctx?.contextBudget);
+    return { content: (truncated + incomplete).slice(0, cap), isError: false };
   }
 }

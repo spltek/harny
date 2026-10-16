@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ONE_LINE_TOLERANCE_PX, needsCollapseControl } from "./pending-overflow";
+import { ONE_LINE_TOLERANCE_PX, needsCollapseControl } from "./pending-fold";
 
 describe("needsCollapseControl — the per-bubble collapse appears only on real overflow", () => {
   it("fits exactly one line: no control (nothing to fold)", () => {

@@ -51,6 +51,8 @@ It speaks one protocol, the **OpenAI Chat Completions API**. That single choice 
 
 **You are never locked out.** Keep typing while it works: **Enter** queues your message, **Ctrl/Cmd+Enter** steers the run mid-flight. **Esc** stops everything.
 
+**Long sessions keep working.** When the context fills, Harny compacts at **turn boundaries**, keeps the recent part verbatim, **carries the state of the work forward** and stops old tool outputs from eating the window. A model that declares no window is not a dead end either: the provider's own rejection tells Harny the real limit, which it then adopts.
+
 **Nothing is hidden.** Every turn shows real token usage and timings. Every tool call shows its input, its output and the diff. Reasoning is streamed as it happens.
 
 **Your history lives outside your project.** Sessions are stored in a central SQLite database — not in your repo. Agent tools can never read or corrupt transcripts, and cleaning your project never deletes your chat history.
@@ -224,7 +226,10 @@ The prompt stays usable **while the agent works**.
 - **Enter** → **queues** the message; it runs as a new send when the current run ends.
 - **Ctrl/Cmd+Enter** → **steers**: injected at the next turn boundary, without restarting the run.
 - A **Queue/Steer** indicator shows what Enter will do, flipping to *Steer* only while you hold **Ctrl/Cmd** during a run.
-- Pending messages appear as **cancellable bubbles** above the prompt. All pending steers are submitted together as **one** message at the next turn boundary. **Stop** clears them.
+- Pending messages appear as **cancellable bubbles** above the prompt, inside a **collapsible section** whose header carries the counts (`Steer 1 · Queued 2`) — so a folded block still tells you what is waiting. A **new** message re-opens it.
+- Each pending message can be **read in full**: it wraps (keeping your own line breaks) and the section scrolls. A fold arrow appears **only when the text really wraps past one line** — measured on the rendered bubble, not guessed from its length, so narrowing the panel brings the arrow out on its own.
+- Each pending message can be **converted**: **→ Steer** (deliver it first, injected into the running loop at its next step) or **→ Queued** (wait for the run, in FIFO order with the others). The two are not two views of the same message — they differ in *when* the text reaches the model — so converting a steer back **also withdraws the draft from the agent**.
+- All pending steers are submitted together as **one** message at the next turn boundary. **Stop** clears them.
 
 ### How every step is tracked
 
@@ -232,6 +237,22 @@ The prompt stays usable **while the agent works**.
 - **Tool calls** get a three-section bubble — **Input / Output / Diff**. When a tool touches a file, the Diff section shows the unified diff with the target path and `+N/−M` counts, syntax-highlighted for the main languages.
 - **Every turn** ends with a **metrics badge** carrying the *real* provider usage: `6.9k in · 74 out · ⚡ 800 · elapsed 2.3s · first token 676ms`.
 - **Diagnostics** go to **Output > Harny**, one line per turn.
+
+### Long sessions
+
+The context window is a hard ceiling. Harny manages it continuously, so a long session keeps working instead of dying at the limit.
+
+**Compaction keeps whole turns.** When the fill crosses the threshold, the OLDEST part of the conversation is replaced by a compact summary. The cut always falls **between complete turns** (your input → the final answer, everything in between), the most recent part — 5% of the usable window, bounded to **8k–20k tokens** — stays **verbatim**, and the summary is written as **schematic lists**: decisions, open threads, the exact next steps and the facts nothing else carries (paths, commands, values, constraints). Its budget comes from the room the compaction actually freed, and the result appears in the transcript as an orange user bubble, so you can always see that it happened.
+
+**The state is carried forward, not re-derived.** Every later compaction **updates** the previous summary — keeping what is still true, adding what changed, dropping what is done — instead of summarizing a summary. That repetition is where a long session quietly loses a fact per generation, in exactly the sessions that cannot afford it.
+
+**Old tool outputs stop consuming the window.** In an agent loop the tool results *are* the context: Harny sends the oldest ones as **one-line stubs that name the tool** (`[Shell output masked to save context…]`) and keeps the newest verbatim — masking what the model is working on right now would break the very next step. It is a **view, not a rewrite**: the transcript, the stored history and any branch keep everything, and the model can re-run the command whenever it needs the data again.
+
+**A rejected request is recovered, never fatal.** If a provider rejects a request as too big, Harny **compacts and re-sends the same turn**. The rejection is also the most reliable statement of a model's real window — a local model that declares none falls back to 128k, which is optimistic — so Harny reads the number out of the provider's own message and **adopts it for the session**, and the threshold stops guessing. Two layers already keep most of this from happening: the request is clamped so that **`input + max_tokens ≤ window`**, and a single tool result is capped to a share of the window (a fixed 50KB would be an entire 8k context, in one command).
+
+**Nothing un-replayable is ever sent.** Every request is checked against the wire rules first: a tool call must be followed by its results, a result must answer the turn above it, no result may be blank, no assistant turn may be empty, and the conversation must open with your input. If a session ever reached such a state, Harny **refuses to send it and names the rule** — instead of letting the provider reject that request *and every one after it*, with a message that says nothing about where the damage is.
+
+**Sub-agents inherit all of it.** A sub-agent runs on the same model as its session, so it sizes its own masking and tool-output caps on the same window — a sub-agent is the one doing the heavy reads — and an overflow **inside** a sub-agent is recovered with the **same** compaction, applied to its own history: one strategy, two consumers, so the two cannot drift apart.
 
 ### When it gets stuck
 
@@ -268,6 +289,16 @@ just want to use Harny, you can stop reading here.
 - **Agent loop**: automatic tool execution, multi-turn continuation, no bounded turn count (the Stop button is the only limit; a `maxTurns` cap exists behind the scenes for tests)
 - **Two chat modes**: **Analyze** (read-only preview — changes are prepared and diffed but never written; when previews are ready the host asks **once** via a modal whether to switch to Build, with a tip to restart the chat for a clean apply) and **Build** (full tool use, writes for real). The transcript keeps a static, non-clickable note. The mode is persisted **per session** (restored on reopen; new sessions start in Analyze)
 - **Output-token-limit handling**: the provider's `finish_reason` is propagated; a truncated response is surfaced explicitly ("raise `harny.maxTokens`") instead of failing silently
+
+**Context & long sessions**
+- **Compaction** replaces the oldest part of a conversation with a schematic summary: the cut is snapped to **turn boundaries** (input → final answer, everything in between), the recent side is kept by an **absolute budget** — 5% of the usable window, clamped to 8k–20k tokens — and the summary's own budget is derived from the room freed (with a single compression pass if the model overshoots). Runs before a request, at every turn boundary, and after a response
+- **Carried state**: a later compaction **updates** the document the previous one left (the `synthetic` pair) instead of re-summarizing it, and that document is excluded from the span — so a summary of a summary cannot cost a fact per generation
+- **Observation masking**: tool results older than a share of the window are sent as one-line stubs that name the tool (the newest stays verbatim); the stored history, the transcript and any branch are never touched
+- **Overflow recovery**: a context-length rejection — 14 provider wordings, plus a provider-independent "our own estimate said we were full" leg — triggers **one compaction and a retry of the same turn**, and the limit the provider itself states is **adopted** as the session window (persisted)
+- **Request clamp**: `input + max_tokens ≤ window`, with a safety margin that **scales** (`min(8192, 5% of the window)` — a fixed 8k is 100% of an 8k window) and a token estimate that counts non-ASCII at 1 token per unit, so CJK is not underestimated 4×
+- **Tool-output cap** scaled to the model (`tools/output-budget.ts`): Shell's 50KB and Grep's 30KB are ceilings, not constants — 50KB is an entire 8k context in one command
+- **Wire rules** (`history/conversation-validity.ts`): 8 rules checked at the last point before the wire (results answering their call, no orphans, ids present and unique, no blank results, no empty assistant turn, a user-first conversation, attachments only on user messages). A violation is **named, never silently repaired** — the request is refused instead of being rejected by the provider *and every request after it*. Five of the eight are also prevented at the source (atomic turn groups, id synthesis, non-blank results, the stall nudge)
+- **Cross-provider error reading** (`llm/context-overflow.ts`): the rejection wordings and the stated limit, so a backend that phrases the limit differently still recovers
 
 **Parallel / sub-agents**
 - The **Parallel** toggle enables the `Delegate` tool: the main agent becomes an **orchestrator** that decomposes a task into independent sub-tasks, each a separate `Agent` with its own ephemeral history (unbounded by default), orchestration depth capped at 1
@@ -352,25 +383,30 @@ harny/
 │   │   ├── config/               # ConfigProvider <- VscodeConfigProvider
 │   │   ├── events/               # EventBus <- InMemoryEventBus
 │   │   ├── history/              # ChatHistory <- PersistentChatHistory (bound to a session)
+│   │   │                         #   conversation-validity (the wire rules), observation-masking
 │   │   ├── llm/                  # LLMProvider <- OpenAIChatProvider
-│   │   │                         #   HttpClient, SSE parser, factory, model-list fetcher
+│   │   │                         #   HttpClient, SSE parser, factory, model-list fetcher,
+│   │   │                         #   context-overflow (rejection wordings + the stated limit)
 │   │   ├── agent/                # Agent orchestrator (DI), LoopGuard, ToolCallAccumulator,
 │   │   │                         #   ThinkingTagParser, SystemPrompt, orchestration + sub-agents
 │   │   ├── sessions/             # SessionStore <- SqliteSessionStore (node:sqlite + FTS5), SessionManager, Compactor
-│   │   │                         #   + one runtime (dedicated Agent) per open session
+│   │   │                         #   (keep budget, summary budget, carried state) + one runtime per open session
 │   │   ├── skills/               # Agent Skills (skills.sh): SKILL.md discovery + registry
 │   │   ├── mcp/                  # Model Context Protocol: stdio + HTTP clients, manager, tools
 │   │   ├── storage/              # Cross-platform path resolution (context.globalStorageUri)
 │   │   └── tools/                # Tool interface + ToolRegistry + 14 tools (one file each)
 │   │                             #   mode-policy (Analyze preview / Build), FileSystem /
-│   │                             #   CommandRunner / HttpClient abstractions
+│   │                             #   CommandRunner / HttpClient abstractions, output-budget
+│   │                             #   (how much a tool result may carry)
 │   ├── chat/
 │   │   ├── chat-view.ts          # Host WebviewViewProvider (single right-side view)
 │   │   ├── session-registry.ts   # Per-session agents (one agent = one session)
 │   │   ├── stream-tee.ts         # Per-session event router + live buffers
 │   │   ├── attachment-service.ts # Attach files/images as context
 │   │   ├── view-html.ts          # Pure HTML generator (sessions + tabs + chat)
-│   │   └── webview/              # Webview client (TS): view.ts + markdown.ts
+│   │   └── webview/              # Webview client (TS): view.ts + markdown.ts,
+│   │       #                       diff-fence.ts, lang-map.ts, pending-section.ts
+│   │       #                       (the queue/steer footer) + pending-fold.ts (its measured rule);
 │   │       #                       markdown-it + DOMPurify, bundled with esbuild
 │   └── logger.ts                 # Diagnostics: "Output > Harny" channel + HARNY_DEBUG file
 ├── media/view.js                 # Webview client bundle (generated: node scripts/build-webview.mjs)
@@ -394,7 +430,7 @@ npm test          # run all unit tests (vitest)
 npm run coverage  # with coverage report
 ```
 
-**1300+ unit tests** cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (SQLite store with FTS5 search, **versioned schema migrations** via `PRAGMA user_version`, manager, registry, compactor, the cross-folder manager with its open/change-folder actions, the per-session control settings incl. the Loop Guard parameters), the OpenAI-compatible LLM provider (streaming, tool calls, `finish_reason`), host-model fetching, all 14 tools (including the Analyze dry-run preview), the mode policy, the agent loop (fake LLM, abort, max turns), the **loop guard** (reasoning/empty/tool-failure/error-streak/tool-repeat detection, tool-call dedup, sensitivity presets, the editable parameter ranges + their clamping), orchestration/sub-agents, **Agent Skills** (SKILL.md parsing + discovery), **MCP** (stdio + Streamable HTTP clients, tool wrapper, manager), markdown/DOM (markdown-it + DOMPurify), the HTML generators and the chat view provider (mocked VS Code, incl. the control-stack wiring: sliders, Auto defaults, the collapsible Loop Guard parameters and the responsive layout), the per-turn metrics badge (real usage + timings), the real context accounting (after a ✂ cut / compaction) and the DB compaction + index optimization (VACUUM, `PRAGMA optimize`, FTS5 `optimize`).
+**1500+ unit tests** cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (SQLite store with FTS5 search, **versioned schema migrations** via `PRAGMA user_version`, manager, registry, the cross-folder manager with its open/change-folder actions, the per-session control settings incl. the Loop Guard parameters), **context management** (the absolute keep budget, the schematic-summary prompt and its budget, the carried state, observation masking, the overflow recovery with each provider's real rejection text, the adopted window, the scaled request margin, the window-scaled tool-output cap, the token estimate for non-ASCII), **the wire rules** (every rule at the checker level **and** by fault injection through a real request — a malformed conversation never reaches the provider and is named), the OpenAI-compatible LLM provider (streaming, tool calls, `finish_reason`, the learned `max_completion_tokens`), host-model fetching, all 14 tools (including the Analyze dry-run preview), the mode policy, the agent loop (fake LLM, abort, max turns), the **loop guard** (reasoning/empty/tool-failure/error-streak/tool-repeat detection, tool-call dedup, sensitivity presets, the editable parameter ranges + their clamping), orchestration/sub-agents, **Agent Skills** (SKILL.md parsing + discovery), **MCP** (stdio + Streamable HTTP clients, tool wrapper, manager), markdown/DOM (markdown-it + DOMPurify), the HTML generators, the pending section (its counts, the fold measured on the rendered bubble, the conversions), and the chat view provider (mocked VS Code, incl. the control-stack wiring: sliders, Auto defaults, the collapsible Loop Guard parameters and the responsive layout), the per-turn metrics badge (real usage + timings), the real context accounting (after a ✂ cut / compaction) and the DB compaction + index optimization (VACUUM, `PRAGMA optimize`, FTS5 `optimize`).
 
 ### Configuration reference
 

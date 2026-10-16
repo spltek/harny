@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { OpenAIChatProvider, describeApiError, needsMaxCompletionTokens } from "./openai-chat-provider";
+import { beforeEach, describe, it, expect } from "vitest";
+import { OpenAIChatProvider, describeApiError, needsMaxCompletionTokens, resetMaxCompletionTokensCache } from "./openai-chat-provider";
 import { FakeHttpClient, sseResponse } from "./http-client.test-utils";
 import type { HttpResponse } from "./http-client";
 import type { HarnyConfig } from "../config/types";
@@ -27,6 +27,8 @@ async function collect(gen: AsyncGenerator<StreamChunk>): Promise<StreamChunk[]>
 }
 
 describe("OpenAIChatProvider", () => {
+  beforeEach(() => resetMaxCompletionTokensCache());
+
   it("renames the output field when the model demands max_completion_tokens (cross-model)", async () => {
     // A reasoning model (OpenAI o-series/gpt-5, or a gateway mirroring it) rejects
     // `max_tokens` BY NAME. No model list keeps up with that, so the provider
@@ -51,6 +53,46 @@ describe("OpenAIChatProvider", () => {
     expect("max_tokens" in retried).toBe(false); // never both: strict servers refuse it
     // …and the answer streams normally.
     expect(chunks.some((c) => c.type === "text" && c.content === "hi")).toBe(true);
+  });
+
+  it("remembers the rename for the NEXT request, so no turn wastes a round trip", async () => {
+    // The quirk is learned from the provider's own rejection; remembering it is the
+    // difference between one wasted request per MODEL and one per TURN.
+    const http = new FakeHttpClient();
+    http.respondWith(
+      new Response(
+        '{"error":{"message":"Unsupported parameter: \'max_tokens\' is not supported with this model. Use \'max_completion_tokens\' instead."}}',
+        { status: 400 },
+      ),
+      sseResponse('data: {"choices":[{"delta":{"content":"one"}}]}', "data: [DONE]"),
+      sseResponse('data: {"choices":[{"delta":{"content":"two"}}]}', "data: [DONE]"),
+    );
+    const provider = new OpenAIChatProvider(config, http, tools);
+
+    await collect(provider.stream([{ role: "user", content: "hi" }]));
+    await collect(provider.stream([{ role: "user", content: "again" }]));
+
+    // First turn: rejected, then retried (2 requests). Second turn: correct first try.
+    expect(http.requests).toHaveLength(3);
+    expect(JSON.parse(http.requests[1].body).max_completion_tokens).toBe(4096);
+    expect(JSON.parse(http.requests[2].body).max_completion_tokens).toBe(4096);
+    expect("max_tokens" in JSON.parse(http.requests[2].body)).toBe(false);
+  });
+
+  it("keeps the learned quirk per model + endpoint (it is not a global switch)", async () => {
+    const http = new FakeHttpClient();
+    http.respondWith(
+      new Response('{"error":{"message":"Unsupported parameter: max_completion_tokens is required"}}', { status: 400 }),
+      sseResponse('data: {"choices":[{"delta":{"content":"one"}}]}', "data: [DONE]"),
+    );
+    await collect(new OpenAIChatProvider(config, http, tools).stream([{ role: "user", content: "hi" }]));
+
+    const other = new FakeHttpClient();
+    other.respondWith(sseResponse('data: {"choices":[{"delta":{"content":"hi"}}]}', "data: [DONE]"));
+    await collect(new OpenAIChatProvider({ ...config, model: "gpt-4o-mini" }, other, tools).stream([{ role: "user", content: "hi" }]));
+
+    // A DIFFERENT model still starts from the standard field: the cache is keyed.
+    expect(JSON.parse(other.requests[0].body).max_tokens).toBe(4096);
   });
 
   it("does NOT rename for a rejection that merely mentions the parameter", async () => {

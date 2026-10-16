@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { Compactor, DEFAULT_COMPACTION, KEEP_RECENT_TOKENS, MIN_KEEP_RECENT_TOKENS, MIN_SUMMARY_TOKENS, SUMMARY_MAX_TOKENS, buildSummaryMessages, estimateTokens, keepRecentTokensFor, planCompactionToBudget, planManualCompaction, shouldCompact, serializeConversation, splitSummary, clampCompactionThresholdPercent, toCompactionThresholdPercent, estimateContextTokens, realWindowTokens, summarizerConfig, summaryBudgetTokens } from "./compactor";
+import { Compactor, DEFAULT_COMPACTION, KEEP_RECENT_TOKENS, MIN_KEEP_RECENT_TOKENS, MIN_SUMMARY_TOKENS, SUMMARY_MAX_TOKENS, buildSummaryMessages, carriedState, estimateTokens, keepRecentTokensFor, planCompactionToBudget, planManualCompaction, shouldCompact, serializeConversation, splitSummary, clampCompactionThresholdPercent, toCompactionThresholdPercent, estimateContextTokens, realWindowTokens, summarizerConfig, summaryBudgetTokens } from "./compactor";
 import type { LLMProviderFactory } from "../llm/types";
 import type { HarnyConfig } from "../config/types";
 import type { ChatMessage } from "../history/types";
@@ -21,6 +21,105 @@ function u(content: string): ChatMessage {
 function a(content: string): ChatMessage {
   return { role: "assistant", content, timestamp: 2 };
 }
+
+describe("carriedState — the state a previous compaction left behind", () => {
+  const syntheticPair = (state: string): ChatMessage[] => [
+    { role: "user", content: "Summary of past interactions", timestamp: 1, synthetic: true },
+    { role: "assistant", content: state, timestamp: 2, synthetic: true },
+  ];
+
+  it("returns the state document of the synthetic pair", () => {
+    const state = "## Goal\nship the parser\n## Facts\nsrc/parser.ts";
+    const messages = [...syntheticPair(state), u("next"), a("working")];
+    expect(carriedState(messages)).toBe(state);
+  });
+
+  it("ignores the synthetic LABEL and everything not synthetic", () => {
+    // The user half of the pair is just the fixed phrase: useless as state, and it
+    // must never be mistaken for it.
+    expect(carriedState(syntheticPair(""))).toBeUndefined();
+    expect(carriedState([u("hello"), a("## Goal\nnot synthetic")])).toBeUndefined();
+    expect(carriedState([])).toBeUndefined();
+  });
+
+  it("prefers the NEWEST state (older pairs are already folded into it)", () => {
+    const messages = [
+      { role: "assistant", content: "old state", timestamp: 1, synthetic: true },
+      u("work"),
+      { role: "assistant", content: "new state", timestamp: 3, synthetic: true },
+    ];
+    expect(carriedState(messages)).toBe("new state");
+  });
+});
+
+describe("buildSummaryMessages — UPDATE the state, do not re-derive it", () => {
+  const span = [u("do the thing"), a("done")];
+
+  it("tells the model to update, keep, drop and never duplicate", () => {
+    const messages = buildSummaryMessages(span, "## Goal\nold goal\n## Facts\nsrc/a.ts");
+    const system = messages[0].content;
+
+    expect(system).toMatch(/UPDATING it, not writing a new one/);
+    expect(system).toMatch(/keep every fact that is still true/);
+    expect(system).toMatch(/DROP what the span shows as done/);
+    expect(system).toMatch(/never re-derive from scratch/);
+    // The state itself travels inside a marked block, so the model knows where it
+    // starts and ends.
+    expect(system).toContain("<state>");
+    expect(system).toContain("## Facts\nsrc/a.ts");
+  });
+
+  it("says nothing about a state when there is none (first compaction)", () => {
+    const system = buildSummaryMessages(span)[0].content;
+    expect(system).not.toContain("<state>");
+    expect(system).not.toMatch(/UPDATING it/);
+  });
+
+  it("treats a blank state as no state", () => {
+    const system = buildSummaryMessages(span, "   ")[0].content;
+    expect(system).not.toContain("<state>");
+  });
+});
+
+describe("planCompactionToBudget — what is NOT worth summarizing again", () => {
+  const syntheticPair: ChatMessage[] = [
+    { role: "user", content: "Summary of past interactions", timestamp: 1, synthetic: true },
+    { role: "assistant", content: "## Goal\nold state", timestamp: 2, synthetic: true },
+  ];
+  const work: ChatMessage[] = [
+    { role: "user", content: "a", timestamp: 3 },
+    { role: "assistant", content: "b", timestamp: 4 },
+    { role: "user", content: "c", timestamp: 5 },
+    { role: "assistant", content: "d", timestamp: 6 },
+    { role: "user", content: "e", timestamp: 7 },
+    { role: "assistant", content: "f", timestamp: 8 },
+  ];
+
+  it("keeps the previous STATE out of the span (it is handed over separately)", () => {
+    // Re-reading a former summary as content is how a summary of a summary loses a
+    // fact per generation. The rule lives here, with the rest of the strategy, so
+    // the manual and the automatic path cannot disagree.
+    // A budget that fits everything makes the planner split by COUNT (half), so the
+    // cut lands inside the real work and the excluded pair would otherwise be part of
+    // the span.
+    const plan = planCompactionToBudget([...syntheticPair, ...work], 1_000);
+
+    expect(plan.toSummarize.length).toBeGreaterThan(0);
+    expect(plan.toSummarize.some((m) => m.synthetic)).toBe(false);
+    expect(plan.toSummarize.some((m) => m.content === "a")).toBe(true);
+    // What is KEPT is untouched: the state stays in the transcript if it falls there.
+    expect(plan.kept.some((m) => m.synthetic)).toBe(false);
+  });
+
+  it("reports nothing to do when the only thing to cut IS the state", () => {
+    // Here the cut lands right AFTER the pair (the recent side fits the budget), so
+    // what remains to summarize is only the state — already handed over separately.
+    // An empty span is what tells the caller to skip the compaction entirely.
+    const plan = planCompactionToBudget([...syntheticPair, u("go"), a("done")], 1);
+    expect(plan.toSummarize).toEqual([]);
+    expect(plan.kept.length).toBe(2);
+  });
+});
 
 describe("estimateTokens — the same rule for every provider, widened for non-ASCII", () => {
   it("keeps the classic ~4 chars per token for ASCII", () => {

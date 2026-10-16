@@ -128,6 +128,29 @@ describe("ShellTool", () => {
     expect(result.content).toContain("npm warn deprecated x");
   });
 
+  it("caps the output to the MODEL's window, not to a constant", async () => {
+    // The same command, two models: on a small local model the result is cut much
+    // earlier, because 50KB (~12k tokens) would be its WHOLE context — and this is
+    // the newest result, so masking cannot touch it.
+    const stdout = Array.from({ length: 4000 }, (_, i) => `line ${i} of a long listing`).join("\n");
+    // The fake runner hands out its results in order (one per call), so the three
+    // executions below need three entries.
+    const once = { stdout, stderr: "", code: 0, timedOut: false };
+    const runner = fakeRunner([{ ...once }, { ...once }, { ...once }]);
+    const tool = new ShellTool(runner, cwd);
+
+    const small = await tool.execute({ command: "ls" }, { contextBudget: 8_000 });
+    const big = await tool.execute({ command: "ls" }, { contextBudget: 1_000_000 });
+
+    expect(small.content.length).toBeLessThan(big.content.length);
+    expect(small.content).toContain("truncated at 3KB"); // 10% of 8k tokens × 4 chars
+    expect(small.content).toMatch(/narrower|head\/tail\/grep/); // and what to do about it
+    expect(big.content).toContain("truncated at 50KB"); // the ceiling a big model keeps
+    // No budget (a tool used outside a session): the old behaviour, exactly.
+    const noBudget = await tool.execute({ command: "ls" });
+    expect(noBudget.content).toContain("truncated at 50KB");
+  });
+
   it("collapses runs of identical lines BEFORE the output cap", async () => {
     const runner = fakeRunner([{ stdout: "riga di output\n".repeat(100), stderr: "", code: 0, timedOut: false }]);
     const tool = new ShellTool(runner, cwd);

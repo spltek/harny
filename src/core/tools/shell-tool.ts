@@ -1,4 +1,5 @@
 import type { CommandRunner } from "./command-runner";
+import { toolOutputCapChars, truncationNote } from "./output-budget";
 import { resolvePath } from "./path-utils";
 import type { Tool, ToolContext, ToolDefinition, ToolResult } from "./tool";
 
@@ -72,6 +73,10 @@ export class ShellTool implements Tool {
         isError: true,
       };
     }
+    // The cap follows the MODEL (see output-budget.ts): a fixed 50KB is ~12k tokens,
+    // the whole window of a small local model — and this is the NEWEST result, so
+    // observation masking cannot touch it. Every truncation point below uses this.
+    const cap = toolOutputCapChars(MAX_OUTPUT, ctx?.contextBudget);
 
     const workingDir = args.working_directory as string | undefined;
     const wd = workingDir ? resolvePath(workingDir, this.cwd()) : this.cwd();
@@ -92,7 +97,7 @@ export class ShellTool implements Tool {
       return {
         content: `Command exited with code ${result.code}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`.slice(
           0,
-          MAX_OUTPUT,
+          cap,
         ),
         isError: true,
       };
@@ -102,12 +107,9 @@ export class ShellTool implements Tool {
     // the model must see them. stdout runs of identical lines are collapsed
     // BEFORE the cap so a flood cannot eat the whole budget.
     const collapsedStdout = collapseIdenticalRuns(result.stdout);
-    const out =
-      collapsedStdout.length > MAX_OUTPUT
-        ? collapsedStdout.slice(0, MAX_OUTPUT) + "\n\n[Output truncated at 50KB]"
-        : collapsedStdout;
+    const out = collapsedStdout.length > cap ? collapsedStdout.slice(0, cap) + truncationNote(cap) : collapsedStdout;
     const err = result.stderr.trim();
-    const content = err ? (out ? `${out}\n\nSTDERR:\n${err.slice(0, MAX_OUTPUT)}` : err) : out;
+    const content = err ? (out ? `${out}\n\nSTDERR:\n${err.slice(0, cap)}` : err) : out;
     return { content, isError: false };
   }
 }

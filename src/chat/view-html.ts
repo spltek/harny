@@ -497,7 +497,7 @@ ${renderViewConfig(deps)}
        keeps the user's own line breaks) and is not capped here — the section owns
        the scroll (see #pending-area). */
     /* One line exactly = 1.4em, so the collapsed height and the "does it wrap?"
-       measurement (measurePendingOverflow) share ONE number. */
+       measurement (pending-section.ts, via the pending-fold rule) share ONE number. */
     .pending-text {
       flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere;
       line-height: 1.4;

@@ -7,6 +7,120 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Overflow recovery**: a request the provider rejects for being too big is no
+  longer a dead end — Harny compacts and re-sends the **same** turn, bounded to two
+  attempts. Detection has two independent legs, so it works on every backend: the
+  provider's own wording (14 families, each pinned by a real pasted rejection) **and**
+  our estimate of the request just sent (an unreadable 4xx at 90%+ of the usable
+  budget is treated as size). It never fires on a network failure or on an unrelated
+  400 with room to spare, and it does not retry when there was nothing to compact.
+- **The model's real context window is learned from that rejection**: a model that
+  declares none falls back to 128k — optimistic, so on a small local model the
+  compaction threshold never fires until the provider refuses. The rejection states
+  the real number, Harny reads it out of the text and adopts it for the session
+  (persisted), and the threshold stops guessing.
+- **Observation masking**: tool results older than a share of the window are sent as
+  one-line stubs naming the tool, while the newest stays verbatim — masking what the
+  model is working on would break the very next step. A **view, not a rewrite**: the
+  transcript, the stored history and any branch keep everything, and the model can
+  re-run the command when it needs the data again.
+- **Queue/steer bubbles can be converted** (`→ Steer` / `→ Queued`, next to the
+  cancel). The two modes are not two views of the same message — they differ in
+  *when* the text reaches the model — so converting a steer back also **withdraws the
+  draft from the agent**, instead of letting it be injected into the running loop
+  anyway.
+- **Transcript action pills**: **Collapse all** (closes every expanded section at
+  once) and **Autoscroll**, right-aligned in the always-visible control strip and
+  outside the scrolling element, so they never scroll away.
+- **A paperclip marks a pending message that carries files**, whose names used to be
+  swallowed whenever the message also had text.
+- **Sub-agents now inherit the session's context discipline**: they size their own
+  observation masking and tool-output caps on the session's window (a sub-agent is the
+  one doing the heavy reads, and its Shell/Grep caps used to stay FIXED at 50KB/30KB —
+  an entire 8k context), and an overflow inside a sub-agent is recovered with the same
+  compaction a session uses, applied to its own ephemeral history.
+
+### Changed
+
+- **Compaction keeps whole turns, with an absolute recent budget.** The cut is
+  snapped to turn boundaries (your input → the final answer, everything in between),
+  the recent side is kept by an **absolute** budget (5% of the usable window, clamped
+  to 8k–20k tokens) instead of a fraction — on a 1M window a fraction kept ~600k and
+  freed almost nothing — and the summary is written as **schematic lists** (decisions,
+  open threads, next steps, and the facts nothing else carries) with a budget derived
+  from the room the compaction actually freed.
+- **The state of the work is carried forward instead of re-derived**: each later
+  compaction **updates** the previous summary — keeping what is still true, adding
+  what changed, dropping what is done — and excludes it from the span, so a summary
+  of a summary cannot cost a fact per generation.
+- **The queue/steer block is a collapsible section** whose header carries the counts
+  (`Steer 1 · Queued 2`), so a folded block still says what is waiting. A pending
+  message is readable **in full** (it wraps, keeping your own line breaks; the section
+  scrolls) and gets a **fold arrow only where the text really wraps past one line** —
+  measured on the rendered bubble and re-measured on resize, so narrowing the panel
+  brings the arrow out on its own instead of a character count deciding for it.
+- **A single tool result is capped to a share of the window** instead of a constant:
+  Shell's 50KB is ~12k tokens, i.e. the **entire** window of an 8k model in one
+  command, and masking cannot rescue it (it is the newest result). The truncation note
+  now says what to do about it (`head`/`tail`, or narrow the command).
+- **The request safety margin scales** (`min(8192, 5% of the window)`): a fixed 8k is
+  8% of a 100k model but **100% of an 8k one**, leaving it no room for its own answer.
+  The token estimate also counts non-ASCII at one token per unit, so CJK transcripts
+  are no longer underestimated 4×.
+- **The sub-agent header yields on the goal, not on the wrong element**: the goal is
+  no longer cut at 60 characters in JS (it clipped a wide panel for nothing and still
+  overflowed a narrow one) and it is the only element that shrinks — all the way to
+  nothing if needed — while the status chip follows it left.
+- **The brand mark is a splash mark**: 6rem (≈78px) instead of 2.4rem (≈31px, because
+  the rem base is the editor font), and it lives as a design token in
+  `view-config.ts` so the number has one home.
+- **Picking a session collapses the sessions list** and its search field: the gesture
+  is over and the transcript gets the space back. An **empty** session re-expands it,
+  since its hero points at the list itself.
+
+### Fixed
+
+- **A response could appear to start mid-word when the model reasoned in the middle of
+  its answer.** The turn carried the text in two halves around a reasoning phase; the
+  view closed the answer bubble at the reasoning and opened a new one for the
+  continuation, so the second half read as if the beginning had been lost. The answer is
+  now **one bubble** — with the reasoning as a collapsible line just above it — and the
+  text continues in place. (Nothing was ever lost: the full text was in the session and
+  in the transcript.)
+- **A `refresh` landing mid-run could wipe the answer being written.** The view rebuilds
+  the transcript from committed messages, and the in-flight turn is not committed yet, so
+  a compaction (or a ✂ cut) during a stream dropped the live text and the following deltas
+  started a new bubble mid-word. The live text now travels with the refresh — one path
+  (`refreshTranscript`) carries it, the view restores it — and the playback is pinned to
+  the bottom again.
+- **A Stop during a tool call could leave a conversation no provider accepts.** The
+  assistant turn carrying `tool_calls` was written before its results, and the
+  interruption notice landed between the two: every later request re-sent that history
+  and was rejected with an opaque 400. The turn group is now written in **one step**,
+  and the **wire rules are complete**: 8 rules checked at the last point before the
+  request, with five of them prevented at the source (atomic turn groups, id synthesis,
+  non-blank results, the stall nudge). A violation is **named, never silently
+  repaired** — the request is refused instead of being rejected by the provider *and
+  every request after it*.
+- **Reasoning models that reject `max_tokens` by name now work.** No model list keeps
+  up with that rule, so the provider follows the server's own instruction: rename the
+  field to `max_completion_tokens` and retry once — and remember it **per model and
+  endpoint**, so no later turn wastes a round trip on it.
+- **The context budget is sized to what the provider actually accepts.** The
+  compaction threshold and the footer measured the input against the raw window, while
+  the provider counts `input + max_tokens`: a 1M-window session died with "you
+  requested 1050820 tokens" while the footer read a harmless 66%.
+- **A queued message is visible from the moment it starts running.** It vanished for
+  the whole of its run: the view does not append a bubble for a pending send (the
+  host owns that list) and the host never told it the item had been dispatched.
+- **A steered message keeps its attachments in its bubble**: the files reached the
+  model, but the event carried no field for them, so the bubble could not show them.
+- **Layout**: a **500px floor** keeps the controls from being squeezed (450px is the
+  measured minimum, 500 ships with margin on top of it), and the session card no
+  longer sits 5px from the tab strip.
+
 ## [0.2.1] - 2026-10-14
 
 ### Fixed
