@@ -93,6 +93,32 @@ export class PendingInputQueue {
     this.post(rt.sessionId);
   }
 
+  /**
+   * Convert a pending item between the two delivery modes.
+   *
+   * The two are NOT two views of the same message: they differ in WHEN the text
+   * reaches the model. A `steer` is injected at the running loop's next turn
+   * boundary (and, once the run ends, goes FIRST); a `queued` message waits for the
+   * run to finish and then runs in FIFO order with the others. So this is a real
+   * change of destination, and one direction is delicate: `steer -> queue` must
+   * WITHDRAW the draft from the agent, which may already hold it — otherwise a
+   * message the user just "put back in the queue" is delivered as a steer anyway.
+   */
+  setMode(rt: SessionRuntime, id: string, mode: PendingInput["mode"]): void {
+    const list = this.bySession.get(rt.sessionId);
+    const item = list?.find((p) => p.id === id);
+    if (!list || !item || item.mode === mode) return;
+    item.mode = mode;
+    if (mode === "queue") {
+      rt.agent.cancelSteer(id);
+      this.bumpVersion(rt.sessionId); // supersede an in-flight apply
+    } else if (rt.agent.streaming) {
+      // Hand it to the RUNNING loop now, exactly as if it had been typed as one.
+      void this.applySteer(rt, item);
+    }
+    this.post(rt.sessionId);
+  }
+
   /** Drop a still-pending message (queued, or a steer not yet at a boundary). */
   cancel(rt: SessionRuntime, id: string): void {
     const list = this.bySession.get(rt.sessionId);

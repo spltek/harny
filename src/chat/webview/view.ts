@@ -1,4 +1,5 @@
 import { renderMarkdown } from "./markdown";
+import { needsCollapseControl } from "./pending-overflow";
 import { splitDiffFence, countDiff } from "./diff-fence";
 import Prism from "./prism";
 import { langIdForPath } from "./lang-map";
@@ -183,6 +184,9 @@ const messagesEl = document.getElementById("messages") as HTMLDivElement;
 // The pulsing working indicator: a REAL footer glued below the transcript (NOT
 // a bubble in the flow), shown/hidden instead of being appended/removed.
 const workingBar = document.getElementById("working-bar") as HTMLDivElement;
+const pendingSection = document.getElementById("pending-section") as HTMLDivElement;
+const pendingHead = document.getElementById("pending-head") as HTMLDivElement;
+const pendingHeadText = document.getElementById("pending-head-text") as HTMLSpanElement;
 const pendingArea = document.getElementById("pending-area") as HTMLDivElement;
 const inputEl = document.getElementById("user-input") as HTMLTextAreaElement;
 const slashMenu = document.getElementById("slash-menu") as HTMLDivElement;
@@ -1024,7 +1028,11 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
   // when the model gave one, otherwise a short snippet of the goal, and always
   // keep the full goal one hover away.
   const label = subAgentLabel(id, goal);
-  const shortGoal = goal.length > 60 ? goal.slice(0, 60).replace(/\s+\S*$/, "") + "…" : goal;
+  // The goal preview is NOT pre-truncated here: how much of it fits depends on
+  // the panel width, so the CSS does it (ellipsis on `.subagent-name`), which
+  // also means the "…" travels left as the header narrows instead of sitting at a
+  // fixed cut. The full text stays in the tooltip.
+  const goalPreview = goal;
   // The bubble is COLLAPSED by default (like thinking blocks): only the header
   // with the live status is visible; expanding reveals goal, resources, the
   // nested live stream and the final report.
@@ -1036,7 +1044,7 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
     " Sub-agent" +
     (label ? ' "' + escapeHtml(label) + '"' : "") +
     "</span>" +
-    (goal ? '<span class="subagent-name" title="' + escapeHtml(goal) + '">' + escapeHtml(shortGoal) + "</span>" : "") +
+    (goal ? '<span class="subagent-name" title="' + escapeHtml(goal) + '">' + escapeHtml(goalPreview) + "</span>" : "") +
     (role ? '<span class="subagent-role">' + escapeHtml(role) + "</span>" : "") +
     '<span class="subagent-status queued">queued…</span>' +
     '<button class="subagent-abort" type="button" title="Abort this sub-agent" aria-label="Abort this sub-agent">' +
@@ -1649,6 +1657,64 @@ function clearAttachments(): void {
   renderAttachmentChips();
 }
 
+/** Pending section collapse state + the count seen at the last render (a NEW
+ * item re-opens the section; delivering one does not). */
+let pendingExpanded = true;
+let pendingCount = 0;
+
+/**
+ * Show the per-bubble collapse control ONLY where the text really overflows one
+ * line, and hide it where it fits. MEASURED on the rendered element, because the
+ * answer depends on the panel WIDTH too: narrowing the panel wraps a message that
+ * used to fit, and a character-count guess would be wrong in both directions.
+ * Called after every render and on every resize (see the hooks below).
+ */
+function measurePendingOverflow(): void {
+  for (const row of pendingArea.querySelectorAll<HTMLElement>(".pending-msg")) {
+    const body = row.querySelector<HTMLElement>(".pending-text");
+    const more = row.querySelector<HTMLButtonElement>(".pending-more");
+    if (!body || !more) continue;
+    // While collapsed, `scrollHeight` still reports the FULL content height (the
+    // cap only clips the view), so "does it overflow?" keeps the same answer.
+    const lineHeight = parseFloat(getComputedStyle(body).lineHeight) || 0;
+    const overflows = needsCollapseControl(lineHeight, body.scrollHeight);
+    // Never hide the control while the bubble IS collapsed: that would strand the
+    // text with no way back.
+    more.classList.toggle("hidden", !(overflows || row.classList.contains("text-collapsed")));
+  }
+}
+
+// Re-evaluate on every panel resize: the control appears/disappears as the text
+// starts or stops wrapping. A ResizeObserver catches container-only resizes
+// (dragging the panel edge) and the window event covers engines without it.
+if (typeof ResizeObserver !== "undefined") {
+  new ResizeObserver(() => measurePendingOverflow()).observe(pendingArea);
+}
+window.addEventListener("resize", () => measurePendingOverflow());
+
+/**
+ * Expand/collapse the queue/steer section, keeping the header arrow and
+ * `aria-expanded` in sync. ONE path for every visibility change (the header click
+ * and the auto-expand), so what is on screen can never contradict the state —
+ * the same rule the sessions header follows.
+ */
+function setPendingExpanded(expanded: boolean): void {
+  pendingExpanded = expanded;
+  pendingArea.classList.toggle("hidden", !expanded);
+  pendingHead.setAttribute("aria-expanded", String(expanded));
+  const toggle = pendingHead.querySelector(".toggle");
+  if (toggle) toggle.textContent = expanded ? "▼" : "▶";
+}
+
+pendingHead.addEventListener("click", () => setPendingExpanded(!pendingExpanded));
+// Keyboard: the header is a control, so it must answer to Enter/Space like one
+// (a div with a click handler is otherwise mouse-only).
+pendingHead.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  e.preventDefault();
+  setPendingExpanded(!pendingExpanded);
+});
+
 /** Render the queue/steer messages typed while working (host-driven).
  * Steer bubbles ALWAYS sit above queued ones (they are applied ASAP at the
  * next turn boundary); within each group, arrival order is preserved. */
@@ -1657,8 +1723,26 @@ function renderPending(items: PendingViewItem[]): void {
   const ordered = [...pendingItems].sort((a, b) =>
     a.mode === b.mode ? 0 : a.mode === "steer" ? -1 : 1,
   );
+  // The section appears only when there is something to show (and disappears
+  // when the last item is delivered or cancelled).
+  pendingSection.classList.toggle("hidden", ordered.length === 0);
+  // A NEW message re-opens a collapsed section: the user just typed it and must
+  // see it (the opposite of surprising). Collapsing is for getting the block out
+  // of the way, not for hiding the next thing you send.
+  if (ordered.length > pendingCount) setPendingExpanded(true);
+  pendingCount = ordered.length;
+  setPendingExpanded(pendingExpanded);
+  // The header carries the COUNTS, so a collapsed section still says what is
+  // waiting: "Steer 1 · Queued 2".
+  const steers = ordered.filter((it) => it.mode === "steer").length;
+  const queued = ordered.length - steers;
+  pendingHeadText.textContent = [
+    steers > 0 ? `Steer ${steers}` : "",
+    queued > 0 ? `Queued ${queued}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
   pendingArea.innerHTML = "";
-  pendingArea.classList.toggle("hidden", ordered.length === 0);
   for (const it of ordered) {
     const el = document.createElement("div");
     el.className = "pending-msg " + (it.mode === "steer" ? "pending-steer" : "pending-queue");
@@ -1681,9 +1765,46 @@ function renderPending(items: PendingViewItem[]): void {
     cancel.textContent = "×";
     cancel.title = it.mode === "steer" ? "Cancel this steer" : "Cancel this queued message";
     cancel.addEventListener("click", () => vscode.postMessage({ type: "cancelPending", id: it.id }));
-    el.append(badge, body, cancel);
+    // Convert between the two delivery modes. The label states the EFFECT, not the
+    // mode: they are not two views of the same message, they are delivered at
+    // different moments (steer joins the running loop at its next step and goes
+    // first at the end; queued waits for the run and keeps FIFO order).
+    const convert = document.createElement("button");
+    convert.type = "button";
+    convert.className = "pending-convert";
+    convert.textContent = it.mode === "steer" ? "→ Queued" : "→ Steer";
+    convert.title =
+      it.mode === "steer"
+        ? "Deliver it after the run: it waits in the queue with the other messages"
+        : "Deliver it first: injected into the running loop at its next step";
+    convert.addEventListener("click", () =>
+      vscode.postMessage({ type: "setPendingMode", id: it.id, mode: it.mode === "steer" ? "queue" : "steer" }),
+    );
+    // Per-bubble collapse, FIRST in the row — the disclosure arrow goes at the
+    // START of what it opens, like every other toggle in Harny (thinking, tool,
+    // subagent). It is added here but only becomes VISIBLE if the text really
+    // overflows a line: see measurePendingOverflow (measured, not guessed —
+    // narrowing the panel can wrap a message that used to fit).
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "pending-more hidden";
+    more.textContent = "▼";
+    more.title = "Collapse this message";
+    more.addEventListener("click", () => {
+      const nowCollapsed = el.classList.toggle("text-collapsed");
+      more.textContent = nowCollapsed ? "▶" : "▼";
+      more.title = nowCollapsed ? "Show the whole message" : "Collapse this message";
+    });
+    // Actions in the TOP-RIGHT corner: with multi-line text they must stay put at
+    // the head of the row instead of drifting to the middle.
+    const actions = document.createElement("span");
+    actions.className = "pending-actions";
+    actions.append(convert, cancel);
+    el.append(more, badge, body, actions);
     pendingArea.appendChild(el);
   }
+  // Decide—AFTER the rows exist—which bubbles actually need the collapse control.
+  measurePendingOverflow();
 }
 
 /**

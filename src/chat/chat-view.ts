@@ -1297,6 +1297,13 @@ export class ChatViewProvider implements WebviewViewProvider {
         // Drop a queued/steer message the user changed their mind about.
         if (rt && typeof msg.id === "string") this.pendingQueue.cancel(rt, msg.id);
         break;
+      case "setPendingMode":
+        // Convert a pending message between queue and steer. Not a cosmetic flip:
+        // the two are delivered at different MOMENTS (see PendingInputQueue.setMode).
+        if (rt && typeof msg.id === "string" && (msg.mode === "steer" || msg.mode === "queue")) {
+          this.pendingQueue.setMode(rt, msg.id, msg.mode);
+        }
+        break;
       case "pickFiles":
         if (this.view) {
           const files = await this.attachments.pick();

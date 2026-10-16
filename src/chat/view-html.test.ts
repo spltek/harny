@@ -6,7 +6,123 @@ const base = {
   scriptUri: "https://vscode-resource.test/view.js",
 };
 
+/** The body of one CSS rule, so an assertion cannot match a DIFFERENT rule that
+ * happens to share a property (several elements legitimately use ellipsis). */
+function cssRule(html: string, selector: string): string {
+  const start = html.indexOf(selector + " {");
+  return start < 0 ? "" : html.slice(start, html.indexOf("}", start));
+}
+
 describe("renderViewHtml", () => {
+  it("renders the brand mark at SPLASH size, as a design token (not a favicon)", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    // The rem base is the editor font (13px by default), so the old 2.4rem was
+    // ~31px — a speck in a 600px+ panel. The size now comes from the size
+    // families, so the mark and its tuning live in ONE place (view-config.ts).
+    expect(html).toContain("--fs-logo: 6rem"); // ~78px at a 13px base
+    expect(html).toContain(".empty-hero .empty-logo img { width: var(--fs-logo); height: var(--fs-logo)");
+  });
+
+  it("lets a pending message be read WHOLE, with its actions pinned top-right", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    // Wrapping replaces the old one-line ellipsis: the user's own line breaks are
+    // kept, long tokens break instead of overflowing…
+    const pendingText = cssRule(html, ".pending-text");
+    expect(pendingText).toContain("white-space: pre-wrap");
+    expect(pendingText).toContain("overflow-wrap: anywhere");
+    expect(pendingText).not.toContain("text-overflow: ellipsis");
+    expect(pendingText).not.toContain("white-space: nowrap");
+    // …and an EXPANDED message is not capped at all: one line is exactly 1.4em
+    // (the number the overflow measurement uses — see pending-overflow.ts).
+    expect(pendingText).not.toContain("max-height");
+    expect(pendingText).toContain("line-height: 1.4;");
+    // The SECTION owns the scroll, so a huge paste cannot eat the panel…
+    const section = cssRule(html, "#pending-area");
+    expect(section).toContain("max-height: 30vh");
+    expect(section).toContain("overflow-y: auto");
+    // …and the per-bubble fold clips to exactly one line.
+    const collapsed = cssRule(html, ".pending-msg.text-collapsed .pending-text");
+    expect(collapsed).toContain("max-height: 1.4em");
+    expect(collapsed).toContain("overflow: hidden");
+    // The fold control is hidden per bubble until a measurement warrants it — and it
+    // is hidden with its SPACE RESERVED (visibility, not display), so the badges
+    // stay in a straight column and the arrow never has to be looked for among the
+    // action buttons on the right.
+    expect(cssRule(html, ".pending-more.hidden")).toContain("visibility: hidden");
+    expect(cssRule(html, ".pending-more.hidden")).not.toContain("display: none");
+    // The fold arrow is the SAME arrow as everywhere else in Harny (see
+    // .tool-toggle): a bare chevron, no box, no border — not a second action
+    // button. This test asserts the two rules AGREE, so they cannot drift apart.
+    const fold = cssRule(html, ".pending-more");
+    const toolToggle = cssRule(html, ".tool-toggle");
+    for (const [property, value] of [
+      ["width", "12px"],
+      ["color", "#888"],
+      ["font-size", "var(--fs-sm)"],
+    ] as const) {
+      expect(fold).toContain(`${property}: ${value}`);
+      expect(toolToggle).toContain(`${property}: ${value}`);
+    }
+    expect(fold).toContain("border: none");
+    expect(fold).toContain("background: transparent");
+    // …and it still turns accent on hover, like the thinking header does.
+    expect(cssRule(html, ".pending-more:hover")).toContain("var(--accent)");
+    // Actions: one group, pushed to the right, on a row aligned at the TOP (so
+    // multi-line text cannot drag the buttons to the middle).
+    expect(cssRule(html, ".pending-msg")).toContain("align-items: flex-start");
+    expect(cssRule(html, ".pending-actions")).toContain("margin-left: auto");
+    expect(cssRule(html, ".pending-convert:hover")).toContain("var(--accent)");
+    // The steer/queue colors stay as they were (accent vs neutral).
+    expect(html).toContain(".pending-msg.pending-steer { border-color: var(--accent);");
+  });
+
+  it("makes the queue/steer block a COLLAPSIBLE section, like the sessions list", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    // The header is a row like the sessions one: arrow + label, whole row clickable.
+    expect(html).toContain('id="pending-section"');
+    expect(html).toContain('id="pending-head" role="button" tabindex="0"');
+    expect(html).toContain('<span class="toggle">▼</span><span id="pending-head-text">');
+    expect(cssRule(html, "#pending-head")).toContain("cursor: pointer");
+    expect(html).toContain(".pending-text");
+    // The section appears/disappears as a unit (nothing pending = no empty header).
+    expect(cssRule(html, "#pending-section.hidden")).toContain("display: none");
+    expect(cssRule(html, "#pending-area.hidden")).toContain("display: none");
+    // Hidden in the two shell states too (no session / no folder): a stale list
+    // must never show without an input area.
+    expect(html).toContain("body.no-session #pending-section");
+    expect(html).toContain("body.no-workspace #pending-section");
+  });
+
+  it("makes the sub-agent GOAL the only element that gives way in its header", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    // No lower bound: it may shrink to nothing, and the ellipsis travels left with
+    // it (a fixed character cut in JS could not know the panel width).
+    const goal = cssRule(html, ".subagent-name");
+    expect(goal).toContain("min-width: 0");
+    expect(goal).toContain("text-overflow: ellipsis");
+    expect(goal).toContain("flex: 0 1 auto");
+    // Everything else in the header is FIXED, so the shrink can only land on the
+    // goal — and the row can never be squeezed by the wrong element.
+    expect(cssRule(html, ".subagent-header .tool-name")).toContain("flex: 0 0 auto");
+    expect(cssRule(html, ".subagent-role")).toContain("flex: 0 0 auto");
+    expect(cssRule(html, ".subagent-status")).toContain("flex-shrink: 0");
+    // The status chip (running… / done) FOLLOWS the goal instead of being pinned to
+    // the right edge: as the goal shrinks, the chip slides left with it.
+    expect(cssRule(html, ".subagent-status")).not.toContain("margin-left: auto");
+  });
+
   it("renders sessions, tabs, messages and input containers", () => {
     const html = renderViewHtml({
       ...base,

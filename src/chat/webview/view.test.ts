@@ -39,7 +39,10 @@ function setupDom(
     <div id="sessions"></div>
     <div id="tabs"></div>
     <div id="messages"></div>
-    <div id="pending-area" class="hidden"></div>
+    <div id="pending-section" class="hidden">
+      <div id="pending-head" role="button" tabindex="0" aria-expanded="true"><span class="toggle">▼</span><span id="pending-head-text"></span></div>
+      <div id="pending-area" class="hidden"></div>
+    </div>
     <div id="working-bar" class="hidden">● Working...</div>
     <div id="input-area">
       <div id="input-main">
@@ -2263,6 +2266,25 @@ describe("view webview client", () => {
     expect(bubble.querySelector(".subagent-name")?.textContent).toContain("Build the login form");
   });
 
+  it("shows the WHOLE goal in the header: no fixed character cut, the CSS clips it", async () => {
+    // How much of the goal fits is a question about the PANEL width, so the preview
+    // carries the full text and the ellipsis decides where to stop (it travels left
+    // as the panel narrows). A 60-character cut would clip a wide panel for nothing
+    // and still overflow a narrow one.
+    await loadView();
+    hostMessage(PARALLEL_ON);
+    const goal =
+      "Refactor the authentication module, extract the token store, add refresh-token support " +
+      "and update every caller across the workspace including the tests";
+    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "auth", goal, access: "write", resources: ["src/auth"] } });
+
+    const preview = document.querySelector(".subagent-name") as HTMLElement;
+    expect(preview.textContent).toBe(goal); // nothing removed, no ellipsis added
+    expect(preview.textContent).not.toContain("…");
+    // The full text stays one hover away.
+    expect(preview.getAttribute("title")).toBe(goal);
+  });
+
   it("marks a failed sub-agent as failed", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
@@ -4431,7 +4453,248 @@ describe("soft steering + pending bubbles (webview)", () => {
     expect(posted).toContainEqual({ type: "cancelPending", id: "q1" });
 
     hostMessage({ type: "pending", items: [] });
-    expect(area.classList.contains("hidden")).toBe(true);
+    // With nothing pending the whole SECTION goes away (header included).
+    expect((document.getElementById("pending-section") as HTMLElement).classList.contains("hidden")).toBe(true);
+  });
+
+  it("offers a convert button on each bubble, labelled with the EFFECT it will have", async () => {
+    await loadView();
+    hostMessage({
+      type: "pending",
+      items: [
+        { id: "q1", mode: "queue", text: "later" },
+        { id: "s1", mode: "steer", text: "not Florence" },
+      ],
+    });
+    const rows = [...document.querySelectorAll("#pending-area .pending-msg")];
+    const steer = rows[0].querySelector(".pending-convert") as HTMLButtonElement;
+    const queued = rows[1].querySelector(".pending-convert") as HTMLButtonElement;
+
+    // On a steer: the button OFFERS the queue, and says what that means.
+    expect(steer.textContent).toBe("→ Queued");
+    expect(steer.title).toMatch(/after the run/i);
+    // On a queued message: the button OFFERS the steer, i.e. delivery FIRST.
+    expect(queued.textContent).toBe("→ Steer");
+    expect(queued.title).toMatch(/first/i);
+    // The fold arrow is at the START of the row (where every other Harny toggle
+    // lives), the action buttons at the END.
+    const row = rows[0];
+    expect(row.firstElementChild?.classList.contains("pending-more")).toBe(true);
+    expect(row.querySelector(".pending-actions")?.contains(steer)).toBe(true);
+    expect(row.querySelector(".pending-actions")?.contains(row.querySelector(".pending-more")!)).toBe(false);
+    // The badge still follows the text (badge, then the message).
+    expect(row.querySelector(".pending-badge")?.nextElementSibling?.classList.contains("pending-text")).toBe(true);
+  });
+
+  it("posts the conversion, asking for the OPPOSITE mode", async () => {
+    await loadView();
+    hostMessage({
+      type: "pending",
+      items: [
+        { id: "q1", mode: "queue", text: "later" },
+        { id: "s1", mode: "steer", text: "not Florence" },
+      ],
+    });
+    const rows = [...document.querySelectorAll("#pending-area .pending-msg")];
+
+    (rows[0].querySelector(".pending-convert") as HTMLButtonElement).click();
+    (rows[1].querySelector(".pending-convert") as HTMLButtonElement).click();
+
+    expect(posted).toContainEqual({ type: "setPendingMode", id: "s1", mode: "queue" });
+    expect(posted).toContainEqual({ type: "setPendingMode", id: "q1", mode: "steer" });
+  });
+
+  it("shows the WHOLE pending text: multi-line, no truncation", async () => {
+    await loadView();
+    const long = "first line\nsecond line\n" + "x".repeat(300);
+    hostMessage({ type: "pending", items: [{ id: "q1", mode: "queue", text: long }] });
+    const body = document.querySelector("#pending-area .pending-text") as HTMLElement;
+
+    // The full text is in the DOM (the earlier version ellipsised it after one
+    // line); wrapping and the section scroll are CSS, asserted in view-html.test.ts.
+    expect(body.textContent).toBe(long);
+    expect(body.textContent).toContain("\n");
+  });
+
+  /**
+   * The DECISION ("does this text wrap?") is measured on the rendered element, and
+   * jsdom computes no layout — so its rule lives in a pure module with its own
+   * tests (pending-overflow.test.ts: fits / wraps / no-measurement). What is tested
+   * here is the WIRING: one control per bubble, hidden until a measurement says
+   * otherwise, folding the text on click, and never stranding a collapsed message.
+   */
+  describe("per-bubble collapse control", () => {
+    it("gives every bubble its own control, hidden with no layout to justify it", async () => {
+      await loadView();
+      hostMessage({
+        type: "pending",
+        items: [
+          { id: "q1", mode: "queue", text: "short" },
+          { id: "s1", mode: "steer", text: "also short" },
+        ],
+      });
+      const controls = [...document.querySelectorAll("#pending-area .pending-more")];
+      expect(controls).toHaveLength(2);
+      // jsdom reports no line height: the control exists but is NOT offered
+      // (hidden, with its space reserved — see the CSS contract).
+      expect(controls.every((c) => c.classList.contains("hidden"))).toBe(true);
+      for (const c of controls) expect(c.parentElement?.firstElementChild).toBe(c);
+    });
+
+    it("folds the bubble to one line and back, saying which way it goes", async () => {
+      await loadView();
+      hostMessage({ type: "pending", items: [{ id: "q1", mode: "queue", text: "a rather long message" }] });
+      const row = document.querySelector("#pending-area .pending-msg") as HTMLElement;
+      const more = row.querySelector(".pending-more") as HTMLButtonElement;
+      more.classList.remove("hidden"); // as a real measurement would
+
+      more.click();
+      expect(row.classList.contains("text-collapsed")).toBe(true);
+      expect(more.textContent).toBe("▶");
+      expect(more.title).toMatch(/whole/i);
+
+      more.click();
+      expect(row.classList.contains("text-collapsed")).toBe(false);
+      expect(more.textContent).toBe("▼");
+      expect(more.title).toMatch(/collapse/i);
+    });
+
+    it("never strands a collapsed bubble when the panel is resized", async () => {
+      await loadView();
+      hostMessage({ type: "pending", items: [{ id: "q1", mode: "queue", text: "a rather long message" }] });
+      const row = document.querySelector("#pending-area .pending-msg") as HTMLElement;
+      const more = row.querySelector(".pending-more") as HTMLButtonElement;
+      more.classList.remove("hidden");
+      more.click();
+      expect(row.classList.contains("text-collapsed")).toBe(true);
+
+      // A resize re-measures; with no layout to read, "does it overflow?" answers
+      // no — but the bubble IS collapsed, so the way back must stay visible.
+      window.dispatchEvent(new Event("resize"));
+
+      expect(more.classList.contains("hidden")).toBe(false);
+    });
+
+    it("re-measures on resize (the panel can be narrowed after the render)", async () => {
+      await loadView();
+      hostMessage({ type: "pending", items: [{ id: "q1", mode: "queue", text: "one line for now" }] });
+      const more = document.querySelector(".pending-more") as HTMLButtonElement;
+      expect(() => window.dispatchEvent(new Event("resize"))).not.toThrow();
+      expect(more.classList.contains("hidden")).toBe(true);
+    });
+  });
+
+  describe("the pending section collapses like the sessions list", () => {
+    it("starts expanded, and the header collapses/expands the list", async () => {
+      await loadView();
+      hostMessage({
+        type: "pending",
+        items: [
+          { id: "q1", mode: "queue", text: "later" },
+          { id: "s1", mode: "steer", text: "now" },
+        ],
+      });
+      const head = document.getElementById("pending-head") as HTMLElement;
+      const area = document.getElementById("pending-area") as HTMLElement;
+      expect(area.classList.contains("hidden")).toBe(false);
+      expect(head.getAttribute("aria-expanded")).toBe("true");
+
+      head.click();
+
+      expect(area.classList.contains("hidden")).toBe(true);
+      expect(head.getAttribute("aria-expanded")).toBe("false");
+      expect(head.querySelector(".toggle")?.textContent).toBe("▶");
+
+      head.click();
+      expect(area.classList.contains("hidden")).toBe(false);
+      expect(head.querySelector(".toggle")?.textContent).toBe("▼");
+    });
+
+    it("answers to Enter/Space too (a header that is a control, not a decoration)", async () => {
+      await loadView();
+      hostMessage({ type: "pending", items: [{ id: "q1", mode: "queue", text: "later" }] });
+      const head = document.getElementById("pending-head") as HTMLElement;
+      const area = document.getElementById("pending-area") as HTMLElement;
+
+      head.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      expect(area.classList.contains("hidden")).toBe(true);
+      head.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+      expect(area.classList.contains("hidden")).toBe(false);
+    });
+
+    it("shows the counts in the header, so a collapsed section still says what is waiting", async () => {
+      await loadView();
+      hostMessage({
+        type: "pending",
+        items: [
+          { id: "q1", mode: "queue", text: "a" },
+          { id: "q2", mode: "queue", text: "b" },
+          { id: "s1", mode: "steer", text: "c" },
+        ],
+      });
+
+      expect((document.getElementById("pending-head-text") as HTMLElement).textContent).toBe("Steer 1 · Queued 2");
+    });
+
+    it("keeps the counts header VISIBLE while the section is collapsed", async () => {
+      // The header is the stable label of the area, not an artefact of collapsing:
+      // it stays put, so a collapsed block still says what is waiting.
+      await loadView();
+      hostMessage({
+        type: "pending",
+        items: [
+          { id: "q1", mode: "queue", text: "a" },
+          { id: "s1", mode: "steer", text: "b" },
+        ],
+      });
+      const section = document.getElementById("pending-section") as HTMLElement;
+      const head = document.getElementById("pending-head") as HTMLElement;
+      const area = document.getElementById("pending-area") as HTMLElement;
+
+      head.click();
+
+      expect(section.classList.contains("hidden")).toBe(false); // still there
+      expect(head.textContent).toContain("Steer 1");
+      expect(head.textContent).toContain("Queued 1");
+      expect(area.classList.contains("hidden")).toBe(true); // only the items fold
+    });
+
+    it("re-opens a collapsed section when a NEW message arrives", async () => {
+      await loadView();
+      hostMessage({ type: "pending", items: [{ id: "q1", mode: "queue", text: "one" }] });
+      const head = document.getElementById("pending-head") as HTMLElement;
+      const area = document.getElementById("pending-area") as HTMLElement;
+      head.click();
+      expect(area.classList.contains("hidden")).toBe(true);
+
+      hostMessage({
+        type: "pending",
+        items: [
+          { id: "q1", mode: "queue", text: "one" },
+          { id: "q2", mode: "queue", text: "two" },
+        ],
+      });
+
+      expect(area.classList.contains("hidden")).toBe(false);
+    });
+
+    it("keeps a deliberate collapse when an item is DELIVERED (only new ones re-open)", async () => {
+      await loadView();
+      hostMessage({
+        type: "pending",
+        items: [
+          { id: "q1", mode: "queue", text: "one" },
+          { id: "q2", mode: "queue", text: "two" },
+        ],
+      });
+      const head = document.getElementById("pending-head") as HTMLElement;
+      const area = document.getElementById("pending-area") as HTMLElement;
+      head.click();
+
+      hostMessage({ type: "pending", items: [{ id: "q2", mode: "queue", text: "two" }] });
+
+      expect(area.classList.contains("hidden")).toBe(true);
+    });
   });
 
   it("groups steers above queued messages, each group in arrival order", async () => {

@@ -25,6 +25,9 @@ export const FONTS = {
  * SIZE (rem, resolved against the root/editor font set by ROOT_FONT_SIZE).
  */
 export const FAMILIES = {
+  /** Huge — the brand mark on the empty shell (the rem base is the editor font,
+   * so this is ~78px at 13px: a splash mark, not a favicon). */
+  logo: { font: "ui", size: "6rem" },
   /** Huge — welcome icon. */
   hero: { font: "ui", size: "2.3rem" },
   /** Titles — modal headings, + button. */

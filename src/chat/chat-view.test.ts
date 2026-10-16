@@ -2969,6 +2969,47 @@ describe("ChatViewProvider soft steering + queue", () => {
     expect(agent.cancelSteer).toHaveBeenCalledWith("s1x");
   });
 
+  it("routes a conversion to the queue: a queued message becomes a real steer", async () => {
+    const { handler, agent, pending, view } = await setupStreaming();
+    await handler({ type: "send", mode: "queue", id: "q1", text: "hurry" });
+    expect(agent.steer).not.toHaveBeenCalled();
+    view.webview.postMessage.mockClear();
+
+    await handler({ type: "setPendingMode", id: "q1", mode: "steer" });
+
+    // The agent now holds it as a steer draft…
+    await vi.waitFor(() => expect(agent.steer).toHaveBeenCalledWith("q1", "hurry", expect.objectContaining({})));
+    // …and the view is told, so the badge flips.
+    expect(view.webview.postMessage).toHaveBeenCalledWith({
+      type: "pending",
+      items: [expect.objectContaining({ id: "q1", mode: "steer" })],
+    });
+    expect(pending()).toEqual([expect.objectContaining({ id: "q1", mode: "steer" })]);
+  });
+
+  it("routes a conversion to the queue: a steer is WITHDRAWN from the agent", async () => {
+    const { handler, agent, pending } = await setupStreaming();
+    await handler({ type: "send", mode: "steer", id: "s1x", text: "wait" });
+    await vi.waitFor(() => expect(agent.steer).toHaveBeenCalled());
+
+    await handler({ type: "setPendingMode", id: "s1x", mode: "queue" });
+
+    expect(agent.cancelSteer).toHaveBeenCalledWith("s1x");
+    expect(pending()).toEqual([expect.objectContaining({ id: "s1x", mode: "queue" })]);
+  });
+
+  it("ignores a conversion with an unknown mode or id (no crash, no state change)", async () => {
+    const { handler, agent, pending } = await setupStreaming();
+    await handler({ type: "send", mode: "queue", id: "q1", text: "later" });
+
+    await handler({ type: "setPendingMode", id: "q1", mode: "sideways" });
+    await handler({ type: "setPendingMode", id: "ghost", mode: "steer" });
+
+    expect(pending()).toEqual([expect.objectContaining({ id: "q1", mode: "queue" })]);
+    expect(agent.steer).not.toHaveBeenCalled();
+    expect(agent.cancelSteer).not.toHaveBeenCalled();
+  });
+
   it("a steer with attachments builds the context and forwards it", async () => {
     const attachments = {
       pick: vi.fn(async () => []),

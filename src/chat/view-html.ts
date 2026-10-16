@@ -463,13 +463,27 @@ ${renderViewConfig(deps)}
     /* Messages typed WHILE the session works: a real footer (outside
        #messages) so they survive streaming re-renders. Queue = neutral, steer
        = accent. Each is cancellable until it is applied. */
+    #pending-section { flex-shrink: 0; background: var(--bg); border-top: 1px dashed var(--border); }
+    #pending-section.hidden { display: none; }
+    /* Same shape as the sessions header (arrow + label, whole row clickable), so
+       the two collapsible sections behave and read the same way. */
+    #pending-head {
+      display: flex; align-items: center; gap: 6px; padding: 5px 10px;
+      font-weight: 700; font-size: var(--fs-md); color: var(--fg-strong);
+      cursor: pointer; user-select: none;
+    }
+    #pending-head:hover { color: var(--accent); }
+    #pending-head .toggle { font-size: var(--fs-xs); width: 12px; color: #888; }
+    /* Expanded, the WHOLE list is readable and the SECTION does the scrolling: one
+       scrollbar for the group (bounded so the transcript keeps its space) instead
+       of a cap per bubble. */
     #pending-area {
-      flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;
-      padding: 6px 10px; background: var(--bg); border-top: 1px dashed var(--border);
+      display: flex; flex-direction: column; gap: 4px; padding: 0 10px 6px;
+      max-height: 30vh; overflow-y: auto;
     }
     #pending-area.hidden { display: none; }
     .pending-msg {
-      display: flex; align-items: center; gap: 8px; min-width: 0;
+      display: flex; align-items: flex-start; gap: 8px; min-width: 0;
       padding: 3px 6px 3px 8px; border-radius: 6px; font-size: var(--fs-md);
       border: 1px solid var(--border); background: var(--surface-2); color: var(--muted);
     }
@@ -479,12 +493,43 @@ ${renderViewConfig(deps)}
       padding: 1px 5px; border-radius: 999px; background: var(--tool-bg); color: var(--muted);
     }
     .pending-msg.pending-steer .pending-badge { background: var(--accent); color: #fff; }
-    .pending-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .pending-cancel {
+    /* The message is readable WHOLE when the section is expanded: it wraps (and
+       keeps the user's own line breaks) and is not capped here — the section owns
+       the scroll (see #pending-area). */
+    /* One line exactly = 1.4em, so the collapsed height and the "does it wrap?"
+       measurement (measurePendingOverflow) share ONE number. */
+    .pending-text {
+      flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere;
+      line-height: 1.4;
+    }
+    /* Collapsed by the user (per bubble): clipped to a single line. */
+    .pending-msg.text-collapsed .pending-text { max-height: 1.4em; overflow: hidden; }
+    /* The disclosure arrow sits at the START of the row, where every other toggle
+       in Harny is (thinking / tool / subagent), NEVER with the action buttons on
+       the right: mixing it in with them is what made it read wrong. And it LOOKS
+       like them — a bare chevron, no box: see .tool-toggle, which it mirrors. */
+    .pending-more {
+      flex: 0 0 auto; width: 12px; padding: 0; background: transparent; border: none;
+      box-shadow: none; color: #888; font-size: var(--fs-sm); line-height: 1.2;
+      cursor: pointer;
+    }
+    .pending-more:hover { filter: none; color: var(--accent); }
+    /* Not needed (the text fits one line): INVISIBLE, but its space stays reserved
+       so the Steer/Queued badges keep a straight column instead of shifting row by
+       row. Using visibility — and NOT display:none — is what reserves it, and it
+       also takes the control out of the tab order while it is not offered. */
+    .pending-more.hidden { visibility: hidden; }
+    /* The buttons sit TOP-RIGHT, before the badge/text in DOM terms they follow,
+       pinned with margin-left: auto so multi-line text never moves them. */
+    .pending-actions { flex: 0 0 auto; margin-left: auto; display: flex; gap: 4px; }
+    .pending-actions button {
       flex: 0 0 auto; min-height: 1.2rem; padding: 0 0.4rem; background: transparent;
       border: 1px solid var(--border); color: var(--muted); box-shadow: none;
+      font-size: var(--fs-sm); white-space: nowrap;
     }
-    .pending-cancel:hover { color: var(--error); border-color: var(--error); filter: none; }
+    .pending-actions button:hover { filter: none; }
+    .pending-cancel:hover { color: var(--error); border-color: var(--error); }
+    .pending-convert:hover { color: var(--accent); border-color: var(--accent); }
     /* A steer that became a real user turn: a thin accent bar on the left. */
     .msg.user.steer-msg { border-left: 2px solid var(--accent); }
     @keyframes harny-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
@@ -601,14 +646,24 @@ ${renderViewConfig(deps)}
     .subagent-header { gap: 6px; --sa-chip-h: 1.3rem; }
     .subagent-header .subagent-icon { color: #a98dff; vertical-align: -2px; }
     #working-bar .subagent-icon { vertical-align: -2px; }
-    .subagent-role { color: #a98dff; font-weight: 500; }
-    /* The sub-agent's short goal in the header: what it actually does. */
+    /* In this header exactly ONE element gives way: the goal. Everything else —
+       the name, the role, the status chip, abort and the arrow — is fixed, so a
+       narrow panel cannot squeeze THEM and leave the goal at full length. */
+    .subagent-header .tool-name { flex: 0 0 auto; }
+    .subagent-role { color: #a98dff; font-weight: 500; flex: 0 0 auto; }
+    /* The sub-agent's short goal in the header: what it actually does.
+       NO lower bound (min-width: 0): it may shrink all the way to nothing, and
+       the ellipsis travels left with it, because how much fits is a question
+       about the PANEL, not about the text (no character cut is applied in JS). */
     .subagent-name {
-      color: #9a9a9a; font-weight: 400; min-width: 0;
+      color: #9a9a9a; font-weight: 400; flex: 0 1 auto; min-width: 0;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
+    /* NOT margin-left: auto — the chip (running… / done / failed) sits right after
+       the goal, so it slides left together with it instead of being pinned to the
+       right edge while the goal is squeezed. */
     .subagent-status {
-      margin-left: auto; flex-shrink: 0;
+      flex-shrink: 0;
       display: inline-flex; align-items: center;
       height: var(--sa-chip-h); box-sizing: border-box;
       font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
@@ -1388,6 +1443,7 @@ ${renderViewConfig(deps)}
        hero that pushes the user to pick a session or create a new one. */
     body.no-session #input-area,
     body.no-session #status,
+    body.no-session #pending-section,
     body.no-session #metrics { display: none; }
     /* No (single) workspace: sessions/tabs/controls are all hidden; the foldes
        hero asks the user to open one folder. Takes precedence over no-session. */
@@ -1395,6 +1451,7 @@ ${renderViewConfig(deps)}
     body.no-workspace #tabs,
     body.no-workspace #input-area,
     body.no-workspace #status,
+    body.no-workspace #pending-section,
     body.no-workspace #metrics { display: none; }
     /* Point the eye up at the sessions list: the second path to act. */
     body.no-session #session-head { color: var(--accent); }
@@ -1407,7 +1464,7 @@ ${renderViewConfig(deps)}
     /* Brand mark in place of the emoji, loaded from media/icon.svg (see
        state.logoUri): the artwork lives in ONE file, no inlined duplicate.
        An <img> can't inherit currentColor, so it shows the SVG's own colors. */
-    .empty-hero .empty-logo img { width: 2.4rem; height: 2.4rem; display: block; }
+    .empty-hero .empty-logo img { width: var(--fs-logo); height: var(--fs-logo); display: block; }
     .empty-hero .empty-logo:hover img { opacity: 0.85; }
     .empty-hero h2 { margin: 0; font-size: var(--fs-xl); color: var(--fg-strong); font-weight: 700; }
     .empty-hero .empty-version { font-size: var(--fs-sm); color: #888; margin-top: -2px; }
@@ -1832,8 +1889,15 @@ ${renderViewConfig(deps)}
   <div id="tabs"></div>
   <div id="messages"></div>
   <!-- Messages typed while the session works (queue/steer): a real footer,
-       outside #messages, so they survive streaming re-renders. -->
-  <div id="pending-area" class="hidden"></div>
+       outside #messages, so they survive streaming re-renders. A COLLAPSIBLE
+       section like the sessions list: the header carries the counts, so a
+       collapsed section still says what is waiting. -->
+  <div id="pending-section" class="hidden">
+    <div id="pending-head" role="button" tabindex="0" aria-expanded="true" title="Messages typed while the session works">
+      <span class="toggle">▼</span><span id="pending-head-text"></span>
+    </div>
+    <div id="pending-area" class="hidden"></div>
+  </div>
   <!-- Working indicator: the BOTTOM-most footer, always BELOW the transcript
        and the pending bubbles. -->
   <div id="working-bar" class="hidden">● Working...</div>
