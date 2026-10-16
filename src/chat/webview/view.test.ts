@@ -4131,13 +4131,50 @@ describe("main sessions list search", () => {
     await loadView();
     const row = document.getElementById("session-search-row") as HTMLElement;
     const head = document.getElementById("session-head") as HTMLElement;
+    const arrow = document.querySelector("#session-head .toggle") as HTMLElement;
     expect(row.classList.contains("hidden")).toBe(false);
+    expect(arrow.textContent).toBe("▼");
 
     head.click(); // collapse
     expect(row.classList.contains("hidden")).toBe(true);
+    expect(arrow.textContent).toBe("▶"); // the arrow never contradicts the list
 
     head.click(); // expand again
     expect(row.classList.contains("hidden")).toBe(false);
+    expect(arrow.textContent).toBe("▼");
+  });
+
+  it("collapses the sessions section when a session is picked, and the header reopens it", async () => {
+    await loadView();
+    const list = document.getElementById("sessions") as HTMLElement;
+    const searchRow = document.getElementById("session-search-row") as HTMLElement;
+    const arrow = document.querySelector("#session-head .toggle") as HTMLElement;
+    expect(list.classList.contains("hidden")).toBe(false);
+
+    (document.querySelector("#sessions .srow .name") as HTMLElement).click();
+
+    // The click still opens the session…
+    expect(posted).toContainEqual({ type: "openSession", id: "a" });
+    // …and the list gets out of the way, search field and arrow included.
+    expect(list.classList.contains("hidden")).toBe(true);
+    expect(searchRow.classList.contains("hidden")).toBe(true);
+    expect(arrow.textContent).toBe("▶");
+
+    (document.getElementById("session-head") as HTMLElement).click();
+    expect(list.classList.contains("hidden")).toBe(false);
+    expect(searchRow.classList.contains("hidden")).toBe(false);
+    expect(arrow.textContent).toBe("▼");
+  });
+
+  it("leaves the sessions section OPEN for a row action: only PICKING a session collapses", async () => {
+    await loadView();
+    const list = document.getElementById("sessions") as HTMLElement;
+    const buttons = document.querySelectorAll("#sessions .srow-actions button");
+    // Branch/rename/delete act ON a row without choosing it, so the list must
+    // stay where it is — collapsing here would hide the list mid-management.
+    (buttons[1] as HTMLElement).click(); // rename
+    expect(posted).toContainEqual({ type: "renameSession", id: "a" });
+    expect(list.classList.contains("hidden")).toBe(false);
   });
 });
 

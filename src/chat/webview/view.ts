@@ -161,6 +161,17 @@ function setSessionsVisible(visible: boolean): void {
   sessionsEl.classList.toggle("hidden", !visible);
   sessionSearchRow.classList.toggle("hidden", !visible);
 }
+
+/**
+ * Expand/collapse the sessions section, keeping the header arrow in sync. EVERY
+ * path that changes the visibility goes through here, so the arrow can never
+ * contradict the list (the header click, the empty hero, and picking a session).
+ */
+function setSessionsExpanded(expanded: boolean): void {
+  setSessionsVisible(expanded);
+  const toggle = sessionHead.querySelector(".toggle");
+  if (toggle) toggle.textContent = expanded ? "▼" : "▶";
+}
 /** Matching ids for the MAIN-list search (null = no filter). Scoped to the
  * sessions already shown (the current workspace folder). */
 let sessionSearchIds: Set<string> | null = null;
@@ -395,7 +406,15 @@ function renderSessions(sessions: SessionInfo[]): void {
     const name = document.createElement("span");
     name.className = "name";
     name.textContent = s.name || "Session";
-    name.addEventListener("click", () => vscode.postMessage({ type: "openSession", id: s.id }));
+    name.addEventListener("click", () => {
+      vscode.postMessage({ type: "openSession", id: s.id });
+      // Picking a session ENDS the gesture: the list collapses so the transcript
+      // gets the space back. The header is one click away to reopen it, and an
+      // EMPTY session expands it again on its own (the hero points at the list).
+      // Deliberately here and NOT on the row: branch/rename/delete act ON a row
+      // without choosing it, so they must leave the list open.
+      setSessionsExpanded(false);
+    });
     const actions = document.createElement("span");
     actions.className = "srow-actions";
     actions.innerHTML =
@@ -1279,9 +1298,7 @@ function renderEmptyShell(): void {
     vscode.postMessage({ type: "newSession" });
   });
   // The sessions list is the second path to act: make sure it stays visible.
-  setSessionsVisible(true);
-  const toggle = sessionHead.querySelector(".toggle");
-  if (toggle) toggle.textContent = "▼";
+  setSessionsExpanded(true);
 }
 
 function renderMessages(msgs: ChatMsg[]): boolean {
@@ -2078,10 +2095,7 @@ messagesEl.addEventListener("click", updateTranscriptActions);
 window.addEventListener("focus", () => vscode.postMessage({ type: "getSkills" }));
 newSessionBtn.addEventListener("click", () => vscode.postMessage({ type: "newSession" }));
 sessionHead.addEventListener("click", () => {
-  const visible = sessionsEl.classList.contains("hidden"); // collapsing -> show
-  setSessionsVisible(visible);
-  const t = sessionHead.querySelector(".toggle");
-  if (t) t.textContent = visible ? "▼" : "▶";
+  setSessionsExpanded(sessionsEl.classList.contains("hidden")); // collapsed -> expand
 });
 
 // The PLAY button blinks while the LLM works (streaming OR compaction): the same
