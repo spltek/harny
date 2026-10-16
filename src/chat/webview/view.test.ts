@@ -210,9 +210,52 @@ function setupDom(
   });
 }
 
+/** Listeners the view module registered on the SHARED `window`/`document`.
+ *
+ * Every test re-imports the module (`vi.resetModules()`), but `window` is the same
+ * object for the whole file: without detaching, each test adds one more `message`
+ * listener and EVERY host message is handled once per test run SO FAR. By the end
+ * of the file that is ~300 handlers, each rendering markdown into its own detached
+ * transcript: the suite got slower the longer it ran (37 s in CI against 16 s
+ * locally) and a late test's timing became a function of the whole file. */
+let globalListeners: {
+  target: Window | Document;
+  type: string;
+  fn: EventListener;
+  options?: AddEventListenerOptions | boolean;
+}[] = [];
+
+function detachGlobalListeners(): void {
+  for (const { target, type, fn, options } of globalListeners) {
+    target.removeEventListener(type, fn, options);
+  }
+  globalListeners = [];
+}
+
 async function loadView(): Promise<void> {
+  detachGlobalListeners();
   vi.resetModules();
-  await import("./view");
+  const targets: (Window | Document)[] = [window, document];
+  const realAdd = targets.map((t) => t.addEventListener);
+  try {
+    targets.forEach((target, i) => {
+      // Record, then register normally: the NEXT test detaches everything this
+      // instance subscribed to on the shared globals.
+      target.addEventListener = function (
+        type: string,
+        fn: EventListener,
+        options?: AddEventListenerOptions | boolean,
+      ) {
+        globalListeners.push({ target, type, fn, options });
+        return (realAdd[i] as typeof target.addEventListener).call(target, type, fn, options);
+      } as typeof target.addEventListener;
+    });
+    await import("./view");
+  } finally {
+    targets.forEach((target, i) => {
+      target.addEventListener = realAdd[i] as typeof target.addEventListener;
+    });
+  }
 }
 
 describe("view webview client", () => {
@@ -5770,19 +5813,52 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
 //  2. the only paint channel was requestAnimationFrame, which Chromium starves
 //     for the entire duration of a resize (visibly so on Windows) — buffered
 //     text had no way to land.
+//
+// These tests are DELIBERATELY clock-free: no "not painted yet within X ms" —
+// that encodes a race, and a loaded runner can legitimately paint after a quiet
+// gap. What is asserted instead is countable (how many paints a burst triggers,
+// all inside ONE synchronous block) or eventual (the text does land, within a
+// generous bound), so the only thing that can fail them is the behaviour itself.
 describe("streaming paint coalescing (resize / parallel sub-agents)", () => {
   beforeEach(() => {
     posted.length = 0;
     setupDom();
   });
 
-  /** Wait (bounded) for a coalesced paint. One frame is NOT enough in jsdom:
-   * the pacing follows the measured render cost, and a 4 KB markdown render
-   * costs several frames here (in the real webview it is well under one). */
-  const painted = (read: () => string, needle: string): Promise<void> =>
-    vi.waitFor(() => expect(read()).toContain(needle), { timeout: 2000 });
   /** Long enough to leave the "cheap render" fast path (> FAST_PAINT_CHARS). */
   const LONG = "x".repeat(4200);
+
+  /**
+   * Count the PAINTS of a node. Every paint is a full markdown render of the whole
+   * accumulated log — the cost this regression is about — so counting them IS the
+   * property under test. The accessor is installed on the node itself (the real
+   * descriptor stays on Element.prototype), which makes it exact and clock-free:
+   * everything read around it happens in one synchronous block.
+   */
+  function countPaints(node: HTMLElement): () => number {
+    let paints = 0;
+    for (let proto: object | null = node; proto; proto = Object.getPrototypeOf(proto)) {
+      const desc = Object.getOwnPropertyDescriptor(proto, "innerHTML");
+      if (!desc?.get || !desc.set) continue;
+      Object.defineProperty(node, "innerHTML", {
+        configurable: true,
+        get: () => desc.get!.call(node) as string,
+        set: (value: string) => {
+          paints++;
+          desc.set!.call(node, value);
+        },
+      });
+      return () => paints;
+    }
+    throw new Error("innerHTML accessor not found");
+  }
+
+  /** Wait (generous, bounded) for the coalesced text to LAND. It only asks that a
+   * paint happens at all — never that it happens within some narrow window — so a
+   * slow machine cannot make it flaky: the frame and the timer both satisfy it. */
+  const eventually = (read: () => string, needle: string): Promise<void> =>
+    vi.waitFor(() => expect(read()).toContain(needle), { timeout: 2000 });
+
   const startRun = (): void => {
     (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
     (document.getElementById("send-btn") as HTMLButtonElement).click();
@@ -5801,61 +5877,48 @@ describe("streaming paint coalescing (resize / parallel sub-agents)", () => {
     hostMessage({ type: "subagentEvent", toolCallId: id, event });
   };
 
-  it("coalesces a long answer instead of re-rendering it on every delta", async () => {
+  it("paints a SHORT chunk immediately (the stream stays live)", async () => {
     await loadView();
     startRun();
 
-    // First chunk of a long segment: the leading edge paints immediately.
-    hostMessage({ type: "textDelta", content: LONG + "HEAD" });
+    // Under the cheap-render threshold the paint is immediate — no frame, no
+    // timer, no clock: asserting it synchronously is exact.
+    hostMessage({ type: "textDelta", content: "hello" });
     const bubble = document.querySelector(".msg.assistant") as HTMLElement;
-    expect(bubble.textContent).toContain("HEAD");
-
-    // A chunk arriving in the SAME frame must NOT re-render the whole answer…
-    hostMessage({ type: "textDelta", content: "-tail" });
-    expect(bubble.textContent).not.toContain("tail");
-    // …and must still land, in order and complete, at the paced paint.
-    await painted(() => bubble.textContent ?? "", "HEAD-tail");
+    expect(bubble.textContent).toContain("hello");
   });
 
-  it("paints a sub-agent's buffered text on the frame, and flushes it on done", async () => {
+  it("renders a long answer AT MOST once per burst of deltas", async () => {
+    await loadView();
+    startRun();
+    hostMessage({ type: "textDelta", content: LONG + "HEAD" });
+    const bubble = document.querySelector(".msg.assistant") as HTMLElement;
+    await eventually(() => bubble.textContent ?? "", "HEAD");
+
+    // 30 chunks in ONE synchronous block: a whole-log markdown render per delta is
+    // exactly what pinned the panel. At most one paint may happen here (the leading
+    // edge, when a stall made the gap look quiet) — never thirty.
+    const paints = countPaints(bubble);
+    for (let i = 0; i < 30; i++) hostMessage({ type: "textDelta", content: "." });
+    expect(paints()).toBeLessThanOrEqual(1);
+
+    // …and every buffered character still lands, in order.
+    await eventually(() => bubble.textContent ?? "", "HEAD" + ".".repeat(30));
+  });
+
+  it("renders a sub-agent's log AT MOST once per burst of deltas", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
     streamDelegate("s1");
-
     subAgentEvent("s1", { type: "text_delta", content: LONG + "HEAD" });
     const answer = document.querySelector(".sa-answer") as HTMLElement;
-    expect(answer.textContent).toContain("HEAD");
+    await eventually(() => answer.textContent ?? "", "HEAD");
 
-    subAgentEvent("s1", { type: "text_delta", content: "-tail" });
-    expect(answer.textContent).not.toContain("tail");
-    await painted(() => answer.textContent ?? "", "HEAD-tail");
-  });
+    const paints = countPaints(answer);
+    for (let i = 0; i < 30; i++) subAgentEvent("s1", { type: "text_delta", content: "." });
+    expect(paints()).toBeLessThanOrEqual(1);
 
-  it("flushes a sub-agent's buffered tail on the terminal event (frames dead)", async () => {
-    // Windows resize: no frame arrives at all, so the tail that is still
-    // buffered has to be painted by the terminal event itself — a finished
-    // sub-agent may never look like it stopped mid-sentence.
-    const realRaf = window.requestAnimationFrame;
-    window.requestAnimationFrame = () => 0;
-    try {
-      await loadView();
-      hostMessage(PARALLEL_ON);
-      streamDelegate("s1");
-
-      subAgentEvent("s1", { type: "text_delta", content: LONG + "HEAD" });
-      const answer = document.querySelector(".sa-answer") as HTMLElement;
-      expect(answer.textContent).toContain("HEAD");
-
-      // Buffered: the pacing cannot have elapsed since the paint above, and no
-      // frame can arrive. Nothing may reach the DOM before the terminal event.
-      subAgentEvent("s1", { type: "text_delta", content: "-end" });
-      expect(answer.textContent).not.toContain("end");
-
-      subAgentEvent("s1", { type: "done" });
-      expect(answer.textContent).toContain("HEAD-end");
-    } finally {
-      window.requestAnimationFrame = realRaf;
-    }
+    await eventually(() => answer.textContent ?? "", "HEAD" + ".".repeat(30));
   });
 
   it("keeps a pending paint per sub-agent (parallel streams never overwrite each other)", async () => {
@@ -5863,35 +5926,59 @@ describe("streaming paint coalescing (resize / parallel sub-agents)", () => {
     hostMessage(PARALLEL_ON);
     streamDelegate("s1");
     streamDelegate("s2");
-
     subAgentEvent("s1", { type: "text_delta", content: LONG + "A" });
     subAgentEvent("s2", { type: "text_delta", content: LONG + "B" });
-    // Both tails arrive in the same frame, for two different bubbles.
-    subAgentEvent("s1", { type: "text_delta", content: "-one" });
-    subAgentEvent("s2", { type: "text_delta", content: "-two" });
-
-    const logs = [...document.querySelectorAll(".sa-answer")];
-    await painted(() => logs.map((e) => e.textContent ?? "").join("|"), "A-one");
-    await painted(() => logs.map((e) => e.textContent ?? "").join("|"), "B-two");
-
+    const logs = [...document.querySelectorAll(".sa-answer")] as HTMLElement[];
     expect(logs).toHaveLength(2);
-    expect(logs[0].textContent).toContain("A-one");
-    expect(logs[1].textContent).toContain("B-two");
+    await eventually(() => logs[0].textContent ?? "", "A");
+    await eventually(() => logs[1].textContent ?? "", "B");
+
+    const paints1 = countPaints(logs[0]);
+    const paints2 = countPaints(logs[1]);
+    // Alternating chunks in ONE tick, for two different bubbles: with a SHARED
+    // coalescer the last push would clobber the other bubble's pending paint, and
+    // its tail would be lost for good (the `eventually` calls below would hang).
+    for (let i = 0; i < 20; i++) {
+      subAgentEvent("s1", { type: "text_delta", content: "1" });
+      subAgentEvent("s2", { type: "text_delta", content: "2" });
+    }
+    expect(paints1()).toBeLessThanOrEqual(1);
+    expect(paints2()).toBeLessThanOrEqual(1);
+
+    await eventually(() => logs[0].textContent ?? "", "A" + "1".repeat(20));
+    await eventually(() => logs[1].textContent ?? "", "B" + "2".repeat(20));
   });
 
-  it("paints with the timer fallback when requestAnimationFrame never fires", async () => {
-    // This is the Windows resize case: for the whole duration of a drag Chromium
-    // delivers no frame at all. The stream must keep showing up anyway.
+  it("a terminal event paints what is still buffered, at once", async () => {
+    await loadView();
+    hostMessage(PARALLEL_ON);
+    streamDelegate("s1");
+    subAgentEvent("s1", { type: "text_delta", content: LONG + "HEAD" });
+    const answer = document.querySelector(".sa-answer") as HTMLElement;
+    await eventually(() => answer.textContent ?? "", "HEAD");
+
+    // The last chunk is buffered (nothing can paint it in between: no time passes,
+    // and the counter is not involved). The terminal event must paint it
+    // SYNCHRONOUSLY, or a finished sub-agent looks like it stopped mid-sentence.
+    subAgentEvent("s1", { type: "text_delta", content: "-end" });
+    subAgentEvent("s1", { type: "done" });
+    expect(answer.textContent).toContain("HEAD-end");
+  });
+
+  it("paints buffered text with the TIMER when requestAnimationFrame never fires", async () => {
+    // Windows resize: for the whole duration of a drag Chromium delivers no frame.
+    // After the last chunk nothing else will push, so if the timer fallback were
+    // missing the buffered text would never appear — the wait below would hang.
     const realRaf = window.requestAnimationFrame;
     window.requestAnimationFrame = () => 0;
     try {
       await loadView();
       startRun();
       hostMessage({ type: "textDelta", content: LONG + "HEAD" });
-      hostMessage({ type: "textDelta", content: "-tail" });
+      for (let i = 0; i < 5; i++) hostMessage({ type: "textDelta", content: "." });
 
       const bubble = document.querySelector(".msg.assistant") as HTMLElement;
-      await vi.waitFor(() => expect(bubble.textContent).toContain("HEAD-tail"), { timeout: 1000 });
+      await eventually(() => bubble.textContent ?? "", "HEAD" + ".".repeat(5));
     } finally {
       window.requestAnimationFrame = realRaf;
     }
