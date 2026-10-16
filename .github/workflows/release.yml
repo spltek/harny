@@ -74,7 +74,23 @@ jobs:
             exit 0
           fi
           npx @vscode/vsce publish --packagePath ./*.vsix -p "$VSCE_PAT"
+      # Two ways in, and the reason for the fallback is worth writing down:
+      #  - trusted publishing (OIDC, no secret) needs open-vsx.org to RESOLVE the
+      #    repository, and it does that without credentials, so a PRIVATE repo
+      #    comes back as "Could not resolve GitHub repository owner/name" and the
+      #    registration form cannot even be submitted;
+      #  - the OVSX_PAT access token works with a private repo, and the ovsx CLI
+      #    disables trusted publishing by itself when a token is given.
+      # So: set the secret to publish from a private repository; once the repo is
+      # public, remove it and OIDC takes over (the token can then be revoked).
       - name: Publish to Open VSX (VSCodium)
-        # `--trusted-publishing` exchanges the workflow's OIDC ID token for a
-        # short-lived publishing token (fails if no ID token is available).
-        run: npx --yes ovsx@^1.2.0 publish ./*.vsix --trusted-publishing
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          if [ -n "$OVSX_PAT" ]; then
+            echo "Open VSX: publishing with OVSX_PAT (private repository)."
+            npx --yes ovsx@^1.2.0 publish ./*.vsix -p "$OVSX_PAT"
+          else
+            echo "Open VSX: publishing with trusted publishing (OIDC)."
+            npx --yes ovsx@^1.2.0 publish ./*.vsix --trusted-publishing
+          fi
