@@ -1,5 +1,5 @@
-import type { McpClient, McpToolInfo } from "./types";
-import type { Tool, ToolDefinition, ToolResult } from "../tools/tool";
+import type { McpClient, McpToolInfo, ServerAnalyzePolicy } from "./types";
+import type { AnalyzePolicy, Tool, ToolDefinition, ToolResult } from "../tools/tool";
 
 /** Harny tool-name for an MCP tool (Claude-compatible namespacing). */
 export function mcpToolName(server: string, tool: string): string {
@@ -19,8 +19,50 @@ export class McpTool implements Tool {
     private readonly server: string,
     private readonly info: McpToolInfo,
     private readonly client: McpClient,
+    /** THE USER's declaration for this server (see ServerAnalyzePolicy). Read on every
+     * access, so a settings change applies to the next turn without reconnecting. */
+    private readonly declaredPolicy: () => ServerAnalyzePolicy | undefined = () => undefined,
   ) {
     this.name = mcpToolName(server, info.name);
+  }
+
+  /**
+   * Analyze: an external call cannot be PREVIEWED (there is no diff to validate), so the
+   * only two options are run or refuse — and Harny refuses everything that does not
+   * PROVE it cannot modify resources:
+   *
+   *   · the user declared the server `read-only` → runs (their statement);
+   *   · the user declared it `trusted` AND the tool sends `readOnlyHint: true` → runs
+   *     (the spec: annotations are untrusted "unless they come from trusted servers");
+   *   · anything else — including a tool that sends NO annotations, whose protocol
+   *     defaults are `readOnlyHint: false` / `destructiveHint: true` — is refused.
+   *
+   * This is the difference between "an unknown tool is assumed harmless" (how an MCP
+   * `drop_table` used to run in Analyze) and the promise Analyze actually makes.
+   */
+  get analyzePolicy(): AnalyzePolicy {
+    const declared = this.declaredPolicy();
+    if (declared === "read-only") return "read-only";
+    if (declared === "trusted" && this.info.annotations?.readOnlyHint === true) return "read-only";
+    return "refuse";
+  }
+
+  /** Named and actionable: the model must know WHICH server is blocking and what the two
+   * ways out are (Build, or a per-server statement in the settings). */
+  get analyzeRefusal(): string {
+    const declared = this.declaredPolicy();
+    const base = `"${this.name}" (MCP server "${this.server}") does not run in Analyze: it may modify ` +
+      `resources, and an external call cannot be previewed the way a file write can.`;
+    if (declared === "trusted") {
+      return (
+        `${base} The server is marked trusted, but this tool does not declare readOnlyHint: true ` +
+        `(no hint, or destructiveHint, means "assume it modifies"). Switch to Build to run it.`
+      );
+    }
+    return (
+      `${base} Server "${this.server}" is not declared read-only: in the MCP settings you can mark it ` +
+      `read-only (every tool of it) or trusted (believe its own readOnlyHint), or switch to Build to run this call.`
+    );
   }
 
   get definition(): ToolDefinition {

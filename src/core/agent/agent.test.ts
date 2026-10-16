@@ -17,7 +17,10 @@ import { SubAgentRunner } from "./subagent";
 import type { AgentEvent, SubAgentEvent } from "./types";
 import { resolveLoopGuardOptions, type LoopGuardOptions } from "./loop-guard";
 import { McpTool } from "../mcp/mcp-tool";
+import { ShellTool } from "../tools/shell-tool";
+import { FILE_PREVIEW_NOTE } from "../tools/mode-policy";
 import { conversationFaults } from "../history/conversation-validity";
+import type { AnalyzePolicy } from "../tools/tool";
 
 const VALID_CONFIG: HarnyConfig = {
   provider: "openai",
@@ -51,10 +54,21 @@ function fakeFactory(...callChunks: StreamChunk[][]): LLMProviderFactory & { cal
   };
 }
 
-function makeTool(name: string, result: ToolResult = { content: "ok", isError: false }): Tool & { called: boolean } {
+/** A stand-in tool. Its default policy is `read-only` — a fixture models a KNOWN tool, and
+ * most tests are not about Analyze — while production's default is `refuse` (see
+ * AnalyzePolicy). The tests whose subject IS the policy declare it explicitly, and the
+ * REAL declarations are pinned in create-default-tools.test.ts: that is the check that
+ * matters, so a real tool cannot forget to declare. */
+function makeTool(
+  name: string,
+  result: ToolResult = { content: "ok", isError: false },
+  opts: { analyzePolicy?: AnalyzePolicy; cacheable?: boolean } = {},
+): Tool & { called: boolean } {
   const tool = {
     name,
     definition: { name, description: name, parameters: { type: "object", properties: {} } },
+    analyzePolicy: opts.analyzePolicy ?? "read-only",
+    ...(opts.cacheable ? { cacheable: true } : {}),
     called: false,
     execute: (): ToolResult => {
       tool.called = true;
@@ -62,6 +76,18 @@ function makeTool(name: string, result: ToolResult = { content: "ok", isError: f
     },
   };
   return tool;
+}
+
+/** A file-mutating tool as the REAL ones declare it: `preview` in Analyze, plus the note
+ * that tells the model a write there is a PROPOSAL. */
+function previewTool(name: string, result: ToolResult = { content: "PROPOSED (preview)", isError: false }) {
+  return { ...makeTool(name, result, { analyzePolicy: "preview" }), analyzeNote: FILE_PREVIEW_NOTE };
+}
+
+/** The REAL Shell tool with a fake runner: its Analyze allowlist lives in the tool, so a
+ * test about that gate must use it rather than re-implement the rule. */
+function shellTool(run: (command: string, opts: unknown) => Promise<unknown>) {
+  return new ShellTool({ run: run as never }, () => "/workspace");
 }
 
 interface Harness {
@@ -580,6 +606,8 @@ describe("Agent", () => {
     const write: Tool = {
       name: "Write",
       definition: { name: "Write", description: "write", parameters: { type: "object", properties: {} } },
+      analyzePolicy: "preview", // the subject of this test IS the Analyze gate
+      analyzeNote: FILE_PREVIEW_NOTE,
       execute: (_args, ctx) => {
         modesSeen.push(ctx?.dryRun); // what the turn decided for THIS call
         agentRef?.setMode("agent"); // the user flips to Build while the turn runs
@@ -732,6 +760,8 @@ describe("Agent", () => {
     const read: Tool = {
       name: "Read",
       definition: { name: "Read", description: "read", parameters: { type: "object", properties: {} } },
+      analyzePolicy: "read-only",
+      cacheable: true, // the subject of this test IS the loop-guard cache
       execute: (): ToolResult => {
         runs++;
         return { content: "FILE CONTENT", isError: false };
@@ -782,7 +812,7 @@ describe("Agent", () => {
     const agent = new Agent({
       config: new StaticConfigProvider(VALID_CONFIG),
       llmFactory: factory,
-      tools: new ToolRegistry([makeTool("StrReplace")]),
+      tools: new ToolRegistry([previewTool("StrReplace")]),
       history: new InMemoryChatHistory(),
       events: new InMemoryEventBus<AgentEvent>(),
       systemPrompt: new DefaultSystemPromptBuilder(() => [], () => "/w"),
@@ -805,7 +835,7 @@ describe("Agent", () => {
       { type: "tool_call_end", index: 0 },
     ];
     const { agent, factory, history } = buildHarness({
-      tools: [makeTool("StrReplace")],
+      tools: [previewTool("StrReplace")],
       chunks: [
         toolCall,
         [{ type: "text", content: "🔧 Tool: StrReplace\n\n" }],
@@ -890,7 +920,7 @@ describe("Agent", () => {
     expect(logs.some((l) => /^tool: FakeTool ok in \d+ms$/.test(l))).toBe(true);
   });
 
-  it("an MCP tool registered in the registry is callable by the agent", async () => {
+  it("an MCP tool registered in the registry is callable by the agent (Build)", async () => {
     let called: Record<string, unknown> | undefined;
     const client = {
       callTool: async (_name: string, args: Record<string, unknown>) => {
@@ -907,11 +937,95 @@ describe("Agent", () => {
       tools: [new McpTool("test", { name: "echo" }, client)],
       chunks: [call, [{ type: "text", content: "done" }]],
     });
+    agent.setMode("agent"); // Build: full tool use
 
     await agent.send("x");
 
     expect(called).toEqual({ text: "hi" });
     expect(history.all().some((m) => m.role === "tool" && /mcp-ok/.test(m.content))).toBe(true);
+  });
+
+  it("REFUSES a tool that declares nothing at all (production's default is not 'harmless')", async () => {
+    // The safety net under every dynamic source: a tool in the registry with NO
+    // declaration is refused in Analyze. This is what makes the hole unable to reopen by
+    // omission — a new MCP server, a plugin, a tool added tomorrow.
+    let called = false;
+    const undeclared: Tool = {
+      name: "MysteryTool",
+      definition: { name: "MysteryTool", description: "?", parameters: { type: "object", properties: {} } },
+      execute: () => {
+        called = true;
+        return { content: "ran", isError: false };
+      },
+    };
+    const { agent, history } = buildHarness({
+      tools: [undeclared],
+      chunks: [
+        [
+          { type: "tool_call_start", index: 0, id: "m", name: "MysteryTool" },
+          { type: "tool_call_end", index: 0 },
+        ],
+        [{ type: "text", content: "ok" }],
+      ],
+    });
+
+    await agent.send("do something");
+
+    expect(called).toBe(false);
+    expect(history.all().find((m) => m.role === "tool")?.content).toContain("Analyze never modifies");
+  });
+
+  it("REFUSES an undeclared MCP tool in Analyze — the client is never called (the reported hole)", async () => {
+    // `mcp__db__drop_table` used to be "not a file-mutating tool", so Analyze ran it for
+    // real: it cannot be previewed like a file write, and nobody had declared it harmless.
+    let called = false;
+    const client = {
+      callTool: async () => {
+        called = true;
+        return { text: "dropped", isError: false };
+      },
+    } as unknown as import("../mcp/mcp-client").McpStdioClient;
+    const call: StreamChunk[] = [
+      { type: "tool_call_start", index: 0, id: "m", name: "mcp__db__drop_table" },
+      { type: "tool_call_delta", index: 0, delta: "{}" },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const { agent, history } = buildHarness({
+      tools: [new McpTool("db", { name: "drop_table" }, client)],
+      chunks: [call, [{ type: "text", content: "I did not run it" }]],
+    });
+
+    await agent.send("drop it"); // default mode = Analyze
+
+    expect(called).toBe(false); // NOT executed
+    const refusal = history.all().find((m) => m.role === "tool")?.content ?? "";
+    expect(refusal).toContain("db"); // names the server
+    expect(refusal).toContain("readOnlyHint"); // says WHY
+    expect(refusal).toContain("Build"); // and what to do about it
+  });
+
+  it("runs an MCP tool in Analyze once the USER declares its server read-only", async () => {
+    let called = false;
+    const client = {
+      callTool: async () => {
+        called = true;
+        return { text: "rows", isError: false };
+      },
+    } as unknown as import("../mcp/mcp-client").McpStdioClient;
+    const call: StreamChunk[] = [
+      { type: "tool_call_start", index: 0, id: "m", name: "mcp__db__read_query" },
+      { type: "tool_call_delta", index: 0, delta: "{}" },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const { agent } = buildHarness({
+      // The declaration is read LIVE: the tool asks the config on every access.
+      tools: [new McpTool("db", { name: "read_query" }, client, () => "read-only")],
+      chunks: [call, [{ type: "text", content: "ok" }]],
+    });
+
+    await agent.send("count the rows");
+
+    expect(called).toBe(true);
   });
 
   it("logs a periodic stream heartbeat while the provider stalls (watchdog)", async () => {
@@ -962,7 +1076,7 @@ describe("Agent", () => {
 
   it("emits preview_ready when Analyze prepared changes (nothing applied)", async () => {
     const { agent, events } = buildHarness({
-      tools: [makeTool("Edit")],
+      tools: [previewTool("Edit")],
       chunks: [
         [
           { type: "tool_call_start", index: 0, id: "c", name: "Edit" },
@@ -986,7 +1100,7 @@ describe("Agent", () => {
 
   it("emits preview_ready + flags the message even when the model wrote its OWN switch line", async () => {
     const { agent, events, history } = buildHarness({
-      tools: [makeTool("Edit")],
+      tools: [previewTool("Edit")],
       chunks: [
         [
           { type: "tool_call_start", index: 0, id: "c", name: "Edit" },
@@ -1017,7 +1131,7 @@ describe("Agent", () => {
     // Build: a real write fires onFileChanged.
     const changes: { path: string; tool: string }[] = [];
     const { agent } = buildHarness({
-      tools: [makeTool("Write")],
+      tools: [previewTool("Write")],
       chunks: writeChunks,
       onFileChanged: (c) => changes.push(c),
     });
@@ -1028,7 +1142,7 @@ describe("Agent", () => {
     // Analyze: the same tool runs as a PREVIEW → no file-change event.
     const previews: { path: string; tool: string }[] = [];
     const { agent: a2 } = buildHarness({
-      tools: [makeTool("Write")],
+      tools: [previewTool("Write")],
       chunks: writeChunks,
       onFileChanged: (c) => previews.push(c),
     });
@@ -1285,6 +1399,7 @@ describe("Agent follow-through guard", () => {
 });
 
 describe("Analyze (read-only) mode", () => {
+
   // Captures the tool definitions AND the system prompt each LLM turn
   // advertises, so tests can assert what the model was (and was NOT) allowed
   // to call and what rules it was given.
@@ -1333,9 +1448,17 @@ describe("Analyze (read-only) mode", () => {
   }
 
   it("advertises the SAME tool set in both modes; Analyze tags Shell read-only and writers as previews", async () => {
-    const tools = ["Read", "Write", "Edit", "Delete", "StrReplace", "Shell", "Grep"].map((n) =>
-      ({ name: n, definition: { name: n, description: n, parameters: { type: "object", properties: {} } }, execute: async () => ({ content: "ok", isError: false }) }) as Tool,
-    );
+    // Built as the REAL tools declare themselves: the notes come from the declarations
+    // (Shell's from the real tool), not from a name list in the policy module.
+    const tools: Tool[] = [
+      makeTool("Read"),
+      previewTool("Write"),
+      previewTool("Edit"),
+      previewTool("Delete"),
+      previewTool("StrReplace"),
+      shellTool(async () => ({ stdout: "", stderr: "", code: 0, timedOut: false })),
+      makeTool("Grep"),
+    ];
     const { agent, seenDefinitions } = capturingHarness(tools);
 
     await agent.send("analyze this"); // default mode = analyze
@@ -1352,7 +1475,7 @@ describe("Analyze (read-only) mode", () => {
 
   it("runs file-mutating tool calls in analyze as DRY-RUN previews (never applied)", async () => {
     const writeTool = {
-      ...makeTool("Write"),
+      ...previewTool("Write"),
       execute: vi.fn(async (): Promise<ToolResult> => ({ content: "PROPOSED (preview — NOT written): a.txt", isError: false })),
     };
     const { agent, history } = capturingHarness(
@@ -1372,7 +1495,7 @@ describe("Analyze (read-only) mode", () => {
   });
 
   it("runs the same write tool after switching to agent mode", async () => {
-    const writeTool = { ...makeTool("Write"), execute: vi.fn(async (): Promise<ToolResult> => ({ content: "wrote", isError: false })) };
+    const writeTool = { ...previewTool("Write"), execute: vi.fn(async (): Promise<ToolResult> => ({ content: "wrote", isError: false })) };
     const { agent, history } = capturingHarness(
       [writeTool],
       [toolCallChunks("Write", '{"path":"a.txt","content":"x"}'), [{ type: "text", content: "ok" }]],
@@ -1391,23 +1514,23 @@ describe("Analyze (read-only) mode", () => {
   });
 
   it("refuses a write shell command in analyze without running it, but allows read-only commands", async () => {
-    const shell = {
-      ...makeTool("Shell"),
-      execute: vi.fn(async (): Promise<ToolResult> => ({ content: "ran", isError: false })),
-    };
+    // The REAL tool: the Analyze allowlist is part of it (guardAnalyze), so nothing is
+    // re-implemented here — the fake runner is the only stand-in.
+    const run = vi.fn(async () => ({ stdout: "ran", stderr: "", code: 0, timedOut: false }));
+    const shell = new ShellTool({ run }, () => "/workspace");
     const { agent } = capturingHarness(
       [shell],
       [toolCallChunks("Shell", '{"command":"rm -rf /tmp/x"}'), [{ type: "text", content: "ok" }]],
     );
     await agent.send("delete temp");
-    expect(shell.execute as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled(); // refused BEFORE running anything
 
     const { agent: agent2, history: history2 } = capturingHarness(
       [shell, makeTool("Read")],
       [toolCallChunks("Shell", '{"command":"ls -la"}'), [{ type: "text", content: "ok" }]],
     );
     await agent2.send("list files");
-    expect(shell.execute as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledTimes(1); // the read-only command DID run
     expect(history2.all().find((m) => m.role === "tool")?.content).toBe("ran");
   });
 
@@ -1426,7 +1549,7 @@ describe("Analyze (read-only) mode", () => {
 
   it("appends an explicit 'nothing applied / switch to Build' footer when previews were prepared", async () => {
     const { agent, history } = capturingHarness(
-      [makeTool("Edit"), makeTool("Read")],
+      [previewTool("Edit"), makeTool("Read")],
       [
         toolCallChunks("Edit", '{"path":"a.ts","edits":[{"oldText":"x","newText":"y"}]}'),
         [{ type: "text", content: "I fixed the bug for you." }],
@@ -1445,7 +1568,7 @@ describe("Analyze (read-only) mode", () => {
 
   it("lists WHAT needs Build in the preview footer", async () => {
     const { agent, history } = capturingHarness(
-      [makeTool("Edit"), makeTool("Write")],
+      [previewTool("Edit"), previewTool("Write")],
       [
         toolCallChunks("Edit", '{"path":"src/a.ts","edits":[]}'),
         toolCallChunks("Write", '{"path":"src/b.ts","contents":"x"}'),
@@ -1464,7 +1587,7 @@ describe("Analyze (read-only) mode", () => {
 
   it("does not duplicate the footer when the model already told the user to switch", async () => {
     const { agent, history } = capturingHarness(
-      [makeTool("Edit")],
+      [previewTool("Edit")],
       [
         toolCallChunks("Edit", '{"path":"a.ts","edits":[{"oldText":"x","newText":"y"}]}'),
         [{ type: "text", content: `Done.\n\n${BUILD_SWITCH_HINT}` }],
@@ -1481,7 +1604,7 @@ describe("Analyze (read-only) mode", () => {
 
   it("does not add the preview footer in Build mode", async () => {
     const { agent, history } = capturingHarness(
-      [makeTool("Edit")],
+      [previewTool("Edit")],
       [toolCallChunks("Edit", '{"path":"a.ts","edits":[]}'), [{ type: "text", content: "Applied the change." }]],
       "agent",
     );
@@ -1538,9 +1661,11 @@ describe("Analyze (read-only) mode", () => {
   });
 
   it("switching back to analyze re-tags the tool definitions as read-only previews", async () => {
-    const tools = ["Read", "Write", "Shell"].map((n) =>
-      ({ name: n, definition: { name: n, description: n, parameters: { type: "object", properties: {} } }, execute: async () => ({ content: "ok", isError: false }) }) as Tool,
-    );
+    const tools: Tool[] = [
+      makeTool("Read"),
+      previewTool("Write"),
+      shellTool(async () => ({ stdout: "", stderr: "", code: 0, timedOut: false })),
+    ];
     const { agent, seenDefinitions } = capturingHarness(tools, undefined, "agent");
 
     await agent.send("full mode");
@@ -3525,6 +3650,7 @@ describe("tool context wiring", () => {
     const spy: Tool = {
       name: "SpyTool",
       definition: { name: "SpyTool", description: "spy", parameters: { type: "object", properties: {} } },
+      analyzePolicy: "read-only", // fixture: an inert tool, and the run is in the default mode
       execute: (_args, ctx) => {
         seen = ctx?.contextBudget;
         return { content: "ok", isError: false };
@@ -3801,6 +3927,7 @@ describe("tool-call pairing on an interrupted run", () => {
     const blocking: Tool = {
       name: "Shell",
       definition: { name: "Shell", description: "shell", parameters: { type: "object", properties: {} } },
+      analyzePolicy: "read-only", // fixture for the ABORT path, not the Shell policy
       execute: (_args, ctx) =>
         new Promise<ToolResult>((resolve) => {
           started();
@@ -3902,6 +4029,7 @@ describe("tool-call pairing on an interrupted run", () => {
     const silent: Tool = {
       name: "Shell",
       definition: { name: "Shell", description: "shell", parameters: { type: "object", properties: {} } },
+      analyzePolicy: "read-only", // fixture for the blank-result rule, not the Shell policy
       execute: () => ({ content: "", isError: false }),
     };
     const factory = recordingFactory([

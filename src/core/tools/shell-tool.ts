@@ -1,4 +1,5 @@
 import type { CommandRunner } from "./command-runner";
+import { ANALYZE_BLOCKED_SHELL_MESSAGE, SHELL_READ_ONLY_NOTE, isSafeReadCommand } from "./mode-policy";
 import { toolOutputCapChars, truncationNote } from "./output-budget";
 import { resolvePath } from "./path-utils";
 import type { Tool, ToolContext, ToolDefinition, ToolResult } from "./tool";
@@ -31,6 +32,20 @@ function collapseIdenticalRuns(text: string): string {
 
 export class ShellTool implements Tool {
   readonly name = "Shell";
+  /** Not classifiable from the outside: a command may be `ls` or `rm -rf`, and only the
+   * ARGUMENTS say which. So it is `guarded` — the allowlist below decides, per call. */
+  readonly analyzePolicy = "guarded" as const;
+  /** What the model is told about this tool IN ANALYZE ONLY. */
+  readonly analyzeNote = SHELL_READ_ONLY_NOTE;
+
+  /** Analyze (read-only) check for ONE command: undefined = allowed. This lives HERE,
+   * with the tool, so the agent needs no `tc.name === "Shell"` special case. */
+  guardAnalyze(args: Record<string, unknown>): string | undefined {
+    const command = String(args.command ?? "");
+    if (isSafeReadCommand(command)) return undefined;
+    return ANALYZE_BLOCKED_SHELL_MESSAGE(command);
+  }
+
   readonly definition: ToolDefinition = {
     name: "Shell",
     description:

@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+  FILE_PREVIEW_NOTE,
+  SHELL_READ_ONLY_NOTE,
+  analyzeRefusalMessage,
   isAnalyzeMode,
-  isFileMutatingTool,
   isSafeReadCommand,
   toolDefinitionsForMode,
   toolsForMode,
 } from "./mode-policy";
-import type { Tool } from "./tool";
+import type { AnalyzePolicy, Tool } from "./tool";
 
-function stubTool(name: string): Tool {
+function stubTool(
+  name: string,
+  opts: { analyzePolicy?: AnalyzePolicy; analyzeNote?: string; analyzeRefusal?: string } = {},
+): Tool {
   return {
     name,
     definition: {
@@ -16,19 +21,43 @@ function stubTool(name: string): Tool {
       description: `desc of ${name}`,
       parameters: { type: "object", properties: {} },
     },
+    ...(opts.analyzePolicy ? { analyzePolicy: opts.analyzePolicy } : {}),
+    ...(opts.analyzeNote ? { analyzeNote: opts.analyzeNote } : {}),
+    ...(opts.analyzeRefusal ? { analyzeRefusal: opts.analyzeRefusal } : {}),
     execute: async () => ({ content: "ok", isError: false }),
   };
 }
 
 describe("mode policy", () => {
-  it("flags exactly the file-mutating tools", () => {
-    for (const name of ["Write", "StrReplace", "Edit", "Delete"]) {
-      expect(isFileMutatingTool(name)).toBe(true);
+  it("the note of a tool is the one IT declares, not a name kept in a list here", () => {
+    // The tagging used to be keyed on tool NAMES held in this module; now each tool
+    // carries its own note, so a tool that forgets to declare one is visible in its own
+    // file. (The REAL declarations are pinned in create-default-tools.test.ts.)
+    const all = [
+      stubTool("Anything", { analyzePolicy: "read-only" }),
+      stubTool("Guarded", { analyzePolicy: "guarded", analyzeNote: SHELL_READ_ONLY_NOTE }),
+      stubTool("Writer", { analyzePolicy: "preview", analyzeNote: FILE_PREVIEW_NOTE }),
+    ];
+    const defs = toolDefinitionsForMode(all, "analyze");
+    expect(defs.map((d) => d.name)).toEqual(["Anything", "Guarded", "Writer"]);
+    expect(defs.find((d) => d.name === "Guarded")!.description).toContain("READ-ONLY");
+    expect(defs.find((d) => d.name === "Writer")!.description).toContain("PREVIEW MODE");
+    expect(defs.find((d) => d.name === "Anything")!.description).not.toContain("PREVIEW MODE");
+    // Agent mode appends no read-only / preview notes.
+    for (const d of toolDefinitionsForMode(all, "agent")) {
+      expect(d.description).not.toContain("READ-ONLY");
+      expect(d.description).not.toContain("PREVIEW MODE");
     }
-    // Read-only / inspection tools are NOT file-mutating.
-    for (const name of ["Read", "Grep", "Glob", "ReadLints", "TodoWrite", "WebSearch", "WebFetch", "Shell"]) {
-      expect(isFileMutatingTool(name)).toBe(false);
-    }
+  });
+
+  it("a REFUSED tool gets an actionable message — its own, when it brings one", () => {
+    const generic = analyzeRefusalMessage(stubTool("Something"));
+    expect(generic).toContain("Something");
+    expect(generic).toContain("Analyze never modifies");
+    expect(generic).toContain("Switch to Build");
+    // A tool that knows how to unblock itself (an MCP server) says it instead.
+    const own = analyzeRefusalMessage(stubTool("mcp__x__y", { analyzeRefusal: "mark the server trusted" }));
+    expect(own).toBe("mark the server trusted");
   });
 
   it("toolsForMode keeps the SAME tool set in both modes (previews, not blocking)", () => {
@@ -43,7 +72,12 @@ describe("mode policy", () => {
   });
 
   it("toolDefinitionsForMode tags the shell read-only and writers as PREVIEW in analyze", () => {
-    const all = [stubTool("Read"), stubTool("Shell"), stubTool("Write"), stubTool("Edit")];
+    const all = [
+      stubTool("Read", { analyzePolicy: "read-only" }),
+      stubTool("Shell", { analyzePolicy: "guarded", analyzeNote: SHELL_READ_ONLY_NOTE }),
+      stubTool("Write", { analyzePolicy: "preview", analyzeNote: FILE_PREVIEW_NOTE }),
+      stubTool("Edit", { analyzePolicy: "preview", analyzeNote: FILE_PREVIEW_NOTE }),
+    ];
     const defs = toolDefinitionsForMode(all, "analyze");
     // Every tool is advertised (writers run as validated previews, not hidden).
     expect(defs.map((d) => d.name)).toEqual(["Read", "Shell", "Write", "Edit"]);

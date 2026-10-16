@@ -16,6 +16,8 @@ function normPath(p: string): string {
 
 export class ReadLintsTool implements Tool {
   readonly name = "ReadLints";
+  readonly analyzePolicy = "read-only" as const;
+  readonly cacheable = true;
   readonly definition: ToolDefinition = {
     name: "ReadLints",
     description:

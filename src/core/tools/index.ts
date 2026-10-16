@@ -26,8 +26,6 @@ export {
   FILE_PREVIEW_NOTE,
   isAnalyzeMode,
   isFullAccessMode,
-  isFileMutatingTool,
-  isReadOnlyTool,
   isSafeReadCommand,
   toolDefinitionsForMode,
   toolsForMode,

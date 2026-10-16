@@ -55,8 +55,44 @@ export interface ToolContext {
   contextBudget?: number;
 }
 
+/**
+ * How a tool behaves in Analyze (read-only PREVIEW) mode.
+ *
+ * Analyze promises ONE thing: **no resource is modified**. Each tool says how that
+ * promise is kept for it, and the default is `"refuse"` — the only safe answer for a
+ * tool nobody described (a new MCP server, a plugin, a tool added tomorrow). With the
+ * name lists this used to be the opposite: an unknown tool was assumed harmless and ran
+ * for real (an MCP `drop_table` "was not a file-mutating tool").
+ *
+ *   · `"read-only"` — cannot change anything (files, databases, the world): runs normally.
+ *   · `"preview"`   — changes files and WE own it: runs DRY (validated diff, nothing written).
+ *   · `"guarded"`   — not classifiable on its own: the tool validates each call itself via
+ *                     {@link Tool.guardAnalyze} (Shell: a read-only allowlist).
+ *   · `"refuse"`    — may change something we can neither preview nor validate: never runs.
+ */
+export type AnalyzePolicy = "read-only" | "preview" | "guarded" | "refuse";
+
+/** The policy that applies when a tool does not declare one: NOT harmless. */
+export const DEFAULT_ANALYZE_POLICY: AnalyzePolicy = "refuse";
+
 export interface Tool {
   readonly name: string;
   readonly definition: ToolDefinition;
+  /** How this tool keeps Analyze's promise (see {@link AnalyzePolicy}). */
+  readonly analyzePolicy?: AnalyzePolicy;
+  /** For `analyzePolicy: "guarded"`: validate ONE call against Analyze. Returns the
+   * refusal message (shown to the model, and in the transcript) or undefined to allow.
+   * Living HERE, next to the tool, is what keeps the agent free of tool-name lists. */
+  guardAnalyze?(args: Record<string, unknown>): string | undefined;
+  /** Appended to this tool's description in Analyze only, so the model knows the contract
+   * it is working under ("this write is a PROPOSAL", "only read-only commands run"). */
+  readonly analyzeNote?: string;
+  /** What the model is told when this tool is refused in Analyze. Optional: a tool that
+   * knows how to unblock itself (an MCP server) says it better than any generic text. */
+  readonly analyzeRefusal?: string;
+  /** True when an identical call may be REUSED verbatim (loop guard cache). A tool that
+   * is read-only may still be time-varying (WebSearch) or stateful (TodoWrite), so this
+   * is a separate fact from {@link Tool.analyzePolicy}. Default: never cached. */
+  readonly cacheable?: boolean;
   execute(args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolResult> | ToolResult;
 }

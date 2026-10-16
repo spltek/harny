@@ -3,7 +3,7 @@ import { isAbsolute } from "node:path";
 import { createInterface } from "node:readline";
 import { isWindows } from "../platform";
 import { killTree } from "../process/kill-tree";
-import type { McpClient, McpToolInfo } from "./types";
+import type { McpClient, McpToolAnnotations, McpToolInfo } from "./types";
 
 /** MCP protocol version Harny speaks (tools only). */
 const PROTOCOL_VERSION = "2024-11-05";
@@ -91,6 +91,10 @@ export class McpStdioClient implements McpClient {
         name: String(rec.name ?? ""),
         ...(typeof rec.description === "string" ? { description: rec.description } : {}),
         ...(rec.inputSchema !== undefined ? { inputSchema: rec.inputSchema } : {}),
+        // The server's behavior hints decide nothing on their own (untrusted unless the
+        // user marked the server trusted) but they must not be DROPPED here either: they
+        // are what a trusted server is believed on, and they are shown to the user.
+        ...(isAnnotations(rec.annotations) ? { annotations: rec.annotations } : {}),
       };
     });
   }
@@ -199,4 +203,13 @@ export function formatMcpContent(content: unknown): string {
     } else parts.push(JSON.stringify(c));
   }
   return parts.join("\n") || "(no output)";
+}
+
+/** Minimal shape check for `ToolAnnotations`: booleans only, unknown fields ignored. */
+function isAnnotations(value: unknown): value is McpToolAnnotations {
+  if (!value || typeof value !== "object") return false;
+  const rec = value as Record<string, unknown>;
+  return ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"].some(
+    (k) => typeof rec[k] === "boolean",
+  );
 }

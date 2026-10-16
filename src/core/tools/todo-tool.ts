@@ -13,6 +13,9 @@ const MAX_OWNER_STATES = 200;
 
 export class TodoTool implements Tool {
   readonly name = "TodoWrite";
+  /** Read-only for Analyze (it changes nothing on disk) but NOT cacheable: it mutates
+  // this conversation's todo list. */
+  readonly analyzePolicy = "read-only" as const;
   readonly definition: ToolDefinition = {
     name: "TodoWrite",
     description: "Use this tool to create and manage a structured task list for your current coding session.",

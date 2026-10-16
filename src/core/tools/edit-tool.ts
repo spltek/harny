@@ -1,5 +1,6 @@
 import type { FileSystem } from "./file-system";
 import { resolvePath } from "./path-utils";
+import { FILE_PREVIEW_NOTE } from "./mode-policy";
 import type { Tool, ToolContext, ToolDefinition, ToolResult } from "./tool";
 import { applyEdits, checkStructuralBalance, closestContext, type EditOp } from "./edit-engine";
 import { diffStat, fencedDiffBlock } from "./diff-text";
@@ -13,6 +14,9 @@ import { diffStat, fencedDiffBlock } from "./diff-text";
  */
 export class EditTool implements Tool {
   readonly name = "Edit";
+  readonly analyzePolicy = "preview" as const;
+  /** What the model is told about this tool IN ANALYZE ONLY. */
+  readonly analyzeNote = FILE_PREVIEW_NOTE;
   readonly definition: ToolDefinition = {
     name: "Edit",
     description:

@@ -12,6 +12,8 @@ export const SKILL_TOOL_NAME = "Skill";
  */
 export class SkillTool implements Tool {
   readonly name = SKILL_TOOL_NAME;
+  readonly analyzePolicy = "read-only" as const;
+  readonly cacheable = true;
 
   constructor(private skills: SkillRegistry) {}
 

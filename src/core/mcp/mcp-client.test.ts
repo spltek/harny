@@ -14,7 +14,7 @@ process.stdin.on("data", (d) => {
     if (m.method === "initialize") {
       process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "test", version: "1" } } }) + "\\n");
     } else if (m.method === "tools/list") {
-      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { tools: [{ name: "echo", description: "Echo text", inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } }] } }) + "\\n");
+      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { tools: [{ name: "echo", description: "Echo text", inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] }, annotations: { readOnlyHint: true } }] } }) + "\\n");
     } else if (m.method === "tools/call") {
       process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { content: [{ type: "text", text: "echo:" + (m.params.arguments && m.params.arguments.text) }] } }) + "\\n");
     }
@@ -43,6 +43,9 @@ describe("McpStdioClient (real stdio)", () => {
     expect(tools.map((t) => t.name)).toEqual(["echo"]);
     expect(tools[0].description).toBe("Echo text");
     expect(tools[0].inputSchema).toEqual({ type: "object", properties: { text: { type: "string" } }, required: ["text"] });
+    // The server's behavior hints must SURVIVE ingestion: they are what a trusted server
+    // is believed on (and what the user is shown when deciding).
+    expect(tools[0].annotations).toEqual({ readOnlyHint: true });
 
     const res = await c.callTool("echo", { text: "hi" });
     expect(res.isError).toBe(false);

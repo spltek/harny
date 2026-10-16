@@ -4,6 +4,8 @@ import type { Tool, ToolDefinition, ToolResult } from "./tool";
 
 export class WebFetchTool implements Tool {
   readonly name = "WebFetch";
+  /** Read-only for Analyze, but NOT cacheable: the page can change between two calls. */
+  readonly analyzePolicy = "read-only" as const;
   readonly definition: ToolDefinition = {
     name: "WebFetch",
     description:

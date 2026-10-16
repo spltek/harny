@@ -177,18 +177,25 @@ export interface ProviderCatalog extends NamedProvidersSource, ModelSelectionSav
 }
 
 /** One MCP server: stdio (command) — HTTP (url) is accepted but not yet run. */
+import type { ServerAnalyzePolicy } from "../mcp/types";
+
 export interface McpStdioServerConfig {
   command: string;
   args?: string[];
   env?: Record<string, string>;
   /** false = disabled (kept in config, NOT connected, tools not exposed). */
   enabled?: boolean;
+  /** YOUR statement about what this server's tools are allowed to do in Analyze (see
+   * ServerAnalyzePolicy). Absent = the strictest: none of its tools runs in Analyze. */
+  analyze?: ServerAnalyzePolicy;
 }
 export interface McpHttpServerConfig {
   url: string;
   headers?: Record<string, string>;
   /** false = disabled (kept in config, NOT connected, tools not exposed). */
   enabled?: boolean;
+  /** See McpStdioServerConfig.analyze. */
+  analyze?: ServerAnalyzePolicy;
 }
 export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig;
 

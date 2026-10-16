@@ -5,6 +5,8 @@ import type { Tool, ToolDefinition, ToolResult } from "./tool";
 
 export class ReadTool implements Tool {
   readonly name = "Read";
+  readonly analyzePolicy = "read-only" as const;
+  readonly cacheable = true;
   readonly definition: ToolDefinition = {
     name: "Read",
     description:

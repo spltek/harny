@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A tool now DECLARES how it keeps Analyze's promise** (`read-only`, `preview`, `guarded`,
+  `refuse`), instead of the mode policy holding a list of names: the list was blind to every
+  dynamic tool and deaf to a core tool that forgot to appear in it. Production's default is
+  **refuse**, so a tool nobody described — a new MCP server, a plugin, a tool added tomorrow —
+  is never assumed harmless, and a missing declaration cannot reopen the hole.
+- **Per-server declaration for MCP in Analyze** (`analyze: "trusted" | "read-only"` in
+  `~/.harny/config.json`): `read-only` states that every tool of that server changes nothing
+  (for servers that send no hints), `trusted` believes the server's own `readOnlyHint: true`.
+  Omitted means **none** of its tools runs in Analyze. Read live, so a change lands on the next
+  turn. (Config file only for now: the panel's editor does not offer the field yet.)
+- **MCP tool hints are kept** (`readOnlyHint`, `destructiveHint`, `idempotentHint`,
+  `openWorldHint`): they used to be dropped at ingestion, and they are what a trusted server is
+  believed on.
 - **Overflow recovery**: a request the provider rejects for being too big is no
   longer a dead end — Harny compacts and re-sends the **same** turn, bounded to two
   attempts. Detection has two independent legs, so it works on every backend: the
@@ -85,6 +98,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An MCP tool that writes ran FOR REAL in Analyze.** The gate asked "is this name in the list
+  of file-mutating tools?" and an MCP tool is named `mcp__<server>__<tool>`, chosen by the
+  server: `mcp__db__drop_table` was therefore "not mutating" and executed, silently — no note to
+  the model, no sign to you. Analyze promises that **no resource is modified**, and an external
+  call cannot be previewed the way a file write can, so the rule is now: in Analyze a tool runs
+  only if something proves it changes nothing — your per-server declaration, or, for a server
+  you marked trusted, its own `readOnlyHint: true`. Everything else is **refused**, naming the
+  server and the two ways out. The protocol's own defaults (`readOnlyHint: false`,
+  `destructiveHint: true`) mean silence is read as "it modifies".
 - **Switching Analyze/Build — or Parallel — while the session was working did
   nothing.** Both switches are disabled together with the rest of the controls during a
   run, so the click was dropped in silence and the run kept the settings it started with:

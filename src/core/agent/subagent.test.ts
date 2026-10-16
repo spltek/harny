@@ -55,6 +55,7 @@ function makeWriteTool(): Tool & { called: boolean; lastDryRun?: boolean } {
   const tool = {
     name: "Write",
     definition: { name: "Write", description: "write", parameters: { type: "object", properties: {} } },
+    analyzePolicy: "preview" as const, // the test asserts the dry-run preview
     called: false,
     lastDryRun: undefined as boolean | undefined,
     execute: (_args: Record<string, unknown>, ctx?: { dryRun?: boolean }): ToolResult => {
@@ -95,6 +96,8 @@ function makeReadTool(opts: { output?: string } = {}): Tool & { calls: number; b
   const tool = {
     name: "Read",
     definition: { name: "Read", description: "read", parameters: { type: "object", properties: {} } },
+    analyzePolicy: "read-only" as const,
+    cacheable: true, // the dedup tests assert the loop-guard cache
     calls: 0,
     budget: undefined as number | undefined,
     execute: (_args: Record<string, unknown>, ctx?: { contextBudget?: number }): ToolResult => {
@@ -410,6 +413,8 @@ describe("SubAgentRunner", () => {
     const read: Tool = {
       name: "Read",
       definition: { name: "Read", description: "read", parameters: { type: "object", properties: {} } },
+      analyzePolicy: "read-only", // a fixture stands in for a KNOWN tool
+      cacheable: true,
       execute: (): ToolResult => ({ content: "data", isError: false }),
     };
     const runner = new SubAgentRunner({
@@ -521,6 +526,8 @@ describe("SubAgentRunner", () => {
     const read: Tool = {
       name: "Read",
       definition: { name: "Read", description: "read", parameters: { type: "object", properties: {} } },
+      analyzePolicy: "read-only", // a fixture stands in for a KNOWN tool
+      cacheable: true,
       execute: (): ToolResult => ({ content: "data", isError: false }),
     };
     const sameCall = (): StreamChunk[] => [
@@ -545,6 +552,7 @@ describe("SubAgentRunner", () => {
     const web: Tool = {
       name: "WebFetch",
       definition: { name: "WebFetch", description: "fetch", parameters: { type: "object", properties: {} } },
+      analyzePolicy: "read-only", // reads the web, changes nothing here
       execute: (args: Record<string, unknown>): ToolResult => {
         const url = String(args.url);
         fetched.push(url);

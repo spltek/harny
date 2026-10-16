@@ -58,6 +58,8 @@ export function globstarToRegex(glob: string): string {
 
 export class GlobTool implements Tool {
   readonly name = "Glob";
+  readonly analyzePolicy = "read-only" as const;
+  readonly cacheable = true;
   readonly definition: ToolDefinition = {
     name: "Glob",
     description:

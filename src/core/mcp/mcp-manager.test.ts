@@ -27,6 +27,21 @@ process.stdin.on("data", (d) => {
 `;
 
 describe("McpManager", () => {
+  it("hands each tool the server's declared Analyze policy (and none by default)", async () => {
+    // The gate reads the USER's declaration for the server, live: without it every tool
+    // of that server is refused in Analyze (the strictest default), with it they follow
+    // the declaration (see ServerAnalyzePolicy).
+    const undeclared = new McpManager({ servers: () => ({ test: { command: process.execPath, args: ["-e", SERVER] } }) });
+    await undeclared.connect();
+    expect(undeclared.getTools()[0].analyzePolicy).toBe("refuse");
+
+    const readOnly = new McpManager({
+      servers: () => ({ test: { command: process.execPath, args: ["-e", SERVER], analyze: "read-only" } }),
+    });
+    await readOnly.connect();
+    expect(readOnly.getTools()[0].analyzePolicy).toBe("read-only");
+  });
+
   it("connects stdio servers, wraps their tools and reports status", async () => {
     let changed = 0;
     const manager = new McpManager({

@@ -1,5 +1,6 @@
 import type { FileSystem } from "./file-system";
 import { resolvePath } from "./path-utils";
+import { FILE_PREVIEW_NOTE } from "./mode-policy";
 import type { Tool, ToolContext, ToolDefinition, ToolResult } from "./tool";
 import { buildDiff, fencedDiffBlock } from "./diff-text";
 import { fuzzyUniqueReplace } from "./edit-engine";
@@ -44,6 +45,9 @@ function midWordStats(original: string, oldStr: string, newStr: string): { count
 
 export class StrReplaceTool implements Tool {
   readonly name = "StrReplace";
+  readonly analyzePolicy = "preview" as const;
+  /** What the model is told about this tool IN ANALYZE ONLY. */
+  readonly analyzeNote = FILE_PREVIEW_NOTE;
   readonly definition: ToolDefinition = {
     name: "StrReplace",
     description:

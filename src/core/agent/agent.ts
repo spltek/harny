@@ -10,13 +10,11 @@ import { isContextOverflowError, isRequestRejection, matchedOverflowSignature, o
 import { estimateTokens } from "../sessions/compactor";
 import type { LLMProviderFactory, LLMMessage, Usage } from "../llm/types";
 import type { Tool, ToolCall, ToolRegistry, ToolResult } from "../tools";
+import { DEFAULT_ANALYZE_POLICY, type AnalyzePolicy } from "../tools/tool";
 import {
-  ANALYZE_BLOCKED_SHELL_MESSAGE,
   DEFAULT_CHAT_MODE,
+  analyzeRefusalMessage,
   isAnalyzeMode,
-  isFileMutatingTool,
-  isReadOnlyTool,
-  isSafeReadCommand,
   toolDefinitionsForMode,
   type ChatMode,
 } from "../tools/mode-policy";
@@ -636,7 +634,7 @@ export class Agent implements ChatController {
       // nested run whose failure must remain retryable, so the loop guard treats
       // it as a side-effecting call (idempotent-read caching would replay a
       // stale/failed sub-agent instead of re-running it).
-      const readOnly = tc.name === DELEGATE_TOOL_NAME ? false : isReadOnlyTool(tc.name);
+      const readOnly = this.deps.tools.get(tc.name)?.cacheable ?? false;
       const decision = this.guard.beforeToolCall(tc, readOnly);
       let r: ToolResult;
       if (decision.mode === "run") {
@@ -1198,6 +1196,11 @@ export class Agent implements ChatController {
     };
   }
 
+  /** The Analyze policy of a tool, by name. Unknown ⇒ `refuse` (see AnalyzePolicy). */
+  private analyzePolicyFor(name: string): AnalyzePolicy {
+    return this.deps.tools.get(name)?.analyzePolicy ?? DEFAULT_ANALYZE_POLICY;
+  }
+
   private async executeToolSafely(tc: ToolCall): Promise<ToolResult> {
     // Delegate is executed by the orchestrator (not the generic tool path):
     // it owns the session's sub-agent runner and the depth-1 policy — and it is where
@@ -1206,18 +1209,22 @@ export class Agent implements ChatController {
     if (tc.name === DELEGATE_TOOL_NAME) return this.executeDelegate(tc);
     const tool: Tool | undefined = this.deps.tools.get(tc.name);
     if (!tool) return { content: `Unknown tool: ${tc.name}`, isError: true };
-    // Analyze (read-only PREVIEW) mode, defense in depth — never trust the
-    // model even though the prompt tells it how to behave:
-    //  · Shell runs ONLY an allowlisted read-only command (anything else,
-    //    including interpreters/scripts, is refused before running);
-    //  · the file-mutating tools (Write/StrReplace/Edit/Delete) run DRY-RUN:
-    //    they validate the change and return the diff, but write NOTHING.
+    // Analyze (read-only PREVIEW) mode — the promise is "no resource is modified", and
+    // the TOOL says how it keeps it (see AnalyzePolicy). The default is `refuse`: a tool
+    // nobody described (a new MCP server, a plugin, a tool added tomorrow) is NOT assumed
+    // harmless. Defense in depth, never trust the model… and never trust a name list
+    // either: that is how an MCP `drop_table` used to run for real in Analyze.
+    const policy = this.analyzePolicyFor(tc.name);
     let dryRun = false;
     if (isAnalyzeMode(this.turnMode)) {
-      if (tc.name === "Shell" && !isSafeReadCommand(String(tc.arguments.command ?? ""))) {
-        return { content: ANALYZE_BLOCKED_SHELL_MESSAGE(String(tc.arguments.command ?? "")), isError: true };
+      if (policy === "refuse") {
+        return { content: analyzeRefusalMessage(tool), isError: true };
       }
-      dryRun = isFileMutatingTool(tc.name);
+      if (policy === "guarded") {
+        const why = tool.guardAnalyze?.(tc.arguments);
+        if (why) return { content: why, isError: true };
+      }
+      dryRun = policy === "preview";
     }
     // Explicit signal for calls whose arguments contained no valid JSON, so the
     // model sees WHY it failed (instead of a generic "missing arg" error) and
@@ -1258,7 +1265,7 @@ export class Agent implements ChatController {
         this.deps.onPreviewPrepared?.({ path, tool: tc.name });
       }
       // A REAL file change (Build, not a preview): let the parent track it.
-      if (!dryRun && !result.isError && isFileMutatingTool(tc.name)) {
+      if (!dryRun && !result.isError && this.analyzePolicyFor(tc.name) === "preview") {
         const changed = String(tc.arguments.path ?? "").trim();
         if (changed) this.deps.onFileChanged?.({ path: changed, tool: tc.name });
       }

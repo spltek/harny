@@ -11,6 +11,9 @@ import type { Tool, ToolDefinition, ToolResult } from "./tool";
  */
 export class DelegateTool implements Tool {
   readonly name = "Delegate";
+  /** Read-only for Analyze (its sub-agents are read-only there, and each of THEIR calls is
+  // gated again) but NOT cacheable: a nested run is expensive and non-deterministic. */
+  readonly analyzePolicy = "read-only" as const;
   readonly definition: ToolDefinition = {
     name: "Delegate",
     description:

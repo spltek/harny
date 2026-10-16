@@ -2,6 +2,7 @@ import type { McpServerConfig } from "../config/types";
 import type { Tool } from "../tools/tool";
 import { McpStdioClient } from "./mcp-client";
 import { McpHttpClient } from "./mcp-http-client";
+import type { ServerAnalyzePolicy } from "./types";
 import { McpTool } from "./mcp-tool";
 import type { McpClient, McpServerStatus } from "./types";
 
@@ -51,7 +52,11 @@ export class McpManager {
         await client.start();
         const infos = await client.listTools();
         this.clients.set(name, client);
-        for (const info of infos) this.tools.push(new McpTool(name, info, client));
+        // The Analyze gate needs the USER's declaration for this server, read live so a
+        // settings change lands on the next turn (see ServerAnalyzePolicy).
+        const declared = (): ServerAnalyzePolicy | undefined =>
+          this.deps.servers()?.[name]?.analyze;
+        for (const info of infos) this.tools.push(new McpTool(name, info, client, declared));
         this.statuses.push({
           name,
           ok: true,
@@ -59,7 +64,10 @@ export class McpManager {
           toolCount: infos.length,
           tools: infos.map((t) => ({ name: t.name, ...(t.description ? { description: t.description } : {}) })),
         });
-        this.deps.log?.(`[mcp] ${name}: connected, ${infos.length} tool(s)`);
+        this.deps.log?.(
+          `[mcp] ${name}: connected, ${infos.length} tool(s)` +
+            (declared() ? ` (analyze: ${declared()})` : " (analyze: not declared — none of them runs in Analyze)"),
+        );
       } catch (e) {
         client.close();
         const error = e instanceof Error ? e.message : String(e);

@@ -73,6 +73,8 @@ const outPath = (p: string): string => p.replace(/\\/g, "/");
  */
 export class GrepTool implements Tool {
   readonly name = "Grep";
+  readonly analyzePolicy = "read-only" as const;
+  readonly cacheable = true;
   readonly definition: ToolDefinition = {
     name: "Grep",
     description:

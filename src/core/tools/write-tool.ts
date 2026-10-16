@@ -1,11 +1,16 @@
 import { dirname } from "node:path";
 import type { FileSystem } from "./file-system";
 import { resolvePath } from "./path-utils";
+import { FILE_PREVIEW_NOTE } from "./mode-policy";
 import type { Tool, ToolContext, ToolDefinition, ToolResult } from "./tool";
 import { buildDiff, fencedDiffBlock } from "./diff-text";
 
 export class WriteTool implements Tool {
   readonly name = "Write";
+  /** Changes files and we own it: in Analyze it runs DRY — validated diff, nothing written. */
+  readonly analyzePolicy = "preview" as const;
+  /** What the model is told about this tool IN ANALYZE ONLY. */
+  readonly analyzeNote = FILE_PREVIEW_NOTE;
   readonly definition: ToolDefinition = {
     name: "Write",
     description:

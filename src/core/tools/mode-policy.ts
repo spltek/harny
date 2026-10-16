@@ -20,29 +20,6 @@ export function isFullAccessMode(mode: ChatMode | undefined): boolean {
   return !isAnalyzeMode(mode);
 }
 
-/** File-MUTATING tools. In Analyze (read-only PREVIEW) mode they are NOT
- * removed nor refused: they run as PREVIEWS (dry-run) — they validate the
- * change and return the exact diff, but write NOTHING to disk. Applying them
- * requires switching to Build mode (the model is told to instruct the user).
- * Shell stays available but is guarded read-only at execution time (see
- * isSafeReadCommand). */
-const FILE_MUTATING_TOOLS = new Set(["Write", "StrReplace", "Edit", "Delete"]);
-
-/** True for a tool that would modify the filesystem (Write/StrReplace/Edit/Delete). */
-export function isFileMutatingTool(name: string): boolean {
-  return FILE_MUTATING_TOOLS.has(name);
-}
-
-/** Pure read-only, side-effect-free tools whose result can be safely reused
- * for an identical call (loop guard cache). Deliberately excludes Shell
- * (arbitrary side effects), Delegate (nested run) and WebSearch/WebFetch
- * (external, time-varying) and TodoWrite (mutates todo state). */
-const READ_ONLY_TOOLS = new Set(["Read", "Grep", "Glob", "ReadLints", "Skill"]);
-
-export function isReadOnlyTool(name: string): boolean {
-  return READ_ONLY_TOOLS.has(name);
-}
-
 /** Extra filtering for a tool set (e.g. hide the Delegate tool from
  * sub-agents so orchestration cannot nest: depth is capped at 1). */
 export interface ToolFilterOptions {
@@ -57,27 +34,40 @@ export function toolsForMode(tools: readonly Tool[], _mode: ChatMode, opts?: Too
   return excluded ? tools.filter((t) => !excluded.has(t.name)) : [...tools];
 }
 
-/** Tool definitions sent to the LLM for a given mode. In Analyze mode the
- * Shell advertises itself as read-only and the file-mutating tools advertise
- * the PREVIEW contract (validated diff, never written to disk). */
+/** Tool definitions sent to the LLM for a given mode. In Analyze each tool adds its OWN
+ * note (`Tool.analyzeNote`: the preview contract, Shell's allowlist, …) so this module
+ * carries no tool-specific text and no name list — a tool that forgets to declare one is
+ * visible in its own file rather than missing from a list here. */
 export function toolDefinitionsForMode(
   tools: readonly Tool[],
   mode: ChatMode,
   opts?: ToolFilterOptions,
 ): ToolDefinition[] {
   return toolsForMode(tools, mode, opts).map((t) => {
-    if (!isAnalyzeMode(mode)) return t.definition;
-    if (t.name === "Shell") return { ...t.definition, description: t.definition.description + SHELL_READ_ONLY_NOTE };
-    if (isFileMutatingTool(t.name)) return { ...t.definition, description: t.definition.description + FILE_PREVIEW_NOTE };
-    return t.definition;
+    if (!isAnalyzeMode(mode) || !t.analyzeNote) return t.definition;
+    return { ...t.definition, description: t.definition.description + t.analyzeNote };
   });
 }
 
+/** What the model is told when a tool is REFUSED in Analyze (see AnalyzePolicy). The
+ * tool may bring its own, actionable message (an MCP server names itself and says how to
+ * trust it); this is the fallback, and it always says what to do instead. */
+export function analyzeRefusalMessage(tool: Tool): string {
+  return (
+    tool.analyzeRefusal ??
+    `${tool.name} is not available in Analyze: it may change resources, and Analyze never modifies any ` +
+      `(no file, no database, no external system). Switch to Build to run it.`
+  );
+}
+
+/** The note the file-mutating tools append in Analyze: a write there is a PROPOSAL.
+ * Declared per tool via `Tool.analyzeNote`, so a new preview tool cannot silently miss it. */
 export const FILE_PREVIEW_NOTE =
   "\n\nPREVIEW MODE (Analyze): this tool does NOT write. It PREPARES and validates the change " +
   "and returns the resulting diff as a PROPOSAL for the user to review. To actually apply it the " +
   "user must switch to Build mode — never claim the change was applied.";
 
+/** The note Shell appends in Analyze: only allowlisted read-only commands run. */
 export const SHELL_READ_ONLY_NOTE =
   "\n\nREAD-ONLY MODE (allowlist, NOT a sandbox): only a curated set of read-only commands is allowed — " +
   "file inspection (ls, cat, head, tail, wc, diff, file, stat, tree), search (grep, rg, find), " +

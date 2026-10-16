@@ -4,6 +4,8 @@ import type { Tool, ToolDefinition, ToolResult } from "./tool";
 
 export class WebSearchTool implements Tool {
   readonly name = "WebSearch";
+  /** Read-only for Analyze, but NOT cacheable: the world moves between two identical calls. */
+  readonly analyzePolicy = "read-only" as const;
   readonly definition: ToolDefinition = {
     name: "WebSearch",
     description:

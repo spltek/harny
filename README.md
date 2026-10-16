@@ -206,6 +206,18 @@ The header has a mode selector, and it is the core safety idea of Harny.
 
 The Shell tool is **allowlist-first** in Analyze: a command runs only if every segment is a known read-only command (`ls`, `cat`, `grep`, `git status`, `git log`, …). Scripts, interpreters (`python -c`, `node -e`) and anything state-changing are refused. It is a **best-effort filter, not a sandbox** — treat Analyze as a strong guardrail, not a jail.
 
+The promise is one sentence — **in Analyze no resource is modified** — and it covers tools that are not ours. A **file** write can be previewed (we own the tool: validate, show the diff, write nothing). An **external** call cannot: an MCP tool either runs or does not. So each tool **declares** how it keeps the promise, and the default is **refuse** — a tool nobody described (a new MCP server, a plugin, a tool added tomorrow) is never assumed harmless, which is what a name list of "tools that write" silently did.
+
+| in Analyze | runs? |
+|---|---|
+| the four file tools | yes, as a **validated diff** (nothing written) |
+| Shell | only allowlisted read-only commands |
+| an MCP tool whose server **declares** `readOnlyHint: true` | yes — if you marked that server **trusted** |
+| an MCP tool of a server you marked **read-only** | yes (your statement, even if the server declares nothing) |
+| an MCP tool that declares nothing, or `destructiveHint`, or an unrelated tool | **refused**, naming the server and the two ways out |
+
+The protocol is explicit that a server's own hints are **untrusted unless the server is trusted**, so Harny never lets one open the gate by itself: you declare it per server (`trusted`, or `read-only` for old servers that send nothing). Its defaults are conservative on their own — `readOnlyHint: false`, `destructiveHint: true` — so **silence means "assume it modifies"**.
+
 **Switching while it works.** The mode is not a request parameter: it is a behaviour policy the agent **re-reads at every turn**, so you can flip Analyze/Build (or Parallel) **during a run** and the change lands at the **next turn boundary** — the same moment a steer is applied. A turn already in flight keeps the mode it started with, so a switch can never rewrite a tool call the model already emitted (an Analyze preview turning into a real write behind your back). By the same rule, the model is told: whatever the conversation shows as **PROPOSED**, it re-issues with the file tools once you are in Build.
 
 ### Parallel: sub-agents
@@ -340,21 +352,25 @@ just want to use Harny, you can stop reading here.
 - **Slash menu**: typing `/` at the START of the prompt opens a picker — arrows/Enter select, Esc closes
 
 **MCP servers**
+
 - Speaks the **Model Context Protocol**; configure in `~/.harny/config.json` or from the panel
 
 ```json
 {
   "mcpServers": {
-    "sqlite": { "command": "npx", "args": ["-y", "mcp-sqlite", "/path/db.sqlite"] },
+    "sqlite": { "command": "npx", "args": ["-y", "mcp-sqlite", "/path/db.sqlite"], "analyze": "read-only" },
     "remote": { "url": "https://example.com/mcp", "headers": { "Authorization": "Bearer …" } }
   }
 }
 ```
 
+- **What each server is allowed to do in Analyze** is a per-server declaration, `analyze`: `"read-only"` (every tool of it — use it for servers that send no hints) or `"trusted"` (believe its own `readOnlyHint: true`). Omitted — like `remote` above — means **none** of its tools runs in Analyze. It is read **live**, so a change lands on the next turn; today it is a config file field (the panel's editor does not offer it yet).
+
 - **Transports**: **stdio** (spawned process) and **Streamable HTTP** (POST; JSON or `text/event-stream`; **stateless** by default, **stateful** via `Mcp-Session-Id`)
 - Tools are exposed as `mcp__<server>__<tool>` (input schema = the server's)
 - **UI**: an **MCP** card lists servers with live status; **click the server name to enable/disable** it, **`(N tools)`** opens a popover with each tool, a gear opens an editor (add/edit/delete + **Test**)
 - Diagnostic logs at the critical points (`[mcp]` / `[mcp-http]`) in **Output > Harny**
+- **Known gaps** (found while wiring the Analyze gate, not done yet): an in-flight MCP call cannot be cancelled by **Stop** (it gets no abort signal) and an MCP result has **no window-scaled output cap** like Shell's — only *old* results are masked, so the newest can be arbitrarily large. Both want the same fix: the cap and the signal belong at the **execution boundary** (where a result enters the conversation), not inside each tool.
 
 **UI**
 - **Esc to stop**: press Esc while a run is working to stop it — modals/overlays and native controls keep Esc for themselves
