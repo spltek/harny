@@ -16,7 +16,7 @@ import { SubAgentRunner } from "./subagent";
 import type { AgentEvent, SubAgentEvent } from "./types";
 import { resolveLoopGuardOptions, type LoopGuardOptions } from "./loop-guard";
 import { McpTool } from "../mcp/mcp-tool";
-import { toolCallPairingViolations } from "../history/tool-call-pairing";
+import { conversationFaults } from "../history/conversation-validity";
 
 const VALID_CONFIG: HarnyConfig = {
   provider: "openai",
@@ -3497,7 +3497,7 @@ describe("tool-call pairing on an interrupted run", () => {
     await agent.send("next");
 
     // 1) the stored conversation honors the invariant…
-    expect(toolCallPairingViolations(history.all())).toEqual([]);
+    expect(conversationFaults(history.all())).toEqual([]);
     // …and the interrupted turn IS recorded: the call and its aborted result
     // landed together (losing them would be the other way to "fix" this).
     const turn = history.all().find((m) => m.role === "assistant" && !!m.toolCalls?.length);
@@ -3551,6 +3551,40 @@ describe("tool-call pairing on an interrupted run", () => {
     expect(shown).toContain("c1");
   });
 
+  it("a tool that returns NOTHING still stores a non-blank result (rule 5)", async () => {
+    // `grep` with no match, `mkdir -p`, a silent command: all legally return "".
+    // A blank `tool` message is rejected by strict servers and tells the model
+    // nothing, so the agent normalizes it at the single point every result passes.
+    const silent: Tool = {
+      name: "Shell",
+      definition: { name: "Shell", description: "shell", parameters: { type: "object", properties: {} } },
+      execute: () => ({ content: "", isError: false }),
+    };
+    const factory = recordingFactory([
+      toolCallChunks("call_1", "Shell", { command: "true" }),
+      [{ type: "text", content: "done" }],
+    ]);
+    const history = new InMemoryChatHistory();
+    const events = new InMemoryEventBus<AgentEvent>();
+    const tools = new ToolRegistry([silent]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history,
+      events,
+      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/workspace"),
+    });
+    agent.setMode("agent");
+
+    await agent.send("go");
+
+    const stored = history.all().find((m) => m.role === "tool");
+    expect(stored?.content).toBe("Shell: no output");
+    // …and the whole conversation is still valid (nothing to refuse).
+    expect(conversationFaults(history.all())).toEqual([]);
+  });
+
   it("does NOT refuse a healthy conversation (a false positive would break every session)", async () => {
     const factory = recordingFactory([
       toolCallChunks("call_1", "Shell", { command: "echo hi" }),
@@ -3574,6 +3608,6 @@ describe("tool-call pairing on an interrupted run", () => {
     // The full round trip (call → result → final answer) reached the provider
     // twice, and the stored history is valid.
     expect(factory.requests).toHaveLength(2);
-    expect(toolCallPairingViolations(history.all())).toEqual([]);
+    expect(conversationFaults(history.all())).toEqual([]);
   });
 });

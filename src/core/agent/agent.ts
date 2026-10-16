@@ -4,7 +4,7 @@ import { describeFetchError } from "../tools/url-utils";
 import type { EventBus } from "../events/event-bus";
 import type { ChatHistory } from "../history/chat-history";
 import type { ChatMessage, MessageMeta } from "../history/types";
-import { describePairingViolations, toolCallPairingViolations } from "../history/tool-call-pairing";
+import { describeFaults, conversationFaults } from "../history/conversation-validity";
 import type { LLMProviderFactory, LLMMessage, Usage } from "../llm/types";
 import type { Tool, ToolCall, ToolRegistry, ToolResult } from "../tools";
 import {
@@ -885,9 +885,9 @@ export class Agent implements ChatController {
     // where the damage is, so it is named here instead. Deliberately NOT repaired:
     // a silent fix would hide whichever writer produced it, and this check exists
     // precisely to keep that producer visible.
-    const pairing = toolCallPairingViolations(messages);
+    const pairing = conversationFaults(messages);
     if (pairing.length > 0) {
-      const detail = describePairingViolations(pairing);
+      const detail = describeFaults(pairing);
       this.log(`tool-call pairing violation -> request refused: ${detail}`);
       throw new Error(
         `Harny internal error: this conversation is not replayable (${detail}). ` +
@@ -1112,7 +1112,13 @@ export class Agent implements ChatController {
         ...(this.deps.ownerId ? { ownerId: this.deps.ownerId } : {}),
         ...(this.abortController ? { signal: this.abortController.signal } : {}),
       };
-      const result = await tool.execute(tc.arguments, ctx);
+      let result = await tool.execute(tc.arguments, ctx);
+      // A tool result is NEVER blank: `grep` with no match, `mkdir -p`, a silent
+      // command… all legally return "". An empty `tool` message is rejected by
+      // strict servers and tells the model nothing (did it run? fail? do
+      // nothing?), so the placeholder is produced HERE, at the single point every
+      // tool result passes through (rule 5 of conversation-validity).
+      if (!result.content.trim()) result = { ...result, content: `${tc.name}: no output` };
       // Remember that a preview was prepared so the final answer can be made
       // unambiguous (the model may still claim it "applied" the change).
       if (dryRun && !result.isError) {

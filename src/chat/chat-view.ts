@@ -11,7 +11,7 @@ import type { SessionManager } from "../core/sessions/session-manager";
 import type { DbVacuumStats, SessionSettingsPatch, SessionSummary } from "../core/sessions/types";
 import type { SessionRegistry, SessionRuntime } from "./session-registry";
 import { PendingInputQueue, type PendingInput } from "./pending-input-queue";
-import { toolCallPairingViolations, turnEnd, turnStart } from "../core/history/tool-call-pairing";
+import { conversationFaults, turnEnd, turnStart } from "../core/history/conversation-validity";
 import { StreamTee } from "./stream-tee";
 import type { AttachmentService } from "./attachment-service";
 import type { AttachmentInfo, AttachmentPart } from "./attachment-types";
@@ -343,7 +343,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     // Unless that turn is ITSELF damaged (a history broken before this rule
     // existed): the damage must not be copied over, so the copy stops at the last
     // valid boundary before it.
-    if (toolCallPairingViolations(loaded.messages.slice(0, end)).length > 0) {
+    if (conversationFaults(loaded.messages.slice(0, end)).length > 0) {
       end = turnStart(loaded.messages, index);
     }
     await this.createBranch(rt.sessionId, name, loaded.messages.slice(0, end));

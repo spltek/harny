@@ -1,5 +1,5 @@
 import type { ChatMessage } from "../history/types";
-import { turnEnd, turnStart } from "../history/tool-call-pairing";
+import { turnEnd, turnStart } from "../history/conversation-validity";
 import type { HarnyConfig } from "../config/types";
 import type { LLMProviderFactory } from "../llm/types";
 import { fallbackTitle } from "./title-generator";

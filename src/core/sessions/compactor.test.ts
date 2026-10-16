@@ -3,7 +3,7 @@ import { Compactor, DEFAULT_COMPACTION, KEEP_RECENT_TOKENS, MIN_KEEP_RECENT_TOKE
 import type { LLMProviderFactory } from "../llm/types";
 import type { HarnyConfig } from "../config/types";
 import type { ChatMessage } from "../history/types";
-import { toolCallPairingViolations } from "../history/tool-call-pairing";
+import { conversationFaults } from "../history/conversation-validity";
 
 const CONFIG: HarnyConfig = {
   provider: "openai",
@@ -272,7 +272,7 @@ describe("keep budget (an ABSOLUTE recent tail, not a fraction of the history)",
     for (const budget of [1, 512, 2000, 100_000]) {
       const plan = planCompactionToBudget(msgs, budget);
       // Never half a turn, never an empty kept side (that would erase the session).
-      expect(toolCallPairingViolations(plan.kept)).toEqual([]);
+      expect(conversationFaults(plan.kept)).toEqual([]);
       expect(plan.kept[0]?.role).toBe("user");
       expect(plan.kept.length).toBeGreaterThan(0);
     }
@@ -355,7 +355,7 @@ describe("planManualCompaction", () => {
       const plan = planManualCompaction(msgs, f);
       // The kept tail is what goes back to the model after the summary: it must
       // still be replayable on its own.
-      expect(toolCallPairingViolations(plan.kept)).toEqual([]);
+      expect(conversationFaults(plan.kept)).toEqual([]);
       // A tail that STARTS with a result would have no call above it in the
       // request — the provider rejects the whole conversation.
       expect(plan.kept[0]?.role).not.toBe("tool");
@@ -373,7 +373,7 @@ describe("planManualCompaction", () => {
       res("c1", "x".repeat(4000)),
     ];
     const plan = planManualCompaction(msgs, 0.001);
-    expect(toolCallPairingViolations(plan.kept)).toEqual([]);
+    expect(conversationFaults(plan.kept)).toEqual([]);
     if (plan.kept.some((m) => m.role === "tool")) {
       // Whenever a result is kept, its call is kept too.
       expect(plan.kept.some((m) => m.role === "assistant" && !!m.toolCalls?.length)).toBe(true);
