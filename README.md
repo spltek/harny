@@ -1,8 +1,9 @@
 # Harny
 
-> **Your AI coding agent, inside VS Code.** Bring your own model — local or cloud.
+> **Your AI coding agent, inside VSCodium and VS Code.** Bring your own model — local or cloud.
 
 ![license](https://img.shields.io/badge/license-MIT-blue)
+![VSCodium](https://img.shields.io/badge/VSCodium-1.101%2B-blue?logo=vscodium)
 ![VS Code](https://img.shields.io/badge/VS%20Code-1.101%2B-blue)
 
 <!--
@@ -89,7 +90,7 @@ code --install-extension spltek.harny-<version>.vsix
 
 Download it from the [Open VSX page](https://open-vsx.org/extension/spltek/harny) (*Download*), or build it yourself with `npm run package`.
 
-**Requirements:** VS Code **1.101+**. Harny stores sessions with the built-in `node:sqlite`, which needs Node 22.5+.
+**Requirements:** the VS Code extension API **1.101+** — i.e. VSCodium 1.101+ as well (VSCodium tracks it). Harny stores sessions with the built-in `node:sqlite`, which needs Node 22.5+.
 
 ## Quick start
 
