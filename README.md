@@ -102,6 +102,29 @@ Download it from the [Open VSX page](https://open-vsx.org/extension/spltek/harny
 
 New sessions start in **Analyze**, so your first run is a preview, not a surprise.
 
+## How a session goes
+
+The order things come up in — and, more useful, **where each one lives**. Some of it you set **once** (global), some follows each **session**, and only a couple of things are worth touching **while the agent is working**.
+
+1. **Create a session** (**+ New**). It is written to the database immediately and starts in **Analyze**.
+2. **Pick the model** in the AI Model row — or, with no provider yet, open the gear at the **right end of that row** (**Providers & Models** → **+ New** → **Test connection**). That setup is **global**: once is enough, for every future session.
+3. **Skills** (optional) are **not a dialog**: they are folders. A `skills`-CLI install and a plain `SKILL.md` both work — project first (`.agents/skills`, `.claude/skills`, `.pi/skills`), then user (`~/.agents/skills`, `~/.pi/agent/skills`, `~/.claude/skills`, `~/.cursor/skills`, …). The **Skills** card lists what it found; a click fills `/skill <name>` in the prompt.
+4. **MCP servers** (optional, **global**): the **MCP** card's gear (add/edit/delete + **Test**), or `config.json`. Careful, in Analyze a server's tools only run if you declare what that server is — see [Analyze & Build](#analyze--build).
+5. **Housekeeping**: the **Compaction** gear (after **Compact**) sets how full the usable context gets before auto-compaction (**per session**); the **⚙ All sessions** manager holds the database stats and the **VACUUM** thresholds (**global**).
+6. **Tuning** (optional, **per session**): the sampling/context/output sliders, the thinking level, and **Guardrails** (sub-agent cap + Loop Guard parameters).
+7. **Analyze or Build**, and **Parallel** — **per session**, and the **only two the panel lets you change while a run is going**.
+8. **While it works**: **Enter** queues a message (it runs when this one ends), **Ctrl/Cmd+Enter** **steers** it into the run now, **Esc** stops. A message already queued can be flipped to a steer with the **Queue** button.
+
+| | where it lives | mid-run? |
+|---|---|---|
+| providers, keys, MCP servers, VACUUM thresholds | **global** (`config.json` / VS Code settings) | no |
+| model, thinking, sliders, context window, output tokens, Guardrails, compaction threshold | **per session** | no |
+| **Analyze/Build**, **Parallel** | **per session** | **yes** — lands at the **next turn**; the turn in flight keeps what it started with |
+| Enter / Ctrl-Cmd+Enter / Esc | per message | always |
+| **Compact**, **✂ Cut**, **⎇ Branch** | the transcript itself | no — they restructure the conversation, so they wait for the run |
+
+> Why that split: Mode and Parallel change the agent's **behaviour inside the same request envelope** — same context, same budget, same accounting — while the model, the window and the samplers move the envelope itself, and a run whose envelope changed halfway is not something you want to reconstruct from a transcript later. Providers and MCP are one level up again: they are the **environment**, set once.
+
 ## Setup
 
 ### Pick your model
