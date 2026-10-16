@@ -75,6 +75,9 @@ function buildHarness(
   opts: {
     config?: HarnyConfig;
     chunks?: StreamChunk[][];
+    /** A provider of your own, when the test must OBSERVE the request itself (its tool
+     * list, its messages). Defaults to the fake built from `chunks`. */
+    llmFactory?: LLMProviderFactory;
     tools?: Tool[];
     maxTurns?: number;
     log?: (message: string) => void;
@@ -91,7 +94,7 @@ function buildHarness(
   const events = new InMemoryEventBus<AgentEvent>();
   const eventsLog: AgentEvent[] = [];
   events.subscribe((e) => eventsLog.push(e));
-  const factory = fakeFactory(...(opts.chunks ?? [[{ type: "text", content: "hi" }]]));
+  const factory = opts.llmFactory ?? fakeFactory(...(opts.chunks ?? [[{ type: "text", content: "hi" }]]));
   const tools = new ToolRegistry(opts.tools ?? [makeTool("FakeTool")]);
   const systemPrompt = new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/workspace");
 
@@ -540,6 +543,87 @@ describe("Agent", () => {
     expect(events.some((e) => e.type === "thinking_delta" && e.content === "let me think about this")).toBe(true);
   });
 
+  it("refuses a Delegate call when Parallel is OFF (the execution-side layer)", async () => {
+    // The tool list is the FIRST layer (Parallel OFF excludes Delegate from the
+    // definitions); a model that emits the name anyway must not spawn anything. This
+    // refusal existed but was never tested — which is exactly why a report of "sub-agents
+    // still running with Parallel OFF" could look like a missing gate.
+    const { agent, history } = buildHarness({
+      tools: [makeTool("Delegate")],
+      chunks: [
+        [
+          { type: "tool_call_start", index: 0, id: "d1", name: "Delegate" },
+          { type: "tool_call_delta", index: 0, delta: '{"id":"A","goal":"g","access":"read"}' },
+          { type: "tool_call_end", index: 0 },
+        ],
+        [{ type: "text", content: "did it myself" }],
+      ],
+    });
+    agent.setDelegation(false);
+
+    await agent.send("go");
+
+    // No sub-agent was spawned and the model was told why.
+    const refusal = history.all().find((m) => m.role === "tool" && /Delegation is disabled/.test(m.content ?? ""));
+    expect(refusal).toBeTruthy();
+    expect(history.all().some((m) => m.role === "assistant" && m.content === "did it myself")).toBe(true);
+  });
+
+  it("a MODE switch mid-run lands on the NEXT turn, never on the turn in flight", async () => {
+    // The UI no longer locks Analyze/Build while the session works: the change must land
+    // at a turn boundary (like a steer) and must NOT change the meaning of a tool call
+    // the model already emitted — an Analyze preview becoming a real write, with the diff
+    // never shown.
+    const seenDefs: Array<Array<{ name: string; description: string }>> = [];
+    let agentRef: Agent | undefined;
+    const modesSeen: Array<boolean | undefined> = [];
+    const write: Tool = {
+      name: "Write",
+      definition: { name: "Write", description: "write", parameters: { type: "object", properties: {} } },
+      execute: (_args, ctx) => {
+        modesSeen.push(ctx?.dryRun); // what the turn decided for THIS call
+        agentRef?.setMode("agent"); // the user flips to Build while the turn runs
+        return { content: "preview", isError: false };
+      },
+    };
+    let call = 0;
+    const recording: LLMProviderFactory = {
+      create: () => ({
+        protocol: "chat" as const,
+        async *stream(_messages: LLMMessage[], _signal?: AbortSignal, tools?: Array<{ name: string; description: string }>) {
+          seenDefs.push((tools ?? []).map((t) => ({ name: t.name, description: t.description })));
+          call++;
+          if (call === 1) {
+            // TWO writes in the SAME turn: the first flips the mode while the turn runs,
+            // so the second is the call that proves the turn was frozen (with a live mode
+            // it would already be a real write).
+            yield { type: "tool_call_start", index: 0, id: "w1", name: "Write" } as StreamChunk;
+            yield { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts","content":"x"}' } as StreamChunk;
+            yield { type: "tool_call_end", index: 0 } as StreamChunk;
+            yield { type: "tool_call_start", index: 1, id: "w2", name: "Write" } as StreamChunk;
+            yield { type: "tool_call_delta", index: 1, delta: '{"path":"b.ts","content":"y"}' } as StreamChunk;
+            yield { type: "tool_call_end", index: 1 } as StreamChunk;
+          } else {
+            yield { type: "text", content: "done" } as StreamChunk;
+          }
+        },
+      }),
+    };
+    const { agent } = buildHarness({ tools: [write], llmFactory: recording });
+    agentRef = agent;
+
+    await agent.send("go"); // starts in Analyze (the default)
+
+    // Turn 1 ran under Analyze: BOTH writes were previews, including the one AFTER the
+    // switch arrived — a mode change never re-reads a turn already in flight.
+    expect(modesSeen).toEqual([true, true]);
+    // What the model was TOLD: in Analyze a write is announced as a preview, after the
+    // switch it is not — the tool stays listed either way, so the note is the signal.
+    const writeDesc = (i: number): string => seenDefs[i].find((t) => t.name === "Write")?.description ?? "";
+    expect(writeDesc(0)).toContain("PREVIEW MODE (Analyze)");
+    expect(writeDesc(1)).not.toContain("PREVIEW MODE");
+  });
+
   it("nudges and continues when a turn is completely empty (no text, no thinking, no tools)", async () => {
     const { agent, factory, history } = buildHarness({
       chunks: [[], [{ type: "text", content: "recovered answer" }]],
@@ -776,7 +860,11 @@ describe("Agent", () => {
 
     await agent.send("x");
 
-    expect(logs.some((l) => /^turn 0: finish=/.test(l))).toBe(true);
+    // The per-turn line carries the mode and Parallel state too: that is what makes a
+    // "it still behaved as Analyze" report diagnosable after the fact.
+    const turnLine = logs.find((l) => l.startsWith("turn 0"));
+    expect(turnLine).toMatch(/^turn 0: mode=\w+ parallel=(ON|OFF) finish=/);
+    expect(turnLine).toContain("mode=analyze"); // the default when nothing switched
     expect(logs.some((l) => l.includes("tools=[Shell]"))).toBe(true);
     expect(logs.some((l) => /loop-guard \[tool-repeat\] level 1/.test(l))).toBe(true);
   });

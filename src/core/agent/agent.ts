@@ -174,6 +174,16 @@ export class Agent implements ChatController {
   private _streaming = false;
   /** Chat mode: "analyze" (read-only) by default — see setMode(). */
   private _mode: ChatMode = DEFAULT_CHAT_MODE;
+  /** The mode THIS TURN runs under: frozen when the turn starts.
+   *
+   * Mode and Parallel are behaviour policies the UI lets the user change while the
+   * session works (they are not request parameters), and a change must land at a TURN
+   * BOUNDARY — the same moment a steer is applied. Without this snapshot a switch could
+   * catch a turn in flight and change the meaning of a tool call the model had already
+   * emitted: an Analyze preview becoming a real write, with the diff never shown. So a
+   * turn is coherent from its first token to its last tool result, and the next turn is
+   * born in the new mode. */
+  private turnMode: ChatMode = DEFAULT_CHAT_MODE;
   /** Loop detection/breaking state (reset per run). */
   private readonly guard: LoopGuard;
   /** Per-session concurrent sub-agent cap: undefined = fall back to the config
@@ -440,6 +450,9 @@ export class Agent implements ChatController {
     }
 
     this.guard.beginTurn();
+    // Freeze the mode for this turn (see turnMode): a switch made mid-run applies from
+    // the NEXT turn, never to the tool calls of a turn already in flight.
+    this.turnMode = this._mode;
     const turnResult = await this.runLlmTurnWithOverflowRecovery();
     // An echoed synthetic label is NOT an answer: treat it as empty so the loop
     // guard nudges the model to actually act/answer instead of ending the run.
@@ -447,7 +460,8 @@ export class Agent implements ChatController {
     const content = echoedLabel ? "" : turnResult.content;
     const { toolCalls, thinking, reasoningDetails, finishReason, reasoningLoop, answerLoop } = turnResult;
     this.log(
-      `turn ${turn}: finish=${finishReason ?? "-"} content=${content.length}c thinking=${thinking.length}c ` +
+      `turn ${turn}: mode=${this.turnMode} parallel=${this.delegationEnabled ? "ON" : "OFF"} ` +
+        `finish=${finishReason ?? "-"} content=${content.length}c thinking=${thinking.length}c ` +
         `tools=[${toolCalls.map((t) => t.name).join(",")}]` +
         (reasoningLoop ? " reasoningLoop" : "") +
         (answerLoop ? " answerLoop" : "") +
@@ -816,7 +830,7 @@ export class Agent implements ChatController {
    * (a tool would require the model to call it — this does not).
    */
   private stateLine(): string {
-    const readOnly = isAnalyzeMode(this._mode);
+    const readOnly = isAnalyzeMode(this.turnMode);
     const mode = readOnly
       ? "Analyze — READ-ONLY PREVIEW: you can PREPARE changes (Write/Edit/StrReplace/Delete run as " +
         "VALIDATED diff previews) but nothing is applied; finish by telling the user to switch to Build to apply"
@@ -922,7 +936,10 @@ export class Agent implements ChatController {
    * {@link Agent.isOverflowRejection} work for any backend.
    */
   private estimatedRequestTokens(): number {
-    const system = this.deps.systemPrompt.build(this._mode, this.deps.tools.definitions());
+    // Built from the TURN's mode, like the request it estimates (see turnMode): an
+    // estimate that used a different mode than the request would be off by the whole
+    // write-tool set, and this is the leg that decides whether a rejection was size.
+    const system = this.deps.systemPrompt.build(this.turnMode, this.deps.tools.definitions());
     return this.llmConversation().reduce(
       (total, m) =>
         total +
@@ -962,17 +979,18 @@ export class Agent implements ChatController {
   }> {
     const config = this.deps.config.get();
     const provider = this.deps.llmFactory.create(config);
-    // Mode-filtered tool set: analyze advertises NO file-mutating tools, so
-    // the model cannot even attempt a write (the execution side below is the
-    // second layer of defense). An explicit [] (forced final report) makes the
-    // turn tool-less.
-    const modeDefs = toolDefinitionsForMode(this.deps.tools.getAll(), this._mode, {
+    // Mode-filtered tool set: in Analyze the file-mutating tools stay LISTED but carry
+    // the PREVIEW note (so the model knows a write prepares a diff), and the execution
+    // side below runs them dry — the tool list is the first layer, never the only one.
+    // `exclude` is how Parallel OFF keeps Delegate out of the model's sight entirely.
+    // An explicit [] (forced final report) makes the turn tool-less.
+    const modeDefs = toolDefinitionsForMode(this.deps.tools.getAll(), this.turnMode, {
       exclude: this.delegationEnabled ? [] : [DELEGATE_TOOL_NAME],
     });
     const toolDefinitions: ToolDefinition[] = toolDefinitionsOverride ?? modeDefs;
 
     const messages: LLMMessage[] = [
-      { role: "system", content: `${this.stateLine()}\n\n${this.deps.systemPrompt.build(this._mode, toolDefinitions)}` },
+      { role: "system", content: `${this.stateLine()}\n\n${this.deps.systemPrompt.build(this.turnMode, toolDefinitions)}` },
       ...this.llmConversation().map((m) => ({
         role: m.role,
         // Never send the synthetic tool label to the model (it gets imitated).
@@ -1182,7 +1200,9 @@ export class Agent implements ChatController {
 
   private async executeToolSafely(tc: ToolCall): Promise<ToolResult> {
     // Delegate is executed by the orchestrator (not the generic tool path):
-    // it owns the session's sub-agent runner and the depth-1 policy.
+    // it owns the session's sub-agent runner and the depth-1 policy — and it is where
+    // Parallel OFF is refused (see executeDelegate), the execution-side layer behind
+    // the tool list.
     if (tc.name === DELEGATE_TOOL_NAME) return this.executeDelegate(tc);
     const tool: Tool | undefined = this.deps.tools.get(tc.name);
     if (!tool) return { content: `Unknown tool: ${tc.name}`, isError: true };
@@ -1193,7 +1213,7 @@ export class Agent implements ChatController {
     //  · the file-mutating tools (Write/StrReplace/Edit/Delete) run DRY-RUN:
     //    they validate the change and return the diff, but write NOTHING.
     let dryRun = false;
-    if (isAnalyzeMode(this._mode)) {
+    if (isAnalyzeMode(this.turnMode)) {
       if (tc.name === "Shell" && !isSafeReadCommand(String(tc.arguments.command ?? ""))) {
         return { content: ANALYZE_BLOCKED_SHELL_MESSAGE(String(tc.arguments.command ?? "")), isError: true };
       }
@@ -1314,7 +1334,7 @@ export class Agent implements ChatController {
     if (!spec) return { content: parsed.error ?? "Invalid Delegate call.", isError: true };
     // Read-only (Analyze) mode must never delegate a WRITER: that would bypass
     // the read-only guarantee.
-    if (isAnalyzeMode(this._mode) && spec.access !== "read") {
+    if (isAnalyzeMode(this.turnMode) && spec.access !== "read") {
       return {
         content: '⛔ Analyze (read-only) mode: sub-agents may only be delegated with access "read".',
         isError: true,

@@ -337,37 +337,39 @@ describe("view webview client", () => {
     expect(btn.getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("Parallel follows the host config and locks while working", async () => {
+  it("Parallel follows the host config and can be switched while working", async () => {
     await loadView();
     const btn = document.getElementById("parallel-btn") as HTMLButtonElement;
     hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, parallel: true, models: [], providerModels: [], contextWindow: 128000 } });
     expect(btn.classList.contains("is-on")).toBe(true);
 
+    // Working does NOT block it: Parallel is a behaviour policy read at each turn, so
+    // switching it mid-run is what the user expects (it lands at the next boundary).
     hostMessage({ type: "status", active: true });
     const before = posted.length;
     btn.click();
-    expect(posted.slice(before)).not.toContainEqual({ type: "setParallel", parallel: false });
+    expect(posted.slice(before)).toContainEqual({ type: "setParallel", parallel: false });
     hostMessage({ type: "status", active: false });
     btn.click();
-    expect(posted.slice(before)).toContainEqual({ type: "setParallel", parallel: false });
+    expect(posted.slice(before)).toContainEqual({ type: "setParallel", parallel: true });
   });
 
-  it("locks the mode button while working and ignores clicks", async () => {
+  it("keeps the mode button usable while working (the change lands at the next turn)", async () => {
     await loadView();
     const btn = document.getElementById("mode-btn") as HTMLButtonElement;
     const menu = document.getElementById("mode-menu") as HTMLDivElement;
-    const postedAtLock = posted.length;
+    const postedAt = posted.length;
 
     hostMessage({ type: "status", active: true });
-    expect(btn.disabled).toBe(true);
+    expect(btn.disabled).toBe(false);
     btn.click();
-    expect(menu.classList.contains("hidden")).toBe(true); // stays closed while locked
-    expect(posted.slice(postedAtLock)).not.toContainEqual({ type: "setMode", mode: "agent" });
+    expect(menu.classList.contains("hidden")).toBe(false); // opens mid-run
+    // Picking Build from the menu reaches the host while the run is going.
+    (menu.querySelector('.mode-item[data-mode="agent"]') as HTMLButtonElement).click();
+    expect(posted.slice(postedAt)).toContainEqual({ type: "setMode", mode: "agent" });
 
     hostMessage({ type: "status", active: false });
     expect(btn.disabled).toBe(false);
-    btn.click();
-    expect(menu.classList.contains("hidden")).toBe(false);
   });
 
   it("reflects the host's mode + Parallel on load and does NOT reset them", async () => {
@@ -3584,6 +3586,30 @@ describe("view webview client", () => {
       if (original) proto.scrollIntoView = original;
       else delete proto.scrollIntoView;
     }
+  });
+
+  it("keeps the Mode and Parallel switches usable while the session works (the change lands next turn)", async () => {
+    // Reported: a click on Analyze → Build (and Parallel → OFF) during a run did nothing
+    // at all, so the UI showed one thing and the run did another. They are not request
+    // parameters: the agent re-reads them at every turn, so the change belongs at the
+    // next turn boundary. Everything that configures the REQUEST stays locked.
+    await loadView();
+    hostMessage({ type: "status", active: true });
+
+    const modeBtn = document.getElementById("mode-btn") as HTMLButtonElement;
+    const parallelBtn = document.getElementById("parallel-btn") as HTMLButtonElement;
+    const modelBtn = document.getElementById("model-btn") as HTMLButtonElement;
+    expect(modeBtn.disabled).toBe(false);
+    expect(parallelBtn.disabled).toBe(false);
+    // …while the request parameters (model, window, samplers, output, compact) stay locked.
+    expect(modelBtn.disabled).toBe(true);
+    expect((document.getElementById("ctx-range") as HTMLInputElement).disabled).toBe(true);
+    expect((document.getElementById("compact-btn") as HTMLButtonElement).disabled).toBe(true);
+
+    // And the click really reaches the host while the run is going.
+    posted.length = 0;
+    parallelBtn.click();
+    expect(posted.some((m) => (m as { type?: string }).type === "setParallel")).toBe(true);
   });
 
   it("disables the tab × of a WORKING session (switching stays allowed)", async () => {

@@ -206,6 +206,8 @@ The header has a mode selector, and it is the core safety idea of Harny.
 
 The Shell tool is **allowlist-first** in Analyze: a command runs only if every segment is a known read-only command (`ls`, `cat`, `grep`, `git status`, `git log`, …). Scripts, interpreters (`python -c`, `node -e`) and anything state-changing are refused. It is a **best-effort filter, not a sandbox** — treat Analyze as a strong guardrail, not a jail.
 
+**Switching while it works.** The mode is not a request parameter: it is a behaviour policy the agent **re-reads at every turn**, so you can flip Analyze/Build (or Parallel) **during a run** and the change lands at the **next turn boundary** — the same moment a steer is applied. A turn already in flight keeps the mode it started with, so a switch can never rewrite a tool call the model already emitted (an Analyze preview turning into a real write behind your back). By the same rule, the model is told: whatever the conversation shows as **PROPOSED**, it re-issues with the file tools once you are in Build.
+
 ### Parallel: sub-agents
 
 Turn **Parallel** on and the main agent becomes an **orchestrator**. It classifies the work by **independence**:
@@ -287,7 +289,7 @@ just want to use Harny, you can stop reading here.
 - **Chat Completions protocol** (`/v1/chat/completions`) with **real-time SSE streaming**
 - **14 tools**: Read, Write, StrReplace, Edit, Delete, Shell, Grep, Glob, Skill, TodoWrite, WebSearch, WebFetch, ReadLints, Delegate — plus dynamic `mcp__<server>__<tool>` from any MCP server
 - **Agent loop**: automatic tool execution, multi-turn continuation, no bounded turn count (the Stop button is the only limit; a `maxTurns` cap exists behind the scenes for tests)
-- **Two chat modes**: **Analyze** (read-only preview — changes are prepared and diffed but never written; when previews are ready the host asks **once** via a modal whether to switch to Build, with a tip to restart the chat for a clean apply) and **Build** (full tool use, writes for real). The transcript keeps a static, non-clickable note. The mode is persisted **per session** (restored on reopen; new sessions start in Analyze)
+- **Two chat modes**: **Analyze** (read-only preview — changes are prepared and diffed but never written; when previews are ready the host asks **once** via a modal whether to switch to Build, with a tip to restart the chat for a clean apply) and **Build** (full tool use, writes for real). The transcript keeps a static, non-clickable note. The mode is persisted **per session** (restored on reopen; new sessions start in Analyze). Both modes and Parallel can be switched **while a run is going**: they are behaviour policies the agent re-reads at every turn, and a turn in flight keeps the mode it started with
 - **Output-token-limit handling**: the provider's `finish_reason` is propagated; a truncated response is surfaced explicitly ("raise `harny.maxTokens`") instead of failing silently
 
 **Context & long sessions**

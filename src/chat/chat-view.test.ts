@@ -695,6 +695,29 @@ describe("ChatViewProvider", () => {
     expect(rt.mode).toBe("analyze");
   });
 
+  it("setMode propagates to the agent and persists — while the session works too", async () => {
+    // The UI used to lock the Mode button during a run, so a click never arrived; the
+    // host itself has no such gate: the change lands in the agent immediately and the
+    // agent applies it from the NEXT turn (see Agent.turnMode).
+    const { provider, registry, store } = buildHarness({ compactor: { summarize: vi.fn() } as unknown as Compactor });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    (rt.agent as any).streaming = true; // mid-run
+
+    await handler({ type: "setMode", mode: "agent" });
+
+    expect(rt.mode).toBe("agent");
+    expect((rt.agent as any).setMode).toHaveBeenCalledWith("agent");
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", expect.objectContaining({ mode: "agent" }));
+
+    // A nonsense value is ignored: no silent mode loss.
+    (rt.agent as any).setMode.mockClear();
+    await handler({ type: "setMode", mode: "nonsense" });
+    expect((rt.agent as any).setMode).not.toHaveBeenCalled();
+    expect(rt.mode).toBe("agent");
+  });
+
   it("setParallel is PER-SESSION, persists and pushes config", async () => {
     const { provider, registry, store } = buildHarness();
     const { handler, view } = resolveWith(provider);

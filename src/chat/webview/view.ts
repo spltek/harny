@@ -3427,11 +3427,14 @@ function setStreaming(active: boolean): void {
   lgResponse.disabled = active;
   for (const el of document.querySelectorAll<HTMLInputElement>("#lg-fields input")) el.disabled = active;
   inputEl.disabled = false;
-  // Mode button follows the same lock (no switching mid-stream); a dropdown
-  // left open gets closed so the disabled state is obvious.
+  // Mode and Parallel stay AVAILABLE while the session works: they are not request
+  // parameters (the model, the samplers, the window are — those stay locked) but two
+  // BEHAVIOUR policies the agent re-reads at every turn, so a change made now lands at
+  // the next turn boundary — the same moment a steer is applied. Locking them only
+  // swallowed the click in silence: the UI went on showing one thing and the run doing
+  // another. A dropdown left open is still closed, so the new label is not confused
+  // with the one that was already sent.
   if (active && !modeMenu.classList.contains("hidden")) closeModeMenu();
-  modeBtn.disabled = active;
-  parallelBtn.disabled = active;
   // Branch/cut keys on assistant bubbles follow the same lock.
   for (const b of document.querySelectorAll<HTMLButtonElement>(".branch-at, .truncate-at")) {
     b.disabled = active;

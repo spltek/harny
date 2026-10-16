@@ -85,6 +85,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Switching Analyze/Build — or Parallel — while the session was working did
+  nothing.** Both switches are disabled together with the rest of the controls during a
+  run, so the click was dropped in silence and the run kept the settings it started with:
+  the UI showed Build while the agent still behaved as Analyze, and Parallel OFF while
+  sub-agents were still spawned. They are not request parameters (the model, the samplers
+  and the window are, and those stay locked) but two **behaviour policies the agent
+  re-reads at every turn**, so they now stay usable and the change lands at the **next
+  turn boundary** — the same moment a steer is applied. A mode change can no longer
+  rewrite a turn already in flight either: the mode is **frozen when a turn starts**, so a
+  tool call the model had already emitted cannot change meaning (an Analyze preview
+  becoming a real write, with the diff never shown). The per-turn diagnostic line in
+  **Output > Harny** now carries `mode=` and `parallel=`, which is what makes such a
+  report diagnosable after the fact.
 - **A response could appear to start mid-word when the model reasoned in the middle of
   its answer.** The turn carried the text in two halves around a reasoning phase; the
   view closed the answer bubble at the reasoning and opened a new one for the
