@@ -4389,6 +4389,27 @@ describe("soft steering + pending bubbles (webview)", () => {
     expect(last.textContent).toContain("look at this");
   });
 
+  it("shows a paperclip in a pending row that carries attachments, even with text", async () => {
+    await loadView();
+    hostMessage({
+      type: "pending",
+      items: [
+        { id: "q1", mode: "queue", text: "andrea", attachments: [{ name: "relazione.pdf", size: 10 }] },
+        { id: "q2", mode: "queue", text: "no attachments" },
+        { id: "q3", mode: "queue", text: "", attachments: [{ name: "foto.png", size: 4 }] },
+      ],
+    });
+    const rows = [...document.querySelectorAll("#pending-area .pending-msg")];
+    const text = (i: number) => rows[i].querySelector(".pending-text") as HTMLElement;
+    // Text AND a file: the paperclip is what makes the file visible at all.
+    expect(text(0).textContent).toBe("📎 andrea");
+    // …and the names stay reachable through the tooltip.
+    expect(text(0).getAttribute("title")).toBe("andrea\nrelazione.pdf");
+    // No attachments: no paperclip.
+    expect(text(1).textContent).toBe("no attachments");
+    // Attachment-only still shows the names as the body, now behind the clip.
+    expect(text(2).textContent).toBe("📎 foto.png");
+  });
 
   it("marks a historical steer message with the steer class", async () => {
     setupDom({

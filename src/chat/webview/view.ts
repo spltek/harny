@@ -1631,9 +1631,14 @@ function renderPending(items: PendingViewItem[]): void {
     badge.textContent = it.mode === "steer" ? "Steer" : "Queued";
     const body = document.createElement("span");
     body.className = "pending-text";
-    body.textContent =
-      it.text || (it.attachments?.length ? "📎 " + it.attachments.map((a) => a.name).join(", ") : "(empty)");
-    body.title = body.textContent;
+    // A paperclip prefix whenever at least one file is attached. The names alone
+    // used to be swallowed as soon as the message ALSO had text, so the row said
+    // nothing about them. Names stay in the tooltip, and become the body when
+    // there is no text at all (as before).
+    const files = it.attachments ?? [];
+    const names = files.map((a) => a.name).join(", ");
+    body.textContent = (files.length > 0 ? "📎 " : "") + (it.text || names || "(empty)");
+    body.title = files.length > 0 && it.text ? `${it.text}\n${names}` : body.textContent;
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.className = "pending-cancel";
