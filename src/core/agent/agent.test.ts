@@ -3593,6 +3593,40 @@ describe("Agent — per-turn meta (real usage + timings)", () => {
     expect(typeof assistant.meta!.durationMs).toBe("number");
   });
 
+  it("records the mode each turn ran under — a single run can hold Analyze and Build", async () => {
+    // The switch works mid-run (see turnMode), so the transcript can hold turns that only
+    // prepared previews and turns that wrote: the badge under each answer says which, so
+    // the fact belongs to the TURN, not to the session.
+    let agentRef: Agent | undefined;
+    const write: Tool = {
+      name: "Write",
+      definition: { name: "Write", description: "write", parameters: { type: "object", properties: {} } },
+      analyzePolicy: "preview",
+      analyzeNote: FILE_PREVIEW_NOTE,
+      execute: () => {
+        agentRef?.setMode("agent"); // the user flips to Build while the turn runs
+        return { content: "PROPOSED (preview)", isError: false };
+      },
+    };
+    const { agent, history } = buildHarness({
+      tools: [write],
+      chunks: [
+        [
+          { type: "tool_call_start", index: 0, id: "w1", name: "Write" },
+          { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts","content":"x"}' },
+          { type: "tool_call_end", index: 0 },
+        ],
+        [{ type: "text", content: "done" }],
+      ],
+    });
+    agentRef = agent;
+
+    await agent.send("go"); // starts in Analyze
+
+    const assistants = history.all().filter((m) => m.role === "assistant" && m.meta);
+    expect(assistants.map((m) => m.meta!.mode)).toEqual(["analyze", "agent"]);
+  });
+
   it("emits a turn_meta event with the REAL metrics as soon as a turn is committed", async () => {
     const { agent, events } = buildHarness({
       chunks: [[{ type: "text", content: "hi" }, { type: "usage", usage: { input: 1000, output: 10, total: 1010 } }]],

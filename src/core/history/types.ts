@@ -16,6 +16,13 @@ export interface MessageMeta {
   model?: string;
   provider?: string;
   /**
+   * The MODE this turn ran under. Stored per message for the same reason as the model:
+   * the switch now works while a run is going, so a transcript can hold Analyze and Build
+   * turns side by side — and the badge under each answer is where you tell them apart
+   * without digging into the log. (Analyze turns prepared previews; Build turns wrote.)
+   */
+  mode?: "analyze" | "agent";
+  /**
    * The context window and output budget VIGENT for this turn. Recorded so an
    * old turn stays interpretable even after the provider entry, the model
    * list or the window itself changes.

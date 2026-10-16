@@ -231,6 +231,11 @@ describe("renderViewHtml", () => {
     expect(html).toContain(".msg-meta {");
     expect(html).toMatch(/\.msg-meta \{[^}]*flex-shrink: 0/);
     expect(html).toMatch(/\.msg-meta \{[^}]*align-self: flex-start/);
+    // The mode chip that leads the badge (see MessageMeta.mode): present, and the Build
+    // variant is visibly different from the quiet Analyze one — that is the whole point of
+    // the chip (scanning a transcript for the turns that WROTE).
+    expect(html).toContain(".msg-meta .meta-mode {");
+    expect(html).toMatch(/\.msg-meta \.meta-mode\.build \{[^}]*color: var\(--accent\)/);
     expect(html).toMatch(/\.msg-meta \{[^}]*tabular-nums/);
   });
 

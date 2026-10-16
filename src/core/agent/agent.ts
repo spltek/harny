@@ -852,11 +852,15 @@ export class Agent implements ChatController {
     modelProvider?: string;
     contextWindow?: number;
     maxTokens?: number;
+    /** The mode the turn ran under (see runLlmTurn). */
+    mode?: ChatMode;
   }): MessageMeta {
     const endedAt = r.endedAt ?? Date.now();
     return {
       ...(r.model ? { model: r.model } : {}),
       ...(r.modelProvider ? { provider: r.modelProvider } : {}),
+      // The mode travels with the turn's identity, like the model: a run can hold both.
+      ...(r.mode ? { mode: r.mode } : {}),
       ...(typeof r.contextWindow === "number" ? { contextWindow: r.contextWindow } : {}),
       ...(typeof r.maxTokens === "number" ? { maxTokens: r.maxTokens } : {}),
       ...(r.usage
@@ -960,6 +964,9 @@ export class Agent implements ChatController {
     modelProvider?: string;
     contextWindow?: number;
     maxTokens?: number;
+    /** The mode this turn RAN under (frozen at its start, see turnMode): the caller stores
+     * it in the turn's meta, which is what the badge under the answer shows. */
+    mode: ChatMode;
     /** True when the loop guard cut this turn short because the reasoning
      * repeated itself; the caller must nudge instead of executing tools. */
     reasoningLoop?: boolean;
@@ -1185,11 +1192,15 @@ export class Agent implements ChatController {
       answerLoop,
       usage,
       // Identity of the turn: the model may differ from the previous one (the
-      // user switches mid-session), and so may the budget it runs with.
+      // user switches mid-session), and so may the budget it runs with…
       model: config.model,
       modelProvider: config.activeProvider,
       contextWindow: config.contextWindow,
       maxTokens: config.maxTokens,
+      // …and so may the MODE, which is why it belongs to the turn rather than to the
+      // session: with the switch now working mid-run, a transcript can hold Analyze and
+      // Build turns side by side, and this is what tells them apart later.
+      mode: this.turnMode,
       startedAt: streamStart,
       firstTokenAt,
       endedAt: Date.now(),

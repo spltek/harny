@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The per-turn badge leads with the MODE the turn ran in** (`Build` accent-tinted,
+  `Analyze` quiet), before the model and the timings. With the switch now working mid-run, a
+  transcript can hold turns that only prepared previews and turns that wrote — and this is
+  where you tell them apart at a glance, instead of digging into `Output > Harny`. Turns
+  recorded before this existed simply show no chip.
 - **A tool now DECLARES how it keeps Analyze's promise** (`read-only`, `preview`, `guarded`,
   `refuse`), instead of the mode policy holding a list of names: the list was blind to every
   dynamic tool and deaf to a core tool that forgot to appear in it. Production's default is

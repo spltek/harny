@@ -5268,6 +5268,41 @@ describe("per-turn metrics badge — live turnMeta", () => {
     expect(badge.textContent).toContain("elapsed 1.2s");
     expect(badge.textContent).toContain("first token 300ms");
   });
+
+  it("leads the badge with the mode the turn ran in", async () => {
+    // Reported as a want: which turns WROTE and which only prepared previews is not
+    // something you should have to dig out of Output > Harny. The mode leads the badge,
+    // as a chip you can scan a long transcript for.
+    await loadView();
+    hostMessage({
+      type: "turnMeta",
+      meta: { model: "gpt-4o", provider: "openai", mode: "agent", inputTokens: 1000, durationMs: 900 },
+    });
+
+    const chip = document.querySelector(".msg-meta .meta-mode") as HTMLElement;
+    expect(chip).toBeTruthy();
+    expect(chip.textContent).toBe("Build");
+    expect(chip.classList.contains("build")).toBe(true);
+    expect(chip.title).toContain("wrote for real");
+    // The rest of the row follows, and the mode is in the tooltip too.
+    expect((document.querySelector(".msg-meta") as HTMLElement).textContent).toContain("openai/gpt-4o");
+    expect((document.querySelector(".msg-meta") as HTMLElement).title).toContain("mode: Build");
+  });
+
+  it("marks an Analyze turn as such, and shows NO chip on turns recorded before the mode existed", async () => {
+    await loadView();
+    hostMessage({ type: "turnMeta", meta: { mode: "analyze", inputTokens: 10, durationMs: 100 } });
+    const chip = document.querySelector(".msg-meta .meta-mode") as HTMLElement;
+    expect(chip.textContent).toBe("Analyze");
+    expect(chip.classList.contains("analyze")).toBe(true);
+
+    // An old transcript has no mode in its meta: the chip is simply absent (no
+    // placeholder, no "unknown").
+    hostMessage({ type: "turnMeta", meta: { inputTokens: 20, durationMs: 200 } });
+    const badges = document.querySelectorAll(".msg-meta");
+    expect(badges[1].querySelector(".meta-mode")).toBe(null);
+    expect(badges[1].textContent).toContain("20 in");
+  });
 });
 
 describe("DB vacuum modal (webview)", () => {

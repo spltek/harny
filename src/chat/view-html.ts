@@ -352,6 +352,14 @@ ${renderViewConfig(deps)}
       font-size: var(--fs-sm); color: var(--muted); font-variant-numeric: tabular-nums;
       user-select: text; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
+    /* The mode chip leading the badge: quiet for Analyze (the default, so it must not
+       shout on every turn) and accent-tinted for Build (the turns that WROTE, which is
+       what you scan a long transcript for). */
+    .msg-meta .meta-mode {
+      padding: 0 4px; border-radius: 3px; background: rgba(255, 255, 255, 0.06);
+      font-size: var(--fs-sm);
+    }
+    .msg-meta .meta-mode.build { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
     /* Bubble action tabs: the ⎇ branch key on assistant replies and the ✂ cut
        key on user prompts become little "linguette" anchored to the bubble's
        TOP-RIGHT. On hover they SLIDE UP out of the bubble (same fade/reveal as

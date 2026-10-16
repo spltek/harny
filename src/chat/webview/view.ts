@@ -25,6 +25,9 @@ interface MsgMeta {
   /** Model + named provider that served the turn (a session can switch both). */
   model?: string;
   provider?: string;
+  /** The mode the turn RAN under (see MessageMeta.mode): with the switch working mid-run,
+   * a transcript can hold Analyze (previews) and Build (writes) turns side by side. */
+  mode?: "analyze" | "agent";
   /** Window and output budget vigent in that turn. */
   contextWindow?: number;
   maxTokens?: number;
@@ -611,11 +614,27 @@ function metaBadge(meta: MsgMeta): HTMLElement | undefined {
   if (typeof meta.cachedTokens === "number" && meta.cachedTokens > 0) parts.push(`⚡ ${fmtTokens(meta.cachedTokens)}`);
   if (typeof meta.durationMs === "number") parts.push(`elapsed ${fmtDuration(meta.durationMs)}`);
   if (typeof meta.ttftMs === "number") parts.push(`first token ${fmtDuration(meta.ttftMs)}`);
-  if (parts.length === 0) return undefined;
+  if (parts.length === 0 && !meta.mode) return undefined;
   const el = document.createElement("div");
   el.className = "msg-meta";
-  el.textContent = parts.join(" · ");
+  if (meta.mode) {
+    // The mode leads, as a chip: it is what you SCAN a long transcript for (which turns
+    // wrote and which only prepared previews). Older turns have no mode recorded — the
+    // chip simply is not there, no placeholder and no "unknown".
+    const build = meta.mode === "agent";
+    const chip = document.createElement("span");
+    chip.className = `meta-mode ${build ? "build" : "analyze"}`;
+    chip.textContent = build ? "Build" : "Analyze";
+    chip.title = build
+      ? "This turn ran in Build: tools wrote for real"
+      : "This turn ran in Analyze: read-only, changes were prepared as previews";
+    el.appendChild(chip);
+    if (parts.length > 0) el.appendChild(document.createTextNode(" · " + parts.join(" · ")));
+  } else {
+    el.textContent = parts.join(" · ");
+  }
   el.title = [
+    meta.mode ? `mode: ${meta.mode === "agent" ? "Build" : "Analyze"}` : "",
     meta.model ? `model: ${meta.model}` : "",
     meta.provider ? `provider: ${meta.provider}` : "",
     meta.contextWindow !== undefined ? `context window: ${meta.contextWindow} tokens` : "",
