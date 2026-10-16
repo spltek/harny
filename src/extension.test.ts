@@ -29,10 +29,16 @@ vi.mock("vscode", () => ({
     get workspaceFolders() {
       return state.workspaceFolders;
     },
-    getConfiguration: () => ({ get: (_key: string, fallback: unknown) => fallback, update: vi.fn() }),
+    getConfiguration: () => ({
+      get: (_key: string, fallback: unknown) => fallback,
+      update: vi.fn(),
+    }),
     onDidChangeConfiguration: state.onDidChangeConfiguration,
     onDidChangeWorkspaceFolders: state.onDidChangeWorkspaceFolders,
-    fs: { writeFile: vi.fn(async () => {}), readFile: vi.fn(async () => new Uint8Array()) },
+    fs: {
+      writeFile: vi.fn(async () => {}),
+      readFile: vi.fn(async () => new Uint8Array()),
+    },
   },
   languages: { getDiagnostics: () => [] },
   Uri: { file: (p: string) => ({ fsPath: p }), joinPath: () => ({}) },
@@ -56,6 +62,10 @@ describe("extension activate (smoke)", () => {
     rmSync(home, { recursive: true, force: true });
   });
 
+  // It boots the REAL composition root (the whole core is imported, a SQLite database is
+  // opened in a temp home), so it is an integration test living in the unit suite: the 5s
+  // default is a unit-test default and Windows runners need more than that (it timed out
+  // at 5.75s there while ubuntu and macos passed).
   it("activates without errors: opens the DB, wires the view provider and returns the sessions manager", async () => {
     const { activate } = await import("./extension");
     const subscriptions: { dispose(): void }[] = [];
@@ -88,5 +98,5 @@ describe("extension activate (smoke)", () => {
         /* best-effort */
       }
     }
-  });
+  }, 30_000);
 });
