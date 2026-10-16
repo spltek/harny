@@ -131,7 +131,11 @@ ${renderViewConfig(deps)}
        separation comes from the tone-on-tone surface, not outline lines. */
     .sessions-card {
       border-radius: 8px;
-      margin: 8px 10px 0;
+      /* The bottom margin is the whole gap above the tab strip: #tabs only adds
+         its own 5px of padding-top, so the session card and the tab head used
+         to sit 5px apart (identical open or collapsed, since collapsing hides
+         #sessions and leaves just the header). */
+      margin: 8px 10px 10px;
       background: var(--input-bg);
       overflow: hidden; /* keep the scrolling list inside the rounded corners */
       flex-shrink: 0;
