@@ -31,6 +31,7 @@ import type { LoopGuardOptions } from "../core/agent/loop-guard";
 import { DEFAULT_MAX_PARALLEL_SUB_AGENTS } from "../core/agent/agent";
 import type { ContextOverflowEvidence } from "../core/agent/agent";
 import type { ChatHistory } from "../core/history/chat-history";
+import type { ChatMessage } from "../core/history/types";
 
 /**
  * Single side-view (webview view) hosting: a hideable sessions list, a tab bar
@@ -1414,15 +1415,26 @@ export class ChatViewProvider implements WebviewViewProvider {
    * one the metrics UI shows).
    */
   private needsAutoCompact(rt: SessionRuntime): boolean {
+    return this.needsCompact(rt, rt.history.conversation(), rt.contextTokens ?? 0);
+  }
+
+  /**
+   * Does this conversation have to be compacted before the next request?
+   *
+   * ONE threshold for every conversation that runs on this session: the agent's own and
+   * a sub-agent's (which is heavier: unbounded, full of big reads). `knownTokens` is what
+   * the provider last reported for that conversation, when it is the session's.
+   *
+   * The threshold applies to the USABLE budget, not to the raw window: the provider
+   * counts `input + max_tokens` against the window, so an input that reaches the
+   * threshold on the raw window is already past the limit. (1M window / 384k output: the
+   * request died at 63.4% while the auto-compact waited for 80% — the compaction could
+   * never fire when it was needed.)
+   */
+  private needsCompact(rt: SessionRuntime, messages: ChatMessage[], knownTokens = 0): boolean {
     if (!this.options.compactor) return false;
     const window = clampContextWindow(rt.contextWindow ?? DEFAULT_CONTEXT_WINDOW);
-    const estimated = estimateTokens(serializeConversation(rt.history.conversation()));
-    const tokens = Math.max(rt.contextTokens ?? 0, estimated);
-    // The threshold applies to the USABLE budget, not the raw window: the
-    // provider counts `input + max_tokens` against the window, so an input that
-    // reaches the threshold on the raw window is already past the limit.
-    // (1M window / 384k output: the request died at 63.4% while the auto-compact
-    // waited for 80% — the compaction could never fire when it was needed.)
+    const tokens = Math.max(knownTokens, estimateTokens(serializeConversation(messages)));
     return shouldCompact(tokens, usableContext(window, this.budgetReserve(rt)), this.compactionSettings(rt));
   }
 
@@ -1982,6 +1994,20 @@ export class ChatViewProvider implements WebviewViewProvider {
     rt.contextWindow = adopted;
     this.sessions.saveSettings(rt.sessionId, { contextWindow: adopted });
     if (this.activeId === rt.sessionId) void this.pushConfig();
+  }
+
+  /**
+   * Proactive compaction for a SUB-AGENT at a turn boundary: the same threshold and the
+   * same routine, applied to ITS history. A sub-agent is unbounded and reads heavily, so
+   * it has to free room before the next request like the session does — instead of
+   * learning it the hard way when the provider refuses. Silent by design: the transcript
+   * has no "compacting" indicator for work that belongs to one sub-task.
+   */
+  async maybeCompactSubAgentHistory(history: ChatHistory, sessionId: string, signal?: AbortSignal): Promise<boolean> {
+    const rt = this.registry.get(sessionId);
+    if (!rt) return false;
+    if (!this.needsCompact(rt, history.conversation())) return false;
+    return this.compactSubAgentHistory(history, sessionId, signal);
   }
 
   /**

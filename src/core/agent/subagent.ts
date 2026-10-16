@@ -50,6 +50,11 @@ export interface SubAgentRunnerDeps {
    * host compacts THIS history with the same strategy a session uses and answers
    * whether it changed anything. Absent = an overflow ends the sub-agent. */
   onContextOverflow?: (history: ChatHistory, signal: AbortSignal, evidence: ContextOverflowEvidence) => Promise<boolean>;
+  /** Called at every turn boundary of a sub-agent, with ITS history: the session frees
+   * room there too (`maybeCompactDuringRun`), and a sub-agent — unbounded, and full of
+   * heavy reads — is the one that needs it most. The host decides whether the threshold
+   * is crossed. Absent = the sub-agent only recovers on a refusal. */
+  onTurnBoundary?: (history: ChatHistory, signal: AbortSignal) => Promise<boolean | void> | boolean | void;
   /** Optional diagnostic sink; sub-agent lines are tagged with their id. */
   log?: (message: string) => void;
 }
@@ -162,6 +167,16 @@ export class SubAgentRunner {
       // retried. Without this an overflow would end the sub-task instead.
       onContextOverflow: (signal, evidence) =>
         this.deps.onContextOverflow ? this.deps.onContextOverflow(history, signal, evidence) : false,
+      // The same turn-boundary release the session gets (see deps.onTurnBoundary). The
+      // Agent's hook takes no answer, so the host's verdict (did it free room?) is
+      // dropped here — it only logs it.
+      ...(this.deps.onTurnBoundary
+        ? {
+            onTurnBoundary: async (signal: AbortSignal): Promise<void> => {
+              await this.deps.onTurnBoundary!(history, signal);
+            },
+          }
+        : {}),
       // Each sub-agent has its OWN tool state (TodoWrite): concurrent sub-agents
       // must never clobber each other's list.
       ownerId: `sub-${key}`,

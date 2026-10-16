@@ -2266,6 +2266,43 @@ describe("ChatViewProvider compaction", () => {
     expect(rt.contextWindow).toBe(8_192);
   });
 
+  it("compacts a sub-agent proactively when its OWN history crosses the threshold", async () => {
+    // Same threshold as the session (ONE implementation, `needsCompact`), so a sub-agent
+    // frees room at a turn boundary instead of learning it from a refusal.
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\nsub");
+    const { provider, registry } = buildHarness({
+      compactor: { summarize } as unknown as Compactor,
+      compaction: DEFAULT_COMPACTION,
+    });
+    resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 8_192; // tiny: a few messages are already past the threshold
+    const sub = {
+      // Decisively over any threshold: the point is the DECISION, not the arithmetic.
+      messages: Array.from({ length: 40 }, (_, i) => ({
+        role: i % 2 === 0 ? "user" : "assistant",
+        content: "x".repeat(4_000),
+        timestamp: i + 1,
+      })) as ChatMessage[],
+      conversation(): ChatMessage[] {
+        return this.messages;
+      },
+      replace(next: ChatMessage[]): void {
+        this.messages = next;
+      },
+    };
+
+    expect(await provider.maybeCompactSubAgentHistory(sub as never, "s1")).toBe(true);
+    expect(sub.messages[0].synthetic).toBe(true);
+
+    // And the SAME history that fits is left alone (no compaction for nothing).
+    rt.contextWindow = 1_000_000;
+    summarize.mockClear();
+    expect(await provider.maybeCompactSubAgentHistory(sub as never, "s1")).toBe(false);
+    expect(summarize).not.toHaveBeenCalled();
+  });
+
   it("says no when a sub-agent's history has nothing worth summarizing", async () => {
     const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\nx");
     const { provider } = buildHarness({ compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION });

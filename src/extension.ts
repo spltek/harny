@@ -172,6 +172,8 @@ export async function activate(context: ExtensionContext) {
     | undefined;
   // The session's resolved Loop Guard, for the sub-agents (same source as the agent's).
   let subAgentGuard: ((sessionId: string) => LoopGuardOptions) | undefined;
+  // Proactive compaction of a sub-agent's own history at a turn boundary.
+  let subAgentTurnBoundary: ((history: ChatHistory, sessionId: string, signal?: AbortSignal) => Promise<boolean>) | undefined;
 
   const createAgent = (history: ChatHistory, sessionId: string): ChatController => {
     // One sub-agent runner per session: it owns the ephemeral sub-agent
@@ -192,6 +194,8 @@ export async function activate(context: ExtensionContext) {
       // compacts the sub-agent's own history with the session's strategy.
       onContextOverflow: (history, signal, evidence) =>
         subAgentOverflow?.(history, sessionId, signal, evidence) ?? Promise.resolve(false),
+      // Free room at every turn boundary, like the session does (see deps.onTurnBoundary).
+      onTurnBoundary: (history, signal) => subAgentTurnBoundary?.(history, sessionId, signal),
     });
     return new Agent({
       config,
@@ -250,6 +254,7 @@ export async function activate(context: ExtensionContext) {
   sessionBudget = (id) => viewProvider.usableBudgetFor(id);
   subAgentOverflow = (history, id, signal, evidence) => viewProvider.compactSubAgentHistory(history, id, signal, evidence);
   subAgentGuard = (id) => viewProvider.loopGuardOptionsFor(id);
+  subAgentTurnBoundary = (history, id, signal) => viewProvider.maybeCompactSubAgentHistory(history, id, signal);
 
   // The sessions live in the CENTRAL home bucket keyed by the root: when the
   // open folder set changes, re-derive the single root and rebuild the view

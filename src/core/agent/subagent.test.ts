@@ -269,6 +269,37 @@ describe("sub-agents inherit the session's context discipline", () => {
     expect(await run()).toBe(3);
   });
 
+  it("frees room at every turn boundary, with its OWN history", async () => {
+    // The session compacts proactively at a boundary (maybeCompactDuringRun); a sub-agent
+    // — unbounded, and full of heavy reads — needs it more, and it must act on the
+    // SUB-AGENT's history, not on the session's.
+    const readCall = (id: string, path: string): StreamChunk[] => toolCallChunks(id, "Read", { path });
+    const seenLengths: number[] = [];
+    const runner = new SubAgentRunner({
+      config: new StaticConfigProvider(CONFIG),
+      llmFactory: factory([
+        readCall("r1", "a.ts"),
+        readCall("r2", "b.ts"),
+        [{ type: "text", content: "report" }],
+      ]),
+      tools: new ToolRegistry([makeReadTool()]),
+      cwd: () => "/workspace",
+      onTurnBoundary: (history) => {
+        seenLengths.push(history.conversation().length);
+        return false; // nothing to free in this test
+      },
+    });
+
+    await runner.run(spec({ access: "read" }));
+
+    // A boundary closes EVERY turn, the last one included: three turns here.
+    expect(seenLengths).toHaveLength(3);
+    expect(seenLengths[0]).toBeGreaterThan(0);
+    // …and each call sees the sub-agent's OWN history, growing as it works.
+    expect(seenLengths[1]).toBeGreaterThan(seenLengths[0]);
+    expect(seenLengths[2]).toBeGreaterThan(seenLengths[1]);
+  });
+
   it("without a budget it behaves exactly as before (no masking, no cap)", async () => {
     // The deps are optional: a runner built without them (tests, a future CLI) must not
     // change behaviour just because the feature exists.
