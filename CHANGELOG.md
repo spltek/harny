@@ -39,8 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sub-agents now inherit the session's context discipline**: they size their own
   observation masking and tool-output caps on the session's window (a sub-agent is the
   one doing the heavy reads, and its Shell/Grep caps used to stay FIXED at 50KB/30KB —
-  an entire 8k context), and an overflow inside a sub-agent is recovered with the same
-  compaction a session uses, applied to its own ephemeral history.
+  an entire 8k context), an overflow inside a sub-agent is recovered with the same
+  compaction a session uses (applied to its own ephemeral history), and the **Loop Guard
+  settings of the session reach the sub-agents** instead of a default preset.
 
 ### Changed
 

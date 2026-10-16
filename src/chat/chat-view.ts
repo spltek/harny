@@ -1515,10 +1515,26 @@ export class ChatViewProvider implements WebviewViewProvider {
    * starts from the current settings.
    */
   private applyLoopGuard(rt: SessionRuntime): void {
-    rt.agent.setLoopGuardOptions({
+    rt.agent.setLoopGuardOptions(this.resolvedLoopGuard(rt));
+  }
+
+  /**
+   * THIS session's Loop Guard options: the sensitivity preset (+ the opt-in answer
+   * guard) overlaid with any EPHEMERAL field overrides. ONE place defines them, so the
+   * agent and the sub-agents cannot end up guarded differently.
+   */
+  private resolvedLoopGuard(rt: SessionRuntime): LoopGuardOptions {
+    return {
       ...resolveLoopGuardOptions(rt.loopGuard, rt.loopGuardResponse),
       ...rt.loopGuardOverrides,
-    });
+    };
+  }
+
+  /** The resolved guard of a session, for a caller that runs its own agents on the
+   * same session (the sub-agent runner). Falls back to the preset defaults. */
+  loopGuardOptionsFor(sessionId: string): LoopGuardOptions {
+    const rt = this.registry.get(sessionId);
+    return rt ? this.resolvedLoopGuard(rt) : resolveLoopGuardOptions(undefined, undefined);
   }
 
   /**

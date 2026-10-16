@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { SubAgentRunner, SUBAGENT_REPORT_MARKER, lastAssistantReport, toSubAgentEvent } from "./subagent";
+import { DEFAULT_LOOP_GUARD_OPTIONS } from "./loop-guard";
+import type { LoopGuardOptions } from "./loop-guard";
 import { StaticConfigProvider } from "../config/static-config-provider";
 import { ToolRegistry } from "../tools/tool-registry";
 import type { Tool, ToolResult } from "../tools/tool";
@@ -87,8 +89,8 @@ function toolCallChunks(id: string, name: string, args: Record<string, unknown>)
   ];
 }
 
-/** The Read stub: counts its calls, returns `output` (default "CONTENT") and
- * records the context budget it was handed. */
+/** The Read stub: counts its calls, returns `output` (default "CONTENT") and records
+ * the context budget it was handed. */
 function makeReadTool(opts: { output?: string } = {}): Tool & { calls: number; budget?: number } {
   const tool = {
     name: "Read",
@@ -226,6 +228,45 @@ describe("sub-agents inherit the session's context discipline", () => {
     const res = await runner.run(spec({ access: "read" }));
 
     expect(res.isError).toBe(true);
+  });
+
+  it("guards a sub-agent with THIS session's options, not with the defaults", async () => {
+    // Same guard, same session: a setting changed in the UI must protect the sub-agents
+    // too, otherwise "they share the loop guard" only means "they have one".
+    // The discriminator is countable: a model that keeps producing EMPTY turns is nudged
+    // up to `maxNudges` times, then the run stops — so the number of requests reveals
+    // which options were in force (the main agent's own test uses the same scenario).
+    const stalling = (): { factory: LLMProviderFactory; calls: () => number } => {
+      let calls = 0;
+      return {
+        calls: () => calls,
+        factory: {
+          create: () => ({
+            protocol: "chat" as const,
+            async *stream() {
+              calls++;
+              yield* [] as StreamChunk[]; // nothing: text, thinking and tools all empty
+            },
+          }),
+        },
+      };
+    };
+    const run = async (opts?: LoopGuardOptions): Promise<number> => {
+      const stall = stalling();
+      await new SubAgentRunner({
+        config: new StaticConfigProvider(CONFIG),
+        llmFactory: stall.factory,
+        tools: new ToolRegistry([]),
+        cwd: () => "/workspace",
+        ...(opts ? { loopGuard: () => opts } : {}),
+      }).run(spec({ access: "read" }));
+      return stall.calls();
+    };
+
+    // The session's guard: ONE nudge, then the stop → the nudge + the final attempt.
+    expect(await run({ ...DEFAULT_LOOP_GUARD_OPTIONS, maxNudges: 1 })).toBe(2);
+    // The same sub-agent with no guard deps: the default preset (maxNudges: 2) → 3.
+    expect(await run()).toBe(3);
   });
 
   it("without a budget it behaves exactly as before (no masking, no cap)", async () => {

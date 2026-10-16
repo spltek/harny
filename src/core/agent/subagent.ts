@@ -6,6 +6,7 @@ import { InMemoryEventBus } from "../events/in-memory-event-bus";
 import type { LLMProviderFactory } from "../llm/types";
 import type { ToolRegistry, ToolResult } from "../tools";
 import { toolDefinitionsForMode, type ChatMode } from "../tools/mode-policy";
+import type { LoopGuardOptions } from "./loop-guard";
 import { Agent } from "./agent";
 import type { ContextOverflowEvidence } from "./agent";
 import type { ChatController } from "./chat-controller";
@@ -38,6 +39,12 @@ export interface SubAgentRunnerDeps {
    * overflow from the provider's wording (see core/agent/agent.ts). Absent = the
    * pre-budget behaviour. */
   contextBudget?: () => number;
+  /** This SESSION's resolved Loop Guard options (preset + response + ephemeral
+   * overrides). A sub-agent is part of the session's work, so a guard tuned for a
+   * flaky model must protect it too — otherwise the README's "sub-agents share the
+   * loop guard" would only mean "they have a default one". Read per run, so a change
+   * made in the UI applies to the next sub-agent. Absent = the default preset. */
+  loopGuard?: () => LoopGuardOptions;
   /** Why an overflow reaches the host here too: the sub-agent's history is EPHEMERAL
    * (the runner owns it), so the session's compaction routine cannot act on it — the
    * host compacts THIS history with the same strategy a session uses and answers
@@ -148,6 +155,8 @@ export class SubAgentRunner {
       // Same session, same window: the sub-agent sizes its masking and its tool
       // caps on the budget the host knows (see SubAgentRunnerDeps.contextBudget).
       contextBudget: this.deps.contextBudget,
+      // …and this session's guard, not a default one (see deps.loopGuard).
+      ...(this.deps.loopGuard ? { loopGuard: this.deps.loopGuard() } : {}),
       // …and the SAME recovery as its session, applied to ITS OWN history: the host
       // compacts it (one strategy, see core/sessions/compactHistory) and the turn is
       // retried. Without this an overflow would end the sub-task instead.

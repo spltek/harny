@@ -4,6 +4,8 @@ import { mkdirSync, watch } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Agent } from "./core/agent/agent";
+import { resolveLoopGuardOptions } from "./core/agent/loop-guard";
+import type { LoopGuardOptions } from "./core/agent/loop-guard";
 import type { ContextOverflowEvidence } from "./core/agent/agent";
 import { SubAgentRunner } from "./core/agent/subagent";
 import { DefaultSystemPromptBuilder } from "./core/agent/system-prompt";
@@ -168,6 +170,8 @@ export async function activate(context: ExtensionContext) {
   let subAgentOverflow:
     | ((history: ChatHistory, sessionId: string, signal?: AbortSignal, evidence?: ContextOverflowEvidence) => Promise<boolean>)
     | undefined;
+  // The session's resolved Loop Guard, for the sub-agents (same source as the agent's).
+  let subAgentGuard: ((sessionId: string) => LoopGuardOptions) | undefined;
 
   const createAgent = (history: ChatHistory, sessionId: string): ChatController => {
     // One sub-agent runner per session: it owns the ephemeral sub-agent
@@ -181,6 +185,9 @@ export async function activate(context: ExtensionContext) {
       // Sub-agents run on THIS session's model, so they size their own masking and
       // tool-output caps on the same window (see SubAgentRunnerDeps.contextBudget).
       contextBudget: () => sessionBudget?.(sessionId) ?? 0,
+      // …and this session's Loop Guard, resolved in ONE place for the agent and the
+      // sub-agents alike (a guard tuned for a flaky model must protect both).
+      loopGuard: () => subAgentGuard?.(sessionId) ?? resolveLoopGuardOptions(undefined, undefined),
       // …and an overflow inside a sub-agent is recovered the SAME way: the host
       // compacts the sub-agent's own history with the session's strategy.
       onContextOverflow: (history, signal, evidence) =>
@@ -242,6 +249,7 @@ export async function activate(context: ExtensionContext) {
   overflowCompact = (id, signal, evidence) => viewProvider.compactForOverflow(id, signal, evidence);
   sessionBudget = (id) => viewProvider.usableBudgetFor(id);
   subAgentOverflow = (history, id, signal, evidence) => viewProvider.compactSubAgentHistory(history, id, signal, evidence);
+  subAgentGuard = (id) => viewProvider.loopGuardOptionsFor(id);
 
   // The sessions live in the CENTRAL home bucket keyed by the root: when the
   // open folder set changes, re-derive the single root and rebuild the view
