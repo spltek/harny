@@ -239,6 +239,45 @@ describe("ChatViewProvider", () => {
     expect(registry.listOpenIds().length).toBe(1);
   });
 
+  it("renders the credit as PLAIN TEXT by default (no dead link)", async () => {
+    const { provider } = buildHarness();
+    const { view } = resolveWith(provider);
+    await vi.waitFor(() => expect(view.webview.html).toContain('id="sessions"'), { timeout: 2000 });
+    expect(view.webview.html).toContain('"brand":{"name":"SPLTek"}');
+  });
+
+  it("never links to `repository`: a private repo would hand out a 404", async () => {
+    const { provider } = buildHarness();
+    provider.setContext({
+      extensionUri: { fsPath: "/ext" },
+      subscriptions: [],
+      extension: { packageJSON: { repository: "git+https://github.com/spltek/harny.git" } },
+    } as any);
+    const { view } = resolveWith(provider);
+    await vi.waitFor(() => expect(view.webview.html).toContain('id="sessions"'), { timeout: 2000 });
+    expect(view.webview.html).toContain('"brand":{"name":"SPLTek"}');
+    expect(view.webview.html).not.toContain("github.com/spltek");
+  });
+
+  it("links the credit when `homepage` is set explicitly", async () => {
+    const { provider } = buildHarness();
+    provider.setContext({
+      extensionUri: { fsPath: "/ext" },
+      subscriptions: [],
+      extension: {
+        packageJSON: {
+          homepage: "https://spltek.example/harny",
+          repository: "git+https://github.com/spltek/harny.git",
+        },
+      },
+    } as any);
+    const { view } = resolveWith(provider);
+    await vi.waitFor(() => expect(view.webview.html).toContain('id="sessions"'), { timeout: 2000 });
+    expect(view.webview.html).toContain('"name":"SPLTek","url":"https://spltek.example/harny"');
+    // `repository` must stay out of the output entirely.
+    expect(view.webview.html).not.toContain("github.com/spltek");
+  });
+
   it("createNew asks for a name via the in-panel modal (New Session default)", async () => {
     const { provider } = buildHarness();
     const { handler, view } = resolveWith(provider);

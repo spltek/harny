@@ -2169,6 +2169,28 @@ export class ChatViewProvider implements WebviewViewProvider {
     } catch {
       /* file missing: fall back to no version */
     }
+    // Brand mark: also loaded through asWebviewUri (media/ is already in
+    // localResourceRoots) and cache-busted the same way, so replacing
+    // media/icon.svg shows up on the next webview render — no rebuild, no
+    // inlined copy in the source to keep in sync.
+    const logoPath = Uri.joinPath(this.context!.extensionUri, "media", "icon.svg");
+    const logoUri = this.view!.webview.asWebviewUri(logoPath);
+    let logoVersion = "0";
+    try {
+      logoVersion = String(fs.statSync(logoPath.fsPath).mtimeMs);
+    } catch {
+      /* file missing: the hero simply renders without the mark */
+    }
+    // Publisher credit for the empty hero, read from the manifest rather than
+    // hardcoded. It links ONLY when `homepage` is set explicitly: `repository`
+    // is deliberately NOT a fallback, because the repo may be private and the
+    // link would hand every user a 404. Without `homepage` the credit is plain
+    // text. Set package.json `homepage` to a public URL to turn the link on.
+    const pkg = (
+      this.context?.extension as { packageJSON?: { homepage?: string } } | undefined
+    )?.packageJSON;
+    const homepage = pkg?.homepage?.trim();
+    const brand = { name: "SPLTek", url: homepage ? homepage : undefined };
     return renderViewHtml({
       cspSource: this.view!.webview.cspSource,
       scriptUri: viewUri.with({ query: "v=" + version }).toString(),
@@ -2180,6 +2202,8 @@ export class ChatViewProvider implements WebviewViewProvider {
         messages,
         config,
         version: (this.context?.extension as { packageJSON?: { version?: string } } | undefined)?.packageJSON?.version,
+        logoUri: logoUri.with({ query: "v=" + logoVersion }).toString(),
+        brand,
         workingIds: this.workingIds(),
         streaming: !!active?.agent.streaming,
         pending: active ? this.pendingQueue.items(active.sessionId) : [],

@@ -3875,6 +3875,26 @@ describe("empty shell (no open session)", () => {
     expect(document.querySelector(".empty-hero h2")?.textContent).toContain("Harny");
   });
 
+  it("loads the brand mark from the external media/icon.svg URI", async () => {
+    setupDom({
+      sessions: [],
+      openIds: [],
+      activeId: undefined,
+      messages: [],
+      logoUri: "vscode-webview://x/media/icon.svg?v=42",
+    });
+    await loadView();
+    const img = document.querySelector<HTMLImageElement>(".empty-hero .empty-logo img");
+    expect(img?.getAttribute("src")).toBe("vscode-webview://x/media/icon.svg?v=42");
+  });
+
+  it("inlines NOTHING when the host sends no logo URI", async () => {
+    setupDom({ sessions: [], openIds: [], activeId: undefined, messages: [] });
+    await loadView();
+    expect(document.querySelector(".empty-hero .empty-logo img")).toBeNull();
+    expect(document.querySelector(".empty-hero .empty-logo svg")).toBeNull();
+  });
+
   it("creates a new session from the hero CTA", async () => {
     setupDom({ sessions: [], openIds: [], activeId: undefined, messages: [] });
     await loadView();
@@ -3914,6 +3934,60 @@ describe("empty shell (no open session)", () => {
     expect(document.body.classList.contains("no-session")).toBe(false);
     expect(document.querySelector(".empty-hero")).not.toBeNull();
     expect(document.querySelector(".empty-hero p")?.textContent).toContain("single open folder");
+  });
+
+  it("credits the publisher next to the version, linked to the repository", async () => {
+    setupDom({
+      sessions: [], openIds: [], activeId: undefined, messages: [],
+      version: "0.2.1",
+      brand: { name: "SPLTek", url: "https://github.com/spltek/harny" },
+    });
+    await loadView();
+    const line = document.querySelector(".empty-hero .empty-version");
+    expect(line?.textContent).toBe("v0.2.1 · by SPLTek");
+    expect(line!.querySelector<HTMLAnchorElement>("a.brand-link")?.getAttribute("href")).toBe(
+      "https://github.com/spltek/harny",
+    );
+  });
+
+  it("shows the publisher as plain text when the manifest has no repository", async () => {
+    setupDom({
+      sessions: [], openIds: [], activeId: undefined, messages: [],
+      version: "0.2.1",
+      brand: { name: "SPLTek" },
+    });
+    await loadView();
+    const line = document.querySelector(".empty-hero .empty-version");
+    expect(line?.textContent).toBe("v0.2.1 · by SPLTek");
+    expect(line!.querySelector("a")).toBeNull();
+  });
+
+  it("omits the meta line entirely with neither version nor brand", async () => {
+    setupDom({ sessions: [], openIds: [], activeId: undefined, messages: [] });
+    await loadView();
+    expect(document.querySelector(".empty-hero .empty-version")).toBeNull();
+  });
+});
+
+describe("welcome greeting (open session, no messages)", () => {
+  beforeEach(() => { posted.length = 0; });
+
+  it("shows the real brand mark instead of the 👋 emoji", async () => {
+    setupDom({ messages: [], logoUri: "vscode-webview://x/media/icon.svg?v=7" });
+    await loadView();
+    const welcome = document.querySelector(".msg.welcome");
+    expect(welcome).not.toBeNull();
+    expect(welcome!.textContent).not.toContain("👋");
+    const img = welcome!.querySelector<HTMLImageElement>("img.welcome-logo");
+    expect(img?.getAttribute("src")).toBe("vscode-webview://x/media/icon.svg?v=7");
+  });
+
+  it("renders plain text (no stray markup) when the host sends no logo URI", async () => {
+    setupDom({ messages: [] });
+    await loadView();
+    const welcome = document.querySelector(".msg.welcome");
+    expect(welcome!.querySelector("img")).toBeNull();
+    expect(welcome!.textContent).toBe("HarnyWrite a message and press Enter");
   });
 });
 

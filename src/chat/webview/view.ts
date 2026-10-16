@@ -137,6 +137,10 @@ interface InitState {
   pending?: PendingViewItem[];
   /** Extension version (shown in the empty hero). */
   version?: string;
+  /** Cache-busted vscode-webview:// URI of media/icon.svg (hero brand mark). */
+  logoUri?: string;
+  /** Publisher credit for the empty hero (name + optional repository URL). */
+  brand?: { name: string; url?: string };
 }
 
 const sessionsEl = document.getElementById("sessions") as HTMLDivElement;
@@ -1129,10 +1133,15 @@ function clearThinkingBlock(): void {
   currentThinkingBlock = null;
 }
 
+/** Empty-session greeting. The brand mark is the REAL media/icon.svg (served
+ * through state.logoUri), not an emoji or an inlined copy. */
 function addWelcome(): HTMLDivElement {
   const div = document.createElement("div");
   div.className = "msg welcome";
-  div.innerHTML = "<b>👋 Harny</b><br><small>Write a message and press Enter</small>";
+  const mark = init.logoUri
+    ? '<img class="welcome-logo" src="' + escapeHtml(init.logoUri) + '" alt="" draggable="false"> '
+    : "";
+  div.innerHTML = "<b>" + mark + "Harny</b><br><small>Write a message and press Enter</small>";
   messagesEl.appendChild(div);
   return div;
 }
@@ -1163,14 +1172,20 @@ function workspaceLocked(config: { workspaceReady?: boolean }): boolean {
   return config.workspaceReady === false;
 }
 
-/** Harny mark (same artwork as media/icon.svg), inlined so it inherits the
- * hero's color and needs no asset URI plumbing or CSP exception. */
-const HARNY_LOGO_SVG =
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" ' +
-  'stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
-  'stroke-linejoin="round" aria-hidden="true">' +
-  '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>' +
-  "</svg>";
+/** "v0.2.1 · by SPLTek" — version and publisher credit share one muted line.
+ * The credit is a plain <a href>: VS Code opens http(s) webview links in the
+ * system browser on its own, so no host round-trip is needed. */
+function heroMetaLine(): string {
+  const version = init.version ? "v" + escapeHtml(init.version) : "";
+  const name = init.brand?.name ? escapeHtml(init.brand.name) : "";
+  const credit = !name
+    ? ""
+    : init.brand!.url
+      ? '<a class="brand-link" href="' + escapeHtml(init.brand!.url) + '">by ' + name + "</a>"
+      : "by " + name;
+  const parts = [version, credit].filter(Boolean);
+  return parts.length ? '<div class="empty-version">' + parts.join(" · ") + "</div>" : "";
+}
 
 /**
  * Empty shell: NO open session. The control stack (input, status, metrics)
@@ -1183,9 +1198,13 @@ function renderEmptyShell(): void {
   const hero = document.createElement("div");
   hero.className = "empty-hero";
   hero.innerHTML =
-    '<div class="empty-icon empty-logo">' + HARNY_LOGO_SVG + "</div>" +
+    '<div class="empty-icon empty-logo">' +
+    (init.logoUri
+      ? '<img src="' + escapeHtml(init.logoUri) + '" alt="Harny" draggable="false">'
+      : "") +
+    "</div>" +
     "<h2>Harny</h2>" +
-    (init.version ? '<div class="empty-version">v' + escapeHtml(init.version) + "</div>" : "") +
+    heroMetaLine() +
     "<p>No session is open right now.</p>" +
     '<p class="empty-hint">Pick one from the list above,<br>start a new conversation,<br>or branch an existing session.</p>' +
     '<button id="empty-new-session" class="empty-cta" title="Create a new session">New session</button>';

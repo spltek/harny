@@ -30,6 +30,12 @@ export interface ViewState {
   config: ViewConfigState;
   /** Extension version, shown in the empty hero (main screen). */
   version?: string;
+  /** Cache-busted `vscode-webview://` URI of media/icon.svg — the brand mark is
+   * loaded from that file at runtime, so there is no inlined copy to sync. */
+  logoUri?: string;
+  /** Publisher credit shown in the empty hero, next to the version. `url` comes
+   * from package.json `repository`; when absent the name renders as plain text. */
+  brand?: { name: string; url?: string };
   /** Session ids whose agent is streaming (disabled delete buttons in the list). */
   workingIds: string[];
   /** Whether the active session is mid-stream (initial lock + live restore). */
@@ -407,6 +413,10 @@ ${renderViewConfig(deps)}
     .msg.tool { align-self: flex-start; background: var(--tool-bg); border: 1px solid var(--border); font-size: var(--fs-md); }
     .msg.system { display: none; }
     .msg.welcome { align-self: center; background: transparent; border: 1px dashed var(--border); color: #888; text-align: center; max-width: 100%; }
+    /* Brand mark inline in the greeting. The artwork is WIDE (22x16 inside the
+       square 24x24 viewBox), so the box is scaled up to ~1.4em to make the
+       visible mark match the surrounding text height. */
+    .msg.welcome .welcome-logo { width: 1.4em; height: 1.4em; vertical-align: -0.4em; display: inline-block; }
     .working { align-self: flex-start; color: #999; font-size: var(--fs-md); font-style: italic; animation: harny-pulse 1.2s ease-in-out infinite; }
     /* The working bar is a REAL footer glued below the transcript (NOT a bubble
        in the flow): always visible in realtime while it exists. It lives
@@ -1319,13 +1329,18 @@ ${renderViewConfig(deps)}
       color: #9a9a9a;
     }
     .empty-hero .empty-icon { font-size: var(--fs-hero); }
-    /* Brand mark in place of the emoji: sized to match the old glyph, muted
-       like the rest of the hero, accent on hover for a touch of life. */
-    .empty-hero .empty-logo svg { width: 2.4rem; height: 2.4rem; display: block; }
-    .empty-hero .empty-logo { color: var(--muted); }
-    .empty-hero .empty-logo:hover { color: var(--accent); }
+    /* Brand mark in place of the emoji, loaded from media/icon.svg (see
+       state.logoUri): the artwork lives in ONE file, no inlined duplicate.
+       An <img> can't inherit currentColor, so it shows the SVG's own colors. */
+    .empty-hero .empty-logo img { width: 2.4rem; height: 2.4rem; display: block; }
+    .empty-hero .empty-logo:hover img { opacity: 0.85; }
     .empty-hero h2 { margin: 0; font-size: var(--fs-xl); color: var(--fg-strong); font-weight: 700; }
     .empty-hero .empty-version { font-size: var(--fs-sm); color: #888; margin-top: -2px; }
+    /* Publisher credit. VS Code opens http(s) webview links in the system
+       browser itself, so this needs no message plumbing (verified in
+       workbench.desktop.main.js: onDidClickLink -> openerService.open). */
+    .empty-hero .empty-version a.brand-link { color: inherit; text-decoration: none; }
+    .empty-hero .empty-version a.brand-link:hover { color: var(--accent); text-decoration: underline; }
     .empty-hero p { margin: 0; font-size: var(--fs-md); line-height: 1.5; }
     .empty-hero .empty-hint { font-size: var(--fs-sm); }
     .empty-hero .empty-cta { margin-top: 12px; padding: 6px 20px; font-size: var(--fs-lg); border-radius: 6px; }
