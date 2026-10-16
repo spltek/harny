@@ -794,12 +794,49 @@ ${renderViewConfig(deps)}
     /* Control-stack toggle (above the ask card): a centered chevron that is
        ALWAYS visible (orange accent) — clicking collapses/expands the Window
        + Sampling cards below (the rest of the controls stays visible). The
-       stack is COLLAPSED by default. */
+       stack is COLLAPSED by default.
+       position:relative because this strip also HOSTS #collapse-all: the strip
+       sits outside #messages, which is the one scrolling element, so a tab
+       anchored here stays put while the transcript scrolls. */
     #ctl-toggle {
+      position: relative;
       display: flex; align-items: center; justify-content: center;
-      height: 14px; margin: 8px 10px 0;
+      height: 18px; margin: 8px 10px 0;
       cursor: pointer; user-select: none;
     }
+    /* Transcript action pills ("Collapse all", "Autoscroll"), right-aligned
+       inside this strip. Flat pills, deliberately WITHOUT the 3D key chrome that
+       the global button rule applies (accent fill, inset bevel, drop shadow), so
+       they read as labels rather than actions.
+       Right-aligned on purpose: the strip's center already belongs to the
+       chevron and to #working-bar.
+       They NEVER appear or disappear — only their disabled state changes — so
+       the row can never reflow under the cursor. Disabled means "not applicable
+       right now", not "broken": the pill stays put and the global
+       button:disabled rule dims it to 0.3.
+       Note: an unfilled pill would sink into the seam, which is --bg (#111111)
+       exactly like the transcript; --surface-2 is what makes them read. */
+    #transcript-actions {
+      position: absolute; right: 0; top: 0;
+      display: flex; align-items: center; gap: 6px;
+    }
+    #transcript-actions > button {
+      height: 18px; min-height: 0; padding: 0 10px;
+      display: inline-flex; align-items: center;
+      background: var(--surface-2); color: var(--muted);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 999px;
+      box-shadow: none; filter: none;
+      font-size: var(--fs-xs); font-weight: 600; line-height: 1; white-space: nowrap;
+    }
+    #transcript-actions > button:disabled { cursor: default; }
+    #transcript-actions > button:not(:disabled):hover {
+      color: var(--accent); border-color: var(--accent); background: #2c241f;
+      /* Kill the global button hover glow too: the pill must stay flat. */
+      filter: none;
+    }
+    /* No dip, no bevel: the pill does not move when clicked. */
+    #transcript-actions > button:not(:disabled):active { transform: none; box-shadow: none; }
     #ctl-toggle-btn {
       background: transparent; border: none; color: var(--accent);
       padding: 3px 8px; cursor: pointer; display: inline-flex; align-items: center;
@@ -1770,6 +1807,10 @@ ${renderViewConfig(deps)}
     <button id="ctl-toggle-btn" aria-label="Toggle controls">
       <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
     </button>
+    <div id="transcript-actions">
+      <button id="collapse-all" type="button" disabled title="Collapse every expanded section (thinking, tool calls, sub-agents)">Collapse all</button>
+      <button id="autoscroll" type="button" disabled title="Jump to the latest message and resume auto-scrolling">Autoscroll</button>
+    </div>
   </div>
   <div id="input-area">
     <div id="input-main">

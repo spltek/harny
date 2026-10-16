@@ -105,7 +105,7 @@ function setupDom(
         <button id="providers-cancel" class="secondary">Cancel</button>
       </div>
     </div>
-    <div id="ctl-toggle"><button id="ctl-toggle-btn"></button></div>
+    <div id="ctl-toggle"><button id="ctl-toggle-btn"></button><div id="transcript-actions"><button id="collapse-all" disabled></button><button id="autoscroll" disabled></button></div></div>
     <div id="mcp-modal" class="hidden">
       <div class="mcp-backdrop"></div>
       <select id="mcp-select"></select>
@@ -4889,5 +4889,180 @@ describe("Esc closes the TOP-MOST overlay (LIFO)", () => {
     // A second Esc then closes All sessions.
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(sessions.classList.contains("hidden")).toBe(true);
+  });
+});
+
+describe("transcript action pills (collapse all + autoscroll)", () => {
+  beforeEach(() => { posted.length = 0; setupDom(); });
+
+  /** One section of each kind: a thinking block, a tool bubble, a sub-agent. */
+  async function withAllSections(): Promise<void> {
+    await loadView();
+    hostMessage({
+      type: "switchView",
+      sessions: [{ id: "a", name: "S", createdAt: 1, updatedAt: 2, messageCount: 2 }],
+      openIds: ["a"],
+      activeId: "a",
+      messages: [
+        { role: "user", content: "hi", timestamp: 1 },
+        { role: "assistant", content: "ok", thinking: "deep thought", timestamp: 2 },
+      ],
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 },
+      workingIds: [],
+    });
+    hostMessage(PARALLEL_ON);
+    hostMessage({ type: "toolCall", id: "t1", name: "Read", arguments: { path: "a.ts" } });
+    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+  }
+
+  const tab = () => document.getElementById("collapse-all") as HTMLButtonElement;
+  const auto = () => document.getElementById("autoscroll") as HTMLButtonElement;
+  const strip = () => document.getElementById("ctl-toggle") as HTMLElement;
+  const openCount = () =>
+    document.querySelectorAll(
+      ".thinking-body:not(.collapsed), .tool-details:not(.collapsed), .subagent-body:not(.collapsed)",
+    ).length;
+
+  /** jsdom does no layout: fake the scroll metrics so the scroll listener can be
+   * driven, and return a setter the tests use as the user's wheel position. */
+  function tetherScroll(): (top: number) => void {
+    const messages = document.getElementById("messages") as HTMLElement;
+    let top = 0;
+    Object.defineProperty(messages, "scrollHeight", { get: () => 1000, configurable: true });
+    Object.defineProperty(messages, "clientHeight", { get: () => 200, configurable: true });
+    Object.defineProperty(messages, "scrollTop", {
+      get: () => top,
+      set: (v: number) => { top = v; },
+      configurable: true,
+    });
+    return (v) => { top = v; };
+  }
+
+  const emitScroll = () =>
+    (document.getElementById("messages") as HTMLElement).dispatchEvent(new Event("scroll"));
+
+  it("ships both pills present, and disabled is the only thing that changes", async () => {
+    await withAllSections();
+    // One of each kind, all created collapsed.
+    expect(document.querySelector(".thinking-body.collapsed")).not.toBeNull();
+    expect(document.querySelector(".msg.tool:not(.subagent) .tool-details.collapsed")).not.toBeNull();
+    expect(document.querySelector(".subagent-body.collapsed")).not.toBeNull();
+    // Both live in the right-aligned group, both disabled, neither hidden: the
+    // row must never reflow, so visibility is never toggled.
+    expect(document.querySelectorAll("#transcript-actions > button").length).toBe(2);
+    expect(tab().disabled).toBe(true);
+    expect(auto().disabled).toBe(true);
+    expect(tab().classList.contains("hidden")).toBe(false);
+    expect(auto().classList.contains("hidden")).toBe(false);
+  });
+
+  it("Collapse all enables when a section is expanded and disables when it closes", async () => {
+    await withAllSections();
+    const header = document.querySelector(".thinking-header") as HTMLElement;
+    header.click();
+    expect(tab().disabled).toBe(false);
+    header.click();
+    expect(tab().disabled).toBe(true);
+  });
+
+  it("closes thinking, tool and sub-agent sections at once, resetting every arrow", async () => {
+    await withAllSections();
+    (document.querySelector(".thinking-header") as HTMLElement).click();
+    const tool = document.querySelector(".msg.tool:not(.subagent)") as HTMLElement;
+    (tool.querySelector(".tool-header") as HTMLElement).click();
+    const sub = document.querySelector(".msg.tool.subagent") as HTMLElement;
+    (sub.querySelector(".subagent-header") as HTMLElement).click();
+    expect(openCount()).toBe(3);
+
+    tab().click();
+
+    expect(openCount()).toBe(0);
+    expect(document.querySelector(".thinking-header .toggle")?.textContent).toBe("▶");
+    expect(tool.querySelector(".tool-toggle")?.textContent).toBe("▶");
+    expect(sub.querySelector(".tool-toggle")?.textContent).toBe("▶");
+    expect(tab().disabled).toBe(true);
+  });
+
+  it("Collapse all never toggles the control stack: the whole strip is a click target", async () => {
+    await withAllSections();
+    (document.querySelector(".thinking-header") as HTMLElement).click();
+
+    tab().click();
+
+    // The strip's own handler must NOT have run: it is what toggles the stack.
+    expect(document.body.classList.contains("controls-collapsed")).toBe(true);
+    expect(strip().getAttribute("aria-expanded")).toBe("false");
+    // Positive control, so the assertions above cannot pass vacuously.
+    strip().click();
+    expect(document.body.classList.contains("controls-collapsed")).toBe(false);
+  });
+
+  it("Collapse all is disabled again after a transcript rebuild", async () => {
+    await withAllSections();
+    (document.querySelector(".thinking-header") as HTMLElement).click();
+    expect(tab().disabled).toBe(false);
+
+    hostMessage({
+      type: "switchView",
+      sessions: [{ id: "a", name: "S", createdAt: 1, updatedAt: 2, messageCount: 1 }],
+      openIds: ["a"],
+      activeId: "a",
+      messages: [{ role: "user", content: "again", timestamp: 3 }],
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 },
+      workingIds: [],
+    });
+
+    expect(tab().disabled).toBe(true);
+  });
+
+  it("Autoscroll is disabled while the user follows the bottom", async () => {
+    await loadView();
+    const setTop = tetherScroll();
+    // scrollHeight 1000, clientHeight 200 → 800 is the bottom.
+    setTop(800);
+    emitScroll();
+    expect(auto().disabled).toBe(true);
+  });
+
+  it("Autoscroll enables as soon as the user scrolls away from the bottom", async () => {
+    await loadView();
+    const setTop = tetherScroll();
+    setTop(400); // 1000 - 400 - 200 = 400px from the bottom
+    emitScroll();
+    expect(auto().disabled).toBe(false);
+    // Coming back within SCROLL_BOTTOM_TOLERANCE re-arms it by itself.
+    setTop(790);
+    emitScroll();
+    expect(auto().disabled).toBe(true);
+  });
+
+  it("clicking Autoscroll jumps to the latest and re-disables itself", async () => {
+    await loadView();
+    const setTop = tetherScroll();
+    const messages = document.getElementById("messages") as HTMLElement;
+    setTop(400);
+    emitScroll();
+    expect(auto().disabled).toBe(false);
+
+    auto().click();
+
+    expect(messages.scrollTop).toBe(1000);
+    expect(messages.scrollTop).toBe(messages.scrollHeight);
+    expect(auto().disabled).toBe(true);
+  });
+
+  it("Autoscroll never toggles the control stack either", async () => {
+    await loadView();
+    const setTop = tetherScroll();
+    setTop(400);
+    emitScroll();
+
+    auto().click();
+
+    expect(document.body.classList.contains("controls-collapsed")).toBe(true);
+    expect(strip().getAttribute("aria-expanded")).toBe("false");
+    // Positive control.
+    strip().click();
+    expect(document.body.classList.contains("controls-collapsed")).toBe(false);
   });
 });

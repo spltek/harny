@@ -172,6 +172,8 @@ let currentSkills: { name: string; description: string }[] = [];
 let slashItems: { cmd: string; description: string }[] = [];
 let slashIndex = 0;
 const ctlToggle = document.getElementById("ctl-toggle") as HTMLDivElement;
+const collapseAllBtn = document.getElementById("collapse-all") as HTMLButtonElement;
+const autoscrollBtn = document.getElementById("autoscroll") as HTMLButtonElement;
 const modeSelectEl = document.getElementById("mode-select") as HTMLDivElement;
 const modeBtn = document.getElementById("mode-btn") as HTMLButtonElement;
 const modeBtnLabel = document.getElementById("mode-btn-label") as HTMLSpanElement;
@@ -510,6 +512,8 @@ messagesEl.addEventListener("scroll", () => {
   const nearBottom =
     messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < SCROLL_BOTTOM_TOLERANCE;
   autoScroll = nearBottom;
+  // Scrolling is what makes the "Autoscroll" pill applicable or not.
+  updateTranscriptActions();
 });
 
 /** Label shown on HARNESS-injected prompts (loop guard / delegation / budget),
@@ -852,6 +856,47 @@ function wireCollapsible(div: HTMLElement): void {
   });
 }
 
+// ── Collapse all ───────────────────────────────────────────────────────────
+/** Every collapsible section of the transcript: thinking blocks, tool bubbles
+ * (Input / Output / Diff) and sub-agent bubbles. All three follow the same
+ * pattern — a body carrying `collapsed` plus an arrow in the header — which is
+ * what makes ONE action able to close all of them. */
+const TRANSCRIPT_SECTIONS = ".thinking-body, .tool-details, .subagent-body";
+
+/** The header arrow that owns a section body. Thinking blocks name it
+ * `.toggle`, tool and sub-agent headers `.tool-toggle`. */
+function sectionToggle(body: Element): HTMLElement | null {
+  return body.parentElement?.querySelector<HTMLElement>(".tool-toggle, .toggle") ?? null;
+}
+
+/** Keeps the two transcript action pills in sync. They are NEVER hidden — only
+ * `disabled` changes — so the row can never reflow under the cursor. */
+function updateTranscriptActions(): void {
+  // "Collapse all": only meaningful while at least one section is expanded.
+  const anyOpen = Array.from(document.querySelectorAll<HTMLElement>(TRANSCRIPT_SECTIONS)).some(
+    (el) => !el.classList.contains("collapsed"),
+  );
+  collapseAllBtn.disabled = !anyOpen;
+  // "Autoscroll": only while the user is parked above the bottom. autoScroll is
+  // DERIVED from the scroll position (see the scroll listener), so reaching the
+  // bottom re-arms it by itself — this pill only has to carry you there.
+  autoscrollBtn.disabled = autoScroll;
+}
+
+/** Collapse every expanded section and reset its arrow. Returns how many were
+ * open, so tests can assert on the effect instead of on the DOM. */
+function collapseAllSections(): number {
+  let collapsed = 0;
+  document.querySelectorAll<HTMLElement>(TRANSCRIPT_SECTIONS).forEach((body) => {
+    if (body.classList.contains("collapsed")) return;
+    body.classList.add("collapsed");
+    const tog = sectionToggle(body);
+    if (tog) tog.textContent = "▶";
+    collapsed += 1;
+  });
+  return collapsed;
+}
+
 /** Update a sub-agent bubble's status chip. */
 function setSubAgentStatus(
   el: HTMLElement,
@@ -1165,6 +1210,7 @@ function renderWorkspaceShell(): void {
     '<p class="empty-hint">Open one folder (File → Open Folder) to start sessions and chat.<br>' +
     "Multi-root workspaces are not supported yet.</p>";
   messagesEl.appendChild(hero);
+  updateTranscriptActions();
 }
 
 /** Confirm a workspace folder is present before touching the transcript. */
@@ -1195,6 +1241,7 @@ function heroMetaLine(): string {
 function renderEmptyShell(): void {
   document.body.classList.add("no-session");
   messagesEl.innerHTML = "";
+  updateTranscriptActions();
   const hero = document.createElement("div");
   hero.className = "empty-hero";
   hero.innerHTML =
@@ -1304,6 +1351,9 @@ function renderMessages(msgs: ChatMsg[]): boolean {
   // appended AFTER the last bubble: scroll once more so auto-scroll includes
   // its height (otherwise the badge is left just below the fold).
   if (hasVisible) scrollDown();
+  // A rebuild always starts from collapsed sections, so nothing is left to
+  // collapse (or nothing is there at all after a switch/clear).
+  updateTranscriptActions();
   return hasVisible;
 }
 
@@ -1971,6 +2021,33 @@ ctlToggle.addEventListener("click", () => {
   // Re-read the installed skills when the stack is shown (fresh after an install).
   if (!collapsed) vscode.postMessage({ type: "getSkills" });
 });
+// "Collapse all": closes every expanded section at once. The WHOLE strip
+// toggles the control stack, so this click must never bubble up to it.
+collapseAllBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  collapseAllSections();
+  updateTranscriptActions();
+  // Collapsed sections are display:none, so the transcript shrinks in one go
+  // and the reading position would jump. Re-anchor only when the user was
+  // already following the bottom — the same rule as the streaming auto-scroll.
+  if (autoScroll) messagesEl.scrollTop = messagesEl.scrollHeight;
+});
+// "Autoscroll": jump back to the latest message. There is NO separate
+// autoscroll state to switch on — the scroll listener above re-derives it from
+// the position, so landing at the bottom resuming following is automatic.
+// autoScroll is set here too so the pill disables itself immediately, without
+// waiting for the scroll event to land.
+autoscrollBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  autoScroll = true;
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  updateTranscriptActions();
+});
+// Any click inside the transcript can change what is expanded: the section
+// headers toggle themselves and their event bubbles here AFTER their own
+// handler ran, so one delegated listener keeps the tab in sync instead of
+// patching all three toggle handlers.
+messagesEl.addEventListener("click", updateTranscriptActions);
 // The skills list can change at any time (npx skills add/remove): re-read it
 // whenever the panel regains focus, so a removal/install shows up without a
 // manual reload.
