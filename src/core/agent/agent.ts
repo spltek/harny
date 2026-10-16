@@ -4,6 +4,7 @@ import { describeFetchError } from "../tools/url-utils";
 import type { EventBus } from "../events/event-bus";
 import type { ChatHistory } from "../history/chat-history";
 import type { ChatMessage, MessageMeta } from "../history/types";
+import { describePairingViolations, toolCallPairingViolations } from "../history/tool-call-pairing";
 import type { LLMProviderFactory, LLMMessage, Usage } from "../llm/types";
 import type { Tool, ToolCall, ToolRegistry, ToolResult } from "../tools";
 import {
@@ -479,7 +480,7 @@ export class Agent implements ChatController {
     // condition (a preview was prepared), not by a marker in the text — the
     // model's own "switch to Build" line is not a reliable signal.
     const previewPrepared = toolCalls.length === 0 && this.hasUnappliedPreviews();
-    this.deps.history.add({
+    const turnMessage: ChatMessage = {
       role: "assistant",
       content: finalContent,
       toolCalls,
@@ -488,10 +489,20 @@ export class Agent implements ChatController {
       ...(reasoningDetails && reasoningDetails.length > 0 ? { reasoningDetails } : {}),
       ...(previewPrepared ? { previewPrepared: true } : {}),
       meta,
-    });
-    // Publish the turn's REAL metrics NOW (right after it is committed), so the
-    // UI can show the badge as soon as the turn ends instead of only on the
-    // end-of-run refresh.
+    };
+    // A turn that asks for TOOLS is NOT committed here: it is appended together
+    // with its results, as ONE unit, once they all exist (see the group append
+    // below the tool phase). Committing it now would open a window in which the
+    // history says "these tools were called" without their results — and anything
+    // written during that window (the host's interruption notice on Stop, an
+    // error path) lands BETWEEN the two. No provider accepts that, and because
+    // the same broken history is re-sent on every later request, the session is
+    // wedged for good. A no-tool turn has no results to wait for: it is complete
+    // the moment it exists.
+    if (toolCalls.length === 0) this.deps.history.add(turnMessage);
+    // Publish the turn's REAL metrics NOW (the turn just ended), so the UI can
+    // show the badge as soon as it is done instead of only on the end-of-run
+    // refresh.
     this.deps.events.emit({ type: "turn_meta", meta });
     // Changes prepared as previews: highlight the "Switch to Build" CTA in the UI.
     if (previewPrepared) {
@@ -618,6 +629,11 @@ export class Agent implements ChatController {
       }
     }
 
+    // Collect the results in the ORIGINAL call order, then append the turn and
+    // its results in ONE write: `addGroup` makes the pair inseparable, so no other
+    // writer (a host notice, an error) can land between them, and the store does
+    // it in a single transaction. See ChatHistory.addGroup for the whole reason.
+    const toolMessages: ChatMessage[] = [];
     for (let i = 0; i < toolCalls.length; i++) {
       const tc = toolCalls[i];
       const result =
@@ -628,9 +644,10 @@ export class Agent implements ChatController {
       // Calls that never started (queued sub-agents killed by Stop) still get a
       // tool_result so the UI can mark them ABORTED.
       if (!emitted.has(i)) emitResult(i, result);
-      this.deps.history.add({ role: "tool", content: result.content, toolCallId: tc.id, timestamp: Date.now() });
+      toolMessages.push({ role: "tool", content: result.content, toolCallId: tc.id, timestamp: Date.now() });
       toolResults.push({ name: tc.name, args: tc.arguments, isError: result.isError, content: result.content });
     }
+    this.deps.history.addGroup([turnMessage, ...toolMessages]);
 
     // Aborted: do not continue the turn loop.
     if (abortedRun()) return;
@@ -861,6 +878,24 @@ export class Agent implements ChatController {
         reasoningDetails: m.reasoningDetails,
       })),
     ];
+
+    // The pairing invariant, at the LAST point before the wire. A violation is
+    // rejected by the provider on THIS and on every later request, with a message
+    // ("insufficient tool messages following tool_calls") that says nothing about
+    // where the damage is, so it is named here instead. Deliberately NOT repaired:
+    // a silent fix would hide whichever writer produced it, and this check exists
+    // precisely to keep that producer visible.
+    const pairing = toolCallPairingViolations(messages);
+    if (pairing.length > 0) {
+      const detail = describePairingViolations(pairing);
+      this.log(`tool-call pairing violation -> request refused: ${detail}`);
+      throw new Error(
+        `Harny internal error: this conversation is not replayable (${detail}). ` +
+          "The request was NOT sent: the provider would reject it, and every request after it. " +
+          "This is a bug in Harny, not in the provider — the session cannot continue, but the cause is " +
+          "now named here and in Output \u203a Harny.",
+      );
+    }
 
     const accumulator = new ToolCallAccumulator();
     let content = "";

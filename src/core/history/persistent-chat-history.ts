@@ -23,6 +23,17 @@ export class PersistentChatHistory implements ChatHistory {
     this.store.saveMessages(this.sessionId, this.inner.all());
   }
 
+  /**
+   * One store write for the whole group: `saveMessages` inserts the new suffix
+   * inside a single BEGIN/COMMIT, so a crash or a failure can never leave the
+   * group half-written (and no other writer can slip in between its messages).
+   */
+  addGroup(messages: ChatMessage[]): void {
+    if (messages.length === 0) return;
+    this.inner.addGroup(messages);
+    this.store.saveMessages(this.sessionId, this.inner.all());
+  }
+
   replace(messages: ChatMessage[]): void {
     this.inner.replace(messages);
   }

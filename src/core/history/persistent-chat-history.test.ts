@@ -28,6 +28,35 @@ describe("PersistentChatHistory", () => {
     expect(store.saveMessages).toHaveBeenCalledWith("sess-1", [expect.objectContaining({ content: "a" })]);
   });
 
+  it("addGroup writes the whole turn in ONE store call (one transaction)", () => {
+    const store = makeStore();
+    const history = new PersistentChatHistory(store, "sess-1");
+    history.replace([msg({ role: "user", content: "go" })]);
+
+    history.addGroup([
+      msg({ role: "assistant", content: "", toolCalls: [{ id: "c1", name: "Shell", arguments: {} }], timestamp: 2 }),
+      msg({ role: "tool", content: "out", toolCallId: "c1", timestamp: 3 }),
+    ]);
+
+    // ONE write, carrying the accumulated history: the store inserts the new
+    // suffix inside a single BEGIN/COMMIT, so the call and its results can never
+    // be torn apart — by a crash, or by another writer slipping in between.
+    expect(store.saveMessages).toHaveBeenCalledTimes(1);
+    expect(store.saveMessages).toHaveBeenCalledWith("sess-1", [
+      expect.objectContaining({ role: "user", content: "go" }),
+      expect.objectContaining({ role: "assistant", toolCalls: [{ id: "c1", name: "Shell", arguments: {} }] }),
+      expect.objectContaining({ role: "tool", toolCallId: "c1" }),
+    ]);
+    expect(history.all()).toHaveLength(3);
+  });
+
+  it("addGroup with nothing to add does not touch the store", () => {
+    const store = makeStore();
+    const history = new PersistentChatHistory(store, "sess-1");
+    history.addGroup([]);
+    expect(store.saveMessages).not.toHaveBeenCalled();
+  });
+
   it("replace swaps messages without triggering a save", () => {
     const store = makeStore();
     const history = new PersistentChatHistory(store, "sess-1");

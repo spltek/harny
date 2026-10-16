@@ -3,6 +3,7 @@ import { Compactor, DEFAULT_COMPACTION, SUMMARY_MAX_TOKENS, estimateTokens, plan
 import type { LLMProviderFactory } from "../llm/types";
 import type { HarnyConfig } from "../config/types";
 import type { ChatMessage } from "../history/types";
+import { toolCallPairingViolations } from "../history/tool-call-pairing";
 
 const CONFIG: HarnyConfig = {
   provider: "openai",
@@ -157,6 +158,64 @@ describe("summarizerConfig", () => {
 });
 
 describe("planManualCompaction", () => {
+  function call(content: string, ...ids: string[]): ChatMessage {
+    return { role: "assistant", content, toolCalls: ids.map((id) => ({ id, name: "Shell", arguments: {} })), timestamp: 2 };
+  }
+  function res(toolCallId: string, content = "out"): ChatMessage {
+    return { role: "tool", content, toolCallId, timestamp: 3 };
+  }
+
+  it("never leaves the kept tail starting with a tool result, whatever the fraction", () => {
+    // Turns that mix text, tool calls and BIG results, so the token boundary lands
+    // in many different places as the fraction changes (it is chosen by size).
+    const msgs: ChatMessage[] = [
+      u("start"),
+      call("let me check", "c1"),
+      res("c1", "x".repeat(4000)),
+      a("done with that"),
+      u("next"),
+      call("checking again", "c2"),
+      res("c2", "y".repeat(200)),
+      a("all good"),
+      u("continue"),
+      call("one more", "c3"),
+      res("c3", "z".repeat(2000)),
+      a("finished"),
+      // …and it ENDS on a just-completed tool turn (the shape right after the
+      // results have landed): that is where a size-based boundary can fall
+      // exactly on the result, orphaning it.
+      call("last check", "c4"),
+      res("c4", "w".repeat(300)),
+    ];
+    for (const f of [0.001, 0.005, 0.02, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95]) {
+      const plan = planManualCompaction(msgs, f);
+      // The kept tail is what goes back to the model after the summary: it must
+      // still be replayable on its own.
+      expect(toolCallPairingViolations(plan.kept)).toEqual([]);
+      // A tail that STARTS with a result would have no call above it in the
+      // request — the provider rejects the whole conversation.
+      expect(plan.kept[0]?.role).not.toBe("tool");
+      // …and it must actually compact (the summarized side is never empty).
+      expect(plan.toSummarize.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("keeps the turn that owns the results instead of orphaning them", () => {
+    // Boundary chosen so the naive cut would fall right after the call, i.e. on
+    // its result: the snap must pull the call back into the kept tail.
+    const msgs: ChatMessage[] = [
+      u("start"),
+      call("", "c1"),
+      res("c1", "x".repeat(4000)),
+    ];
+    const plan = planManualCompaction(msgs, 0.001);
+    expect(toolCallPairingViolations(plan.kept)).toEqual([]);
+    if (plan.kept.some((m) => m.role === "tool")) {
+      // Whenever a result is kept, its call is kept too.
+      expect(plan.kept.some((m) => m.role === "assistant" && !!m.toolCalls?.length)).toBe(true);
+    }
+  });
+
   it("always summarizes a fraction, dropping the estimated tokens", () => {
     const msgs = [u("1"), a("1"), u("2"), a("2"), u("3"), a("3"), u("4"), a("4")];
     const plan = planManualCompaction(msgs, 0.5);

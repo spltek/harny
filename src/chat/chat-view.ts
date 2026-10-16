@@ -11,6 +11,7 @@ import type { SessionManager } from "../core/sessions/session-manager";
 import type { DbVacuumStats, SessionSettingsPatch, SessionSummary } from "../core/sessions/types";
 import type { SessionRegistry, SessionRuntime } from "./session-registry";
 import { PendingInputQueue, type PendingInput } from "./pending-input-queue";
+import { cutAfterTurn } from "../core/history/tool-call-pairing";
 import { StreamTee } from "./stream-tee";
 import type { AttachmentService } from "./attachment-service";
 import type { AttachmentInfo, AttachmentPart } from "./attachment-types";
@@ -333,7 +334,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       await this.warnNameTaken(name);
       return;
     }
-    await this.createBranch(rt.sessionId, name, loaded.messages.slice(0, index + 1));
+    await this.createBranch(rt.sessionId, name, loaded.messages.slice(0, cutAfterTurn(loaded.messages, index)));
   }
 
   /**
@@ -1255,12 +1256,20 @@ export class ChatViewProvider implements WebviewViewProvider {
           // Red bubble "Processing interrupted" in the transcript.
           this.view?.webview.postMessage({ type: "interrupted" });
           // Persist the notice too, so it survives refresh / session reload and
-          // keeps the LLM-aware story coherent (not just UI-only). The ❌ prefix
-          // makes it render as a red bubble like the other errors.
+          // keeps the story visible in the transcript — but as uiOnly, i.e. NOT
+          // part of what is sent to the model. Two reasons:
+          //  · the model already learns the interruption from the aborted tool
+          //    results themselves, which is where it belongs;
+          //  · more importantly, an assistant message written here would land in
+          //    the middle of the turn's `tool_calls` → results pairing (the agent
+          //    appends the two together, at its own pace), and a message between
+          //    them is rejected by every provider on EVERY later request.
+          // The ❌ prefix makes it render as a red bubble like the other errors.
           rt.history.add({
             role: "assistant",
             content: "❌ ⏹ Processing interrupted.",
             timestamp: Date.now(),
+            uiOnly: true,
           });
         }
         break;

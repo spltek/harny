@@ -1,4 +1,5 @@
 import type { ChatMessage } from "../history/types";
+import { snapTailStart } from "../history/tool-call-pairing";
 import type { HarnyConfig } from "../config/types";
 import type { LLMProviderFactory } from "../llm/types";
 import { fallbackTitle } from "./title-generator";
@@ -137,20 +138,23 @@ export function planManualCompaction(messages: ChatMessage[], keepRecentFraction
   if (visible.length <= 2) return { toSummarize: [], kept: visible, tokensBefore };
 
   const keepTokens = Math.max(1, tokensBefore * keepRecentFraction);
-  const kept: ChatMessage[] = [];
+  // Walk BACKWARDS accumulating the recent side, remembering where the tail
+  // starts (an index, not a list: the boundary is what needs fixing below).
+  let start = visible.length;
   let acc = 0;
   for (let i = visible.length - 1; i >= 0; i--) {
-    if (acc + estimateTokens(visible[i].content) > keepTokens && kept.length > 0) break;
-    kept.unshift(visible[i]);
+    if (acc + estimateTokens(visible[i].content) > keepTokens && start < visible.length) break;
+    start = i;
     acc += estimateTokens(visible[i].content);
   }
   // Force a visible reduction by message count when the token spread is too shallow.
-  if (kept.length === visible.length) {
-    const half = Math.floor(visible.length / 2);
-    return { toSummarize: visible.slice(0, half), kept: visible.slice(half), tokensBefore };
-  }
-  const keptSet = new Set(kept);
-  return { toSummarize: visible.filter((m) => !keptSet.has(m)), kept, tokensBefore };
+  if (start === 0) start = Math.floor(visible.length / 2);
+  // A cut must never separate a tool call from its results: a tail that STARTS
+  // with tool results has no call above it in the request, and the provider
+  // rejects the whole conversation. Move the boundary back to the turn that owns
+  // them instead (the summary swallows one turn fewer — never a broken request).
+  start = snapTailStart(visible, start);
+  return { toSummarize: visible.slice(0, start), kept: visible.slice(start), tokensBefore };
 }
 
 const SUMMARY_PROMPT = `You are summarizing an old part of a coding session. The summary will REPLACE the transcript, so it must stand alone. Reply with EXACTLY TWO blocks separated by a line containing only "---" (three dashes):

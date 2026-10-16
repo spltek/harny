@@ -16,6 +16,7 @@ import { SubAgentRunner } from "./subagent";
 import type { AgentEvent, SubAgentEvent } from "./types";
 import { resolveLoopGuardOptions, type LoopGuardOptions } from "./loop-guard";
 import { McpTool } from "../mcp/mcp-tool";
+import { toolCallPairingViolations } from "../history/tool-call-pairing";
 
 const VALID_CONFIG: HarnyConfig = {
   provider: "openai",
@@ -3420,5 +3421,159 @@ describe("Agent — per-turn meta (real usage + timings)", () => {
     expect(meta.provider).toBeUndefined();
     expect(meta.contextWindow).toBeUndefined();
     expect(meta.maxTokens).toBe(4096);
+  });
+});
+
+describe("tool-call pairing on an interrupted run", () => {
+  /** A factory that RECORDS every request, so a test can assert on the WIRE. */
+  function recordingFactory(chunks: StreamChunk[][]): LLMProviderFactory & { requests: LLMMessage[][] } {
+    const requests: LLMMessage[][] = [];
+    let call = 0;
+    return {
+      requests,
+      create: () => ({
+        protocol: "chat" as const,
+        async *stream(messages: LLMMessage[]) {
+          requests.push(messages);
+          const batch = chunks[Math.min(call++, chunks.length - 1)];
+          for (const chunk of batch) yield chunk;
+        },
+      }),
+    } as unknown as LLMProviderFactory & { requests: LLMMessage[][] };
+  }
+
+  function toolCallChunks(id: string, name: string, args: Record<string, unknown>): StreamChunk[] {
+    return [
+      { type: "tool_call_start", index: 0, id, name },
+      { type: "tool_call_delta", index: 0, delta: JSON.stringify(args) },
+      { type: "tool_call_end", index: 0 },
+    ];
+  }
+
+  it("a Stop while a tool runs leaves a conversation the provider still accepts", async () => {
+    // A tool that runs until the RUN is aborted: the Shell-in-flight case.
+    let started: () => void = () => {};
+    const toolStarted = new Promise<void>((r) => (started = r));
+    const blocking: Tool = {
+      name: "Shell",
+      definition: { name: "Shell", description: "shell", parameters: { type: "object", properties: {} } },
+      execute: (_args, ctx) =>
+        new Promise<ToolResult>((resolve) => {
+          started();
+          const signal = ctx?.signal;
+          const done = (): void => resolve({ content: "⏹ aborted", isError: true });
+          if (signal?.aborted) return done();
+          signal?.addEventListener("abort", done, { once: true });
+        }),
+    };
+    const factory = recordingFactory([
+      toolCallChunks("call_1", "Shell", { command: "npm run build" }),
+      [{ type: "text", content: "done" }],
+    ]);
+    const history = new InMemoryChatHistory();
+    const events = new InMemoryEventBus<AgentEvent>();
+    const tools = new ToolRegistry([blocking]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history,
+      events,
+      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/workspace"),
+    });
+    // Build mode (the default is Analyze, which would refuse a Shell command
+    // before running it — and the point here is a tool that is IN FLIGHT).
+    agent.setMode("agent");
+
+    const run = agent.send("go");
+    await toolStarted; // the tool is in flight: the turn is not committed yet
+    // EXACTLY what the host does on Stop (chat-view.ts:1253-1260): signal the
+    // abort and persist the interruption notice in the SAME tick.
+    agent.abort();
+    history.add({ role: "assistant", content: "❌ ⏹ Processing interrupted.", timestamp: Date.now(), uiOnly: true });
+    await run;
+
+    // The NEXT send builds its request from this history.
+    await agent.send("next");
+
+    // 1) the stored conversation honors the invariant…
+    expect(toolCallPairingViolations(history.all())).toEqual([]);
+    // …and the interrupted turn IS recorded: the call and its aborted result
+    // landed together (losing them would be the other way to "fix" this).
+    const turn = history.all().find((m) => m.role === "assistant" && !!m.toolCalls?.length);
+    expect(turn?.toolCalls?.map((tc) => tc.id)).toEqual(["call_1"]);
+    const result = history.all().find((m) => m.role === "tool");
+    expect(result?.toolCallId).toBe("call_1");
+    expect(result?.content).toMatch(/aborted/i);
+    // 2) …and so does what actually goes on the wire (LLMMessage is camelCase: the
+    // snake_case mapping happens later, in the provider's converter): every
+    // toolCallId is answered by the tool message IMMEDIATELY after the turn.
+    const second = factory.requests[1];
+    const callIndex = second.findIndex((m) => m.role === "assistant" && !!m.toolCalls?.length);
+    expect(callIndex).toBeGreaterThanOrEqual(0);
+    expect(second[callIndex + 1]?.role).toBe("tool");
+    expect(second[callIndex + 1]?.toolCallId).toBe("call_1");
+  });
+
+  it("refuses to SEND a conversation that violates the pairing, and names the cause", async () => {
+    const factory = recordingFactory([[{ type: "text", content: "hi" }]]);
+    const history = new InMemoryChatHistory();
+    const events = new InMemoryEventBus<AgentEvent>();
+    const errors: string[] = [];
+    events.subscribe((e) => {
+      if (e.type === "error") errors.push((e as { error: string }).error);
+    });
+    const tools = new ToolRegistry([makeTool("FakeTool")]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history,
+      events,
+      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/workspace"),
+    });
+    // A history damaged by something OUTSIDE this path: the check must catch it
+    // whoever produced it (that is the whole point of putting it at the wire).
+    history.replace([
+      { role: "user", content: "go", timestamp: 1 },
+      { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "Shell", arguments: {} }], timestamp: 2 },
+      { role: "assistant", content: "interrupted", timestamp: 3 },
+    ]);
+
+    await agent.send("again");
+
+    // Nothing went out: the provider never built a request it would reject.
+    expect(factory.requests).toHaveLength(0);
+    // …and what the user reads names the problem (which turn, which id) instead
+    // of the provider's "insufficient tool messages following tool_calls".
+    const shown = [...errors, ...history.all().map((m) => m.content ?? "")].join(" | ");
+    expect(shown).toContain("not replayable");
+    expect(shown).toContain("c1");
+  });
+
+  it("does NOT refuse a healthy conversation (a false positive would break every session)", async () => {
+    const factory = recordingFactory([
+      toolCallChunks("call_1", "Shell", { command: "echo hi" }),
+      [{ type: "text", content: "done" }],
+    ]);
+    const history = new InMemoryChatHistory();
+    const events = new InMemoryEventBus<AgentEvent>();
+    const tools = new ToolRegistry([makeTool("Shell", { content: "hi", isError: false })]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history,
+      events,
+      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/workspace"),
+    });
+    agent.setMode("agent");
+
+    await agent.send("go");
+
+    // The full round trip (call → result → final answer) reached the provider
+    // twice, and the stored history is valid.
+    expect(factory.requests).toHaveLength(2);
+    expect(toolCallPairingViolations(history.all())).toEqual([]);
   });
 });

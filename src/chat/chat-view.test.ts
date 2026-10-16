@@ -1209,6 +1209,56 @@ describe("ChatViewProvider", () => {
     expect(switchPosts[switchPosts.length - 1].activeId).toBe("s2");
   });
 
+  it("branchAt on a reply that ALSO called tools copies the turn WITH its results", async () => {
+    const { store, provider } = buildHarness();
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1 (active)
+    // The reply the user clicks ⎇ on carries text AND a tool call (a preamble):
+    // copying "up to and including this reply" without the results would create a
+    // session whose history ends with an unanswered tool_calls — one that cannot
+    // send anything, ever (every request is rejected with a 400).
+    const msgs = [
+      { role: "user", content: "q1", timestamp: 1 },
+      { role: "assistant", content: "let me check", toolCalls: [{ id: "c1", name: "Shell", arguments: {} }], timestamp: 2 },
+      { role: "tool", content: "out", toolCallId: "c1", timestamp: 3 },
+      { role: "assistant", content: "all good", timestamp: 4 },
+    ];
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 4, model: "gpt-4o" },
+    ]);
+    (store.load as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
+      id === "s1"
+        ? { summary: { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 4, model: "gpt-4o" }, messages: msgs }
+        : { summary: { id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 0 }, messages: [] },
+    );
+    state.autoName = "Branch copy";
+    await handler({ type: "branchAt", index: 1 }); // the preamble turn, not the plain reply
+    expect(store.saveMessages).toHaveBeenCalledWith("s2", [msgs[0], msgs[1], msgs[2]]);
+  });
+
+  it("branchAt on a DAMAGED history does not copy an unanswered tool call", async () => {
+    const { store, provider } = buildHarness();
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1 (active)
+    const msgs = [
+      { role: "user", content: "q1", timestamp: 1 },
+      { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "Shell", arguments: {} }], timestamp: 2 },
+      { role: "assistant", content: "interrupted", timestamp: 3 },
+    ];
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 3, model: "gpt-4o" },
+    ]);
+    (store.load as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
+      id === "s1"
+        ? { summary: { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 3, model: "gpt-4o" }, messages: msgs }
+        : { summary: { id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 0 }, messages: [] },
+    );
+    state.autoName = "Branch copy";
+    await handler({ type: "branchAt", index: 1 });
+    // The copy stops BEFORE the dangling call: the damage is never propagated.
+    expect(store.saveMessages).toHaveBeenCalledWith("s2", [msgs[0]]);
+  });
+
   it("branchAt ignores out-of-range or invalid indexes", async () => {
     const { store, provider } = buildHarness();
     const { handler } = resolveWith(provider);
@@ -1725,7 +1775,7 @@ describe("ChatViewProvider", () => {
     );
   });
 
-  it("abort while streaming posts an interrupted notice and persists it", async () => {
+  it("abort while streaming posts an interrupted notice and persists it as uiOnly", async () => {
     const { registry, provider } = buildHarness();
     const { handler, view } = resolveWith(provider);
     await provider.createNew(); // s1
@@ -1734,7 +1784,17 @@ describe("ChatViewProvider", () => {
     await handler({ type: "abort" });
     expect(rt.agent.abort).toHaveBeenCalled();
     expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "interrupted" });
-    expect(rt.history.all().some((m) => !m.uiOnly && /Processing interrupted/.test(m.content ?? ""))).toBe(true);
+    // Stored (so it survives a reload and shows in the transcript) but uiOnly, so
+    // it is NOT part of the request. This is the fix for a wedged session: an
+    // assistant message written here sits between a turn's `tool_calls` and its
+    // results — the agent appends the two together at its own pace — and every
+    // provider then rejects every later request with a 400.
+    const notice = rt.history.all().find((m) => /Processing interrupted/.test(m.content ?? ""));
+    expect(notice).toBeTruthy();
+    expect(notice!.uiOnly).toBe(true);
+    // The model still learns about the interruption: from the aborted tool
+    // results, which are what the provider actually sees.
+    expect(rt.history.conversation().some((m) => /Processing interrupted/.test(m.content ?? ""))).toBe(false);
   });
 
   it("abort without streaming does nothing", async () => {

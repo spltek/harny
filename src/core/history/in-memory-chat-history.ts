@@ -12,6 +12,10 @@ export class InMemoryChatHistory implements ChatHistory {
     this.messages.push(message);
   }
 
+  addGroup(messages: ChatMessage[]): void {
+    this.messages.push(...messages);
+  }
+
   replace(messages: ChatMessage[]): void {
     this.messages = [...messages];
   }
