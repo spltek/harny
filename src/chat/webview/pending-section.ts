@@ -160,10 +160,22 @@ export function createPendingSection(deps: PendingSectionDeps): PendingSection {
   // Re-evaluate on every resize: the fold appears/disappears as the text starts or
   // stops wrapping. A ResizeObserver catches container-only resizes (dragging the
   // panel edge); the window event covers engines without it.
+  // Both are COALESCED to one pass per frame: every pass reads getComputedStyle
+  // and scrollHeight for each bubble (a forced layout), and a resize gesture
+  // fires these handlers dozens of times per second.
+  let measurePending = false;
+  const measureOverflowSoon = (): void => {
+    if (measurePending) return;
+    measurePending = true;
+    requestAnimationFrame(() => {
+      measurePending = false;
+      measureOverflow();
+    });
+  };
   if (typeof ResizeObserver !== "undefined") {
-    new ResizeObserver(() => measureOverflow()).observe(area);
+    new ResizeObserver(measureOverflowSoon).observe(area);
   }
-  window.addEventListener("resize", () => measureOverflow());
+  window.addEventListener("resize", measureOverflowSoon);
 
   return {
     render(items: PendingViewItem[]): void {

@@ -291,46 +291,106 @@ const MAX_PASTE_IMAGE_BYTES = 15 * 1024 * 1024;
 // (Qwen3.8-style thinking, verbose answers). Render at most once per window
 // (leading edge) with a trailing flush, so a section always catches up.
 /**
- * Coalesce streaming renders to the ANIMATION FRAME (≤ ~60/s) instead of a
- * fixed 120 ms window, so text appears smoothly. The FIRST chunk of a segment
- * (leading edge) still paints synchronously so a bubble never waits a frame;
- * the rest coalesce into one paint per frame ("render a chunk", not per char).
+ * Coalesce streaming renders instead of one markdown render per delta, so text
+ * appears smoothly AND the panel stays responsive.
+ *
+ * Three rules, in this order:
+ *
+ * 1. SHORT text paints immediately: under `FAST_PAINT_CHARS` a render costs a
+ *    few hundred microseconds, so the leading chunks of every segment stay
+ *    perfectly live (this is also what keeps the stream feeling instant).
+ * 2. ADAPTIVE PACING: the next paint waits at least as long as the previous
+ *    render took. One markdown render of a long log can cost as much as a whole
+ *    frame — repeated 60×/s it pins the webview's main thread, and every layout
+ *    (resize, scroll, the next paint) has to wait behind it. That is what froze
+ *    the panel on Windows while a run with parallel sub-agents was streaming:
+ *    the message backlog never drained.
+ * 3. TIMER FALLBACK: `requestAnimationFrame` is STARVED while the window is
+ *    being resized (and while the webview is occluded/hidden), so a buffered
+ *    chunk could wait for a frame that never comes. A `setTimeout` on the same
+ *    coalescer guarantees the text still lands within a couple of frames.
  */
 function makeThrottledMd(minIntervalMs = 16) {
   let raf: number | undefined;
+  let timer: number | undefined;
   let last = 0;
+  /** Duration of the last render: the pacing follows the REAL cost. */
+  let lastCost = 0;
   let el: Element | null = null;
   let getText: (() => string) | null = null;
-  const paint = (e: Element, g: () => string): void => {
-    last = performance.now();
+
+  function paint(e: Element, g: () => string): void {
+    const started = performance.now();
     e.innerHTML = renderMarkdown(g());
+    lastCost = performance.now() - started;
+    last = performance.now();
     // The render grows the section BELOW the current scroll anchor: re-pin to
     // the bottom (auto-scroll guarded) or streaming appears below the fold.
     scrollDown();
-  };
-  const tick = (): void => {
-    raf = undefined;
+  }
+
+  /** Minimum gap between two paints: the nominal frame time, or what the last
+   * render actually cost (never paint faster than we can afford). */
+  function minGap(): number {
+    return Math.max(minIntervalMs, lastCost);
+  }
+
+  function unschedule(): void {
+    if (raf !== undefined) {
+      window.cancelAnimationFrame(raf);
+      raf = undefined;
+    }
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      timer = undefined;
+    }
+  }
+
+  /** Arm BOTH channels: the animation frame (normal path) and the timer. */
+  function schedule(): void {
+    if (raf === undefined) raf = window.requestAnimationFrame(tick);
+    if (timer === undefined) {
+      timer = window.setTimeout(() => {
+        timer = undefined;
+        tick();
+      }, Math.max(32, Math.round(minGap())));
+    }
+  }
+
+  function tick(): void {
+    // Either channel may fire first: drop the other one.
+    unschedule();
     const e = el;
     const g = getText;
     el = null;
     getText = null;
     if (!e || !g) return;
     // Too soon after the last paint: keep coalescing into the next frame.
-    if (performance.now() - last < minIntervalMs) {
+    if (performance.now() - last < minGap()) {
       el = e;
       getText = g;
-      raf = window.requestAnimationFrame(tick);
+      schedule();
       return;
     }
     paint(e, g);
-  };
+  }
+
   return {
     /** Schedule a render of getText() into el (leading edge + per-frame flush). */
     push(e: Element, g: () => string): void {
+      // Cheap render: paint it straight away (the common case for the first
+      // chunks of a segment, and for short answers/tool reports).
+      if (g().length <= FAST_PAINT_CHARS) {
+        unschedule();
+        el = null;
+        getText = null;
+        paint(e, g);
+        return;
+      }
       el = e;
       getText = g;
       // Leading edge: the first chunk (or one after a quiet gap) paints NOW.
-      if (raf === undefined && performance.now() - last >= minIntervalMs) {
+      if (raf === undefined && timer === undefined && performance.now() - last >= minGap()) {
         const ee = el;
         const gg = getText;
         el = null;
@@ -338,32 +398,63 @@ function makeThrottledMd(minIntervalMs = 16) {
         if (ee && gg) paint(ee, gg);
         return;
       }
-      if (raf === undefined) raf = window.requestAnimationFrame(tick);
+      schedule();
     },
     /** Render the final text immediately (done/error/interrupt/refresh). */
     flush(e: Element | null, g: () => string): void {
-      if (raf !== undefined) {
-        window.cancelAnimationFrame(raf);
-        raf = undefined;
-      }
+      unschedule();
       el = null;
       getText = null;
       if (e) paint(e, g);
     },
     reset(): void {
-      if (raf !== undefined) {
-        window.cancelAnimationFrame(raf);
-        raf = undefined;
-      }
+      unschedule();
       el = null;
       getText = null;
       last = 0;
+      lastCost = 0;
     },
   };
 }
 
+/** Above this many characters a markdown render stops being "cheap": the
+ * coalescer takes over and the pacing follows the measured render cost. */
+const FAST_PAINT_CHARS = 4096;
+
 const thinkingMd = makeThrottledMd();
 const answerMd = makeThrottledMd();
+
+/** A live text node carrying its own RAW markdown (never re-read from the DOM). */
+type RawEl = HTMLElement & { _raw?: string };
+
+/**
+ * Per-NODE coalescer for a SUB-AGENT's live text. Each bubble gets its own
+ * (several sub-agents stream in parallel — a shared coalescer would let one
+ * overwrite another's pending paint), and the cadence is slower than the main
+ * stream: this log is secondary detail that grows into the tens of KB, where a
+ * single markdown render already costs a good part of a frame.
+ */
+const SUBAGENT_MD_INTERVAL_MS = 100;
+const subAgentMd = new WeakMap<Element, ReturnType<typeof makeThrottledMd>>();
+
+function subAgentMdFor(node: Element): ReturnType<typeof makeThrottledMd> {
+  let md = subAgentMd.get(node);
+  if (!md) {
+    md = makeThrottledMd(SUBAGENT_MD_INTERVAL_MS);
+    subAgentMd.set(node, md);
+  }
+  return md;
+}
+
+/** Paint a sub-agent's buffered text right now: a TERMINAL event (done, error,
+ * the final report) must never leave the last chunk invisible. */
+function flushSubAgentMd(scope: Element): void {
+  for (const node of Array.from(scope.querySelectorAll<RawEl>(".sa-thinking, .sa-answer"))) {
+    const md = subAgentMd.get(node);
+    const raw = node._raw;
+    if (md && typeof raw === "string") md.flush(node, () => raw);
+  }
+}
 
 function flushStreamingMd(): void {
   const tb = currentThinkingBlock?.querySelector(".thinking-body") ?? null;
@@ -1133,7 +1224,7 @@ function handleSubAgentEvent(parentId: string, event: SubAgentStreamEvent): void
   if (!el) return;
   const log = subAgentLog(el);
   if (event.type === "thinking_delta" && typeof event.content === "string") {
-    let t = log.querySelector(".sa-thinking") as (HTMLElement & { _raw?: string }) | null;
+    let t = log.querySelector(".sa-thinking") as RawEl | null;
     if (!t) {
       t = document.createElement("div");
       t.className = "sa-thinking";
@@ -1141,19 +1232,22 @@ function handleSubAgentEvent(parentId: string, event: SubAgentStreamEvent): void
     }
     // Markdown, like the thinking blocks: keep the FULL text (raw on the
     // element) and let the container scroll — never trim from the top.
+    // The RENDER is coalesced (a sub-agent can emit hundreds of deltas per
+    // second, each re-parsing its whole log): accumulate on the node, paint on
+    // the frame. `paint` scrolls, so nothing is lost visually.
     t._raw = (t._raw ?? "") + event.content;
-    t.innerHTML = renderMarkdown(t._raw);
-    scrollDown();
+    const node = t;
+    subAgentMdFor(node).push(node, () => node._raw ?? "");
   } else if (event.type === "text_delta" && typeof event.content === "string") {
-    let a = log.querySelector(".sa-answer") as (HTMLElement & { _raw?: string }) | null;
+    let a = log.querySelector(".sa-answer") as RawEl | null;
     if (!a) {
       a = document.createElement("div");
       a.className = "sa-answer";
       log.appendChild(a);
     }
     a._raw = (a._raw ?? "") + event.content;
-    a.innerHTML = renderMarkdown(a._raw);
-    scrollDown();
+    const node = a;
+    subAgentMdFor(node).push(node, () => node._raw ?? "");
   } else if (event.type === "tool_call" && event.toolCall) {
     const line = document.createElement("div");
     line.className = "sa-tool pending";
@@ -1171,6 +1265,8 @@ function handleSubAgentEvent(parentId: string, event: SubAgentStreamEvent): void
       line.classList.add(event.toolResult.isError ? "err" : "ok");
     }
   } else if (event.type === "done") {
+    // The log is complete: paint whatever the coalescer still holds.
+    flushSubAgentMd(el);
     // Only a queued/running sub-agent can become done — never override a
     // terminal status (done/failed/aborted).
     const chip = el.querySelector(".subagent-status");
@@ -1178,6 +1274,8 @@ function handleSubAgentEvent(parentId: string, event: SubAgentStreamEvent): void
       setSubAgentStatus(el, "done");
     }
   } else if (event.type === "error") {
+    // Nothing may stay buffered behind a terminal event.
+    flushSubAgentMd(el);
     // A fatal sub-agent error (e.g. loop/API): mark failed unless it already
     // reported done.
     if (!el.querySelector(".subagent-status.done")) setSubAgentStatus(el, "failed");
@@ -2000,10 +2098,25 @@ inputEl.addEventListener("input", resizeInput);
 inputEl.addEventListener("input", updateSlashMenu);
 // Recompute the height when the input's width changes (panel/window resize),
 // because line wrapping depends on width. Guarded ResizeObserver avoids loops.
+// Both paths are COALESCED to one measure per frame: `resizeInput` reads
+// `scrollHeight` (a forced layout of the whole transcript), and a resize gesture
+// fires these handlers dozens of times per second — one gesture could force
+// hundreds of layouts back to back.
+const resizeInputSoon = rafThrottle(resizeInput);
 if (typeof ResizeObserver !== "undefined") {
-  new ResizeObserver(resizeInput).observe(inputEl);
+  new ResizeObserver(resizeInputSoon).observe(inputEl);
 }
-window.addEventListener("resize", resizeInput);
+window.addEventListener("resize", resizeInputSoon);
+// Frames AND timers are throttled while the webview is hidden or occluded: when
+// it comes back (or the resize ends) the buffered stream must show at once
+// instead of waiting for a frame that may not come.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  flushStreamingMd();
+  for (const bubble of Array.from(messagesEl.querySelectorAll(".msg.tool.subagent"))) {
+    flushSubAgentMd(bubble);
+  }
+});
 inputEl.addEventListener("keydown", (e) => {
   // The slash menu captures navigation/selection keys while it is open.
   if (!slashMenu.classList.contains("hidden")) {
@@ -3000,8 +3113,12 @@ function layoutControlColumns(): void {
   // The parameter fields follow: 2 columns only when the card is half-width.
   lgFieldsEl.style.gridTemplateColumns = cols === 2 ? "repeat(2, minmax(0, 1fr))" : "minmax(0, 1fr)";
 }
-if (typeof ResizeObserver !== "undefined") new ResizeObserver(layoutControlColumns).observe(ctlCardsEl);
-window.addEventListener("resize", layoutControlColumns);
+// Coalesced to one layout pass per frame: `layoutControlColumns` reads
+// clientWidth/scrollWidth on the control cards (forced layout) on every resize
+// event of the gesture.
+const layoutControlColumnsSoon = rafThrottle(layoutControlColumns);
+if (typeof ResizeObserver !== "undefined") new ResizeObserver(layoutControlColumnsSoon).observe(ctlCardsEl);
+window.addEventListener("resize", layoutControlColumnsSoon);
 
 function renderControl(config: ConfigState): void {
   const cap = config.maxParallelSubAgents;
@@ -4125,8 +4242,9 @@ window.addEventListener("message", (e) => {
       if (!currentRawText.trim()) break;
       const resultEl = ensureResult();
       if (resultEl) {
+        // `push`/`paint` scrolls: scrolling HERE would force one extra layout
+        // per delta, even when the coalescer did not paint at all.
         answerMd.push(resultEl, () => currentRawText);
-        scrollDown();
       }
       break;
     }
@@ -4158,8 +4276,8 @@ window.addEventListener("message", (e) => {
       if (currentThinkingBlock) {
         currentThinkingText += msg.content;
         const body = currentThinkingBlock.querySelector(".thinking-body");
+        // `push`/`paint` scrolls (see the answer path).
         if (body) thinkingMd.push(body, () => currentThinkingText);
-        scrollDown();
       }
       break;
     }
@@ -4215,6 +4333,9 @@ window.addEventListener("message", (e) => {
             !msg.isError ? "done" : /aborted/i.test(out) || /interrupted/i.test(out) ? "aborted" : "failed",
           );
         }
+        // The nested live log ends here: paint its buffered chunk BEFORE the
+        // final report lands below it.
+        if (isSubAgent) flushSubAgentMd(el);
         const resultEl = el.querySelector(".tool-result");
         if (resultEl) {
           // A sub-agent report is Markdown (its own answer); ordinary tool

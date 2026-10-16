@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The panel no longer gets stuck when the window is resized during a run** (visible on
+  Windows, with parallel sub-agents). Two causes, both in the webview. Every sub-agent delta
+  re-rendered its WHOLE live log as Markdown on the spot — hundreds of renders of a log that
+  grows into the tens of KB, each followed by the forced layout of `scrollDown()` — while
+  only the main stream coalesced into a frame; with several sub-agents the message backlog
+  never drained, so the UI stopped following the run. And the ONLY paint channel was
+  `requestAnimationFrame`, which Chromium starves for the entire duration of a window resize
+  (and while the webview is hidden): buffered text had no way to land. Now a sub-agent's live
+  text goes through the same coalescer — one per bubble, so parallel streams never overwrite
+  each other's pending paint — the pacing follows the MEASURED render cost (a 40 ms render is
+  not repeated 60×/s), a `setTimeout` fallback paints the buffered chunk even when no frame
+  arrives, short text still paints immediately so the stream stays instant, and the resize
+  handlers (input height, control columns, the pending-bubble fold) run once per frame
+  instead of once per event.
+
 ## [0.3.1] - 2026-10-16
 
 ### Changed

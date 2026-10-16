@@ -3013,6 +3013,9 @@ describe("view webview client", () => {
 
   it("picks the control columns from the MEASURED sensitivity row", async () => {
     await loadView();
+    /** The resize handlers are COALESCED to one pass per frame (a gesture fires
+     * dozens of events), so the layout lands on the next frame. */
+    const frame = (): Promise<void> => new Promise((r) => requestAnimationFrame(() => r()));
     const cards = document.getElementById("ctl-cards") as HTMLElement;
     const toggle = document.getElementById("lg-toggle") as HTMLElement;
     const fields = document.getElementById("lg-fields") as HTMLElement;
@@ -3022,15 +3025,18 @@ describe("view webview client", () => {
     Object.defineProperty(cards, "clientWidth", { value: 500, configurable: true });
     Object.defineProperty(toggle, "scrollWidth", { value: 190, configurable: true });
     window.dispatchEvent(new Event("resize"));
+    await frame();
     expect(cards.style.gridTemplateColumns).toBe("repeat(2, minmax(0, 1fr))");
     expect(fields.style.gridTemplateColumns).toBe("repeat(2, minmax(0, 1fr))");
 
     // A wide stack fits FOUR cards; a narrow one falls back to a single column.
     Object.defineProperty(cards, "clientWidth", { value: 1200, configurable: true });
     window.dispatchEvent(new Event("resize"));
+    await frame();
     expect(cards.style.gridTemplateColumns).toBe("repeat(4, minmax(0, 1fr))");
     Object.defineProperty(cards, "clientWidth", { value: 300, configurable: true });
     window.dispatchEvent(new Event("resize"));
+    await frame();
     expect(cards.style.gridTemplateColumns).toBe("repeat(1, minmax(0, 1fr))");
     expect(fields.style.gridTemplateColumns).toBe("minmax(0, 1fr)");
   });
@@ -5752,5 +5758,142 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
     // Positive control.
     strip().click();
     expect(document.body.classList.contains("controls-collapsed")).toBe(false);
+  });
+});
+
+// ── Streaming paint coalescing (the "frozen panel" regression) ──
+// Symptom: the panel went unresponsive when the window was resized during a run
+// with parallel sub-agents. Two causes, both pinned here:
+//  1. every sub-agent delta re-rendered its WHOLE log as markdown on the spot
+//     (hundreds of O(log) renders + forced layouts per second) instead of
+//     coalescing into a frame: the message backlog never drained;
+//  2. the only paint channel was requestAnimationFrame, which Chromium starves
+//     for the entire duration of a resize (visibly so on Windows) — buffered
+//     text had no way to land.
+describe("streaming paint coalescing (resize / parallel sub-agents)", () => {
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
+
+  /** Wait (bounded) for a coalesced paint. One frame is NOT enough in jsdom:
+   * the pacing follows the measured render cost, and a 4 KB markdown render
+   * costs several frames here (in the real webview it is well under one). */
+  const painted = (read: () => string, needle: string): Promise<void> =>
+    vi.waitFor(() => expect(read()).toContain(needle), { timeout: 2000 });
+  /** Long enough to leave the "cheap render" fast path (> FAST_PAINT_CHARS). */
+  const LONG = "x".repeat(4200);
+  const startRun = (): void => {
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+  };
+  /** A Delegate bubble, already marked as running. */
+  const streamDelegate = (id: string): void => {
+    hostMessage({
+      type: "toolCall",
+      id,
+      name: "Delegate",
+      arguments: { id, goal: "g", access: "read", resources: ["a.ts"] },
+    });
+    hostMessage({ type: "subagentStart", toolCallId: id });
+  };
+  const subAgentEvent = (id: string, event: unknown): void => {
+    hostMessage({ type: "subagentEvent", toolCallId: id, event });
+  };
+
+  it("coalesces a long answer instead of re-rendering it on every delta", async () => {
+    await loadView();
+    startRun();
+
+    // First chunk of a long segment: the leading edge paints immediately.
+    hostMessage({ type: "textDelta", content: LONG + "HEAD" });
+    const bubble = document.querySelector(".msg.assistant") as HTMLElement;
+    expect(bubble.textContent).toContain("HEAD");
+
+    // A chunk arriving in the SAME frame must NOT re-render the whole answer…
+    hostMessage({ type: "textDelta", content: "-tail" });
+    expect(bubble.textContent).not.toContain("tail");
+    // …and must still land, in order and complete, at the paced paint.
+    await painted(() => bubble.textContent ?? "", "HEAD-tail");
+  });
+
+  it("paints a sub-agent's buffered text on the frame, and flushes it on done", async () => {
+    await loadView();
+    hostMessage(PARALLEL_ON);
+    streamDelegate("s1");
+
+    subAgentEvent("s1", { type: "text_delta", content: LONG + "HEAD" });
+    const answer = document.querySelector(".sa-answer") as HTMLElement;
+    expect(answer.textContent).toContain("HEAD");
+
+    subAgentEvent("s1", { type: "text_delta", content: "-tail" });
+    expect(answer.textContent).not.toContain("tail");
+    await painted(() => answer.textContent ?? "", "HEAD-tail");
+  });
+
+  it("flushes a sub-agent's buffered tail on the terminal event (frames dead)", async () => {
+    // Windows resize: no frame arrives at all, so the tail that is still
+    // buffered has to be painted by the terminal event itself — a finished
+    // sub-agent may never look like it stopped mid-sentence.
+    const realRaf = window.requestAnimationFrame;
+    window.requestAnimationFrame = () => 0;
+    try {
+      await loadView();
+      hostMessage(PARALLEL_ON);
+      streamDelegate("s1");
+
+      subAgentEvent("s1", { type: "text_delta", content: LONG + "HEAD" });
+      const answer = document.querySelector(".sa-answer") as HTMLElement;
+      expect(answer.textContent).toContain("HEAD");
+
+      // Buffered: the pacing cannot have elapsed since the paint above, and no
+      // frame can arrive. Nothing may reach the DOM before the terminal event.
+      subAgentEvent("s1", { type: "text_delta", content: "-end" });
+      expect(answer.textContent).not.toContain("end");
+
+      subAgentEvent("s1", { type: "done" });
+      expect(answer.textContent).toContain("HEAD-end");
+    } finally {
+      window.requestAnimationFrame = realRaf;
+    }
+  });
+
+  it("keeps a pending paint per sub-agent (parallel streams never overwrite each other)", async () => {
+    await loadView();
+    hostMessage(PARALLEL_ON);
+    streamDelegate("s1");
+    streamDelegate("s2");
+
+    subAgentEvent("s1", { type: "text_delta", content: LONG + "A" });
+    subAgentEvent("s2", { type: "text_delta", content: LONG + "B" });
+    // Both tails arrive in the same frame, for two different bubbles.
+    subAgentEvent("s1", { type: "text_delta", content: "-one" });
+    subAgentEvent("s2", { type: "text_delta", content: "-two" });
+
+    const logs = [...document.querySelectorAll(".sa-answer")];
+    await painted(() => logs.map((e) => e.textContent ?? "").join("|"), "A-one");
+    await painted(() => logs.map((e) => e.textContent ?? "").join("|"), "B-two");
+
+    expect(logs).toHaveLength(2);
+    expect(logs[0].textContent).toContain("A-one");
+    expect(logs[1].textContent).toContain("B-two");
+  });
+
+  it("paints with the timer fallback when requestAnimationFrame never fires", async () => {
+    // This is the Windows resize case: for the whole duration of a drag Chromium
+    // delivers no frame at all. The stream must keep showing up anyway.
+    const realRaf = window.requestAnimationFrame;
+    window.requestAnimationFrame = () => 0;
+    try {
+      await loadView();
+      startRun();
+      hostMessage({ type: "textDelta", content: LONG + "HEAD" });
+      hostMessage({ type: "textDelta", content: "-tail" });
+
+      const bubble = document.querySelector(".msg.assistant") as HTMLElement;
+      await vi.waitFor(() => expect(bubble.textContent).toContain("HEAD-tail"), { timeout: 1000 });
+    } finally {
+      window.requestAnimationFrame = realRaf;
+    }
   });
 });
