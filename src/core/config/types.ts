@@ -32,6 +32,13 @@ export interface HarnyConfig {
   baseUrl: string;
   model: string;
   maxTokens: number;
+  /**
+   * Context window of the model serving THIS turn (runtime override only: it is
+   * never persisted). It travels with the config so a per-turn consumer — the
+   * agent's message meta, the request clamp — knows the budget without asking
+   * the host, exactly like `model` and `maxTokens` already do.
+   */
+  contextWindow?: number;
   /** Sampler temperature; omitted (not sent) when unset. */
   temperature?: number;
   /** Presence penalty (− encourages… Auto/0 = not sent); 0.0–2.0 in the UI. */

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { Compactor, DEFAULT_COMPACTION, estimateTokens, planManualCompaction, shouldCompact, serializeConversation, splitSummary, clampCompactionThresholdPercent, toCompactionThresholdPercent, estimateContextTokens, realWindowTokens } from "./compactor";
+import { Compactor, DEFAULT_COMPACTION, SUMMARY_MAX_TOKENS, estimateTokens, planManualCompaction, shouldCompact, serializeConversation, splitSummary, clampCompactionThresholdPercent, toCompactionThresholdPercent, estimateContextTokens, realWindowTokens, summarizerConfig } from "./compactor";
 import type { LLMProviderFactory } from "../llm/types";
 import type { HarnyConfig } from "../config/types";
 import type { ChatMessage } from "../history/types";
@@ -115,6 +115,44 @@ describe("Compactor", () => {
     const controller = new AbortController();
     await new Compactor(factory, () => CONFIG).summarize([u("x")], undefined, controller.signal);
     expect(seen).toEqual([controller.signal]);
+  });
+
+  it("uses the config it is GIVEN, unchanged (the host decides the summary budget)", async () => {
+    const seen: HarnyConfig[] = [];
+    const factory = {
+      create: (cfg: HarnyConfig) => {
+        seen.push(cfg);
+        return {
+          protocol: "chat" as const,
+          async *stream() {
+            yield { type: "text", content: "ok" };
+          },
+        };
+      },
+    } as unknown as LLMProviderFactory;
+    await new Compactor(factory, () => ({ ...CONFIG, maxTokens: 777 })).summarize([u("x")]);
+    // No inheritance from the chat turn and no mutation of what it was handed.
+    expect(seen[0].maxTokens).toBe(777);
+  });
+});
+
+describe("summarizerConfig", () => {
+  it("gives the summary its OWN bounded output budget, whatever the turn uses", () => {
+    // A turn on a big model asks for 384k of output. Inheriting that budget makes
+    // the summary request itself oversized (`input + max_tokens` > window), so the
+    // compaction fails silently and the session keeps its full context — the
+    // failure this decoupling removes.
+    const turn: HarnyConfig = { ...CONFIG, model: "deepseek-v4.1-flash", maxTokens: 384_000 };
+    const summary = summarizerConfig(turn);
+    expect(summary.maxTokens).toBe(SUMMARY_MAX_TOKENS);
+    expect(summary.maxTokens).toBeLessThan(turn.maxTokens);
+    // Everything else is carried over untouched: the summary runs on the SAME
+    // provider/model/key as the chat it summarizes.
+    expect(summary.model).toBe("deepseek-v4.1-flash");
+    expect(summary.baseUrl).toBe(turn.baseUrl);
+    expect(summary.apiKey).toBe(turn.apiKey);
+    // …and the turn's own config is not mutated.
+    expect(turn.maxTokens).toBe(384_000);
   });
 });
 

@@ -17,6 +17,28 @@ export const DEFAULT_COMPACTION: CompactionSettings = {
 export const MIN_COMPACTION_THRESHOLD_PERCENT = 1;
 export const MAX_COMPACTION_THRESHOLD_PERCENT = 100;
 
+/**
+ * Output budget for the one-shot SUMMARY request. Deliberately INDEPENDENT of
+ * the chat turn's `max_tokens`: the summary is a bounded, single-purpose call,
+ * while a turn can be configured for hundreds of thousands of output tokens.
+ * Since the provider counts `input + max_tokens` against the window, inheriting
+ * the turn budget means the summary request itself gets rejected as too long —
+ * the compaction fails silently (`auto-compaction failed; continuing`) and the
+ * session keeps its full context. Decoupling it costs nothing and removes a
+ * whole failure mode.
+ */
+export const SUMMARY_MAX_TOKENS = 8_192;
+
+/**
+ * The config a SUMMARY request runs with: the caller's config with the bounded
+ * summary output budget substituted. Lives here (not in the composition root)
+ * so the rule is testable and cannot be "simplified" back into inheriting the
+ * chat turn's `max_tokens` — which is what made big-session compactions fail.
+ */
+export function summarizerConfig(cfg: HarnyConfig): HarnyConfig {
+  return { ...cfg, maxTokens: SUMMARY_MAX_TOKENS };
+}
+
 /** Clamp/round any value into the valid threshold range (1%–100%). */
 export function clampCompactionThresholdPercent(v: number): number {
   if (!Number.isFinite(v)) return DEFAULT_COMPACTION.thresholdPercent;

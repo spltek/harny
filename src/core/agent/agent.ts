@@ -777,9 +777,22 @@ export class Agent implements ChatController {
   }
 
   /** Build the per-turn `meta` (REAL usage + wall-clock timings) for an assistant message. */
-  private turnMeta(r: { usage?: Usage; startedAt: number; firstTokenAt?: number; endedAt?: number }): MessageMeta {
+  private turnMeta(r: {
+    usage?: Usage;
+    startedAt: number;
+    firstTokenAt?: number;
+    endedAt?: number;
+    model?: string;
+    modelProvider?: string;
+    contextWindow?: number;
+    maxTokens?: number;
+  }): MessageMeta {
     const endedAt = r.endedAt ?? Date.now();
     return {
+      ...(r.model ? { model: r.model } : {}),
+      ...(r.modelProvider ? { provider: r.modelProvider } : {}),
+      ...(typeof r.contextWindow === "number" ? { contextWindow: r.contextWindow } : {}),
+      ...(typeof r.maxTokens === "number" ? { maxTokens: r.maxTokens } : {}),
       ...(r.usage
         ? {
             inputTokens: r.usage.input,
@@ -803,6 +816,12 @@ export class Agent implements ChatController {
     reasoningDetails?: unknown[];
     /** Provider finish reason for this turn ("length" = output-token limit). */
     finishReason?: string;
+    /** The model/provider/budget this turn ACTUALLY ran with (read from the
+     * config at request time, so it follows a mid-session model switch). */
+    model: string;
+    modelProvider?: string;
+    contextWindow?: number;
+    maxTokens?: number;
     /** True when the loop guard cut this turn short because the reasoning
      * repeated itself; the caller must nudge instead of executing tools. */
     reasoningLoop?: boolean;
@@ -1008,6 +1027,12 @@ export class Agent implements ChatController {
       reasoningLoop,
       answerLoop,
       usage,
+      // Identity of the turn: the model may differ from the previous one (the
+      // user switches mid-session), and so may the budget it runs with.
+      model: config.model,
+      modelProvider: config.activeProvider,
+      contextWindow: config.contextWindow,
+      maxTokens: config.maxTokens,
       startedAt: streamStart,
       firstTokenAt,
       endedAt: Date.now(),

@@ -118,6 +118,25 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/\.msg-meta \{[^}]*tabular-nums/);
   });
 
+  it("ships every id the webview looks up in the metrics row (a missing one is a null crash)", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    // view.ts resolves these ONCE at load with `as HTMLSpanElement` and writes to
+    // them unconditionally, so the markup and the lookup are a contract.
+    for (const id of ["met-tokens", "met-ctx", "met-pct", "met-window", "met-cache", "ctx-bar", "compact-btn", "compact-threshold-label"]) {
+      expect(html).toContain(`id="${id}"`);
+    }
+    // The derivation note ("616k/1M") is nested INSIDE the same flex item as the
+    // usable value: a wrapping row must never split them ("/1M" alone on a line
+    // would be meaningless). Dim and hidden while empty — it explains the number,
+    // it must not compete with it.
+    expect(html).toMatch(/<span class="met"><span id="met-ctx"[^>]*>[^<]*<\/span><span class="met-note" id="met-window"/);
+    expect(html).toMatch(/\.met-note \{[^}]*white-space: nowrap/);
+    expect(html).toMatch(/#met-window:empty \{\s*display: none/);
+  });
+
   it("the tab strip does not shrink tabs and hides any vertical scrollbar", () => {
     const html = renderViewHtml({
       ...base,
@@ -353,15 +372,18 @@ describe("renderViewHtml", () => {
     // squeezing the controls (the PANEL's minimum is VS Code's, not ours).
     // 450px is the MEASURED minimum, read off a live width readout in a real VS
     // Code panel - the narrowest width at which the prompt placeholder still fits
-    // on one line and the control row is not squeezed. 500px is what ships, with
-    // ~50px of margin on top. The 32rem part covers larger editor fonts, where
-    // every control grows; headless measurements put that side at ~22.75px per
-    // font px plus ~148px of chrome, but they ran ~6% high against the real panel
-    // (480px vs the real 450px), so the rem part is the conservative side.
+    // on one line and the control row is not squeezed. 600px is what ships — the
+    // reference width the panel is meant to open at — with ~150px (a third) of
+    // margin over that measurement. The 32rem part is INDEPENDENT of it: it
+    // covers larger editor fonts, where every control grows; headless
+    // measurements put that side at ~22.75px per font px plus ~148px of chrome,
+    // but they ran ~6% high against the real panel (480px vs the real 450px), so
+    // the rem part is the conservative side. With the floor at 600px the rem side
+    // takes over past a ~18.75px font (32rem === 600px exactly there).
     // It also clears the control-row overflow (~407px) and the pills reaching the
     // centred ctl-toggle chevron (~379px).
-    expect(html).toMatch(/html\s*\{\s*min-width:\s*max\(500px,\s*32rem\);\s*overflow-x:\s*auto/);
-    expect(html).toMatch(/body\s*\{[^}]*min-width:\s*max\(500px,\s*32rem\)/);
+    expect(html).toMatch(/html\s*\{\s*min-width:\s*max\(600px,\s*32rem\);\s*overflow-x:\s*auto/);
+    expect(html).toMatch(/body\s*\{[^}]*min-width:\s*max\(600px,\s*32rem\)/);
     // The old providers-form flag is gone (moved to the per-session Parallel card).
     expect(html).not.toContain("pe-maxparallel");
   });

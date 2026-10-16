@@ -67,7 +67,7 @@ function setupDom(
     </div>
     <div id="status">AI Model: <button id="model-btn"><span id="model-btn-label">Select a model</span><span id="model-warn" class="hidden"></span></button><button id="gear-btn">⚙</button><input type="range" id="ctx-range" min="1000" max="2000000" step="1000"><span id="ctx-value"></span><span id="ctx-range-label"></span><input type="range" id="out-range" min="256" max="262144" step="256"><span id="out-value"></span><span id="out-range-label"></span><input id="sampler-temp" type="radio" name="sampler" checked><input id="sampler-topp" type="radio" name="sampler"><input type="range" id="samp-range" min="0" max="2" step="0.1"><span id="samp-value">Auto</span><span id="samp-range-label"></span><button id="samp-auto">Auto</button><input type="range" id="presence-range" min="0" max="2" step="0.1"><span id="presence-value">Auto</span><button id="presence-auto">Auto</button><input type="range" id="freq-range" min="0" max="2" step="0.1"><span id="freq-value">Auto</span><button id="freq-auto">Auto</button></div>
     <div id="ctl-cards"><input type="range" id="par-range" min="0" max="100" step="1" /><span id="par-value">4</span><button id="lg-reset"></button><div id="lg-head"><div id="lg-toggle" class="sampler-toggle"><input type="radio" name="lg-level" id="lg-high" value="high" /><input type="radio" name="lg-level" id="lg-normal" value="normal" checked /><input type="radio" name="lg-level" id="lg-low" value="low" /><input type="checkbox" id="lg-response" /></div><button id="lg-collapse"></button></div><div id="lg-params-field"><div id="lg-fields"></div></div><div id="skills-card" class="hidden"><div id="skills-list"></div></div><div id="mcp-card" class="hidden"><div id="mcp-list"></div><button id="mcp-configure"></button></div></div>
-    <div id="metrics"><input type="radio" name="thinking-level" id="thinking-off" value="off" /><input type="radio" name="thinking-level" id="thinking-low" value="low" /><input type="radio" name="thinking-level" id="thinking-medium" value="medium" /><input type="radio" name="thinking-level" id="thinking-high" value="high" /><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button><span id="compact-threshold-label"></span><button id="compact-settings-btn">⚙</button></div>
+    <div id="metrics"><input type="radio" name="thinking-level" id="thinking-off" value="off" /><input type="radio" name="thinking-level" id="thinking-low" value="low" /><input type="radio" name="thinking-level" id="thinking-medium" value="medium" /><input type="radio" name="thinking-level" id="thinking-high" value="high" /><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-window"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button><span id="compact-threshold-label"></span><button id="compact-settings-btn">⚙</button></div>
     <div id="compact-settings-modal" class="hidden">
       <div class="cs-backdrop"></div>
       <div class="cs-card">
@@ -3702,6 +3702,63 @@ describe("context metrics line", () => {
     expect((document.getElementById("ctx-bar") as HTMLDivElement).classList.contains("warn")).toBe(true);
   });
 
+  it("measures the fill against the USABLE budget (window − reserve), not the raw window", async () => {
+    await loadView();
+    // The exact state that killed a real session: 1M window, 384k of output
+    // reserved, 663.3k of input. Against the window it reads a harmless 66%,
+    // while the provider was already rejecting the request (666.820 + 384.000
+    // = 1.050.820 > 1.048.576). The usable budget is what must be shown.
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "deepseek-v4.1-flash",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 1_048_576,
+        contextUsable: 664_576,
+        contextTokens: 663_300,
+      },
+    });
+    expect(document.getElementById("met-ctx")?.textContent).toBe("664.6k");
+    expect(document.getElementById("met-pct")?.textContent).toBe("(100%)");
+    expect((document.getElementById("ctx-bar") as HTMLDivElement).style.width).toBe("100%");
+    // …and the DECLARED window stays attached to the usable value, so "616k" is
+    // never a number out of nowhere. Most contracted form: no connector words.
+    expect(document.getElementById("met-window")?.textContent).toBe("/1M");
+    // The breakdown stays reachable: window − reserved = usable.
+    const title = document.getElementById("met-ctx")?.getAttribute("title") ?? "";
+    expect(title).toContain("1M context window");
+    expect(title).toContain("384k reserved for the response");
+    expect(title).toContain("664.6k usable tokens");
+  });
+
+  it("shows no window suffix when nothing is reserved (no pointless '/1M')", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        // usable === window: host pushed no reserve (older payload, or a session
+        // whose output budget is not set yet).
+        contextWindow: 200000,
+        contextUsable: 200000,
+        contextTokens: 50000,
+      },
+    });
+    const note = document.getElementById("met-window") as HTMLSpanElement;
+    expect(note.textContent).toBe("");
+    expect(note.getAttribute("title")).toBe("");
+    // The empty span is hidden by CSS (#met-window:empty).
+    expect(document.getElementById("met-ctx")?.textContent).toBe("200k");
+    expect(document.getElementById("met-pct")?.textContent).toBe("(25%)");
+  });
+
   it("gear opens the threshold form, prefills the current %, saves and posts", async () => {
     await loadView();
     hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 200000, compactionThresholdPercent: 60 } });
@@ -4620,6 +4677,52 @@ describe("per-turn metrics badge (webview)", () => {
     await loadView();
     hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "hello", timestamp: 2 }] });
     expect(document.querySelector(".msg-meta")).toBeNull();
+  });
+
+  it("shows WHICH model served the turn, first on the line, with the budget in the tooltip", async () => {
+    await loadView();
+    // A session that switches model mid-flight: the two turns differ only in the
+    // meta, and the badge must make that visible — otherwise the token counts
+    // have no unit (32k llama-local vs 1M opencode in the same transcript).
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "user", content: "go", timestamp: 1 },
+        {
+          role: "assistant",
+          content: "first",
+          timestamp: 2,
+          meta: { model: "qwen3-32b", provider: "llama-local", contextWindow: 32768, maxTokens: 8192, inputTokens: 12000, durationMs: 900 },
+        },
+        {
+          role: "assistant",
+          content: "second",
+          timestamp: 3,
+          meta: {
+            model: "deepseek-v4.1-flash",
+            provider: "opencode-go",
+            contextWindow: 1_048_576,
+            maxTokens: 377_084,
+            inputTokens: 663_300,
+            durationMs: 2200,
+          },
+        },
+      ],
+    });
+    const badges = Array.from(document.querySelectorAll(".msg-meta")) as HTMLElement[];
+    expect(badges.length).toBe(2);
+    expect(badges[0].textContent).toContain("llama-local/qwen3-32b");
+    expect(badges[0].textContent).toContain("12k in");
+    expect(badges[1].textContent).toContain("opencode-go/deepseek-v4.1-flash");
+    // The model is the FIRST part: the row is nowrap + ellipsized, so whatever
+    // gets cut has to be the least important thing.
+    expect(badges[1].textContent!.indexOf("opencode-go/")).toBe(0);
+    // The full budget of the turn stays one hover away.
+    expect(badges[1].title).toContain("model: deepseek-v4.1-flash");
+    expect(badges[1].title).toContain("provider: opencode-go");
+    expect(badges[1].title).toContain("context window: 1048576 tokens");
+    expect(badges[1].title).toContain("output budget: 377084 tokens");
+    expect(badges[1].title).toContain("input: 663300 tokens");
   });
 });
 

@@ -7,6 +7,21 @@ import type { ToolCall } from "../tools/tool";
  * counts instead of only estimating.
  */
 export interface MessageMeta {
+  /**
+   * Which model (and named provider) SERVED this turn. Stored per message
+   * because a session can switch model/provider at any point: without it the
+   * token counts below have no unit and no budget (llama-local 32k, OpenRouter
+   * 200k, opencode 1M in the SAME transcript).
+   */
+  model?: string;
+  provider?: string;
+  /**
+   * The context window and output budget VIGENT for this turn. Recorded so an
+   * old turn stays interpretable even after the provider entry, the model
+   * list or the window itself changes.
+   */
+  contextWindow?: number;
+  maxTokens?: number;
   /** Input tokens of the WHOLE prompt for this turn (provider-reported). */
   inputTokens?: number;
   /** Tokens generated in this turn (provider-reported). */

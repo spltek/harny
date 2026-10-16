@@ -6,12 +6,14 @@ import {
   DEFAULT_OUTPUT_TOKENS,
   MAX_OUTPUT_TOKENS,
   MIN_OUTPUT_TOKENS,
+  REQUEST_SAFETY_MARGIN,
   clampAdoptedContextWindow,
   clampAdoptedOutputTokens,
   clampContextWindow,
   clampOutputTokens,
   toContextWindow,
   toOutputTokens,
+  usableContext,
 } from "./context-window";
 
 describe("context-window bounds", () => {
@@ -34,6 +36,32 @@ describe("context-window bounds", () => {
   it("toContextWindow coerces JSON values", () => {
     expect(toContextWindow("128000")).toBe(128_000);
     expect(toContextWindow(undefined)).toBe(DEFAULT_CONTEXT_WINDOW);
+  });
+});
+
+describe("usableContext (the input's real budget)", () => {
+  it("subtracts the response reserve from the window", () => {
+    // The session that died: 1M window with a 384k output budget leaves only
+    // 664k for the input — which is where the 400 came from.
+    expect(usableContext(1_048_576, 384_000)).toBe(664_576);
+    expect(usableContext(128_000, 16_384)).toBe(111_616);
+    expect(usableContext(32_768, 0)).toBe(32_768);
+  });
+
+  it("never returns a non-positive budget (a contradictory config must not invert the math)", () => {
+    expect(usableContext(128_000, 128_000)).toBe(1);
+    expect(usableContext(128_000, 999_999)).toBe(1);
+    expect(usableContext(0, 0)).toBe(1);
+  });
+
+  it("rounds both sides, so a fractional config cannot leak into the bar", () => {
+    expect(usableContext(100_000.4, 8_000.6)).toBe(100_000 - 8_001);
+  });
+
+  it("exposes the margin used by the request clamp", () => {
+    // The clamp is conservative on purpose: it covers the messages appended
+    // after the last measured usage (the counter lags by exactly those).
+    expect(REQUEST_SAFETY_MARGIN).toBeGreaterThan(0);
   });
 });
 

@@ -2108,6 +2108,47 @@ describe("ChatViewProvider compaction", () => {
     expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "refresh" }));
   });
 
+  it("auto-compacts against the USABLE budget: the 80% of the RAW window is unreachable when output is reserved", async () => {
+    const options = {
+      compactor: new Compactor(compactorFactory(), () => CONFIG),
+      compaction: DEFAULT_COMPACTION,
+    };
+    const { registry, provider } = buildHarness(options);
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    // A model MUST be selected first: without one the send is refused with
+    // "Select a model for this session first" and no turn ever runs.
+    await handler({ type: "setModel", model: "m", provider: "p" });
+    const rt = registry.get("s1")!;
+    // The configuration that killed a real session: a 1M window with a 384k
+    // output budget. The input can never exceed 664.576, so a threshold applied
+    // to the RAW window (80% = 838.861) can never be reached: the provider
+    // answers 400 first. Against the USABLE budget (80% of 664.576 = 531.660)
+    // the trigger fires — and 663.300 is past it.
+    rt.contextWindow = 1_048_576;
+    rt.outputTokens = 384_000;
+    rt.contextTokens = 400_000; // under the usable threshold before the request
+    rt.history.replace([
+      { role: "user", content: "let's go", timestamp: 1 },
+      { role: "assistant", content: "ok", timestamp: 2 },
+      { role: "user", content: "then", timestamp: 3 },
+      { role: "assistant", content: "done", timestamp: 4 },
+    ]);
+    (rt.agent as any).send = vi.fn(async () => {
+      (rt.agent as any).streaming = true;
+      rt.contextTokens = 663_300; // the failing session's input: 63% of the window
+    });
+
+    await handler({ type: "send", text: "more" });
+
+    // Sanity: this fill is FAR below 80% of the raw window — the old math would
+    // have sent the request and let the provider reject it.
+    expect(663_300).toBeLessThan(1_048_576 * 0.8);
+    const conv = registry.get("s1")!.history.conversation();
+    expect(conv[0].role).toBe("user");
+    expect(String(conv[1].content)).toContain("## Goal");
+  });
+
   it("auto-compacts right after a response when the reply crossed the threshold", async () => {
     const options = {
       compactor: new Compactor(compactorFactory(), () => CONFIG),
@@ -2161,6 +2202,30 @@ describe("ChatViewProvider compaction", () => {
     expect(seq[startAt + 1]).toBe("status");
     expect(seq[doneAt + 1]).toBe("status");
     expect(startAt).toBeLessThan(doneAt);
+  });
+
+  it("pushes the USABLE context (window − reserve) so the bar and the host threshold agree", async () => {
+    const { registry, provider } = buildHarness({
+      providerEntry: { name: "p", baseUrl: "http://x/v1", models: [] },
+      fetchModelInfos: async () => [{ id: "big", contextLength: 1_048_576, maxOutputTokens: 384_000 }],
+    });
+    const { view, handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "big", provider: "p" });
+    const rt = registry.get("s1")!;
+    expect(rt.contextWindow).toBe(1_048_576);
+    expect(rt.outputTokens).toBe(384_000);
+
+    // The webview must receive BOTH numbers, otherwise it cannot show the truth:
+    // 1M − 384k = 664.576 usable. This is the same function the auto-compaction
+    // threshold uses, so the bar and the trigger can never disagree.
+    const pushedConfig = (): { contextWindow?: number; contextUsable?: number } | undefined =>
+      (view.webview.postMessage as ReturnType<typeof vi.fn>).mock.calls
+        .map((c: unknown[]) => c[0] as { type?: string; config?: { contextWindow?: number; contextUsable?: number } })
+        .filter((m) => m?.type === "config" && m.config?.contextUsable !== undefined)
+        .at(-1)?.config;
+    await vi.waitFor(() => expect(pushedConfig()?.contextUsable).toBe(664_576));
+    expect(pushedConfig()!.contextWindow).toBe(1_048_576);
   });
 
   it("adopts the host-reported context window when a model is selected", async () => {
@@ -3110,14 +3175,91 @@ describe("ChatViewProvider model limits (context + output)", () => {
     expect(rt.outputTokens).toBe(16384);
   });
 
-  it("caps a config maxTokens above the scale maximum (never above the 512k fallback)", async () => {
-    const { provider, modelSelector } = buildHarness({
+  it("caps a config maxTokens at the scale maximum AND at the room left in the window", async () => {
+    const { provider, registry, modelSelector } = buildHarness({
       providerEntry: { name: "p", baseUrl: "https://x/v1", maxTokens: 999_999, models: [{ id: "m1" }] },
     });
     const { handler } = resolveWith(provider);
     await provider.createNew();
     await handler({ type: "setModel", model: "m1", provider: "p" });
-    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ maxTokens: 512_000 }));
+    // The CONFIGURED budget keeps the scale cap (512k) — that is the value the
+    // UI shows and the user edits.
+    expect(registry.get("s1")!.outputTokens).toBe(512_000);
+    // The REQUEST budget is additionally clamped to the room left: with no measured
+    // input yet, a 128k window leaves 128k − 8k of safety margin. Sending 512k of
+    // output on top of any input is exactly what the provider rejects.
+    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ maxTokens: 119_808 }));
+  });
+
+  it("clamps the output budget to the room left: the request must FIT `input + max_tokens ≤ window`", async () => {
+    const { provider, registry, modelSelector } = buildHarness({
+      providerEntry: { name: "p", baseUrl: "https://x/v1", models: [{ id: "m1" }] },
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "m1", provider: "p" });
+    const rt = registry.get("s1")!;
+    const lastMaxTokens = (): number | undefined =>
+      (modelSelector.set as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0]?.maxTokens;
+
+    // The REAL numbers of the session that failed: 1M window, 384k output, and
+    // an input of 666.820 tokens. The provider counts both against the window,
+    // so the un-clamped request was 1.050.820 on a 1.048.576 window → 400
+    // invalid_request_error and the run died.
+    rt.contextWindow = 1_048_576;
+    rt.contextTokens = 666_820;
+    expect(666_820 + 384_000).toBeGreaterThan(1_048_576);
+    await handler({ type: "setOutputTokens", value: 384_000 });
+    const clamped = lastMaxTokens();
+    expect(clamped).toBe(373_564); // 1.048.576 − 666.820 input − 8.192 margin
+    // The clamped request now fits the window exactly, margin included.
+    expect(666_820 + clamped! + 8_192).toBe(1_048_576);
+    // The UI keeps the value the USER chose: only the request is clamped.
+    expect(rt.outputTokens).toBe(384_000);
+
+    // A config that already fits is left alone (no surprise shrink).
+    rt.contextWindow = 1_048_576;
+    rt.contextTokens = 100_000;
+    await handler({ type: "setOutputTokens", value: 16_384 });
+    expect(lastMaxTokens()).toBe(16_384);
+
+    // The session's OWN editor floors the value when it is SET from the UI
+    // (toOutputTokens applies MIN_OUTPUT_TOKENS): 123 becomes 256. The clamp is
+    // NOT the thing doing it — and it never RAISES a value either: a provider
+    // entry declaring maxTokens: 123 keeps 123 (see the setModel tests).
+    rt.contextTokens = 100_000;
+    await handler({ type: "setOutputTokens", value: 123 });
+    expect(lastMaxTokens()).toBe(256);
+
+    // When the context is already over the limit the clamp floors at the minimum
+    // instead of going negative — the fix for that state is a compaction, not a
+    // longer request (the auto-compact trigger fires on the usable budget).
+    rt.contextTokens = 1_048_576;
+    await handler({ type: "setOutputTokens", value: 384_000 });
+    expect(lastMaxTokens()).toBe(256);
+  });
+
+  it("leaves the config chain alone for a session with NO model (an override would shadow it)", async () => {
+    // The per-turn clamp writes `maxTokens` into the shared runtime overrides. On
+    // a session with no model selected there is nothing to clamp — and writing
+    // anything would SHADOW the provider entry / file / settings that legitimately
+    // own maxTokens (a provider declaring 123 would silently become the default).
+    const { provider, registry, modelSelector } = buildHarness({
+      providerEntry: { name: "p", baseUrl: "https://x/v1", maxTokens: 123, models: [{ id: "m1" }] },
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1, no model yet
+    const rt = registry.get("s1")!;
+    expect(rt.model).toBeUndefined();
+    const calls = (modelSelector.set as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    // The turn boundary is where the clamp is applied during a run.
+    await provider.maybeCompactDuringRun("s1");
+    expect((modelSelector.set as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls);
+
+    // Selecting a model then DOES apply it, and it honours the entry's 123.
+    await handler({ type: "setModel", model: "m1", provider: "p" });
+    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ maxTokens: 123 }));
   });
 
   it("adopts the models.dev output too when the host reports neither limit", async () => {

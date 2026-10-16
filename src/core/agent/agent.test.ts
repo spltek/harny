@@ -3384,4 +3384,41 @@ describe("Agent — per-turn meta (real usage + timings)", () => {
     expect(tm && tm.type === "turn_meta" ? tm.meta.inputTokens : undefined).toBe(1000);
     expect(tm && tm.type === "turn_meta" ? typeof tm.meta.durationMs : undefined).toBe("number");
   });
+
+  it("records WHICH model and WHICH budget served the turn (a session can switch mid-flight)", async () => {
+    // The config of a turn on a 1M-window model whose output budget was clamped
+    // by the host: both facts must land in the message, so an old turn stays
+    // readable even after the user picks llama-local (32k) for the next one.
+    const config: HarnyConfig = {
+      ...VALID_CONFIG,
+      model: "deepseek-v4.1-flash",
+      activeProvider: "opencode-go",
+      contextWindow: 1_048_576,
+      maxTokens: 373_564,
+    };
+    const { agent, history } = buildHarness({
+      config,
+      chunks: [[{ type: "text", content: "hi" }]],
+    });
+    await agent.send("hello");
+
+    const meta = history.all().find((m) => m.role === "assistant")!.meta!;
+    expect(meta.model).toBe("deepseek-v4.1-flash");
+    expect(meta.provider).toBe("opencode-go");
+    expect(meta.contextWindow).toBe(1_048_576);
+    expect(meta.maxTokens).toBe(373_564);
+  });
+
+  it("omits the identity fields when the config carries no model/provider (no invented labels)", async () => {
+    const { agent, history } = buildHarness({ chunks: [[{ type: "text", content: "hi" }]] });
+    await agent.send("hello");
+    const meta = history.all().find((m) => m.role === "assistant")!.meta!;
+    // The harness config HAS a model, so it is recorded…
+    expect(meta.model).toBe("gpt-4o");
+    // …while a field the config does not declare (no activeProvider, no window)
+    // stays ABSENT rather than being defaulted.
+    expect(meta.provider).toBeUndefined();
+    expect(meta.contextWindow).toBeUndefined();
+    expect(meta.maxTokens).toBe(4096);
+  });
 });

@@ -27,6 +27,30 @@ export function clampContextWindow(v: number, max: number = MAX_CONTEXT_WINDOW):
   return Math.min(hi, Math.max(MIN_CONTEXT_WINDOW, Math.round(v)));
 }
 
+/**
+ * Tokens the INPUT may occupy for a request to still be accepted.
+ *
+ * The provider counts `input + max_tokens` against the context window, so the
+ * input alone can never use the whole window: the room reserved for the
+ * response (the `max_tokens` actually sent) is subtracted here. Measuring the
+ * fill against the RAW window is what made Harny's bar read 66% while the
+ * provider was already refusing the request at 63% (1M window, 384k output).
+ */
+export function usableContext(window: number, reserve: number): number {
+  const w = Math.max(0, Math.round(window));
+  const r = Math.max(0, Math.round(reserve));
+  return Math.max(1, w - r);
+}
+
+/**
+ * Safety margin subtracted when clamping the output budget to the room left.
+ * It absorbs what the measured input does not yet include: the messages
+ * appended after the last reported usage (the footer counter lags by exactly
+ * those) plus provider/estimator drift. Never subtracted from the declared
+ * budget (that one is exact); it only makes the CLAMP more conservative.
+ */
+export const REQUEST_SAFETY_MARGIN = 8_192;
+
 /** Coerce a JSON message value to a number (NaN/undefined -> default). */
 export function toContextWindow(v: unknown): number {
   return clampContextWindow(typeof v === "number" ? v : Number(v));

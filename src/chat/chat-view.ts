@@ -18,7 +18,7 @@ import { debugLog, infoLog } from "../logger";
 import { preprocessJsonc } from "../core/config/jsonc";
 import { renderViewHtml } from "./view-html";
 import { toTemperature, toTopP } from "./temperature";
-import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, MAX_CONTEXT_WINDOW, MAX_OUTPUT_TOKENS, clampAdoptedContextWindow, clampAdoptedOutputTokens, clampContextWindow, clampOutputTokens, toContextWindow, toOutputTokens } from "./context-window";
+import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, MAX_CONTEXT_WINDOW, MAX_OUTPUT_TOKENS, MIN_OUTPUT_TOKENS, REQUEST_SAFETY_MARGIN, clampAdoptedContextWindow, clampAdoptedOutputTokens, clampContextWindow, clampOutputTokens, toContextWindow, toOutputTokens, usableContext } from "./context-window";
 import { PanelModalQueue } from "./panel-modal-queue";
 import { Compactor, DEFAULT_COMPACTION, CompactionSettings, planManualCompaction, shouldCompact, estimateTokens, serializeConversation, estimateContextTokens, realWindowTokens, splitSummary, toCompactionThresholdPercent } from "../core/sessions/compactor";
 import type { SkillRegistry } from "../core/skills/skill-registry";
@@ -1337,6 +1337,9 @@ export class ChatViewProvider implements WebviewViewProvider {
   async maybeCompactDuringRun(sessionId: string, signal?: AbortSignal): Promise<void> {
     const rt = this.registry.get(sessionId);
     if (!rt || this.compacting) return;
+    // Re-clamp the output budget at EVERY turn boundary: the context grows
+    // during the run, so what fitted at the start may not fit now.
+    this.applySessionBudget(rt);
     if (!this.needsAutoCompact(rt)) return;
     await this.compactDuringRun(rt, signal);
   }
@@ -1383,7 +1386,87 @@ export class ChatViewProvider implements WebviewViewProvider {
     const window = clampContextWindow(rt.contextWindow ?? DEFAULT_CONTEXT_WINDOW);
     const estimated = estimateTokens(serializeConversation(rt.history.conversation()));
     const tokens = Math.max(rt.contextTokens ?? 0, estimated);
-    return shouldCompact(tokens, window, this.compactionSettings(rt));
+    // The threshold applies to the USABLE budget, not the raw window: the
+    // provider counts `input + max_tokens` against the window, so an input that
+    // reaches the threshold on the raw window is already past the limit.
+    // (1M window / 384k output: the request died at 63.4% while the auto-compact
+    // waited for 80% — the compaction could never fire when it was needed.)
+    return shouldCompact(tokens, usableContext(window, this.budgetReserve(rt)), this.compactionSettings(rt));
+  }
+
+  /**
+   * The output budget the session ASKS for: the per-session override, else the
+   * provider entry's declared max output, else the config default. This is the
+   * number the context math must reserve — exactly the value
+   * {@link computeOverrides} sends when nothing has to be clamped.
+   */
+  private configuredOutputTokens(rt?: SessionRuntime): number {
+    if (typeof rt?.outputTokens === "number") return clampAdoptedOutputTokens(rt.outputTokens);
+    const entry = rt?.modelProvider ? this.providers.getProvider(rt.modelProvider) : undefined;
+    if (typeof entry?.maxTokens === "number") {
+      return Math.min(MAX_OUTPUT_TOKENS, Math.max(1, Math.round(entry.maxTokens)));
+    }
+    const cfg = this.config.get().maxTokens;
+    return typeof cfg === "number" && cfg > 0 ? Math.round(cfg) : DEFAULT_OUTPUT_TOKENS;
+  }
+
+  /**
+   * The window that governs the CONTEXT MATH for this session. The bar's base,
+   * the compaction threshold and the output clamp all read it from HERE, so they
+   * cannot disagree — a bar saying "100%" while the trigger still waits for 80%
+   * is exactly the class of bug this avoids.
+   */
+  private budgetWindow(rt?: SessionRuntime): number {
+    return clampContextWindow(rt?.contextWindow ?? DEFAULT_CONTEXT_WINDOW);
+  }
+
+  /**
+   * The reserve used by the CONTEXT MATH (soglia + barra): the configured
+   * output budget, capped at half the window so a contradictory configuration
+   * (max_tokens ≥ window) cannot leave a negative budget. The cap is only about
+   * keeping the math sane — the real protection is the request clamp below.
+   */
+  private budgetReserve(rt?: SessionRuntime): number {
+    return Math.max(MIN_OUTPUT_TOKENS, Math.min(this.configuredOutputTokens(rt), Math.floor(this.budgetWindow(rt) / 2)));
+  }
+
+  /**
+   * The output budget the NEXT request may actually use: the configured one,
+   * capped by the room left after the input (`input + max_tokens ≤ window`).
+   * Never raised above the configured value, and never below the floor — a
+   * session with no room left is a compaction problem, not an output problem.
+   */
+  private outputBudgetFor(rt?: SessionRuntime, configured?: number): number {
+    const room = Math.max(MIN_OUTPUT_TOKENS, this.budgetWindow(rt) - (rt?.contextTokens ?? 0) - REQUEST_SAFETY_MARGIN);
+    return Math.min(configured ?? this.configuredOutputTokens(rt), room);
+  }
+
+  /**
+   * Apply the per-turn output clamp to the runtime config, so the request that
+   * is about to be sent can never ask for more than the window has left.
+   * Without this, a fixed `max_tokens` makes the provider reject the WHOLE
+   * request once the input grows (666.820 in + 384.000 out = 1.050.820 on a
+   * 1.048.576 window → 400 invalid_request_error, the run dies). The clamp is
+   * silent and never touches the UI: the output slider keeps showing the value
+   * the user chose.
+   *
+   * Two deliberate properties:
+   *  · it is written on EVERY call (not only when it bites), so a session whose
+   *    budget fits again — after a compaction, after a model switch — is not
+   *    left stuck with a previously lowered value;
+   *  · without a model there is NOTHING to clamp: the config chain (provider
+   *    entry, file, settings) owns `maxTokens` and an override would shadow it
+   *    (a provider declaring 123 would silently become the default).
+   * The runtime override layer is shared by the open sessions, so concurrent
+   * runs write each other's value: the clamp can only ever LOWER `max_tokens`,
+   * which cannot turn a valid request into a rejected one.
+   */
+  private applySessionBudget(rt: SessionRuntime): void {
+    if (!rt.model) return;
+    this.modelSelector.set({
+      maxTokens: this.outputBudgetFor(rt),
+      contextWindow: clampContextWindow(rt.contextWindow ?? DEFAULT_CONTEXT_WINDOW),
+    });
   }
 
   /**
@@ -1543,6 +1626,9 @@ export class ChatViewProvider implements WebviewViewProvider {
         infoLog("auto-compaction failed; continuing with the request:", e?.message || String(e));
       }
     }
+    // AFTER (possibly) compacting: clamp the output budget to the room the
+    // request actually has left, so a full context can never turn into a 400.
+    this.applySessionBudget(rt);
     this.streamTee.clear(rt.sessionId);
     // A QUEUED message: the view deliberately did NOT append a bubble when it was
     // typed — it sat in the pending footer until its turn came — so the host has
@@ -1672,6 +1758,14 @@ export class ChatViewProvider implements WebviewViewProvider {
     const sampler = rt?.sampler ?? "temperature";
     overrides.temperature = sampler === "temperature" && typeof rt?.temperature === "number" ? rt.temperature : undefined;
     overrides.topP = sampler === "topP" && typeof rt?.topP === "number" ? rt.topP : undefined;
+    // The window travels WITH the turn's config: the agent records it in the
+    // message meta (so every turn stays self-describing) and the request clamp
+    // below needs it.
+    if (rt) overrides.contextWindow = clampContextWindow(rt.contextWindow ?? DEFAULT_CONTEXT_WINDOW);
+    // LAST: the request must fit `input + max_tokens ≤ window`. This is a
+    // starting point — a multi-turn run re-clamps at every turn boundary
+    // (`applySessionBudget`), where the context has grown.
+    overrides.maxTokens = this.outputBudgetFor(rt, overrides.maxTokens);
     return overrides;
   }
 
@@ -1854,6 +1948,13 @@ export class ChatViewProvider implements WebviewViewProvider {
     contextWindow: number;
     /** Upper bound of the context slider: the model's DETECTED window, else the global max. */
     maxContextWindow: number;
+    /**
+     * The part of the window the INPUT may use: `window − reserve`, where the
+     * reserve is the output budget of this session. This is what the footer bar
+     * and its % must be measured against — the raw window would read 66% while
+     * the provider is already refusing the request.
+     */
+    contextUsable?: number;
     compactionThresholdPercent?: number;
     outputTokens: number;
     /** Upper bound of the output slider: the model's DETECTED max output, else the global max. */
@@ -1984,7 +2085,10 @@ export class ChatViewProvider implements WebviewViewProvider {
       loopGuardRanges: LOOP_GUARD_FIELD_RANGES,
       skills: this.skillCatalog(),
       mcp: { servers: this.providers.readMcpServers?.() ?? {}, statuses: this.options.mcp?.getStatuses() ?? [] },
-      contextWindow: clampContextWindow(this.activeRuntime()?.contextWindow ?? DEFAULT_CONTEXT_WINDOW, ctxMax),
+      contextWindow: clampContextWindow(rt?.contextWindow ?? DEFAULT_CONTEXT_WINDOW, ctxMax),
+      // Same window + reserve the auto-compaction threshold uses, so the bar and
+      // the trigger are one number by construction.
+      contextUsable: usableContext(this.budgetWindow(rt), this.budgetReserve(rt)),
       // The slider SCALE is the model's real max (no global cap): an identified
       // model can go up to its own limit, an unknown one uses the fallback.
       maxContextWindow: clampContextWindow(ctxMax, ctxMax),

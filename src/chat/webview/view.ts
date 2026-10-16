@@ -20,6 +20,12 @@ interface ToolCallView {
 }
 /** Per-turn metrics captured from the provider stream (real usage + timings). */
 interface MsgMeta {
+  /** Model + named provider that served the turn (a session can switch both). */
+  model?: string;
+  provider?: string;
+  /** Window and output budget vigent in that turn. */
+  contextWindow?: number;
+  maxTokens?: number;
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
@@ -89,6 +95,8 @@ interface ConfigState {
   contextWindow?: number;
   /** Slider MAXIMUM for the context window (the model's detected value). */
   maxContextWindow?: number;
+  /** Part of the window the INPUT may use (`window − reserve`): the bar's base. */
+  contextUsable?: number;
   compactionThresholdPercent?: number;
   outputTokens?: number;
   /** Slider MAXIMUM for the output tokens (the model's detected value). */
@@ -214,6 +222,7 @@ const freqAuto = document.getElementById("freq-auto") as HTMLButtonElement;
 const metTokens = document.getElementById("met-tokens") as HTMLSpanElement;
 const metCtx = document.getElementById("met-ctx") as HTMLSpanElement;
 const metPct = document.getElementById("met-pct") as HTMLSpanElement;
+const metWindow = document.getElementById("met-window") as HTMLSpanElement;
 const metCache = document.getElementById("met-cache") as HTMLSpanElement;
 const ctxBar = document.getElementById("ctx-bar") as HTMLDivElement;
 const compactBtn = document.getElementById("compact-btn") as HTMLButtonElement;
@@ -578,6 +587,12 @@ function fmtDuration(ms: number): string {
 /** Compact per-turn metrics badge (REAL usage + timings) shown under a bubble. */
 function metaBadge(meta: MsgMeta): HTMLElement | undefined {
   const parts: string[] = [];
+  // The model comes FIRST: with a session switching between llama-local,
+  // OpenRouter and opencode, the identity of the turn is what makes the token
+  // counts that follow readable. The tooltip carries the rest of the budget
+  // (provider, window, output budget) — the row itself is nowrap + ellipsized,
+  // so only what identifies the turn belongs on it.
+  if (meta.model) parts.push(meta.provider ? `${meta.provider}/${meta.model}` : meta.model);
   if (typeof meta.inputTokens === "number") parts.push(`${fmtTokens(meta.inputTokens)} in`);
   if (typeof meta.outputTokens === "number") parts.push(`${fmtTokens(meta.outputTokens)} out`);
   if (typeof meta.cachedTokens === "number" && meta.cachedTokens > 0) parts.push(`⚡ ${fmtTokens(meta.cachedTokens)}`);
@@ -588,6 +603,10 @@ function metaBadge(meta: MsgMeta): HTMLElement | undefined {
   el.className = "msg-meta";
   el.textContent = parts.join(" · ");
   el.title = [
+    meta.model ? `model: ${meta.model}` : "",
+    meta.provider ? `provider: ${meta.provider}` : "",
+    meta.contextWindow !== undefined ? `context window: ${meta.contextWindow} tokens` : "",
+    meta.maxTokens !== undefined ? `output budget: ${meta.maxTokens} tokens` : "",
     meta.inputTokens !== undefined ? `input: ${meta.inputTokens} tokens` : "",
     meta.outputTokens !== undefined ? `output: ${meta.outputTokens} tokens` : "",
     meta.totalTokens !== undefined ? `total: ${meta.totalTokens} tokens` : "",
@@ -3950,13 +3969,31 @@ function fmtTokens(n: number): string {
 }
 
 function renderMetrics(c: ConfigState): void {
-  const ctx = clampContextWindow(c.contextWindow || DEFAULT_CONTEXT_WINDOW);
+  const window = clampContextWindow(c.contextWindow || DEFAULT_CONTEXT_WINDOW);
+  // The base of the bar is the USABLE budget, not the raw window: the provider
+  // counts `input + max_tokens` against the window, so only `window − reserve`
+  // is reachable by the input. Measured against the window the bar showed 66%
+  // while the request was already being rejected; against the usable budget the
+  // same state reads 100% — which is the truth that matters.
+  const ctx = c.contextUsable && c.contextUsable > 0 ? c.contextUsable : window;
+  const reserve = Math.max(0, window - ctx);
   const used = c.contextTokens ?? 0;
   metCtx.textContent = fmtTokens(ctx);
   metTokens.textContent = fmtTokens(used);
   // Exact counts stay reachable via the tooltip.
   metTokens.title = String(used);
-  metCtx.title = String(ctx);
+  metCtx.title = reserve
+    ? `${fmtTokens(window)} context window − ${fmtTokens(reserve)} reserved for the response = ${fmtTokens(ctx)} usable tokens`
+    : `${window} context window (no response reserve)`;
+  // The declared window, attached to the usable value with no connector words:
+  // "663.3k / 616k/1M (100%)". Most contracted form that still says where the
+  // usable number comes from — without it the footer shows "616k" with no trace
+  // of the 1M the model card promises. The full breakdown (and the 384k reserve
+  // that explains the gap) stays in the tooltip.
+  metWindow.textContent = reserve > 0 ? `/${fmtTokens(window)}` : "";
+  metWindow.title = reserve > 0
+    ? `${window} context window − ${reserve} reserved for the response = ${ctx} usable tokens`
+    : "";
   const pct = ctx > 0 ? Math.max(0, Math.min(100, Math.round((used / ctx) * 100))) : 0;
   metPct.textContent = "(" + pct + "%)";
   metPct.classList.toggle("warn", pct >= 90);

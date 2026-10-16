@@ -1,4 +1,5 @@
 import { FONTS, FAMILIES, PALETTE, ROOT_FONT_SIZE } from "./view-config";
+import { panelMinWidthCss } from "./panel-width";
 import type { ChatMessage } from "../core/history/types";
 import type { SessionSummary } from "../core/sessions/types";
 import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, MAX_CONTEXT_WINDOW, MAX_OUTPUT_TOKENS, MIN_CONTEXT_WINDOW, MIN_OUTPUT_TOKENS } from "./context-window";
@@ -114,22 +115,33 @@ ${renderViewConfig(deps)}
     pre, code, .code-lang, .fd-stat, .fd-body, .sm-folder { font-family: var(--font-mono); }
     /* Never squeeze the LAYOUT below this: past it the panel gets a horizontal
        scrollbar instead of compressing the controls. (The PANEL's own minimum
-       width is controlled by VS Code — the extension cannot force it.)
+       width is controlled by VS Code — the extension cannot force it: this floor
+       is what Harny guarantees about its CONTENT, and it is also why the layout
+       looks the same every time it opens.)
        450px is the MEASURED minimum, read off a live width readout in a real VS
        Code panel: the narrowest width at which the prompt placeholder still fits
        on one line and the control row (Analyze / Queue / Parallel / AI Model) is
-       not squeezed. The floor shipped is 500px, keeping ~50px of margin on top
-       of that measurement.
-       The 32rem part covers LARGER editor fonts, where every control grows.
-       Headless measurements put that side at roughly 22.75px per font px plus
-       ~148px of chrome, i.e. ~510px at a 16px font and ~600px at 20px.
+       not squeezed. The floor shipped is PANEL_REFERENCE_WIDTH (panel-width.ts),
+       keeping ~150px (a third) of margin over that measurement — that margin is
+       the TOLERANCE you feel when dragging the panel narrower before the
+       scrollbar appears. The px value comes from that constant, NOT from a
+       literal here: the intended tolerance and what the stylesheet enforces must
+       never drift apart.
+       (How wide the panel OPENS is VS Code's, not ours — it restores the width
+       you last left it at, and offers no API to read or set it.)
+       The 32rem part is INDEPENDENT of the reference: it covers LARGER editor
+       fonts, where every control grows. Headless measurements put that side at
+       roughly 22.75px per font px plus ~148px of chrome (~510px at a 16px font,
+       ~600px at 20px), rounded up to 32 per font px to stay on the conservative
+       side. With the floor at 600px the rem side takes over past a ~18.75px font
+       (32rem === 600px exactly there).
        Beware: those headless numbers ran ~6% high against the real panel (they
        said 480px where the real answer is 450px), so treat the rem part as the
        conservative side of an estimate and the px part as the measured one.
        This also clears the two things measured earlier: the control row
        overflows under ~407px and the transcript action pills reach the centred
        ctl-toggle chevron under ~379px (at 14px) — both well below the floor. */
-    html { min-width: max(500px, 32rem); overflow-x: auto; }
+    html { min-width: ${panelMinWidthCss()}; overflow-x: auto; }
     body {
       font-size: 1rem;
       background: var(--bg);
@@ -138,7 +150,7 @@ ${renderViewConfig(deps)}
       display: flex;
       flex-direction: column;
       overflow: hidden;
-      min-width: max(500px, 32rem);
+      min-width: ${panelMinWidthCss()};
     }
 
     /* Sessions area: a card matching the control cards below. Borderless:
@@ -1322,6 +1334,14 @@ ${renderViewConfig(deps)}
     }
     #met-pct.warn { color: var(--error); border-color: var(--error); background: rgba(244, 71, 71, 0.1); }
     #met-cache { white-space: nowrap; color: var(--accent); }
+    /* The declared window, HUGGING the usable value: "663.3k / 616k/1M (100%)".
+       Both live inside ONE flex item (see the .met wrapper in the markup), so a
+       narrow panel can never wrap them apart — "/1M" alone on a line would be
+       meaningless. Dim and smaller than the value it qualifies: it explains the
+       number, it must not compete with it. Hidden while empty, so a session with
+       no reserve shows nothing at all. */
+    .met-note { white-space: nowrap; color: #666; font-size: var(--fs-sm); }
+    #met-window:empty { display: none; }
     /* Placeholder state: provider does not report cached tokens. */
     #met-cache.idle { color: #888; }
     /* The bar is the hero: a full-width row of its own. The Compact key lives
@@ -2000,7 +2020,7 @@ ${renderViewConfig(deps)}
       <span class="model-label">Tokens</span>
       <span class="met" id="met-tokens" title="Input tokens used">0</span>
       <span class="met-sep">/</span>
-      <span class="met" id="met-ctx" title="Context window (tokens)">${DEFAULT_CONTEXT_WINDOW}</span>
+      <span class="met"><span id="met-ctx" title="Usable context: window − response reserve">${DEFAULT_CONTEXT_WINDOW}</span><span class="met-note" id="met-window" title="Window the model declares, BEFORE the reserve is taken out"></span></span>
       <span class="met pct" id="met-pct">(0%)</span>
       <span class="met" id="met-cache" title="Input tokens served from prompt cache"></span>
       <button id="compact-btn" title="Compact the conversation context">Compact</button>
