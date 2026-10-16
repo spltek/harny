@@ -2699,6 +2699,46 @@ describe("ChatViewProvider soft steering + queue", () => {
     );
   });
 
+  it("shows a QUEUED message in the transcript the moment it starts running", async () => {
+    const attachments = {
+      pick: vi.fn(async () => []),
+      buildContext: vi.fn(async () => ({
+        text: "FILE CONTENTS",
+        images: ["data:image/png;base64,iVBORw0KGgo="],
+        parts: [],
+      })),
+    } as unknown as AttachmentService;
+    const { provider, rt, view } = await setupStreaming({ attachments });
+    view.webview.postMessage.mockClear();
+
+    // The view did NOT append a bubble when this was typed (it waited in the
+    // pending footer) and the host owns that list, so without this post the row
+    // vanished and the transcript stayed empty until the end-of-run refresh.
+    await (provider as unknown as { dispatchSend(rt: unknown, msg: unknown): Promise<void> }).dispatchSend(rt, {
+      mode: "queue",
+      text: "guarda qui",
+      attachments: [{ name: "relazione.pdf", path: "/tmp/relazione.pdf", size: 42, isImage: false }],
+    });
+
+    expect(view.webview.postMessage).toHaveBeenCalledWith({
+      type: "userMessage",
+      content: "guarda qui",
+      attachments: [{ name: "relazione.pdf", path: "/tmp/relazione.pdf", size: 42, isImage: false }],
+      images: ["data:image/png;base64,iVBORw0KGgo="],
+    });
+  });
+
+  it("does NOT re-post the bubble for a direct send (the view already showed it)", async () => {
+    const { provider, rt, view } = await setupStreaming();
+    view.webview.postMessage.mockClear();
+
+    await (provider as unknown as { dispatchSend(rt: unknown, msg: unknown): Promise<void> }).dispatchSend(rt, {
+      text: "hello",
+    });
+
+    expect(view.webview.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "userMessage" }));
+  });
+
   it("steers a message typed while working (agent.steer, not a new send)", async () => {
     const { handler, agent, pending } = await setupStreaming();
     agent.send.mockClear();

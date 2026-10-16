@@ -4236,6 +4236,15 @@ window.addEventListener("message", (e) => {
     case "pending":
       renderPending((msg.items as PendingViewItem[]) || []);
       break;
+    case "userMessage": {
+      // A QUEUED message just started running. The view never appended its bubble
+      // when it was typed (it waited in the pending footer) and the host owns
+      // that list, so the host tells the view to show it now. No cut key here:
+      // the end-of-run refresh rebuilds the transcript and attaches it.
+      addMessage("user", String(msg.content || ""), msg.attachments, msg.images);
+      scrollDown();
+      break;
+    }
     case "steerApplied": {
       // The soft-steer message reached a turn boundary: show it as a real user
       // bubble now (the end-of-run refresh rebuilds the transcript anyway).

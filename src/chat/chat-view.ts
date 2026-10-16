@@ -1544,6 +1544,19 @@ export class ChatViewProvider implements WebviewViewProvider {
       }
     }
     this.streamTee.clear(rt.sessionId);
+    // A QUEUED message: the view deliberately did NOT append a bubble when it was
+    // typed — it sat in the pending footer until its turn came — so the host has
+    // to show it NOW. Without this the pending row disappears and the transcript
+    // stays empty until the end-of-run refresh, i.e. the user cannot see what
+    // they sent, attachments included. A direct send already showed its own.
+    if (msg.mode === "queue" && this.activeId === rt.sessionId) {
+      this.view?.webview.postMessage({
+        type: "userMessage",
+        content: displayText ?? rawText,
+        ...(attachmentMeta ? { attachments: attachmentMeta } : {}),
+        ...(images ? { images } : {}),
+      });
+    }
     // send() sets _streaming synchronously on invocation: start it first, THEN
     // push the status — otherwise workingIds() is still empty and the session
     // row never locks (branch/rename/delete stay hoverable during the work).

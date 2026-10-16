@@ -4369,6 +4369,23 @@ describe("soft steering + pending bubbles (webview)", () => {
     expect(last.classList.contains("steer-msg")).toBe(true);
   });
 
+  it("renders a QUEUED message's bubble when the host says it started running", async () => {
+    await loadView();
+    // The view never appends a bubble for a queued message: it waits in the
+    // pending footer, and the host tells the view when it actually runs.
+    hostMessage({ type: "pending", items: [{ id: "q1", mode: "queue", text: "guarda qui" }] });
+    hostMessage({
+      type: "userMessage",
+      content: "guarda qui",
+      images: ["data:image/png;base64,iVBORw0KGgo="],
+      attachments: [{ name: "relazione.pdf", path: "/tmp/relazione.pdf", size: 42, isImage: false }],
+    });
+    const last = document.querySelector("#messages .msg.user:last-of-type") as HTMLElement;
+    expect(last.textContent).toContain("guarda qui");
+    expect(last.querySelector(".msg-attachments")).not.toBeNull();
+    expect(last.querySelector(".msg-attach-file-name")?.textContent).toBe("relazione.pdf");
+  });
+
   it("renders a STEERED message's attachments in the live bubble", async () => {
     await loadView();
     hostMessage({
