@@ -115,9 +115,11 @@ ${renderViewConfig(deps)}
     /* Never squeeze the LAYOUT below this: past it the panel gets a horizontal
        scrollbar instead of compressing the controls. (The PANEL's own minimum
        width is controlled by VS Code — the extension cannot force it.)
-       450px is read off a live width readout in a real VS Code panel: it is the
-       narrowest width at which the prompt placeholder still fits on one line and
-       the control row (Analyze / Queue / Parallel / AI Model) is not squeezed.
+       450px is the MEASURED minimum, read off a live width readout in a real VS
+       Code panel: the narrowest width at which the prompt placeholder still fits
+       on one line and the control row (Analyze / Queue / Parallel / AI Model) is
+       not squeezed. The floor shipped is 500px, keeping ~50px of margin on top
+       of that measurement.
        The 32rem part covers LARGER editor fonts, where every control grows.
        Headless measurements put that side at roughly 22.75px per font px plus
        ~148px of chrome, i.e. ~510px at a 16px font and ~600px at 20px.
@@ -127,7 +129,7 @@ ${renderViewConfig(deps)}
        This also clears the two things measured earlier: the control row
        overflows under ~407px and the transcript action pills reach the centred
        ctl-toggle chevron under ~379px (at 14px) — both well below the floor. */
-    html { min-width: max(450px, 32rem); overflow-x: auto; }
+    html { min-width: max(500px, 32rem); overflow-x: auto; }
     body {
       font-size: 1rem;
       background: var(--bg);
@@ -136,7 +138,7 @@ ${renderViewConfig(deps)}
       display: flex;
       flex-direction: column;
       overflow: hidden;
-      min-width: max(450px, 32rem);
+      min-width: max(500px, 32rem);
     }
 
     /* Sessions area: a card matching the control cards below. Borderless:

@@ -351,16 +351,17 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/@media \(min-width: 59rem\)\s*\{\s*\.ctl-cards\s*\{\s*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/);
     // A minimum layout width: past it the panel scrolls horizontally instead of
     // squeezing the controls (the PANEL's minimum is VS Code's, not ours).
-    // 450px was read off a live width readout in a real VS Code panel - the
-    // narrowest width at which the prompt placeholder still fits on one line and
-    // the control row is not squeezed. The 32rem part covers larger editor fonts,
-    // where every control grows; headless measurements put that side at ~22.75px
-    // per font px plus ~148px of chrome, but they ran ~6% high against the real
-    // panel (480px vs the real 450px), so the rem part is the conservative side.
+    // 450px is the MEASURED minimum, read off a live width readout in a real VS
+    // Code panel - the narrowest width at which the prompt placeholder still fits
+    // on one line and the control row is not squeezed. 500px is what ships, with
+    // ~50px of margin on top. The 32rem part covers larger editor fonts, where
+    // every control grows; headless measurements put that side at ~22.75px per
+    // font px plus ~148px of chrome, but they ran ~6% high against the real panel
+    // (480px vs the real 450px), so the rem part is the conservative side.
     // It also clears the control-row overflow (~407px) and the pills reaching the
     // centred ctl-toggle chevron (~379px).
-    expect(html).toMatch(/html\s*\{\s*min-width:\s*max\(450px,\s*32rem\);\s*overflow-x:\s*auto/);
-    expect(html).toMatch(/body\s*\{[^}]*min-width:\s*max\(450px,\s*32rem\)/);
+    expect(html).toMatch(/html\s*\{\s*min-width:\s*max\(500px,\s*32rem\);\s*overflow-x:\s*auto/);
+    expect(html).toMatch(/body\s*\{[^}]*min-width:\s*max\(500px,\s*32rem\)/);
     // The old providers-form flag is gone (moved to the per-session Parallel card).
     expect(html).not.toContain("pe-maxparallel");
   });
