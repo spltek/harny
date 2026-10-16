@@ -1,5 +1,5 @@
 import type { ChatMessage } from "../history/types";
-import { snapTailStart } from "../history/tool-call-pairing";
+import { turnEnd, turnStart } from "../history/tool-call-pairing";
 import type { HarnyConfig } from "../config/types";
 import type { LLMProviderFactory } from "../llm/types";
 import { fallbackTitle } from "./title-generator";
@@ -128,41 +128,114 @@ export function estimateContextTokens(messages: ChatMessage[]): number {
 }
 
 /**
- * Manual compaction: always summarize a fraction of the CURRENT context.
- * Keeps the most recent `keepRecentFraction` of the estimated tokens and
- * summarizes the rest, so the fill % visibly drops even on small sessions.
+ * Snap a cut point to the nearest WHOLE turn group, so what is kept is always a
+ * sequence of complete turns (input → final answer, everything in between).
+ *
+ * Prefers the input that OPENS the group containing the boundary. When that would
+ * keep the entire conversation (the boundary fell inside the FIRST group), it
+ * moves FORWARD to the next input instead: summarizing that whole group still
+ * frees context, while keeping everything would make the compaction a no-op.
+ * Returns 0 when the conversation is a single group — nothing can be summarized
+ * without cutting it in half, and half a turn is exactly what this avoids
+ * (`performCompaction` treats an empty plan as "nothing to do").
+ */
+export function snapCutToGroup(messages: ChatMessage[], index: number): number {
+  const back = turnStart(messages, index);
+  if (back > 0) return back;
+  const forward = turnEnd(messages, index);
+  return forward < messages.length ? forward : 0;
+}
+
+/**
+ * How much RECENT work is kept verbatim after a compaction, in tokens.
+ *
+ * An ABSOLUTE budget, not a fraction: a fraction of the history keeps ~600k on a
+ * 1M window and frees almost nothing (the bug this replaces), while the recent
+ * work that actually matters — the task at hand, its files, its last results — is
+ * bounded whatever the window. Same choice as the reference agents (pi keeps 20k
+ * recent tokens, OpenCode ~15k) and the reason their compactions buy room for a
+ * long stretch of turns.
+ */
+export const KEEP_RECENT_TOKENS = 20_000;
+
+/** Never keep fewer than this, or the model loses the task it was doing. */
+export const MIN_KEEP_RECENT_TOKENS = 8_000;
+
+/**
+ * The verbatim tail a compaction should keep for a given usable budget: a small
+ * share of the window, bounded by {@link KEEP_RECENT_TOKENS}. It scales DOWN on
+ * small models (where 20k would be most of the window), never up on big ones.
+ */
+export function keepRecentTokensFor(usableTokens: number): number {
+  const share = Math.round(Math.max(0, usableTokens) * 0.05);
+  return Math.min(KEEP_RECENT_TOKENS, Math.max(MIN_KEEP_RECENT_TOKENS, share));
+}
+
+/**
+ * Plan a compaction that keeps about `keepTokens` of the MOST RECENT work.
+ *
+ * The budget is the INPUT (not a fraction of whatever happens to be there), so the
+ * result is predictable: what stays verbatim is bounded by design and everything
+ * older is summarized. The tail is snapped to a whole turn group, and at least one
+ * group is always kept — a plan that kept nothing would erase the session.
+ */
+export function planCompactionToBudget(messages: ChatMessage[], keepTokens: number): CompactionPlan {
+  const visible = messages.filter((m) => m.role !== "system" && !m.uiOnly);
+  const tokensBefore = estimateTokens(serializeConversation(visible));
+  if (visible.length <= 2) return { toSummarize: [], kept: visible, tokensBefore };
+
+  const budget = Math.max(1, keepTokens);
+  // Walk BACKWARDS from the newest message, accumulating the recent side.
+  let start = visible.length;
+  let acc = 0;
+  for (let i = visible.length - 1; i >= 0; i--) {
+    if (acc + estimateTokens(visible[i].content) > budget && start < visible.length) break;
+    start = i;
+    acc += estimateTokens(visible[i].content);
+  }
+  // Nothing worth keeping (one huge message fills the budget on its own):
+  // summarize half by count rather than keep the whole conversation alive.
+  if (start === 0) start = Math.floor(visible.length / 2);
+  // A cut must never leave half a turn: what is KEPT is a sequence of complete
+  // groups (input → final answer, everything in between).
+  start = snapCutToGroup(visible, start);
+  return { toSummarize: visible.slice(0, start), kept: visible.slice(start), tokensBefore };
+}
+
+/**
+ * Manual compaction: summarize a FRACTION of the current context. Kept as the
+ * entry point of the fraction-based policy (and its tests); the HOST uses
+ * {@link planCompactionToBudget} with {@link keepRecentTokensFor} instead, because
+ * an absolute recent budget is what makes a compaction actually free room.
  */
 export function planManualCompaction(messages: ChatMessage[], keepRecentFraction = 0.6): CompactionPlan {
   const visible = messages.filter((m) => m.role !== "system" && !m.uiOnly);
   const tokensBefore = estimateTokens(serializeConversation(visible));
   if (visible.length <= 2) return { toSummarize: [], kept: visible, tokensBefore };
-
-  const keepTokens = Math.max(1, tokensBefore * keepRecentFraction);
-  // Walk BACKWARDS accumulating the recent side, remembering where the tail
-  // starts (an index, not a list: the boundary is what needs fixing below).
-  let start = visible.length;
-  let acc = 0;
-  for (let i = visible.length - 1; i >= 0; i--) {
-    if (acc + estimateTokens(visible[i].content) > keepTokens && start < visible.length) break;
-    start = i;
-    acc += estimateTokens(visible[i].content);
-  }
-  // Force a visible reduction by message count when the token spread is too shallow.
-  if (start === 0) start = Math.floor(visible.length / 2);
-  // A cut must never separate a tool call from its results: a tail that STARTS
-  // with tool results has no call above it in the request, and the provider
-  // rejects the whole conversation. Move the boundary back to the turn that owns
-  // them instead (the summary swallows one turn fewer — never a broken request).
-  start = snapTailStart(visible, start);
-  return { toSummarize: visible.slice(0, start), kept: visible.slice(start), tokensBefore };
+  return planCompactionToBudget(messages, Math.max(1, tokensBefore * keepRecentFraction));
 }
 
-const SUMMARY_PROMPT = `You are summarizing an old part of a coding session. The summary will REPLACE the transcript, so it must stand alone. Reply with EXACTLY TWO blocks separated by a line containing only "---" (three dashes):
+const SUMMARY_PROMPT = `You are summarizing an OLD part of a coding session. The summary REPLACES that span, so it must stand alone — but it is also CONTEXT: every token you write is a token the session cannot spend on real work. Its only job is to let the next turns reconstruct what was decided and what comes next.
+
+Write the MINIMUM that does that, as SCHEMATIC LISTS — never prose:
+- fragments, not sentences; one bullet per fact, one line each, most important first;
+- no restating the transcript, no examples, no code blocks (name the file and the symbol instead), no pleasantries, no "the user asked…" narration;
+- scale the LENGTH to the COMPLEXITY of the work: a simple task gets a handful of bullets, a long one more — never padding, never a template filled for its own sake;
+- OMIT anything the transcript AFTER this span already shows, and anything re-derivable by reading the code;
+- KEEP exact names, paths, numbers, commands and constraints: those are the facts nothing else carries.
+
+Reply with EXACTLY TWO blocks separated by a line containing only "---" (three dashes):
 
 BLOCK 1 — ONLY the fixed phrase "Summary of past interactions", TRANSLATED into the SAME language as the transcript. Output that phrase alone, nothing else (no punctuation, no extra words).
-BLOCK 2 — a Markdown summary covering: Goal, Progress (Done / In Progress / Blocked), Key Decisions, Next Steps, Critical Context. Write it in the SAME language as the transcript. Be concise.
 
-Do not invent details absent from the transcript.
+BLOCK 2 — a Markdown summary with these headings, IN THIS ORDER, including ONLY the ones that have something under them (an empty heading is just padding — drop it):
+## Goal    — what was asked, one line
+## Done    — bullets: what is finished, and the decisions taken with the reason when it is not obvious
+## Open    — bullets: what is in progress or blocked, and on what
+## Next    — bullets: the exact next steps
+## Facts   — bullets: what the next turns cannot guess (paths, commands, values, constraints, gotchas)
+
+Write it in the SAME language as the transcript. Never invent details absent from the transcript.
 
 <transcript>
 `;
@@ -186,9 +259,68 @@ export function splitSummary(text: string): { prompt: string; response: string }
 export function buildSummaryMessages(
   toSummarize: ChatMessage[],
   previousSummary?: string,
+  maxSummaryTokens?: number,
+  keptPreview?: string,
 ): { role: "system" | "user"; content: string }[] {
   const text = serializeConversation(toSummarize);
-  return [{ role: "system", content: SUMMARY_PROMPT + (previousSummary ? `\nPrevious summary:\n${previousSummary}\n` : "") }, { role: "user", content: text }];
+  const budget =
+    typeof maxSummaryTokens === "number" && maxSummaryTokens > 0
+      ? `\nBudget: the WHOLE summary must stay under roughly ${maxSummaryTokens} tokens (about ${Math.max(
+          60,
+          Math.round(maxSummaryTokens * 0.75),
+        )} words). Be terse: short lines, no prose, never restate the transcript.\n`
+      : "";
+  // What the session still has in FULL. Without it the summary re-states work the
+  // next turns can already see, which is the cheapest waste there is: those tokens
+  // are paid twice (in the summary and in the kept tail).
+  const kept =
+    keptPreview && keptPreview.trim()
+      ? `\nThe transcript CONTINUES after this span; do NOT summarize what it already shows (first message that follows):\n${keptPreview.trim().slice(0, 600)}\n`
+      : "";
+  return [{ role: "system", content: SUMMARY_PROMPT + budget + kept + (previousSummary ? `\nPrevious summary:\n${previousSummary}\n` : "") }, { role: "user", content: text }];
+}
+
+/**
+ * How full the context should be RIGHT AFTER a compaction, as a fraction of the
+ * usable budget. Compaction exists to buy room, so it aims at a comfortable level
+ * instead of merely dipping under the trigger.
+ */
+export const POST_COMPACT_TARGET_FRACTION = 0.5;
+
+/** A summary smaller than this is not worth having: too little to continue from. */
+export const MIN_SUMMARY_TOKENS = 512;
+
+/** Overshoot tolerated before the summary is squeezed a second time (+15%). */
+const SUMMARY_OVERSHOOT = 1.15;
+
+/**
+ * The token budget the summary itself gets: the room left between the KEPT part
+ * and the post-compaction target.
+ *
+ * This is what keeps a compaction from "not freeing enough": a verbose summary
+ * eats the very context it just freed, and the effect worsens as the window
+ * shrinks (on a small model the same summary is a much larger share). The floor
+ * exists because a summary must stay usable — when the KEPT part alone already
+ * exceeds the target, the summary cannot fix it, and shrinking the tail is a
+ * different lever.
+ */
+export function summaryBudgetTokens(usableTokens: number, keptTokens: number): number {
+  const target = Math.floor(Math.max(0, usableTokens) * POST_COMPACT_TARGET_FRACTION);
+  return Math.max(MIN_SUMMARY_TOKENS, target - Math.max(0, keptTokens));
+}
+
+const COMPRESS_PROMPT = `You are COMPRESSING a summary that is too long for the context budget. Reply with EXACTLY the same two-block structure as the input (block 1: the fixed phrase, in the SAME language as the input; then a line with only "---"; block 2: the compressed Markdown summary).
+
+Keep every fact needed to continue the work: Goal, Progress (Done / In Progress / Blocked), Key Decisions, Next Steps, Critical Context. DROP prose, repetitions, examples, and anything already visible in the kept transcript. Prefer short bullets over sentences.
+
+Budget: the result must stay under roughly `;
+
+/** The second pass: rewrite an oversized summary under an explicit token cap. */
+function compressSummaryMessages(summary: string, maxSummaryTokens: number): { role: "system" | "user"; content: string }[] {
+  return [
+    { role: "system", content: `${COMPRESS_PROMPT}${maxSummaryTokens} tokens.\n\n<summary>\n` },
+    { role: "user", content: summary },
+  ];
 }
 
 /**
@@ -201,15 +333,24 @@ export class Compactor {
     private buildConfig: () => HarnyConfig,
   ) {}
 
-  async summarize(toSummarize: ChatMessage[], previousSummary?: string, signal?: AbortSignal): Promise<string> {
-    const provider = this.factory.create(this.buildConfig());
-    let out = "";
-    // No tools for a summary turn: pass [] so the provider never advertises
-    // the (possibly orchestration) tool set during compaction. `signal` lets a
-    // user Stop (or the agent's turn abort) cancel the summary request too.
-    for await (const chunk of provider.stream(buildSummaryMessages(toSummarize, previousSummary), signal, [])) {
-      if (chunk.type === "text") out += chunk.content;
-      if (out.length > 40000) break;
+  async summarize(
+    toSummarize: ChatMessage[],
+    previousSummary?: string,
+    signal?: AbortSignal,
+    options: { maxSummaryTokens?: number; keptPreview?: string } = {},
+  ): Promise<string> {
+    const budget = options.maxSummaryTokens;
+    let out = await this.requestSummary(
+      buildSummaryMessages(toSummarize, previousSummary, budget, options.keptPreview),
+      signal,
+    );
+    // Still oversized when measured (the instruction is a request, not a limit):
+    // ONE compression pass, and only the SHORTER of the two is kept. Bounded to a
+    // single extra call on purpose — a loop over a summary would spend more
+    // context than it frees.
+    if (budget && budget > 0 && out && estimateTokens(out) > Math.ceil(budget * SUMMARY_OVERSHOOT)) {
+      const squeezed = await this.requestSummary(compressSummaryMessages(out, budget), signal);
+      if (squeezed && estimateTokens(squeezed) < estimateTokens(out)) out = squeezed;
     }
     const trimmed = out.trim();
     if (!trimmed) {
@@ -217,5 +358,21 @@ export class Compactor {
       return `Summary of past interactions\n---\n## Goal\n${fallbackTitle(first)}\n## Progress\nNo details available.\n`;
     }
     return trimmed;
+  }
+
+  /** One one-shot summary request (no tools; `signal` lets Stop cancel it too). */
+  private async requestSummary(
+    messages: { role: "system" | "user"; content: string }[],
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const provider = this.factory.create(this.buildConfig());
+    let out = "";
+    // No tools for a summary turn: pass [] so the provider never advertises
+    // the (possibly orchestration) tool set during compaction.
+    for await (const chunk of provider.stream(messages, signal, [])) {
+      if (chunk.type === "text") out += chunk.content;
+      if (out.length > 40000) break;
+    }
+    return out;
   }
 }

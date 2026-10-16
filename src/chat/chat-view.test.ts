@@ -1181,7 +1181,7 @@ describe("ChatViewProvider", () => {
     expect(switchPosts[switchPosts.length - 1].activeId).toBe("s2");
   });
 
-  it("branchAt copies the transcript up to (and including) the given reply", async () => {
+  it("branchAt copies the transcript up to (and including) the given reply's TURN", async () => {
     const { store, provider } = buildHarness();
     const { handler, view } = resolveWith(provider);
     await provider.createNew(); // s1 (active)
@@ -1190,33 +1190,37 @@ describe("ChatViewProvider", () => {
       { role: "assistant", content: "a1", timestamp: 2 },
       { role: "user", content: "q2", timestamp: 3 },
       { role: "assistant", content: "a2", timestamp: 4 },
+      { role: "user", content: "q3", timestamp: 5 },
+      { role: "assistant", content: "a3", timestamp: 6 },
     ];
     (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
-      { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 4, model: "gpt-4o" },
+      { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 6, model: "gpt-4o" },
     ]);
     (store.load as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
       id === "s1"
-        ? { summary: { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 4, model: "gpt-4o" }, messages: msgs }
+        ? { summary: { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 6, model: "gpt-4o" }, messages: msgs }
         : { summary: { id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 0 }, messages: [] },
     );
     state.autoName = "Branch copy";
-    await handler({ type: "branchAt", index: 2 }); // up to q2 -> [q1, a1, q2]
+    // Nothing is cut in the middle of a turn: the copy ends at the LAST message
+    // of the clicked reply's group (q2 → a2), never inside it.
+    await handler({ type: "branchAt", index: 3 });
     expect(store.create).toHaveBeenCalledWith("Branch copy");
-    expect(store.saveMessages).toHaveBeenCalledWith("s2", [msgs[0], msgs[1], msgs[2]]);
+    expect(store.saveMessages).toHaveBeenCalledWith("s2", [msgs[0], msgs[1], msgs[2], msgs[3]]);
     const switchPosts = view.webview.postMessage.mock.calls
       .map((c) => c[0] as any)
       .filter((m) => m.type === "switchView");
     expect(switchPosts[switchPosts.length - 1].activeId).toBe("s2");
   });
 
-  it("branchAt on a reply that ALSO called tools copies the turn WITH its results", async () => {
+  it("branchAt on a reply that ALSO called tools copies the WHOLE turn (results + final answer)", async () => {
     const { store, provider } = buildHarness();
     const { handler } = resolveWith(provider);
     await provider.createNew(); // s1 (active)
     // The reply the user clicks ⎇ on carries text AND a tool call (a preamble):
-    // copying "up to and including this reply" without the results would create a
-    // session whose history ends with an unanswered tool_calls — one that cannot
-    // send anything, ever (every request is rejected with a 400).
+    // copying "up to and including this reply" without the rest of the turn would
+    // make a session that cannot send anything — the turn continues with the tool
+    // results and the final answer.
     const msgs = [
       { role: "user", content: "q1", timestamp: 1 },
       { role: "assistant", content: "let me check", toolCalls: [{ id: "c1", name: "Shell", arguments: {} }], timestamp: 2 },
@@ -1232,31 +1236,37 @@ describe("ChatViewProvider", () => {
         : { summary: { id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 0 }, messages: [] },
     );
     state.autoName = "Branch copy";
-    await handler({ type: "branchAt", index: 1 }); // the preamble turn, not the plain reply
-    expect(store.saveMessages).toHaveBeenCalledWith("s2", [msgs[0], msgs[1], msgs[2]]);
+    await handler({ type: "branchAt", index: 1 }); // the preamble of the turn
+    expect(store.saveMessages).toHaveBeenCalledWith("s2", [msgs[0], msgs[1], msgs[2], msgs[3]]);
   });
 
-  it("branchAt on a DAMAGED history does not copy an unanswered tool call", async () => {
+  it("branchAt never copies a DAMAGED turn: the copy stops before it", async () => {
     const { store, provider } = buildHarness();
     const { handler } = resolveWith(provider);
     await provider.createNew(); // s1 (active)
+    // A turn whose call was never answered (a history damaged before this fix):
+    // copying it would create a session that cannot send anything, so the copy
+    // stops at the last valid boundary instead.
     const msgs = [
       { role: "user", content: "q1", timestamp: 1 },
-      { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "Shell", arguments: {} }], timestamp: 2 },
-      { role: "assistant", content: "interrupted", timestamp: 3 },
+      { role: "assistant", content: "a1", timestamp: 2 },
+      { role: "user", content: "q2", timestamp: 3 },
+      { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "Shell", arguments: {} }], timestamp: 4 },
+      { role: "assistant", content: "interrupted", timestamp: 5 },
     ];
     (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
-      { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 3, model: "gpt-4o" },
+      { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 5, model: "gpt-4o" },
     ]);
     (store.load as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
       id === "s1"
-        ? { summary: { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 3, model: "gpt-4o" }, messages: msgs }
+        ? { summary: { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 5, model: "gpt-4o" }, messages: msgs }
         : { summary: { id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 0 }, messages: [] },
     );
     state.autoName = "Branch copy";
-    await handler({ type: "branchAt", index: 1 });
-    // The copy stops BEFORE the dangling call: the damage is never propagated.
-    expect(store.saveMessages).toHaveBeenCalledWith("s2", [msgs[0]]);
+    await handler({ type: "branchAt", index: 3 });
+    // The damaged group (q2 → …) is left out entirely: what is copied is the last
+    // COMPLETE turn (q1 → a1).
+    expect(store.saveMessages).toHaveBeenCalledWith("s2", [msgs[0], msgs[1]]);
   });
 
   it("branchAt ignores out-of-range or invalid indexes", async () => {
@@ -2166,6 +2176,46 @@ describe("ChatViewProvider compaction", () => {
     expect(rt.cachedTokens).toBe(0);
     // final bubble posted (the UI shows completion, no toast needed)
     expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "refresh" }));
+  });
+
+  it("feeds the summarizer a budget derived from the room left after the kept part", async () => {
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\nx");
+    const options = {
+      compactor: { summarize } as unknown as Compactor,
+      compaction: DEFAULT_COMPACTION,
+      manualKeepFraction: 0.6,
+    };
+    const { registry, provider } = buildHarness(options);
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    // A window with an output reserve: the USABLE budget is what matters, not the
+    // raw window (the same rule the threshold and the footer use).
+    rt.contextWindow = 100_000;
+    rt.outputTokens = 20_000;
+    rt.contextTokens = 60_000;
+    rt.history.replace([
+      { role: "user", content: "a".repeat(4000), timestamp: 1 },
+      { role: "assistant", content: "b".repeat(4000), timestamp: 2 },
+      { role: "user", content: "c".repeat(4000), timestamp: 3 },
+      { role: "assistant", content: "d".repeat(4000), timestamp: 4 },
+      { role: "user", content: "e".repeat(4000), timestamp: 5 },
+      { role: "assistant", content: "f".repeat(4000), timestamp: 6 },
+    ]);
+
+    await handler({ type: "compact" });
+
+    // usable = 100k window − 20k reserve = 80k; the post-compaction target is 50%
+    // of it (40k), and the kept part takes a share of that: the rest is the
+    // summary's. Asserted as a RELATIONSHIP: the exact number depends on how the
+    // kept share is estimated, and pinning it would just re-state the formula.
+    expect(summarize).toHaveBeenCalledTimes(1);
+    const budget = (summarize.mock.calls[0] as unknown[])[3] as { maxSummaryTokens?: number };
+    expect(budget?.maxSummaryTokens).toBeGreaterThanOrEqual(512);
+    expect(budget?.maxSummaryTokens).toBeLessThan(40_000);
+    // …and the summarizer is told what the session still has in full, so the
+    // summary does not pay twice for work the kept tail already shows.
+    expect(budget?.keptPreview).toBeTruthy();
   });
 
   it("auto-compacts against the USABLE budget: the 80% of the RAW window is unreachable when output is reserved", async () => {

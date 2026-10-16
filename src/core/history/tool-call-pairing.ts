@@ -1,5 +1,3 @@
-import type { ChatMessage } from "./types";
-
 /**
  * The tool-call pairing invariant, as the providers enforce it:
  *
@@ -90,36 +88,37 @@ export function describePairingViolations(violations: PairingViolation[]): strin
 }
 
 /**
- * The cut point (EXCLUSIVE) that includes the turn at `index` AND the results of
- * the tools it called.
+ * The index of the message that OPENS the turn containing `index`.
  *
- * Used by ⎇ branch, which copies "up to and including this reply": a reply can
- * carry both text and tool calls, and cutting right after the message would leave
- * the copied session with a call whose results stayed behind — a session that is
- * born unable to send anything. When the results are NOT there (an already
- * damaged history) the call is left out too, so the damage is never propagated.
+ * A turn is an INPUT and everything it produced: a `user` message (a real prompt,
+ * a harness nudge, a steer — all inputs) followed by whatever the model did until
+ * the next input. Cutting by index alone can land in the middle of one, so every
+ * cut is snapped to a group: from an input, to its final answer, with everything
+ * in between.
  */
-export function cutAfterTurn(messages: ChatMessage[], index: number): number {
-  const end = index + 1;
-  const m = messages[index];
-  if (!m || m.role !== "assistant" || !m.toolCalls?.length) return end;
-  const expected = m.toolCalls.map((tc) => tc.id).filter((id): id is string => !!id);
-  let j = end;
-  while (j < messages.length && messages[j].role === "tool") j++;
-  const answered = new Set(messages.slice(end, j).map((t) => t.toolCallId));
-  if (expected.some((id) => !answered.has(id))) return index;
-  return j;
+export function turnStart(messages: PairingMessage[], index: number): number {
+  const from = Math.max(0, Math.min(index, messages.length));
+  for (let k = from; k > 0; k--) {
+    if (messages[k]?.role === "user") return k;
+  }
+  return 0; // a head with no input (a synthetic summary/system message)
 }
 
 /**
- * The start index a KEPT TAIL may safely begin at, moving BACK when the chosen
- * boundary would leave tool results whose call is not in the tail: a conversation
- * that starts with a `tool` message has no `tool_calls` above it, and the
- * provider rejects it. Used by compaction, which picks its boundary by token
- * count and cannot know where the turn boundaries are.
+ * The cut point (EXCLUSIVE) that ENDS the turn containing `index`: the index of
+ * the next turn's input (or the end of the conversation).
+ *
+ * Used by ⎇ branch, which copies "up to and including this reply": a reply can
+ * carry text AND tool calls, and the model may continue with more tool turns
+ * before it answers. Stopping at the clicked message (or right after its own
+ * results) would copy half a turn — and could leave the copy with an unanswered
+ * call, i.e. a session that cannot send anything. The whole group is copied
+ * instead.
  */
-export function snapTailStart(messages: ChatMessage[], index: number): number {
-  let start = Math.max(0, Math.min(index, messages.length));
-  while (start > 0 && messages[start]?.role === "tool") start--;
-  return start;
+export function turnEnd(messages: PairingMessage[], index: number): number {
+  const from = Math.max(0, Math.min(index, messages.length));
+  for (let k = from + 1; k < messages.length; k++) {
+    if (messages[k]?.role === "user") return k;
+  }
+  return messages.length;
 }

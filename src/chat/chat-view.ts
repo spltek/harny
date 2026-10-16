@@ -11,7 +11,7 @@ import type { SessionManager } from "../core/sessions/session-manager";
 import type { DbVacuumStats, SessionSettingsPatch, SessionSummary } from "../core/sessions/types";
 import type { SessionRegistry, SessionRuntime } from "./session-registry";
 import { PendingInputQueue, type PendingInput } from "./pending-input-queue";
-import { cutAfterTurn } from "../core/history/tool-call-pairing";
+import { toolCallPairingViolations, turnEnd, turnStart } from "../core/history/tool-call-pairing";
 import { StreamTee } from "./stream-tee";
 import type { AttachmentService } from "./attachment-service";
 import type { AttachmentInfo, AttachmentPart } from "./attachment-types";
@@ -21,7 +21,7 @@ import { renderViewHtml } from "./view-html";
 import { toTemperature, toTopP } from "./temperature";
 import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, MAX_CONTEXT_WINDOW, MAX_OUTPUT_TOKENS, MIN_OUTPUT_TOKENS, REQUEST_SAFETY_MARGIN, clampAdoptedContextWindow, clampAdoptedOutputTokens, clampContextWindow, clampOutputTokens, toContextWindow, toOutputTokens, usableContext } from "./context-window";
 import { PanelModalQueue } from "./panel-modal-queue";
-import { Compactor, DEFAULT_COMPACTION, CompactionSettings, planManualCompaction, shouldCompact, estimateTokens, serializeConversation, estimateContextTokens, realWindowTokens, splitSummary, toCompactionThresholdPercent } from "../core/sessions/compactor";
+import { Compactor, DEFAULT_COMPACTION, CompactionSettings, keepRecentTokensFor, planCompactionToBudget, shouldCompact, estimateTokens, serializeConversation, estimateContextTokens, realWindowTokens, splitSummary, summaryBudgetTokens, toCompactionThresholdPercent } from "../core/sessions/compactor";
 import type { SkillRegistry } from "../core/skills/skill-registry";
 import type { McpManager } from "../core/mcp";
 import { McpStdioClient, McpHttpClient, type McpClient } from "../core/mcp";
@@ -334,7 +334,19 @@ export class ChatViewProvider implements WebviewViewProvider {
       await this.warnNameTaken(name);
       return;
     }
-    await this.createBranch(rt.sessionId, name, loaded.messages.slice(0, cutAfterTurn(loaded.messages, index)));
+    // Copy the WHOLE turn the clicked reply belongs to (input → final answer,
+    // everything in between): a reply can carry text AND tool calls and the turn
+    // may continue with more tool rounds, so anything less would copy half a turn
+    // — and could leave the copy with an unanswered call, i.e. a session that
+    // cannot send anything at all.
+    let end = turnEnd(loaded.messages, index);
+    // Unless that turn is ITSELF damaged (a history broken before this rule
+    // existed): the damage must not be copied over, so the copy stops at the last
+    // valid boundary before it.
+    if (toolCallPairingViolations(loaded.messages.slice(0, end)).length > 0) {
+      end = turnStart(loaded.messages, index);
+    }
+    await this.createBranch(rt.sessionId, name, loaded.messages.slice(0, end));
   }
 
   /**
@@ -355,9 +367,11 @@ export class ChatViewProvider implements WebviewViewProvider {
     // the bubble index matches exactly.
     const messages = rt.agent.getMessages();
     if (index >= messages.length) return; // stale bubble, treat as gone
-    // Keeping [0, index) drops that message and the whole tail, so a tool-call
-    // is never left without its tool results.
-    const kept = messages.slice(0, index);
+    // Keeping [0, turnStart) drops that message and the whole tail, so a tool-call
+    // is never left without its tool results. Snapping to the turn's INPUT keeps
+    // the rule even when the clicked index is not the input itself: a cut always
+    // lands between groups (input → final answer, everything in between).
+    const kept = messages.slice(0, turnStart(messages, index));
     const removed = messages.length - kept.length;
     const ok = await this.inPanelAlert({
       kind: "confirm",
@@ -1842,11 +1856,32 @@ export class ChatViewProvider implements WebviewViewProvider {
     const compactor = this.options.compactor;
     if (!compactor) return;
     const messages = rt.history.conversation();
-    // The SAME plan the Compact button uses: always summarizes a fraction of
-    // the current context (never a silent no-op).
-    const plan = planManualCompaction(messages, this.options.manualKeepFraction ?? 0.6);
+    // WHAT to cut: an ABSOLUTE recent budget, not a fraction of the history. A
+    // fraction keeps most of a big window (600k of 1M) and frees almost nothing —
+    // the compaction then buys a few turns instead of a long stretch. What must
+    // stay verbatim is the work in flight, and that is bounded whatever the window
+    // (pi keeps ~20k recent tokens, OpenCode ~15k); the tail is snapped to whole
+    // turn groups.
+    const usable = usableContext(this.budgetWindow(rt), this.budgetReserve(rt));
+    const keepBudget = keepRecentTokensFor(usable);
+    const plan = planCompactionToBudget(messages, keepBudget);
     if (plan.toSummarize.length === 0) return;
-    const summary = await compactor.summarize(plan.toSummarize, undefined, signal);
+    // HOW MUCH the summary may take: the room left between the kept part and the
+    // post-compaction target. A verbose summary eats the context the compaction
+    // just freed, and the same text is a far larger share on a small model.
+    const keptTokensEstimate = estimateTokens(serializeConversation(plan.kept));
+    const summaryBudget = summaryBudgetTokens(usable, keptTokensEstimate);
+    // Tell the summarizer what the session still has in FULL, so it does not
+    // re-state work the next turns can already see (paid twice otherwise).
+    const keptPreview = plan.kept.find((m) => (m.content ?? "").trim())?.content;
+    const summary = await compactor.summarize(plan.toSummarize, undefined, signal, {
+      maxSummaryTokens: summaryBudget,
+      keptPreview,
+    });
+    infoLog(
+      `compaction: usable=${usable}t kept≈${keptTokensEstimate}t (budget ${keepBudget}t) -> summary budget=${summaryBudget}t, ` +
+        `produced=${estimateTokens(summary)}t, was=${estimateTokens(serializeConversation(messages))}t`,
+    );
     // Represent the summarized span as a synthetic USER prompt + ASSISTANT
     // response, so the transcript ALWAYS starts with an orange user bubble.
     const { prompt: synthPrompt, response: synthResponse } = splitSummary(summary);

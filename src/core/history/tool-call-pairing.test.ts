@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cutAfterTurn, describePairingViolations, snapTailStart, toolCallPairingViolations } from "./tool-call-pairing";
+import { describePairingViolations, toolCallPairingViolations, turnEnd, turnStart } from "./tool-call-pairing";
 import type { ChatMessage } from "./types";
 
 const user = (content = "u"): ChatMessage => ({ role: "user", content, timestamp: 1 });
@@ -59,66 +59,62 @@ describe("toolCallPairingViolations", () => {
   });
 });
 
-describe("cutAfterTurn (⎇ branch: 'up to and including this reply')", () => {
-  it("includes the results of the tools the reply called", () => {
-    const messages = [user(), call("preamble", "c1"), result("c1"), answer("final")];
-    // The reply at #1 carries text AND a tool call: copying up to #1 alone would
-    // leave the call unanswered, so the copy must reach past its result.
-    expect(cutAfterTurn(messages, 1)).toBe(3);
+describe("turnStart / turnEnd (every cut lands between whole turn groups)", () => {
+  // u1 → a1(answer) | u2 → a2(preamble + call) → tool → a3(answer) | u3 → …
+  const transcript = [
+    user("q1"),
+    answer("a1"),
+    user("q2"),
+    call("working", "c1"),
+    result("c1"),
+    answer("a3"),
+    user("q3"),
+  ];
+
+  it("turnStart returns the INPUT that opens the group containing the index", () => {
+    expect(turnStart(transcript, 0)).toBe(0); // the input itself
+    expect(turnStart(transcript, 1)).toBe(0); // its final answer
+    expect(turnStart(transcript, 4)).toBe(2); // a tool result → back to u2
+    expect(turnStart(transcript, 5)).toBe(2); // the final answer of that turn
+    expect(turnStart(transcript, 6)).toBe(6); // u3
   });
 
-  it("includes a whole batch", () => {
-    const messages = [user(), call("", "c1", "c2"), result("c1"), result("c2"), answer()];
-    expect(cutAfterTurn(messages, 1)).toBe(4);
+  it("turnStart falls back to 0 for a head with no input (synthetic summary)", () => {
+    const head = [{ role: "system", content: "summary" } as ChatMessage, user("q"), answer()];
+    expect(turnStart(head, 0)).toBe(0);
+    expect(turnStart(head, 1)).toBe(1);
   });
 
-  it("keeps the plain behaviour for a reply with no tool calls", () => {
-    expect(cutAfterTurn([user(), answer()], 1)).toBe(2);
+  it("turnEnd returns the NEXT input: the group is copied whole, final answer included", () => {
+    // Clicking ⎇ on the preamble (2) copies through a3 — the turn's final answer.
+    expect(turnEnd(transcript, 2)).toBe(6);
+    expect(turnEnd(transcript, 4)).toBe(6);
+    expect(turnEnd(transcript, 5)).toBe(6);
+    // The first turn is just u1 → a1.
+    expect(turnEnd(transcript, 0)).toBe(2);
+    expect(turnEnd(transcript, 1)).toBe(2);
   });
 
-  it("drops the turn entirely when its results are NOT there (never propagates damage)", () => {
-    // A branch of an already-damaged history must not carry the damage over: the
-    // call is left out, so the copy still starts from a valid point.
-    const messages = [user(), call("", "c1"), answer("interrupted")];
-    expect(cutAfterTurn(messages, 1)).toBe(1);
+  it("turnEnd on the last group reaches the end of the conversation", () => {
+    expect(turnEnd(transcript, 6)).toBe(transcript.length);
+    expect(turnEnd([user(), answer()], 1)).toBe(2);
   });
 
-  it("falls back to index+1 for a cut that is not an assistant message", () => {
-    expect(cutAfterTurn([user(), result("c1")], 0)).toBe(1);
-    expect(cutAfterTurn([], 0)).toBe(1);
+  it("clamps out-of-range indexes instead of returning nonsense", () => {
+    expect(turnStart(transcript, 99)).toBe(6);
+    expect(turnStart(transcript, -5)).toBe(0);
+    expect(turnEnd(transcript, 99)).toBe(transcript.length);
+    expect(turnEnd([], 0)).toBe(0);
   });
 
-  it("a branch cut with it always yields a valid conversation", () => {
-    const messages = [user(), answer("hi"), user(), call("working", "c1"), result("c1"), answer("done")];
-    for (let i = 0; i < messages.length; i++) {
-      expect(toolCallPairingViolations(messages.slice(0, cutAfterTurn(messages, i)))).toEqual([]);
+  it("EVERY cut the branch can take yields a complete, replayable conversation", () => {
+    for (let i = 0; i < transcript.length; i++) {
+      const copy = transcript.slice(0, turnEnd(transcript, i));
+      expect(toolCallPairingViolations(copy)).toEqual([]);
+      // …and it ends on a final answer, not mid-turn.
+      const last = copy[copy.length - 1];
+      expect(last.role).not.toBe("tool");
+      expect(copy.length === transcript.length || last.role === "assistant").toBe(true);
     }
-  });
-});
-
-describe("snapTailStart (compaction: the kept tail must start at a turn boundary)", () => {
-  it("moves the boundary back to the call that owns the results", () => {
-    const messages = [user(), call("", "c1"), result("c1"), answer("final")];
-    // The naive boundary (#2) would leave a tool result with no call above it.
-    expect(snapTailStart(messages, 2)).toBe(1);
-  });
-
-  it("moves back past a whole batch", () => {
-    const messages = [user(), call("", "c1", "c2"), result("c1"), result("c2"), answer()];
-    expect(snapTailStart(messages, 3)).toBe(1);
-    expect(snapTailStart(messages, 2)).toBe(1);
-  });
-
-  it("leaves a boundary that is already safe untouched", () => {
-    const messages = [user(), call("", "c1"), result("c1"), answer()];
-    expect(snapTailStart(messages, 3)).toBe(3);
-    expect(snapTailStart(messages, 0)).toBe(0);
-    expect(snapTailStart(messages, messages.length)).toBe(messages.length);
-  });
-
-  it("clamps an out-of-range index instead of returning nonsense", () => {
-    const messages = [user(), answer()];
-    expect(snapTailStart(messages, 99)).toBe(2);
-    expect(snapTailStart(messages, -3)).toBe(0);
   });
 });

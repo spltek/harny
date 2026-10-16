@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { Compactor, DEFAULT_COMPACTION, SUMMARY_MAX_TOKENS, estimateTokens, planManualCompaction, shouldCompact, serializeConversation, splitSummary, clampCompactionThresholdPercent, toCompactionThresholdPercent, estimateContextTokens, realWindowTokens, summarizerConfig } from "./compactor";
+import { Compactor, DEFAULT_COMPACTION, KEEP_RECENT_TOKENS, MIN_KEEP_RECENT_TOKENS, MIN_SUMMARY_TOKENS, SUMMARY_MAX_TOKENS, buildSummaryMessages, estimateTokens, keepRecentTokensFor, planCompactionToBudget, planManualCompaction, shouldCompact, serializeConversation, splitSummary, clampCompactionThresholdPercent, toCompactionThresholdPercent, estimateContextTokens, realWindowTokens, summarizerConfig, summaryBudgetTokens } from "./compactor";
 import type { LLMProviderFactory } from "../llm/types";
 import type { HarnyConfig } from "../config/types";
 import type { ChatMessage } from "../history/types";
@@ -154,6 +154,170 @@ describe("summarizerConfig", () => {
     expect(summary.apiKey).toBe(turn.apiKey);
     // …and the turn's own config is not mutated.
     expect(turn.maxTokens).toBe(384_000);
+  });
+});
+
+describe("summary budget (the summary must not eat what the compaction freed)", () => {
+  it("gives the summary the room between the target and the kept part", () => {
+    // 616k usable, 50% target = 308k. Keeping 100k leaves ~208k for the summary.
+    expect(summaryBudgetTokens(616_000, 100_000)).toBe(208_000);
+    // The SAME window with a fat kept part: less room, and it shrinks with it.
+    expect(summaryBudgetTokens(616_000, 300_000)).toBe(8_000);
+  });
+
+  it("never goes below the usable floor, even when the kept part exceeds the target", () => {
+    // The summary cannot fix a kept side that is already over target (shrinking the
+    // tail is a different lever) — but it must not become useless either.
+    expect(summaryBudgetTokens(100_000, 95_000)).toBe(MIN_SUMMARY_TOKENS);
+    // A window so small that even 50% is under the floor: the floor wins.
+    expect(summaryBudgetTokens(1_000, 0)).toBe(MIN_SUMMARY_TOKENS);
+    expect(summaryBudgetTokens(0, 0)).toBe(MIN_SUMMARY_TOKENS);
+  });
+
+  it("scales with the model: the same session on a small window gets a small budget", () => {
+    const kept = 20_000;
+    expect(summaryBudgetTokens(32_000, kept)).toBe(MIN_SUMMARY_TOKENS); // nothing to spare
+    expect(summaryBudgetTokens(1_000_000, kept)).toBe(480_000); // plenty
+  });
+
+  it("tells the summarizer the cap, in tokens and in words", () => {
+    const withBudget = buildSummaryMessages([u("hi")], undefined, 2000)[0].content;
+    expect(withBudget).toContain("under roughly 2000 tokens");
+    expect(withBudget).toContain("1500 words");
+    // No budget → no instruction (the plain one-shot summary is unchanged).
+    expect(buildSummaryMessages([u("hi")])[0].content).not.toContain("Budget:");
+    expect(buildSummaryMessages([u("hi")], undefined, 0)[0].content).not.toContain("Budget:");
+  });
+});
+
+describe("Compactor — squeezing an oversized summary", () => {
+  /** A factory whose replies are scripted per call, recording what it was asked. */
+  function scriptedFactory(replies: string[]): LLMProviderFactory & { sent: string[] } {
+    const sent: string[] = [];
+    let call = 0;
+    return {
+      sent,
+      create: () => ({
+        protocol: "chat" as const,
+        async *stream(messages: { role: string; content: string }[]) {
+          sent.push(messages[messages.length - 1].content);
+          yield { type: "text", content: replies[Math.min(call++, replies.length - 1)] };
+        },
+      }),
+    } as unknown as LLMProviderFactory & { sent: string[] };
+  }
+
+  it("keeps a summary that fits in ONE call (no wasted request)", async () => {
+    const factory = scriptedFactory(["Summary of past interactions\n---\n## Goal\nshort"]);
+    const c = new Compactor(factory, () => CONFIG);
+    const out = await c.summarize([u("work")], undefined, undefined, { maxSummaryTokens: 10_000 });
+    expect(factory.sent).toHaveLength(1);
+    expect(out).toContain("short");
+  });
+
+  it("squeezes ONCE when the summary overshoots the budget, and keeps the shorter one", async () => {
+    const huge = `Summary of past interactions\n---\n${"blah ".repeat(4000)}`; // ~6k tokens
+    const small = "Summary of past interactions\n---\n## Goal\ncompressed";
+    const factory = scriptedFactory([huge, small]);
+    const c = new Compactor(factory, () => CONFIG);
+
+    const out = await c.summarize([u("work")], undefined, undefined, { maxSummaryTokens: 1000 });
+
+    expect(factory.sent).toHaveLength(2); // the second call is the compression
+    expect(factory.sent[1]).toBe(huge); // …fed with the FIRST summary
+    expect(out).toBe(small); // the shorter result wins
+  });
+
+  it("keeps the original when the squeezed one is NOT shorter (never worse)", async () => {
+    const first = `Summary of past interactions\n---\n${"blah ".repeat(4000)}`;
+    const worse = `${first}${first}`;
+    const factory = scriptedFactory([first, worse]);
+    const c = new Compactor(factory, () => CONFIG);
+    // (the returned summary is trimmed; the point is WHICH text won)
+    expect(await c.summarize([u("work")], undefined, undefined, { maxSummaryTokens: 1000 })).toBe(first.trim());
+  });
+
+  it("does not squeeze at all when no budget is given (backward compatible)", async () => {
+    const huge = `Summary of past interactions\n---\n${"blah ".repeat(4000)}`;
+    const factory = scriptedFactory([huge]);
+    const c = new Compactor(factory, () => CONFIG);
+    expect(await c.summarize([u("work")])).toBe(huge.trim());
+    expect(factory.sent).toHaveLength(1);
+  });
+});
+
+describe("keep budget (an ABSOLUTE recent tail, not a fraction of the history)", () => {
+  it("scales with the window but is bounded by the reference (pi keeps 20k)", () => {
+    expect(keepRecentTokensFor(100_000)).toBe(MIN_KEEP_RECENT_TOKENS); // 5% < the floor
+    expect(keepRecentTokensFor(200_000)).toBe(10_000);
+    expect(keepRecentTokensFor(616_000)).toBe(KEEP_RECENT_TOKENS); // 30.8k → capped
+    expect(keepRecentTokensFor(2_000_000)).toBe(KEEP_RECENT_TOKENS);
+  });
+
+  it("keeps about the budget of the NEWEST work, whatever the history length", () => {
+    const big = (n: number): ChatMessage[] =>
+      Array.from({ length: n }, (_, i) => [u(`q${i}`), a("x".repeat(4000))]).flat();
+    const msgs = big(50); // ~50k tokens of history
+    const plan = planCompactionToBudget(msgs, 10_000);
+    // The tail is bounded by the BUDGET, not by a share of the whole: this is the
+    // difference that makes a compaction free room on a large session.
+    expect(estimateTokens(serializeConversation(plan.kept))).toBeLessThanOrEqual(20_000);
+    expect(plan.toSummarize.length).toBeGreaterThan(0);
+    // What is kept is the END of the conversation (the recent work), verbatim.
+    expect(plan.kept[plan.kept.length - 1]).toBe(msgs[msgs.length - 1]);
+  });
+
+  it("keeps whole turn groups and at least one of them", () => {
+    const msgs = [u("q1"), a("x".repeat(4000)), u("q2"), a("y".repeat(4000)), u("q3"), a("z".repeat(4000))];
+    for (const budget of [1, 512, 2000, 100_000]) {
+      const plan = planCompactionToBudget(msgs, budget);
+      // Never half a turn, never an empty kept side (that would erase the session).
+      expect(toolCallPairingViolations(plan.kept)).toEqual([]);
+      expect(plan.kept[0]?.role).toBe("user");
+      expect(plan.kept.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("the fraction entry point still behaves like the token one", () => {
+    const msgs = [u("a"), a("b"), u("c"), a("d"), u("e"), a("f")];
+    const byFraction = planManualCompaction(msgs, 0.5);
+    const byBudget = planCompactionToBudget(msgs, byFraction.tokensBefore * 0.5);
+    expect(byFraction.kept).toEqual(byBudget.kept);
+    expect(byFraction.toSummarize).toEqual(byBudget.toSummarize);
+  });
+
+  it("a huge window no longer keeps the history alive (the bug: 60% of 1M)", () => {
+    // 616k usable (the session that started this work) and a long history: the old
+    // fraction policy kept ~60% of it and freed nearly nothing.
+    const msgs = Array.from({ length: 200 }, (_, i) => [u(`prompt ${i}`), a("x".repeat(4000))]).flat();
+    const keep = keepRecentTokensFor(616_000);
+    const plan = planCompactionToBudget(msgs, keep);
+    const keptTokens = estimateTokens(serializeConversation(plan.kept));
+    const before = plan.tokensBefore;
+    expect(keptTokens).toBeLessThanOrEqual(keep * 1.5); // a bounded tail…
+    expect(keptTokens).toBeLessThan(before * 0.2); // …and a real reduction
+  });
+});
+
+describe("the summary prompt (schematic, minimal, no duplication)", () => {
+  it("asks for lists scaled to the complexity, not a filled template", () => {
+    const system = buildSummaryMessages([u("work")])[0].content;
+    expect(system).toContain("SCHEMATIC LISTS");
+    expect(system).toContain("scale the LENGTH to the COMPLEXITY");
+    expect(system).toContain("no code blocks");
+    // …and keeps the two-block contract the orange synthetic bubble depends on.
+    expect(system).toContain("EXACTLY TWO blocks");
+    expect(system).toContain("## Facts");
+  });
+
+  it("tells it what the session still has in full, so it does not repeat it", () => {
+    const withPreview = buildSummaryMessages([u("work")], undefined, undefined, "a".repeat(900))[0].content;
+    expect(withPreview).toContain("do NOT summarize what it already shows");
+    // The preview is CAPPED at 600 chars: it is context too, not a second copy of
+    // the tail (900 in, 600 out, nothing beyond).
+    expect(withPreview).toContain("a".repeat(600));
+    expect(withPreview).not.toContain("a".repeat(601));
+    expect(buildSummaryMessages([u("work")])[0].content).not.toContain("do NOT summarize");
   });
 });
 
