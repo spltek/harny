@@ -294,6 +294,11 @@ ${renderViewConfig(deps)}
        a single character sits in the middle of the min-width bubble; as the text
        grows it reaches the bubble edges and stays left-aligned. */
     .msg.user > .user-text { display: inline-block; max-width: 100%; text-align: left; white-space: pre-wrap; }
+    /* …BUT when the bubble is wide for a reason of ITS OWN — an attachment, which is
+       usually wider than the text — a shrink-to-fit block floats in the middle of it and
+       the message reads as if it were centred. With the marker, the text takes the full
+       width and starts where the previews do: the whole bubble reads left-aligned. */
+    .msg.user.has-attachments > .user-text { display: block; }
     /* Harness-injected prompts (loop guard / delegation / budget): a LIGHT-BLUE
        bubble with a "Nudge" label, so they read as SYSTEM messages and can't be
        confused with the user's orange bubbles. Rendered as Markdown. */
@@ -502,32 +507,41 @@ ${renderViewConfig(deps)}
       padding: 1px 5px; border-radius: 999px; background: var(--tool-bg); color: var(--muted);
     }
     .pending-msg.pending-steer .pending-badge { background: var(--accent); color: #fff; }
-    /* The message is readable WHOLE when the section is expanded: it wraps (and
-       keeps the user's own line breaks) and is not capped here — the section owns
-       the scroll (see #pending-area). */
-    /* One line exactly = 1.4em, so the collapsed height and the "does it wrap?"
-       measurement (pending-section.ts, via the pending-fold rule) share ONE number. */
+    /* The row is badge + content + actions: the text and its attachments share the
+       middle column (so the previews land UNDER the text, as in a user bubble) while
+       the commands stay pinned to the top-right corner. */
+    .pending-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+    /* ONE LINE while folded: clipped, and faded at the right edge. NOT "nowrap" +
+       ellipsis, which would make the "does it wrap?" measurement impossible (a
+       nowrap box always reports a single line — see pending-fold.ts). Opened, the
+       text is WHOLE: it wraps, keeps the user's own line breaks and the bubble grows
+       as tall as it needs, while the SECTION owns the scroll (#pending-area). */
     .pending-text {
       flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere;
       line-height: 1.4;
     }
-    /* Collapsed by the user (per bubble): clipped to a single line. */
-    .pending-msg.text-collapsed .pending-text { max-height: 1.4em; overflow: hidden; }
-    /* The disclosure arrow sits at the START of the row, where every other toggle
-       in Harny is (thinking / tool / subagent), NEVER with the action buttons on
-       the right: mixing it in with them is what made it read wrong. And it LOOKS
-       like them — a bare chevron, no box: see .tool-toggle, which it mirrors. */
-    .pending-more {
+    .pending-msg.text-collapsed .pending-text {
+      max-height: 1.4em; overflow: hidden;
+      -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.4rem), transparent);
+      mask-image: linear-gradient(to right, #000 calc(100% - 1.4rem), transparent);
+    }
+    /* The previews are folded away WITH the text: a closed row is exactly one line,
+       thumbnails included. */
+    .pending-msg.text-collapsed .pending-extras { display: none; }
+    /* The SHARED attachment row (the one user bubbles render), inside a pending row:
+       identical content, a hair tighter — the main column already spaces it. */
+    .pending-extras .msg-attachments { margin-top: 0; gap: 6px; }
+    /* The fold is the same bare chevron as every other toggle in Harny (.tool-toggle),
+       and it is one of this bubble's ACTIONS, so it sits with the other two instead of
+       in front of the text. Hidden, its SPACE stays reserved (visibility, not
+       display): the commands then land in the same spot on every row. */
+    .pending-toggle {
       flex: 0 0 auto; width: 12px; padding: 0; background: transparent; border: none;
       box-shadow: none; color: #888; font-size: var(--fs-sm); line-height: 1.2;
       cursor: pointer;
     }
-    .pending-more:hover { filter: none; color: var(--accent); }
-    /* Not needed (the text fits one line): INVISIBLE, but its space stays reserved
-       so the Steer/Queued badges keep a straight column instead of shifting row by
-       row. Using visibility — and NOT display:none — is what reserves it, and it
-       also takes the control out of the tab order while it is not offered. */
-    .pending-more.hidden { visibility: hidden; }
+    .pending-toggle:hover { filter: none; color: var(--accent); }
+    .pending-toggle.hidden { visibility: hidden; }
     /* The buttons sit TOP-RIGHT, before the badge/text in DOM terms they follow,
        pinned with margin-left: auto so multi-line text never moves them. */
     .pending-actions { flex: 0 0 auto; margin-left: auto; display: flex; gap: 4px; }
@@ -868,6 +882,9 @@ ${renderViewConfig(deps)}
     }
     .msg-attach-img img { display: block; width: 100%; height: auto; cursor: zoom-in; }
     .msg-attach-img .msg-attach-cap {
+      /* LEFT, like the image above it: the bubble centres its TEXT, and that must not
+         leak into a caption sitting under a left-aligned preview. */
+      text-align: left;
       font-size: var(--fs-sm); color: #d0d0d0; padding: 2px 6px; line-height: 1.3;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
@@ -1197,12 +1214,21 @@ ${renderViewConfig(deps)}
     #mode-btn:active { transform: scale(0.96); }
     #mode-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     #mode-btn:disabled { opacity: 0.45; cursor: default; transform: none; box-shadow: none; }
-    /* The mode is the ICON: magnifier (Analyze) or sparkle (Agent), each in its
-       own colour — never in the label, which stays the row's normal text. */
-    #mode-btn-icon-analyze, #mode-btn-icon-agent { flex-shrink: 0; transition: color 0.18s; }
-    #mode-btn-icon-analyze { color: var(--accent); }
-    #mode-btn.is-agent #mode-btn-icon-agent { color: #a98dff; }
+    /* NO colour carries the mode here: both icons are the muted gray of the other pills
+       on this row, and the LABEL is what says which mode you are in — a coloured icon was
+       the last loud thing left on a row of quiet controls. */
+    #mode-btn-icon-analyze, #mode-btn-icon-agent { flex-shrink: 0; color: var(--muted); transition: color 0.18s; }
+    #mode-btn:hover #mode-btn-icon-analyze, #mode-btn:hover #mode-btn-icon-agent { color: var(--fg); }
     #mode-btn-icon-analyze.hidden, #mode-btn-icon-agent.hidden { display: none; }
+    /* ONE width for BOTH modes: the longest label ("Analyze") is reserved by an in-flow,
+       zero-height ghost, so switching mode can never move this pill — or the two that sit
+       next to it. A flex item's base size IS the max-content of its content, so the ghost
+       is all it takes; measuring at runtime would cost a layout on every switch and would
+       still reflow on the way back. The string is the LONGEST of the two choices below. */
+    #mode-btn-label::before {
+      content: "Analyze";
+      display: block; height: 0; visibility: hidden;
+    }
     /* Chevron rotates when the dropdown is open. */
     #mode-btn .mode-btn-chevron { flex-shrink: 0; color: var(--muted); transition: color 0.18s, transform 0.18s; }
     #mode-btn:hover .mode-btn-chevron { color: var(--fg); }
@@ -1242,13 +1268,12 @@ ${renderViewConfig(deps)}
     .mode-item:hover { background: var(--tool-bg); color: var(--fg-strong); }
     .mode-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
     .mode-item.is-active { color: var(--fg-strong); }
-    /* Icon + check tinted by mode accent (safe here: dark menu background). */
-    .mode-item[data-mode="analyze"] svg { color: var(--accent); }
-    .mode-item[data-mode="agent"] svg { color: #a98dff; }
+    /* The menu follows the button: NEUTRAL icons, and the accent marks only WHAT IS
+       SELECTED (the checkmark) — never which mode it is. */
+    .mode-item svg:not(.mode-check) { color: var(--muted); }
     .mode-item.is-active:not(:hover) { background: rgba(255, 255, 255, 0.06); }
     .mode-check { margin-left: 2px; flex-shrink: 0; visibility: hidden; }
     .mode-item.is-active .mode-check { visibility: visible; color: var(--accent); }
-    .mode-item[data-mode="agent"].is-active .mode-check { color: #a98dff; }
 
     /* Parallel toggle: press/release button right after the mode button.
        Released = quiet dark pill; PRESSED = blue with white icon + label. */
@@ -1275,6 +1300,12 @@ ${renderViewConfig(deps)}
     #parallel-btn:hover svg { color: var(--fg); }
     #parallel-btn:focus-visible { outline: 2px solid #4c8dff; outline-offset: 2px; }
     #parallel-btn:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
+    /* A Mode/Parallel policy that changed UNDER the panel while a run works (a config push,
+       another window): the pill is disabled — the run keeps the policy it was born with — so
+       the choice is PENDING, and the dashed border with its tooltip says exactly that. */
+    #mode-btn.is-pending, #parallel-btn.is-pending { border-style: dashed; }
+    /* Parallel ON paints its border transparent, which would swallow the dashes. */
+    #parallel-btn.is-on.is-pending { border-color: rgba(255, 255, 255, 0.55); }
     #parallel-btn.is-on {
       background: linear-gradient(135deg, #4c8dff, #2f6fed);
       border-color: transparent;

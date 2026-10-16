@@ -7,21 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Attachment previews INSIDE a queue/steer bubble.** The paperclip still leads the line, and
+  opening the row reveals exactly what a user message shows — the thumbnail with its lightbox
+  and the file cards — because it is the same renderer, so the two can never drift apart.
+
 ### Changed
 
-- **The mode pill on the AI Model row is quiet, like the controls next to it.** It was a
-  saturated gradient (terracotta / violet) with a white icon + label and a glow, which made
-  the row's quietest element the loudest thing in it. It is now the same dark pill as
-  `Queue` / `Parallel`, and the mode travels in the COLOUR OF ITS ICON — the magnifier for
-  Analyze and the sparkle for Build, in the very pair of colours the dropdown items already
-  use for theirs.
+- **Queue / steer bubbles are ONE LINE, born folded, and open on demand.** A pending message
+  is a queued intention, not a document: it takes a single line whatever was pasted into it
+  (the whole text rides in its tooltip) and the SECTION keeps the scroll, so a long queue can
+  no longer push the transcript up. The fold is a bare chevron sitting WITH the two commands
+  instead of in front of the text, and it is offered only where a measurement ON THE RENDERED
+  ROW says there is a second line (`pending-fold.ts`) or where the message carries
+  attachments; the transcript's **Collapse all** closes the pending bubbles with everything
+  else.
+- **The mode pill on the AI Model row is quiet AND colourless, like the controls next to it.**
+  It was a saturated gradient (terracotta / violet) with a white icon + label and a glow, which
+  made the row's quietest element the loudest thing in it. It is now the same dark pill as
+  `Queue` / `Parallel`, with both of its icons in the row's muted gray: the LABEL is what says
+  which mode you are in, and no colour carries it anywhere — the menu's icons are neutral too,
+  and the accent marks only which row is SELECTED. The label also reserves the width of the
+  longest mode name, so switching Analyze ⇄ Build never moves the pill or its neighbours.
 - **The `Build` / `Analyze` chip in the per-turn badge is now gray like the rest of the
   badge.** An accent-tinted `Build` turned half the lines of a long transcript into the
   loudest text in the panel, competing with the answer it only annotates; the word itself
   already says which mode the turn ran in.
+- **Analyze/Build and Parallel are decided ONCE PER RUN and LOCKED while it works.**
+  They are not request parameters — the model, the window and the samplers stay locked — but
+  they are **safety promises**: *Analyze* means nothing is written, and a promise that can
+  change under a run cannot be trusted. Both ways it broke were real. A **writer sub-agent**
+  delegated before a switch to Analyze kept writing while the pill said Analyze. And a switch
+  to Build **erased the "Nothing has been applied" footer** on files that were still
+  untouched, because that footer read the live mode instead of the run's. A run is now born
+  with its mode and its Parallel setting and keeps them to its last tool result, so every
+  turn of it reads the same policies and nothing already emitted can change meaning — and the
+  two pills are disabled while it works, with the **request parameters** they now belong to.
+  The lock is not silent, which is what made this row lie in the first place: each pill's
+  tooltip names the policy the run is using and says that **Stop** is how to stop now.
 
 ### Fixed
 
+- **A user bubble with attachments no longer reads as centre-aligned.** The bubble centres its
+  TEXT on purpose — a one-character message sits in the middle of its 48px floor — and it does
+  so with a shrink-to-fit, left-aligned block inside. With an attachment (usually wider than
+  the text) that block floated in the middle of a wide bubble: the message *looked* centred
+  while the previews sat at the left. The bubble now declares the attachment, and the text
+  takes the full width, starting where the previews do. The caption under a preview is
+  left-aligned with it as well.
 - **The panel no longer gets stuck when the window is resized during a run** (visible on
   Windows, with parallel sub-agents). Two causes, both in the webview. Every sub-agent delta
   re-rendered its WHOLE live log as Markdown on the spot — hundreds of renders of a log that

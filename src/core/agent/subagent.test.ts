@@ -614,6 +614,10 @@ describe("SubAgentRunner", () => {
     const runner = buildRunner(factory([writeCall(), [{ type: "text", content: "done writing" }]]), [write]);
     const res = await runner.run(spec({ access: "write", resources: ["a.ts"] }));
     expect(write.called).toBe(true);
+    // The MIRROR of the read-only case above: a writer sub-agent runs in Build, so `dryRun` is
+    // not set at all (see ToolContext) and the tool really writes. Pinned here because the two
+    // halves are the whole promise of the delegated work: a reader never writes, a writer does.
+    expect(write.lastDryRun).toBeUndefined();
     expect(res.content).toContain("done writing");
   });
 

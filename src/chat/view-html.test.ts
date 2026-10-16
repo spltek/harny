@@ -38,41 +38,31 @@ describe("renderViewHtml", () => {
     expect(pendingText).toContain("overflow-wrap: anywhere");
     expect(pendingText).not.toContain("text-overflow: ellipsis");
     expect(pendingText).not.toContain("white-space: nowrap");
-    // …and an EXPANDED message is not capped at all: one line is exactly 1.4em
-    // (the number the overflow measurement uses — see pending-fold.ts).
-    expect(pendingText).not.toContain("max-height");
     expect(pendingText).toContain("line-height: 1.4;");
-    // The SECTION owns the scroll, so a huge paste cannot eat the panel…
+    // …and the FOLDED row is clipped to exactly that one line, in a way that keeps the
+    // measurement possible: `max-height` (NOT `nowrap` + ellipsis, which would report a
+    // single line for ever — see pending-fold.ts) and not `display: none`.
+    const folded = cssRule(html, ".pending-msg.text-collapsed .pending-text");
+    expect(folded).toContain("max-height: 1.4em");
+    expect(folded).toContain("overflow: hidden");
+    expect(folded).toContain("mask-image");
+    expect(folded).not.toContain("nowrap");
+    // The previews fold away WITH the text: a closed row is one line, thumbnails too.
+    expect(cssRule(html, ".pending-msg.text-collapsed .pending-extras")).toContain("display: none");
+    // The fold is a bare chevron like every other toggle in Harny (.tool-toggle), and it
+    // is hidden with its SPACE RESERVED, so the commands sit in the same spot on every
+    // row instead of moving one row to the next.
+    const foldCss = cssRule(html, ".pending-toggle");
+    expect(foldCss).toContain("border: none");
+    expect(foldCss).toContain("background: transparent");
+    expect(cssRule(html, ".pending-toggle.hidden")).toContain("visibility: hidden");
+    expect(cssRule(html, ".pending-toggle.hidden")).not.toContain("display: none");
+    // The SECTION owns the scroll, so a long queue cannot eat the panel…
     const section = cssRule(html, "#pending-area");
     expect(section).toContain("max-height: 30vh");
     expect(section).toContain("overflow-y: auto");
-    // …and the per-bubble fold clips to exactly one line.
-    const collapsed = cssRule(html, ".pending-msg.text-collapsed .pending-text");
-    expect(collapsed).toContain("max-height: 1.4em");
-    expect(collapsed).toContain("overflow: hidden");
-    // The fold control is hidden per bubble until a measurement warrants it — and it
-    // is hidden with its SPACE RESERVED (visibility, not display), so the badges
-    // stay in a straight column and the arrow never has to be looked for among the
-    // action buttons on the right.
-    expect(cssRule(html, ".pending-more.hidden")).toContain("visibility: hidden");
-    expect(cssRule(html, ".pending-more.hidden")).not.toContain("display: none");
-    // The fold arrow is the SAME arrow as everywhere else in Harny (see
-    // .tool-toggle): a bare chevron, no box, no border — not a second action
-    // button. This test asserts the two rules AGREE, so they cannot drift apart.
-    const fold = cssRule(html, ".pending-more");
-    const toolToggle = cssRule(html, ".tool-toggle");
-    for (const [property, value] of [
-      ["width", "12px"],
-      ["color", "#888"],
-      ["font-size", "var(--fs-sm)"],
-    ] as const) {
-      expect(fold).toContain(`${property}: ${value}`);
-      expect(toolToggle).toContain(`${property}: ${value}`);
-    }
-    expect(fold).toContain("border: none");
-    expect(fold).toContain("background: transparent");
-    // …and it still turns accent on hover, like the thinking header does.
-    expect(cssRule(html, ".pending-more:hover")).toContain("var(--accent)");
+    // …and the attachments live in the middle column, under the text.
+    expect(cssRule(html, ".pending-main")).toContain("flex-direction: column");
     // Actions: one group, pushed to the right, on a row aligned at the TOP (so
     // multi-line text cannot drag the buttons to the middle).
     expect(cssRule(html, ".pending-msg")).toContain("align-items: flex-start");
@@ -158,6 +148,12 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/\.msg\.user \{[^}]*text-align: center/);
     expect(html).toMatch(/\.msg\.user > \.user-text \{[^}]*display: inline-block/);
     expect(html).toMatch(/\.msg\.user > \.user-text \{[^}]*text-align: left/);
+    // …EXCEPT when the bubble is wide for a reason of its OWN: with an attachment the
+    // shrink-to-fit block floats in the middle and the message reads as if it were
+    // centred, so the marked bubble gives the text the full width.
+    expect(html).toMatch(/\.msg\.user\.has-attachments > \.user-text \{[^}]*display: block/);
+    // The preview caption follows the image it belongs to, not the bubble's centring.
+    expect(html).toMatch(/\.msg-attach-img \.msg-attach-cap \{[^}]*text-align: left/);
     // Disabled action tabs are hidden even WITHOUT hover (the global
     // `button:disabled` opacity must not leak through during a run).
     expect(html).toMatch(/\.branch-at:disabled,\s*\.truncate-at:disabled \{[^}]*opacity: 0/);
@@ -380,6 +376,30 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/data-mode="agent"/);
     expect(html).toMatch(/id="mode-select"[\s\S]*?<\/div>[\s\S]*?<button type="button" id="parallel-btn"/);
     expect(html).toMatch(/id="parallel-btn"[\s\S]*?aria-pressed="false"[\s\S]*?Parallel/);
+  });
+
+  it("keeps the mode selector colourless, at ONE width for both modes", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    // The pill: both icons in the row's muted gray (hover brightens them, like the pills
+    // next to it), and the old per-mode colours are GONE — not just overridden.
+    expect(cssRule(html, "#mode-btn-icon-analyze, #mode-btn-icon-agent")).toContain("color: var(--muted)");
+    expect(html).not.toContain("#mode-btn-icon-analyze { color: var(--accent); }");
+    expect(html).not.toContain("#mode-btn.is-agent #mode-btn-icon-agent");
+    // The menu follows: neutral icons, and the accent marks only WHAT IS SELECTED.
+    expect(cssRule(html, ".mode-item svg:not(.mode-check)")).toContain("color: var(--muted)");
+    expect(html).not.toContain('.mode-item[data-mode="analyze"] svg');
+    expect(html).not.toContain('.mode-item[data-mode="agent"] svg');
+    expect(cssRule(html, ".mode-item.is-active .mode-check")).toContain("var(--accent)");
+    expect(html).not.toContain('.mode-item[data-mode="agent"].is-active .mode-check');
+    // ONE width: the longest label is reserved by a zero-height ghost, so switching
+    // Analyze ⇄ Build cannot move the pill (or the pills beside it).
+    const ghost = cssRule(html, "#mode-btn-label::before");
+    expect(ghost).toContain('content: "Analyze"');
+    expect(ghost).toContain("visibility: hidden");
+    expect(ghost).toContain("height: 0");
   });
 
   it("styles the sub-agent bubble with its status states", () => {

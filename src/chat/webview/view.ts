@@ -25,8 +25,8 @@ interface MsgMeta {
   /** Model + named provider that served the turn (a session can switch both). */
   model?: string;
   provider?: string;
-  /** The mode the turn RAN under (see MessageMeta.mode): with the switch working mid-run,
-   * a transcript can hold Analyze (previews) and Build (writes) turns side by side. */
+  /** The mode the RUN ran under (see MessageMeta.mode): a session can hold Analyze
+   * (previews) and Build (writes) runs side by side. */
   mode?: "analyze" | "agent";
   /** Window and output budget vigent in that turn. */
   contextWindow?: number;
@@ -674,6 +674,12 @@ function addMessage(
       div.textContent = content || "";
     }
     if (role === "user" && attachments && attachments.length > 0) {
+      // The bubble is now wide for a reason of its OWN: an attachment is usually wider
+      // than the text, and a shrink-to-fit text block would float in the middle of it,
+      // reading as if the message were centred. The marker is what lets the CSS give the
+      // text the full width (see `.msg.user.has-attachments > .user-text`), so it starts
+      // where the previews do.
+      div.classList.add("has-attachments");
       div.appendChild(messageAttachmentRow(attachments, images));
     }
   }
@@ -768,6 +774,10 @@ function appendTurnBadge(meta: MsgMeta | undefined): void {
  * lingers in the transcript or can be clicked on an old turn.
  */
 function addSwitchToBuildBanner(): void {
+  // The user may have switched to Build WHILE this run worked: the switch is PENDING (it
+  // lands on the next run), so the previews are still not on disk — but "switch to Build"
+  // would name a step they have already taken, and the pill already says Build.
+  if (currentMode === "agent") return;
   const el = document.createElement("div");
   el.className = "build-cta build-cta-static";
   const text = document.createElement("span");
@@ -1014,10 +1024,12 @@ function sectionToggle(body: Element): HTMLElement | null {
 /** Keeps the two transcript action pills in sync. They are NEVER hidden — only
  * `disabled` changes — so the row can never reflow under the cursor. */
 function updateTranscriptActions(): void {
-  // "Collapse all": only meaningful while at least one section is expanded.
-  const anyOpen = Array.from(document.querySelectorAll<HTMLElement>(TRANSCRIPT_SECTIONS)).some(
-    (el) => !el.classList.contains("collapsed"),
-  );
+  // "Collapse all": only meaningful while at least one section — a transcript section
+  // OR an open pending bubble — is expanded.
+  const anyOpen =
+    Array.from(document.querySelectorAll<HTMLElement>(TRANSCRIPT_SECTIONS)).some(
+      (el) => !el.classList.contains("collapsed"),
+    ) || pending.openCount() > 0;
   collapseAllBtn.disabled = !anyOpen;
   // "Autoscroll": only while the user is parked above the bottom. autoScroll is
   // DERIVED from the scroll position (see the scroll listener), so reaching the
@@ -1036,6 +1048,9 @@ function collapseAllSections(): number {
     if (tog) tog.textContent = "▶";
     collapsed += 1;
   });
+  // The pending bubbles fold with them: they are the same gesture ("close what is
+  // open"), and their own module keeps them in sync from there.
+  collapsed += pending.collapseAll();
   return collapsed;
 }
 
@@ -1767,12 +1782,20 @@ function clearAttachments(): void {
 // The queue/steer footer lives in its own module (pending-section.ts): the section
 // with its counts, the per-bubble fold and the two commands. It is built once at
 // load, with the DOM it owns and the ONE way it may talk to the host.
+const pendingArea = document.getElementById("pending-area") as HTMLElement;
 const pending = createPendingSection({
   section: document.getElementById("pending-section") as HTMLElement,
   head: document.getElementById("pending-head") as HTMLElement,
   headText: document.getElementById("pending-head-text") as HTMLElement,
-  area: document.getElementById("pending-area") as HTMLElement,
+  area: pendingArea,
   post: (message) => vscode.postMessage(message),
+  // The SAME renderer a user bubble uses for its attachments, so the previews inside
+  // a pending message are identical to the ones it will show once delivered.
+  renderAttachments: (host, item) => {
+    if (item.attachments && item.attachments.length > 0) {
+      host.appendChild(messageAttachmentRow(item.attachments));
+    }
+  },
 });
 
 /**
@@ -2193,6 +2216,8 @@ autoscrollBtn.addEventListener("click", (e) => {
 // handler ran, so one delegated listener keeps the tab in sync instead of
 // patching all three toggle handlers.
 messagesEl.addEventListener("click", updateTranscriptActions);
+// Same deal for the pending list: a fold there changes what "Collapse all" would close.
+pendingArea.addEventListener("click", updateTranscriptActions);
 // The skills list can change at any time (npx skills add/remove): re-read it
 // whenever the panel regains focus, so a removal/install shows up without a
 // manual reload.
@@ -3521,6 +3546,12 @@ function setStreaming(active: boolean): void {
   const rising = active && !streamingActive;
   streamingActive = active;
   if (rising) {
+    // The policies of THIS run are the ones on screen at this instant (see Agent.runMode).
+    // This snapshot is the safety net: the two pills are disabled below, so a change can only
+    // arrive from OUTSIDE the panel (a config push, another window) — and when it does, the
+    // run keeps these and the pill marks the new choice as pending (see refreshPolicyHints).
+    runModeAtStart = currentMode;
+    runParallelAtStart = parallelOn;
     // The play button + Working bar start harny-pulse now: this becomes the
     // shared clock the area border pulses lock onto.
     pulseClockStart = performance.now();
@@ -3563,14 +3594,23 @@ function setStreaming(active: boolean): void {
   lgResponse.disabled = active;
   for (const el of document.querySelectorAll<HTMLInputElement>("#lg-fields input")) el.disabled = active;
   inputEl.disabled = false;
-  // Mode and Parallel stay AVAILABLE while the session works: they are not request
-  // parameters (the model, the samplers, the window are — those stay locked) but two
-  // BEHAVIOUR policies the agent re-reads at every turn, so a change made now lands at
-  // the next turn boundary — the same moment a steer is applied. Locking them only
-  // swallowed the click in silence: the UI went on showing one thing and the run doing
-  // another. A dropdown left open is still closed, so the new label is not confused
-  // with the one that was already sent.
+  // Mode and Parallel are LOCKED while the session works, exactly like the request
+  // parameters: they are decided once per run (see Agent.runMode) — a run is born with its
+  // mode and its Parallel setting and keeps them to its last tool result — so a switch cannot
+  // reach it, and offering one would promise something that does not happen. They are never
+  // locked SILENTLY, though: their tooltip names the policy the run is using and says when a
+  // change would land (see refreshPolicyHints). The silent lock is what made this row lie
+  // before, and the answer to that is to say it, not to hide it. A dropdown left open is
+  // closed too, so the label on screen is never the one that was already sent.
+  modeBtn.disabled = active;
+  parallelBtn.disabled = active;
   if (active && !modeMenu.classList.contains("hidden")) closeModeMenu();
+  if (!active) {
+    // The run is over: what the panel holds is this session's policy again.
+    runModeAtStart = null;
+    runParallelAtStart = null;
+  }
+  refreshPolicyHints();
   // Branch/cut keys on assistant bubbles follow the same lock.
   for (const b of document.querySelectorAll<HTMLButtonElement>(".branch-at, .truncate-at")) {
     b.disabled = active;
@@ -3586,6 +3626,15 @@ function setStreaming(active: boolean): void {
 type ChatMode = "analyze" | "agent";
 const DEFAULT_MODE: ChatMode = "analyze";
 let currentMode: ChatMode = DEFAULT_MODE;
+/** The policies the RUN IN FLIGHT was born with (null = no run running).
+ *
+ * Mode and Parallel are decided ONCE per run (see `Agent.runMode`): they are safety
+ * promises, not preferences — "Analyze" means nothing is written — so a click while a run
+ * works cannot reach it. The click is still ACCEPTED (swallowing it is how the panel used
+ * to lie: it showed one thing and the run did another) and becomes the NEXT run's policy,
+ * which is what the dashed pill and its tooltip say. */
+let runModeAtStart: ChatMode | null = null;
+let runParallelAtStart: boolean | null = null;
 /** Highest config sequence applied: older async config pushes are IGNORED, so a
  * slow response can never clobber the current mode/controls with a stale one. */
 let lastConfigSeq = -1;
@@ -3610,6 +3659,7 @@ function applyMode(mode: ChatMode, opts?: { notify?: boolean }): void {
     item.setAttribute("aria-selected", String(on));
   }  
   if (opts?.notify) vscode.postMessage({ type: "setMode", mode });
+  refreshPolicyHints();
 }
 
 function closeModeMenu(): void {
@@ -3669,6 +3719,51 @@ function applyParallel(on: boolean, opts?: { notify?: boolean }): void {
   parallelBtn.classList.toggle("is-on", on);
   parallelBtn.setAttribute("aria-pressed", String(on));
   if (opts?.notify) vscode.postMessage({ type: "setParallel", parallel: on });
+  refreshPolicyHints();
+}
+
+/** The panel is now following a DIFFERENT run (a session switch): a snapshot taken for the
+ * previous one cannot describe this one, so it is re-read from what is on screen — the mode
+ * and Parallel the host has just pushed for the session switched TO. */
+function resetPolicySnapshot(): void {
+  runModeAtStart = streamingActive ? currentMode : null;
+  runParallelAtStart = streamingActive ? parallelOn : null;
+  refreshPolicyHints();
+}
+
+/** What the two behaviour pills say while a run works — the ONLY feedback they can give,
+ * since they are disabled (see setStreaming). A disabled control is not a SILENT one only if
+ * it explains itself, so the tooltip names the policy the run is locked to and the one way to
+ * stop now (Stop). The pending branch is the safety net for a policy changed UNDER the panel
+ * while it works (a config push, another window): the choice is then real and pending, the
+ * run keeps what it was born with, and the pill says both. Colours carry none of this. */
+function refreshPolicyHints(): void {
+  const runMode = runModeAtStart;
+  const modePending = runMode !== null && currentMode !== runMode;
+  modeBtn.classList.toggle("is-pending", modePending);
+  if (modePending) {
+    const wanted = currentMode === "agent" ? "Build" : "Analyze";
+    const running = runMode === "agent" ? "Build" : "Analyze";
+    modeBtn.title = `${wanted} — applies to the NEXT run: this one is still ${running}. Stop to stop now.`;
+  } else if (runMode !== null) {
+    const running = runMode === "agent" ? "Build" : "Analyze";
+    modeBtn.title = `${running} — locked to this run: a switch now applies to the NEXT one. Stop to stop now.`;
+  } else {
+    modeBtn.removeAttribute("title");
+  }
+  const runParallel = runParallelAtStart;
+  const parallelPending = runParallel !== null && parallelOn !== runParallel;
+  parallelBtn.classList.toggle("is-pending", parallelPending);
+  if (parallelPending) {
+    const wanted = parallelOn ? "ON" : "OFF";
+    const running = runParallel ? "ON" : "OFF";
+    parallelBtn.title = `Parallel ${wanted} — applies to the NEXT run: this one is still ${running}. Stop to stop now.`;
+  } else if (runParallel !== null) {
+    const running = runParallel ? "ON" : "OFF";
+    parallelBtn.title = `Parallel ${running} — locked to this run: a switch now applies to the NEXT one. Stop to stop now.`;
+  } else {
+    parallelBtn.removeAttribute("title");
+  }
 }
 
 parallelBtn.addEventListener("click", () => {
@@ -4597,6 +4692,9 @@ window.addEventListener("message", (e) => {
       });
       restoreLiveStream(msg); // replay the in-flight thinking/answer
       setStreaming(!!msg.streaming);
+      // …and the run we are now following has ITS OWN policies: a marker taken for the
+      // previous session would be a lie about this one (see resetPolicySnapshot).
+      resetPolicySnapshot();
       pending.render((msg.pending as PendingViewItem[]) || []);
       // Opening/switching a session always lands the caret in the prompt, so
       // the user can type immediately.

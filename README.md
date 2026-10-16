@@ -112,18 +112,18 @@ The order things come up in — and, more useful, **where each one lives**. Some
 4. **MCP servers** (optional, **global**): the **MCP** card's gear (add/edit/delete + **Test**), or `config.json`. Careful, in Analyze a server's tools only run if you declare what that server is — see [Analyze & Build](#analyze--build).
 5. **Housekeeping**: the **Compaction** gear (after **Compact**) sets how full the usable context gets before auto-compaction (**per session**); the **⚙ All sessions** manager holds the database stats and the **VACUUM** thresholds (**global**).
 6. **Tuning** (optional, **per session**): the sampling/context/output sliders, the thinking level, and **Guardrails** (sub-agent cap + Loop Guard parameters).
-7. **Analyze or Build**, and **Parallel** — **per session**, and the **only two the panel lets you change while a run is going**.
+7. **Analyze or Build**, and **Parallel** — **per session**, and **locked while a run is going** (they are decided once per run, and the pill's tooltip says so).
 8. **While it works**: **Enter** queues a message (it runs when this one ends), **Ctrl/Cmd+Enter** **steers** it into the run now, **Esc** stops. A message already queued can be flipped to a steer with the **Queue** button.
 
 | | where it lives | mid-run? |
 |---|---|---|
 | providers, keys, MCP servers, VACUUM thresholds | **global** (`config.json` / VS Code settings) | no |
 | model, thinking, sliders, context window, output tokens, Guardrails, compaction threshold | **per session** | no |
-| **Analyze/Build**, **Parallel** | **per session** | **yes** — lands at the **next turn**; the turn in flight keeps what it started with |
+| **Analyze/Build**, **Parallel** | **per session** | **no** — locked while it works: decided once per run, and the pill says why instead of swallowing the click (**Stop** is the way to interrupt) |
 | Enter / Ctrl-Cmd+Enter / Esc | per message | always |
 | **Compact**, **✂ Cut**, **⎇ Branch** | the transcript itself | no — they restructure the conversation, so they wait for the run |
 
-> Why that split: Mode and Parallel change the agent's **behaviour inside the same request envelope** — same context, same budget, same accounting — while the model, the window and the samplers move the envelope itself, and a run whose envelope changed halfway is not something you want to reconstruct from a transcript later. Providers and MCP are one level up again: they are the **environment**, set once.
+> Why that split: Mode and Parallel change the agent's **behaviour inside the same request envelope** — same context, same budget, same accounting — while the model, the window and the samplers move the envelope itself, and a run whose envelope changed halfway is not something you want to reconstruct from a transcript later. Behaviour is also where the **promises** live (*Analyze means nothing is written*), so it is decided **once per run**: a run cannot acquire a different mode halfway, and the two pills are locked while it works — with a tooltip, never in silence. Providers and MCP are one level up again: they are the **environment**, set once.
 
 ## Setup
 
@@ -206,7 +206,7 @@ The promise is one sentence — **in Analyze no resource is modified** — and i
 
 The protocol is explicit that a server's own hints are **untrusted unless the server is trusted**, so Harny never lets one open the gate by itself: you declare it per server (`trusted`, or `read-only` for old servers that send nothing). Its defaults are conservative on their own — `readOnlyHint: false`, `destructiveHint: true` — so **silence means "assume it modifies"**.
 
-**Switching while it works.** The mode is not a request parameter: it is a behaviour policy the agent **re-reads at every turn**, so you can flip Analyze/Build (or Parallel) **during a run** and the change lands at the **next turn boundary** — the same moment a steer is applied. A turn already in flight keeps the mode it started with, so a switch can never rewrite a tool call the model already emitted (an Analyze preview turning into a real write behind your back). By the same rule, the model is told: whatever the conversation shows as **PROPOSED**, it re-issues with the file tools once you are in Build.
+**Switching while it works.** The mode is not a request parameter (the model, the samplers and the window are) but a **behaviour policy, and a promise**: *Analyze* means nothing is written. A promise that can change under a run cannot be trusted, so Mode and Parallel are **decided once per run** — the run is born with them and keeps them to its last tool result, and the two pills are **locked while it works**, exactly like the request parameters. That includes what the run handed to a sub-agent: one delegated with `access: write` finishes under the run's own mode, which is the Build it was delegated under. The lock is never SILENT, though: each pill's tooltip names the policy the run is using and says that **Stop** — which aborts the sub-agents with it — is how to stop now. That is the difference between a lock and a lie: the panel used to keep the buttons quiet and let the click die, which is how it showed one thing while doing another. By the same rule, the model is told: whatever the conversation shows as **PROPOSED**, it re-issues with the file tools once you are in Build.
 
 ### Parallel: sub-agents
 
@@ -229,7 +229,15 @@ The prompt stays usable **while the agent works**.
 - **Ctrl/Cmd+Enter** → **steers**: injected at the next turn boundary, without restarting the run.
 - A **Queue/Steer** indicator shows what Enter will do, flipping to *Steer* only while you hold **Ctrl/Cmd** during a run.
 - Pending messages appear as **cancellable bubbles** above the prompt, inside a **collapsible section** whose header carries the counts (`Steer 1 · Queued 2`) — so a folded block still tells you what is waiting. A **new** message re-opens it.
-- Each pending message can be **read in full**: it wraps (keeping your own line breaks) and the section scrolls. A fold arrow appears **only when the text really wraps past one line** — measured on the rendered bubble, not guessed from its length, so narrowing the panel brings the arrow out on its own.
+- Each bubble is **one line**, and born folded — it wraps only when you open it. The fold
+  appears **only when there is more to see**: it is measured on the rendered bubble (not
+  guessed from its length, so narrowing the panel brings the arrow out on its own), it sits
+  **with the two commands** rather than in front of the text, and the whole message is in the
+  tooltip meanwhile. The **Collapse all** pill closes the pending bubbles too.
+- **Attachments show inside the bubble**: the paperclip leads the line and opening the row
+  reveals the same previews a user message shows (thumbnail with lightbox, file cards).
+- The SECTION scrolls (bounded) when the queue gets long, so the footer never pushes the
+  transcript up.
 - Each pending message can be **converted**: **→ Steer** (deliver it first, injected into the running loop at its next step) or **→ Queued** (wait for the run, in FIFO order with the others). The two are not two views of the same message — they differ in *when* the text reaches the model — so converting a steer back **also withdraws the draft from the agent**.
 - All pending steers are submitted together as **one** message at the next turn boundary. **Stop** clears them.
 
@@ -237,7 +245,7 @@ The prompt stays usable **while the agent works**.
 
 - **Reasoning** is streamed live as it happens, and passed back on later turns so tool-call chains keep their chain of thought.
 - **Tool calls** get a three-section bubble — **Input / Output / Diff**. When a tool touches a file, the Diff section shows the unified diff with the target path and `+N/−M` counts, syntax-highlighted for the main languages.
-- **Every turn** ends with a **metrics badge** carrying the mode it ran in (`Build` accent-tinted, `Analyze` quiet — so a transcript that spans a mid-run switch still says which turns WROTE) and the *real* provider usage: `Build · openai/gpt-4o · 6.9k in · 74 out · ⚡ 800 · elapsed 2.3s · first token 676ms`. Turns recorded before the mode was stored show no chip.
+- **Every turn** ends with a **metrics badge** carrying the mode it ran in (`Build` / `Analyze`, both in the badge's own quiet gray — the WORD says which turns WROTE) and the *real* provider usage: `Build · openai/gpt-4o · 6.9k in · 74 out · ⚡ 800 · elapsed 2.3s · first token 676ms`. Turns recorded before the mode was stored show no chip.
 - **Diagnostics** go to **Output > Harny**, one line per turn.
 
 ### Long sessions
@@ -289,7 +297,7 @@ just want to use Harny, you can stop reading here.
 - **Chat Completions protocol** (`/v1/chat/completions`) with **real-time SSE streaming**
 - **14 tools**: Read, Write, StrReplace, Edit, Delete, Shell, Grep, Glob, Skill, TodoWrite, WebSearch, WebFetch, ReadLints, Delegate — plus dynamic `mcp__<server>__<tool>` from any MCP server
 - **Agent loop**: automatic tool execution, multi-turn continuation, no bounded turn count (the Stop button is the only limit; a `maxTurns` cap exists behind the scenes for tests)
-- **Two chat modes**: **Analyze** (read-only preview — changes are prepared and diffed but never written; when previews are ready the host asks **once** via a modal whether to switch to Build, with a tip to restart the chat for a clean apply) and **Build** (full tool use, writes for real). The transcript keeps a static, non-clickable note. The mode is persisted **per session** (restored on reopen; new sessions start in Analyze). Both modes and Parallel can be switched **while a run is going**: they are behaviour policies the agent re-reads at every turn, and a turn in flight keeps the mode it started with
+- **Two chat modes**: **Analyze** (read-only preview — changes are prepared and diffed but never written; when previews are ready the host asks **once** via a modal whether to switch to Build, with a tip to restart the chat for a clean apply) and **Build** (full tool use, writes for real). The transcript keeps a static, non-clickable note. The mode is persisted **per session** (restored on reopen; new sessions start in Analyze). Both modes and Parallel are **locked while a run is going** (a run is born with its mode and its Parallel setting and keeps them to its last tool result): the pills explain why instead of swallowing the click, and **Stop** is the way to interrupt this one
 - **Output-token-limit handling**: the provider's `finish_reason` is propagated; a truncated response is surfaced explicitly ("raise `harny.maxTokens`") instead of failing silently
 
 **Context & long sessions**
@@ -401,7 +409,7 @@ harny/
 │   │   ├── view-html.ts          # Pure HTML generator (sessions + tabs + chat)
 │   │   └── webview/              # Webview client (TS): view.ts + markdown.ts,
 │   │       #                       diff-fence.ts, lang-map.ts, pending-section.ts
-│   │       #                       (the queue/steer footer) + pending-fold.ts (its measured rule);
+│   │       #                       (the queue/steer footer);
 │   │       #                       markdown-it + DOMPurify, bundled with esbuild
 │   └── logger.ts                 # Diagnostics: "Output > Harny" channel + HARNY_DEBUG file
 ├── media/view.js                 # Webview client bundle (generated: node scripts/build-webview.mjs)
@@ -425,7 +433,7 @@ npm test          # run all unit tests (vitest)
 npm run coverage  # with coverage report
 ```
 
-**1500+ unit tests** cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (SQLite store with FTS5 search, **versioned schema migrations** via `PRAGMA user_version`, manager, registry, the cross-folder manager with its open/change-folder actions, the per-session control settings incl. the Loop Guard parameters), **context management** (the absolute keep budget, the schematic-summary prompt and its budget, the carried state, observation masking, the overflow recovery with each provider's real rejection text, the adopted window, the scaled request margin, the window-scaled tool-output cap, the token estimate for non-ASCII), **the wire rules** (every rule at the checker level **and** by fault injection through a real request — a malformed conversation never reaches the provider and is named), the OpenAI-compatible LLM provider (streaming, tool calls, `finish_reason`, the learned `max_completion_tokens`), host-model fetching, all 14 tools (including the Analyze dry-run preview), the mode policy, the agent loop (fake LLM, abort, max turns), the **loop guard** (reasoning/empty/tool-failure/error-streak/tool-repeat detection, tool-call dedup, sensitivity presets, the editable parameter ranges + their clamping), orchestration/sub-agents, **Agent Skills** (SKILL.md parsing + discovery), **MCP** (stdio + Streamable HTTP clients, tool wrapper, manager), markdown/DOM (markdown-it + DOMPurify), the HTML generators, the pending section (its counts, the fold measured on the rendered bubble, the conversions), and the chat view provider (mocked VS Code, incl. the control-stack wiring: sliders, Auto defaults, the collapsible Loop Guard parameters and the responsive layout), the per-turn metrics badge (real usage + timings), the real context accounting (after a ✂ cut / compaction) and the DB compaction + index optimization (VACUUM, `PRAGMA optimize`, FTS5 `optimize`).
+**1500+ unit tests** cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (SQLite store with FTS5 search, **versioned schema migrations** via `PRAGMA user_version`, manager, registry, the cross-folder manager with its open/change-folder actions, the per-session control settings incl. the Loop Guard parameters), **context management** (the absolute keep budget, the schematic-summary prompt and its budget, the carried state, observation masking, the overflow recovery with each provider's real rejection text, the adopted window, the scaled request margin, the window-scaled tool-output cap, the token estimate for non-ASCII), **the wire rules** (every rule at the checker level **and** by fault injection through a real request — a malformed conversation never reaches the provider and is named), the OpenAI-compatible LLM provider (streaming, tool calls, `finish_reason`, the learned `max_completion_tokens`), host-model fetching, all 14 tools (including the Analyze dry-run preview), the mode policy, the agent loop (fake LLM, abort, max turns), the **loop guard** (reasoning/empty/tool-failure/error-streak/tool-repeat detection, tool-call dedup, sensitivity presets, the editable parameter ranges + their clamping), orchestration/sub-agents, **Agent Skills** (SKILL.md parsing + discovery), **MCP** (stdio + Streamable HTTP clients, tool wrapper, manager), markdown/DOM (markdown-it + DOMPurify), the HTML generators, the pending section (its counts, the born-folded bubbles, the fold measured on the rendered row, the attachment previews, the conversions), and the chat view provider (mocked VS Code, incl. the control-stack wiring: sliders, Auto defaults, the collapsible Loop Guard parameters and the responsive layout), the per-turn metrics badge (real usage + timings), the real context accounting (after a ✂ cut / compaction) and the DB compaction + index optimization (VACUUM, `PRAGMA optimize`, FTS5 `optimize`).
 
 ### Configuration reference
 

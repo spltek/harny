@@ -595,11 +595,14 @@ describe("Agent", () => {
     expect(history.all().some((m) => m.role === "assistant" && m.content === "did it myself")).toBe(true);
   });
 
-  it("a MODE switch mid-run lands on the NEXT turn, never on the turn in flight", async () => {
-    // The UI no longer locks Analyze/Build while the session works: the change must land
-    // at a turn boundary (like a steer) and must NOT change the meaning of a tool call
-    // the model already emitted — an Analyze preview becoming a real write, with the diff
-    // never shown.
+  it("a MODE switch mid-run does NOT reach this run: it lands on the NEXT one", async () => {
+    // Mode and Parallel are SAFETY policies, decided ONCE per run (see Agent.runMode): the
+    // run is born with them and keeps them to its last tool result, and a switch made while
+    // it works is the NEXT run's policy — which is why the panel marks it as pending.
+    // Before this rule the switch landed on the next TURN, and two things followed from it:
+    // a writer sub-agent delegated before the switch kept writing while the pill said
+    // Analyze, and a switch to Build erased the "nothing has been applied" footer while the
+    // files were still untouched.
     const seenDefs: Array<Array<{ name: string; description: string }>> = [];
     let agentRef: Agent | undefined;
     const modesSeen: Array<boolean | undefined> = [];
@@ -608,13 +611,18 @@ describe("Agent", () => {
       definition: { name: "Write", description: "write", parameters: { type: "object", properties: {} } },
       analyzePolicy: "preview", // the subject of this test IS the Analyze gate
       analyzeNote: FILE_PREVIEW_NOTE,
-      execute: (_args, ctx) => {
-        modesSeen.push(ctx?.dryRun); // what the turn decided for THIS call
-        agentRef?.setMode("agent"); // the user flips to Build while the turn runs
-        return { content: "preview", isError: false };
+      execute: (args, ctx) => {
+        modesSeen.push(ctx?.dryRun); // what the RUN decided for THIS call
+        agentRef?.setMode("agent"); // the user flips to Build while the run works
+        return { content: `preview ${String(args.path ?? "")}`, isError: false };
       },
     };
     let call = 0;
+    const writeCall = (index: number, id: string, path: string): StreamChunk[] => [
+      { type: "tool_call_start", index, id, name: "Write" } as StreamChunk,
+      { type: "tool_call_delta", index, delta: `{"path":"${path}","content":"x"}` } as StreamChunk,
+      { type: "tool_call_end", index } as StreamChunk,
+    ];
     const recording: LLMProviderFactory = {
       create: () => ({
         protocol: "chat" as const,
@@ -622,34 +630,175 @@ describe("Agent", () => {
           seenDefs.push((tools ?? []).map((t) => ({ name: t.name, description: t.description })));
           call++;
           if (call === 1) {
-            // TWO writes in the SAME turn: the first flips the mode while the turn runs,
-            // so the second is the call that proves the turn was frozen (with a live mode
-            // it would already be a real write).
-            yield { type: "tool_call_start", index: 0, id: "w1", name: "Write" } as StreamChunk;
-            yield { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts","content":"x"}' } as StreamChunk;
-            yield { type: "tool_call_end", index: 0 } as StreamChunk;
-            yield { type: "tool_call_start", index: 1, id: "w2", name: "Write" } as StreamChunk;
-            yield { type: "tool_call_delta", index: 1, delta: '{"path":"b.ts","content":"y"}' } as StreamChunk;
-            yield { type: "tool_call_end", index: 1 } as StreamChunk;
+            // TWO writes in the SAME turn: the first flips the mode while the turn runs, so
+            // the second proves the turn was frozen (a live mode would have written it).
+            for (const c of [...writeCall(0, "w1", "a.ts"), ...writeCall(1, "w2", "b.ts")]) yield c;
+          } else if (call === 2) {
+            // A LATER turn of the SAME run: still Analyze. This is what moved from per-turn
+            // to per-run — under the old rule this write already went to disk.
+            for (const c of writeCall(0, "w3", "c.ts")) yield c;
+          } else if (call === 4) {
+            // The NEXT run: born in Build, so its write is real.
+            for (const c of writeCall(0, "w4", "d.ts")) yield c;
           } else {
             yield { type: "text", content: "done" } as StreamChunk;
           }
         },
       }),
     };
-    const { agent } = buildHarness({ tools: [write], llmFactory: recording });
+    const { agent, history } = buildHarness({ tools: [write], llmFactory: recording });
     agentRef = agent;
 
-    await agent.send("go"); // starts in Analyze (the default)
+    await agent.send("go"); // run 1 starts in Analyze (the default)
+    await agent.send("again"); // run 2 starts in Build (the switch was pending)
 
-    // Turn 1 ran under Analyze: BOTH writes were previews, including the one AFTER the
-    // switch arrived — a mode change never re-reads a turn already in flight.
-    expect(modesSeen).toEqual([true, true]);
-    // What the model was TOLD: in Analyze a write is announced as a preview, after the
-    // switch it is not — the tool stays listed either way, so the note is the signal.
+    // EVERY write of run 1 was a preview, the one from its THIRD turn included; run 2's was
+    // a real write (Build does not set dryRun at all — see ToolContext — hence undefined).
+    expect(modesSeen.slice(0, 3)).toEqual([true, true, true]);
+    expect(modesSeen[3]).toBeUndefined();
+    // What the model was TOLD, turn by turn: run 1 announced the write as a preview in every
+    // turn, run 2 did not — the tool stays listed either way, so the note is the signal.
     const writeDesc = (i: number): string => seenDefs[i].find((t) => t.name === "Write")?.description ?? "";
     expect(writeDesc(0)).toContain("PREVIEW MODE (Analyze)");
-    expect(writeDesc(1)).not.toContain("PREVIEW MODE");
+    expect(writeDesc(1)).toContain("PREVIEW MODE (Analyze)");
+    expect(writeDesc(3)).not.toContain("PREVIEW MODE");
+    // …and the run that prepared previews still SAYS they are not on disk: the footer reads
+    // the RUN's mode, so a pending switch to Build cannot erase it any more.
+    const final = history.all().find((m) => m.role === "assistant" && m.content.includes("Nothing has been applied"));
+    expect(final?.content).toContain("NOT on disk");
+    expect(final?.content).toContain("c.ts"); // the third turn's preview is listed too
+  });
+
+  it("a PARALLEL switch mid-run does NOT reach this run either: it keeps the policy it was born with", async () => {
+    // Same rule as the mode (see Agent.runMode): the run's orchestration policy is fixed at
+    // its start. A run born with Parallel ON keeps delegating after a mid-run OFF — that
+    // switch is the NEXT run's — and a run born with it OFF cannot acquire sub-agents
+    // halfway. Stop, not a toggle, is what stops a run.
+    const spawned: string[] = [];
+    const seenDefs: string[][] = [];
+    let call = 0;
+    let agentRef: Agent | undefined;
+    const delegateCall = (id: string): StreamChunk[] => [
+      { type: "tool_call_start", index: 0, id, name: "Delegate" } as StreamChunk,
+      { type: "tool_call_delta", index: 0, delta: `{"id":"${id}","goal":"g","access":"read","resources":["a.ts"]}` } as StreamChunk,
+      { type: "tool_call_end", index: 0 } as StreamChunk,
+    ];
+    const factory: LLMProviderFactory = {
+      create: () => ({
+        protocol: "chat" as const,
+        async *stream(_m: LLMMessage[], _s?: AbortSignal, defs?: { name: string }[]) {
+          seenDefs.push((defs ?? []).map((d) => d.name));
+          call++;
+          if (call === 1) {
+            // Mid-run (the run's policies are already frozen): Parallel goes OFF, then the
+            // model delegates. The RUN is still the one that started with Parallel ON.
+            agentRef?.setDelegation(false);
+            for (const c of delegateCall("d1")) yield c;
+          } else if (call === 3) {
+            // The NEXT run was born with Parallel OFF: the same call is refused at execution.
+            for (const c of delegateCall("d2")) yield c;
+          } else {
+            yield { type: "text", content: "done" } as StreamChunk;
+          }
+        },
+      }),
+    };
+    const history = new InMemoryChatHistory();
+    const tools = new ToolRegistry([makeTool("Read"), makeTool("Delegate")]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history,
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        (m) => toolDefinitionsForMode(tools.getAll(), m),
+        () => "/w",
+      ),
+      allowDelegation: true,
+      spawnSubAgent: async (spec) => {
+        spawned.push(spec.id);
+        return { content: "report", isError: false };
+      },
+    });
+    agentRef = agent;
+    agent.setMode("agent");
+    agent.setDelegation(true);
+
+    await agent.send("one");
+    await agent.send("two");
+
+    // Run 1 delegated (its own policy), run 2 did not (its own policy) — and the second run
+    // does not even see the tool, let alone a half-acquired one.
+    expect(spawned).toEqual(["d1"]);
+    expect(seenDefs[0]).toContain("Delegate");
+    expect(seenDefs[2]).not.toContain("Delegate");
+    const refusal = history.all().find((m) => m.role === "tool" && /Delegation is disabled/.test(m.content ?? ""));
+    expect(refusal).toBeTruthy();
+  });
+
+  it("a PENDING mode cannot open or close the Delegate gate of the run in flight", async () => {
+    // The case the per-run rule exists for. A run born in Build delegates a WRITER; the user
+    // picks Analyze while it works (the panel locks the pill, so this arrives as the host
+    // pushing the choice — the agent's contract is the same either way). The run keeps Build,
+    // so the sub-agent is legitimately delegated and is NOT silently downgraded; the SAME
+    // Delegate in the next run, born in Analyze, is refused.
+    const spawned: string[] = [];
+    const seenDefs: string[][] = [];
+    let call = 0;
+    let agentRef: Agent | undefined;
+    const delegateWriter = (id: string): StreamChunk[] => [
+      { type: "tool_call_start", index: 0, id, name: "Delegate" } as StreamChunk,
+      { type: "tool_call_delta", index: 0, delta: `{"id":"${id}","goal":"write","access":"write","resources":["a.ts"]}` } as StreamChunk,
+      { type: "tool_call_end", index: 0 } as StreamChunk,
+    ];
+    const factory: LLMProviderFactory = {
+      create: () => ({
+        protocol: "chat" as const,
+        async *stream(_m: LLMMessage[], _s?: AbortSignal, defs?: { name: string }[]) {
+          seenDefs.push((defs ?? []).map((d) => d.name));
+          call++;
+          if (call === 1) {
+            agentRef?.setMode("analyze"); // the pending switch, mid-run
+            for (const c of delegateWriter("d1")) yield c;
+          } else if (call === 3) {
+            for (const c of delegateWriter("d2")) yield c;
+          } else {
+            yield { type: "text", content: "done" } as StreamChunk;
+          }
+        },
+      }),
+    };
+    const history = new InMemoryChatHistory();
+    const tools = new ToolRegistry([makeTool("Read"), makeTool("Delegate")]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history,
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        (m) => toolDefinitionsForMode(tools.getAll(), m),
+        () => "/w",
+      ),
+      allowDelegation: true,
+      spawnSubAgent: async (spec) => {
+        spawned.push(spec.id);
+        return { content: "wrote a.ts", isError: false };
+      },
+    });
+    agentRef = agent;
+    agent.setMode("agent");
+    agent.setDelegation(true);
+
+    await agent.send("one"); // Build: the writer IS delegated
+    await agent.send("two"); // the pending Analyze is the run's policy now: refused
+
+    expect(spawned).toEqual(["d1"]);
+    const refusal = history.all().find(
+      (m) => m.role === "tool" && /may only be delegated with access "read"/.test(m.content ?? ""),
+    );
+    expect(refusal).toBeTruthy();
   });
 
   it("nudges and continues when a turn is completely empty (no text, no thinking, no tools)", async () => {
@@ -3593,10 +3742,10 @@ describe("Agent — per-turn meta (real usage + timings)", () => {
     expect(typeof assistant.meta!.durationMs).toBe("number");
   });
 
-  it("records the mode each turn ran under — a single run can hold Analyze and Build", async () => {
-    // The switch works mid-run (see turnMode), so the transcript can hold turns that only
-    // prepared previews and turns that wrote: the badge under each answer says which, so
-    // the fact belongs to the TURN, not to the session.
+  it("records the mode each RUN ran under — the switch is pending until the next one", async () => {
+    // Mode and Parallel are decided once per run (see runMode), so every turn of a run
+    // carries the same mode, and the NEXT run carries whatever was picked while the
+    // previous one was working. This meta is what the badge under each answer reads.
     let agentRef: Agent | undefined;
     const write: Tool = {
       name: "Write",
@@ -3621,10 +3770,11 @@ describe("Agent — per-turn meta (real usage + timings)", () => {
     });
     agentRef = agent;
 
-    await agent.send("go"); // starts in Analyze
+    await agent.send("go"); // run 1 starts in Analyze
+    await agent.send("again"); // run 2 starts in Build (the switch during run 1 was pending)
 
     const assistants = history.all().filter((m) => m.role === "assistant" && m.meta);
-    expect(assistants.map((m) => m.meta!.mode)).toEqual(["analyze", "agent"]);
+    expect(assistants.map((m) => m.meta!.mode)).toEqual(["analyze", "analyze", "agent"]);
   });
 
   it("emits a turn_meta event with the REAL metrics as soon as a turn is committed", async () => {

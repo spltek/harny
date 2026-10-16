@@ -698,7 +698,8 @@ describe("ChatViewProvider", () => {
   it("setMode propagates to the agent and persists — while the session works too", async () => {
     // The UI used to lock the Mode button during a run, so a click never arrived; the
     // host itself has no such gate: the change lands in the agent immediately and the
-    // agent applies it from the NEXT turn (see Agent.turnMode).
+    // agent applies it from the NEXT run (see Agent.runMode) — the Mode/Parallel pills are
+    // safety policies, decided once per run.
     const { provider, registry, store } = buildHarness({ compactor: { summarize: vi.fn() } as unknown as Compactor });
     const { handler } = resolveWith(provider);
     await provider.createNew(); // s1

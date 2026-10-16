@@ -172,16 +172,23 @@ export class Agent implements ChatController {
   private _streaming = false;
   /** Chat mode: "analyze" (read-only) by default — see setMode(). */
   private _mode: ChatMode = DEFAULT_CHAT_MODE;
-  /** The mode THIS TURN runs under: frozen when the turn starts.
+  /** The mode THIS RUN was born with: frozen for the whole run (Parallel with it, see
+   * `runDelegation`).
    *
-   * Mode and Parallel are behaviour policies the UI lets the user change while the
-   * session works (they are not request parameters), and a change must land at a TURN
-   * BOUNDARY — the same moment a steer is applied. Without this snapshot a switch could
-   * catch a turn in flight and change the meaning of a tool call the model had already
-   * emitted: an Analyze preview becoming a real write, with the diff never shown. So a
-   * turn is coherent from its first token to its last tool result, and the next turn is
-   * born in the new mode. */
-  private turnMode: ChatMode = DEFAULT_CHAT_MODE;
+   * Mode and Parallel are behaviour policies, not request parameters — but they are
+   * SAFETY policies: "Analyze" is a promise that nothing is written. A promise that can
+   * change under a run cannot be trusted, and the cases where it did were real: a writer
+   * sub-agent launched before a switch kept writing while the pill said Analyze, and a
+   * switch to Build cancelled the "nothing has been applied" footer on files that were
+   * still untouched. So the policies are decided ONCE, when the run starts: a switch made
+   * while it works is accepted (the pill marks it as pending) and lands on the NEXT run.
+   * Want it sooner? Stop — that is what Stop is for. */
+  private runMode: ChatMode = DEFAULT_CHAT_MODE;
+  /** Parallel, frozen with the mode and for the same reason (see `runMode`): a run that
+   * starts without orchestration does not acquire sub-agents halfway, and one that starts
+   * with it does not lose them under a flip. `delegationEnabled` stays the PENDING choice
+   * (what the next run will use). */
+  private runDelegation = false;
   /** Loop detection/breaking state (reset per run). */
   private readonly guard: LoopGuard;
   /** Per-session concurrent sub-agent cap: undefined = fall back to the config
@@ -216,7 +223,8 @@ export class Agent implements ChatController {
     this.guard = new LoopGuard(deps.loopGuard ?? DEFAULT_LOOP_GUARD_OPTIONS);
   }
 
-  /** Enable/disable orchestration (sub-agents) — the "Parallel" toggle. */
+  /** Enable/disable orchestration (sub-agents) — the "Parallel" toggle. Takes effect on
+   * the NEXT run (see runDelegation): a run in flight keeps the policy it started with. */
   setDelegation(enabled: boolean): void {
     this.delegationEnabled = enabled && this.mayDelegate;
   }
@@ -232,7 +240,8 @@ export class Agent implements ChatController {
     this.guard.setOptions(options);
   }
 
-  /** Switch chat mode: "analyze" (read-only) or "agent" (full tools). */
+  /** Switch chat mode: "analyze" (read-only) or "agent" (full tools). Takes effect on the
+   * NEXT run (see runMode): a run in flight keeps the mode it started with. */
   setMode(mode: ChatMode): void {
     this._mode = mode === "agent" ? "agent" : DEFAULT_CHAT_MODE;
   }
@@ -351,6 +360,11 @@ export class Agent implements ChatController {
     this.abortController = new AbortController();
     this._streaming = true;
     this.log(`send: mode=${this._mode} parallel=${this.delegationEnabled ? "ON" : "OFF"}`);
+    // The run's policies are decided HERE, once for all of it (see runMode): from this
+    // point a switch is accepted by the UI — which marks it as pending — and lands on the
+    // NEXT run. Nothing already emitted keeps a meaning it was not given.
+    this.runMode = this._mode;
+    this.runDelegation = this.delegationEnabled;
     this.guard.reset();
     this.preparedChanges.clear();
     this.subAgentChanges.clear();
@@ -448,9 +462,8 @@ export class Agent implements ChatController {
     }
 
     this.guard.beginTurn();
-    // Freeze the mode for this turn (see turnMode): a switch made mid-run applies from
-    // the NEXT turn, never to the tool calls of a turn already in flight.
-    this.turnMode = this._mode;
+    // No freeze here: the RUN's policies were pinned in send() (see runMode). Every turn
+    // of this run reads the same mode, so a switch can never reach a tool call of this run.
     const turnResult = await this.runLlmTurnWithOverflowRecovery();
     // An echoed synthetic label is NOT an answer: treat it as empty so the loop
     // guard nudges the model to actually act/answer instead of ending the run.
@@ -458,7 +471,7 @@ export class Agent implements ChatController {
     const content = echoedLabel ? "" : turnResult.content;
     const { toolCalls, thinking, reasoningDetails, finishReason, reasoningLoop, answerLoop } = turnResult;
     this.log(
-      `turn ${turn}: mode=${this.turnMode} parallel=${this.delegationEnabled ? "ON" : "OFF"} ` +
+      `turn ${turn}: mode=${this.runMode} parallel=${this.runDelegation ? "ON" : "OFF"} ` +
         `finish=${finishReason ?? "-"} content=${content.length}c thinking=${thinking.length}c ` +
         `tools=[${toolCalls.map((t) => t.name).join(",")}]` +
         (reasoningLoop ? " reasoningLoop" : "") +
@@ -796,7 +809,7 @@ export class Agent implements ChatController {
    */
   private llmConversation(): ChatMessage[] {
     const all = this.deps.history.conversation();
-    const kept = this.delegationEnabled
+    const kept = this.runDelegation
       ? all
       : (() => {
           const droppedIds = new Set<string>();
@@ -828,14 +841,14 @@ export class Agent implements ChatController {
    * (a tool would require the model to call it — this does not).
    */
   private stateLine(): string {
-    const readOnly = isAnalyzeMode(this.turnMode);
+    const readOnly = isAnalyzeMode(this.runMode);
     const mode = readOnly
       ? "Analyze — READ-ONLY PREVIEW: you can PREPARE changes (Write/Edit/StrReplace/Delete run as " +
         "VALIDATED diff previews) but nothing is applied; finish by telling the user to switch to Build to apply"
       : "Build — you CAN create, modify and delete files";
     // Parallel OFF: the model must not even know that sub-tasks exist, so the
     // state banner says nothing about Parallel.
-    if (!this.delegationEnabled) return `[CURRENT STATE] Mode: ${mode}.`;
+    if (!this.runDelegation) return `[CURRENT STATE] Mode: ${mode}.`;
     return (
       `[CURRENT STATE] Mode: ${mode}. Parallel: ON — PARALLELISM MEANS SUB-TASKS: the ONLY way to run work in ` +
       `parallel is one Delegate per independent item; your own tool calls run one after another (serially).`
@@ -938,10 +951,10 @@ export class Agent implements ChatController {
    * {@link Agent.isOverflowRejection} work for any backend.
    */
   private estimatedRequestTokens(): number {
-    // Built from the TURN's mode, like the request it estimates (see turnMode): an
+    // Built from the RUN's mode, like the request it estimates (see runMode): an
     // estimate that used a different mode than the request would be off by the whole
     // write-tool set, and this is the leg that decides whether a rejection was size.
-    const system = this.deps.systemPrompt.build(this.turnMode, this.deps.tools.definitions());
+    const system = this.deps.systemPrompt.build(this.runMode, this.deps.tools.definitions());
     return this.llmConversation().reduce(
       (total, m) =>
         total +
@@ -964,8 +977,8 @@ export class Agent implements ChatController {
     modelProvider?: string;
     contextWindow?: number;
     maxTokens?: number;
-    /** The mode this turn RAN under (frozen at its start, see turnMode): the caller stores
-     * it in the turn's meta, which is what the badge under the answer shows. */
+    /** The mode this RUN ran under (frozen when the run started, see runMode): the caller
+     * stores it in the turn's meta, which is what the badge under the answer shows. */
     mode: ChatMode;
     /** True when the loop guard cut this turn short because the reasoning
      * repeated itself; the caller must nudge instead of executing tools. */
@@ -989,13 +1002,13 @@ export class Agent implements ChatController {
     // side below runs them dry — the tool list is the first layer, never the only one.
     // `exclude` is how Parallel OFF keeps Delegate out of the model's sight entirely.
     // An explicit [] (forced final report) makes the turn tool-less.
-    const modeDefs = toolDefinitionsForMode(this.deps.tools.getAll(), this.turnMode, {
-      exclude: this.delegationEnabled ? [] : [DELEGATE_TOOL_NAME],
+    const modeDefs = toolDefinitionsForMode(this.deps.tools.getAll(), this.runMode, {
+      exclude: this.runDelegation ? [] : [DELEGATE_TOOL_NAME],
     });
     const toolDefinitions: ToolDefinition[] = toolDefinitionsOverride ?? modeDefs;
 
     const messages: LLMMessage[] = [
-      { role: "system", content: `${this.stateLine()}\n\n${this.deps.systemPrompt.build(this.turnMode, toolDefinitions)}` },
+      { role: "system", content: `${this.stateLine()}\n\n${this.deps.systemPrompt.build(this.runMode, toolDefinitions)}` },
       ...this.llmConversation().map((m) => ({
         role: m.role,
         // Never send the synthetic tool label to the model (it gets imitated).
@@ -1197,10 +1210,9 @@ export class Agent implements ChatController {
       modelProvider: config.activeProvider,
       contextWindow: config.contextWindow,
       maxTokens: config.maxTokens,
-      // …and so may the MODE, which is why it belongs to the turn rather than to the
-      // session: with the switch now working mid-run, a transcript can hold Analyze and
-      // Build turns side by side, and this is what tells them apart later.
-      mode: this.turnMode,
+      // …and so may the MODE: a session can hold Analyze and Build runs side by side (a
+      // switch made mid-run lands on the next one), and this is what tells them apart.
+      mode: this.runMode,
       startedAt: streamStart,
       firstTokenAt,
       endedAt: Date.now(),
@@ -1227,7 +1239,7 @@ export class Agent implements ChatController {
     // either: that is how an MCP `drop_table` used to run for real in Analyze.
     const policy = this.analyzePolicyFor(tc.name);
     let dryRun = false;
-    if (isAnalyzeMode(this.turnMode)) {
+    if (isAnalyzeMode(this.runMode)) {
       if (policy === "refuse") {
         return { content: analyzeRefusalMessage(tool), isError: true };
       }
@@ -1289,7 +1301,10 @@ export class Agent implements ChatController {
   /** Analyze prepared changes (by this agent OR one of its sub-agents) that are
    * NOT applied: the final answer gets the "Switch to Build" call to action. */
   private hasUnappliedPreviews(): boolean {
-    if (!this.mayDelegate || !isAnalyzeMode(this._mode)) return false;
+    // The RUN's mode, not the live one: a switch made while the run works is pending, so
+    // reading it here would drop the "nothing has been applied" footer (and the CTA) on
+    // files that are still untouched — the exact promise the footer exists to keep.
+    if (!this.mayDelegate || !isAnalyzeMode(this.runMode)) return false;
     return this.preparedChanges.size > 0 || this.subAgentChanges.size > 0;
   }
 
@@ -1338,7 +1353,7 @@ export class Agent implements ChatController {
     if (!this.mayDelegate) {
       return { content: "Sub-agents cannot delegate further (orchestration depth is 1).", isError: true };
     }
-    if (!this.delegationEnabled) {
+    if (!this.runDelegation) {
       return {
         content: 'Delegation is disabled. Turn on the "Parallel" toggle to allow sub-agents.',
         isError: true,
@@ -1352,7 +1367,7 @@ export class Agent implements ChatController {
     if (!spec) return { content: parsed.error ?? "Invalid Delegate call.", isError: true };
     // Read-only (Analyze) mode must never delegate a WRITER: that would bypass
     // the read-only guarantee.
-    if (isAnalyzeMode(this.turnMode) && spec.access !== "read") {
+    if (isAnalyzeMode(this.runMode) && spec.access !== "read") {
       return {
         content: '⛔ Analyze (read-only) mode: sub-agents may only be delegated with access "read".',
         isError: true,

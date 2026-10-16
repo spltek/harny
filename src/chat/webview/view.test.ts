@@ -380,39 +380,76 @@ describe("view webview client", () => {
     expect(btn.getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("Parallel follows the host config and can be switched while working", async () => {
+  it("Parallel follows the host config and is LOCKED while working (never a silent lock)", async () => {
     await loadView();
     const btn = document.getElementById("parallel-btn") as HTMLButtonElement;
     hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, parallel: true, models: [], providerModels: [], contextWindow: 128000 } });
     expect(btn.classList.contains("is-on")).toBe(true);
 
-    // Working does NOT block it: Parallel is a behaviour policy read at each turn, so
-    // switching it mid-run is what the user expects (it lands at the next boundary).
+    // A run is in flight: the toggle is disabled — a run keeps the policy it was born with
+    // (see Agent.runMode) — and the tooltip says which one, plus what Stop does instead.
     hostMessage({ type: "status", active: true });
     const before = posted.length;
+    expect(btn.disabled).toBe(true);
+    expect(btn.title).toContain("locked to this run");
+    expect(btn.title).toContain("Parallel ON");
+    btn.dispatchEvent(new MouseEvent("click", { bubbles: true })); // the guard refuses it
+    expect(posted.slice(before).some((m) => (m as { type?: string }).type === "setParallel")).toBe(false);
+    expect(btn.classList.contains("is-on")).toBe(true);
+
+    // The run ends: usable again, and no stale tooltip left behind.
+    hostMessage({ type: "status", active: false });
+    expect(btn.disabled).toBe(false);
+    expect(btn.title).toBe("");
     btn.click();
     expect(posted.slice(before)).toContainEqual({ type: "setParallel", parallel: false });
-    hostMessage({ type: "status", active: false });
-    btn.click();
-    expect(posted.slice(before)).toContainEqual({ type: "setParallel", parallel: true });
   });
 
-  it("keeps the mode button usable while working (the change lands at the next turn)", async () => {
+  it("locks the mode button while working — with a tooltip, not a silent lock", async () => {
+    // The reported bug was a lock with NO feedback: the click died in silence and the panel
+    // went on showing what the user had picked. The lock stays — a run keeps the mode it was
+    // born with — but it now explains itself and names the way out (Stop).
     await loadView();
     const btn = document.getElementById("mode-btn") as HTMLButtonElement;
     const menu = document.getElementById("mode-menu") as HTMLDivElement;
     const postedAt = posted.length;
 
-    hostMessage({ type: "status", active: true });
-    expect(btn.disabled).toBe(false);
+    // A dropdown left OPEN when the run starts is closed by the lock: the label on screen
+    // must never be the one that was already sent.
     btn.click();
-    expect(menu.classList.contains("hidden")).toBe(false); // opens mid-run
-    // Picking Build from the menu reaches the host while the run is going.
-    (menu.querySelector('.mode-item[data-mode="agent"]') as HTMLButtonElement).click();
-    expect(posted.slice(postedAt)).toContainEqual({ type: "setMode", mode: "agent" });
+    expect(menu.classList.contains("hidden")).toBe(false);
+    hostMessage({ type: "status", active: true });
+    expect(menu.classList.contains("hidden")).toBe(true);
+
+    expect(btn.disabled).toBe(true);
+    expect(btn.title).toContain("locked to this run");
+    expect(btn.title).toContain("Analyze");
+    btn.dispatchEvent(new MouseEvent("click", { bubbles: true })); // the guard refuses it
+    expect(menu.classList.contains("hidden")).toBe(true); // and the dropdown never opens
+    expect(posted.slice(postedAt).some((m) => (m as { type?: string }).type === "setMode")).toBe(false);
 
     hostMessage({ type: "status", active: false });
     expect(btn.disabled).toBe(false);
+    expect(btn.title).toBe("");
+    btn.click();
+    expect(menu.classList.contains("hidden")).toBe(false);
+    (menu.querySelector('.mode-item[data-mode="agent"]') as HTMLButtonElement).click();
+    expect(posted.slice(postedAt)).toContainEqual({ type: "setMode", mode: "agent" });
+  });
+
+  it("a policy changed UNDER the panel while it works is marked as PENDING", async () => {
+    // The pills are disabled, so this cannot come from a click here — but the host can push a
+    // config (another window, a restored session). The choice is real and pending: the run
+    // keeps what it was born with, and the pill says both.
+    await loadView();
+    const btn = document.getElementById("mode-btn") as HTMLButtonElement;
+    hostMessage({ type: "status", active: true }); // the run's mode: Analyze
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, mode: "agent", models: [], providerModels: [], contextWindow: 128000 } });
+
+    expect(btn.classList.contains("is-pending")).toBe(true);
+    expect(btn.textContent).toContain("Build");
+    expect(btn.title).toContain("still Analyze");
+    expect(btn.disabled).toBe(true); // the lock covers a pending choice too
   });
 
   it("reflects the host's mode + Parallel on load and does NOT reset them", async () => {
@@ -489,6 +526,26 @@ describe("view webview client", () => {
     expect(text.textContent).toBe("hello");
     // The text block is the FIRST child of the bubble (attachments follow it).
     expect(bubble.firstElementChild).toBe(text);
+  });
+
+  it("shows a user bubble with attachments as one LEFT-aligned block", async () => {
+    await loadView();
+    // The same path a delivered queue/steer message takes.
+    hostMessage({
+      type: "userMessage",
+      content: "look at this",
+      attachments: [{ name: "shot.png", size: 10, isImage: true, dataUri: "data:image/png;base64,AAAA" }],
+    });
+    const bubble = document.querySelectorAll(".msg.user")[1] as HTMLElement;
+    // The text is still the shrink-to-fit span (its own contract)…
+    expect(bubble.querySelector(":scope > .user-text")?.textContent).toBe("look at this");
+    // …but the bubble now says it is wide for a reason of its own, which is what makes the
+    // CSS give the text the full width instead of letting it float in the middle.
+    expect(bubble.classList.contains("has-attachments")).toBe(true);
+    expect(bubble.querySelector(".msg-attachments")).not.toBeNull();
+    // A bubble with no attachments keeps the centred shrink-to-fit behaviour.
+    const plain = document.querySelectorAll(".msg.user")[0] as HTMLElement;
+    expect(plain.classList.contains("has-attachments")).toBe(false);
   });
 
   it("shows creation and last-modified dates BEFORE the session name", async () => {
@@ -1496,6 +1553,20 @@ describe("view webview client", () => {
     expect(cta.querySelector(".build-cta-text")?.textContent).toContain("switch to Build");
     // The ACTION is the one-shot host modal, not a persistent button.
     expect(document.querySelector(".build-cta-btn")).toBeFalsy();
+  });
+
+  it("does NOT ask to switch to Build when the user already did (a pending switch)", async () => {
+    // Analyze prepared the previews and the user flipped to Build while that run worked: the
+    // banner would tell them to do what they have done, so it is not shown.
+    await loadView();
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, mode: "agent", models: [], providerModels: [], contextWindow: 128000 } });
+    hostMessage({ type: "previewReady" });
+    expect(document.querySelector(".build-cta")).toBeFalsy();
+
+    // Still in Analyze → the banner IS the point.
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, mode: "analyze", models: [], providerModels: [], contextWindow: 128000 } });
+    hostMessage({ type: "previewReady" });
+    expect(document.querySelector(".build-cta")).toBeTruthy();
   });
 
   it("ignores a STALE config push (out-of-order async responses)", async () => {
@@ -3637,28 +3708,67 @@ describe("view webview client", () => {
     }
   });
 
-  it("keeps the Mode and Parallel switches usable while the session works (the change lands next turn)", async () => {
-    // Reported: a click on Analyze → Build (and Parallel → OFF) during a run did nothing
-    // at all, so the UI showed one thing and the run did another. They are not request
-    // parameters: the agent re-reads them at every turn, so the change belongs at the
-    // next turn boundary. Everything that configures the REQUEST stays locked.
+  it("locks Mode and Parallel while the session works — like the request parameters, but it says why", async () => {
+    // Reported: a click on Analyze → Build (and Parallel → OFF) during a run did nothing at
+    // all, so the UI showed one thing and the run did another. Two ways out of that lie: let
+    // the click land, or lock it AND say so. The lock wins — the policies are decided once per
+    // run (Agent.runMode), so nothing can be switched under a run — and the tooltip carries
+    // the reason, which is what the silent lock never did.
     await loadView();
     hostMessage({ type: "status", active: true });
 
     const modeBtn = document.getElementById("mode-btn") as HTMLButtonElement;
     const parallelBtn = document.getElementById("parallel-btn") as HTMLButtonElement;
     const modelBtn = document.getElementById("model-btn") as HTMLButtonElement;
-    expect(modeBtn.disabled).toBe(false);
-    expect(parallelBtn.disabled).toBe(false);
-    // …while the request parameters (model, window, samplers, output, compact) stay locked.
+    // The two behaviour pills are locked exactly like the request parameters…
+    expect(modeBtn.disabled).toBe(true);
+    expect(parallelBtn.disabled).toBe(true);
     expect(modelBtn.disabled).toBe(true);
     expect((document.getElementById("ctx-range") as HTMLInputElement).disabled).toBe(true);
     expect((document.getElementById("compact-btn") as HTMLButtonElement).disabled).toBe(true);
+    // …but they are NOT locked in silence: each names the policy the run is using and the way
+    // out, so the row can never disagree with the run behind the user's back.
+    expect(modeBtn.title).toContain("locked to this run");
+    expect(modeBtn.title).toContain("Stop");
+    expect(parallelBtn.title).toContain("locked to this run");
+    expect(parallelBtn.title).toContain("Stop");
 
-    // And the click really reaches the host while the run is going.
+    // And no click reaches the host while the run is going.
     posted.length = 0;
-    parallelBtn.click();
-    expect(posted.some((m) => (m as { type?: string }).type === "setParallel")).toBe(true);
+    parallelBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    modeBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(posted.some((m) => /setParallel|setMode/.test((m as { type?: string }).type ?? ""))).toBe(false);
+  });
+
+  it("a session switch re-reads the run's policies (a marker for the OLD run would be a lie)", async () => {
+    // The pending marker describes the run the panel is following. Switching to another
+    // session that is working in Build must not carry the previous one's Analyze over: the
+    // pill would say "applies to the next run — this one is still Analyze" about a run that
+    // IS Build.
+    await loadView();
+    const btn = document.getElementById("mode-btn") as HTMLButtonElement;
+    hostMessage({ type: "status", active: true }); // session A works, in Analyze
+    // A pending choice can only arrive from the HOST while it works (the pill is disabled),
+    // so that is what a stale marker would have been built from.
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, mode: "agent", models: [], providerModels: [], contextWindow: 128000 } });
+    expect(btn.classList.contains("is-pending")).toBe(true);
+
+    hostMessage({
+      type: "switchView",
+      sessions: [{ id: "b", name: "B", createdAt: 1, updatedAt: 2, messageCount: 1 }],
+      openIds: ["b"],
+      activeId: "b",
+      messages: [{ role: "user", content: "go", timestamp: 1 }],
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, mode: "agent", models: [], providerModels: [], contextWindow: 128000 },
+      workingIds: ["b"],
+      streaming: true,
+    });
+
+    expect(btn.textContent).toContain("Build"); // the new session's mode
+    expect(btn.classList.contains("is-pending")).toBe(false);
+    // Still working — but now on THIS run's policy, so the marker is gone on both counts.
+    expect(btn.title).toContain("locked to this run");
+    expect(btn.title).toContain("Build");
   });
 
   it("disables the tab × of a WORKING session (switching stays allowed)", async () => {
@@ -4712,14 +4822,15 @@ describe("soft steering + pending bubbles (webview)", () => {
     // On a queued message: the button OFFERS the steer, i.e. delivery FIRST.
     expect(queued.textContent).toBe("→ Steer");
     expect(queued.title).toMatch(/first/i);
-    // The fold arrow is at the START of the row (where every other Harny toggle
-    // lives), the action buttons at the END.
+    // The row is badge + message + commands, and the FOLD sits with the commands at
+    // the END — never in front of the text.
     const row = rows[0];
-    expect(row.firstElementChild?.classList.contains("pending-more")).toBe(true);
-    expect(row.querySelector(".pending-actions")?.contains(steer)).toBe(true);
-    expect(row.querySelector(".pending-actions")?.contains(row.querySelector(".pending-more")!)).toBe(false);
-    // The badge still follows the text (badge, then the message).
-    expect(row.querySelector(".pending-badge")?.nextElementSibling?.classList.contains("pending-text")).toBe(true);
+    expect(row.firstElementChild).toBe(row.querySelector(".pending-badge"));
+    const actions = row.querySelector(".pending-actions");
+    expect(actions?.contains(steer)).toBe(true);
+    expect(actions?.contains(row.querySelector(".pending-toggle"))).toBe(true);
+    // The text is the middle column, so the attachments can sit under it.
+    expect(row.querySelector(".pending-main > .pending-text")).toBeTruthy();
   });
 
   it("posts the conversion, asking for the OPPOSITE mode", async () => {
@@ -4752,15 +4863,50 @@ describe("soft steering + pending bubbles (webview)", () => {
     expect(body.textContent).toContain("\n");
   });
 
+  it("shows a message's attachments INSIDE its bubble, as a user bubble does", async () => {
+    await loadView();
+    hostMessage({
+      type: "pending",
+      items: [
+        {
+          id: "q1",
+          mode: "queue",
+          text: "look at these",
+          attachments: [
+            { name: "shot.png", size: 10, isImage: true, dataUri: "data:image/png;base64,AAAA" },
+            { name: "notes.txt", size: 5 },
+          ],
+        },
+      ],
+    });
+    const row = document.querySelector("#pending-area .pending-msg") as HTMLElement;
+    const extras = row.querySelector(".pending-extras") as HTMLElement;
+    // The SAME row a user bubble renders: the image as a clickable thumbnail…
+    expect((extras.querySelector("img") as HTMLImageElement).getAttribute("src")).toBe(
+      "data:image/png;base64,AAAA",
+    );
+    // …and the non-image as a card carrying its name.
+    expect(extras.textContent).toContain("notes.txt");
+    // The paperclip still leads the text (the row says WHAT is attached at a glance).
+    expect(row.querySelector(".pending-text")?.textContent).toContain("📎");
+    // There IS something inside, so the fold is offered with no measurement needed —
+    // and the row is still born folded.
+    const fold = row.querySelector(".pending-toggle") as HTMLElement;
+    expect(fold.classList.contains("hidden")).toBe(false);
+    expect(row.classList.contains("text-collapsed")).toBe(true);
+  });
+
   /**
    * The DECISION ("does this text wrap?") is measured on the rendered element, and
-   * jsdom computes no layout — so its rule lives in a pure module with its own
-   * tests (pending-fold.test.ts: fits / wraps / no-measurement). What is tested
-   * here is the WIRING: one control per bubble, hidden until a measurement says
-   * otherwise, folding the text on click, and never stranding a collapsed message.
+   * jsdom computes no layout — so its rule lives in a pure module with its own tests
+   * (pending-fold.test.ts). What is tested here is the WIRING: one fold per bubble,
+   * born folded, offered only where a measurement (or the previews) justifies it.
    */
-  describe("per-bubble collapse control", () => {
-    it("gives every bubble its own control, hidden with no layout to justify it", async () => {
+  describe("per-bubble fold", () => {
+    const rowsHere = (): HTMLElement[] =>
+      [...document.querySelectorAll<HTMLElement>("#pending-area .pending-msg")];
+
+    it("is born folded, one line per message, with its own fold next to the commands", async () => {
       await loadView();
       hostMessage({
         type: "pending",
@@ -4769,58 +4915,58 @@ describe("soft steering + pending bubbles (webview)", () => {
           { id: "s1", mode: "steer", text: "also short" },
         ],
       });
-      const controls = [...document.querySelectorAll("#pending-area .pending-more")];
-      expect(controls).toHaveLength(2);
-      // jsdom reports no line height: the control exists but is NOT offered
-      // (hidden, with its space reserved — see the CSS contract).
-      expect(controls.every((c) => c.classList.contains("hidden"))).toBe(true);
-      for (const c of controls) expect(c.parentElement?.firstElementChild).toBe(c);
+      const rows = rowsHere();
+      expect(rows).toHaveLength(2);
+      // Every row starts folded — the one just typed included.
+      expect(rows.every((r) => r.classList.contains("text-collapsed"))).toBe(true);
+      const folds = rows.map((r) => r.querySelector<HTMLButtonElement>(".pending-toggle")!);
+      // jsdom reports no line height: the fold exists but is NOT offered (hidden with
+      // its space reserved — see the CSS contract), and it belongs to the commands.
+      expect(folds.every((f) => f.classList.contains("hidden"))).toBe(true);
+      expect(folds.every((f) => f.textContent === "▶")).toBe(true);
+      for (const fold of folds) {
+        expect(fold.parentElement?.classList.contains("pending-actions")).toBe(true);
+      }
     });
 
-    it("folds the bubble to one line and back, saying which way it goes", async () => {
+    it("opens and folds the bubble, announcing which way it goes", async () => {
       await loadView();
       hostMessage({ type: "pending", items: [{ id: "q1", mode: "queue", text: "a rather long message" }] });
-      const row = document.querySelector("#pending-area .pending-msg") as HTMLElement;
-      const more = row.querySelector(".pending-more") as HTMLButtonElement;
-      more.classList.remove("hidden"); // as a real measurement would
+      const row = rowsHere()[0];
+      const fold = row.querySelector(".pending-toggle") as HTMLButtonElement;
 
-      more.click();
-      expect(row.classList.contains("text-collapsed")).toBe(true);
-      expect(more.textContent).toBe("▶");
-      expect(more.title).toMatch(/whole/i);
-      // It is a disclosure control: its state is announced, not just drawn.
-      expect(more.getAttribute("aria-expanded")).toBe("false");
-      expect(more.getAttribute("aria-label")).toMatch(/whole/i);
-
-      more.click();
+      fold.click();
       expect(row.classList.contains("text-collapsed")).toBe(false);
-      expect(more.textContent).toBe("▼");
-      expect(more.title).toMatch(/collapse/i);
-      expect(more.getAttribute("aria-expanded")).toBe("true");
-    });
+      expect(fold.textContent).toBe("▼");
+      expect(fold.title).toMatch(/collapse/i);
+      // It is a disclosure control: its state is announced, not just drawn.
+      expect(fold.getAttribute("aria-expanded")).toBe("true");
+      expect(fold.getAttribute("aria-label")).toMatch(/collapse/i);
 
-    it("never strands a collapsed bubble when the panel is resized", async () => {
-      await loadView();
-      hostMessage({ type: "pending", items: [{ id: "q1", mode: "queue", text: "a rather long message" }] });
-      const row = document.querySelector("#pending-area .pending-msg") as HTMLElement;
-      const more = row.querySelector(".pending-more") as HTMLButtonElement;
-      more.classList.remove("hidden");
-      more.click();
+      fold.click();
       expect(row.classList.contains("text-collapsed")).toBe(true);
-
-      // A resize re-measures; with no layout to read, "does it overflow?" answers
-      // no — but the bubble IS collapsed, so the way back must stay visible.
-      window.dispatchEvent(new Event("resize"));
-
-      expect(more.classList.contains("hidden")).toBe(false);
+      expect(fold.textContent).toBe("▶");
+      expect(fold.title).toMatch(/whole/i);
+      expect(fold.getAttribute("aria-expanded")).toBe("false");
+      expect(fold.getAttribute("aria-label")).toMatch(/whole/i);
     });
 
-    it("re-measures on resize (the panel can be narrowed after the render)", async () => {
+    it("offers the fold when a resize gives the message a second line", async () => {
       await loadView();
-      hostMessage({ type: "pending", items: [{ id: "q1", mode: "queue", text: "one line for now" }] });
-      const more = document.querySelector(".pending-more") as HTMLButtonElement;
-      expect(() => window.dispatchEvent(new Event("resize"))).not.toThrow();
-      expect(more.classList.contains("hidden")).toBe(true);
+      hostMessage({ type: "pending", items: [{ id: "q1", mode: "queue", text: "wraps only when narrow" }] });
+      const row = rowsHere()[0];
+      const body = row.querySelector(".pending-text") as HTMLElement;
+      const fold = row.querySelector(".pending-toggle") as HTMLButtonElement;
+      expect(fold.classList.contains("hidden")).toBe(true);
+
+      // jsdom lays nothing out, so the measurement is fed the way a layout engine
+      // would answer it: a real line height, and content taller than one line.
+      body.style.lineHeight = "18px";
+      Object.defineProperty(body, "scrollHeight", { value: 36, configurable: true });
+      window.dispatchEvent(new Event("resize"));
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+
+      expect(fold.classList.contains("hidden")).toBe(false);
     });
   });
 
@@ -5691,6 +5837,26 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
     expect(auto().disabled).toBe(true);
     expect(tab().classList.contains("hidden")).toBe(false);
     expect(auto().classList.contains("hidden")).toBe(false);
+  });
+
+  it("Collapse all also folds the pending bubbles (and the pill watches them)", async () => {
+    await loadView();
+    hostMessage({ type: "pending", items: [{ id: "q1", mode: "queue", text: "queued while it works" }] });
+    const row = document.querySelector("#pending-area .pending-msg") as HTMLElement;
+    const fold = row.querySelector(".pending-toggle") as HTMLButtonElement;
+
+    // Born folded: there is nothing to close yet.
+    expect(tab().disabled).toBe(true);
+
+    fold.click();
+    expect(row.classList.contains("text-collapsed")).toBe(false);
+    // An OPEN pending bubble is exactly what the pill is for.
+    expect(tab().disabled).toBe(false);
+
+    tab().click();
+    expect(row.classList.contains("text-collapsed")).toBe(true);
+    expect(fold.textContent).toBe("▶");
+    expect(tab().disabled).toBe(true);
   });
 
   it("Collapse all enables when a section is expanded and disables when it closes", async () => {
