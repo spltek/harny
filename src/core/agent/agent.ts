@@ -4,7 +4,10 @@ import { describeFetchError } from "../tools/url-utils";
 import type { EventBus } from "../events/event-bus";
 import type { ChatHistory } from "../history/chat-history";
 import type { ChatMessage, MessageMeta } from "../history/types";
-import { describeFaults, conversationFaults } from "../history/conversation-validity";
+import { conversationFaults, describeFaults } from "../history/conversation-validity";
+import { maskKeepTokens, maskOldToolResults } from "../history/observation-masking";
+import { isContextOverflowError, isRequestRejection, matchedOverflowSignature } from "../llm/context-overflow";
+import { estimateTokens } from "../sessions/compactor";
 import type { LLMProviderFactory, LLMMessage, Usage } from "../llm/types";
 import type { Tool, ToolCall, ToolRegistry, ToolResult } from "../tools";
 import {
@@ -127,6 +130,16 @@ export interface AgentDeps {
    * exceeded: it compacts at a step boundary, then the run continues. It
    * receives the run's abort signal so a user Stop cancels the compaction. */
   onTurnBoundary?: (signal: AbortSignal) => Promise<void> | void;
+  /** Called when the provider REJECTED a request because the input was too big:
+   * the host compacts the session in place and answers whether anything changed.
+   * When it did, the agent sends the SAME turn again — the safety net under every
+   * budget calculation, since our estimate is a heuristic and the declared window
+   * can be wrong. See {@link Agent.runLlmTurnWithOverflowRecovery}. */
+  onContextOverflow?: (signal: AbortSignal) => Promise<boolean> | boolean;
+  /** The USABLE context of the current turn (window − output reserve). Used to
+   * decide whether a rejection we cannot read was about size, and to size the
+   * masking of old tool results. Absent = those two features stay off. */
+  contextBudget?: () => number;
   /** Working directory, used to resolve delegate `resources` for the safe
    * parallelism decision (relative vs absolute paths must MATCH). */
   cwd?: () => string;
@@ -415,7 +428,7 @@ export class Agent implements ChatController {
     }
 
     this.guard.beginTurn();
-    const turnResult = await this.runLlmTurn();
+    const turnResult = await this.runLlmTurnWithOverflowRecovery();
     // An echoed synthetic label is NOT an answer: treat it as empty so the loop
     // guard nudges the model to actually act/answer instead of ending the run.
     const echoedLabel = isSyntheticToolSummary(turnResult.content);
@@ -759,18 +772,30 @@ export class Agent implements ChatController {
    */
   private llmConversation(): ChatMessage[] {
     const all = this.deps.history.conversation();
-    if (this.delegationEnabled) return all;
-    const droppedIds = new Set<string>();
-    const out: ChatMessage[] = [];
-    for (const m of all) {
-      if (m.role === "assistant" && m.toolCalls?.some((tc) => tc.name === DELEGATE_TOOL_NAME)) {
-        for (const tc of m.toolCalls) droppedIds.add(tc.id);
-        continue; // drop the whole Delegate turn
-      }
-      if (m.role === "tool" && m.toolCallId && droppedIds.has(m.toolCallId)) continue;
-      out.push(m);
-    }
-    return out;
+    const kept = this.delegationEnabled
+      ? all
+      : (() => {
+          const droppedIds = new Set<string>();
+          const out: ChatMessage[] = [];
+          for (const m of all) {
+            if (m.role === "assistant" && m.toolCalls?.some((tc) => tc.name === DELEGATE_TOOL_NAME)) {
+              for (const tc of m.toolCalls) droppedIds.add(tc.id);
+              continue; // drop the whole Delegate turn
+            }
+            if (m.role === "tool" && m.toolCallId && droppedIds.has(m.toolCallId)) continue;
+            out.push(m);
+          }
+          return out;
+        })();
+    // Old tool results become one-line stubs IN THIS VIEW (see
+    // observation-masking.ts): the newest output stays verbatim, the rest stops
+    // consuming the window without touching the stored history. It changes
+    // `content` only, so it cannot affect the wire rules checked just below.
+    const usable = this.deps.contextBudget?.() ?? 0;
+    if (usable <= 0) return kept;
+    const { messages, masked, savedTokens } = maskOldToolResults(kept, maskKeepTokens(usable), estimateTokens);
+    if (masked > 0) this.log(`masked ${masked} old tool result(s), ~${savedTokens} tokens saved`);
+    return messages;
   }
 
   /**
@@ -824,6 +849,69 @@ export class Agent implements ChatController {
       endedAt,
       durationMs: endedAt - r.startedAt,
     };
+  }
+
+  /**
+   * A turn, with recovery from a context overflow: when the provider rejects the
+   * request because the input is too big, compact the session and send the SAME
+   * turn again (bounded). For the user this is the difference between a session
+   * that dies and one that keeps working.
+   *
+   * Only reachable BEFORE a token is streamed: an overflow is a 4xx on the POST,
+   * so nothing was emitted and the retry cannot duplicate output.
+   */
+  private async runLlmTurnWithOverflowRecovery(toolDefinitionsOverride?: ToolDefinition[]): Promise<Awaited<ReturnType<Agent["runLlmTurn"]>>> {
+    const maxRecoveries = 2;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.runLlmTurn(toolDefinitionsOverride);
+      } catch (err) {
+        const signal = this.abortController?.signal;
+        if (attempt >= maxRecoveries || !signal || signal.aborted || !this.deps.onContextOverflow) throw err;
+        if (!this.isOverflowRejection(err)) throw err;
+        this.log(
+          `context overflow (${matchedOverflowSignature(err) ?? "wording not recognised"}) -> compacting and retrying the turn ` +
+            `(${attempt + 1}/${maxRecoveries})`,
+        );
+        const compacted = await this.deps.onContextOverflow(signal);
+        // Nothing to compact (or it failed): do not retry the same request twice.
+        if (!compacted) throw err;
+      }
+    }
+  }
+
+  /**
+   * True when a failure is (or very likely is) a context overflow.
+   *
+   * Two independent legs, on purpose: a provider's WORDING (see
+   * context-overflow.ts for the families) or — when we cannot read it — its own
+   * status plus OUR estimate of the request we just sent. Without the second leg,
+   * any backend that phrases the limit differently would still kill the session;
+   * with it, an unreadable 4xx sent at the ceiling is treated as size, and the
+   * cost of being wrong is one compaction.
+   */
+  private isOverflowRejection(err: unknown): boolean {
+    if (isContextOverflowError(err)) return true;
+    if (!isRequestRejection(err)) return false;
+    const budget = this.deps.contextBudget?.() ?? 0;
+    if (budget <= 0) return false;
+    return this.estimatedRequestTokens() >= budget * 0.9;
+  }
+
+  /**
+   * Size of the request this turn sends, by the same estimate the footer uses.
+   * Deliberately independent of the provider: it is what makes the second leg of
+   * {@link Agent.isOverflowRejection} work for any backend.
+   */
+  private estimatedRequestTokens(): number {
+    const system = this.deps.systemPrompt.build(this._mode, this.deps.tools.definitions());
+    return this.llmConversation().reduce(
+      (total, m) =>
+        total +
+        estimateTokens(m.content ?? "") +
+        estimateTokens((m.toolCalls ?? []).map((tc) => JSON.stringify(tc.arguments)).join("")),
+      estimateTokens(system),
+    );
   }
 
   private async runLlmTurn(toolDefinitionsOverride?: ToolDefinition[]): Promise<{

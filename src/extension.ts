@@ -158,6 +158,10 @@ export async function activate(context: ExtensionContext) {
   // the agent awaits it at every turn boundary so a long run compacts then
   // continues.
   let midRunCompact: ((sessionId: string, signal?: AbortSignal) => Promise<void>) | undefined;
+  // Context-overflow recovery (agent -> host) and the session's usable budget
+  // (host -> agent). Same single assignment point, once the view provider exists.
+  let overflowCompact: ((sessionId: string, signal?: AbortSignal) => Promise<boolean>) | undefined;
+  let sessionBudget: ((sessionId: string) => number) | undefined;
 
   const createAgent = (history: ChatHistory, sessionId: string): ChatController => {
     // One sub-agent runner per session: it owns the ephemeral sub-agent
@@ -177,6 +181,11 @@ export async function activate(context: ExtensionContext) {
       abortSubAgent: (toolCallId) => subAgents.abort(toolCallId),
       log: (m) => infoLog(`[agent] ${m}`),
       onTurnBoundary: (signal) => midRunCompact?.(sessionId, signal),
+      // The provider rejected a request as too big: compact and let the turn retry.
+      onContextOverflow: (signal) => overflowCompact?.(sessionId, signal) ?? false,
+      // The USABLE context of this session: the agent sizes its masking and its
+      // own overflow check against it, without knowing which model it serves.
+      contextBudget: () => sessionBudget?.(sessionId) ?? 0,
       cwd,
       // Per-session identity: stateful tools (TodoWrite) keep separate state.
       ownerId: sessionId,
@@ -211,6 +220,8 @@ export async function activate(context: ExtensionContext) {
   );
   viewProvider.setContext(context);
   midRunCompact = (id) => viewProvider.maybeCompactDuringRun(id);
+  overflowCompact = (id, signal) => viewProvider.compactForOverflow(id, signal);
+  sessionBudget = (id) => viewProvider.usableBudgetFor(id);
 
   // The sessions live in the CENTRAL home bucket keyed by the root: when the
   // open folder set changes, re-derive the single root and rebuild the view

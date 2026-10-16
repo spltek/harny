@@ -51,6 +51,13 @@ export function usableContext(window: number, reserve: number): number {
  */
 export const REQUEST_SAFETY_MARGIN = 8_192;
 
+/**
+ * The margin as a SHARE of the window, so it scales down on small models instead
+ * of swallowing them: a fixed 8192 is 8% of a 100k model but 100% of an 8k one.
+ * The clamp uses `min(REQUEST_SAFETY_MARGIN, window × this)`.
+ */
+export const REQUEST_SAFETY_MARGIN_SHARE = 0.05;
+
 /** Coerce a JSON message value to a number (NaN/undefined -> default). */
 export function toContextWindow(v: unknown): number {
   return clampContextWindow(typeof v === "number" ? v : Number(v));

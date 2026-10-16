@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { OpenAIChatProvider, describeApiError } from "./openai-chat-provider";
+import { OpenAIChatProvider, describeApiError, needsMaxCompletionTokens } from "./openai-chat-provider";
 import { FakeHttpClient, sseResponse } from "./http-client.test-utils";
 import type { HttpResponse } from "./http-client";
 import type { HarnyConfig } from "../config/types";
@@ -27,6 +27,56 @@ async function collect(gen: AsyncGenerator<StreamChunk>): Promise<StreamChunk[]>
 }
 
 describe("OpenAIChatProvider", () => {
+  it("renames the output field when the model demands max_completion_tokens (cross-model)", async () => {
+    // A reasoning model (OpenAI o-series/gpt-5, or a gateway mirroring it) rejects
+    // `max_tokens` BY NAME. No model list keeps up with that, so the provider
+    // follows the server's own instruction: rename and retry ONCE.
+    const http = new FakeHttpClient();
+    http.respondWith(
+      new Response(
+        '{"error":{"message":"Unsupported parameter: \'max_tokens\' is not supported with this model. Use \'max_completion_tokens\' instead.","type":"invalid_request_error"}}',
+        { status: 400 },
+      ),
+      sseResponse('data: {"choices":[{"delta":{"content":"hi"}}]}', "data: [DONE]"),
+    );
+    const provider = new OpenAIChatProvider(config, http, tools);
+
+    const chunks = await collect(provider.stream([{ role: "user", content: "hi" }]));
+
+    // Two requests: the rejected one and the adapted one.
+    expect(http.requests).toHaveLength(2);
+    expect(JSON.parse(http.requests[0].body).max_tokens).toBe(4096);
+    const retried = JSON.parse(http.requests[1].body);
+    expect(retried.max_completion_tokens).toBe(4096);
+    expect("max_tokens" in retried).toBe(false); // never both: strict servers refuse it
+    // …and the answer streams normally.
+    expect(chunks.some((c) => c.type === "text" && c.content === "hi")).toBe(true);
+  });
+
+  it("does NOT rename for a rejection that merely mentions the parameter", async () => {
+    const http = new FakeHttpClient();
+    http.respondWith(
+      new Response('{"error":{"message":"Invalid value for max_completion_tokens: 999999"}}', { status: 400 }),
+    );
+    const provider = new OpenAIChatProvider(config, http, tools);
+
+    await expect(collect(provider.stream([{ role: "user", content: "hi" }]))).rejects.toThrow(/max_completion_tokens/);
+    expect(http.requests).toHaveLength(1); // no pointless second attempt
+  });
+
+  it("recognises the rename signal only on a rejection that asks for it", () => {
+    expect(
+      needsMaxCompletionTokens(
+        400,
+        "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.",
+      ),
+    ).toBe(true);
+    expect(needsMaxCompletionTokens(400, "unknown parameter: max_completion_tokens")).toBe(true);
+    expect(needsMaxCompletionTokens(400, "Invalid value for max_completion_tokens: 0")).toBe(false);
+    expect(needsMaxCompletionTokens(500, "Unsupported parameter: max_completion_tokens")).toBe(false);
+    expect(needsMaxCompletionTokens(400, "maximum context length is 128000 tokens")).toBe(false);
+  });
+
   it("posts to the chat completions endpoint with auth headers and tools", async () => {
     const http = new FakeHttpClient();
     http.respondWith(sseResponse('data: {"choices":[{"delta":{"content":"hi"}}]}', "data: [DONE]"));

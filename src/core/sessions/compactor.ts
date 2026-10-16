@@ -63,7 +63,19 @@ export interface CompactionPlan {
 /** Rough token estimate: ~4 chars per token. */
 export function estimateTokens(text: string): number {
   if (!text) return 0;
-  return Math.ceil(text.length / 4);
+  let ascii = 0;
+  let wide = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) < 128) ascii++;
+    else wide++;
+  }
+  // ASCII (code, English, Italian prose): ~4 chars per token — the usual rule for
+  // byte-pair tokenizers, and it holds across providers because it is a property
+  // of the TEXT, not of a model. Anything else (CJK, accented letters, emoji)
+  // costs 1 token per unit or MORE, counted here at 1 on purpose: overestimating
+  // compacts a little earlier, underestimating lets a request hit the provider's
+  // hard ceiling. Never narrower than the old chars/4 for pure ASCII.
+  return Math.ceil(ascii / 4 + wide);
 }
 
 /** True when the current context fill reaches the compaction threshold. */
@@ -167,8 +179,12 @@ export const MIN_KEEP_RECENT_TOKENS = 8_000;
  * small models (where 20k would be most of the window), never up on big ones.
  */
 export function keepRecentTokensFor(usableTokens: number): number {
-  const share = Math.round(Math.max(0, usableTokens) * 0.05);
-  return Math.min(KEEP_RECENT_TOKENS, Math.max(MIN_KEEP_RECENT_TOKENS, share));
+  const usable = Math.max(0, usableTokens);
+  // Both bounds scale: an 8k floor is right for a 100k model and is 100% of an 8k
+  // one (where keeping "the same" would keep everything and compact nothing).
+  const floor = Math.min(MIN_KEEP_RECENT_TOKENS, Math.round(usable * 0.25));
+  const share = Math.round(usable * 0.05);
+  return Math.min(KEEP_RECENT_TOKENS, Math.max(floor, share));
 }
 
 /**

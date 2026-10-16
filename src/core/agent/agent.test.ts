@@ -78,6 +78,8 @@ function buildHarness(
     maxTurns?: number;
     log?: (message: string) => void;
     onTurnBoundary?: (signal: AbortSignal) => Promise<void> | void;
+    onContextOverflow?: (signal: AbortSignal) => Promise<boolean> | boolean;
+    contextBudget?: () => number;
     loopGuard?: LoopGuardOptions;
     streamIdleTimeoutMs?: number;
     onFileChanged?: (change: { path: string; tool: string }) => void;
@@ -102,6 +104,8 @@ function buildHarness(
     maxTurns: opts.maxTurns,
     log: opts.log,
     onTurnBoundary: opts.onTurnBoundary,
+    onContextOverflow: opts.onContextOverflow,
+    contextBudget: opts.contextBudget,
     loopGuard: opts.loopGuard,
     streamIdleTimeoutMs: opts.streamIdleTimeoutMs,
     onFileChanged: opts.onFileChanged,
@@ -3421,6 +3425,219 @@ describe("Agent — per-turn meta (real usage + timings)", () => {
     expect(meta.provider).toBeUndefined();
     expect(meta.contextWindow).toBeUndefined();
     expect(meta.maxTokens).toBe(4096);
+  });
+});
+
+describe("context-overflow recovery (cross-provider)", () => {
+  /** A factory that rejects the FIRST request with `boom` and answers later. */
+  function flakyFactory(boom: string | undefined, answer = "recovered") {
+    const requests: unknown[][] = [];
+    const factory = {
+      create: () => ({
+        protocol: "chat" as const,
+        async *stream(messages: unknown[]) {
+          requests.push(messages);
+          if (requests.length === 1 && boom) throw new Error(boom);
+          yield { type: "text", content: answer };
+        },
+      }),
+    } as unknown as ReturnType<typeof fakeFactory>;
+    return { factory, requests };
+  }
+
+  const OPENAI_OVERFLOW =
+    'OpenAI API error 400: {"error":{"message":"This model\'s maximum context length is 128000 tokens. ' +
+    'However, your messages resulted in 130000 tokens.","code":"context_length_exceeded"}}';
+
+  function build(opts: {
+    factory: ReturnType<typeof fakeFactory>;
+    onContextOverflow?: (signal: AbortSignal) => boolean;
+    contextBudget?: () => number;
+  }) {
+    const history = new InMemoryChatHistory();
+    const tools = new ToolRegistry([makeTool("FakeTool")]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: opts.factory,
+      tools,
+      history,
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/workspace"),
+      ...(opts.onContextOverflow ? { onContextOverflow: opts.onContextOverflow } : {}),
+      ...(opts.contextBudget ? { contextBudget: opts.contextBudget } : {}),
+    });
+    return { agent, history };
+  }
+
+  it("compacts and retries the SAME turn when the provider says the input is too big", async () => {
+    const { factory, requests } = flakyFactory(OPENAI_OVERFLOW);
+    let compactions = 0;
+    const { agent, history } = build({
+      factory,
+      onContextOverflow: () => {
+        compactions++;
+        // What the host does: the history really shrinks (that is what makes a
+        // retry meaningful).
+        history.replace([
+          { role: "user", content: "summary of past work", timestamp: 1 },
+          { role: "assistant", content: "noted", timestamp: 2 },
+        ]);
+        return true;
+      },
+    });
+
+    await agent.send("go");
+
+    expect(compactions).toBe(1); // asked the host exactly once
+    expect(requests).toHaveLength(2); // …and sent the same turn again
+    // The retry went out with the COMPACTED history, not the one that was rejected.
+    expect(requests[1].some((m: any) => m.content === "summary of past work")).toBe(true);
+    // The run finished normally: the user sees an answer, not an error.
+    expect(history.all().some((m) => m.role === "assistant" && m.content === "recovered")).toBe(true);
+  });
+
+  it("does NOT compact on an unrelated rejection (no false recovery)", async () => {
+    const { factory, requests } = flakyFactory('OpenAI API error 400: {"error":{"message":"Invalid schema for function Shell"}}');
+    let compactions = 0;
+    const { agent, history } = build({
+      factory,
+      onContextOverflow: () => {
+        compactions++;
+        return true;
+      },
+      // A REAL budget with a small history: our own estimate is nowhere near the
+      // ceiling, so leg 2 cannot fire either. (With an absurdly small budget ANY
+      // request would look "full", which is the scenario the other test covers.)
+      contextBudget: () => 100_000,
+    });
+
+    await agent.send("go");
+
+    expect(compactions).toBe(0);
+    expect(requests).toHaveLength(1);
+    expect(history.all().map((m) => m.content ?? "").join(" | ")).toContain("Invalid schema");
+  });
+
+  it("recovers from a rejection we CANNOT read, when our own estimate says we were at the ceiling", async () => {
+    // Leg 2 of the detection: no known wording, but the request we sent was full.
+    // Without it, any backend phrasing the limit differently would still die.
+    const { factory, requests } = flakyFactory('OpenAI API error 400: {"error":{"message":"eltilov erom"}}');
+    let compactions = 0;
+    const { agent } = build({
+      factory,
+      onContextOverflow: () => {
+        compactions++;
+        return true;
+      },
+      // 10 tokens of budget against a system prompt + history of hundreds: our own
+      // estimate is far above 90% of it.
+      contextBudget: () => 10,
+    });
+
+    await agent.send("go");
+
+    expect(compactions).toBe(1);
+    expect(requests).toHaveLength(2);
+  });
+
+  it("does not retry when the host could not free anything (no pointless loop)", async () => {
+    const { factory, requests } = flakyFactory(OPENAI_OVERFLOW);
+    let compactions = 0;
+    const { agent } = build({
+      factory,
+      onContextOverflow: () => {
+        compactions++;
+        return false; // nothing to summarize: the same request would fail again
+      },
+    });
+
+    await agent.send("go");
+
+    expect(compactions).toBe(1);
+    expect(requests).toHaveLength(1); // no blind retry
+  });
+
+  it("never treats a network failure as an overflow, even with a full context", async () => {
+    const { factory, requests } = flakyFactory("fetch failed: connect ECONNREFUSED");
+    let compactions = 0;
+    const { agent } = build({
+      factory,
+      onContextOverflow: () => {
+        compactions++;
+        return true;
+      },
+      contextBudget: () => 10,
+    });
+
+    await agent.send("go");
+
+    expect(compactions).toBe(0);
+    expect(requests).toHaveLength(1);
+  });
+});
+
+describe("observation masking in the request", () => {
+  const big = (tokens: number): string => "x".repeat(tokens * 4);
+
+  function buildRequestRecorder(contextBudget?: () => number) {
+    const seen: any[][] = [];
+    const factory = {
+      create: () => ({
+        protocol: "chat" as const,
+        async *stream(messages: any[]) {
+          seen.push(messages);
+          yield { type: "text", content: "ok" };
+        },
+      }),
+    } as unknown as ReturnType<typeof fakeFactory>;
+    const history = new InMemoryChatHistory();
+    const tools = new ToolRegistry([makeTool("FakeTool")]);
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools,
+      history,
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/workspace"),
+      ...(contextBudget ? { contextBudget } : {}),
+    });
+    return { agent, history, seen };
+  }
+
+  const twoToolTurns = (): ChatMessage[] => [
+    { role: "user", content: "go", timestamp: 1 },
+    { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "Shell", arguments: {} }], timestamp: 2 },
+    { role: "tool", content: big(5000), toolCallId: "c1", timestamp: 3 },
+    { role: "assistant", content: "done", timestamp: 4 },
+    { role: "assistant", content: "", toolCalls: [{ id: "c2", name: "Shell", arguments: {} }], timestamp: 5 },
+    { role: "tool", content: big(5000), toolCallId: "c2", timestamp: 6 },
+  ];
+
+  it("sends the NEWEST tool output verbatim and stubs the older ones", async () => {
+    // A small model: the budget forces the OLD result into a stub.
+    const { agent, history, seen } = buildRequestRecorder(() => 32_000);
+    history.replace(twoToolTurns());
+
+    await agent.send("again");
+
+    const request = seen[seen.length - 1];
+    const toolMsgs = request.filter((m: any) => m.role === "tool");
+    // The newest output (c2) is what the model is working on: verbatim.
+    expect(String(toolMsgs[toolMsgs.length - 1].content)).toBe(big(5000));
+    // The older one is a stub, and it says which tool produced it…
+    expect(String(toolMsgs[0].content)).toContain("masked to save context");
+    expect(String(toolMsgs[0].content)).toContain("Shell");
+    // …while the STORED history keeps everything (the transcript is untouched).
+    expect(history.all().find((m) => m.toolCallId === "c1")?.content).toBe(big(5000));
+  });
+
+  it("changes nothing when there is no budget (feature off)", async () => {
+    const { agent, history, seen } = buildRequestRecorder();
+    history.replace(twoToolTurns());
+
+    await agent.send("again");
+
+    expect(seen[seen.length - 1].some((m: any) => String(m.content).includes("masked"))).toBe(false);
   });
 });
 

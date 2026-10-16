@@ -40,6 +40,17 @@ function abortError(): Error {
   return e;
 }
 
+/**
+ * True when the provider rejected the request ONLY because of the output-length
+ * field's NAME — the signal being its own hint. Pure, so the rule is testable
+ * without a server (see openai-chat-provider.test.ts).
+ */
+export function needsMaxCompletionTokens(status: number, text: string): boolean {
+  if (status !== 400 && status !== 422) return false;
+  if (!/max_completion_tokens/i.test(text)) return false;
+  return /Unsupported parameter|not supported|use .*max_completion_tokens|unknown (parameter|field)|unrecognized/i.test(text);
+}
+
 /** Sleep that rejects with an AbortError when the signal fires (Stop during backoff). */
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -227,8 +238,22 @@ export class OpenAIChatProvider implements LLMProvider {
     }
 
     if (!response.ok) {
-      const text = await response.text();
-      throw new Error(describeApiError(response.status, text));
+      let text = await response.text();
+      // CROSS-MODEL: some models reject `max_tokens` by NAME (OpenAI's reasoning
+      // ones demand `max_completion_tokens`, and gateways mirror them). No model
+      // list keeps up with that, so the SERVER's own instruction is followed: the
+      // field is renamed and the request sent again, ONCE. Because the rule lives
+      // in the response and not in a model table, any backend that behaves this way
+      // works without being known in advance.
+      if (needsMaxCompletionTokens(response.status, text) && "max_tokens" in body) {
+        const patched: Record<string, unknown> = { ...body, max_completion_tokens: body.max_tokens };
+        delete patched.max_tokens;
+        const retry = await this.http.post(url, JSON.stringify(patched), headers, signal);
+        if (!retry.ok) throw new Error(describeApiError(retry.status, await retry.text()));
+        response = retry;
+      } else {
+        throw new Error(describeApiError(response.status, text));
+      }
     }
 
     const seenToolCallIndices = new Set<number>();

@@ -22,6 +22,28 @@ function a(content: string): ChatMessage {
   return { role: "assistant", content, timestamp: 2 };
 }
 
+describe("estimateTokens — the same rule for every provider, widened for non-ASCII", () => {
+  it("keeps the classic ~4 chars per token for ASCII", () => {
+    expect(estimateTokens("a".repeat(400))).toBe(100);
+    expect(estimateTokens("")).toBe(0);
+  });
+
+  it("counts CJK at about a token per character", () => {
+    // chars/4 would say 25 for 100 ideograms: an estimate 4x too low is what makes
+    // a request hit the provider's hard ceiling.
+    expect(estimateTokens("我".repeat(100))).toBe(100);
+  });
+
+  it("costs more for accented text than for the same ASCII text", () => {
+    expect(estimateTokens("città perché".repeat(10))).toBeGreaterThan(estimateTokens("citta perche".repeat(10)));
+  });
+
+  it("never UNDERestimates versus the ASCII-only rule", () => {
+    const mixed = "hello 世界 àèìòù";
+    expect(estimateTokens(mixed)).toBeGreaterThanOrEqual(Math.ceil(mixed.length / 4));
+  });
+});
+
 describe("shouldCompact", () => {
   it("triggers at the threshold % of the declared context window", () => {
     const s = DEFAULT_COMPACTION; // 80% of 200000 = 160000

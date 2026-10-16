@@ -3296,9 +3296,12 @@ describe("ChatViewProvider model limits (context + output)", () => {
     // UI shows and the user edits.
     expect(registry.get("s1")!.outputTokens).toBe(512_000);
     // The REQUEST budget is additionally clamped to the room left: with no measured
-    // input yet, a 128k window leaves 128k − 8k of safety margin. Sending 512k of
-    // output on top of any input is exactly what the provider rejects.
-    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ maxTokens: 119_808 }));
+    // input yet, a 128k window leaves the margin. Sending 512k of output on top of
+    // any input is exactly what the provider rejects.
+    // The margin SCALES (min(8192, 5% of the window)): on 128k that is 6.4k, and
+    // the 8192 it was tuned at only applies from 164k up — a fixed 8k would be 100%
+    // of an 8k model's window, i.e. no room at all for its own answer.
+    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ maxTokens: 121_600 }));
   });
 
   it("clamps the output budget to the room left: the request must FIT `input + max_tokens ≤ window`", async () => {

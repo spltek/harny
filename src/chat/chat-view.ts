@@ -19,7 +19,7 @@ import { debugLog, infoLog } from "../logger";
 import { preprocessJsonc } from "../core/config/jsonc";
 import { renderViewHtml } from "./view-html";
 import { toTemperature, toTopP } from "./temperature";
-import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, MAX_CONTEXT_WINDOW, MAX_OUTPUT_TOKENS, MIN_OUTPUT_TOKENS, REQUEST_SAFETY_MARGIN, clampAdoptedContextWindow, clampAdoptedOutputTokens, clampContextWindow, clampOutputTokens, toContextWindow, toOutputTokens, usableContext } from "./context-window";
+import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, MAX_CONTEXT_WINDOW, MAX_OUTPUT_TOKENS, MIN_OUTPUT_TOKENS, REQUEST_SAFETY_MARGIN, REQUEST_SAFETY_MARGIN_SHARE, clampAdoptedContextWindow, clampAdoptedOutputTokens, clampContextWindow, clampOutputTokens, toContextWindow, toOutputTokens, usableContext } from "./context-window";
 import { PanelModalQueue } from "./panel-modal-queue";
 import { Compactor, DEFAULT_COMPACTION, CompactionSettings, keepRecentTokensFor, planCompactionToBudget, shouldCompact, estimateTokens, serializeConversation, estimateContextTokens, realWindowTokens, splitSummary, summaryBudgetTokens, toCompactionThresholdPercent } from "../core/sessions/compactor";
 import type { SkillRegistry } from "../core/skills/skill-registry";
@@ -1460,7 +1460,14 @@ export class ChatViewProvider implements WebviewViewProvider {
    * session with no room left is a compaction problem, not an output problem.
    */
   private outputBudgetFor(rt?: SessionRuntime, configured?: number): number {
-    const room = Math.max(MIN_OUTPUT_TOKENS, this.budgetWindow(rt) - (rt?.contextTokens ?? 0) - REQUEST_SAFETY_MARGIN);
+    const window = this.budgetWindow(rt);
+    // The margin absorbs the difference between our ESTIMATE and the provider's
+    // real tokenizer (plus the tokens a request adds on its own), so it must not
+    // be a bigger share of a small window than of a big one: a fixed 8192 is 8% of
+    // a 100k model but 100% of an 8k one, where it would leave no room at all.
+    // Scaled, and never more than the absolute value it was tuned at.
+    const margin = Math.min(REQUEST_SAFETY_MARGIN, Math.floor(window * REQUEST_SAFETY_MARGIN_SHARE));
+    const room = Math.max(MIN_OUTPUT_TOKENS, window - (rt?.contextTokens ?? 0) - margin);
     return Math.min(configured ?? this.configuredOutputTokens(rt), room);
   }
 
@@ -1852,9 +1859,16 @@ export class ChatViewProvider implements WebviewViewProvider {
     this.pushSessionsManager();
   }
 
-  private async performCompaction(rt: SessionRuntime, signal?: AbortSignal): Promise<void> {
+  /**
+   * Runs one compaction over this session's history.
+   *
+   * Returns TRUE when the session was actually rewritten (something was
+   * summarized). The overflow recovery uses that answer: retrying a request the
+   * provider just rejected only makes sense if the history really shrank.
+   */
+  private async performCompaction(rt: SessionRuntime, signal?: AbortSignal): Promise<boolean> {
     const compactor = this.options.compactor;
-    if (!compactor) return;
+    if (!compactor) return false;
     const messages = rt.history.conversation();
     // WHAT to cut: an ABSOLUTE recent budget, not a fraction of the history. A
     // fraction keeps most of a big window (600k of 1M) and frees almost nothing —
@@ -1865,7 +1879,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     const usable = usableContext(this.budgetWindow(rt), this.budgetReserve(rt));
     const keepBudget = keepRecentTokensFor(usable);
     const plan = planCompactionToBudget(messages, keepBudget);
-    if (plan.toSummarize.length === 0) return;
+    if (plan.toSummarize.length === 0) return false;
     // HOW MUCH the summary may take: the room left between the kept part and the
     // post-compaction target. A verbose summary eats the context the compaction
     // just freed, and the same text is a far larger share on a small model.
@@ -1909,6 +1923,45 @@ export class ChatViewProvider implements WebviewViewProvider {
     // real chat turn reports fresh usage (avoids stale ratios > 100%).
     rt.cachedTokens = 0;
     rt.cachedWriteTokens = 0;
+    return true;
+  }
+
+  /**
+   * The agent's safety net: the provider REJECTED a request because the input was
+   * too big. Compact NOW (the threshold is irrelevant — the provider just told us
+   * the truth) and answer whether the history actually shrank, so the agent knows
+   * if retrying the same turn can help.
+   *
+   * Silent: the run is still going, so the "working" status is untouched. A
+   * failure here must not mask the original error — the agent falls back to it.
+   */
+  async compactForOverflow(sessionId: string, signal?: AbortSignal): Promise<boolean> {
+    const rt = this.registry.get(sessionId);
+    if (!rt || this.compacting) return false;
+    this.compacting = true;
+    try {
+      const compacted = await this.performCompaction(rt, signal);
+      infoLog(`context overflow: compaction ${compacted ? "rewrote the session" : "had nothing to summarize"}`);
+      if (compacted && this.activeId === rt.sessionId) {
+        this.view?.webview.postMessage({ type: "refresh", messages: rt.agent.getMessages() });
+        void this.pushConfig();
+      }
+      return compacted;
+    } catch (e: any) {
+      infoLog("overflow compaction failed:", e?.message || String(e));
+      return false;
+    } finally {
+      this.compacting = false;
+    }
+  }
+
+  /** The USABLE context of a session (window − output reserve): the number every
+   * budget decision is measured against, exposed so the agent can size its own
+   * (masking, overflow detection) without knowing about the session model. */
+  usableBudgetFor(sessionId: string): number {
+    const rt = this.registry.get(sessionId);
+    if (!rt) return 0;
+    return usableContext(this.budgetWindow(rt), this.budgetReserve(rt));
   }
 
   /**
