@@ -1,7 +1,7 @@
 {
   "name": "harny",
   "displayName": "Harny - AI Coding Harness",
-  "description": "AI coding harness for VSCodium and VS Code — fast like pi, with a SOLID core. OpenAI chat completions, tool-calling and streaming.",
+  "description": "AI coding harness for VSCodium and VS Code — fast and packed with features, built on a SOLID core. OpenAI chat completions, tool-calling and streaming.",
   "version": "0.3.0",
   "publisher": "spltek",
   "license": "MIT",

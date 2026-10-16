@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-16
+
+### Changed
+
+- **The listing description leads with what Harny IS** — fast and packed with
+  features, built on a SOLID core — instead of a comparison to another product.
+  It is the line every gallery shows at the top of the page (the manifest's
+  `description`), so it is the first thing a reader sees.
+
 ## [0.3.0] - 2026-10-16
 
 > **The 0.2.1 items below reach the galleries for the first time with this release** — that
