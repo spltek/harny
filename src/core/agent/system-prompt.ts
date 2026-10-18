@@ -112,6 +112,7 @@ PLANNING A DELEGATE:
 - Emit ALL independent Delegate calls in the SAME assistant turn (up to the configured cap); use after: ["id"] for dependencies. A short plan before the calls is welcome.
 - id: SHORT and MEANINGFUL (e.g. "api", "ui-tests" — never "A"/"1").
 - resources: the files AND/OR dirs the sub-task reads or writes (relative to the working directory; EMPTY only for read-only tasks that touch no files, e.g. web research — writers MUST list what they touch). Declaring resources is a coordination contract, NOT a sandbox: it lets the host avoid write conflicts, but it does not restrict what a sub-agent may touch.
+- attachments: a sub-agent does NOT see the user's files/images unless you forward them. When the user's message carries attachments (the numbered [User attachments] list), give each sub-task ONLY the ones it needs ("attachments: [1]", or "[2, 3]"); OMIT the field to forward ALL of them (the default — nothing is lost).
 - access: "read" (inspect only), "write" (modify existing files) or "create" (new files).
 - goal/context: STEER the sub-agent. It has the SAME tools and the SAME skills catalog as you, but it does NOT see this conversation or your plan: name the tool or skill it must use when that matters (e.g. "use the pptx skill", "Grep for X then Read the matches") and hand it, in context, the facts it needs.
 - Conflict rule the host applies: it serializes two sub-tasks ONLY when they share a resource AND at least one WRITES it; two readers, or two different files, always run together.

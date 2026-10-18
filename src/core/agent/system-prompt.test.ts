@@ -119,6 +119,21 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     expect(without.build("agent")).not.toContain("STEER the sub-agent");
   });
 
+  it("tells the orchestrator to SELECT which attachments each sub-task gets (Parallel ON)", () => {
+    const withDelegate = new DefaultSystemPromptBuilder(
+      (mode) => toolDefinitionsForMode(toolsWithDelegate(), mode),
+      () => "/w",
+    );
+    const prompt = withDelegate.build("agent");
+    // The sub-agent is BLIND to the user's files unless forwarded, and the
+    // orchestrator chooses per sub-task (omit = all).
+    expect(prompt).toContain("unless you forward them");
+    expect(prompt).toContain("give each sub-task ONLY the ones it needs");
+    // Parallel OFF: the whole concept stays hidden.
+    const without = new DefaultSystemPromptBuilder((mode) => toolDefinitionsForMode(tools(), mode), () => "/w");
+    expect(without.build("agent")).not.toContain("unless you forward them");
+  });
+
   it("states the mode-aware split rule when Parallel is ON", () => {
     const withDelegate = new DefaultSystemPromptBuilder(
       (mode) => toolDefinitionsForMode(toolsWithDelegate(), mode),
