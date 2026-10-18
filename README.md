@@ -318,7 +318,7 @@ just want to use Harny, you can stop reading here.
 - **`resources` are a coordination declaration, not a sandbox.** They let the host serialize overlapping writers; they do **not** restrict what a sub-agent may read or write, so declare honestly
 - With Parallel **OFF** the concept is hidden entirely: `Delegate` is not advertised, the prompt never mentions sub-agents (or even the word "Parallel"), and past `Delegate` turns are filtered out of the conversation
 - **Stop vs per-sub-task abort:** the global **Stop** aborts the whole run; the **⏹** on a bubble stops **only that one** — running or still queued behind the cap. Either way a stopped sub-agent is reported as `aborted`, so the orchestrator knows the sub-task did not finish and never treats it as a completed report
-- Sub-agents share all tools (except `Delegate`) and the loop guard
+- Sub-agents share all tools (except `Delegate`) and the loop guard — **and the same skills catalog**: a sub-agent can activate a skill on its own. The orchestrator can still point it at a specific tool/skill by naming it in the `Delegate`'s `goal`/`context`
 
 **Loop guard**
 - Reasoning, empty, failing-tool, error-streak and repeated-tool loops are **broken, not just stopped** — the host interrupts the degenerate behaviour, tells the model how to recover and keeps going; identical read-only calls are cached and identical failing calls are not re-run
@@ -342,7 +342,7 @@ just want to use Harny, you can stop reading here.
 **Agent Skills**
 - Compatible with the **Agent Skills** ecosystem (`skills.sh`): a skill is a folder with a `SKILL.md` (YAML frontmatter `name` + `description`)
 - Harny scans the standard agent skill directories — project `.agents/`, `.claude/`, `.pi/skills/`, then user `~/.agents`, `~/.config/agents`, `~/.pi/agent`, `~/.claude`, `~/.cursor`, `~/.gemini`, `~/.copilot`. A project skill shadows a user one of the same name
-- **Progressive disclosure**: the system prompt lists only `name: description`; the **`Skill` tool** loads the full `SKILL.md` on demand. The model activates a skill itself, or you force it with `/skill <name> [task]`
+- **Progressive disclosure**: the system prompt lists only `name: description`; the **`Skill` tool** loads the full `SKILL.md` on demand. The model activates a skill itself — the orchestrator **and its sub-agents** get the same catalog — or you force it with `/skill <name> [task]`
 - **Skills card** lists the installed skills as clickable text; `/skills` lists them
 - **`disable-model-invocation: true`** skills are hidden from the model and can only be activated manually
 - **Slash menu**: typing `/` at the START of the prompt opens a picker — arrows/Enter select, Esc closes

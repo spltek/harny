@@ -11,6 +11,7 @@ import { Agent } from "./agent";
 import type { ContextOverflowEvidence } from "./agent";
 import type { ChatController } from "./chat-controller";
 import type { AgentEvent, SubAgentEvent, PreparedChange } from "./types";
+import type { SkillMeta } from "../skills/types";
 import {
   DELEGATE_TOOL_NAME,
   buildSubAgentTask,
@@ -29,6 +30,11 @@ export interface SubAgentRunnerDeps {
   llmFactory: LLMProviderFactory;
   tools: ToolRegistry;
   cwd: () => string;
+  /** Installed Agent Skills (catalog only): a sub-agent gets the SAME catalog as the
+   * orchestrator, so it can activate a skill on its own when the task matches one. The
+   * orchestrator can still point it at a specific skill in the Delegate goal/context.
+   * Absent = an empty catalog (no `## Skills` section, the pre-feature behaviour). */
+  skills?: () => readonly SkillMeta[];
   /** Optional turn budget per sub-agent (undefined = UNBOUNDED, like the
    * orchestrator: the loop guard + Stop are the safeguards). */
   maxTurns?: number;
@@ -132,6 +138,7 @@ export class SubAgentRunner {
       (m) => toolDefinitionsForMode(this.deps.tools.getAll(), m, { exclude: [DELEGATE_TOOL_NAME] }),
       this.deps.cwd,
       { role: spec.role, access: spec.access, resources: spec.resources, turnBudget: maxTurns },
+      this.deps.skills,
     );
 
     // Preview changes this sub-agent prepares (Analyze only): forwarded to the

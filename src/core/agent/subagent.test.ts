@@ -458,6 +458,35 @@ describe("SubAgentRunner", () => {
     expect(systemPrompt).not.toContain("BUDGET");
   });
 
+  it("hands the sub-agent the installed skills catalog (it can activate a skill on its own)", async () => {
+    let systemPrompt = "";
+    const captureFactory: LLMProviderFactory = {
+      create() {
+        return {
+          protocol: "chat" as const,
+          async *stream(messages: LLMMessage[]) {
+            if (!systemPrompt) systemPrompt = String(messages[0]?.content ?? "");
+            yield { type: "text", content: "report" };
+          },
+        };
+      },
+    };
+    const runner = new SubAgentRunner({
+      config: new StaticConfigProvider(CONFIG),
+      llmFactory: captureFactory,
+      tools: new ToolRegistry([]),
+      cwd: () => "/workspace",
+      skills: () => [
+        { name: "pdf", description: "Extract PDF text", dir: "/w/.agents/skills/pdf", path: "/w/.agents/skills/pdf/SKILL.md" },
+      ],
+    });
+
+    await runner.run(spec({ access: "read" }));
+
+    expect(systemPrompt).toContain("## Skills");
+    expect(systemPrompt).toContain("- pdf: Extract PDF text");
+  });
+
   it("does not append the Analyze preview footer to a sub-agent report", async () => {
     const write: Tool = {
       name: "Write",

@@ -183,6 +183,9 @@ export async function activate(context: ExtensionContext) {
       llmFactory,
       tools,
       cwd,
+      // The SAME skills catalog as the orchestrator: a sub-agent activates a skill on
+      // its own when the task matches one (progressive disclosure).
+      skills: () => skills.list(),
       log: (m) => infoLog(`[agent] ${m}`),
       // Sub-agents run on THIS session's model, so they size their own masking and
       // tool-output caps on the same window (see SubAgentRunnerDeps.contextBudget).

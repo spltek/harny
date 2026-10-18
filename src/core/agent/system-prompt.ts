@@ -113,6 +113,7 @@ PLANNING A DELEGATE:
 - id: SHORT and MEANINGFUL (e.g. "api", "ui-tests" — never "A"/"1").
 - resources: the files AND/OR dirs the sub-task reads or writes (relative to the working directory; EMPTY only for read-only tasks that touch no files, e.g. web research — writers MUST list what they touch). Declaring resources is a coordination contract, NOT a sandbox: it lets the host avoid write conflicts, but it does not restrict what a sub-agent may touch.
 - access: "read" (inspect only), "write" (modify existing files) or "create" (new files).
+- goal/context: STEER the sub-agent. It has the SAME tools and the SAME skills catalog as you, but it does NOT see this conversation or your plan: name the tool or skill it must use when that matters (e.g. "use the pptx skill", "Grep for X then Read the matches") and hand it, in context, the facts it needs.
 - Conflict rule the host applies: it serializes two sub-tasks ONLY when they share a resource AND at least one WRITES it; two readers, or two different files, always run together.
 
 AFTER DELEGATING:
@@ -176,6 +177,10 @@ export class SubAgentSystemPromptBuilder implements SystemPromptBuilder {
     private toolDefinitions: (mode: ChatMode) => ToolDefinition[],
     private cwd: () => string,
     private options: SubAgentPromptOptions,
+    /** Installed Agent Skills (catalog only): a sub-agent gets the SAME catalog as the
+     * orchestrator, so it can activate a skill on its own (progressive disclosure).
+     * Absent/empty = no `## Skills` section, exactly like the orchestrator without skills. */
+    private skills: () => readonly SkillMeta[] = () => [],
   ) {}
 
   build(mode: ChatMode = "analyze", effective?: readonly ToolDefinition[]): string {
@@ -196,6 +201,16 @@ export class SubAgentSystemPromptBuilder implements SystemPromptBuilder {
     const budgetRule = this.options.turnBudget
       ? `\n- BUDGET: you have about ${this.options.turnBudget} tool turns. Work efficiently, do not over-explore, and STOP calling tools to write your report well within the budget.`
       : "";
+    // SAME progressive disclosure as the orchestrator (see DefaultSystemPromptBuilder):
+    // only names + descriptions here; the Skill tool loads the full SKILL.md on demand.
+    // `disable-model-invocation` skills are EXCLUDED (the orchestrator can still force
+    // one with `/skill`, which inlines the body into the message it forwards).
+    const installedSkills = this.skills().filter((s) => !s.disableModelInvocation);
+    const skillsSection =
+      installedSkills.length > 0
+        ? `\n\n## Skills\nWhen the task matches one of these skills, ACTIVATE it first by calling the ${SKILL_TOOL_NAME} tool with its exact name, then follow the returned instructions:\n` +
+          installedSkills.map((s) => `- ${s.name}: ${s.description}`).join("\n")
+        : "";
 
     return `You are a sub-agent of Harny, launched by the main Harny agent to complete ONE focused task and report back.
 Working directory: ${cwd}
@@ -212,7 +227,7 @@ Rules:
 - Use tools for real; never just announce an action. Prefer Read/Grep/Glob to inspect before editing.
 
 You have access to these tools:
-${toolList}`;
+${toolList}${skillsSection}`;
   }
 
   private summarize(description: string): string {

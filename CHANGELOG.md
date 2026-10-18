@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Sub-agents get the same skills catalog as the orchestrator.** A delegated sub-agent now
+  receives the installed Agent Skills (name + description) in its own system prompt — the same
+  progressive-disclosure catalog the orchestrator has — so it can activate a skill on its own
+  when the task matches one, instead of being blindly unaware of them. `disable-model-invocation`
+  skills stay hidden, exactly as for the orchestrator, and an absent catalog keeps the previous
+  behaviour. To keep the split honest, the orchestrator's planning rules now tell it to **steer**
+  a sub-agent — naming the tool or skill it must use, in `goal`/`context`, when that matters.
+
 ## [0.3.2] - 2026-10-16
 
 ### Added

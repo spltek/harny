@@ -106,6 +106,19 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     expect(listSection).toContain("- Write:");
   });
 
+  it("tells the orchestrator to STEER a sub-agent (naming tool/skill) when Parallel is ON", () => {
+    const withDelegate = new DefaultSystemPromptBuilder(
+      (mode) => toolDefinitionsForMode(toolsWithDelegate(), mode),
+      () => "/w",
+    );
+    const prompt = withDelegate.build("agent");
+    expect(prompt).toContain("STEER the sub-agent");
+    expect(prompt).toContain("SAME skills catalog");
+    // Parallel OFF: the concept stays hidden entirely (no mention of steering either).
+    const without = new DefaultSystemPromptBuilder((mode) => toolDefinitionsForMode(tools(), mode), () => "/w");
+    expect(without.build("agent")).not.toContain("STEER the sub-agent");
+  });
+
   it("states the mode-aware split rule when Parallel is ON", () => {
     const withDelegate = new DefaultSystemPromptBuilder(
       (mode) => toolDefinitionsForMode(toolsWithDelegate(), mode),
@@ -209,5 +222,30 @@ describe("SubAgentSystemPromptBuilder", () => {
     const prompt = build({ access: "read", resources: ["a"] }, "analyze");
     expect(prompt).toContain("NEVER repeat the same tool call");
     expect(prompt).toContain("Prefer Glob/Grep/Read");
+  });
+
+  it("gives the sub-agent the SAME skills catalog as the orchestrator", () => {
+    const prompt = new SubAgentSystemPromptBuilder(
+      (m) => toolDefinitionsForMode(tools(), m),
+      () => "/w",
+      { access: "read", resources: [] },
+      () => [
+        { name: "pdf", description: "Extract PDF text", dir: "/w/.agents/skills/pdf", path: "/w/.agents/skills/pdf/SKILL.md" },
+        { name: "grill-me", description: "Interview", dir: "/w/.agents/skills/grill-me", path: "/w/.agents/skills/grill-me/SKILL.md", disableModelInvocation: true },
+      ],
+    ).build("analyze");
+    expect(prompt).toContain("## Skills");
+    expect(prompt).toContain("- pdf: Extract PDF text");
+    expect(prompt).toContain("Skill tool");
+    // Same rule as the orchestrator: manual-only skills are NOT offered to the model.
+    expect(prompt).not.toContain("- grill-me:");
+
+    // No catalog -> no section (the pre-feature behaviour is unchanged).
+    const without = new SubAgentSystemPromptBuilder(
+      (m) => toolDefinitionsForMode(tools(), m),
+      () => "/w",
+      { access: "read", resources: [] },
+    ).build("analyze");
+    expect(without).not.toContain("## Skills");
   });
 });
