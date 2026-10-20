@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-20
+
+### Changed
+
+- **"Imported from …" / "Exported to …" moved onto their own line, UNDER the buttons.** The feedback
+  was a `span` inside the Providers & Models button row, so a full path
+  (`/Users/…/harny-providers.json`) squeezed Export/Import and shoved Cancel/Save sideways. It is now
+  a full-width `role="status"` row below the strip: it wraps long paths, and takes no space at all
+  while it has nothing to say (`:empty`).
+
 ### Fixed
 
 - **The dialogs are laid out in the PANEL, not in the viewport.** With the panel narrower than its
@@ -28,14 +38,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   than the area actually drawn, so the window also scrolled vertically. `html` and `body` are now
   `height: 100%`, which always matches the viewport the panel is drawn in; the width-floor test still
   pins `html { min-width: max(500px, 32rem); overflow-x: auto }`.
-
-### Changed
-
-- **"Imported from …" / "Exported to …" moved onto their own line, UNDER the buttons.** The feedback
-  was a `span` inside the Providers & Models button row, so a full path
-  (`/Users/…/harny-providers.json`) squeezed Export/Import and shoved Cancel/Save sideways. It is now
-  a full-width `role="status"` row below the strip: it wraps long paths, and takes no space at all
-  while it has nothing to say (`:empty`).
 
 ## [0.4.0] - 2026-10-20
 
@@ -674,7 +676,8 @@ Completions protocol.
 - **Diagnostics**: per-turn lines in *Output > Harny*, an optional request log
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
-[Unreleased]: https://github.com/spltek/harny/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/spltek/harny/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/spltek/harny/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/spltek/harny/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/spltek/harny/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/spltek/harny/compare/v0.3.0...v0.3.1
