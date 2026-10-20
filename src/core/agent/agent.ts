@@ -138,7 +138,7 @@ export interface AgentDeps {
    * this long (undefined = {@link DEFAULT_STREAM_IDLE_TIMEOUT_MS}). */
   streamIdleTimeoutMs?: number;
   /** Optional per-session Loop Guard options (resolved from the session's three
-   * knobs). Undefined = the "normal" preset. */
+   * knobs). Undefined = the "medium" preset. */
   loopGuard?: LoopGuardOptions;
   /** Called (and awaited) at the START of every turn, before the LLM request.
    * The host uses it to auto-compact MID-RUN when the context threshold is

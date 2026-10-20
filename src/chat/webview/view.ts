@@ -118,8 +118,8 @@ interface ConfigState {
   sampler?: "temperature" | "topP";
   /** Effective concurrent sub-agent cap for the active session (0 = no cap). */
   maxParallelSubAgents?: number;
-  /** Per-session Loop Guard sensitivity; undefined = the "normal" preset. */
-  loopGuard?: "low" | "normal" | "high";
+  /** Per-session Loop Guard sensitivity; undefined = the "medium" preset. */
+  loopGuard?: "off" | "low" | "medium" | "high";
   /** Also guard the visible final answer (opt-in; undefined = off). */
   loopGuardResponse?: boolean;
   /** Preset VALUES per sensitivity level (single source: the core). */
@@ -211,8 +211,8 @@ const modeMenu = document.getElementById("mode-menu") as HTMLDivElement;
 const modeItems = Array.from(modeMenu.querySelectorAll<HTMLButtonElement>(".mode-item"));
 const parallelBtn = document.getElementById("parallel-btn") as HTMLButtonElement;
 const sendBtn = document.getElementById("send-btn") as HTMLButtonElement;
-const steerBtn = document.getElementById("steer-btn") as HTMLButtonElement;
-const steerBtnLabel = document.getElementById("steer-btn-label") as HTMLSpanElement;
+const insertHint = document.getElementById("insert-hint") as HTMLSpanElement;
+const insertHintWord = document.getElementById("insert-hint-word") as HTMLSpanElement;
 const abortBtn = document.getElementById("abort-btn") as HTMLButtonElement;
 const attachBtn = document.getElementById("attach-btn") as HTMLButtonElement;
 const attachmentChips = document.getElementById("attachment-chips") as HTMLDivElement;
@@ -791,6 +791,9 @@ function metaBadge(meta: MsgMeta): HTMLElement | undefined {
   if (typeof meta.ttftMs === "number") parts.push(`first token ${fmtDuration(meta.ttftMs)}`);
   if (parts.length === 0 && !meta.mode) return undefined;
   const el = document.createElement("div");
+  // Only the WORD "Build" takes the accent (.msg-meta .meta-mode.build): the rest of
+  // the line stays the quiet gray of the model and the counts, so the chip reads as a
+  // marker and not as a loud row repeated under half the transcript.
   el.className = "msg-meta";
   if (meta.mode) {
     // The mode leads, as a chip: it is what you SCAN a long transcript for (which turns
@@ -1925,10 +1928,11 @@ const pending = createPendingSection({
 let pendingSnapshot: string | null = null;
 
 /**
- * The Queue/Steer pill is a pure INDICATOR (never clicked): it shows Steer
- * ONLY while a run is active AND Ctrl/Cmd is held, and Queue otherwise.
- * Releasing the key (or the run ending) returns it to Queue; a sent message
- * leaves it as-is (still Steer while the key is down, Queue once released).
+ * The insert-in hint ("Insert in Queue" / "Insert in Steer") is a pure INDICATOR
+ * (never clicked): it shows Steer ONLY while a run is active AND Ctrl/Cmd is held,
+ * and Queue otherwise. Releasing the key (or the run ending) returns it to Queue; a
+ * sent message leaves it as-is (still Steer while the key is down, Queue once
+ * released). It replaced the Queue/Steer pill that used to sit in the model row.
  */
 let steerModifierHeld = false;
 /** The mode last PAINTED, so a real Queue<->Steer switch can be told from a repaint. */
@@ -1939,18 +1943,20 @@ function effectiveSendMode(): "queue" | "steer" {
   return streamingActive && steerModifierHeld ? "steer" : "queue";
 }
 
-/** Paint the indicator: label + red "Steer" state + dim when idle. */
+/** Paint the hint: word + red "Steer" pill + dim when idle. */
 function renderSteerMode(): void {
   const isSteer = effectiveSendMode() === "steer";
   const switched = isSteer !== lastSteerMode;
   lastSteerMode = isSteer;
-  steerBtn.classList.toggle("is-steer", isSteer);
-  steerBtn.setAttribute("aria-pressed", String(isSteer));
-  steerBtnLabel.textContent = isSteer ? "Steer" : "Queue";
-  steerBtn.disabled = !streamingActive;
-  steerBtn.title = isSteer
+  insertHint.classList.toggle("is-steer", isSteer);
+  // Idle has no meaningful choice: dim the line exactly like the old disabled pill.
+  insertHint.classList.toggle("is-idle", !streamingActive);
+  insertHintWord.textContent = isSteer ? "Steer" : "Queue";
+  insertHint.title = isSteer
     ? "Steer: the next message is injected into the running loop"
-    : "Queue: the next message runs after the current run ends";
+    : streamingActive
+      ? "Queue: the next message runs after the current run ends (hold Ctrl/Cmd to Steer)"
+      : "Queue: the next message runs after the current run ends";
   // Switching Queue <-> Steer is a decision about the run in progress — ONCE per real
   // switch, not on every repaint of the indicator (it repaints on each key press while
   // the modifier is held).
@@ -2007,7 +2013,7 @@ sendBtn.addEventListener("click", (e) => {
   send();
 });
 attachBtn.addEventListener("click", () => vscode.postMessage({ type: "pickFiles" }));
-// The Queue/Steer pill is an INDICATOR only (no click handler); its state is
+// The insert-in hint is an INDICATOR only (no click handler); its state is
 // driven purely by Ctrl/Cmd below. Ctrl/Cmd forces Steer while held; keyup may
 // be missed when the
 // window loses focus with the key down, so blur releases it too.
@@ -3027,7 +3033,26 @@ let mcpStatuses: { name: string; ok: boolean; enabled: boolean; error?: string; 
 
 const DEFAULT_PARALLEL = 4;
 
-type LoopGuardLevel = "low" | "normal" | "high";
+type LoopGuardLevel = "off" | "low" | "medium" | "high";
+
+/** Legacy name persisted by older sessions: read-only migration, same behaviour
+ * as "medium". The host migrates it too (normalizeLoopGuardSensitivity); this
+ * keeps a webview that receives a stale push on the right radio. */
+function normalizeLgLevel(value: unknown): LoopGuardLevel {
+  if (value === "off" || value === "low" || value === "high") return value;
+  return "medium";
+}
+
+/** With the guard OFF the parameters do nothing, so they are dimmed and inert
+ * (NOT hidden: hiding them would change the card's height on every level switch,
+ * and the column-count measurement reads this very row). `locked` is the
+ * working-run lock, which wins over everything else. */
+function applyLgEnabledState(level: LoopGuardLevel, locked: boolean): void {
+  const inert = locked || level === "off";
+  lgResponse.disabled = inert;
+  for (const el of document.querySelectorAll<HTMLInputElement>("#lg-fields input")) el.disabled = inert;
+  lgFieldsEl.classList.toggle("is-off", level === "off");
+}
 
 /** 0 = no cap; 1–100 = the cap. */
 function clampParallel(v: number): number {
@@ -3049,7 +3074,7 @@ function sendParallel(): void {
 }
 
 function sendLoopGuard(): void {
-  const level = (lgRadios.find((r) => r.checked)?.value ?? "normal") as LoopGuardLevel;
+  const level = (lgRadios.find((r) => r.checked)?.value ?? "medium") as LoopGuardLevel;
   vscode.postMessage({ type: "setLoopGuard", value: level });
 }
 
@@ -3193,7 +3218,7 @@ function lgRangeInput(key: string): HTMLInputElement | null {
 }
 
 function currentLgLevel(): string {
-  return lgRadios.find((r) => r.checked)?.value ?? "normal";
+  return lgRadios.find((r) => r.checked)?.value ?? "medium";
 }
 
 function clampLgValue(r: LgRange, v: number): number {
@@ -3232,6 +3257,7 @@ function sendLoopGuardOverrides(): void {
 function onLoopGuardLevelChange(): void {
   sendLoopGuard();
   fillLgFields(currentLgLevel(), false);
+  applyLgEnabledState(normalizeLgLevel(currentLgLevel()), streamingActive);
 }
 
 // The Loop Guard parameters section starts COLLAPSED, so the card — and its
@@ -3284,7 +3310,7 @@ function renderControl(config: ConfigState): void {
   const capV = typeof cap === "number" && cap > 0 ? clampParallel(cap) : 0;
   parRange.value = String(capV);
   parValue.textContent = parLabel(capV);
-  const level: LoopGuardLevel = config.loopGuard === "high" || config.loopGuard === "low" ? config.loopGuard : "normal";
+  const level: LoopGuardLevel = normalizeLgLevel(config.loopGuard);
   for (const r of lgRadios) r.checked = r.value === level;
   lgResponse.checked = config.loopGuardResponse === true;
   // Loop Guard fields: ranges + preset values come from the host (one source).
@@ -3306,6 +3332,9 @@ function renderControl(config: ConfigState): void {
     lgLastSession = activeId;
     fillLgFields(level);
   }
+  // AFTER the fields exist: the OFF/lock state disables `#lg-fields input`, so it has to
+  // run once they have been built (and again on every push, since a lock can be released).
+  applyLgEnabledState(level, streamingActive);
   renderSkills(config.skills ?? []);
   renderMcp(config.mcp);
 }
@@ -3748,8 +3777,9 @@ function setStreaming(active: boolean): void {
   // Guardrails card (parallel cap + Loop Guard) follows the same lock.
   parRange.disabled = active;
   for (const r of lgRadios) r.disabled = active;
-  lgResponse.disabled = active;
-  for (const el of document.querySelectorAll<HTMLInputElement>("#lg-fields input")) el.disabled = active;
+  // OFF or a live run: the parameters and "Include response" are inert (dimmed by the
+  // global input:disabled rule) — the GLOBAL lock has to re-apply them on release.
+  applyLgEnabledState(normalizeLgLevel(currentLgLevel()), active);
   inputEl.disabled = false;
   // Mode and Parallel are LOCKED while the session works, exactly like the request
   // parameters: they are decided once per run (see Agent.runMode) — a run is born with its
@@ -4404,9 +4434,9 @@ function renderMetrics(c: ConfigState): void {
 
 compactBtn.addEventListener("click", () => vscode.postMessage({ type: "compact" }));
 
-/** Keep the "Auto Compact threshold: X%" label in sync with the saved %. */
+/** Keep the "Auto: X% ctx" label in sync with the saved %. */
 function renderCompactionThreshold(): void {
-  compactThresholdLabel.textContent = "Auto Compact threshold: " + compactionThresholdPct + "%";
+  compactThresholdLabel.textContent = "Auto: " + compactionThresholdPct + "% ctx";
 }
 
 // ── Auto-compaction threshold % (gear next to Compact) ──

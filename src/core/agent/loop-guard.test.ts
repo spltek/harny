@@ -13,6 +13,8 @@ import {
   clampLoopGuardOverrides,
   LOOP_GUARD_FIELD_RANGES,
   LOOP_GUARD_SENSITIVITIES,
+  DEFAULT_LOOP_GUARD_SENSITIVITY,
+  DEFAULT_LOOP_GUARD_OPTIONS,
   type ToolOutcome,
 } from "./loop-guard";
 import type { ToolCall } from "../tools/tool";
@@ -255,9 +257,35 @@ describe("LoopGuard turn classification + escalation", () => {
 });
 
 describe("Loop Guard sensitivity presets", () => {
-  it("normal is the default and matches the historical values", () => {
+  it("MEDIUM is the default: constant, resolved options and the bare guard all agree", () => {
+    // The single default this whole feature is built on. Pinned here so a future preset
+    // edit (or an accidental flip to "off") cannot change it silently.
+    expect(DEFAULT_LOOP_GUARD_SENSITIVITY).toBe("medium");
+    expect(DEFAULT_LOOP_GUARD_OPTIONS).toEqual(resolveLoopGuardOptions("medium"));
+    expect(DEFAULT_LOOP_GUARD_OPTIONS.enabled).toBe(true);
+    // No override (= undefined) resolves to Medium, NOT to Off and NOT to another level.
+    expect(resolveLoopGuardOptions()).toEqual(DEFAULT_LOOP_GUARD_OPTIONS);
+    expect(resolveLoopGuardOptions(undefined).maxNudges).toBe(2);
+    expect(resolveLoopGuardOptions(null).enabled).toBe(true);
+    // …and a guard built without options is a MEDIUM one (agent.ts relies on it).
+    const bare = new LoopGuard();
+    const obs = {
+      content: "done",
+      thinking: "",
+      toolCalls: [toolCall("Shell", { command: "ls" })],
+      toolResults: [outcome("Shell", { command: "ls" }, false)],
+    };
+    expect(bare.observeTurn(obs).kind).toBe("continue"); // 1st
+    expect(bare.observeTurn(obs).kind).toBe("continue"); // 2nd (medium: consec = 3)
+    const third = bare.observeTurn(obs); // 3rd — the MEDIUM threshold, not high's 2
+    expect(third.kind).toBe("react");
+    if (third.kind === "react") expect(third.type).toBe("tool-repeat");
+  });
+
+  it("medium is the default and matches the historical values", () => {
     const o = resolveLoopGuardOptions();
-    expect(o).toEqual(resolveLoopGuardOptions("normal"));
+    expect(o).toEqual(resolveLoopGuardOptions("medium"));
+    expect(o.enabled).toBe(true);
     expect(o.maxNudges).toBe(2);
     expect(o.reasoningThreshold).toBe(0.5);
     expect(o.reasoningMinTokens).toBe(60);
@@ -290,18 +318,33 @@ describe("Loop Guard sensitivity presets", () => {
     expect(low.toolRepeatWindowThreshold).toBe(4);
   });
 
-  it("an unknown level falls back to normal", () => {
-    expect(resolveLoopGuardOptions("bogus" as never)).toEqual(resolveLoopGuardOptions("normal"));
+  it("an unknown level falls back to medium", () => {
+    expect(resolveLoopGuardOptions("bogus" as never)).toEqual(resolveLoopGuardOptions("medium"));
+  });
+
+  it("off is INERT: the guard is disabled and the answer guard cannot be forced back on", () => {
+    const off = resolveLoopGuardOptions("off");
+    expect(off.enabled).toBe(false);
+    // `includeResponse` must NOT re-enable anything while the guard is off.
+    expect(resolveLoopGuardOptions("off", true).guardResponse).toBe(false);
+    expect(resolveLoopGuardOptions("off", true).enabled).toBe(false);
+    // Every other preset is enabled.
+    for (const level of ["low", "medium", "high"] as const) {
+      expect(resolveLoopGuardOptions(level).enabled).toBe(true);
+    }
+    // The order the UI renders: Off first, then quiet → loud.
+    expect([...LOOP_GUARD_SENSITIVITIES]).toEqual(["off", "low", "medium", "high"]);
   });
 
   it("exposes the presets as COPIES (loopGuardPresets)", () => {
     const p = loopGuardPresets();
     expect(p.high).toEqual(resolveLoopGuardOptions("high"));
-    expect(p.normal).toEqual(resolveLoopGuardOptions("normal"));
+    expect(p.medium).toEqual(resolveLoopGuardOptions("medium"));
     expect(p.low).toEqual(resolveLoopGuardOptions("low"));
+    expect(p.off).toEqual(resolveLoopGuardOptions("off"));
     // Mutating a copy must not corrupt the module-level presets.
-    p.normal.maxNudges = 99;
-    expect(resolveLoopGuardOptions("normal").maxNudges).toBe(2);
+    p.medium.maxNudges = 99;
+    expect(resolveLoopGuardOptions("medium").maxNudges).toBe(2);
   });
 
   it("every preset value sits inside its editable range", () => {
@@ -329,14 +372,20 @@ describe("Loop Guard sensitivity presets", () => {
     expect(clampLoopGuardOverrides({ maxNudges: Number.NaN })).toBeUndefined();
   });
 
-  it("normalizeLoopGuardSensitivity validates persisted values", () => {
+  it("normalizeLoopGuardSensitivity validates persisted values and migrates the old name", () => {
     expect(normalizeLoopGuardSensitivity(undefined)).toBeUndefined();
+    expect(normalizeLoopGuardSensitivity("off")).toBe("off");
     expect(normalizeLoopGuardSensitivity("high")).toBe("high");
     expect(normalizeLoopGuardSensitivity("low")).toBe("low");
-    expect(normalizeLoopGuardSensitivity("normal")).toBe("normal");
+    expect(normalizeLoopGuardSensitivity("medium")).toBe("medium");
+    // Sessions saved before the rename persist "normal": same behaviour, new name.
+    expect(normalizeLoopGuardSensitivity("normal")).toBe("medium");
     expect(normalizeLoopGuardSensitivity("bogus")).toBeUndefined();
     expect(normalizeLoopGuardSensitivity(3)).toBeUndefined();
     expect(isLoopGuardSensitivity("high")).toBe(true);
+    expect(isLoopGuardSensitivity("off")).toBe(true);
+    // The legacy spelling is accepted ONLY by the normalizer, never as a level.
+    expect(isLoopGuardSensitivity("normal")).toBe(false);
   });
 
   it("high flags an error streak sooner than low", () => {
@@ -376,13 +425,13 @@ describe("Loop Guard sensitivity presets", () => {
   });
 
   it("the response guard is off by default and opt-in", () => {
-    expect(resolveLoopGuardOptions("normal").guardResponse).toBe(false);
-    expect(resolveLoopGuardOptions("normal", true).guardResponse).toBe(true);
+    expect(resolveLoopGuardOptions("medium").guardResponse).toBe(false);
+    expect(resolveLoopGuardOptions("medium", true).guardResponse).toBe(true);
     const text = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu ".repeat(30);
-    const off = new LoopGuard(resolveLoopGuardOptions("normal"));
+    const off = new LoopGuard(resolveLoopGuardOptions("medium"));
     expect(off.observeAnswer(text)).toBe(false);
 
-    const on = new LoopGuard(resolveLoopGuardOptions("normal", true));
+    const on = new LoopGuard(resolveLoopGuardOptions("medium", true));
     expect(on.observeAnswer(text)).toBe(true);
     // Once flagged, it does not fire again for the same turn.
     expect(on.observeAnswer(text)).toBe(false);
@@ -394,11 +443,60 @@ describe("Loop Guard sensitivity presets", () => {
   it("guards the final answer per turn only when enabled", () => {
     const text = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu ".repeat(30);
     const obs = { content: text, thinking: "", toolCalls: [], toolResults: [] };
-    const off = new LoopGuard(resolveLoopGuardOptions("normal"));
+    const off = new LoopGuard(resolveLoopGuardOptions("medium"));
     expect(off.observeTurn(obs).kind).toBe("continue");
-    const on = new LoopGuard(resolveLoopGuardOptions("normal", true));
+    const on = new LoopGuard(resolveLoopGuardOptions("medium", true));
     const decision = on.observeTurn(obs);
     expect(decision.kind).toBe("react");
     if (decision.kind === "react") expect(decision.type).toBe("response");
+  });
+});
+
+describe("Loop Guard OFF — the guard is completely inert", () => {
+  const repetitive = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu ".repeat(30);
+  const tc = toolCall("Read", { path: "a" });
+
+  it("never flags reasoning, even with the answer guard forced on", () => {
+    const g = new LoopGuard({ ...resolveLoopGuardOptions("off"), guardResponse: true });
+    expect(g.observeThinking(repetitive)).toBe(false);
+    expect(g.observeAnswer(repetitive)).toBe(false);
+    for (let i = 0; i < 10; i++) {
+      expect(g.observeTurn({ content: repetitive, thinking: repetitive, toolCalls: [], toolResults: [] }).kind).toBe(
+        "continue",
+      );
+    }
+  });
+
+  it("never dedupes or refuses tool calls (off means off, not just quieter)", () => {
+    const g = new LoopGuard(resolveLoopGuardOptions("off"));
+    // First run executes and is recorded as a FAILURE…
+    expect(g.beforeToolCall(tc, true).mode).toBe("run");
+    g.afterToolCall(tc, true, "boom", true);
+    // …and an identical failing call runs again instead of being refused.
+    expect(g.beforeToolCall(tc, true).mode).toBe("run");
+    g.afterToolCall(tc, true, "boom", true);
+    // A successful read is never cached: a second identical read runs again.
+    expect(g.beforeToolCall(tc, true).mode).toBe("run");
+    g.afterToolCall(tc, false, "file body", true);
+    expect(g.beforeToolCall(tc, true).mode).toBe("run");
+    // No in-flight bookkeeping either: the same call twice in one turn is allowed.
+    expect(g.beforeToolCall(tc, false).mode).toBe("run");
+    expect(g.beforeToolCall(tc, false).mode).toBe("run");
+  });
+
+  it("turning it off at runtime silences a guard that was already escalating", () => {
+    const obs = {
+      content: "done",
+      thinking: "",
+      toolCalls: [toolCall("Shell", { command: "ls" })],
+      toolResults: [outcome("Shell", { command: "ls" }, false)],
+    };
+    const g = new LoopGuard(resolveLoopGuardOptions("high"));
+    expect(g.observeTurn(obs).kind).toBe("continue"); // 1st
+    expect(g.observeTurn(obs).kind).toBe("react"); // high flags at 2
+    g.setOptions(resolveLoopGuardOptions("off"));
+    for (let i = 0; i < 5; i++) expect(g.observeTurn(obs).kind).toBe("continue");
+    expect(g.observeThinking(repetitive)).toBe(false);
+    expect(g.beforeToolCall(tc, true).mode).toBe("run");
   });
 });

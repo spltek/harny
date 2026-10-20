@@ -46,7 +46,7 @@ export interface SessionSummary {
   /** Per-session cap on concurrently-running sub-agents. Positive = cap; 0 =
    * explicitly NO cap; undefined = inherit the config default (then 4). */
   maxParallelSubAgents?: number;
-  /** Per-session Loop Guard sensitivity; undefined = "normal". */
+  /** Per-session Loop Guard sensitivity; undefined = "medium". */
   loopGuard?: LoopGuardSensitivity;
   /** Also guard the visible final answer for repetition (opt-in; undefined = off). */
   loopGuardResponse?: boolean;

@@ -1137,7 +1137,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       case "setLoopGuard": {
         const rt = this.activeRuntime();
         if (!rt) break;
-        // Per-session Loop Guard sensitivity; undefined clears the override (= normal).
+        // Per-session Loop Guard sensitivity; undefined clears the override (= medium).
         const level = normalizeLoopGuardSensitivity(msg.value);
         rt.loopGuard = level;
         // Picking a level RESETS the saved field overrides: the preset becomes
@@ -2326,7 +2326,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     mode?: "analyze" | "agent";
     parallel?: boolean;
     maxParallelSubAgents: number;
-    loopGuard?: "low" | "normal" | "high";
+    loopGuard?: "off" | "low" | "medium" | "high";
     loopGuardResponse?: boolean;
     /** The SAVED per-session Loop Guard field values (absent = the preset). */
     loopGuardParams?: Partial<LoopGuardOptions>;

@@ -22,18 +22,29 @@ export const LOOP_TYPES: readonly LoopType[] = [
 ];
 
 /**
- * Loop Guard sensitivity preset, persisted per session. `undefined` = "normal".
+ * Loop Guard sensitivity preset, persisted per session. `undefined` = "medium".
  * Each level maps to a FULL, hard-coded option set (see the presets below), so
- * the user picks one of three behaviours instead of tuning raw thresholds.
+ * the user picks one of four behaviours instead of tuning raw thresholds.
+ *
+ * Ordered from the QUIETEST to the loudest; the UI renders them in this order,
+ * with "off" first: switching the guard off is a real choice, not a hidden flag.
  */
-export type LoopGuardSensitivity = "low" | "normal" | "high";
+export type LoopGuardSensitivity = "off" | "low" | "medium" | "high";
 
-export const LOOP_GUARD_SENSITIVITIES: readonly LoopGuardSensitivity[] = ["low", "normal", "high"];
-export const DEFAULT_LOOP_GUARD_SENSITIVITY: LoopGuardSensitivity = "normal";
+export const LOOP_GUARD_SENSITIVITIES: readonly LoopGuardSensitivity[] = ["off", "low", "medium", "high"];
+export const DEFAULT_LOOP_GUARD_SENSITIVITY: LoopGuardSensitivity = "medium";
+
+/** The level sessions persisted under the PRE-RENAME name ("normal" → "medium").
+ * Kept as a literal so old rows keep loading: see normalizeLoopGuardSensitivity. */
+const LEGACY_NORMAL = "normal";
 
 /** Fully-resolved internal options: every guard parameter the loop detectors
  * read. Produced from a sensitivity preset by {@link resolveLoopGuardOptions}. */
 export interface LoopGuardOptions {
+  /** Master switch: `false` (the "off" preset) makes the guard INERT — no
+   * detection, no nudges, no stop, and no tool-call deduplication either.
+   * The numbers below stay populated so the parameter panel has values to show. */
+  enabled: boolean;
   /** Reactive nudges before a type's escalation stops the run. */
   maxNudges: number;
   reasoningThreshold: number;
@@ -54,13 +65,33 @@ export interface LoopGuardOptions {
 }
 
 /**
- * The three presets, with every value hard-coded:
- *  · high   — aggressive: flags loops sooner (more nudges, lower thresholds).
- *  · normal — the historical defaults.
+ * The four presets, with every value hard-coded:
+ *  · off    — inert: the guard does nothing at all (no detection, no dedup).
  *  · low    — permissive: only clear, sustained loops are flagged.
+ *  · medium — the historical defaults, and the default level.
+ *  · high   — aggressive: flags loops sooner (more nudges, lower thresholds).
  */
 const LOOP_GUARD_PRESETS: Record<LoopGuardSensitivity, LoopGuardOptions> = {
-  normal: {
+  off: {
+    enabled: false,
+    // Mirror of "medium": nothing reads these while the guard is inert, but the
+    // parameter panel still needs something sensible to show.
+    maxNudges: 2,
+    reasoningThreshold: 0.5,
+    reasoningMinTokens: 60,
+    crossTurnSimilarity: 0.85,
+    crossTurnMinLength: 120,
+    toolFailureRepeats: 2,
+    errorStreakTurns: 3,
+    toolRepeatConsecutive: 3,
+    toolRepeatWindow: 16,
+    toolRepeatWindowThreshold: 3,
+    guardResponse: false,
+    answerThreshold: 0.6,
+    answerMinTokens: 300,
+  },
+  medium: {
+    enabled: true,
     maxNudges: 2,
     reasoningThreshold: 0.5,
     reasoningMinTokens: 60,
@@ -76,6 +107,7 @@ const LOOP_GUARD_PRESETS: Record<LoopGuardSensitivity, LoopGuardOptions> = {
     answerMinTokens: 300,
   },
   high: {
+    enabled: true,
     maxNudges: 3,
     reasoningThreshold: 0.45,
     reasoningMinTokens: 50,
@@ -91,6 +123,7 @@ const LOOP_GUARD_PRESETS: Record<LoopGuardSensitivity, LoopGuardOptions> = {
     answerMinTokens: 200,
   },
   low: {
+    enabled: true,
     maxNudges: 2,
     reasoningThreshold: 0.65,
     reasoningMinTokens: 120,
@@ -107,31 +140,38 @@ const LOOP_GUARD_PRESETS: Record<LoopGuardSensitivity, LoopGuardOptions> = {
   },
 };
 
-/** Whether an untrusted value is a valid sensitivity level. */
+/** Whether an untrusted value is a valid sensitivity level. The PRE-RENAME
+ * name ("normal") is NOT valid here: only {@link normalizeLoopGuardSensitivity}
+ * accepts it, and only to migrate it to "medium". */
 export function isLoopGuardSensitivity(value: unknown): value is LoopGuardSensitivity {
-  return value === "low" || value === "normal" || value === "high";
+  return value === "off" || value === "low" || value === "medium" || value === "high";
 }
 
-/** Resolve a sensitivity level (or `undefined` = normal) into the full option
- * set. An unknown value falls back to "normal". `includeResponse` enables the
- * opt-in final-answer guard (default off). */
+/** Resolve a sensitivity level (or `undefined` = medium) into the full option
+ * set. An unknown value falls back to "medium". `includeResponse` enables the
+ * opt-in final-answer guard (default off) — meaningless while the guard is OFF,
+ * where it is forced back to false so nothing can re-enable the guard sideways. */
 export function resolveLoopGuardOptions(
   level?: LoopGuardSensitivity | null,
   includeResponse = false,
 ): LoopGuardOptions {
-  const base = level === "low" || level === "high" ? LOOP_GUARD_PRESETS[level] : LOOP_GUARD_PRESETS.normal;
+  const base =
+    level === "off" || level === "low" || level === "high" ? LOOP_GUARD_PRESETS[level] : LOOP_GUARD_PRESETS.medium;
+  if (!base.enabled) return base;
   return base.guardResponse === includeResponse ? base : { ...base, guardResponse: includeResponse };
 }
 
 /** Validate an untrusted value (e.g. a persisted session field) into a level,
- * or `undefined` (= normal). */
+ * or `undefined` (= medium). Sessions saved before the rename persist "normal":
+ * it maps to "medium", the same behaviour it always had. */
 export function normalizeLoopGuardSensitivity(value: unknown): LoopGuardSensitivity | undefined {
+  if (value === LEGACY_NORMAL) return "medium";
   return isLoopGuardSensitivity(value) ? value : undefined;
 }
 
-/** Every NUMERIC Loop Guard parameter (everything except the `guardResponse`
- * flag), i.e. the knobs the UI exposes as editable fields. */
-export type LoopGuardNumericKey = Exclude<keyof LoopGuardOptions, "guardResponse">;
+/** Every NUMERIC Loop Guard parameter (everything except the flags), i.e. the
+ * knobs the UI exposes as editable fields. */
+export type LoopGuardNumericKey = Exclude<keyof LoopGuardOptions, "guardResponse" | "enabled">;
 
 /** The editable range of one Loop Guard parameter. */
 export interface LoopGuardFieldRange {
@@ -182,14 +222,15 @@ export function clampLoopGuardOverrides(input: unknown): Partial<LoopGuardOption
  * behind each sensitivity level without duplicating them. */
 export function loopGuardPresets(): Record<LoopGuardSensitivity, LoopGuardOptions> {
   return {
+    off: { ...LOOP_GUARD_PRESETS.off },
     low: { ...LOOP_GUARD_PRESETS.low },
-    normal: { ...LOOP_GUARD_PRESETS.normal },
+    medium: { ...LOOP_GUARD_PRESETS.medium },
     high: { ...LOOP_GUARD_PRESETS.high },
   };
 }
 
-/** The full resolved option set for the "normal" preset (the guard default). */
-export const DEFAULT_LOOP_GUARD_OPTIONS: LoopGuardOptions = LOOP_GUARD_PRESETS.normal;
+/** The full resolved option set for the "medium" preset (the guard default). */
+export const DEFAULT_LOOP_GUARD_OPTIONS: LoopGuardOptions = LOOP_GUARD_PRESETS.medium;
 
 export interface ToolOutcome {
   name: string;
@@ -305,6 +346,10 @@ export function thinkingSimilarity(a: string, b: string): number {
  * Stateful, per-run loop guard. It does NOT touch the filesystem or the LLM:
  * the Agent feeds it observations and applies the returned `LoopDecision`.
  *
+ * `options.enabled === false` (the "off" preset) makes every method a no-op:
+ * no detection, no nudges, no stop — and no tool-call deduplication either,
+ * because "off" has to mean off (the UI tooltip says so).
+ *
  * Design:
  *  · every loop type escalates INDEPENDENTLY (up to `options.maxNudges` reactive
  *    nudges, then a final stop);
@@ -380,6 +425,7 @@ export class LoopGuard {
    * 200 chars).
    */
   observeThinking(fullText: string): boolean {
+    if (!this.options.enabled) return false;
     if (this.reasoningBroken) return false;
     if (fullText.length < 200) return false;
     if (fullText.length - this.lastThinkingCheck < 200) return false;
@@ -410,6 +456,7 @@ export class LoopGuard {
    * unless `options.guardResponse` is set. Amortised: re-checks every 200 chars.
    */
   observeAnswer(fullText: string): boolean {
+    if (!this.options.enabled) return false;
     if (!this.options.guardResponse || this.responseBroken) return false;
     if (fullText.length < 200) return false;
     if (fullText.length - this.lastAnswerCheck < 200) return false;
@@ -443,6 +490,9 @@ export class LoopGuard {
     tc: ToolCall,
     readOnly: boolean,
   ): { mode: "run" } | { mode: "reuse"; content: string } | { mode: "refuse"; content: string } {
+    // OFF means inert: no cache reuse, no refusal of a repeated failure and no
+    // in-flight dedup either — the call runs exactly as if there were no guard.
+    if (!this.options.enabled) return { mode: "run" };
     const sig = callSignature(tc.name, tc.arguments);
     const previousError = this.failed.get(sig);
     if (previousError !== undefined) {
@@ -480,6 +530,7 @@ export class LoopGuard {
 
   /** Record the outcome of a tool call that actually ran. */
   afterToolCall(tc: ToolCall, isError: boolean, content: string, readOnly: boolean): void {
+    if (!this.options.enabled) return;
     const sig = callSignature(tc.name, tc.arguments);
     this.inFlight.delete(sig);
     if (isError) {
@@ -503,6 +554,7 @@ export class LoopGuard {
    * acted on per turn (highest priority); the others reset their level.
    */
   observeTurn(obs: TurnObservation): LoopDecision {
+    if (!this.options.enabled) return { kind: "continue" };
     const hasTools = obs.toolCalls.length > 0;
     const allFailed = obs.toolResults.length >= 1 && obs.toolResults.every((r) => r.isError);
 

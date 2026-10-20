@@ -896,7 +896,7 @@ describe("Agent", () => {
 
     // ON: the answer is cut mid-stream, a "response" intervention is emitted,
     // and the model gets a chance to recover.
-    const on = buildHarness({ chunks, loopGuard: resolveLoopGuardOptions("normal", true) });
+    const on = buildHarness({ chunks, loopGuard: resolveLoopGuardOptions("medium", true) });
     await on.agent.send("x");
     const intervention = on.events.find((e) => e.type === "loop_intervention");
     expect(intervention && intervention.type === "loop_intervention" ? intervention.loopType : "").toBe("response");
@@ -931,6 +931,37 @@ describe("Agent", () => {
     // The underlying Read executed exactly once; the 2nd identical call reused it.
     expect(runs).toBe(1);
     expect(history.all().some((m) => m.role === "tool" && /reused the cached result/i.test(m.content))).toBe(true);
+    expect(history.all().some((m) => m.content === "done")).toBe(true);
+  });
+
+  it("with Loop Guard OFF an identical read is executed AGAIN (no cache, no reuse note)", async () => {
+    let runs = 0;
+    const read: Tool = {
+      name: "Read",
+      definition: { name: "Read", description: "read", parameters: { type: "object", properties: {} } },
+      analyzePolicy: "read-only",
+      cacheable: true,
+      execute: (): ToolResult => {
+        runs++;
+        return { content: "FILE CONTENT", isError: false };
+      },
+    };
+    const readCall = (id: string): StreamChunk[] => [
+      { type: "tool_call_start", index: 0, id, name: "Read" },
+      { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts"}' },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const { agent, history } = buildHarness({
+      tools: [read],
+      chunks: [readCall("c1"), readCall("c2"), [{ type: "text", content: "done" }]],
+      loopGuard: resolveLoopGuardOptions("off"),
+    });
+
+    await agent.send("x");
+
+    // Off = the guard is completely inert: the second identical read RUNS.
+    expect(runs).toBe(2);
+    expect(history.all().some((m) => /reused the cached result/i.test(m.content))).toBe(false);
     expect(history.all().some((m) => m.content === "done")).toBe(true);
   });
 
@@ -1345,6 +1376,40 @@ describe("Agent", () => {
     expect(history.all().some((m) => m.role === "user" && /SAME arguments/.test(m.content))).toBe(true);
     const refused = history.all().filter((m) => m.role === "tool" && /already failed and was NOT re-run/.test(m.content));
     expect(refused.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("with Loop Guard OFF a repeated failing call is RE-RUN, with no nudge and no stop", async () => {
+    let runs = 0;
+    const failing: Tool = {
+      name: "Read",
+      definition: { name: "Read", description: "read", parameters: { type: "object", properties: {} } },
+      analyzePolicy: "read-only",
+      execute: (): ToolResult => {
+        runs++;
+        return { content: "boom", isError: true };
+      },
+    };
+    const call = (id: string): StreamChunk[] => [
+      { type: "tool_call_start", index: 0, id, name: "Read" },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const { agent, events, history } = buildHarness({
+      tools: [failing],
+      chunks: [call("c1"), call("c2"), call("c3")],
+      maxTurns: 6,
+      loopGuard: resolveLoopGuardOptions("off"),
+    });
+
+    await agent.send("x");
+
+    // Off = nothing is refused and nothing escalates: the same failing call ran on EVERY turn
+    // (the fake LLM keeps repeating it until maxTurns) instead of being refused after the first.
+    expect(runs).toBeGreaterThanOrEqual(3);
+    expect(history.all().some((m) => /already failed and was NOT re-run/.test(m.content))).toBe(false);
+    expect(history.all().some((m) => m.role === "user" && /SAME arguments/.test(m.content))).toBe(false);
+    expect(events.some((e) => e.type === "loop_intervention")).toBe(false);
+    const error = events.find((e) => e.type === "error");
+    expect(error && error.type === "error" ? error.error : "").not.toContain("Loop not resolved");
   });
 
   it("nudges then stops after consecutive all-error turns with DIFFERENT tools", async () => {

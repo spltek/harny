@@ -20,7 +20,7 @@ describe("renderViewHtml", () => {
       state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
     });
     // The rem base is the editor font (13px by default), so the old 2.4rem was
-    // ~31px — a speck in a 600px+ panel. The size now comes from the size
+    // ~31px — a speck in a 500px+ panel. The size now comes from the size
     // families, so the mark and its tuning live in ONE place (view-config.ts).
     expect(html).toContain("--fs-logo: 6rem"); // ~78px at a 13px base
     expect(html).toContain(".empty-hero .empty-logo img { width: var(--fs-logo); height: var(--fs-logo)");
@@ -130,10 +130,13 @@ describe("renderViewHtml", () => {
     // The paperclip file picker is the HEAD key of the input row (before the
     // textarea, same row as send/abort) and shares their exact size rule.
     expect(html).toMatch(/id="input-main"[\s\S]*?<button id="attach-btn"/);
-    // The Queue/Steer toggle sits BETWEEN the mode select and Parallel.
-    expect(html).toContain('id="steer-btn"');
-    expect(html).toContain('id="steer-btn-label"');
-    expect(html).toMatch(/id="mode-select"[\s\S]*?id="steer-btn"[\s\S]*?id="parallel-btn"/);
+    // The Queue/Steer pill is GONE from the model row: mode select → Parallel directly.
+    expect(html).not.toContain('id="steer-btn"');
+    expect(html).toMatch(/id="mode-select"[\s\S]*?<button type="button" id="parallel-btn"/);
+    // The indicator lives in the control-stack strip now: LEFT side, same height as
+    // "Collapse all" (right side). "Insert in " + the word in a pill.
+    expect(html).toMatch(/<div id="ctl-toggle"[^>]*>[\s\S]*?<span id="insert-hint"[^>]*>Insert in <span id="insert-hint-word">Queue<\/span><\/span>/);
+    expect(html).toMatch(/id="insert-hint"[\s\S]*?id="ctl-toggle-btn"[\s\S]*?id="collapse-all"/);
     expect(html).toMatch(/<button id="attach-btn"[\s\S]*?id="user-input"/);
     // It shows a PAPERCLIP glyph (attachment), not a bare "+".
     expect(html).toMatch(/<button id="attach-btn"[^>]*>\s*<svg[\s\S]*?<\/svg>\s*<\/button>/);
@@ -160,8 +163,9 @@ describe("renderViewHtml", () => {
     // The Compact key sits in the stats row, right after the cache indicator.
     expect(html).toMatch(/id="met-cache"[\s\S]*?<button id="compact-btn"/);
     // Its gear (compaction settings) sits right after Compact; the threshold
-    // label sits between them; the modal form exists and starts hidden.
-    expect(html).toMatch(/<button id="compact-btn"[\s\S]*?<span id="compact-threshold-label"[\s\S]*?>Auto Compact threshold: 80%<\/span>[\s\S]*?<button id="compact-settings-btn"/);
+    // label (compact form: "Auto: <n>% ctx") sits between them; the modal form
+    // exists and starts hidden.
+    expect(html).toMatch(/<button id="compact-btn"[\s\S]*?<span id="compact-threshold-label"[\s\S]*?>Auto: 80% ctx<\/span>[\s\S]*?<button id="compact-settings-btn"/);
     expect(html).toMatch(/id="compact-settings-modal"[\s\S]*?id="compact-threshold-input"/);
     expect(html).toMatch(/id="compact-settings-modal" class="hidden"/);
     expect(html).toContain(`<script src="${base.scriptUri}"></script>`);
@@ -219,6 +223,34 @@ describe("renderViewHtml", () => {
     expect(html).toContain(">Import models configuration</button>");
   });
 
+  it("styles the insert-in hint: left slot of the strip, pill word, red on Steer", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    // Same slot geometry as #transcript-actions, but on the LEFT: the two pills rows sit at
+    // the same height and the strip's centre stays the chevron's.
+    const strip = cssRule(html, "#insert-hint");
+    expect(strip).toContain("position: absolute");
+    expect(strip).toContain("left: 0");
+    expect(strip).toContain("height: 18px");
+    expect(strip).toContain("pointer-events: none"); // indicator, never a control
+    expect(cssRule(html, "#ctl-toggle")).toContain("position: relative");
+    expect(cssRule(html, "#transcript-actions")).toContain("right: 0");
+    // The word lives in a pill, neutral for Queue…
+    const word = cssRule(html, "#insert-hint-word");
+    expect(word).toContain("border-radius: 999px");
+    expect(word).toContain("background: var(--surface-2)");
+    // …and muted red (with its glow) for Steer, the old pill's palette.
+    const steer = cssRule(html, "#insert-hint.is-steer #insert-hint-word");
+    expect(steer).toContain("linear-gradient(135deg, #b23b3b, #8f2d2d)");
+    expect(steer).toContain("color: #ffffff");
+    // Idle dims it, exactly like the disabled pill it replaced.
+    expect(cssRule(html, "#insert-hint.is-idle")).toContain("opacity: 0.45");
+    // The old pill's rules are GONE, not just unused.
+    expect(html).not.toContain("#steer-btn");
+  });
+
   it("styles the per-turn metrics badge under assistant bubbles", () => {
     const html = renderViewHtml({
       ...base,
@@ -227,12 +259,14 @@ describe("renderViewHtml", () => {
     expect(html).toContain(".msg-meta {");
     expect(html).toMatch(/\.msg-meta \{[^}]*flex-shrink: 0/);
     expect(html).toMatch(/\.msg-meta \{[^}]*align-self: flex-start/);
-    // The mode chip that leads the badge (see MessageMeta.mode): present, and BOTH modes
-    // read as the badge's own quiet text — the WORD says which one ran, the colour does
-    // not (an accent-tinted "Build" was the loudest thing on half the lines).
+    // The mode chip that leads the badge (see MessageMeta.mode): present, on the same
+    // quiet bed as the rest of the line, and ONLY the word "Build" takes the accent —
+    // Analyze stays gray, so the orange marks the turns that actually wrote.
     expect(html).toContain(".msg-meta .meta-mode {");
     expect(html).toMatch(/\.msg-meta \.meta-mode \{[^}]*background: rgba\(255, 255, 255, 0\.06\)/);
-    expect(html).not.toMatch(/\.meta-mode\.build/);
+    expect(html).toMatch(/\.msg-meta \.meta-mode\.build \{[^}]*color: var\(--accent\)/);
+    // The colour lives on the WORD only: no rule paints the whole line.
+    expect(html).not.toContain(".msg-meta.build {");
     expect(html).toMatch(/\.msg-meta \{[^}]*tabular-nums/);
   });
 
@@ -378,22 +412,33 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/id="parallel-btn"[\s\S]*?aria-pressed="false"[\s\S]*?Parallel/);
   });
 
-  it("keeps the mode selector colourless, at ONE width for both modes", () => {
+  it("keeps Analyze colourless, paints Build orange, at ONE width for both modes", () => {
     const html = renderViewHtml({
       ...base,
       state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
     });
-    // The pill: both icons in the row's muted gray (hover brightens them, like the pills
-    // next to it), and the old per-mode colours are GONE — not just overridden.
+    // ANALYZE (the quiet default): both icons in the row's muted gray, hover brightens
+    // them like the pills next to it.
     expect(cssRule(html, "#mode-btn-icon-analyze, #mode-btn-icon-agent")).toContain("color: var(--muted)");
     expect(html).not.toContain("#mode-btn-icon-analyze { color: var(--accent); }");
-    expect(html).not.toContain("#mode-btn.is-agent #mode-btn-icon-agent");
+    // BUILD: the whole pill goes orange — accent gradient, white label/icon/chevron and
+    // a soft glow, the same recipe as #parallel-btn.is-on.
+    const build = cssRule(html, "#mode-btn.is-agent");
+    expect(build).toContain("linear-gradient(135deg, var(--accent), var(--accent-strong))");
+    expect(build).toContain("color: #ffffff");
+    expect(cssRule(html, "#mode-btn.is-agent #mode-btn-icon-analyze,\n    #mode-btn.is-agent #mode-btn-icon-agent,\n    #mode-btn.is-agent .mode-btn-chevron")).toContain("color: #ffffff");
+    // A dashed pending edge must survive the transparent border.
+    expect(cssRule(html, "#mode-btn.is-agent.is-pending")).toContain("border-style: dashed");
     // The menu follows: neutral icons, and the accent marks only WHAT IS SELECTED.
     expect(cssRule(html, ".mode-item svg:not(.mode-check)")).toContain("color: var(--muted)");
     expect(html).not.toContain('.mode-item[data-mode="analyze"] svg');
     expect(html).not.toContain('.mode-item[data-mode="agent"] svg');
     expect(cssRule(html, ".mode-item.is-active .mode-check")).toContain("var(--accent)");
     expect(html).not.toContain('.mode-item[data-mode="agent"].is-active .mode-check');
+    // The per-turn badge under an answer: ONLY the word "Build" takes the accent —
+    // the line itself stays the badge's quiet gray.
+    expect(cssRule(html, ".msg-meta .meta-mode.build")).toContain("color: var(--accent)");
+    expect(html).not.toContain(".msg-meta.build {");
     // ONE width: the longest label is reserved by a zero-height ghost, so switching
     // Analyze ⇄ Build cannot move the pill (or the pills beside it).
     const ghost = cssRule(html, "#mode-btn-label::before");
@@ -456,7 +501,22 @@ describe("renderViewHtml", () => {
     expect(html).not.toContain('id="samp-input"');
     expect(html).toMatch(/type="range" id="par-range"[\s\S]*?id="par-value"/);
     expect(html).toMatch(/name="thinking-level"[\s\S]*?id="thinking-off"[\s\S]*?id="thinking-high"/);
-    expect(html).toMatch(/name="lg-level"[\s\S]*?id="lg-high"[\s\S]*?id="lg-normal"[\s\S]*?id="lg-low"/);
+    expect(html).toMatch(
+      /name="lg-level"[\s\S]*?id="lg-off"[\s\S]*?id="lg-low"[\s\S]*?id="lg-medium"[\s\S]*?id="lg-high"/,
+    );
+    // The order is the FEATURE: quietest → loudest, with Off first (the row used to read
+    // High/Normal/Low, i.e. backwards). Medium is the default, and the label was renamed.
+    expect(html).toMatch(/id="lg-off" value="off"/);
+    expect(html).toMatch(/id="lg-low" value="low"/);
+    expect(html).toMatch(/id="lg-medium" value="medium" checked/);
+    expect(html).toMatch(/id="lg-high" value="high"/);
+    expect(html).not.toContain('id="lg-normal"');
+    expect(html).not.toContain('value="normal"');
+    // Off must SAY it also drops the tool-call dedup, or "off" would be a half-truth.
+    expect(html).toMatch(/id="lg-off"[\s\S]{0,40}\/>Off</);
+    expect(html).toContain("no tool-call deduplication");
+    // Loop Guard OFF dims the parameter block (the sliders stay in place).
+    expect(cssRule(html, "#lg-fields.is-off")).toContain("opacity: 0.45");
     expect(html).toContain('id="lg-response"');
     // Below the sensitivity row: the editable Loop Guard fields (filled at
     // runtime from the host-provided ranges + presets).
@@ -514,18 +574,18 @@ describe("renderViewHtml", () => {
     // squeezing the controls (the PANEL's minimum is VS Code's, not ours).
     // 450px is the MEASURED minimum, read off a live width readout in a real VS
     // Code panel - the narrowest width at which the prompt placeholder still fits
-    // on one line and the control row is not squeezed. 600px is what ships — the
-    // reference width the panel is meant to open at — with ~150px (a third) of
+    // on one line and the control row is not squeezed. 500px is what ships — the
+    // reference width the panel is meant to open at — with ~50px (about a ninth) of
     // margin over that measurement. The 32rem part is INDEPENDENT of it: it
     // covers larger editor fonts, where every control grows; headless
     // measurements put that side at ~22.75px per font px plus ~148px of chrome,
     // but they ran ~6% high against the real panel (480px vs the real 450px), so
-    // the rem part is the conservative side. With the floor at 600px the rem side
-    // takes over past a ~18.75px font (32rem === 600px exactly there).
+    // the rem part is the conservative side. With the floor at 500px the rem side
+    // takes over past a ~15.6px font (32rem === 500px exactly there).
     // It also clears the control-row overflow (~407px) and the pills reaching the
     // centred ctl-toggle chevron (~379px).
-    expect(html).toMatch(/html\s*\{\s*min-width:\s*max\(600px,\s*32rem\);\s*overflow-x:\s*auto/);
-    expect(html).toMatch(/body\s*\{[^}]*min-width:\s*max\(600px,\s*32rem\)/);
+    expect(html).toMatch(/html\s*\{\s*min-width:\s*max\(500px,\s*32rem\);\s*overflow-x:\s*auto/);
+    expect(html).toMatch(/body\s*\{[^}]*min-width:\s*max\(500px,\s*32rem\)/);
     // The old providers-form flag is gone (moved to the per-session Parallel card).
     expect(html).not.toContain("pe-maxparallel");
   });

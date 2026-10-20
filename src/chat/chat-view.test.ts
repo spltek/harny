@@ -855,6 +855,40 @@ describe("ChatViewProvider", () => {
     expect(store.saveSettings).toHaveBeenCalledWith("s1", { loopGuard: undefined });
   });
 
+  it("setLoopGuard accepts off, and a legacy 'normal' is stored as 'medium'", async () => {
+    const { store, provider, registry } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+
+    // OFF reaches the agent as a DISABLED option set (the guard is fully inert).
+    const agent = registry.get("s1")!.agent;
+    (agent.setLoopGuardOptions as ReturnType<typeof vi.fn>).mockClear();
+    await handler({ type: "setLoopGuard", value: "off" });
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { loopGuard: "off" });
+    expect(agent.setLoopGuardOptions).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }));
+    const configPosts = view.webview.postMessage.mock.calls
+      .map((c) => c[0] as any)
+      .filter((m) => m.type === "config");
+    expect(configPosts[configPosts.length - 1].config.loopGuard).toBe("off");
+
+    // A client still sending the pre-rename name is migrated, never stored verbatim.
+    (agent.setLoopGuardOptions as ReturnType<typeof vi.fn>).mockClear();
+    await handler({ type: "setLoopGuard", value: "normal" as never });
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { loopGuard: "medium" });
+    expect(agent.setLoopGuardOptions).toHaveBeenCalledWith(expect.objectContaining({ enabled: true }));
+
+    // And a truly unknown value clears the override (undefined = the default).
+    await handler({ type: "setLoopGuard", value: "bogus" as never });
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { loopGuard: undefined });
+
+    // The push the webview needs to RENDER all four states: the presets must carry `off`,
+    // or the parameter panel would have nothing to fill in when the guard is switched off.
+    const last = configPosts[configPosts.length - 1].config;
+    expect(Object.keys(last.loopGuardPresets).sort()).toEqual(["high", "low", "medium", "off"]);
+    expect(last.loopGuardPresets.off.enabled).toBe(false);
+    expect(last.loopGuardPresets.medium.enabled).toBe(true);
+  });
+
   it("setLoopGuardResponse persists the opt-in flag and applies it to the agent", async () => {
     const { store, provider, registry } = buildHarness();
     const { handler, view } = resolveWith(provider);

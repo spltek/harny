@@ -122,8 +122,8 @@ ${renderViewConfig(deps)}
        Code panel: the narrowest width at which the prompt placeholder still fits
        on one line and the control row (Analyze / Queue / Parallel / AI Model) is
        not squeezed. The floor shipped is PANEL_REFERENCE_WIDTH (panel-width.ts),
-       keeping ~150px (a third) of margin over that measurement — that margin is
-       the TOLERANCE you feel when dragging the panel narrower before the
+       keeping ~50px (about a ninth) of margin over that measurement — that margin
+       is the TOLERANCE you feel when dragging the panel narrower before the
        scrollbar appears. The px value comes from that constant, NOT from a
        literal here: the intended tolerance and what the stylesheet enforces must
        never drift apart.
@@ -133,8 +133,8 @@ ${renderViewConfig(deps)}
        fonts, where every control grows. Headless measurements put that side at
        roughly 22.75px per font px plus ~148px of chrome (~510px at a 16px font,
        ~600px at 20px), rounded up to 32 per font px to stay on the conservative
-       side. With the floor at 600px the rem side takes over past a ~18.75px font
-       (32rem === 600px exactly there).
+       side. With the floor at 500px the rem side takes over past a ~15.6px font
+       (32rem === 500px exactly there).
        Beware: those headless numbers ran ~6% high against the real panel (they
        said 480px where the real answer is 450px), so treat the rem part as the
        conservative side of an estimate and the px part as the measured one.
@@ -404,14 +404,16 @@ ${renderViewConfig(deps)}
       user-select: text; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     /* The mode chip leading the badge: the SAME quiet gray as the model and the
-       counts that follow it, for Analyze and Build alike — the WORD is what tells
-       the two modes apart. An accent-tinted "Build" turned half the lines of a
-       long transcript into the loudest thing in the panel, competing with the
-       answer it exists to annotate. */
+       counts that follow it for Analyze. In BUILD only the WORD takes the accent —
+       the rest of the line stays gray, so the chip is a marker you can scan for and
+       not a loud row repeated under half the transcript. */
     .msg-meta .meta-mode {
       padding: 0 4px; border-radius: 3px; background: rgba(255, 255, 255, 0.06);
       font-size: var(--fs-sm);
     }
+    /* The one orange thing on the line: the word itself. Background and the text that
+       follows keep their neutral tone. */
+    .msg-meta .meta-mode.build { color: var(--accent); }
     /* Bubble action tabs: the ⎇ branch key on assistant replies and the ✂ cut
        key on user prompts become little "linguette" anchored to the bubble's
        TOP-RIGHT. On hover they SLIDE UP out of the bubble (same fade/reveal as
@@ -952,7 +954,8 @@ ${renderViewConfig(deps)}
        ALWAYS visible (orange accent) — clicking collapses/expands the Window
        + Sampling cards below (the rest of the controls stays visible). The
        stack is COLLAPSED by default.
-       position:relative because this strip also HOSTS #collapse-all: the strip
+       position:relative because this strip also HOSTS #collapse-all (right) and the
+       insert-in hint (left): the strip
        sits outside #messages, which is the one scrolling element, so a tab
        anchored here stays put while the transcript scrolls. */
     #ctl-toggle {
@@ -994,6 +997,35 @@ ${renderViewConfig(deps)}
     }
     /* No dip, no bevel: the pill does not move when clicked. */
     #transcript-actions > button:not(:disabled):active { transform: none; box-shadow: none; }
+    /* Insert-in hint: the LEFT slot of this same strip, mirroring #transcript-actions on
+       the right. It replaces the old Queue/Steer pill that lived in the model row:
+       "Insert in Queue" / "Insert in Steer". A pure INDICATOR — never clickable — so it
+       is a plain span: no button chrome, no focus ring. Both states keep the word in a
+       pill of the strip's own height, so the row cannot reflow when the word changes. */
+    #insert-hint {
+      position: absolute; left: 0; top: 0;
+      display: inline-flex; align-items: center; gap: 5px;
+      height: 18px; pointer-events: none;
+      font-size: var(--fs-xs); color: var(--muted);
+      white-space: nowrap; user-select: none;
+    }
+    /* The word itself, in a pill: neutral for Queue, muted red for Steer (the message is
+       then injected into the running loop instead of waiting for it). */
+    #insert-hint-word {
+      display: inline-flex; align-items: center;
+      height: 18px; padding: 0 8px; border-radius: 999px;
+      background: var(--surface-2); border: 1px solid rgba(255, 255, 255, 0.16);
+      color: var(--fg); font-weight: 600; line-height: 1;
+      transition: background 0.18s, color 0.18s, border-color 0.18s, box-shadow 0.18s;
+    }
+    #insert-hint.is-steer #insert-hint-word {
+      background: linear-gradient(135deg, #b23b3b, #8f2d2d);
+      border-color: transparent; color: #ffffff;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 12px rgba(178, 59, 59, 0.45);
+    }
+    /* Idle (no run in flight): dimmed like the old disabled pill — the choice only means
+       something while the agent is working. */
+    #insert-hint.is-idle { opacity: 0.45; }
     #ctl-toggle-btn {
       background: transparent; border: none; color: var(--accent);
       padding: 3px 8px; cursor: pointer; display: inline-flex; align-items: center;
@@ -1203,6 +1235,10 @@ ${renderViewConfig(deps)}
     /* The value is a read-only LABEL (the slider is the only control). */
     .lg-value { grid-area: val; text-align: right; color: var(--fg); font-variant-numeric: tabular-nums; }
     .lg-range { grid-area: range; width: 100%; height: 14px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+    /* Loop Guard OFF: the parameter sliders are inert (they stay in place, with their
+       values, so switching level never changes the card's height — the column-count
+       measurement reads this row). Dim the whole block, labels included. */
+    #lg-fields.is-off { opacity: 0.45; }
     .lg-field input:disabled { opacity: 0.5; cursor: default; }
     .ctl-inline { display: flex; align-items: center; gap: 8px; min-width: 0; }
     .ctl-inline input[type="checkbox"] {
@@ -1260,9 +1296,9 @@ ${renderViewConfig(deps)}
     #mode-btn:active { transform: scale(0.96); }
     #mode-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     #mode-btn:disabled { opacity: 0.45; cursor: default; transform: none; box-shadow: none; }
-    /* NO colour carries the mode here: both icons are the muted gray of the other pills
-       on this row, and the LABEL is what says which mode you are in — a coloured icon was
-       the last loud thing left on a row of quiet controls. */
+    /* NO colour carries the mode in ANALYZE (the quiet default): both icons are the
+       muted gray of the other pills on this row, and the LABEL is what says which mode
+       you are in. BUILD is the loud one ON PURPOSE — see the .is-agent block below. */
     #mode-btn-icon-analyze, #mode-btn-icon-agent { flex-shrink: 0; color: var(--muted); transition: color 0.18s; }
     #mode-btn:hover #mode-btn-icon-analyze, #mode-btn:hover #mode-btn-icon-agent { color: var(--fg); }
     #mode-btn-icon-analyze.hidden, #mode-btn-icon-agent.hidden { display: none; }
@@ -1278,6 +1314,33 @@ ${renderViewConfig(deps)}
     /* Chevron rotates when the dropdown is open. */
     #mode-btn .mode-btn-chevron { flex-shrink: 0; color: var(--muted); transition: color 0.18s, transform 0.18s; }
     #mode-btn:hover .mode-btn-chevron { color: var(--fg); }
+    /* BUILD: one orange pill says "tools write for real" BEFORE you send anything.
+       Analyze keeps the quiet gray above, so the contrast IS the signal — you never
+       have to re-read the word to know which mode the next run uses. Same recipe as
+       #parallel-btn.is-on (saturated gradient, white icon+label, soft glow). These
+       rules must stay AFTER the neutral ones: #mode-btn:hover has the same
+       specificity, so the ORDER is what makes the orange win on hover too. */
+    #mode-btn.is-agent {
+      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+      border-color: transparent;
+      color: #ffffff;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 12px rgba(217, 95, 39, 0.45);
+    }
+    #mode-btn.is-agent:hover {
+      border-color: transparent; color: #ffffff;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45), 0 0 16px rgba(217, 95, 39, 0.6);
+    }
+    #mode-btn.is-agent #mode-btn-icon-analyze,
+    #mode-btn.is-agent #mode-btn-icon-agent,
+    #mode-btn.is-agent .mode-btn-chevron { color: #ffffff; }
+    /* The hover variants need their own rule: #mode-btn:hover #mode-btn-icon-agent
+       counts TWO ids and would repaint the icon gray on top of the white. */
+    #mode-btn.is-agent:hover #mode-btn-icon-analyze,
+    #mode-btn.is-agent:hover #mode-btn-icon-agent,
+    #mode-btn.is-agent:hover .mode-btn-chevron { color: #ffffff; }
+    /* A policy changed under the panel keeps its dashed edge — a transparent border
+       would swallow it (same fix as #parallel-btn.is-on.is-pending). */
+    #mode-btn.is-agent.is-pending { border-style: dashed; border-color: rgba(255, 255, 255, 0.6); }
     #mode-select.open #mode-btn .mode-btn-chevron { transform: rotate(180deg); }
     /* The vertical dropdown: stacks the two choices under the button. */
     #mode-menu {
@@ -1360,39 +1423,6 @@ ${renderViewConfig(deps)}
     }
     #parallel-btn.is-on svg { color: #ffffff; }
     #parallel-btn.is-on:hover { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45), 0 0 16px rgba(76, 141, 255, 0.55); }
-
-    /* Queue/Steer pill: same family as Parallel, sitting between the mode
-       select and Parallel. It is a pure INDICATOR (never clickable): Queue by
-       default, Steer (muted red) only while working with Ctrl/Cmd held. */
-    #steer-btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      height: 1.85rem;
-      padding: 0 10px 0 8px;
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      background: var(--surface-2);
-      color: var(--fg);
-      font-size: var(--fs-sm);
-      font-weight: 600;
-      cursor: default;
-      pointer-events: none;
-      white-space: nowrap;
-      flex-shrink: 0;
-      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
-      transition: background 0.18s, box-shadow 0.18s, color 0.18s, border-color 0.18s, opacity 0.18s;
-    }
-    #steer-btn svg { flex-shrink: 0; color: var(--muted); transition: color 0.18s; }
-    #steer-btn:disabled { opacity: 0.45; box-shadow: none; }
-    #steer-btn.is-steer {
-      background: linear-gradient(135deg, #b23b3b, #8f2d2d);
-      border-color: transparent;
-      color: #ffffff;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 12px rgba(178, 59, 59, 0.4);
-    }
-    #steer-btn.is-steer svg { color: #ffffff; }
-    #steer-btn.is-steer:hover:not(:disabled) { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45), 0 0 16px rgba(178, 59, 59, 0.55); }
 
     .card-title {
       font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
@@ -1997,6 +2027,12 @@ ${renderViewConfig(deps)}
        Sampling cards (#ctl-cards) while the ask card (with the AI Model row
        at its head) and the metrics stay visible. -->
   <div id="ctl-toggle" title="Toggle the controls below" aria-expanded="false">
+    <!-- Insert-in hint: replaces the old Queue/Steer pill. Same height and same
+         side of the strip as "Collapse all"/"Follow", but on the LEFT. It is a
+         pure INDICATOR (never clickable): "Queue" by default, "Steer" (red pill)
+         ONLY while a run is active AND Ctrl/Cmd is held — exactly the rule the
+         old pill followed, so the keyboard gesture is unchanged. -->
+    <span id="insert-hint" title="Queue: the next message runs after the current run ends">Insert in <span id="insert-hint-word">Queue</span></span>
     <button id="ctl-toggle-btn" aria-label="Toggle controls">
       <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
     </button>
@@ -2040,15 +2076,6 @@ ${renderViewConfig(deps)}
           </button>
         </div>
       </div>
-      <!-- Queue/Steer: an INDICATOR (not a control) for how a message typed
-           while the agent works is applied. Queue by default; it shows Steer
-           only while working with Ctrl/Cmd held (the message is then injected
-           into the running loop at the next turn boundary). -->
-      <button type="button" id="steer-btn" tabindex="-1" aria-pressed="false"
-              title="Queue: the next message runs after the current run ends">
-        <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none"/></svg>
-        <span id="steer-btn-label">Queue</span>
-      </button>
       <!-- Parallel: press/release toggle enabling orchestration (sub-agents)
            for the current mode. Blue when pressed. -->
       <button type="button" id="parallel-btn" aria-pressed="false"
@@ -2143,9 +2170,10 @@ ${renderViewConfig(deps)}
           <span class="field-label">Sensitivity</span>
           <div class="lg-head" id="lg-head">
             <div class="sampler-toggle" id="lg-toggle" role="radiogroup" aria-label="Loop Guard sensitivity">
-              <label class="sampler-opt" title="Aggressive: flags loops sooner (more nudges, lower thresholds)"><input type="radio" name="lg-level" id="lg-high" value="high" />High</label>
-              <label class="sampler-opt" title="Balanced: the default preset"><input type="radio" name="lg-level" id="lg-normal" value="normal" checked />Normal</label>
+              <label class="sampler-opt" title="Off: the Loop Guard does nothing at all — no detection, no nudges, no stop, and no tool-call deduplication (identical calls are re-run)"><input type="radio" name="lg-level" id="lg-off" value="off" />Off</label>
               <label class="sampler-opt" title="Permissive: only clear, sustained loops are flagged"><input type="radio" name="lg-level" id="lg-low" value="low" />Low</label>
+              <label class="sampler-opt" title="Balanced: the default preset"><input type="radio" name="lg-level" id="lg-medium" value="medium" checked />Medium</label>
+              <label class="sampler-opt" title="Aggressive: flags loops sooner (more nudges, lower thresholds)"><input type="radio" name="lg-level" id="lg-high" value="high" />High</label>
               <label class="sampler-opt" title="Also apply the Loop Guard to the final answer text (detects the model repeating the same response). Default off."><input type="checkbox" id="lg-response" />Include response</label>
             </div>
             <button id="lg-collapse" class="lg-collapse" aria-expanded="false" aria-controls="lg-params-field" title="Show the Loop Guard parameters">
@@ -2179,7 +2207,7 @@ ${renderViewConfig(deps)}
       <span class="met pct" id="met-pct">(0%)</span>
       <span class="met" id="met-cache" title="Input tokens served from prompt cache"></span>
       <button id="compact-btn" title="Compact the conversation context">Compact</button>
-      <span id="compact-threshold-label" title="Context fill % that triggers auto-compaction (set via the gear)">Auto Compact threshold: 80%</span>
+      <span id="compact-threshold-label" title="Context fill % that triggers auto-compaction (set via the gear)">Auto: 80% ctx</span>
       <button id="compact-settings-btn" class="gear-btn" title="Set the context fill % that auto-compacts"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
     </div>
     <div id="ctx-bar-wrap"><div id="ctx-bar"></div></div>

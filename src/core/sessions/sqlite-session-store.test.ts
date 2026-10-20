@@ -203,6 +203,20 @@ describe("SqliteSessionStore — per-session settings", () => {
     });
   });
 
+  it("loopGuard: off round-trips, and a legacy 'normal' row loads as 'medium'", () => {
+    const { store } = makeStore();
+    store.create();
+    // OFF is a real stored value, not "unset".
+    store.saveSettings("s1", { loopGuard: "off" });
+    expect(store.load("s1").summary.loopGuard).toBe("off");
+    // A row written before the rename (\"normal\") is migrated on read.
+    store.saveSettings("s1", { loopGuard: "normal" as never });
+    expect(store.load("s1").summary.loopGuard).toBe("medium");
+    // Junk is dropped (undefined = the default preset).
+    store.saveSettings("s1", { loopGuard: "bogus" as never });
+    expect(store.load("s1").summary.loopGuard).toBeUndefined();
+  });
+
   it("contextTokens: 0 survives a cut + reload (an explicit clear beats the carry-over)", () => {
     const { store } = makeStore();
     store.create();

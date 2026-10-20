@@ -3,8 +3,8 @@ import { PANEL_REFERENCE_WIDTH, panelMinWidthCss } from "./panel-width";
 
 describe("panelMinWidthCss", () => {
   it("builds the floor from the reference width, keeping the font-scaled part", () => {
-    expect(panelMinWidthCss()).toBe("max(600px, 32rem)");
-    expect(panelMinWidthCss(PANEL_REFERENCE_WIDTH)).toBe("max(600px, 32rem)");
+    expect(panelMinWidthCss()).toBe("max(500px, 32rem)");
+    expect(panelMinWidthCss(PANEL_REFERENCE_WIDTH)).toBe("max(500px, 32rem)");
   });
 
   it("rounds the width and never emits a negative floor", () => {
@@ -19,6 +19,6 @@ describe("panelMinWidthCss", () => {
     // relationship (not just the number) keeps a future edit from silently
     // removing the tolerance and making the scrollbar appear on the first drag.
     expect(PANEL_REFERENCE_WIDTH).toBeGreaterThan(450);
-    expect(PANEL_REFERENCE_WIDTH - 450).toBeGreaterThanOrEqual(100);
+    expect(PANEL_REFERENCE_WIDTH - 450).toBeGreaterThanOrEqual(50);
   });
 });

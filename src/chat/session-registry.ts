@@ -35,7 +35,7 @@ export interface SessionRuntime {
   sampler?: "temperature" | "topP";
   /** Per-session concurrent sub-agent cap (undefined = inherit; 0 = no cap). */
   maxParallelSubAgents?: number;
-  /** Per-session Loop Guard sensitivity; undefined = "normal". */
+  /** Per-session Loop Guard sensitivity; undefined = "medium". */
   loopGuard?: LoopGuardSensitivity;
   /** Also guard the visible final answer (opt-in; undefined = off). */
   loopGuardResponse?: boolean;

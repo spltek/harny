@@ -62,14 +62,13 @@ function setupDom(
           <button type="button" class="mode-item" data-mode="agent" role="option" aria-selected="false">Build</button>
         </div>
       </div>
-      <button type="button" id="steer-btn" aria-pressed="false"><span id="steer-btn-label">Queue</span></button>
       <button type="button" id="parallel-btn" aria-pressed="false">Parallel</button>
       <div id="attach-row">
         <div id="attachment-chips" class="hidden"></div>
       </div>
     </div>
     <div id="status">AI Model: <button id="model-btn"><span id="model-btn-label">Select a model</span><span id="model-warn" class="hidden"></span></button><button id="gear-btn">⚙</button><input type="range" id="ctx-range" min="1000" max="2000000" step="1000"><span id="ctx-value"></span><span id="ctx-range-label"></span><input type="range" id="out-range" min="256" max="262144" step="256"><span id="out-value"></span><span id="out-range-label"></span><input id="sampler-temp" type="radio" name="sampler" checked><input id="sampler-topp" type="radio" name="sampler"><input type="range" id="samp-range" min="0" max="2" step="0.1"><span id="samp-value">Auto</span><span id="samp-range-label"></span><button id="samp-auto">Auto</button><input type="range" id="presence-range" min="0" max="2" step="0.1"><span id="presence-value">Auto</span><button id="presence-auto">Auto</button><input type="range" id="freq-range" min="0" max="2" step="0.1"><span id="freq-value">Auto</span><button id="freq-auto">Auto</button></div>
-    <div id="ctl-cards"><input type="range" id="par-range" min="0" max="100" step="1" /><span id="par-value">4</span><button id="lg-reset"></button><div id="lg-head"><div id="lg-toggle" class="sampler-toggle"><input type="radio" name="lg-level" id="lg-high" value="high" /><input type="radio" name="lg-level" id="lg-normal" value="normal" checked /><input type="radio" name="lg-level" id="lg-low" value="low" /><input type="checkbox" id="lg-response" /></div><button id="lg-collapse"></button></div><div id="lg-params-field"><div id="lg-fields"></div></div><div id="skills-card" class="hidden"><div id="skills-list"></div></div><div id="mcp-card" class="hidden"><div id="mcp-list"></div><button id="mcp-configure"></button></div></div>
+    <div id="ctl-cards"><input type="range" id="par-range" min="0" max="100" step="1" /><span id="par-value">4</span><button id="lg-reset"></button><div id="lg-head"><div id="lg-toggle" class="sampler-toggle"><input type="radio" name="lg-level" id="lg-off" value="off" /><input type="radio" name="lg-level" id="lg-low" value="low" /><input type="radio" name="lg-level" id="lg-medium" value="medium" checked /><input type="radio" name="lg-level" id="lg-high" value="high" /><input type="checkbox" id="lg-response" /></div><button id="lg-collapse"></button></div><div id="lg-params-field"><div id="lg-fields"></div></div><div id="skills-card" class="hidden"><div id="skills-list"></div></div><div id="mcp-card" class="hidden"><div id="mcp-list"></div><button id="mcp-configure"></button></div></div>
     <div id="metrics"><input type="radio" name="thinking-level" id="thinking-off" value="off" /><input type="radio" name="thinking-level" id="thinking-low" value="low" /><input type="radio" name="thinking-level" id="thinking-medium" value="medium" /><input type="radio" name="thinking-level" id="thinking-high" value="high" /><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-window"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button><span id="compact-threshold-label"></span><button id="compact-settings-btn">⚙</button></div>
     <div id="compact-settings-modal" class="hidden">
       <div class="cs-backdrop"></div>
@@ -108,7 +107,7 @@ function setupDom(
         <button id="providers-cancel" class="secondary">Cancel</button>
       </div>
     </div>
-    <div id="ctl-toggle"><button id="ctl-toggle-btn"></button><div id="transcript-actions"><button id="collapse-all" disabled></button><button id="autoscroll" disabled></button></div></div>
+    <div id="ctl-toggle"><span id="insert-hint">Insert in <span id="insert-hint-word">Queue</span></span><button id="ctl-toggle-btn"></button><div id="transcript-actions"><button id="collapse-all" disabled></button><button id="autoscroll" disabled></button></div></div>
     <div id="mcp-modal" class="hidden">
       <div class="mcp-backdrop"></div>
       <select id="mcp-select"></select>
@@ -3047,10 +3046,11 @@ describe("view webview client", () => {
     await loadView();
     hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, loopGuard: "high" } });
     const high = document.getElementById("lg-high") as HTMLInputElement;
-    const normal = document.getElementById("lg-normal") as HTMLInputElement;
+    const medium = document.getElementById("lg-medium") as HTMLInputElement;
     const low = document.getElementById("lg-low") as HTMLInputElement;
+    const off = document.getElementById("lg-off") as HTMLInputElement;
     expect(high.checked).toBe(true);
-    expect(normal.checked).toBe(false);
+    expect(medium.checked).toBe(false);
 
     posted.length = 0;
     low.checked = true;
@@ -3058,6 +3058,12 @@ describe("view webview client", () => {
     const msg = posted.at(-1) as { type: string; value: string };
     expect(msg.type).toBe("setLoopGuard");
     expect(msg.value).toBe("low");
+
+    // Off is a real level and posts as such.
+    posted.length = 0;
+    off.checked = true;
+    off.dispatchEvent(new Event("change"));
+    expect((posted.at(-1) as { type: string; value: string }).value).toBe("off");
 
     // The "Include response" flag posts its own message.
     posted.length = 0;
@@ -3069,10 +3075,14 @@ describe("view webview client", () => {
     expect(respMsg.type).toBe("setLoopGuardResponse");
     expect(respMsg.value).toBe(true);
 
-    // An undefined config (no override) selects the normal preset.
+    // An undefined config (no override) selects the MEDIUM preset (the default).
     hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000 } });
-    expect(normal.checked).toBe(true);
+    expect(medium.checked).toBe(true);
     expect(response.checked).toBe(false);
+
+    // A session persisted under the old name ("normal") lands on Medium, not on Off.
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, loopGuard: "normal" as never } });
+    expect(medium.checked).toBe(true);
   });
 
   it("Loop Guard fields: built from the ranges, filled from the preset, post live overrides", async () => {
@@ -3087,7 +3097,7 @@ describe("view webview client", () => {
         ],
         loopGuardPresets: {
           high: { maxNudges: 3, reasoningThreshold: 0.45 },
-          normal: { maxNudges: 2, reasoningThreshold: 0.5 },
+          medium: { maxNudges: 2, reasoningThreshold: 0.5 },
           low: { maxNudges: 2, reasoningThreshold: 0.65 },
         },
       },
@@ -3131,12 +3141,12 @@ describe("view webview client", () => {
     hostMessage({
       type: "config",
       config: {
-        provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, loopGuard: "normal",
+        provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, loopGuard: "medium",
         loopGuardRanges: [
           { key: "maxNudges", min: 1, max: 10, step: 1, integer: true },
           { key: "reasoningThreshold", min: 0.05, max: 1, step: 0.05, integer: false },
         ],
-        loopGuardPresets: { normal: { maxNudges: 2, reasoningThreshold: 0.5 } },
+        loopGuardPresets: { medium: { maxNudges: 2, reasoningThreshold: 0.5 } },
         loopGuardParams: { maxNudges: 7 },
       },
     });
@@ -3151,9 +3161,9 @@ describe("view webview client", () => {
     hostMessage({
       type: "config",
       config: {
-        provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, loopGuard: "normal",
+        provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, loopGuard: "medium",
         loopGuardRanges: [{ key: "maxNudges", min: 1, max: 10, step: 1, integer: true }],
-        loopGuardPresets: { normal: { maxNudges: 2 } },
+        loopGuardPresets: { medium: { maxNudges: 2 } },
       },
     });
     const tip = document.getElementById("tip") as HTMLElement;
@@ -3243,10 +3253,52 @@ describe("view webview client", () => {
     hostMessage({ type: "status", active: true });
     expect((document.getElementById("par-range") as HTMLInputElement).disabled).toBe(true);
     expect((document.getElementById("lg-high") as HTMLInputElement).disabled).toBe(true);
+    expect((document.getElementById("lg-off") as HTMLInputElement).disabled).toBe(true);
     expect((document.getElementById("lg-response") as HTMLInputElement).disabled).toBe(true);
     hostMessage({ type: "status", active: false });
     expect((document.getElementById("lg-high") as HTMLInputElement).disabled).toBe(false);
     expect((document.getElementById("lg-response") as HTMLInputElement).disabled).toBe(false);
+  });
+
+  it("Loop Guard OFF dims and disables its parameters and the answer checkbox", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, loopGuard: "off",
+        loopGuardRanges: [{ key: "maxNudges", min: 1, max: 10, step: 1, integer: true }],
+        loopGuardPresets: { off: { maxNudges: 2 }, medium: { maxNudges: 2 } },
+      },
+    });
+    const off = document.getElementById("lg-off") as HTMLInputElement;
+    const medium = document.getElementById("lg-medium") as HTMLInputElement;
+    const response = document.getElementById("lg-response") as HTMLInputElement;
+    const nudges = document.getElementById("lgr-maxNudges") as HTMLInputElement;
+    const fields = document.getElementById("lg-fields") as HTMLElement;
+    expect(off.checked).toBe(true);
+    // Inert, but still THERE (hiding them would change the card's height).
+    expect(nudges).toBeTruthy();
+    expect(nudges.disabled).toBe(true);
+    expect(response.disabled).toBe(true);
+    expect(fields.classList.contains("is-off")).toBe(true);
+    // …and a new level wakes them up again (the run lock is not on).
+    medium.checked = true;
+    medium.dispatchEvent(new Event("change"));
+    expect(nudges.disabled).toBe(false);
+    expect(response.disabled).toBe(false);
+    expect(fields.classList.contains("is-off")).toBe(false);
+
+    // OFF + a run: the lock wins, and when the run ENDS the parameters must stay inert
+    // (the release of the lock must not re-enable a guard that is switched off).
+    off.checked = true;
+    off.dispatchEvent(new Event("change"));
+    hostMessage({ type: "status", active: true });
+    expect(nudges.disabled).toBe(true);
+    expect(response.disabled).toBe(true);
+    hostMessage({ type: "status", active: false });
+    expect(nudges.disabled).toBe(true);
+    expect(response.disabled).toBe(true);
+    expect(off.checked).toBe(true);
   });
 
   it("Skills card lists installed skills; a chip click fills the prompt with /skill <name>", async () => {
@@ -4284,7 +4336,7 @@ describe("context metrics line", () => {
     const modal = document.getElementById("compact-settings-modal") as HTMLDivElement;
     expect(modal.classList.contains("hidden")).toBe(true);
     // The label already shows the session's saved threshold from the config push.
-    expect(document.getElementById("compact-threshold-label")?.textContent).toBe("Auto Compact threshold: 60%");
+    expect(document.getElementById("compact-threshold-label")?.textContent).toBe("Auto: 60% ctx");
     (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
     expect(modal.classList.contains("hidden")).toBe(false);
     const input = document.getElementById("compact-threshold-input") as HTMLInputElement;
@@ -4294,7 +4346,7 @@ describe("context metrics line", () => {
     expect(modal.classList.contains("hidden")).toBe(true);
     expect(posted).toContainEqual({ type: "setCompactionThreshold", value: 75 });
     // The label between Compact and the gear reflects the saved value.
-    expect(document.getElementById("compact-threshold-label")?.textContent).toBe("Auto Compact threshold: 75%");
+    expect(document.getElementById("compact-threshold-label")?.textContent).toBe("Auto: 75% ctx");
 
     // Reopening shows the value saved last (not the config one again).
     (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
@@ -5379,57 +5431,62 @@ describe("soft steering + pending bubbles (webview)", () => {
   });
 });
 
-describe("Queue/Steer indicator (webview)", () => {
+describe("Insert-in hint — Queue/Steer (webview)", () => {
   beforeEach(() => {
     posted.length = 0;
     setupDom();
   });
 
-  const steerBtn = () => document.getElementById("steer-btn") as HTMLButtonElement;
-  const steerLabel = () => document.getElementById("steer-btn-label") as HTMLElement;
+  const hint = () => document.getElementById("insert-hint") as HTMLElement;
+  const word = () => document.getElementById("insert-hint-word") as HTMLElement;
   const input = () => document.getElementById("user-input") as HTMLTextAreaElement;
 
   it("defaults to Queue and is dim while idle", async () => {
     await loadView();
-    expect(steerLabel().textContent).toBe("Queue");
-    expect(steerBtn().disabled).toBe(true);
+    expect(word().textContent).toBe("Queue");
+    // Not a button any more: idleness is the dimmed class, not `disabled`.
+    expect(hint().classList.contains("is-idle")).toBe(true);
+    expect(hint().classList.contains("is-steer")).toBe(false);
     hostMessage({ type: "status", active: true });
-    expect(steerBtn().disabled).toBe(false);
-    expect(steerLabel().textContent).toBe("Queue");
+    expect(hint().classList.contains("is-idle")).toBe(false);
+    expect(word().textContent).toBe("Queue");
     hostMessage({ type: "status", active: false });
-    expect(steerBtn().disabled).toBe(true);
+    expect(hint().classList.contains("is-idle")).toBe(true);
   });
 
-  it("is NOT clickable: clicking never changes the state", async () => {
+  it("is a plain indicator: it is not a button and has no click handler", async () => {
     await loadView();
     hostMessage({ type: "status", active: true });
-    steerBtn().click();
-    expect(steerLabel().textContent).toBe("Queue");
-    steerBtn().click();
-    expect(steerLabel().textContent).toBe("Queue");
+    expect(hint().querySelector("button")).toBe(null);
+    hint().click();
+    expect(word().textContent).toBe("Queue");
+    hint().click();
+    expect(word().textContent).toBe("Queue");
   });
 
   it("shows Steer ONLY while working with Ctrl/Cmd held, reverts on release", async () => {
     await loadView();
     // idle: the modifier has no effect
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control" }));
-    expect(steerLabel().textContent).toBe("Queue");
+    expect(word().textContent).toBe("Queue");
     // working: the already-held modifier now shows Steer
     hostMessage({ type: "status", active: true });
-    expect(steerLabel().textContent).toBe("Steer");
+    expect(word().textContent).toBe("Steer");
+    expect(hint().classList.contains("is-steer")).toBe(true);
     window.dispatchEvent(new KeyboardEvent("keyup", { key: "Control" }));
-    expect(steerLabel().textContent).toBe("Queue");
+    expect(word().textContent).toBe("Queue");
+    expect(hint().classList.contains("is-steer")).toBe(false);
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta" }));
-    expect(steerLabel().textContent).toBe("Steer");
+    expect(word().textContent).toBe("Steer");
     // the run ends while the modifier is held → back to Queue
     hostMessage({ type: "status", active: false });
-    expect(steerLabel().textContent).toBe("Queue");
+    expect(word().textContent).toBe("Queue");
   });
 
   it("suppresses the native context menu on controls but keeps it in the prompt", async () => {
     await loadView();
     const onButton = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
-    steerBtn().dispatchEvent(onButton);
+    (document.getElementById("ctl-toggle-btn") as HTMLButtonElement).dispatchEvent(onButton);
     expect(onButton.defaultPrevented).toBe(true);
 
     const onInput = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
@@ -5441,9 +5498,9 @@ describe("Queue/Steer indicator (webview)", () => {
     await loadView();
     hostMessage({ type: "status", active: true });
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta" }));
-    expect(steerLabel().textContent).toBe("Steer");
+    expect(word().textContent).toBe("Steer");
     window.dispatchEvent(new Event("blur"));
-    expect(steerLabel().textContent).toBe("Queue");
+    expect(word().textContent).toBe("Queue");
   });
 
   it("a sent steer stays Steer while the key is held, Queue once released", async () => {
@@ -5453,9 +5510,9 @@ describe("Queue/Steer indicator (webview)", () => {
     input().value = "use Rome";
     input().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
     expect(posted.find((m: any) => m.type === "send")).toMatchObject({ mode: "steer" });
-    expect(steerLabel().textContent).toBe("Steer"); // still held
+    expect(word().textContent).toBe("Steer"); // still held
     window.dispatchEvent(new KeyboardEvent("keyup", { key: "Control" }));
-    expect(steerLabel().textContent).toBe("Queue");
+    expect(word().textContent).toBe("Queue");
   });
 
   it("shows the working bar when a run starts without an optimistic send (queued dispatch)", async () => {
@@ -5683,13 +5740,28 @@ describe("per-turn metrics badge — live turnMeta", () => {
     const chip = document.querySelector(".msg-meta .meta-mode") as HTMLElement;
     expect(chip.textContent).toBe("Analyze");
     expect(chip.classList.contains("analyze")).toBe(true);
+    // Analyze keeps the quiet gray chip: no .build on it, and the line is never tinted.
+    expect(chip.classList.contains("build")).toBe(false);
+    expect((document.querySelector(".msg-meta") as HTMLElement).classList.contains("build")).toBe(false);
 
     // An old transcript has no mode in its meta: the chip is simply absent (no
-    // placeholder, no "unknown").
+    // placeholder, no "unknown") and so is the Build tint.
     hostMessage({ type: "turnMeta", meta: { inputTokens: 20, durationMs: 200 } });
     const badges = document.querySelectorAll(".msg-meta");
     expect(badges[1].querySelector(".meta-mode")).toBe(null);
     expect(badges[1].textContent).toContain("20 in");
+    expect(badges[1].classList.contains("build")).toBe(false);
+  });
+
+  it("puts the accent on the WORD Build only, never on the whole badge line", async () => {
+    await loadView();
+    hostMessage({ type: "turnMeta", meta: { mode: "agent", model: "gpt-4o", inputTokens: 1000, durationMs: 900 } });
+    // The chip carries the flag the CSS colours; the line around it stays gray.
+    const badge = document.querySelector(".msg-meta") as HTMLElement;
+    const chip = badge.querySelector(".meta-mode") as HTMLElement;
+    expect(chip.classList.contains("build")).toBe(true);
+    expect(chip.textContent).toBe("Build");
+    expect(badge.classList.contains("build")).toBe(false);
   });
 });
 
