@@ -2801,7 +2801,9 @@ const providersSaveBtn = document.getElementById("providers-save") as HTMLButton
 const providersCancelBtn = document.getElementById("providers-cancel") as HTMLButtonElement;
 const providersExportBtn = document.getElementById("providers-export") as HTMLButtonElement;
 const providersImportBtn = document.getElementById("providers-import") as HTMLButtonElement;
-const providersIoResult = document.getElementById("providers-io-result") as HTMLSpanElement;
+// Import/export feedback: a full-width row UNDER the buttons (was a span in the
+// button strip, where a long path squeezed Cancel/Save).
+const providersIoResult = document.getElementById("providers-io-result") as HTMLDivElement;
 const gearBtn = document.getElementById("gear-btn") as HTMLButtonElement;
 
 let providerEditorData: { providers: Record<string, { baseUrl?: string; apiKey?: string; thinking?: string; thinkingLevel?: string; sessionHeader?: string; headers?: Record<string, string>; maxTokens?: number; extra?: Record<string, unknown> }> } = {

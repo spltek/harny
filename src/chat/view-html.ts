@@ -141,12 +141,25 @@ ${renderViewConfig(deps)}
        This also clears the two things measured earlier: the control row
        overflows under ~407px and the transcript action pills reach the centred
        ctl-toggle chevron under ~379px (at 14px) — both well below the floor. */
-    html { min-width: ${panelMinWidthCss()}; overflow-x: auto; }
+    html { min-width: ${panelMinWidthCss()}; overflow-x: auto; height: 100%; }
     body {
       font-size: 1rem;
       background: var(--bg);
       color: var(--fg);
-      height: 100vh;
+      /* 100%, NOT 100vh. When the panel goes under the floor above, the window
+         grows a HORIZONTAL scrollbar and that bar eats ~15px of height; 100vh is
+         measured WITHOUT scrollbars, so the body ended up ~15px taller than the
+         area actually drawn and the panel grew a SECOND, vertical bar — the
+         "barra sulla finestra" that used to appear. A percentage always matches
+         the viewport the panel is drawn in. */
+      height: 100%;
+      /* Relative so the modal overlays are laid out against the PANEL CONTENT
+         (this box, which honours the min-width floor) instead of the viewport:
+         that is what keeps a dialog from being squeezed by the visible slice
+         when the horizontal bar is showing, and what makes it scroll together
+         with the panel. No absolute child of body relied on the initial
+         containing block: they all sit inside their own positioned parents. */
+      position: relative;
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -1149,12 +1162,14 @@ ${renderViewConfig(deps)}
     .slash-item.active, .slash-item:hover { background: rgba(255, 255, 255, 0.08); }
     .slash-cmd { font-family: var(--font-mono); font-size: var(--fs-md); color: var(--fg); }
     .slash-desc { font-size: var(--fs-sm); color: #9a9a9a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-    #mcp-modal { position: fixed; inset: 0; z-index: 50; }
+    /* Overlay geometry (viewport-locked fixed box, flex centring) comes from the
+       shared modal block further down; only the stacking order lives here. */
+    #mcp-modal { z-index: 50; }
     #mcp-modal.hidden { display: none; }
-    .mcp-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5); }
+    .mcp-backdrop { background: rgba(0, 0, 0, 0.5); }
     .mcp-card {
-      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-      width: min(46rem, 94vw); max-height: 88vh; overflow: auto;
+      position: relative; margin: auto;
+      width: min(46rem, 100%); max-height: 100%; overflow: auto;
       background: var(--bg, #1e1e1e); border: 1px solid var(--border); border-radius: 10px; padding: 14px;
       display: flex; flex-direction: column; gap: 10px;
     }
@@ -1634,14 +1649,12 @@ ${renderViewConfig(deps)}
     }
     .gear-btn:disabled, #session-head .gear-btn:disabled { opacity: 0.5; cursor: default; }
     /* Providers & Models modal (gear editor). */
-    #providers-modal { position: fixed; inset: 0; z-index: 50; }
+    #providers-modal { z-index: 50; }
     #providers-modal.hidden { display: none; }
-    #providers-modal .providers-backdrop {
-      position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5);
-    }
+    #providers-modal .providers-backdrop { background: rgba(0, 0, 0, 0.5); }
     #providers-modal .providers-card {
-      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-      width: min(700px, calc(100% - 20px)); max-height: 92%;
+      position: relative; margin: auto;
+      width: min(700px, 100%); max-height: 100%;
       background: var(--bg, #1e1e1e); border: 1px solid var(--border);
       border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column;
       gap: 12px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
@@ -1684,7 +1697,13 @@ ${renderViewConfig(deps)}
     .provider-actions .danger { color: var(--error, #f05555); }
     .providers-actions { display: flex; justify-content: flex-end; gap: 10px; }
     .providers-actions button { font-size: var(--fs-lg); padding: 6px 14px; border-radius: 6px; }
-    .providers-io { margin-right: auto; align-self: center; font-size: var(--fs-sm); color: var(--muted, #999); }
+    /* Import/export feedback: its OWN row UNDER the button strip. It used to be
+       a span inside .providers-actions, where a long absolute path ("Imported
+       from /Users/…/harny-providers.json") squeezed the buttons and shoved
+       Cancel/Save sideways. Full width + wrapping, and no empty gap while it
+       has nothing to say. */
+    .providers-io { font-size: var(--fs-sm); color: var(--muted, #999); overflow-wrap: anywhere; }
+    .providers-io:empty { display: none; }
     .providers-io.ok { color: #4ec9b0; }
     .providers-io.err { color: var(--error, #f05555); }
     #provider-test-result {
@@ -1703,21 +1722,50 @@ ${renderViewConfig(deps)}
     #out-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
     #ctx-input, #out-input { -moz-appearance: textfield; }
 
-    /* ── Session-name modal (in the Harny panel): full-area overlay, blurred ── */
-    #name-modal {
-      position: fixed; inset: 0; z-index: 100;
+    /* ── Modal forms: ONE geometry, shared by every dialog ──
+       What these dialogs must do (Providers & Models, Select model, All
+       sessions, MCP, Compact, name/confirm prompts): stay in the PANEL's
+       coordinate space, not the viewport's. The panel has a width FLOOR (see
+       the note at the top of this sheet): below it the window grows a
+       horizontal bar instead of squeezing the controls. A dialog pinned to the
+       viewport (position: fixed) does NOT know about that floor — it kept
+       shrinking with the visible slice, so the Providers form got squeezed to
+       a sliver while the panel below still laid out at its floor, and the card
+       re-centred every time the bar appeared. The dialog is therefore laid out
+       against the BODY (which IS the panel content, body being position:
+       relative), with inset: 0: same width as the floor, same origin, and it
+       scrolls away together with the rest of the panel when the horizontal bar
+       is dragged — exactly like the content underneath it.
+       Card centring: flex + margin: auto. The auto margins still centre, but
+       they collapse to 0 when a card is taller than the screen, so its first
+       field stays reachable instead of being clipped above the top edge;
+       overflow: auto then scrolls the DIALOG, never the window. Backdrops stay
+       FIXED: they must keep covering the visible slice while the dialog itself
+       scrolls with the content. */
+    #name-modal, #alert-modal, #compact-settings-modal, #providers-modal,
+    #sessions-modal, #model-modal, #db-vacuum-modal, #mcp-modal {
+      position: absolute; inset: 0;
       display: flex; align-items: center; justify-content: center;
+      padding: 10px; overflow: auto; overscroll-behavior: contain;
     }
+    #name-modal .name-modal-backdrop, #alert-modal .alert-backdrop,
+    #compact-settings-modal .cs-backdrop, #providers-modal .providers-backdrop,
+    #sessions-modal .sm-backdrop, #model-modal .mm-backdrop,
+    #db-vacuum-modal .dv-backdrop, #mcp-modal .mcp-backdrop {
+      position: fixed; inset: 0;
+    }
+
+    /* ── Session-name modal (in the Harny panel): full-area overlay, blurred ── */
+    #name-modal { z-index: 100; }
     #name-modal.hidden { display: none; }
     #name-modal .name-modal-backdrop {
-      position: absolute; inset: 0;
       background: rgba(0,0,0,0.45);
       backdrop-filter: blur(4px);
       -webkit-backdrop-filter: blur(4px);
     }
     #name-modal .name-modal-card {
-      position: relative;
-      width: min(85%, 340px);
+      position: relative; margin: auto; max-height: 100%; overflow: auto;
+      width: min(340px, 100%);
       background: var(--bg);
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -1741,20 +1789,16 @@ ${renderViewConfig(deps)}
     #name-modal .name-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
     /* ── Compaction settings (gear after Compact): threshold % form ── */
-    #compact-settings-modal {
-      position: fixed; inset: 0; z-index: 100;
-      display: flex; align-items: center; justify-content: center;
-    }
+    #compact-settings-modal { z-index: 100; }
     #compact-settings-modal.hidden { display: none; }
     #compact-settings-modal .cs-backdrop {
-      position: absolute; inset: 0;
       background: rgba(0, 0, 0, 0.45);
       backdrop-filter: blur(4px);
       -webkit-backdrop-filter: blur(4px);
     }
     #compact-settings-modal .cs-card {
-      position: relative;
-      width: min(85%, 360px);
+      position: relative; margin: auto; max-height: 100%; overflow: auto;
+      width: min(360px, 100%);
       background: var(--bg);
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -1780,20 +1824,16 @@ ${renderViewConfig(deps)}
     #compact-settings-modal .cs-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
     /* ── In-panel alert / confirm modal (same family as the name modal) ── */
-    #alert-modal {
-      position: fixed; inset: 0; z-index: 110;
-      display: flex; align-items: center; justify-content: center;
-    }
+    #alert-modal { z-index: 110; }
     #alert-modal.hidden { display: none; }
     #alert-modal .alert-backdrop {
-      position: absolute; inset: 0;
       background: rgba(0, 0, 0, 0.45);
       backdrop-filter: blur(4px);
       -webkit-backdrop-filter: blur(4px);
     }
     #alert-modal .alert-card {
-      position: relative;
-      width: min(85%, 340px);
+      position: relative; margin: auto; max-height: 100%; overflow: auto;
+      width: min(340px, 100%);
       background: var(--bg);
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -1813,14 +1853,12 @@ ${renderViewConfig(deps)}
        Lists sessions of EVERY folder, most recent first. Red rows = the
        session's folder is no longer available (open disabled until a valid
        folder is picked). */
-    #sessions-modal { position: fixed; inset: 0; z-index: 60; }
+    #sessions-modal { z-index: 60; }
     #sessions-modal.hidden { display: none; }
-    #sessions-modal .sm-backdrop {
-      position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5);
-    }
+    #sessions-modal .sm-backdrop { background: rgba(0, 0, 0, 0.5); }
     #sessions-modal .sm-card {
-      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-      width: min(680px, calc(100% - 20px)); max-height: 92%;
+      position: relative; margin: auto;
+      width: min(680px, 100%); max-height: 100%;
       background: var(--bg, #1e1e1e); border: 1px solid var(--border);
       border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column;
       gap: 12px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5); font-size: var(--fs-lg);
@@ -1882,12 +1920,12 @@ ${renderViewConfig(deps)}
     .sm-vacuum-stats b { color: var(--fg); }
     .sm-vacuum-stats .warn { color: var(--accent); }
     /* Shared "compact database" modal (auto suggestion OR manual button). */
-    #db-vacuum-modal { position: fixed; inset: 0; z-index: 70; }
+    #db-vacuum-modal { z-index: 70; }
     #db-vacuum-modal.hidden { display: none; }
-    #db-vacuum-modal .dv-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5); }
+    #db-vacuum-modal .dv-backdrop { background: rgba(0, 0, 0, 0.5); }
     #db-vacuum-modal .dv-card {
-      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-      width: min(520px, calc(100% - 20px));
+      position: relative; margin: auto; max-height: 100%; overflow: auto;
+      width: min(520px, 100%);
       background: var(--bg, #1e1e1e); border: 1px solid var(--border);
       border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column;
       gap: 12px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5); font-size: var(--fs-lg);
@@ -1925,12 +1963,12 @@ ${renderViewConfig(deps)}
     #sessions .empty.no-match { font-style: italic; }
 
     /* ── "Select model" modal (filterable, provider tree preserved) ── */
-    #model-modal { position: fixed; inset: 0; z-index: 70; }
+    #model-modal { z-index: 70; }
     #model-modal.hidden { display: none; }
-    #model-modal .mm-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5); }
+    #model-modal .mm-backdrop { background: rgba(0, 0, 0, 0.5); }
     #model-modal .mm-card {
-      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-      width: min(560px, calc(100% - 20px)); max-height: 88%;
+      position: relative; margin: auto;
+      width: min(560px, 100%); max-height: 100%;
       background: var(--bg, #1e1e1e); border: 1px solid var(--border);
       border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px;
       box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5); font-size: var(--fs-lg);
@@ -2370,10 +2408,13 @@ ${renderViewConfig(deps)}
       <div class="providers-actions">
         <button id="providers-export" class="secondary" title="Export the providers config to a JSON file">Export models configuration</button>
         <button id="providers-import" class="secondary" title="Import providers from a JSON file (merged into the current config)">Import models configuration</button>
-        <span id="providers-io-result" class="providers-io"></span>
         <button id="providers-cancel" class="secondary">Cancel</button>
         <button id="providers-save">Save</button>
       </div>
+      <!-- Import/export feedback on its OWN line, UNDER the buttons: the full
+           "Imported from /Users/…/harny-providers.json" path used to sit inside
+           the button row and pushed the buttons around. -->
+      <div id="providers-io-result" class="providers-io" role="status" aria-live="polite"></div>
     </div>
   </div>
   <div id="mcp-modal" class="hidden">
