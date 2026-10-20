@@ -42,6 +42,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that (measured on the real functions). Below it every compaction is a trim and the state document
   is never written. The knob is now measured; scaling it to the window is NOT part of this change.
 
+- **Loop Guard grows an `Off` state.** The guard had only three sensitivities, so a user who found the
+  corrective nudges disruptive had no way to say so — every level still detected, nudged and could
+  stop the run. `Off` is a real fourth preset, first in the row, and it makes the guard **completely
+  inert**: no reasoning/answer detection, no per-turn classification, no nudges, no stop — *and* no
+  tool-call deduplication either, because "off" has to mean off (identical read-only calls are re-run,
+  identical failures are retried). The tooltip says exactly that, and the 12 parameter sliders stay
+  in place, dimmed and disabled, instead of disappearing: hiding them would change the card's height
+  on every level switch, and that row is what the column-count measurement reads. `Medium` remains the
+  default — pinned by a test on `DEFAULT_LOOP_GUARD_OPTIONS`, on the bare guard and on the UI.
+
 ### Changed
 
 - **The summary request is ONE message: the data first, the instructions last.** They used to sit in
@@ -127,6 +137,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (jump to the latest message and follow the stream). Order and placement are unchanged: a pill that
   appears or disappears beside a neighbour reflows the row under the cursor, which is why these two
   never move.
+
+- **The compaction threshold reads `Auto: 80% ctx`.** It used to spell out `Auto Compact threshold:
+  80%`, which was the widest thing on the metrics row for a number that is a status, not a control.
+  The shorter form says the same in about half the width (~72px against ~154px, measured), which is
+  the slack the row needs now that the panel can be dragged narrower.
+
+- **The panel's horizontal floor drops from 600px to 500px.** The floor is not a guess: 450px is the
+  measured minimum at which the ask box keeps its placeholder on one line and the control row is not
+  squeezed, and the reference width ships with a margin over it — that margin is the tolerance you
+  feel while dragging the panel narrower before the scrollbar appears. It is now ~50px (a ninth)
+  instead of ~150px (a third), and the `rem` side of `max(500px, 32rem)` takes over past a ~15.6px
+  editor font instead of ~18.75px, so large fonts are covered exactly as before. Measured slack at
+  the floor is still ~88px in the widest metrics state.
+
+- **Build paints the mode pill orange.** The mode selector was deliberately colourless in both
+  modes — a coloured icon was "the last loud thing on a row of quiet controls" — which left the pill
+  saying the same thing twice (word + tooltip) and nothing you could catch from the corner of your
+  eye. Build now fills the pill with the accent gradient and turns its icon, label and chevron white
+  (the same recipe as Parallel-on, glow included), while **Analyze keeps the quiet gray**: the
+  contrast between the two states is the signal, so you never have to re-read the word to know which
+  mode the next run will use. The pending dashed edge survives the transparent border.
+
+- **The per-turn badge puts the accent on the WORD `Build`, not on the line.** Each answer carries a
+  badge naming the mode it ran in; painting the whole row orange was tried and reverted once for
+  being the loudest thing on half a long transcript — but leaving Build indistinguishable from
+  Analyze was the opposite error. The compromise is a single orange word inside the chip: it is the
+  one thing you scan a transcript for ("which turns actually wrote"), it competes with nothing, and
+  the model/provider/token text stays gray.
+
+- **The Queue/Steer pill is now an `Insert in …` hint in the control strip.** The pill sat in the
+  model row, competing with the controls that actually *do* something, and it was the only indicator
+  wearing a button's clothes. It moved to the strip above the prompt: `Insert in` followed by the
+  word `Queue` (neutral pill) or `Steer` (muted red pill with its glow), on the LEFT — the same slot
+  geometry as `Collapse all`/`Follow` on the right, same 18px height, so nothing reflows. The
+  behaviour is unchanged *exactly*: Steer only while a run is active **and** Ctrl/Cmd is held, back
+  to Queue on key release, on blur, or when the run ends, with the same one-shot `followAndFocus()`
+  per real switch. It is still a pure indicator (a span, no click handler); when nothing is running
+  it is dimmed instead of `disabled`. The model row also got ~169px of its width back.
+
+- **The Loop Guard row reads `Off` / `Low` / `Medium` / `High` — quietest to loudest.** It shipped as
+  `High` / `Normal` / `Low`, i.e. backwards against the way the row is read, with the default in the
+  middle and no way to express "none". The order is now the dial it always was, and `Normal` is
+  **renamed `Medium` end to end** — the persisted value included (`LoopGuardSensitivity`, the presets,
+  the radio ids/values, the CSS, the tests, the README). Sessions saved under the old name still load:
+  `normalizeLoopGuardSensitivity` maps `"normal"` → `"medium"`, and it is the single choke point for
+  both reads and writes of the session row, so the migration cannot be forgotten on one path. Sub-agents
+  inherit the same guard, so they follow their session's level — Off included.
 
 ### Fixed
 

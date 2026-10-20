@@ -110,10 +110,10 @@ The order things come up in — and, more useful, **where each one lives**. Some
 2. **Pick the model** in the AI Model row — or, with no provider yet, open the gear at the **right end of that row** (**Providers & Models** → **+ New** → **Test connection**). That setup is **global**: once is enough, for every future session.
 3. **Skills** (optional) are **not a dialog**: they are folders. A `skills`-CLI install and a plain `SKILL.md` both work — project first (`.agents/skills`, `.claude/skills`, `.pi/skills`), then user (`~/.agents/skills`, `~/.pi/agent/skills`, `~/.claude/skills`, `~/.cursor/skills`, …). The **Skills** card lists what it found; a click fills `/skill <name>` in the prompt.
 4. **MCP servers** (optional, **global**): the **MCP** card's gear (add/edit/delete + **Test**), or `config.json`. Careful, in Analyze a server's tools only run if you declare what that server is — see [Analyze & Build](#analyze--build).
-5. **Housekeeping**: the **Compaction** gear (after **Compact**) sets how full the usable context gets before auto-compaction (**per session**); the **⚙ All sessions** manager holds the database stats and the **VACUUM** thresholds (**global**).
+5. **Housekeeping**: the **Compaction** gear (after **Compact**) sets how full the usable context gets before auto-compaction (**per session**) — the label next to it reads `Auto: 80% ctx`; the **⚙ All sessions** manager holds the database stats and the **VACUUM** thresholds (**global**).
 6. **Tuning** (optional, **per session**): the sampling/context/output sliders, the thinking level, and **Guardrails** (sub-agent cap + Loop Guard parameters).
 7. **Analyze or Build**, and **Parallel** — **per session**, and **locked while a run is going** (they are decided once per run, and the pill's tooltip says so).
-8. **While it works**: **Enter** queues a message (it runs when this one ends), **Ctrl/Cmd+Enter** **steers** it into the run now, **Esc** stops. A message already queued can be flipped to a steer with the **Queue** button.
+8. **While it works**: **Enter** queues a message (it runs when this one ends), **Ctrl/Cmd+Enter** **steers** it into the run now, **Esc** stops. A message already queued can be flipped to a steer with its **→ Steer** button.
 
 | | where it lives | mid-run? |
 |---|---|---|
@@ -192,6 +192,8 @@ The header has a mode selector, and it is the core safety idea of Harny.
 - **Analyze** — read-only **preview**. Write, StrReplace, Edit and Delete still run, but in **dry-run**: they validate the change and return the exact **diff**, writing nothing to disk. When changes are ready, Harny asks **once** whether to switch to Build and suggests restarting the chat for a clean apply.
 - **Build** — the same tools **write for real**.
 
+The **mode pill says which one you are in from across the room**: quiet gray in Analyze, **orange (accent fill, white label, soft glow) in Build** — the same treatment as Parallel-on. The contrast is the signal, so a run that will write is never a guess.
+
 The Shell tool is **allowlist-first** in Analyze: a command runs only if every segment is a known read-only command (`ls`, `cat`, `grep`, `git status`, `git log`, …). Scripts, interpreters (`python -c`, `node -e`) and anything state-changing are refused. It is a **best-effort filter, not a sandbox** — treat Analyze as a strong guardrail, not a jail.
 
 The promise is one sentence — **in Analyze no resource is modified** — and it covers tools that are not ours. A **file** write can be previewed (we own the tool: validate, show the diff, write nothing). An **external** call cannot: an MCP tool either runs or does not. So each tool **declares** how it keeps the promise, and the default is **refuse** — a tool nobody described (a new MCP server, a plugin, a tool added tomorrow) is never assumed harmless, which is what a name list of "tools that write" silently did.
@@ -227,7 +229,7 @@ The prompt stays usable **while the agent works**.
 
 - **Enter** → **queues** the message; it runs as a new send when the current run ends.
 - **Ctrl/Cmd+Enter** → **steers**: injected at the next turn boundary, without restarting the run.
-- A **Queue/Steer** indicator shows what Enter will do, flipping to *Steer* only while you hold **Ctrl/Cmd** during a run.
+- An **"Insert in Queue / Steer"** hint (left end of the strip above the prompt, opposite **Collapse all**) shows what Enter will do: the word sits in a pill that turns red — *Steer* — only while you hold **Ctrl/Cmd** during a run. It is an indicator, never a button: dimmed when nothing is running.
 - Pending messages appear as **cancellable bubbles** above the prompt, inside a **collapsible section** whose header carries the counts (`Steer 1 · Queued 2`) — so a folded block still tells you what is waiting. A **new** message re-opens it.
 - Each bubble is **one line**, and born folded — it wraps only when you open it. The fold
   appears **only when there is more to see**: it is measured on the rendered bubble (not
@@ -245,7 +247,7 @@ The prompt stays usable **while the agent works**.
 
 - **Reasoning** is streamed live as it happens, and passed back on later turns so tool-call chains keep their chain of thought.
 - **Tool calls** get a three-section bubble — **Input / Output / Diff**. When a tool touches a file, the Diff section shows the unified diff with the target path and `+N/−M` counts, syntax-highlighted for the main languages.
-- **Every turn** ends with a **metrics badge** carrying the mode it ran in (`Build` / `Analyze`, both in the badge's own quiet gray — the WORD says which turns WROTE) and the *real* provider usage: `Build · openai/gpt-4o · 6.9k in · 74 out · ⚡ 800 · elapsed 2.3s · first token 676ms`. Turns recorded before the mode was stored show no chip.
+- **Every turn** ends with a **metrics badge** carrying the mode it ran in (`Build` / `Analyze`) and the *real* provider usage: `Build · openai/gpt-4o · 6.9k in · 74 out · ⚡ 800 · elapsed 2.3s · first token 676ms`. The mode chip keeps the badge's own quiet gray, with **one exception: the word `Build` is in the accent** — the one thing you scan a long transcript for (*which turns actually wrote*) without turning half the lines orange. Turns recorded before the mode was stored show no chip.
 - **Diagnostics** go to **Output > Harny**, one line per turn.
 
 ### Long sessions
@@ -277,7 +279,7 @@ Degenerate loops are **broken, not silently stopped** — a light-blue **"Nudge"
 | Error streak across turns | failure summary + "change strategy" |
 | Identical **successful** read-only call repeated | served from cache |
 
-The **Loop Guard** card exposes a sensitivity preset (`High` / `Normal` / `Low`) and **12 tunable parameters**, all persisted per session. Optionally it also guards the **final answer** itself for repetition.
+The **Loop Guard** card exposes a sensitivity preset (`Off` / `Low` / `Medium` / `High`, in that order — quietest to loudest, `Medium` by default) and **12 tunable parameters**, all persisted per session. **Off** makes the guard completely inert: no detection, no nudges, no stop, *and* no tool-call deduplication (identical calls are re-run) — the parameters stay visible but disabled. Optionally it also guards the **final answer** itself for repetition.
 
 ### Attachments
 
@@ -369,7 +371,7 @@ just want to use Harny, you can stop reading here.
 - **Syntax highlighting in Diff sections**: editor-style colors (Prism, one-dark) for TypeScript, JavaScript, Python, Rust, C#, HTML, CSS, JSON, Markdown, Bash, SQL and Go — unknown extensions fall back to plain diff coloring
 - **Per-turn metrics badge**: under every assistant turn, `6.9k in · 74 out · ⚡ 800 · elapsed 2.3s · first token 676ms` (hover for detail). Appears as soon as the turn ends (a `turn_meta` event, no transcript re-render), shown for tool-only turns too, captured from the provider stream and persisted with the message
 - **Real context accounting**: the context-fill metric prefers the provider-reported input tokens; after a ✂ cut it is recomputed from the **kept** messages and persisted (cutting everything → 0, so it no longer "jumps back" on reload), and after a compaction the kept window's real cumulative-input delta is used. Auto-compaction follows the same numbers
-- **Responsive control stack**: cards lay out **1 / 2 / 4 per row** as the panel widens, all share one row height so columns line up, and the stack **scrolls vertically** once it would take more than 75% of the panel height
+- **Responsive control stack**: cards lay out **1 / 2 / 4 per row** as the panel widens, all share one row height so columns line up, and the stack **scrolls vertically** once it would take more than 75% of the panel height. The panel itself has a **500px horizontal floor** (`max(500px, 32rem)`): below it the window gets a horizontal scrollbar instead of squeezing the controls into nonsense, and the `rem` side takes over past a ~15.6px editor font so the floor grows with the type
 - **Per-session controls**: mode, Parallel on/off, context window, output tokens, sampler value, presence/frequency penalties, thinking level and every Loop Guard parameter are sliders (each with a read-only value label; **Auto** snaps back to the knob's default) persisted **per session** and restored on reopen; they win over provider defaults
 - **Diagnostics**: one line per turn (finish reason, content/thinking sizes, tool names, loop-guard decisions) in **Output > Harny**; set `HARNY_DEBUG=1` for a full request body log
 
