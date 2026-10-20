@@ -2672,6 +2672,71 @@ describe("ChatViewProvider compaction", () => {
     expect(rt.history.conversation()[0].content).not.toBe(TRIM_LABEL);
   });
 
+  it("asks for a SMALL document but allows the session's declared output to write it", async () => {
+    // The two numbers answer different questions and must never be mixed up. The budget is
+    // the size we ASK for; the cap is what the model may SPEND — and a model that reasons
+    // spends it BEFORE writing a character. Measured on a real session: cap = budget gave
+    // EMPTY replies 3 times out of 3, cap = the declared output gave a real document 3/3.
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\nok");
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 200_000;
+    rt.outputTokens = 8_192;
+    rt.contextTokens = 190_000;
+    rt.history.replace([
+      { role: "user", content: "a".repeat(20_000), timestamp: 1 },
+      { role: "assistant", content: "b".repeat(20_000), timestamp: 2 },
+      { role: "user", content: "c".repeat(20_000), timestamp: 3 },
+      { role: "assistant", content: "d".repeat(20_000), timestamp: 4 },
+      { role: "user", content: "e".repeat(20_000), timestamp: 5 },
+      { role: "assistant", content: "f".repeat(20_000), timestamp: 6 },
+    ]);
+
+    await provider.maybeCompactDuringRun("s1");
+
+    const sent = (summarize.mock.calls[0] as unknown[])[3] as { maxSummaryTokens?: number; maxReplyTokens?: number };
+    expect(sent.maxSummaryTokens).toBeGreaterThan(0);
+    // The cap is the session's declared OUTPUT…
+    expect(sent.maxReplyTokens).toBe(8_192);
+    // …and it is NOT the budget: that is the defect that produced empty replies.
+    expect(sent.maxReplyTokens).not.toBe(sent.maxSummaryTokens);
+  });
+
+  it("retries ONCE when the reply is not the document: a bad roll must not cost the summary", async () => {
+    // An auto-router can land on a guard model, or a model can simply lose the thread:
+    // that is a transient roll, not a systematic failure. One extra call recovers it —
+    // measured 4 runs in 5 succeeding on the same input, so the retry is cheap insurance.
+    const summarize = vi
+      .fn()
+      .mockResolvedValueOnce("Ciao! Come posso aiutarti oggi?")
+      .mockResolvedValueOnce("Summary of past interactions\n---\n## Goal\nok");
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 200_000;
+    rt.contextTokens = 190_000;
+    rt.history.replace([
+      { role: "user", content: "a".repeat(20_000), timestamp: 1 },
+      { role: "assistant", content: "b".repeat(20_000), timestamp: 2 },
+      { role: "user", content: "c".repeat(20_000), timestamp: 3 },
+      { role: "assistant", content: "d".repeat(20_000), timestamp: 4 },
+      { role: "user", content: "e".repeat(20_000), timestamp: 5 },
+      { role: "assistant", content: "f".repeat(20_000), timestamp: 6 },
+    ]);
+
+    await provider.maybeCompactDuringRun("s1");
+
+    expect(summarize).toHaveBeenCalledTimes(2);
+    const conv = rt.history.conversation();
+    expect(conv[0].content).not.toBe(TRIM_LABEL);
+    expect(conv[0].content).toContain("Summary of past interactions");
+  });
+
   it("reads the NEWEST part that fits and DEFERS the rest — nothing is thrown away", async () => {
     const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\ncarried");
     const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };

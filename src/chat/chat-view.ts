@@ -1963,6 +1963,15 @@ export class ChatViewProvider implements WebviewViewProvider {
         usableTokens: usable,
         maxOutputTokens: this.configuredOutputTokens(rt),
         maxInputTokens: span.ceilingTokens,
+        // Say WHY it failed: an empty stream and a reply that is not the document are
+        // different problems (the second is what a guard or confused model does), and both
+        // used to read as a single "no summary written".
+        onUnusableReply: (reply) =>
+          infoLog(
+            reply.trim()
+              ? `the summarizer replied with something that is not the document (${reply.length} chars): ${JSON.stringify(reply.slice(0, 200))}`
+              : `the summarizer replied with NOTHING (empty stream, ${span.ceilingTokens} tokens of room)`,
+          ),
         signal,
       });
     } catch (err) {
@@ -2199,6 +2208,12 @@ export class ChatViewProvider implements WebviewViewProvider {
         usableTokens: usable,
         maxOutputTokens: this.configuredOutputTokens(rt),
         maxInputTokens: span.ceilingTokens,
+        onUnusableReply: (reply) =>
+          infoLog(
+            reply.trim()
+              ? `sub-agent summarizer replied with something that is not the document (${reply.length} chars): ${JSON.stringify(reply.slice(0, 200))}`
+              : "sub-agent summarizer replied with NOTHING (empty stream)",
+          ),
         signal,
       });
     } catch (err) {

@@ -223,6 +223,33 @@ describe("buildSummaryMessages — UPDATE the state, do not re-derive it", () =>
 });
 
 describe("planCompactionToBudget — what is NOT worth summarizing again", () => {
+  it("a single turn BIGGER than the keep budget can still be summarized (it used to be a NO-OP)", () => {
+    // The real session: after a checkpoint, ONE turn with a dozen tool cycles, ~16k tokens.
+    // The turn-group rule snapped the cut back to that turn's first message, which left ONLY
+    // the synthetic pair above it — and the pair is filtered out. So the planner answered
+    // "nothing to summarize" and the session could never write a state document again: every
+    // Compact fell back to a trim, forever (observed: three attempts in a row).
+    const messages: ChatMessage[] = [
+      { role: "user", content: "Continue the work from the summarized context below.", timestamp: 1, synthetic: true },
+      { role: "assistant", content: "## Goal\nold state", timestamp: 2, synthetic: true },
+      { role: "user", content: "fammi una ulteriore ricerca", timestamp: 3 },
+      ...Array.from({ length: 20 }, (_, i) => ({
+        role: (i % 2 === 0 ? "assistant" : "tool") as ChatMessage["role"],
+        content: "x".repeat(12_000),
+        timestamp: 4 + i,
+      })),
+      { role: "assistant", content: "fatto", timestamp: 40 },
+    ];
+
+    const plan = planCompactionToBudget(messages, 10_000);
+
+    expect(plan.toSummarize.length).toBeGreaterThan(0);
+    expect(plan.kept.length).toBeGreaterThan(0);
+    // …and the kept side must never OPEN on a `tool` message: its parent was summarized
+    // away, so the request would be malformed.
+    expect(plan.kept[0].role).not.toBe("tool");
+  });
+
   const syntheticPair: ChatMessage[] = [
     { role: "user", content: "Summary of past interactions", timestamp: 1, synthetic: true },
     { role: "assistant", content: "## Goal\nold state", timestamp: 2, synthetic: true },

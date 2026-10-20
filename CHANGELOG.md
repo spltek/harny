@@ -44,6 +44,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The summary request is ONE message: the data first, the instructions last.** They used to sit in
+  the `system` role with the transcript *after* them — the opposite of what long-context guidance
+  recommends ("put longform data at the top; a query at the end can improve quality by up to 30% on
+  20k+ token inputs"), and a shape that depends on the `system` role being honoured at all. Now:
+  `<transcript>…</transcript>` and then the task, in a single user message. The tags are **closed**
+  (they used to be opened and never closed), and nothing relies on the system role, so a summarizer
+  that downweights it — a guard model, a small local one — still gets a task it can follow.
+
+- **Adding a queue or a steer, converting one into the other, or cancelling one brings the view back
+  to the live edge and the caret back into the prompt.** Each of those is the user talking about the
+  run in progress, and each moves the pending footer — a place the reader is not looking at if they
+  scrolled away. A re-push of the SAME list (what a reload sends) leaves position and focus alone.
+
 - **Compaction no longer discards the part of a conversation it summarizes.** The summarized span
   stays in the session — still in the transcript, still searchable — and the **context window begins
   at the summary** instead of the span being replaced by it. Nothing is lost any more, so a long
@@ -116,6 +129,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never move.
 
 ### Fixed
+
+- **One turn bigger than the verbatim budget made every compaction a NO-OP.** The cut is snapped to a
+  whole turn; when a single turn exceeded the keep budget — a dozen tool cycles under one request —
+  that left nothing above the cut but the synthetic checkpoint pair, which is filtered out. The
+  planner answered "nothing to summarize", the session fell back to a trim, and the next attempt hit
+  the same wall: it could never write a state document again (observed three times in a row). The
+  budget now wins over the group in that case, walking back over a leading tool message so a kept
+  result never loses the call that owns it — and only when the span above is worth a model call,
+  because turning a no-op into a request would spend a summary to produce nothing.
+
+- **An empty reply is a FAILURE, not a fabricated document.** A silent model used to produce
+  `## Goal <title> / ## Progress No details available.` — a document that passes the structural check
+  while carrying nothing, and that REPLACES the previous state instead of preserving it. Empty now
+  means: trim, which carries that state verbatim. A reply that is not the document at all gets **one
+  retry** before giving up, because an auto-router can land on a guard model or a model can lose the
+  thread (measured: 4 runs in 5 succeeded on the same input).
+
+- **The Working bar beats on the cycle that starts with the run.** It is created a line before the
+  pulse clock is reset, so it was locked to the PREVIOUS cycle while every bubble born later locked
+  to the new one — the bar and the `compacting` bubble pulsed up to a third of a cycle apart
+  (measured: 333 ms of 1200), with everything else in sync. The clock reset now re-locks whatever is
+  already pulsing, so the invariant holds whatever the creation order.
 
 - **The summarizer could not see what the tools had done.** `serializeConversation` emitted
   `[Assistant]: <text>` and then bare `[Tool result]` lines: `m.toolCalls` was dropped entirely, so

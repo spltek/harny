@@ -209,13 +209,27 @@ export function planCompactionToBudget(messages: ChatMessage[], keepTokens: numb
   const visible = messages.filter((m) => m.role !== "system" && !m.uiOnly);
   const tokensBefore = estimateTokens(serializeConversation(visible));
   if (visible.length <= 2) return { toSummarize: [], kept: visible, tokensBefore };
-  const start = recentStartFor(visible, keepTokens);
-  // The synthetic pair a PREVIOUS compaction left is the STATE of the work, not
-  // content to summarize again: it is handed to the summarizer separately (see
-  // carriedState) and re-reading it is how a summary of a summary loses facts.
-  // Decided HERE, with the rest of the strategy, so every entry point (manual and
-  // automatic) gets the same rule.
-  const toSummarize = visible.slice(0, start).filter((m) => !m.synthetic);
+  const keepStart = recentStartFor(visible, keepTokens);
+  // …but the snap must never make the compaction a NO-OP. One turn bigger than the keep
+  // budget (a dozen tool cycles under a single request) starts at the first real message,
+  // so snapping back leaves only the synthetic pair above the cut — which is filtered out
+  // below, leaving `toSummarize` EMPTY. Observed on a real session: every Compact answered
+  // "nothing to summarize" and fell back to a trim, forever.
+  const summarize = (start: number): ChatMessage[] => visible.slice(0, start).filter((m) => !m.synthetic);
+  let start = keepStart;
+  if (summarize(start).length === 0) {
+    // Honor the budget instead of the group — but WALK BACK over a leading tool message,
+    // so the call that owns those results stays in the kept tail (a kept result without
+    // its call is a malformed request).
+    let safe = budgetedCut(visible, keepTokens);
+    while (safe > 0 && visible[safe]?.role === "tool") safe--;
+    const candidate = summarize(safe);
+    // …and only when there is a span WORTH a model call: one tiny message above the cut is
+    // not "something to summarize", and turning a no-op into a request would spend a
+    // summary to produce nothing. Below the floor the plan stays empty (the caller skips).
+    if (estimateTokens(serializeConversation(candidate)) >= MIN_SUMMARY_TOKENS) start = safe;
+  }
+  const toSummarize = summarize(start);
   return { toSummarize, kept: visible.slice(start), tokensBefore };
 }
 
@@ -233,6 +247,25 @@ export function planCompactionToBudget(messages: ChatMessage[], keepTokens: numb
  * fits, so a boundary that needs no moving cannot drift (see trimHistory).
  */
 export function recentStartFor(visible: ChatMessage[], budgetTokens: number): number {
+  let start = budgetedCut(visible, budgetTokens);
+  // Nothing worth keeping (one huge message fills the budget on its own):
+  // summarize half by count rather than keep the whole conversation alive.
+  if (start === 0) start = Math.floor(visible.length / 2);
+  // A cut must never leave half a turn: what is KEPT is a sequence of complete
+  // groups (input → final answer, everything in between).
+  return snapCutToGroup(visible, start);
+}
+
+/**
+ * The RAW budget walk: where the verbatim tail begins, before any turn-group snapping.
+ *
+ * Separate on purpose. Snapping BACK to the group that contains the cut is what keeps the
+ * kept side a sequence of whole turns — but when ONE turn is bigger than the keep budget,
+ * the group starts at the very first real message, so snapping back leaves nothing above
+ * the cut but the synthetic checkpoint pair. That is the case `planCompactionToBudget`
+ * falls back to this index for: being unable to compact is worse than a mid-turn cut.
+ */
+export function budgetedCut(visible: ChatMessage[], budgetTokens: number): number {
   const budget = Math.max(1, budgetTokens);
   let start = visible.length;
   let acc = 0;
@@ -241,12 +274,7 @@ export function recentStartFor(visible: ChatMessage[], budgetTokens: number): nu
     start = i;
     acc += estimateTokens(visible[i].content);
   }
-  // Nothing worth keeping (one huge message fills the budget on its own):
-  // summarize half by count rather than keep the whole conversation alive.
-  if (start === 0) start = Math.floor(visible.length / 2);
-  // A cut must never leave half a turn: what is KEPT is a sequence of complete
-  // groups (input → final answer, everything in between).
-  return snapCutToGroup(visible, start);
+  return start;
 }
 
 /**
@@ -326,6 +354,10 @@ export async function compactHistory(
     /** The largest span the summary request may READ (see maxSummaryInputTokens). When the
      *  span is bigger, the most RECENT part that fits is summarized. */
     maxInputTokens?: number;
+    /** Called with the raw reply when it is NOT the document we asked for, so the caller
+     *  can say WHY: an empty stream and a classification are different failures, and both
+     *  used to read as a single "no summary written". */
+    onUnusableReply?: (reply: string) => void;
     signal?: AbortSignal;
   },
 ): Promise<CompactedHistory | null> {
@@ -350,17 +382,32 @@ export async function compactHistory(
   // …and the state a previous compaction left: the summary UPDATES it instead of
   // summarizing a summary (the planner already keeps it out of the span).
   const carried = carriedState(messages);
-  const summary = await opts.compactor.summarize(toSummarize, carried, opts.signal, {
+  const summary0 = await opts.compactor.summarize(toSummarize, carried, opts.signal, {
     maxSummaryTokens: summaryBudget,
     keptPreview,
     // What the model MAY spend to write it: the session's declared output, never the
     // budget itself (see summarize).
     maxReplyTokens: opts.maxOutputTokens,
   });
+  // ONE retry before giving up. A reply that is not the document is usually a bad roll of
+  // an auto-router (a guard model, a lost thread, an empty stream), not a systematic
+  // failure — and refusing to try again throws the summary away for a transient reason.
+  // Exactly one extra call, and only when the first one failed; a loop would spend more
+  // context than it frees.
+  const summary = isUsableSummary(summary0)
+    ? summary0
+    : await opts.compactor.summarize(toSummarize, carried, opts.signal, {
+        maxSummaryTokens: summaryBudget,
+        keptPreview,
+        maxReplyTokens: opts.maxOutputTokens,
+      });
   // A reply that is not the document we asked for must NOT become the state document —
   // see isUsableSummary. An unusable summary is a FAILED compaction (null), which sends
   // the caller down the path that cannot fail: the trim.
-  if (!isUsableSummary(summary)) return null;
+  if (!isUsableSummary(summary)) {
+    opts.onUnusableReply?.(summary);
+    return null;
+  }
   // The span becomes a synthetic USER prompt + ASSISTANT response, so a transcript
   // always starts with an orange user bubble (and the state is recognizable later).
   const { prompt, response } = splitSummary(summary);
