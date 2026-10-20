@@ -1013,6 +1013,26 @@ describe("view webview client", () => {
     expect(bubble.style.animationDelay).toMatch(/^-\d+(\.\d+)?ms$/);
   });
 
+  it("the Working bar re-joins the cycle when the run starts (it used to keep the old one)", async () => {
+    await loadView();
+    const now = vi.spyOn(performance, "now");
+    try {
+      // Five seconds after load. The bar is created a line BEFORE the clock is reset, so with
+      // the stale clock it locks some way INTO the cycle, while every bubble born later locks
+      // to the new one — the two beat out of phase, and everything else stays in sync.
+      now.mockReturnValue(5_000);
+      const prompt = document.getElementById("user-input") as HTMLTextAreaElement;
+      prompt.value = "ciao";
+      prompt.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      const bar = document.getElementById("working-bar") as HTMLElement;
+      // send() -> addWorking() -> setStreaming(true) resets the clock and re-locks what is
+      // already pulsing: the bar sits at the START of the cycle, with everything else.
+      expect(Math.abs(parseFloat(bar.style.animationDelay))).toBe(0);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it("shows a red interrupted bubble on abort", async () => {
     await loadView();
     hostMessage({ type: "interrupted" });

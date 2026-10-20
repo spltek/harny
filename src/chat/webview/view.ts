@@ -3703,6 +3703,15 @@ function setStreaming(active: boolean): void {
     // The play button + Working bar start harny-pulse now: this becomes the
     // shared clock the area border pulses lock onto.
     pulseClockStart = performance.now();
+    // …and everything ALREADY pulsing must re-join this cycle. The Working bar is created a
+    // line before this call (addWorking) and was locked against the PREVIOUS clock, so
+    // without this the bar and a bubble born later beat on different phases — exactly what
+    // "compacting and working pulse out of sync" looked like.
+    for (const el of document.querySelectorAll<HTMLElement>(
+      ".working, #working-bar, .msg.assistant.streaming, .thinking-block.streaming, .subagent-running",
+    )) {
+      phaseLockPulse(el);
+    }
     // Entering working always pins the transcript at the bottom with
     // auto-scroll ON: the reply is arriving below, even if the user had
     // scrolled up to re-read older content.
