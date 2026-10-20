@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-20
+
 ### Added
 
 - **Sub-agents get the same skills catalog as the orchestrator.** A delegated sub-agent now
@@ -642,7 +644,8 @@ Completions protocol.
 - **Diagnostics**: per-turn lines in *Output > Harny*, an optional request log
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
-[Unreleased]: https://github.com/spltek/harny/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/spltek/harny/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/spltek/harny/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/spltek/harny/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/spltek/harny/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/spltek/harny/compare/v0.2.1...v0.3.0
