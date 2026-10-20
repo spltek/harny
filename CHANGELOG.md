@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The dialogs are laid out in the PANEL, not in the viewport.** With the panel narrower than its
+  width floor the window grows a horizontal bar, and the dialogs — Providers & Models, Select model,
+  All sessions, MCP, Compact, name/confirm — were pinned to the viewport (`position: fixed`), which
+  knows nothing about that floor: the Providers form was squeezed down to the visible slice while the
+  panel below still laid out at its floor, the card re-centred every time the bar appeared, and it
+  stayed put while the panel scrolled sideways. The overlay is now `position: absolute; inset: 0`
+  against the body (`position: relative`), which *is* the panel content: the card keeps the floor
+  width and scrolls away together with the rest of the panel. All eight dialogs share ONE rule now
+  (they used to carry eight drifting copies); each card centres with `margin: auto` +
+  `max-height: 100%` — centring that survives a card taller than the screen, where the old
+  `translate(-50%,-50%)` pushed the first field above the top edge and made it unreachable — and
+  `overflow: auto` scrolls the DIALOG, never the window. Backdrops stay `fixed`, so they keep
+  covering the visible slice while the dialog itself scrolls with the content.
+
+- **The panel grew a second, phantom scrollbar.** `body` was `height: 100vh`, which is measured
+  *without* scrollbars: the moment the horizontal bar appeared (~15px) the body was that much taller
+  than the area actually drawn, so the window also scrolled vertically. `html` and `body` are now
+  `height: 100%`, which always matches the viewport the panel is drawn in; the width-floor test still
+  pins `html { min-width: max(500px, 32rem); overflow-x: auto }`.
+
+### Changed
+
+- **"Imported from …" / "Exported to …" moved onto their own line, UNDER the buttons.** The feedback
+  was a `span` inside the Providers & Models button row, so a full path
+  (`/Users/…/harny-providers.json`) squeezed Export/Import and shoved Cancel/Save sideways. It is now
+  a full-width `role="status"` row below the strip: it wraps long paths, and takes no space at all
+  while it has nothing to say (`:empty`).
+
 ## [0.4.0] - 2026-10-20
 
 ### Added
