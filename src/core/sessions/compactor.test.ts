@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { Compactor, DEFAULT_COMPACTION, KEEP_RECENT_TOKENS, MIN_KEEP_RECENT_TOKENS, MIN_SUMMARY_TOKENS, SUMMARY_MAX_TOKENS, buildSummaryMessages, carriedState, estimateTokens, keepRecentTokensFor, planCompactionToBudget, planManualCompaction, shouldCompact, serializeConversation, splitSummary, clampCompactionThresholdPercent, toCompactionThresholdPercent, estimateContextTokens, realWindowTokens, summarizerConfig, summaryBudgetTokens } from "./compactor";
+import { Compactor, DEFAULT_COMPACTION, KEEP_RECENT_TOKENS, MIN_KEEP_RECENT_TOKENS, MIN_SUMMARY_TOKENS, SUMMARY_MAX_TOKENS, TRIM_LABEL, TRIM_NOTE, buildSummaryMessages, carriedState, compactionSpanTokens, estimateContextTokens, estimateTokens, isUsableSummary, keepRecentTokensFor, maxSummaryInputTokens, planCompactionToBudget, planManualCompaction, realWindowTokens, recentStartFor, serializeConversation, shouldCompact, splitSummary, clampCompactionThresholdPercent, toCompactionThresholdPercent, summarizerConfig, summarizerPromptReserve, summaryBudgetTokens, trimHistory } from "./compactor";
 import type { LLMProviderFactory } from "../llm/types";
 import type { HarnyConfig } from "../config/types";
 import type { ChatMessage } from "../history/types";
@@ -21,6 +21,147 @@ function u(content: string): ChatMessage {
 function a(content: string): ChatMessage {
   return { role: "assistant", content, timestamp: 2 };
 }
+
+describe("serializeConversation — the summarizer's view of the span", () => {
+  it("names every tool call, so a result is never anonymous", () => {
+    const msgs: ChatMessage[] = [
+      { role: "user", content: "fix the bug", timestamp: 1 },
+      {
+        role: "assistant",
+        content: "Looking at it",
+        timestamp: 2,
+        toolCalls: [
+          { id: "c1", name: "Read", arguments: { path: "src/a.ts" } },
+          { id: "c2", name: "Grep", arguments: { pattern: "TODO", path: "src" } },
+        ],
+      },
+      { role: "tool", content: "contents of a.ts", toolCallId: "c1", timestamp: 3 },
+      { role: "tool", content: "3 matches", toolCallId: "c2", timestamp: 4 },
+    ];
+
+    const text = serializeConversation(msgs);
+    expect(text).toContain("[Tool call]: Read src/a.ts");
+    expect(text).toContain("[Tool call]: Grep /TODO/ in src");
+    expect(text).toContain("[Tool result]: 3 matches");
+    // Each call precedes the results it produced, as in the real conversation.
+    expect(text.indexOf("[Tool call]: Read src/a.ts")).toBeLessThan(text.indexOf("[Tool result]: contents of a.ts"));
+  });
+
+  it("describes a Write by SIZE, never by its contents", () => {
+    const msgs: ChatMessage[] = [
+      {
+        role: "assistant",
+        content: "Writing the file",
+        timestamp: 1,
+        toolCalls: [{ id: "c1", name: "Write", arguments: { path: "src/gen.ts", contents: "SECRET\n".repeat(80) } }],
+      },
+      { role: "tool", content: "ok", toolCallId: "c1", timestamp: 2 },
+    ];
+
+    const text = serializeConversation(msgs);
+    expect(text).toContain("[Tool call]: Write src/gen.ts (80 lines)");
+    // The payload would have been 560 chars of a file the span does not need.
+    expect(text).not.toContain("SECRET");
+  });
+
+  it("leaves an assistant turn with no calls exactly as it was", () => {
+    const msgs: ChatMessage[] = [
+      { role: "user", content: "hi", timestamp: 1 },
+      { role: "assistant", content: "hello", timestamp: 2 },
+    ];
+    expect(serializeConversation(msgs)).toBe("[User]: hi\n[Assistant]: hello");
+  });
+
+  it("is WIRED: the named calls reach the message the model actually receives", () => {
+    // The regression this pins: a fix INSIDE serializeConversation is inert if the
+    // request is built some other way. It is exactly the class of bug that hid the
+    // tool calls in the first place, so the pipe is asserted end to end, not just
+    // the function at the bottom of it.
+    const msgs: ChatMessage[] = [
+      { role: "user", content: "go", timestamp: 1 },
+      {
+        role: "assistant",
+        content: "on it",
+        timestamp: 2,
+        toolCalls: [{ id: "c1", name: "Write", arguments: { path: "src/a.ts", contents: "x\ny" } }],
+      },
+      { role: "tool", content: "ok", toolCallId: "c1", timestamp: 3 },
+    ];
+
+    const sent = buildSummaryMessages(msgs);
+    // ONE message: data first, instructions last. Nothing depends on the system role, so a
+    // summarizer that ignores it — a guard model, a small local one — still gets a task.
+    expect(sent).toHaveLength(1);
+    expect(sent[0].role).toBe("user");
+    expect(sent[0].content).toContain("[Tool call]: Write src/a.ts (2 lines)");
+    expect(sent[0].content).toContain("[Tool result]: ok");
+    // The transcript comes FIRST and the task LAST — see the comment in buildSummaryMessages.
+    expect(sent[0].content.indexOf("<transcript>")).toBeLessThan(sent[0].content.indexOf("BLOCK 1"));
+    // …and the tag is CLOSED (it used to be opened in the system prompt and never closed).
+    expect(sent[0].content).toContain("</transcript>");
+    expect(sent[0].content.trimEnd().endsWith("Never invent details absent from the transcript.")).toBe(true);
+  });
+});
+
+describe("isUsableSummary — a reply that is not the document", () => {
+  it("accepts the two-block document, and the fallback prompt around a real body", () => {
+    expect(isUsableSummary("Summary of past interactions\n---\n## Goal\nx")).toBe(true);
+    expect(isUsableSummary("Riepilogo delle interazioni\n---\n## Fatto\ny")).toBe(true);
+    // No `---`: splitSummary supplies its own prompt, and the BODY is still a document.
+    expect(isUsableSummary("## Goal\nx\n## Done\ny")).toBe(true);
+  });
+
+  it("REJECTS a safety classification — the reply that wrote two useless lines", () => {
+    // Seen in the wild: 108 messages reduced to this, and nothing noticed.
+    expect(isUsableSummary("User Safety: safe\nResponse Safety: safe")).toBe(false);
+  });
+
+  it("REJECTS a document that is only headings — the empty skeleton seen on a real run", () => {
+    // "## Goal / ## Done / ## Facts" with nothing under them passes a "has headings"
+    // check while carrying nothing, and it REPLACES the previous state.
+    expect(isUsableSummary("Summary of past interactions\n---\n## Goal\n## Done\n## Facts")).toBe(false);
+    // One heading with real content under it is enough.
+    expect(isUsableSummary("Summary of past interactions\n---\n## Goal\n\n## Done\n- did it")).toBe(true);
+  });
+
+  it("rejects a refusal, an empty reply, and a label with no document under it", () => {
+    expect(isUsableSummary("")).toBe(false);
+    expect(isUsableSummary("   ")).toBe(false);
+    expect(isUsableSummary("I can't help with that.")).toBe(false);
+    expect(isUsableSummary("Summary of past interactions\n---\nok")).toBe(false);
+  });
+});
+
+describe("maxSummaryInputTokens — what the summarizer could actually read", () => {
+  it("is ZERO below the window where a summary request could fit at all", () => {
+    // window − output − the MEASURED prompt reserve, then ×0.9 and floored. The ceiling
+    // only leaves 0 once that room reaches 2 (room 1 still floors to 0).
+    const empty = SUMMARY_MAX_TOKENS + summarizerPromptReserve();
+    expect(maxSummaryInputTokens(8_000)).toBe(0);
+    expect(maxSummaryInputTokens(empty)).toBe(0);
+    expect(maxSummaryInputTokens(empty + 1)).toBe(0);
+    expect(maxSummaryInputTokens(empty + 2)).toBe(1);
+    expect(maxSummaryInputTokens(empty + 3)).toBe(2);
+  });
+
+  it("reserves the prompt it actually sends, not a flat guess", () => {
+    // The instructions are ~1.9k chars: a FEW hundred tokens. The flat 2000 this
+    // replaces was nearly four times the real thing — room the summarizer was told it
+    // did not have — and at 1M it would have been rounding error pretending to be a
+    // reserve. A constant we own has a size that is a fact.
+    expect(summarizerPromptReserve()).toBeGreaterThan(400);
+    expect(summarizerPromptReserve()).toBeLessThan(1_500);
+  });
+
+  it("counts the PREVIOUS state document in what it may read", () => {
+    // It travels INSIDE the same request (buildSummaryMessages). Not counting it is how a
+    // big document silently pushed the request past the window.
+    const plain = maxSummaryInputTokens(32_000);
+    const withState = maxSummaryInputTokens(32_000, undefined, 4_000);
+    expect(withState).toBeLessThan(plain);
+    expect(plain - withState).toBe(3_600); // the 4000, minus the 0.9 margin
+  });
+});
 
 describe("carriedState — the state a previous compaction left behind", () => {
   const syntheticPair = (state: string): ChatMessage[] => [
@@ -216,11 +357,12 @@ describe("Compactor", () => {
     expect(summary).toContain("Fix the bug");
   });
 
-  it("falls back to a short goal when the model stays silent", async () => {
+  it("an EMPTY reply is a FAILURE, not a fabricated document", async () => {
+    // It used to invent "## Goal <title> / ## Progress No details available." — a document
+    // that PASSES the structural check while carrying nothing, and that REPLACES the
+    // previous state instead of preserving it. Empty means: let the caller trim.
     const c = new Compactor(factoryWith("   "), () => CONFIG);
-    const summary = await c.summarize([u("Refactor auth")]);
-    expect(summary).toContain("## Goal");
-    expect(summary).toContain("Refactor auth");
+    expect(await c.summarize([u("Refactor auth")])).toBe("");
   });
 
   it("forwards the abort signal to the provider (Stop cancels the summary)", async () => {
@@ -279,26 +421,24 @@ describe("summarizerConfig", () => {
 });
 
 describe("summary budget (the summary must not eat what the compaction freed)", () => {
-  it("gives the summary the room between the target and the kept part", () => {
-    // 616k usable, 50% target = 308k. Keeping 100k leaves ~208k for the summary.
-    expect(summaryBudgetTokens(616_000, 100_000)).toBe(208_000);
-    // The SAME window with a fat kept part: less room, and it shrinks with it.
-    expect(summaryBudgetTokens(616_000, 300_000)).toBe(8_000);
+  it("is a COMPRESSION of the span it replaces, not a share of the window", () => {
+    // 10:1. The window is irrelevant here on purpose: as a share of the window the same
+    // rule asked for HALF of it, i.e. an impossible ~450k on a 1M model.
+    expect(summaryBudgetTokens(20_000, 16_384)).toBe(2_000);
   });
 
-  it("never goes below the usable floor, even when the kept part exceeds the target", () => {
-    // The summary cannot fix a kept side that is already over target (shrinking the
-    // tail is a different lever) — but it must not become useless either.
-    expect(summaryBudgetTokens(100_000, 95_000)).toBe(MIN_SUMMARY_TOKENS);
-    // A window so small that even 50% is under the floor: the floor wins.
-    expect(summaryBudgetTokens(1_000, 0)).toBe(MIN_SUMMARY_TOKENS);
-    expect(summaryBudgetTokens(0, 0)).toBe(MIN_SUMMARY_TOKENS);
+  it("its only HARD limit is the max output declared for the session", () => {
+    // A summary is a response: it can never be larger than what the model is declared
+    // able to write, whatever the compression suggests.
+    expect(summaryBudgetTokens(200_000, 8_192)).toBe(8_192);
+    expect(summaryBudgetTokens(1_000_000, 8_192)).toBe(8_192);
+    // …and the cap WINS over the floor: a 256-token session gets 256, not a rejected 512.
+    expect(summaryBudgetTokens(100_000, 256)).toBe(256);
   });
 
-  it("scales with the model: the same session on a small window gets a small budget", () => {
-    const kept = 20_000;
-    expect(summaryBudgetTokens(32_000, kept)).toBe(MIN_SUMMARY_TOKENS); // nothing to spare
-    expect(summaryBudgetTokens(1_000_000, kept)).toBe(480_000); // plenty
+  it("never goes below the floor when the cap allows it", () => {
+    expect(summaryBudgetTokens(1_000, 16_384)).toBe(MIN_SUMMARY_TOKENS); // 100 → floor
+    expect(summaryBudgetTokens(0, 16_384)).toBe(MIN_SUMMARY_TOKENS);
   });
 
   it("tells the summarizer the cap, in tokens and in words", () => {
@@ -345,7 +485,10 @@ describe("Compactor — squeezing an oversized summary", () => {
     const out = await c.summarize([u("work")], undefined, undefined, { maxSummaryTokens: 1000 });
 
     expect(factory.sent).toHaveLength(2); // the second call is the compression
-    expect(factory.sent[1]).toBe(huge); // …fed with the FIRST summary
+    // …fed with the FIRST summary, inside the data block (the request is ONE message:
+    // data first, instruction last, so the last message is the whole thing).
+    expect(factory.sent[1]).toContain(huge);
+    expect(factory.sent[1]).toContain("You are COMPRESSING a summary");
     expect(out).toBe(small); // the shorter result wins
   });
 
@@ -429,6 +572,15 @@ describe("the summary prompt (schematic, minimal, no duplication)", () => {
     // …and keeps the two-block contract the orange synthetic bubble depends on.
     expect(system).toContain("EXACTLY TWO blocks");
     expect(system).toContain("## Facts");
+  });
+
+  it("tells the summarizer what a `[Tool call]` line is, so `## Done` names the files", () => {
+    // The serialization names every tool call (see serializeConversation); the
+    // prompt must not stay silent about it, or the model reads those lines as noise
+    // and keeps writing "changed a file" — which is the whole defect it fixes.
+    const system = buildSummaryMessages([u("work")])[0].content;
+    expect(system).toContain('[Tool call]');
+    expect(system).toContain("Wrote src/x.ts");
   });
 
   it("tells it what the session still has in full, so it does not repeat it", () => {
@@ -582,5 +734,169 @@ describe("compactor: real-data context accounting", () => {
 
   it("realWindowTokens is undefined when the window has no real usage", () => {
     expect(realWindowTokens([u("a"), asst("b")], 0)).toBeUndefined();
+  });
+});
+
+/** A history of `turns` exchanges, each message padded to `size` characters, so
+ * the token arithmetic is predictable from the test itself. */
+function bigHistory(turns: number, size = 4000): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  for (let i = 0; i < turns; i++) {
+    out.push({ role: "user", content: `domanda ${i}`.padEnd(size, "x"), timestamp: i * 2 + 1 });
+    out.push({ role: "assistant", content: `risposta ${i}`.padEnd(size, "y"), timestamp: i * 2 + 2 });
+  }
+  return out;
+}
+
+const PAIR = (content = "## Goal\nstate"): ChatMessage[] => [
+  { role: "user", content: "Summary of past interactions", timestamp: 1, synthetic: true },
+  { role: "assistant", content, timestamp: 2, synthetic: true },
+];
+
+describe("recentStartFor — how much 'the recent part' is", () => {
+  it("keeps a suffix that fits the budget, opening on a whole turn", () => {
+    const visible = bigHistory(6);
+    const start = recentStartFor(visible, 9_000);
+    expect(start).toBeGreaterThan(0);
+    expect(visible[start].role).toBe("user"); // always an INPUT
+    expect(estimateTokens(serializeConversation(visible.slice(start)))).toBeLessThanOrEqual(12_000);
+  });
+
+  it("forces progress when one message fills the budget alone (the compaction rule)", () => {
+    const visible: ChatMessage[] = [u("a"), { role: "assistant", content: "b", timestamp: 2 }, u("x".repeat(400_000))];
+    // Keeping it alone would keep everything, so the walk moves on instead of
+    // returning 0 (which would make the compaction a no-op forever).
+    expect(recentStartFor(visible, 1_000)).toBeGreaterThan(0);
+  });
+});
+
+describe("maxSummaryInputTokens — the span the summarizer can actually READ", () => {
+  it("scales with the window, reserving the summary's OWN output budget", () => {
+    expect(maxSummaryInputTokens(1_000_000)).toBeGreaterThan(800_000);
+    // The request carries SUMMARY_MAX_TOKENS (not the chat turn's reserve), so
+    // the ceiling must sit below window − 8192 minus a margin.
+    expect(maxSummaryInputTokens(32_000)).toBeLessThan(32_000 - SUMMARY_MAX_TOKENS);
+    expect(maxSummaryInputTokens(32_000)).toBeGreaterThan(10_000);
+  });
+
+  it("is 0 on a window that cannot host the request at all", () => {
+    // No room to ask => the caller must move the boundary without a summary
+    // rather than send a request that is guaranteed to be rejected.
+    expect(maxSummaryInputTokens(SUMMARY_MAX_TOKENS)).toBe(0);
+    expect(maxSummaryInputTokens(4_000)).toBe(0);
+  });
+});
+
+describe("compactionSpanTokens — what a compaction would ask the summarizer to read", () => {
+  it("is 0 when there is nothing worth summarizing", () => {
+    expect(compactionSpanTokens([u("a"), { role: "assistant", content: "b", timestamp: 2 }], 100_000)).toBe(0);
+  });
+
+  it("shrinks as the budget grows (more kept verbatim => less to read)", () => {
+    const all = bigHistory(20);
+    const tight = compactionSpanTokens(all, 10_000);
+    const loose = compactionSpanTokens(all, 100_000);
+    expect(tight).toBeGreaterThan(0);
+    expect(tight).toBeGreaterThan(loose);
+  });
+
+  it("on a BIG history the span dwarfs a small model's ceiling — the downgrade case", () => {
+    const all = bigHistory(60);
+    // Filled on a 1M model, moved to a 32k one: the span is an order of magnitude
+    // past what that model could read, which is exactly when the trim must fire.
+    expect(compactionSpanTokens(all, 950_000)).toBeGreaterThan(maxSummaryInputTokens(32_000));
+  });
+});
+
+describe("trimHistory — move the window WITHOUT a summary (the fail-safe)", () => {
+  it("moves the boundary and loses NOTHING: the whole past stays, in order", () => {
+    const all = bigHistory(10);
+    const trim = trimHistory(all, { budgetTokens: 12_000 });
+    expect(trim).not.toBeNull();
+    const { history, windowStart, moved } = trim!;
+
+    expect(moved).toBeGreaterThan(0);
+    // The window opens on a checkpoint pair carrying the trim label…
+    expect(history[windowStart].synthetic).toBe(true);
+    expect(history[windowStart].content).toBe(TRIM_LABEL);
+    // …the untouched prefix is IDENTICAL to the original…
+    expect(history.slice(0, windowStart)).toEqual(all.slice(0, windowStart));
+    // …and every original message is still in the session (two added: the pair).
+    expect(history.length).toBe(all.length + 2);
+    for (const m of all) expect(history).toContain(m);
+  });
+
+  it("CARRIES the state document verbatim (continuity survives the trim)", () => {
+    const state = "## Goal\nship the parser\n## Facts\nsrc/parser.ts is the entry point";
+    const all: ChatMessage[] = [...PAIR(state), ...bigHistory(10)];
+    const trim = trimHistory(all, { budgetTokens: 12_000, summary: state })!;
+
+    expect(trim).not.toBeNull();
+    expect(trim.history[trim.windowStart].content).toBe(TRIM_LABEL);
+    expect(trim.history[trim.windowStart + 1].content).toBe(state); // handed over, unchanged
+    // The OLD pair left the window but is still in the session.
+    expect(trim.windowStart).toBeGreaterThan(2);
+    expect(trim.history[0].content).toBe("Summary of past interactions");
+    expect(trim.moved).toBe(trim.windowStart - 2);
+  });
+
+  it("with no summary to carry, it leaves a factual note (not a fake state document)", () => {
+    const all = bigHistory(10);
+    const trim = trimHistory(all, { budgetTokens: 12_000 })!;
+    expect(trim.history[trim.windowStart + 1].content).toBe(TRIM_NOTE);
+  });
+
+  it("never lands INSIDE the existing pair (which would halve it)", () => {
+    // A budget big enough to keep everything after the pair would move the
+    // boundary right past it — freeing nothing and re-creating the same pair.
+    const all: ChatMessage[] = [...PAIR(), ...bigHistory(1)];
+    expect(trimHistory(all, { budgetTokens: 1_000_000 })).toBeNull();
+  });
+
+  it("is a no-op when the window would have to start at the very beginning", () => {
+    expect(trimHistory(bigHistory(1), { budgetTokens: 1_000_000 })).toBeNull();
+    expect(trimHistory([u("only")], { budgetTokens: 1 })).toBeNull();
+    expect(trimHistory([], { budgetTokens: 1_000 })).toBeNull();
+  });
+
+  it("is a no-op when the whole view already FITS the budget (the boundary must not drift)", () => {
+    // `recentStartFor` forces progress when everything fits — right for a
+    // compaction, WRONG here: `snapCutToGroup` would move the boundary forward on
+    // a session that needs nothing, and the prefix would change for no gain.
+    const all = bigHistory(2); // ~16k tokens, far under this budget
+    expect(trimHistory(all, { budgetTokens: 1_000_000 })).toBeNull();
+  });
+
+  it("cannot fix a SINGLE message bigger than the whole window (an honest limit)", () => {
+    // Nothing can be moved out: the one message that does not fit is the newest,
+    // and it is the content the model is working on.
+    const all: ChatMessage[] = [...PAIR(), u("x".repeat(400_000))];
+    expect(trimHistory(all, { budgetTokens: 1_000 })).toBeNull();
+  });
+
+  it("is STICKY in effect: the trimmed window no longer needs anything moved", () => {
+    const all = bigHistory(20);
+    const first = trimHistory(all, { budgetTokens: 12_000 })!;
+    // What the model would now receive is well under the budget…
+    const window = first.history.slice(first.windowStart);
+    expect(estimateTokens(serializeConversation(window))).toBeLessThan(20_000);
+    // …so a second pass has nothing to move (the boundary does not drift).
+    expect(trimHistory(first.history, { budgetTokens: 60_000 })).toBeNull();
+  });
+
+  it("is NOT a dead end: the next compaction carries what the trim left", () => {
+    // `carriedState` reads the newest synthetic assistant, and a trim leaves one
+    // — so the NEXT summary UPDATES that text instead of starting from nothing.
+    // Without this the trim would silently reset the session's state document.
+    const all = bigHistory(10);
+    const trim = trimHistory(all, { budgetTokens: 12_000 })!;
+    expect(carriedState(trim.history)).toBe(TRIM_NOTE);
+  });
+
+  it("…and when a summary was carried, the next compaction updates THAT", () => {
+    const state = "## Goal\nship the parser\n## Facts\nsrc/parser.ts";
+    const all: ChatMessage[] = [...PAIR(state), ...bigHistory(10)];
+    const trim = trimHistory(all, { budgetTokens: 12_000, summary: state })!;
+    expect(carriedState(trim.history)).toBe(state);
   });
 });

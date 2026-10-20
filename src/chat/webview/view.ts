@@ -6,6 +6,11 @@ import Prism from "./prism";
 import { langIdForPath } from "./lang-map";
 import { clampContextWindow, clampOutputTokens, DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, MAX_CONTEXT_WINDOW, MAX_OUTPUT_TOKENS, MIN_CONTEXT_WINDOW, MIN_OUTPUT_TOKENS } from "../context-window";
 import { clampTemperature, clampTopP, TEMPERATURE_MAX, TEMPERATURE_MIN, TEMPERATURE_STEP } from "../temperature";
+// The SAME boundary the core uses to decide what the model receives: importing it
+// (it is pure and dependency-free) is what keeps the transcript's marker and the
+// request from ever disagreeing about where the window starts.
+import { checkpointStart } from "../../core/history/conversation-validity";
+import { toolArgTarget } from "../../core/tools/tool-call-text";
 
 declare function acquireVsCodeApi(): {
   postMessage(message: unknown): void;
@@ -632,6 +637,79 @@ messagesEl.addEventListener("scroll", () => {
   updateTranscriptActions();
 });
 
+/**
+ * The READING POSITION, captured before a rebuild destroys the nodes.
+ *
+ * Anchored on the ELEMENT under the top edge, not on a pixel offset. A refresh can
+ * change the transcript's height — a compaction adds the divider and the summary card
+ * and re-slices the history — and the same `scrollTop` then lands somewhere else in
+ * it, which is how the view used to jump halfway through the chat. Saving and
+ * restoring `scrollTop` itself would fix nothing: the browser already keeps it across
+ * a wipe-and-re-render in the same task, and THAT is the defect.
+ *
+ * Measured with getBoundingClientRect, never offsetTop: #messages is not positioned,
+ * so a child's offsetTop is measured against some ancestor instead.
+ */
+interface ScrollAnchor {
+  /** Which child sat under the top edge, by position among #messages' children. */
+  index: number;
+  /** How far ABOVE the edge it started (negative when it started below, i.e. a gap). */
+  above: number;
+}
+
+function captureScrollAnchor(): ScrollAnchor | null {
+  // Following the bottom needs no anchor: the rebuild scrolls there anyway.
+  if (autoScroll) return null;
+  const kids = Array.from(messagesEl.children) as HTMLElement[];
+  if (kids.length === 0) return null;
+  const edge = messagesEl.getBoundingClientRect().top;
+  for (let i = 0; i < kids.length; i++) {
+    const r = kids[i].getBoundingClientRect();
+    if (r.bottom > edge) return { index: i, above: edge - r.top };
+  }
+  return null; // nothing spans the edge (scrolled into the bottom padding)
+}
+
+function restoreScrollAnchor(anchor: ScrollAnchor | null): void {
+  if (!anchor) return;
+  const el = messagesEl.children[anchor.index] as HTMLElement | undefined;
+  // The list changed under us (a compaction rewrites the head of the transcript): do
+  // NOTHING. A wrong scroll is worse than no scroll, and falling back to the top or
+  // the bottom would be exactly the jump this exists to prevent.
+  if (!el) return;
+  const edge = messagesEl.getBoundingClientRect().top;
+  messagesEl.scrollTop += el.getBoundingClientRect().top - edge + anchor.above;
+}
+
+/**
+ * A pointer to the summary card, left where the reader ACTUALLY is.
+ *
+ * After a compaction the transcript reads [past][divider][CARD][kept]: the card opens the
+ * context window, which puts it at the HEAD — several screens above the bottom. That is
+ * structurally right and practically invisible: you are following the stream at the end,
+ * so the compaction would have no visible effect where you are looking. The card cannot
+ * move (it IS the boundary), so the EVENT gets a line — and the line takes you there.
+ */
+function addCompactedHint(): void {
+  const wrap = document.createElement("div");
+  wrap.className = "compacted-hint";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = "🧹 Context compacted · the summary is above ↑";
+  btn.title = "Scroll to the summary that now opens the context window";
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    // Exactly ONE card is rendered (older checkpoints are folded into a single row).
+    messagesEl.querySelector(".msg.user.synthetic-summary")?.scrollIntoView?.({ block: "start" });
+  });
+  wrap.appendChild(btn);
+  messagesEl.appendChild(wrap);
+  // Only when the reader is following: appending while they are mid-transcript must not
+  // move their view (they will see the line when they get there).
+  scrollDown();
+  updateTranscriptActions();
+}
+
 /** Label shown on HARNESS-injected prompts (loop guard / delegation / budget),
  * so they read as SYSTEM messages rather than something the user typed. */
 const HARNESS_LABEL = "Nudge";
@@ -950,30 +1028,13 @@ function makeThinkingBlock(
 }
 
 /**
- * Target of a tool call shown in the header after the tool name: the file
- * path (file tools), the glob pattern (Glob), the command (Shell), the
- * search term (WebSearch), the url (WebFetch), the paths (ReadLints) or the
- * list summary (TodoWrite).
+ * Target of a tool call shown in the header after the tool name. The IMPLEMENTATION
+ * is shared with the compactor (see core/tools/tool-call-text.ts): the transcript and
+ * the summarizer must describe a call the same way, and a second copy is exactly how
+ * the summarizer ended up blind to tool calls in the first place.
  */
 function toolTargetArg(args: unknown): string | undefined {
-  if (!args || typeof args !== "object") return undefined;
-  const rec = args as Record<string, unknown>;
-  if (typeof rec.glob_pattern === "string" && rec.glob_pattern) return rec.glob_pattern;
-  if (typeof rec.path === "string" && rec.path) return rec.path;
-  if (typeof rec.command === "string" && rec.command) return rec.command;
-  if (typeof rec.search_term === "string" && rec.search_term) return rec.search_term;
-  if (typeof rec.url === "string" && rec.url) return rec.url;
-  if (Array.isArray(rec.paths)) {
-    const list = rec.paths.filter((p): p is string => typeof p === "string");
-    if (list.length > 0) return list.join(", ");
-  }
-  if (Array.isArray(rec.todos)) {
-    const items = rec.todos
-      .filter((t): t is Record<string, unknown> => !!t && typeof t === "object")
-      .map((t) => `${String(t.id ?? "?")} - ${String(t.content ?? "")} - ${String(t.status ?? "?")}`);
-    if (items.length > 0) return items.join(" · ");
-  }
-  return undefined;
+  return toolArgTarget(args);
 }
 
 function addToolCall(name: string, args: unknown, beforeEl?: HTMLElement | null): HTMLDivElement {
@@ -1301,6 +1362,9 @@ function addWorking(): HTMLDivElement {
   workingEl = workingBar;
   workingBar.classList.remove("hidden");
   workingBar.textContent = "● Working...";
+  // The bar can appear MID-turn (a sub-agent, a resumed run): join the cycle where the
+  // play button already is instead of restarting it from zero.
+  phaseLockPulse(workingBar);
   scrollDown();
   return workingBar;
 }
@@ -1431,17 +1495,72 @@ function renderEmptyShell(): void {
   setSessionsExpanded(true);
 }
 
+/**
+ * The rule that marks where the CONTEXT WINDOW starts.
+ *
+ * Everything ABOVE it is still in the session — in the transcript, readable,
+ * searchable — but is no longer sent to the model; everything from the summary
+ * below it is. It exists because a long session otherwise looks like it is
+ * growing without bound while the context bar stays put, with nothing on screen
+ * explaining why.
+ */
+function addWindowDivider(outOfWindow: number): HTMLDivElement {
+  const div = document.createElement("div");
+  div.className = "ctx-divider";
+  div.textContent =
+    outOfWindow > 0
+      ? `${outOfWindow} message${outOfWindow === 1 ? "" : "s"} above · kept in the session, out of the context window`
+      : "out of the context window";
+  messagesEl.appendChild(div);
+  return div;
+}
+
+/**
+ * One row for the checkpoints that are NO LONGER the boundary.
+ *
+ * Their content is already inside the newest summary — a compaction folds the previous
+ * one in, a trim carries it verbatim — so re-rendering their bodies says nothing new and
+ * is pure noise in a long transcript. Their existence is still worth a line, because it
+ * is how you know the window has moved more than once.
+ */
+function addOldSummariesLine(count: number): HTMLDivElement {
+  const div = document.createElement("div");
+  div.className = "old-summaries";
+  div.textContent = `${count} earlier summar${count === 1 ? "y" : "ies"}, folded into the one below`;
+  messagesEl.appendChild(div);
+  return div;
+}
+
 function renderMessages(msgs: ChatMsg[]): boolean {
   historyLength = msgs.length;
   const outputs = new Map<string, string>();
   for (const m of msgs) {
     if (m.role === "tool" && m.toolCallId && m.content) outputs.set(m.toolCallId, m.content);
   }
+  // Where the window begins (see checkpointStart). The summary BODY is the pair's
+  // second half, so it can be styled as the card the label opens instead of as a
+  // normal answer — one implementation, shared with the request itself.
+  const boundary = checkpointStart(msgs);
+  const summaryBody = msgs[boundary]?.synthetic ? boundary + 1 : -1;
+  const outOfWindow = msgs.slice(0, boundary).filter((m) => !m.synthetic).length;
+  // The checkpoints ABOVE the boundary are history (see addOldSummariesLine).
+  const oldPairs = new Set<number>();
+  for (let i = 0; i < boundary; i++) if (msgs[i].synthetic) oldPairs.add(i);
+  const firstOldPair = oldPairs.size > 0 ? Math.min(...oldPairs) : -1;
   let hasVisible = false;
   for (let i = 0; i < msgs.length; i++) {
     const m = msgs[i];
     if (m.role === "system" || m.role === "tool") continue;
+    if (oldPairs.has(i)) {
+      if (i === firstOldPair) {
+        addOldSummariesLine(oldPairs.size / 2);
+        hasVisible = true;
+      }
+      continue;
+    }
     hasVisible = true;
+    // The marker sits just above the checkpoint, where the window opens.
+    if (i === boundary && boundary > 0) addWindowDivider(outOfWindow);
     if (m.role === "assistant") {
       // Historical thinking blocks are NOT live: no streaming pulse.
       if (m.thinking) addThinkingBlock(m.thinking, undefined, { pulse: false });
@@ -1454,6 +1573,9 @@ function renderMessages(msgs: ChatMsg[]): boolean {
       const content = m.content || "";
       if (content.trim() && !content.startsWith("🔧 ")) {
         const bubble = addMessage("assistant", content);
+        // The summary that OPENS the window: the body of the checkpoint card, not
+        // an answer — it must not read as something the model just said.
+        if (i === summaryBody) bubble.classList.add("synthetic-body");
         if (content.startsWith("❌")) bubble.classList.add("error");
         else if (content.startsWith("🔁")) bubble.classList.add("loop");
         // Loop notices are system annotations, not branchable messages.
@@ -1798,6 +1920,10 @@ const pending = createPendingSection({
   },
 });
 
+/** The footer as last rendered (`id:mode` per item), so a CHANGE — added, cancelled,
+ *  converted — can be told from the initial push the host sends on reload. */
+let pendingSnapshot: string | null = null;
+
 /**
  * The Queue/Steer pill is a pure INDICATOR (never clicked): it shows Steer
  * ONLY while a run is active AND Ctrl/Cmd is held, and Queue otherwise.
@@ -1805,6 +1931,8 @@ const pending = createPendingSection({
  * leaves it as-is (still Steer while the key is down, Queue once released).
  */
 let steerModifierHeld = false;
+/** The mode last PAINTED, so a real Queue<->Steer switch can be told from a repaint. */
+let lastSteerMode = false;
 
 /** The mode a new message will use right now. */
 function effectiveSendMode(): "queue" | "steer" {
@@ -1814,6 +1942,8 @@ function effectiveSendMode(): "queue" | "steer" {
 /** Paint the indicator: label + red "Steer" state + dim when idle. */
 function renderSteerMode(): void {
   const isSteer = effectiveSendMode() === "steer";
+  const switched = isSteer !== lastSteerMode;
+  lastSteerMode = isSteer;
   steerBtn.classList.toggle("is-steer", isSteer);
   steerBtn.setAttribute("aria-pressed", String(isSteer));
   steerBtnLabel.textContent = isSteer ? "Steer" : "Queue";
@@ -1821,6 +1951,10 @@ function renderSteerMode(): void {
   steerBtn.title = isSteer
     ? "Steer: the next message is injected into the running loop"
     : "Queue: the next message runs after the current run ends";
+  // Switching Queue <-> Steer is a decision about the run in progress — ONCE per real
+  // switch, not on every repaint of the indicator (it repaints on each key press while
+  // the modifier is held).
+  if (switched) followAndFocus();
 }
 
 function send(): void {
@@ -3542,6 +3676,20 @@ function focusPrompt(): void {
   inputEl.focus();
 }
 
+/** Back to the live edge and back into the prompt.
+ *
+ * Typing while the agent works (a queue, a steer), converting one into the other,
+ * cancelling one: every one of those is the user talking ABOUT the run in progress. Each
+ * moves the pending footer or the transcript — a place the reader is not looking at if
+ * they scrolled away — so the view returns to following, and the caret returns where the
+ * next keystroke belongs. */
+function followAndFocus(): void {
+  autoScroll = true;
+  scrollDown();
+  updateTranscriptActions();
+  focusPrompt();
+}
+
 function setStreaming(active: boolean): void {
   const rising = active && !streamingActive;
   streamingActive = active;
@@ -4464,22 +4612,29 @@ window.addEventListener("message", (e) => {
         compactionEl = document.createElement("div");
         compactionEl.className = "working";
         compactionEl.textContent = "● Compacting…";
+        // Same beat as the Working bar and the play key. This bubble is created mid-run,
+        // so a plain CSS animation would start its cycle at zero and pulse OUT OF PHASE
+        // with everything already on screen — the reported defect.
+        phaseLockPulse(compactionEl);
         messagesEl.appendChild(compactionEl);
         scrollDown();
       }
       break;
     }
     case "compactDone": {
-      // Finalize into a quiet "thinking-style" block (gray/dashed/collapsible):
-      // blue/result styling stays reserved for actual emitted model output.
       if (compactionEl) {
-        makeThinkingBlock(
-          "🧹 Conversation compacted.",
-          "The older messages were summarized into the session context.",
-          compactionEl,
-        );
+        if (msg.ok) {
+          // Should not normally happen (a real compaction wiped this bubble with the
+          // rebuild), but if it does, keep it truthful.
+          makeThinkingBlock("🧹 Conversation compacted.", "The summary now opens the context window.", compactionEl);
+        } else {
+          // Nothing was moved: the provisional bubble must not claim it was.
+          compactionEl.remove();
+        }
         compactionEl = null;
       }
+      // A real compaction leaves its card at the HEAD of the window (see addCompactedHint).
+      if (msg.ok) addCompactedHint();
       break;
     }
     case "previewReady": {
@@ -4506,9 +4661,18 @@ window.addEventListener("message", (e) => {
       scrollDown();
       break;
     }
-    case "pending":
-      pending.render((msg.items as PendingViewItem[]) || []);
+    case "pending": {
+      const items = (msg.items as PendingViewItem[]) || [];
+      pending.render(items);
+      // A CHANGE in the footer — one added, one cancelled, one converted — is the user
+      // acting on the run in progress: go back to the live edge and into the prompt. The
+      // FIRST render only primes the baseline: on reload the host re-pushes the list, and
+      // following the footer there would fight the restored reading position.
+      const ids = items.map((i) => `${i.id}:${i.mode}`).join("|");
+      if (pendingSnapshot !== null && ids !== pendingSnapshot) followAndFocus();
+      pendingSnapshot = ids;
       break;
+    }
     case "userMessage": {
       // A QUEUED message just started running. The view never appended its bubble
       // when it was typed (it waited in the pending footer) and the host owns
@@ -4555,6 +4719,9 @@ window.addEventListener("message", (e) => {
       break;
     }
     case "refresh": {
+      // Capture the reading position BEFORE the wipe: without it the rebuild lands at
+      // the same pixel offset in a DIFFERENT transcript (see captureScrollAnchor).
+      const anchor = captureScrollAnchor();
       messagesEl.innerHTML = "";
       resetStreamState();
       // A refresh rebuilds the transcript from host messages; drop the stale
@@ -4577,6 +4744,8 @@ window.addEventListener("message", (e) => {
       // A refresh (e.g. after a ✂ cut) rebuilds the transcript: return the caret
       // to the prompt so the user can keep typing from the clean point.
       if (Array.isArray(msg.skills)) renderSkills(msg.skills);
+      // The content is settled: put the reader back where they were.
+      restoreScrollAnchor(anchor);
       focusPrompt();
       break;
     }

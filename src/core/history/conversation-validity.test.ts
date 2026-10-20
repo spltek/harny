@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { describeFaults, conversationFaults, turnEnd, turnStart } from "./conversation-validity";
+import { checkpointStart, describeFaults, conversationFaults, turnEnd, turnStart } from "./conversation-validity";
 import type { ChatMessage } from "./types";
 
 const user = (content = "u"): ChatMessage => ({ role: "user", content, timestamp: 1 });
@@ -174,5 +174,57 @@ describe("turnStart / turnEnd (every cut lands between whole turn groups)", () =
       expect(last.role).not.toBe("tool");
       expect(copy.length === transcript.length || last.role === "assistant").toBe(true);
     }
+  });
+});
+
+describe("checkpointStart — the ONE point the context window starts from", () => {
+  // The pair a compaction leaves: a user LABEL and the assistant summary.
+  const label = (content = "Summary of past interactions"): ChatMessage => ({
+    role: "user",
+    content,
+    timestamp: 1,
+    synthetic: true,
+  });
+  const state = (content = "## Goal\nx"): ChatMessage => ({ role: "assistant", content, timestamp: 2, synthetic: true });
+
+  it("is 0 while no checkpoint exists (a session that never compacted)", () => {
+    expect(checkpointStart([])).toBe(0);
+    expect(checkpointStart([user("q"), answer("a")])).toBe(0);
+  });
+
+  it("returns the START of the pair, so the checkpoint itself stays IN the window", () => {
+    expect(checkpointStart([label(), state(), user("q")])).toBe(0);
+    expect(checkpointStart([user("old"), answer("old"), label(), state(), user("q")])).toBe(2);
+  });
+
+  it("prefers the NEWEST pair (the older ones are already folded into it)", () => {
+    const msgs = [user("a"), label("L1"), state("S1"), user("b"), label("L2"), state("S2"), user("c")];
+    expect(checkpointStart(msgs)).toBe(4);
+  });
+
+  it("accepts a LONE synthetic message as its own boundary", () => {
+    // carriedState tolerates an assistant-only head; the boundary follows it
+    // instead of looking for a label that is not there.
+    expect(checkpointStart([{ role: "system", content: "s" }, state("head"), user("q")])).toBe(1);
+    expect(checkpointStart([label(), user("q")])).toBe(0);
+    expect(checkpointStart([user("old"), answer("old"), state("head"), user("q")])).toBe(2);
+  });
+
+  it("what it skips is REACHABLE in the full array — nothing is deleted", () => {
+    const msgs = [user("past"), answer("past"), label(), state(), user("now")];
+    const from = checkpointStart(msgs);
+    expect(msgs.slice(from).map((m) => m.content)).toEqual(["Summary of past interactions", "## Goal\nx", "now"]);
+    expect(msgs).toHaveLength(5); // the past is still there
+  });
+
+  it("walks past uiOnly and system messages without being confused by them", () => {
+    const msgs: ChatMessage[] = [
+      { role: "system", content: "sys", timestamp: 0, uiOnly: true },
+      user("past"),
+      label(),
+      state(),
+      user("now"),
+    ];
+    expect(checkpointStart(msgs)).toBe(2);
   });
 });

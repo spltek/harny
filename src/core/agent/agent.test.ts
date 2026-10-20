@@ -3977,6 +3977,36 @@ describe("context-overflow recovery (cross-provider)", () => {
     expect(requests).toHaveLength(2);
   });
 
+  it("counts IMAGES, so a rejection at the real ceiling is still read as size", async () => {
+    // Leg 2 answers "was the request we sent full?" — and it can only answer that if
+    // the estimate covers what the request CARRIES. A screenshot travels as a data URI
+    // that nothing charged for, so a session full of images reported itself as nearly
+    // empty and an unreadable rejection at the true ceiling went unrecognised.
+    //
+    // The two runs differ by the images and NOTHING else, so the differential pins
+    // them and cannot pass for some other reason.
+    const budget = 20_000; // the leg fires at 90% = 18_000
+    const run = async (images?: string[]) => {
+      const { factory } = flakyFactory('OpenAI API error 400: {"error":{"message":"eltilov erom"}}');
+      let compactions = 0;
+      const { agent } = build({
+        factory,
+        onContextOverflow: () => {
+          compactions++;
+          return true;
+        },
+        contextBudget: () => budget,
+      });
+      await agent.send("go", images ? { images } : {});
+      return compactions;
+    };
+
+    // A few thousand tokens of prompt and history: nowhere near the ceiling.
+    expect(await run()).toBe(0);
+    // Ten images add 10 × IMAGE_TOKENS, past 90% of the SAME budget.
+    expect(await run(Array.from({ length: 10 }, () => "data:image/png;base64,AAAA"))).toBe(1);
+  });
+
   it("does not retry when the host could not free anything (no pointless loop)", async () => {
     const { factory, requests } = flakyFactory(OPENAI_OVERFLOW);
     let compactions = 0;

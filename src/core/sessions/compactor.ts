@@ -1,8 +1,8 @@
 import type { ChatMessage } from "../history/types";
-import { turnEnd, turnStart } from "../history/conversation-validity";
+import { checkpointStart, turnEnd, turnStart } from "../history/conversation-validity";
 import type { HarnyConfig } from "../config/types";
 import type { LLMProviderFactory } from "../llm/types";
-import { fallbackTitle } from "./title-generator";
+import { describeToolCall } from "../tools/tool-call-text";
 
 export interface CompactionSettings {
   enabled: boolean;
@@ -88,13 +88,23 @@ export function shouldCompact(contextTokens: number, contextWindow: number, sett
 export function serializeConversation(messages: ChatMessage[], toolResultLimit = 2000): string {
   return messages
     .filter((m) => m.role !== "system" && !m.uiOnly)
-    .map((m) => {
-      if (m.role === "assistant") return `[Assistant]: ${m.content}`;
+    .flatMap((m) => {
+      if (m.role === "assistant") {
+        const lines = [`[Assistant]: ${m.content}`];
+        // The CALLS, not just the answers. Without them a `[Tool result]` below is
+        // anonymous — the summarizer cannot tell a Write from a Grep, so the state
+        // it writes cannot name the file that was changed or the command that was
+        // run. That is the whole point of the state document, so it is worth a line
+        // each. Arguments go through describeToolCall: a Write carries the entire
+        // file, and echoing it would inflate the span past what the model can read.
+        for (const tc of m.toolCalls ?? []) lines.push(`[Tool call]: ${describeToolCall(tc.name, tc.arguments)}`);
+        return lines;
+      }
       if (m.role === "tool") {
         const out = m.content.length > toolResultLimit ? `${m.content.slice(0, toolResultLimit)}… (+${m.content.length - toolResultLimit} chars)` : m.content;
-        return `[Tool result]: ${out}`;
+        return [`[Tool result]: ${out}`];
       }
-      return `[User]: ${m.content}`;
+      return [`[User]: ${m.content}`];
     })
     .join("\n");
 }
@@ -199,9 +209,31 @@ export function planCompactionToBudget(messages: ChatMessage[], keepTokens: numb
   const visible = messages.filter((m) => m.role !== "system" && !m.uiOnly);
   const tokensBefore = estimateTokens(serializeConversation(visible));
   if (visible.length <= 2) return { toSummarize: [], kept: visible, tokensBefore };
+  const start = recentStartFor(visible, keepTokens);
+  // The synthetic pair a PREVIOUS compaction left is the STATE of the work, not
+  // content to summarize again: it is handed to the summarizer separately (see
+  // carriedState) and re-reading it is how a summary of a summary loses facts.
+  // Decided HERE, with the rest of the strategy, so every entry point (manual and
+  // automatic) gets the same rule.
+  const toSummarize = visible.slice(0, start).filter((m) => !m.synthetic);
+  return { toSummarize, kept: visible.slice(start), tokensBefore };
+}
 
-  const budget = Math.max(1, keepTokens);
-  // Walk BACKWARDS from the newest message, accumulating the recent side.
+/**
+ * Where the RECENT side begins in `visible`: walk BACKWARDS from the newest
+ * message spending `budgetTokens`, then snap to a whole turn group so the result
+ * always opens on an input.
+ *
+ * A compaction that kept everything would free nothing, so when the walk could not
+ * spend the budget AT ALL — one huge message, or a view smaller than it — the cut
+ * moves to the middle instead: summarizing half still frees room, while returning
+ * 0 would make the compaction a no-op the caller retries forever.
+ *
+ * The TRIM never inherits that rule: it returns early when the whole view already
+ * fits, so a boundary that needs no moving cannot drift (see trimHistory).
+ */
+export function recentStartFor(visible: ChatMessage[], budgetTokens: number): number {
+  const budget = Math.max(1, budgetTokens);
   let start = visible.length;
   let acc = 0;
   for (let i = visible.length - 1; i >= 0; i--) {
@@ -214,14 +246,7 @@ export function planCompactionToBudget(messages: ChatMessage[], keepTokens: numb
   if (start === 0) start = Math.floor(visible.length / 2);
   // A cut must never leave half a turn: what is KEPT is a sequence of complete
   // groups (input → final answer, everything in between).
-  start = snapCutToGroup(visible, start);
-  // The synthetic pair a PREVIOUS compaction left is the STATE of the work, not
-  // content to summarize again: it is handed to the summarizer separately (see
-  // carriedState) and re-reading it is how a summary of a summary loses facts.
-  // Decided HERE, with the rest of the strategy, so every entry point (manual and
-  // automatic) gets the same rule.
-  const toSummarize = visible.slice(0, start).filter((m) => !m.synthetic);
-  return { toSummarize, kept: visible.slice(start), tokensBefore };
+  return snapCutToGroup(visible, start);
 }
 
 /**
@@ -240,6 +265,10 @@ export function planManualCompaction(messages: ChatMessage[], keepRecentFraction
 export interface CompactedHistory {
   /** The rebuilt conversation: the synthetic summary pair + the kept tail. */
   history: ChatMessage[];
+  /** Older messages of the span that did NOT fit the request: they stay in the transcript
+   *  ABOVE the new checkpoint instead of being summarized. Empty when the whole span
+   *  fitted. */
+  deferred: ChatMessage[];
   /** The span that was summarized (non-empty by contract). */
   summarized: ChatMessage[];
   /** What survived verbatim. */
@@ -249,6 +278,30 @@ export interface CompactedHistory {
   /** The budgets behind the decision, for the caller's diagnostics. */
   keepBudgetTokens: number;
   summaryBudgetTokens: number;
+}
+
+/**
+ * The NEWEST messages of a span that fit a token budget, walking BACKWARDS.
+ *
+ * The work closest to now is the work that matters, and the budget is a hard limit of the
+ * request: when the span is bigger than what the model can read in one call, something has
+ * to be left out. Leaving out the OLDEST is the choice that keeps the transcript
+ * continuous — and nothing is destroyed, because the caller keeps what was left out.
+ *
+ * Always returns at least the last message: a single huge one is the caller's problem (its
+ * request simply fails, and the trim catches it), not a silent empty summary.
+ */
+function newestWithin(messages: ChatMessage[], maxTokens: number): ChatMessage[] {
+  const budget = Math.max(0, maxTokens);
+  let start = messages.length;
+  let acc = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const t = estimateTokens(messages[i].content);
+    if (acc + t > budget && start < messages.length) break;
+    start = i;
+    acc += t;
+  }
+  return messages.slice(start);
 }
 
 /**
@@ -266,37 +319,63 @@ export interface CompactedHistory {
  */
 export async function compactHistory(
   messages: ChatMessage[],
-  opts: { compactor: Compactor; usableTokens: number; signal?: AbortSignal },
+  opts: {
+    compactor: Compactor;
+    usableTokens: number;
+    maxOutputTokens: number;
+    /** The largest span the summary request may READ (see maxSummaryInputTokens). When the
+     *  span is bigger, the most RECENT part that fits is summarized. */
+    maxInputTokens?: number;
+    signal?: AbortSignal;
+  },
 ): Promise<CompactedHistory | null> {
   const keepBudgetTokens = keepRecentTokensFor(opts.usableTokens);
   const plan = planCompactionToBudget(messages, keepBudgetTokens);
   if (plan.toSummarize.length === 0) return null;
-  // HOW MUCH the summary may take: the room left between the kept part and the
-  // post-compaction target. A verbose summary eats the context the compaction just
-  // freed, and the same text is a far larger share on a small model.
-  const keptTokensEstimate = estimateTokens(serializeConversation(plan.kept));
-  const summaryBudget = summaryBudgetTokens(opts.usableTokens, keptTokensEstimate);
+  // A span bigger than the request can read is NOT a reason to give up: the summarizer
+  // takes the most RECENT part that fits, and `deferred` stays in the transcript above the
+  // new checkpoint — preserved, out of the window, eligible for a later summary.
+  const toSummarize =
+    typeof opts.maxInputTokens === "number"
+      ? newestWithin(plan.toSummarize, opts.maxInputTokens)
+      : plan.toSummarize;
+  const deferred = plan.toSummarize.slice(0, plan.toSummarize.length - toSummarize.length);
+  // HOW MUCH the summary may take: a share of the span it REPLACES (a compression
+  // ratio), capped by what the model is declared able to write.
+  const spanTokensEstimate = estimateTokens(serializeConversation(toSummarize));
+  const summaryBudget = summaryBudgetTokens(spanTokensEstimate, opts.maxOutputTokens);
   // Tell the summarizer what the conversation still has in FULL, so it does not
   // re-state work the next turns can already see (paid twice otherwise)…
   const keptPreview = plan.kept.find((m) => (m.content ?? "").trim())?.content;
   // …and the state a previous compaction left: the summary UPDATES it instead of
   // summarizing a summary (the planner already keeps it out of the span).
   const carried = carriedState(messages);
-  const summary = await opts.compactor.summarize(plan.toSummarize, carried, opts.signal, {
+  const summary = await opts.compactor.summarize(toSummarize, carried, opts.signal, {
     maxSummaryTokens: summaryBudget,
     keptPreview,
+    // What the model MAY spend to write it: the session's declared output, never the
+    // budget itself (see summarize).
+    maxReplyTokens: opts.maxOutputTokens,
   });
+  // A reply that is not the document we asked for must NOT become the state document —
+  // see isUsableSummary. An unusable summary is a FAILED compaction (null), which sends
+  // the caller down the path that cannot fail: the trim.
+  if (!isUsableSummary(summary)) return null;
   // The span becomes a synthetic USER prompt + ASSISTANT response, so a transcript
   // always starts with an orange user bubble (and the state is recognizable later).
   const { prompt, response } = splitSummary(summary);
   const now = Date.now();
   return {
     history: [
+      // What did not fit stays ABOVE the new checkpoint: still in the transcript, outside
+      // the window — visible, not summarized, not lost.
+      ...deferred,
       { role: "user" as const, content: prompt, timestamp: now, synthetic: true },
       { role: "assistant" as const, content: response, timestamp: now + 1, synthetic: true },
       ...plan.kept,
     ],
-    summarized: plan.toSummarize,
+    summarized: toSummarize,
+    deferred,
     kept: plan.kept,
     summaryTokens: estimateTokens(summary),
     keepBudgetTokens,
@@ -304,14 +383,47 @@ export async function compactHistory(
   };
 }
 
-const SUMMARY_PROMPT = `You are summarizing an OLD part of a coding session. The summary REPLACES that span, so it must stand alone — but it is also CONTEXT: every token you write is a token the session cannot spend on real work. Its only job is to let the next turns reconstruct what was decided and what comes next.
+/** The message that produces the summary is not the only thing in its request: the
+ *  system prompt carries the instructions, the state and the budget. This is the room for
+ *  the blocks glued to it — the prompt ITSELF is measured (summarizerPromptReserve),
+ *  because a constant string we own has a size that is a FACT, not an estimate. */
+const SUMMARY_PROMPT_BLOCKS = 600;
+
+/** Keep a margin under the ceiling: the estimate is approximate, and a rejected
+ * request is what this whole guard exists to avoid. */
+const SUMMARY_INPUT_MARGIN = 0.9;
+
+/** The fixed label a TRIM leaves where a summary would have been. Deliberately
+ * NOT the compaction phrase, so a window moved without a summary is recognizable
+ * in the transcript (and in the logs) as exactly that. */
+export const TRIM_LABEL = "Earlier interactions moved out of the context window";
+
+/** What a trim leaves as the state document when there was no summary to carry.
+ * Short and factual: it is not a state document, and the next compaction must not
+ * mistake it for one to "update". */
+export const TRIM_NOTE =
+  "The earlier part of this session is no longer in the model's context window: it did not fit the current model. " +
+  "It is still stored — the transcript shows it — and it can be searched.";
+
+/** What {@link trimHistory} produced. */
+export interface TrimResult {
+  /** The rebuilt history: the trimmed span stays, the boundary moves after it. */
+  history: ChatMessage[];
+  /** Index in `history` of the checkpoint pair that OPENS the new window. */
+  windowStart: number;
+  /** How many messages left the window (the re-created pair is not counted). */
+  moved: number;
+}
+
+const SUMMARY_PROMPT = `The transcript above is an OLD part of a coding session. Summarize it. The summary REPLACES that span, so it must stand alone — but it is also CONTEXT: every token you write is a token the session cannot spend on real work. Its only job is to let the next turns reconstruct what was decided and what comes next.
 
 Write the MINIMUM that does that, as SCHEMATIC LISTS — never prose:
 - fragments, not sentences; one bullet per fact, one line each, most important first;
 - no restating the transcript, no examples, no code blocks (name the file and the symbol instead), no pleasantries, no "the user asked…" narration;
 - scale the LENGTH to the COMPLEXITY of the work: a simple task gets a handful of bullets, a long one more — never padding, never a template filled for its own sake;
 - OMIT anything the transcript AFTER this span already shows, and anything re-derivable by reading the code;
-- KEEP exact names, paths, numbers, commands and constraints: those are the facts nothing else carries.
+- KEEP exact names, paths, numbers, commands and constraints: those are the facts nothing else carries;
+- "[Tool call]" lines name each tool with its target and size, and the "[Tool result]" lines are that call's OUTPUT: a file WRITTEN or DELETED is a fact about the work, so ## Done names it ("Wrote src/x.ts") — never just "changed a file".
 
 Reply with EXACTLY TWO blocks separated by a line containing only "---" (three dashes):
 
@@ -324,10 +436,7 @@ BLOCK 2 — a Markdown summary with these headings, IN THIS ORDER, including ONL
 ## Next    — bullets: the exact next steps
 ## Facts   — bullets: what the next turns cannot guess (paths, commands, values, constraints, gotchas)
 
-Write it in the SAME language as the transcript. Never invent details absent from the transcript.
-
-<transcript>
-`;
+Write it in the SAME language as the transcript. Never invent details absent from the transcript.`;
 
 /** Split the summarizer output into the synthetic USER prompt and the synthetic
  * ASSISTANT response (the two messages that replace the summarized span). When
@@ -342,6 +451,36 @@ export function splitSummary(text: string): { prompt: string; response: string }
     prompt: "Continue the work from the summarized context below.",
     response: trimmed || "## Progress\nNo details available.",
   };
+}
+
+/**
+ * Is this reply the DOCUMENT we asked for, or something else entirely?
+ *
+ * Free and auto-routed models sometimes answer with a safety classification, a refusal or
+ * an empty stream — `User Safety: safe` and nothing more. Accepting that would write
+ * GARBAGE into the state document, which is the one thing the next turns depend on: 108
+ * messages would be reduced to two useless lines, silently, and nothing would ever
+ * recover them.
+ *
+ * The prompt asks for Markdown headings, so a body with none is not the document. Being
+ * strict is safe here because the CALLER has a fallback that cannot fail (the trim).
+ */
+export function isUsableSummary(text: string): boolean {
+  if (!text.trim()) return false;
+  const { response } = splitSummary(text);
+  // Headings ALONE are not a document. "## Goal / ## Done / ## Facts" with nothing under
+  // them passes a "has headings" check while carrying nothing — and it would REPLACE a
+  // previous state that had everything. Observed on a real run. So: a heading must have
+  // real content below it.
+  let opened = false;
+  for (const line of response.split("\n")) {
+    if (/^#{2,3}\s+\S/.test(line)) {
+      opened = true;
+      continue;
+    }
+    if (opened && line.trim()) return true;
+  }
+  return false;
 }
 
 /**
@@ -364,6 +503,131 @@ export function carriedState(messages: ChatMessage[]): string | undefined {
     if (m.synthetic && m.role === "assistant" && (m.content ?? "").trim()) return m.content.trim();
   }
   return undefined;
+}
+
+/**
+ * Move the context window FORWARD without summarizing anything.
+ *
+ * This is the fallback for the ONE case a compaction cannot serve: the span is
+ * larger than the window of the model that would have to READ it (the summarizer
+ * runs on the SESSION's model, see summarizerConfig). Asking a small model to read
+ * a span built for a big one gets the summary request REJECTED — and on a window
+ * that just shrank under a full session, that left the session unable to send
+ * anything at all: the compaction failed, the request was refused for length, and
+ * the retries failed the same way.
+ *
+ * A trim instead:
+ *  · is DETERMINISTIC and free — no model call, so it cannot fail;
+ *  · CARRIES the summary verbatim, so the state document stays inside the window
+ *    (moving the boundary past it would drop continuity entirely);
+ *  · keeps the trimmed messages IN the history, before the new boundary, where
+ *    they stay readable and searchable — nothing is lost;
+ *  · snaps to a whole turn group, so the window still opens on an input.
+ *
+ * It trades QUALITY for survival: the trimmed span is neither in the window nor
+ * in the summary. That is why it is a fallback — the caller compacts whenever the
+ * span fits — and never the ordinary path.
+ *
+ * Returns null when there is nothing to move: the window already fits, the
+ * boundary would land on the checkpoint pair, or a single message is bigger than
+ * the whole window — which no trim can fix.
+ */
+export function trimHistory(
+  all: ChatMessage[],
+  opts: { budgetTokens: number; summary?: string },
+): TrimResult | null {
+  const activeStart = checkpointStart(all);
+  const visible = all.slice(activeStart).filter((m) => m.role !== "system" && !m.uiOnly);
+  if (visible.length <= 1) return null;
+
+  // Nothing to move when the whole view already FITS the budget. Checked here,
+  // explicitly, because `recentStartFor` forces progress when everything fits (it
+  // jumps to the middle — right for a compaction, wrong for a trim: `snapCutToGroup`
+  // would move the boundary forward on a session that needs nothing, drifting the
+  // prefix and invalidating the prompt cache for no gain).
+  if (estimateTokens(serializeConversation(visible)) <= Math.max(1, opts.budgetTokens)) return null;
+
+  const firstKept = visible[recentStartFor(visible, opts.budgetTokens)];
+  if (!firstKept) return null;
+  // Index in the FULL array: `visible` holds the very same message objects.
+  const at = all.indexOf(firstKept);
+  if (at < 0) return null;
+
+  // The boundary must fall PAST the existing checkpoint pair, and far enough to
+  // free something: landing inside it would HALVE it, and landing right after it
+  // would re-create the same pair and free nothing at all.
+  const hasPair = all[activeStart]?.synthetic === true;
+  if (hasPair ? at <= activeStart + 2 : at <= activeStart) return null;
+
+  const now = Date.now();
+  const pair: ChatMessage[] = [
+    { role: "user", content: TRIM_LABEL, timestamp: now, synthetic: true },
+    { role: "assistant", content: opts.summary?.trim() || TRIM_NOTE, timestamp: now + 1, synthetic: true },
+  ];
+  return {
+    history: [...all.slice(0, at), ...pair, ...all.slice(at)],
+    windowStart: at,
+    moved: at - activeStart - (hasPair ? 2 : 0),
+  };
+}
+
+/**
+ * Everything a summary request spends BEFORE it reads a line of transcript: the prompt
+ * itself plus the blocks glued to it.
+ *
+ * MEASURED, not guessed. The prompt is a constant string we own, so its size is a FACT —
+ * and the flat 2000 it replaces was wrong in both directions at once: ~6% of a 33k window
+ * and ~0.2% of a 1M one. At small windows it burned room the summarizer could have used;
+ * at large ones it was rounding error pretending to be a reserve.
+ */
+export function summarizerPromptReserve(): number {
+  return estimateTokens(SUMMARY_PROMPT) + SUMMARY_PROMPT_BLOCKS;
+}
+
+/**
+ * The largest span the summarizer can be asked to READ, in tokens.
+ *
+ * Measured on the MODEL's window, not on the session's usable budget: the summary
+ * request carries its OWN output budget (SUMMARY_MAX_TOKENS) instead of the chat
+ * turn's reserve, so subtracting the turn's reserve here would refuse a summary
+ * that would have fitted. The margin exists because the estimate is approximate
+ * and a rejection costs the session.
+ *
+ * `stateTokens` is the PREVIOUS state document, which travels INSIDE the same request
+ * (see buildSummaryMessages). Not counting it is how a big document silently pushed the
+ * request past the window.
+ *
+ * `outputCap` is the session's DECLARED max output — a ceiling on the reply, not the reply
+ * itself: the summary is sized by the compression ratio (see summaryBudgetTokens), so the
+ * reserve is that ratio, and the cap only matters when it is SMALLER than the ratio asks.
+ */
+export function maxSummaryInputTokens(
+  windowTokens: number,
+  outputCap = SUMMARY_MAX_TOKENS,
+  stateTokens = 0,
+): number {
+  const room = Math.max(0, windowTokens) - summarizerPromptReserve() - Math.max(0, stateTokens);
+  // The provider counts `input + output` against the window, and the summary asks for a
+  // SHARE of what it reads — so a bigger input asks for a bigger output, which leaves LESS
+  // room for the input. Solving it directly breaks that circle instead of guessing:
+  //   input × (1 + share) ≤ room      (the summary is a share of the span)
+  //   input ≤ room − cap              (the cap is the session's declared max output)
+  const byRatio = room / (1 + SUMMARY_SPAN_SHARE);
+  const byCap = room - Math.max(0, outputCap);
+  return Math.max(0, Math.floor(Math.min(byRatio, byCap) * SUMMARY_INPUT_MARGIN));
+}
+
+/**
+ * Token size of the span a compaction would summarize right now (0 = none).
+ *
+ * Pure and LLM-free on purpose: it is the number to compare against
+ * {@link maxSummaryInputTokens} BEFORE calling {@link compactHistory}, because
+ * that one already runs the summarizer — checking afterwards would mean asking a
+ * model to read a request it cannot accept.
+ */
+export function compactionSpanTokens(messages: ChatMessage[], usableTokens: number): number {
+  const plan = planCompactionToBudget(messages, keepRecentTokensFor(usableTokens));
+  return plan.toSummarize.length === 0 ? 0 : estimateTokens(serializeConversation(plan.toSummarize));
 }
 
 /** Builds the one-shot summary request (optionally passing the previous summary). */
@@ -400,15 +664,21 @@ export function buildSummaryMessages(
 - never re-derive from scratch and never keep two copies of one fact.
 \n<state>\n${previousSummary.trim()}\n</state>\n`
       : "";
-  return [{ role: "system", content: SUMMARY_PROMPT + budget + kept + state }, { role: "user", content: text }];
+  // DATA FIRST, INSTRUCTIONS LAST — ONE message, and no reliance on the system role.
+  //
+  // Anthropic's long-context guidance, which holds across models: put longform data at
+  // the TOP, above the instructions ("queries at the end can improve response quality by
+  // up to 30%" on 20k+ token inputs — exactly our case). It is also the most compatible
+  // shape there is: a summarizer that ignores or downweights the system role — a guard
+  // model, a small local one — still sees a task it can follow, and it never has to hold
+  // "what am I supposed to do" across 40k characters of transcript.
+  return [
+    {
+      role: "user",
+      content: `<transcript>\n${text}\n</transcript>\n\n${SUMMARY_PROMPT}${budget}${kept}${state}`,
+    },
+  ];
 }
-
-/**
- * How full the context should be RIGHT AFTER a compaction, as a fraction of the
- * usable budget. Compaction exists to buy room, so it aims at a comfortable level
- * instead of merely dipping under the trigger.
- */
-export const POST_COMPACT_TARGET_FRACTION = 0.5;
 
 /** A summary smaller than this is not worth having: too little to continue from. */
 export const MIN_SUMMARY_TOKENS = 512;
@@ -416,20 +686,24 @@ export const MIN_SUMMARY_TOKENS = 512;
 /** Overshoot tolerated before the summary is squeezed a second time (+15%). */
 const SUMMARY_OVERSHOOT = 1.15;
 
+/** A summary is a COMPRESSION of what it replaces: this is the ratio. */
+export const SUMMARY_SPAN_SHARE = 0.1;
+
 /**
- * The token budget the summary itself gets: the room left between the KEPT part
- * and the post-compaction target.
+ * How big the summary itself is allowed to be, in tokens.
  *
- * This is what keeps a compaction from "not freeing enough": a verbose summary
- * eats the very context it just freed, and the effect worsens as the window
- * shrinks (on a small model the same summary is a much larger share). The floor
- * exists because a summary must stay usable — when the KEPT part alone already
- * exceeds the target, the summary cannot fix it, and shrinking the tail is a
- * different lever.
+ * Two questions with two answers, and only ONE of them is about space — which is why this
+ * used to be wrong. It is first a COMPRESSION of the span it replaces (the ratio above):
+ * as a share of the window the same rule asked for half of it, i.e. 12k on a 33k model
+ * and an impossible ~450k on a 1M one.
+ *
+ * The only HARD limit is `maxOutputTokens`: a summary is a response, so it can never be
+ * larger than what the model is declared able to write. That cap wins even over the floor
+ * — a session configured to write 256 tokens gets a 256-token summary, not a rejected one.
  */
-export function summaryBudgetTokens(usableTokens: number, keptTokens: number): number {
-  const target = Math.floor(Math.max(0, usableTokens) * POST_COMPACT_TARGET_FRACTION);
-  return Math.max(MIN_SUMMARY_TOKENS, target - Math.max(0, keptTokens));
+export function summaryBudgetTokens(spanTokens: number, maxOutputTokens: number): number {
+  const compression = Math.round(Math.max(0, spanTokens) * SUMMARY_SPAN_SHARE);
+  return Math.min(Math.max(0, maxOutputTokens), Math.max(MIN_SUMMARY_TOKENS, compression));
 }
 
 const COMPRESS_PROMPT = `You are COMPRESSING a summary that is too long for the context budget. Reply with EXACTLY the same two-block structure as the input (block 1: the fixed phrase, in the SAME language as the input; then a line with only "---"; block 2: the compressed Markdown summary).
@@ -440,9 +714,12 @@ Budget: the result must stay under roughly `;
 
 /** The second pass: rewrite an oversized summary under an explicit token cap. */
 function compressSummaryMessages(summary: string, maxSummaryTokens: number): { role: "system" | "user"; content: string }[] {
+  // Same shape as the summary request itself: data first, instruction last.
   return [
-    { role: "system", content: `${COMPRESS_PROMPT}${maxSummaryTokens} tokens.\n\n<summary>\n` },
-    { role: "user", content: summary },
+    {
+      role: "user",
+      content: `<summary>\n${summary}\n</summary>\n\n${COMPRESS_PROMPT}${maxSummaryTokens} tokens.\n`,
+    },
   ];
 }
 
@@ -460,26 +737,36 @@ export class Compactor {
     toSummarize: ChatMessage[],
     previousSummary?: string,
     signal?: AbortSignal,
-    options: { maxSummaryTokens?: number; keptPreview?: string } = {},
+    options: { maxSummaryTokens?: number; keptPreview?: string; maxReplyTokens?: number } = {},
   ): Promise<string> {
     const budget = options.maxSummaryTokens;
     let out = await this.requestSummary(
       buildSummaryMessages(toSummarize, previousSummary, budget, options.keptPreview),
       signal,
+      // The CAP is deliberately NOT the budget. The budget is the size we ASK for; the cap
+      // is what the model may spend to produce it — and a model that reasons spends that
+      // budget BEFORE writing a single character. Measured: cap = budget (964) gave an
+      // EMPTY reply 3 times out of 3; cap = the session's declared output gave a real
+      // document 3 times out of 3.
+      options.maxReplyTokens,
     );
     // Still oversized when measured (the instruction is a request, not a limit):
     // ONE compression pass, and only the SHORTER of the two is kept. Bounded to a
     // single extra call on purpose — a loop over a summary would spend more
     // context than it frees.
     if (budget && budget > 0 && out && estimateTokens(out) > Math.ceil(budget * SUMMARY_OVERSHOOT)) {
-      const squeezed = await this.requestSummary(compressSummaryMessages(out, budget), signal);
+      const squeezed = await this.requestSummary(
+        compressSummaryMessages(out, budget),
+        signal,
+        options.maxReplyTokens,
+      );
       if (squeezed && estimateTokens(squeezed) < estimateTokens(out)) out = squeezed;
     }
     const trimmed = out.trim();
-    if (!trimmed) {
-      const first = toSummarize.find((m) => m.role === "user")?.content ?? "";
-      return `Summary of past interactions\n---\n## Goal\n${fallbackTitle(first)}\n## Progress\nNo details available.\n`;
-    }
+    // An EMPTY reply is a FAILURE, not a document. Fabricating "## Progress / No details
+    // available." here was worse than useless: it PASSES the structural check while
+    // carrying nothing, and it replaces the previous state instead of preserving it. The
+    // caller turns this into the trim, which carries that state verbatim.
     return trimmed;
   }
 
@@ -487,8 +774,12 @@ export class Compactor {
   private async requestSummary(
     messages: { role: "system" | "user"; content: string }[],
     signal?: AbortSignal,
+    maxTokens?: number,
   ): Promise<string> {
-    const provider = this.factory.create(this.buildConfig());
+    // The cap is the session's DECLARED max output when the caller knows it (see the note
+    // in `summarize`): room for the model to reason and still answer.
+    const cfg = this.buildConfig();
+    const provider = this.factory.create(maxTokens ? { ...cfg, maxTokens } : cfg);
     let out = "";
     // No tools for a summary turn: pass [] so the provider never advertises
     // the (possibly orchestration) tool set during compaction.

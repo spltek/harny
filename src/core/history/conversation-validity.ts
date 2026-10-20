@@ -69,6 +69,8 @@ export interface PairingMessage {
   toolCallId?: string;
   images?: string[];
   uiOnly?: boolean;
+  /** True on the synthetic pair a compaction leaves (see checkpointStart). */
+  synthetic?: boolean;
 }
 
 /**
@@ -212,4 +214,41 @@ export function turnEnd(messages: PairingMessage[], index: number): number {
     if (messages[k]?.role === "user") return k;
   }
   return messages.length;
+}
+
+/** The minimum {@link checkpointStart} needs to see — structural, so the stored
+ * history (`ChatMessage`) AND the webview's own message shape both fit without a
+ * cast. The boundary is a property of `synthetic` and nothing else. */
+export interface CheckpointMessage {
+  role: string;
+  synthetic?: boolean;
+}
+
+/**
+ * The index of the message that OPENS the newest SUMMARY CHECKPOINT (0 when the
+ * session has none).
+ *
+ * A checkpoint is the synthetic pair a compaction leaves: a `user` label
+ * ("Summary of past interactions") and the `assistant` summary itself. It is the
+ * ONE point the context window starts from — everything before it stays in the
+ * session, readable and searchable, but is no longer sent to the model.
+ *
+ * The marker is STORED, never recomputed from a position or a token count. That
+ * is what keeps the request prefix stable between turns, and therefore the
+ * provider's prompt cache warm: a boundary that moved by itself every turn would
+ * invalidate the cache on every request.
+ *
+ * Returns the START of the pair, so the checkpoint itself is always included —
+ * the model needs it: it is the state of the work it is continuing.
+ */
+export function checkpointStart(messages: readonly CheckpointMessage[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (!m.synthetic) continue;
+    // The pair is [user(label), assistant(summary)]: when the newest synthetic
+    // message is the summary, the boundary is the label above it. A lone
+    // synthetic message is a boundary on its own.
+    return m.role === "assistant" && i > 0 && messages[i - 1]?.synthetic ? i - 1 : i;
+  }
+  return 0;
 }

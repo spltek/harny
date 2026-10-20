@@ -11,7 +11,7 @@ import type { SessionManager } from "../core/sessions/session-manager";
 import type { DbVacuumStats, SessionSettingsPatch, SessionSummary } from "../core/sessions/types";
 import type { SessionRegistry, SessionRuntime } from "./session-registry";
 import { PendingInputQueue, type PendingInput } from "./pending-input-queue";
-import { conversationFaults, turnEnd, turnStart } from "../core/history/conversation-validity";
+import { checkpointStart, conversationFaults, turnEnd, turnStart } from "../core/history/conversation-validity";
 import { StreamTee } from "./stream-tee";
 import type { AttachmentService } from "./attachment-service";
 import type { AttachmentInfo, AttachmentPart } from "./attachment-types";
@@ -21,7 +21,8 @@ import { renderViewHtml } from "./view-html";
 import { toTemperature, toTopP } from "./temperature";
 import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, MAX_CONTEXT_WINDOW, MAX_OUTPUT_TOKENS, MIN_OUTPUT_TOKENS, REQUEST_SAFETY_MARGIN, REQUEST_SAFETY_MARGIN_SHARE, clampAdoptedContextWindow, clampAdoptedOutputTokens, clampContextWindow, clampOutputTokens, toContextWindow, toOutputTokens, usableContext } from "./context-window";
 import { PanelModalQueue } from "./panel-modal-queue";
-import { Compactor, DEFAULT_COMPACTION, CompactionSettings, compactHistory, shouldCompact, estimateTokens, serializeConversation, estimateContextTokens, realWindowTokens, toCompactionThresholdPercent } from "../core/sessions/compactor";
+import { Compactor, DEFAULT_COMPACTION, CompactionSettings, carriedState, compactHistory, compactionSpanTokens, estimateContextTokens, estimateTokens, keepRecentTokensFor, maxSummaryInputTokens, realWindowTokens, serializeConversation, shouldCompact, toCompactionThresholdPercent, trimHistory, type CompactedHistory, type TrimResult } from "../core/sessions/compactor";
+import { CompactionTally } from "../core/sessions/compaction-tally";
 import type { SkillRegistry } from "../core/skills/skill-registry";
 import type { McpManager } from "../core/mcp";
 import { McpStdioClient, McpHttpClient, type McpClient } from "../core/mcp";
@@ -80,6 +81,10 @@ export class ChatViewProvider implements WebviewViewProvider {
   // fetch itself is bounded by HOST_MODEL_TIMEOUT_MS anyway.
   private static readonly HOST_CACHE_TTL = 5_000;
   private compacting = false;
+  /** Counts what compaction DID, and says so on the line each event already logs.
+   *  A log answers "what happened here"; only a ratio answers "is the trim a rare
+   *  rescue or the normal path" — which is a question about the tuning. */
+  private readonly tally = new CompactionTally();
   /** Per-session queue of messages typed while the agent works (queue/steer). */
   private readonly pendingQueue: PendingInputQueue;
   /** True while an async SEND PREAMBLE is in flight for a session (attachment
@@ -1171,7 +1176,9 @@ export class ChatViewProvider implements WebviewViewProvider {
         const ok = await this.inPanelAlert({
           kind: "confirm",
           title: "Compact context",
-          message: "Run context compaction now? The older messages are summarized into the session context.",
+          message:
+            "Run context compaction now? The older messages leave the context window and a summary takes " +
+            "their place in it — the transcript keeps them, readable and searchable.",
           confirmText: "Compact",
         });
         if (!ok) break;
@@ -1345,14 +1352,18 @@ export class ChatViewProvider implements WebviewViewProvider {
       this.view?.webview.postMessage({ type: "compactStart" });
       this.view?.webview.postMessage({ type: "status", active: true, message: "Compacting…" });
     }
+    let compacted = false;
     try {
-      await this.performCompaction(rt, signal);
+      compacted = await this.performCompaction(rt, signal);
     } finally {
       this.compacting = false;
       if (isActive) {
         // Re-render the transcript so the SYNTHETIC user prompt (orange) +
         // assistant response that replaced the summarized span are visible.
         this.refreshTranscript(rt);
+        // The card it just rendered is the HEAD of the window, i.e. above the view: the
+        // same pointer the automatic path leaves (see addCompactedHint in the webview).
+        this.view?.webview.postMessage({ type: "compactDone", ok: compacted });
         this.view?.webview.postMessage({ type: "status", active: false });
       }
     }
@@ -1381,15 +1392,26 @@ export class ChatViewProvider implements WebviewViewProvider {
     this.compacting = true;
     const isActive = this.activeId === rt.sessionId;
     if (isActive) this.view?.webview.postMessage({ type: "compactStart" });
+    let compacted = false;
     try {
-      await this.performCompaction(rt, signal);
+      compacted = await this.performCompaction(rt, signal);
     } catch (e: any) {
       infoLog("mid-run auto-compaction failed; continuing:", e?.message || String(e));
     } finally {
       this.compacting = false;
-      // Only the in-chat bubble changes: no `status` posts, so the working
-      // indicator keeps showing (the run is still in flight).
-      if (isActive) this.view?.webview.postMessage({ type: "compactDone" });
+      if (isActive) {
+        // ALIGNED with the manual path (`compactNow`): a compaction has a VISIBLE result —
+        // the divider and the summary card — and this path used to leave it for the next
+        // unrelated refresh, showing a stand-in bubble in the meantime. The webview is
+        // built for exactly this ("A refresh can land MID-RUN (a compaction, …)") and
+        // restores the in-flight stream, so rebuilding cannot disturb the running turn.
+        if (compacted) this.refreshTranscript(rt);
+        // Still NO `status` posts: the working indicator must keep showing, because the
+        // run is still in flight. After a rebuild `compactDone` is a no-op for the bubble
+        // (the refresh handler already dropped `compactionEl`) — what it still does is
+        // leave the pointer to the card where the reader is (see addCompactedHint).
+        this.view?.webview.postMessage({ type: "compactDone", ok: compacted });
+      }
     }
     void this.pushConfig();
   }
@@ -1906,19 +1928,83 @@ export class ChatViewProvider implements WebviewViewProvider {
   private async performCompaction(rt: SessionRuntime, signal?: AbortSignal): Promise<boolean> {
     const compactor = this.options.compactor;
     if (!compactor) return false;
-    const messages = rt.history.conversation();
+    // The context BEGINS at the newest checkpoint: what precedes it is the
+    // session's readable past and stays STORED — it is simply no longer in the
+    // window (see checkpointStart). A compaction therefore rewrites only the
+    // ACTIVE span, and the result is spliced back after the preserved past.
+    const all = rt.history.all();
+    const activeStart = checkpointStart(all);
+    const messages = all.slice(activeStart);
     const usable = usableContext(this.budgetWindow(rt), this.budgetReserve(rt));
+    // The summarizer runs on the SESSION's model, so a span larger than that model's
+    // window cannot be READ by it. That is no longer a reason to give up: the summary takes
+    // the most RECENT part that fits and the rest stays in the transcript above the new
+    // checkpoint (see compactHistory) — preserved, not summarized, not lost. Only a window
+    // that can read NOTHING at all falls back to the trim, which calls no model and
+    // therefore cannot fail.
+    const span = this.summarySpan(messages, usable, rt);
+    if (span.ceilingTokens <= 0) return this.trimWindow(rt, usable, span);
     // THE compaction strategy lives in core/sessions and is shared with the sub-agents
     // (which compact their own ephemeral history the same way). What stays HERE is what
     // only the session has: persistence, the context counter and the UI.
-    const result = await compactHistory(messages, { compactor, usableTokens: usable, signal });
-    if (!result) return false;
+    //
+    // The summary is the GOOD path; the trim is the one that CANNOT fail. So a summary
+    // that could not be made has to LAND on the trim instead of surfacing as an error:
+    // the window still has to move, and a session that dies because the summarizer's own
+    // request was too long is exactly what the trim exists to prevent. The ceiling above
+    // is our PREDICTION of that request's size — a prediction, so it can be wrong, and
+    // when it is wrong the answer must still not be an exception.
+    // The one exception is a Stop: the user cancelled, so degrading would be doing work
+    // they asked to cancel.
+    let result: CompactedHistory | null = null;
+    try {
+      result = await compactHistory(messages, {
+        compactor,
+        usableTokens: usable,
+        maxOutputTokens: this.configuredOutputTokens(rt),
+        maxInputTokens: span.ceilingTokens,
+        signal,
+      });
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      infoLog(
+        `compaction failed (${err instanceof Error ? err.message : String(err)}) — ` +
+          `falling back to a trim, so the window still moves and nothing is lost`,
+      );
+    }
+    if (!result) {
+      // `compactHistory` returns null for two reasons: there was nothing worth summarizing,
+      // or the model's reply was not the document (a safety classification, a refusal).
+      // Either way the window still has to move, and the trim is the path that cannot fail.
+      // The tally line the trim logs is the record that NO summary was written.
+      infoLog("no summary written (nothing to summarize, or the reply was not a summary) — trimming instead");
+      return this.trimWindow(rt, usable, span);
+    }
+    // A deferral must never be silent: the caller has to be able to see that the state
+    // document covers the RECENT work and that older messages are still waiting.
+    if (result.deferred.length > 0) {
+      infoLog(
+        `summary read the most recent ${result.summarized.length} message(s); ` +
+          `${result.deferred.length} older one(s) stay in the transcript, unsummarized — a later compaction can pick them up`,
+      );
+    }
     infoLog(
-      `compaction: usable=${usable}t kept≈${estimateTokens(serializeConversation(result.kept))}t ` +
-        `(budget ${result.keepBudgetTokens}t) -> summary budget=${result.summaryBudgetTokens}t, ` +
-        `produced=${result.summaryTokens}t, was=${estimateTokens(serializeConversation(messages))}t`,
+      this.tally.recordCompaction({
+        spanTokens: estimateTokens(serializeConversation(result.summarized)),
+        usableTokens: usable,
+        ceilingTokens: maxSummaryInputTokens(this.budgetWindow(rt)),
+        keepBudgetTokens: result.keepBudgetTokens,
+        keptTokens: estimateTokens(serializeConversation(result.kept)),
+        summaryBudgetTokens: result.summaryBudgetTokens,
+        summaryTokens: result.summaryTokens,
+        summarizedCount: result.summarized.length,
+        keptCount: result.kept.length,
+      }),
     );
-    const newHistory = result.history;
+    // The past is KEPT, not dropped: [past][newly summarized][checkpoint][kept].
+    // The previous checkpoint pair is absorbed into the new summary (carriedState
+    // UPDATES it) and therefore does not appear twice.
+    const newHistory = [...all.slice(0, activeStart), ...result.summarized, ...result.history];
     rt.history.replace(newHistory);
     this.sessions.saveMessages(rt.sessionId, newHistory, { replace: true });
     // Prefer REAL data for the KEPT window (the cumulative `meta.inputTokens`
@@ -1929,10 +2015,12 @@ export class ChatViewProvider implements WebviewViewProvider {
       keptFrom >= 0
         ? realWindowTokens(messages, keptFrom) ?? estimateTokens(serializeConversation(result.kept))
         : 0;
-    // The synthetic pair is the first two messages of the rebuilt history.
+    // The checkpoint is the TAIL of the rebuilt history: the preserved past sits
+    // before it, so the pair is no longer at index 0.
+    const pairStart = newHistory.length - result.history.length;
     const next =
-      estimateTokens(String(newHistory[0]?.content ?? "")) +
-      estimateTokens(String(newHistory[1]?.content ?? "")) +
+      estimateTokens(String(newHistory[pairStart]?.content ?? "")) +
+      estimateTokens(String(newHistory[pairStart + 1]?.content ?? "")) +
       keptTokens;
     rt.contextTokens = next;
     this.sessions.saveSettings(rt.sessionId, { contextTokens: next });
@@ -1942,6 +2030,64 @@ export class ChatViewProvider implements WebviewViewProvider {
     rt.cachedTokens = 0;
     rt.cachedWriteTokens = 0;
     return true;
+  }
+
+  /**
+   * Move the context window forward WITHOUT summarizing (see trimHistory).
+   *
+   * The fallback for the one case a compaction cannot serve: the span is larger
+   * than the model that would have to read it. Deterministic and free — no model
+   * call — so it works exactly where the compaction cannot, and the session keeps
+   * working with a narrower window instead of dying. The state document is carried
+   * verbatim, and everything that leaves the window stays in the session.
+   */
+  private trimWindow(rt: SessionRuntime, usable: number, oversized: { spanTokens: number; ceilingTokens: number }): boolean {
+    const trim = this.trimInto(rt.history.all(), usable);
+    if (!trim) return false;
+    rt.history.replace(trim.history);
+    this.sessions.saveMessages(rt.sessionId, trim.history, { replace: true });
+    infoLog(this.tally.recordTrim({ ...oversized, moved: trim.moved, budgetTokens: keepRecentTokensFor(usable) }));
+    rt.contextTokens = estimateContextTokens(trim.history.slice(trim.windowStart));
+    this.sessions.saveSettings(rt.sessionId, { contextTokens: rt.contextTokens });
+    // The prefix was rewritten: any reported cache hit is meaningless now.
+    rt.cachedTokens = 0;
+    rt.cachedWriteTokens = 0;
+    return true;
+  }
+
+  /**
+   * The trimmed history for this conversation, or null when there is nothing to
+   * move (it already fits).
+   *
+   * Pure on purpose: what happens to the result belongs to the CALLER. The session
+   * persists it; a sub-agent's history is ephemeral and is only swapped in memory.
+   */
+  private trimInto(all: ChatMessage[], usable: number): TrimResult | null {
+    const carried = carriedState(all);
+    return trimHistory(all, {
+      budgetTokens: keepRecentTokensFor(usable),
+      ...(carried ? { summary: carried } : {}),
+    });
+  }
+
+  /** What summarization would have to read, and the ceiling it must fit under.
+   *
+   * It returns the NUMBERS, always — the caller needs them to decide (`span > ceiling`)
+   * AND to explain the trim it falls back to: `span 41.2k > ceiling 8.9k` is the only
+   * reason a reader needs to know why a model call was skipped. */
+  private summarySpan(messages: ChatMessage[], usable: number, rt: SessionRuntime): { spanTokens: number; ceilingTokens: number } {
+    const spanTokens = compactionSpanTokens(messages, usable);
+    return {
+      spanTokens,
+      // The request spends the measured prompt, the previous state, and — as a SHARE of
+      // what it reads — the summary it will write. No circularity: see
+      // maxSummaryInputTokens.
+      ceilingTokens: maxSummaryInputTokens(
+        this.budgetWindow(rt),
+        this.configuredOutputTokens(rt),
+        estimateTokens(carriedState(messages) ?? ""),
+      ),
+    };
   }
 
   /**
@@ -2011,6 +2157,18 @@ export class ChatViewProvider implements WebviewViewProvider {
   }
 
   /**
+   * The trim for a sub-agent's EPHEMERAL history: same rule as the session, different
+   * storage — nothing is persisted, only the in-memory history is swapped.
+   */
+  private trimSubAgent(history: ChatHistory, usable: number, span: { spanTokens: number; ceilingTokens: number }): boolean {
+    const trim = this.trimInto(history.conversation(), usable);
+    if (!trim) return false;
+    history.replace(trim.history);
+    infoLog(this.tally.recordTrim({ ...span, moved: trim.moved, budgetTokens: keepRecentTokensFor(usable), subAgent: true }));
+    return true;
+  }
+
+  /**
    * Overflow recovery for a SUB-AGENT: a sub-agent's history is EPHEMERAL (its runner
    * owns it), so the session's compaction cannot act on it — but the STRATEGY must be
    * the same one, or the two would drift into two behaviours. Same `compactHistory`,
@@ -2029,12 +2187,50 @@ export class ChatViewProvider implements WebviewViewProvider {
     if (evidence?.limitTokens) this.adoptContextWindow(rt, evidence.limitTokens);
     const messages = history.conversation();
     const usable = usableContext(this.budgetWindow(rt), this.budgetReserve(rt));
-    const result = await compactHistory(messages, { compactor, usableTokens: usable, signal });
-    if (!result) return false;
+    // A sub-agent shares the SESSION's model, so an oversized span cannot be read here
+    // either — but that is no longer a reason to give up: the summary takes the most
+    // recent part that fits, and the rest stays in its history above the new checkpoint.
+    const span = this.summarySpan(messages, usable, rt);
+    if (span.ceilingTokens <= 0) return this.trimSubAgent(history, usable, span);
+    let result: CompactedHistory | null = null;
+    try {
+      result = await compactHistory(messages, {
+        compactor,
+        usableTokens: usable,
+        maxOutputTokens: this.configuredOutputTokens(rt),
+        maxInputTokens: span.ceilingTokens,
+        signal,
+      });
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      infoLog(
+        `sub-agent compaction failed (${err instanceof Error ? err.message : String(err)}) — ` +
+          `falling back to a trim, so its window still moves`,
+      );
+    }
+    // Same rule as the session: a summary that could not be made lands on the trim
+    // (which calls no model), never on an exception that stops the sub-agent.
+    if (!result) return this.trimSubAgent(history, usable, span);
     history.replace(result.history);
+    if (result.deferred.length > 0) {
+      infoLog(
+        `sub-agent summary read the most recent ${result.summarized.length} message(s); ` +
+          `${result.deferred.length} older one(s) stay in its history, unsummarized`,
+      );
+    }
     infoLog(
-      `sub-agent context overflow: compacted ${result.summarized.length} messages into ${result.summaryTokens}t ` +
-        `(kept ${result.kept.length}, budget ${result.keepBudgetTokens}t)`,
+      this.tally.recordCompaction({
+        subAgent: true,
+        spanTokens: estimateTokens(serializeConversation(result.summarized)),
+        usableTokens: usable,
+        ceilingTokens: maxSummaryInputTokens(this.budgetWindow(rt)),
+        keepBudgetTokens: result.keepBudgetTokens,
+        keptTokens: estimateTokens(serializeConversation(result.kept)),
+        summaryBudgetTokens: result.summaryBudgetTokens,
+        summaryTokens: result.summaryTokens,
+        summarizedCount: result.summarized.length,
+        keptCount: result.kept.length,
+      }),
     );
     return true;
   }

@@ -9,8 +9,9 @@ import type { SessionStore } from "../core/sessions/types";
 import { SessionRegistry } from "./session-registry";
 import type { ChatController } from "../core/agent/chat-controller";
 import type { ChatHistory } from "../core/history/chat-history";
+import { InMemoryChatHistory } from "../core/history/in-memory-chat-history";
 import { ChatViewProvider } from "./chat-view";
-import { Compactor, DEFAULT_COMPACTION, estimateContextTokens } from "../core/sessions/compactor";
+import { Compactor, DEFAULT_COMPACTION, TRIM_LABEL, estimateContextTokens } from "../core/sessions/compactor";
 import type { LLMProviderFactory } from "../core/llm/types";
 
 const state = vi.hoisted(() => ({
@@ -155,7 +156,12 @@ function buildHarness(opts: Record<string, unknown> = {}) {
     const handlers: ((e: any) => void)[] = [];
     const agent: any = {
       streaming: false,
-      getMessages: vi.fn(() => history.conversation()),
+      // Faithful to the real Agent: `getMessages()` exposes the WHOLE stored
+      // history (`all()`), not the window the model sees (`conversation()`). The
+      // two differ as soon as a summary checkpoint exists — and the host uses
+      // this for the transcript, the ✂ cut and the ⎇ branch, which must all see
+      // the preserved past.
+      getMessages: vi.fn(() => history.all()),
       addUserMessage: vi.fn(),
       send: vi.fn(async () => {
         // Mirrors the real Agent: streaming flips synchronously on send start.
@@ -2278,7 +2284,7 @@ describe("ChatViewProvider compaction", () => {
     };
     store.saveMessages.mockClear();
 
-    const compacted = await provider.compactSubAgentHistory(subHistory as never, "s1", undefined, { limitTokens: 8_192 } as never);
+    const compacted = await provider.compactSubAgentHistory(subHistory as never, "s1", undefined, { limitTokens: 32_000 } as never);
 
     expect(compacted).toBe(true);
     // The ephemeral history was rewritten in place: a synthetic pair + the kept tail.
@@ -2287,7 +2293,10 @@ describe("ChatViewProvider compaction", () => {
     // Nothing is PERSISTED: a sub-agent's history is not a session transcript.
     expect(store.saveMessages).not.toHaveBeenCalled();
     // The stated limit is the same model as the session, so the session adopts it.
-    expect(rt.contextWindow).toBe(8_192);
+    // (32k, not 8k: the summary request carries its OWN output budget of 8192
+    // tokens, so on an 8k window it could never be SENT — the compaction would
+    // have to trim instead, which is a different test.)
+    expect(rt.contextWindow).toBe(32_000);
   });
 
   it("compacts a sub-agent proactively when its OWN history crosses the threshold", async () => {
@@ -2302,28 +2311,26 @@ describe("ChatViewProvider compaction", () => {
     await provider.createNew(); // s1
     const rt = registry.get("s1")!;
     rt.contextWindow = 8_192; // tiny: a few messages are already past the threshold
-    const sub = {
-      // Decisively over any threshold: the point is the DECISION, not the arithmetic.
-      messages: Array.from({ length: 40 }, (_, i) => ({
-        role: i % 2 === 0 ? "user" : "assistant",
-        content: "x".repeat(4_000),
-        timestamp: i + 1,
-      })) as ChatMessage[],
-      conversation(): ChatMessage[] {
-        return this.messages;
-      },
-      replace(next: ChatMessage[]): void {
-        this.messages = next;
-      },
-    };
+    // The REAL history implementation, not a stub: the contract being checked is
+    // that the WINDOW starts at the new checkpoint, which only `conversation()`
+    // knows — a stub returning every message could not test it.
+    const sub = new InMemoryChatHistory();
+    // Decisively over any threshold: the point is the DECISION, not the arithmetic.
+    for (let i = 0; i < 40; i++) {
+      sub.add({ role: i % 2 === 0 ? "user" : "assistant", content: "x".repeat(4_000), timestamp: i + 1 });
+    }
 
-    expect(await provider.maybeCompactSubAgentHistory(sub as never, "s1")).toBe(true);
-    expect(sub.messages[0].synthetic).toBe(true);
+    expect(await provider.maybeCompactSubAgentHistory(sub, "s1")).toBe(true);
+    // A small window and a ~40k-token history: the span is far past what the
+    // summarizer could READ, so the window moves WITHOUT one — and the history it
+    // moved past is still there (a sub-agent's is ephemeral, but the rule is one).
+    expect(sub.conversation()[0].synthetic).toBe(true);
+    expect(sub.all().length).toBeGreaterThan(sub.conversation().length);
 
     // And the SAME history that fits is left alone (no compaction for nothing).
     rt.contextWindow = 1_000_000;
     summarize.mockClear();
-    expect(await provider.maybeCompactSubAgentHistory(sub as never, "s1")).toBe(false);
+    expect(await provider.maybeCompactSubAgentHistory(sub, "s1")).toBe(false);
     expect(summarize).not.toHaveBeenCalled();
   });
 
@@ -2369,7 +2376,434 @@ describe("ChatViewProvider compaction", () => {
     expect(previousState).toBeUndefined();
   });
 
-  it("feeds the summarizer a budget derived from the room left after the kept part", async () => {
+  // ── The checkpoint: the summary stays IN the session, and the window starts
+  // from it. Everything below is about NOT losing the past while keeping the
+  // request small. ──
+
+  const EIGHT_TURNS: ChatMessage[] = [
+    { role: "user", content: "prima domanda", timestamp: 1 },
+    { role: "assistant", content: "prima risposta", timestamp: 2 },
+    { role: "user", content: "seconda domanda", timestamp: 3 },
+    { role: "assistant", content: "seconda risposta", timestamp: 4 },
+    { role: "user", content: "terza domanda", timestamp: 5 },
+    { role: "assistant", content: "terza risposta", timestamp: 6 },
+    { role: "user", content: "quarta domanda", timestamp: 7 },
+    { role: "assistant", content: "quarta risposta", timestamp: 8 },
+  ];
+
+  it("KEEPS the summarized span in the session, and starts the window at the checkpoint", async () => {
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\ncarried");
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { store, registry, provider } = buildHarness(options);
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 200_000;
+    rt.history.replace([...EIGHT_TURNS]);
+
+    await handler({ type: "compact" });
+
+    const all = rt.history.all();
+    const conv = rt.history.conversation();
+
+    // The summarized span is still IN the session — nothing was thrown away…
+    expect(all.some((m) => m.content === "prima domanda")).toBe(true);
+    expect(all.length).toBeGreaterThan(conv.length);
+    // …the window BEGINS at the checkpoint…
+    expect(conv[0].synthetic).toBe(true);
+    expect(conv[1].synthetic).toBe(true);
+    expect(conv.some((m) => m.content === "prima domanda")).toBe(false);
+    // …and what gets PERSISTED is the whole thing, past included.
+    const saved = (store.saveMessages as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1] as ChatMessage[];
+    expect(saved).toHaveLength(all.length);
+    expect(saved.some((m) => m.content === "prima domanda")).toBe(true);
+  });
+
+  it("a SECOND compaction folds the previous checkpoint in, and keeps the OLDER past", async () => {
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\nnew");
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 200_000;
+    rt.history.replace([
+      { role: "user", content: "antichissima domanda", timestamp: 1 },
+      { role: "assistant", content: "antichissima risposta", timestamp: 2 },
+      { role: "user", content: "Riepilogo", timestamp: 3, synthetic: true },
+      { role: "assistant", content: "vecchio stato", timestamp: 4, synthetic: true },
+      { role: "user", content: "lavoro 1", timestamp: 5 },
+      { role: "assistant", content: "fatto 1", timestamp: 6 },
+      { role: "user", content: "lavoro 2", timestamp: 7 },
+      { role: "assistant", content: "fatto 2", timestamp: 8 },
+      { role: "user", content: "lavoro 3", timestamp: 9 },
+      { role: "assistant", content: "fatto 3", timestamp: 10 },
+    ]);
+
+    await handler({ type: "compact" });
+
+    const all = rt.history.all();
+    // The past that sat BEFORE the previous checkpoint survives…
+    expect(all.some((m) => m.content === "antichissima domanda")).toBe(true);
+    // …the previous pair is ABSORBED, never duplicated…
+    expect(all.filter((m) => m.synthetic)).toHaveLength(2);
+    expect(all.some((m) => m.content === "vecchio stato")).toBe(false);
+    // …and the window starts from the NEW checkpoint, the old past still excluded.
+    const conv = rt.history.conversation();
+    expect(conv[0].synthetic).toBe(true);
+    expect(conv[1].content).toContain("new");
+    expect(conv.some((m) => m.content === "antichissima domanda")).toBe(false);
+  });
+
+  it("the preserved past is NOT counted: only the active window is measured", async () => {
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\nx");
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.history.replace([
+      { role: "user", content: "P".repeat(120_000), timestamp: 1 },
+      { role: "assistant", content: "Q".repeat(120_000), timestamp: 2 },
+      { role: "user", content: "Riepilogo", timestamp: 3, synthetic: true },
+      { role: "assistant", content: "## Goal\nx", timestamp: 4, synthetic: true },
+      { role: "user", content: "breve", timestamp: 5 },
+    ]);
+
+    // The SESSION is big…
+    expect(estimateContextTokens(rt.history.all())).toBeGreaterThan(50_000);
+    // …but the WINDOW is small: the past is not sent, so it must not be counted.
+    // (This is what keeps the threshold from firing forever on a long session.)
+    expect(estimateContextTokens(rt.history.conversation())).toBeLessThan(500);
+  });
+
+  it("a ✂ cut INSIDE the active span leaves the checkpoint (and the past) in place", async () => {
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\nx");
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.history.replace([
+      { role: "user", content: "passato", timestamp: 1 },
+      { role: "assistant", content: "vecchia risposta", timestamp: 2 },
+      { role: "user", content: "Riepilogo", timestamp: 3, synthetic: true },
+      { role: "assistant", content: "## Goal\nx", timestamp: 4, synthetic: true },
+      { role: "user", content: "domanda 1", timestamp: 5 },
+      { role: "assistant", content: "risposta 1", timestamp: 6 },
+      { role: "user", content: "domanda 2", timestamp: 7 },
+      { role: "assistant", content: "risposta 2", timestamp: 8 },
+    ]);
+
+    // Cut at "domanda 2" (index 6): the checkpoint and the past survive.
+    await handler({ type: "truncateAt", index: 6 });
+
+    expect(rt.history.conversation().map((m) => m.content)).toEqual([
+      "Riepilogo",
+      "## Goal\nx",
+      "domanda 1",
+      "risposta 1",
+    ]);
+    expect(rt.history.all().some((m) => m.content === "passato")).toBe(true);
+  });
+
+  it("a ✂ cut AT the checkpoint removes it: the surviving past becomes the window again", async () => {
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\nx");
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.history.replace([
+      { role: "user", content: "passato", timestamp: 1 },
+      { role: "assistant", content: "vecchia risposta", timestamp: 2 },
+      { role: "user", content: "Riepilogo", timestamp: 3, synthetic: true },
+      { role: "assistant", content: "## Goal\nx", timestamp: 4, synthetic: true },
+      { role: "user", content: "domanda 1", timestamp: 5 },
+      { role: "assistant", content: "risposta 1", timestamp: 6 },
+    ]);
+
+    // Cut at the checkpoint's own label (index 2): the pair and the tail go.
+    await handler({ type: "truncateAt", index: 2 });
+
+    const all = rt.history.all();
+    expect(all.some((m) => m.synthetic)).toBe(false); // the checkpoint is gone
+    expect(all.map((m) => m.content)).toEqual(["passato", "vecchia risposta"]);
+    // No marker left ⇒ the window restarts from what survived. That is "go back
+    // to BEFORE that compaction", not a leak.
+    expect(rt.history.conversation().map((m) => m.content)).toEqual(["passato", "vecchia risposta"]);
+  });
+
+  // ── The fail-safe: a window that SHRINKS under a full session. A compaction
+  // cannot serve it (the summarizer runs on the session's model, so the span it
+  // would have to read does not fit), and the window must move anyway. ──
+
+  it("a window that SHRINKS under a full session still summarizes what it can READ (nothing is lost)", async () => {
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\ncarried");
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { store, registry, provider } = buildHarness(options);
+    resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+
+    // Filled on a BIG model: no checkpoint yet, and far more than a small model
+    // could read in one summary call.
+    const big: ChatMessage[] = [];
+    for (let i = 0; i < 60; i++) {
+      big.push({ role: "user", content: `domanda ${i} ${"x".repeat(8000)}`, timestamp: i * 2 + 1 });
+      big.push({ role: "assistant", content: `risposta ${i} ${"y".repeat(8000)}`, timestamp: i * 2 + 2 });
+    }
+    rt.contextWindow = 1_000_000;
+    rt.history.replace(big);
+
+    // …then the user switches to a model with a far smaller window, and the next
+    // turn boundary re-checks the context against it.
+    rt.contextWindow = 32_000;
+    rt.contextTokens = 240_000; // what the provider counted on the last turn
+    await provider.maybeCompactDuringRun("s1");
+
+    // The summarizer WAS asked: a span bigger than it can read no longer means giving up
+    // on the whole span — it reads the most RECENT part that fits.
+    expect(summarize).toHaveBeenCalled();
+    // The window moved — it now opens on the summary…
+    const conv = rt.history.conversation();
+    expect(conv[0].synthetic).toBe(true);
+    expect(conv[0].content).not.toBe(TRIM_LABEL);
+    // …it fits the small model now…
+    expect(estimateContextTokens(conv)).toBeLessThan(32_000);
+    // …NOTHING was lost: the very first message is still in the session…
+    expect(rt.history.all().some((m) => m.content.startsWith("domanda 0"))).toBe(true);
+    // …and it was persisted whole.
+    const saved = (store.saveMessages as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1] as ChatMessage[];
+    expect(saved.some((m) => m.content.startsWith("domanda 0"))).toBe(true);
+
+    // A SECOND check does NOT move the boundary again: the window is under the
+    // threshold now, so the prefix stays put (the cache is not invalidated twice).
+    const before = rt.history.all().length;
+    const calls = summarize.mock.calls.length;
+    await provider.maybeCompactDuringRun("s1");
+    expect(rt.history.all().length).toBe(before);
+    expect(summarize.mock.calls.length).toBe(calls);
+  });
+
+  it("a SUB-AGENT's oversized span DEFERS instead of failing: same model, ephemeral history", async () => {
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\ncarried");
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 32_000;
+
+    // A sub-agent reads heavily: its OWN history is huge, and the model that would
+    // have to summarize it is the session's — a small one.
+    const sub = new InMemoryChatHistory();
+    for (let i = 0; i < 60; i++) {
+      sub.add({ role: "user", content: `task ${i} ${"x".repeat(8000)}`, timestamp: i * 2 + 1 });
+      sub.add({ role: "assistant", content: `result ${i} ${"y".repeat(8000)}`, timestamp: i * 2 + 2 });
+    }
+
+    const ok = await provider.compactSubAgentHistory(sub, "s1");
+
+    expect(ok).toBe(true);
+    // Same rule as the session: it reads the newest part it can and defers the rest.
+    expect(summarize).toHaveBeenCalled();
+    // The sub-agent's window moved, and its own history keeps everything (it is
+    // ephemeral, but the same rule applies: nothing is thrown away mid-run).
+    expect(sub.conversation()[0].synthetic).toBe(true);
+    expect(sub.conversation()[0].content).not.toBe(TRIM_LABEL);
+    expect(sub.all().some((m) => m.content.startsWith("task 0"))).toBe(true);
+  });
+
+  it("a NORMAL compaction still runs when the span FITS the model (the trim is not the default)", async () => {
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\ncarried");
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 200_000;
+    rt.contextTokens = 190_000;
+    rt.history.replace([
+      { role: "user", content: "a".repeat(20_000), timestamp: 1 },
+      { role: "assistant", content: "b".repeat(20_000), timestamp: 2 },
+      { role: "user", content: "c".repeat(20_000), timestamp: 3 },
+      { role: "assistant", content: "d".repeat(20_000), timestamp: 4 },
+      { role: "user", content: "e".repeat(20_000), timestamp: 5 },
+      { role: "assistant", content: "f".repeat(20_000), timestamp: 6 },
+    ]);
+
+    await provider.maybeCompactDuringRun("s1");
+
+    // The summary RAN — a real compaction, not a trim.
+    expect(summarize).toHaveBeenCalledTimes(1);
+    const conv = rt.history.conversation();
+    expect(conv[0].synthetic).toBe(true);
+    expect(conv[0].content).not.toBe(TRIM_LABEL);
+    // The summarized span is still stored (the past is preserved), so the session
+    // holds MORE than the window does.
+    expect(rt.history.all().length).toBeGreaterThan(conv.length);
+  });
+
+  it("an 8k window CAN summarize now: the fixed 8192 used to make it impossible", async () => {
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\ncarried");
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    // 8k — a LOCAL model's default, and a window this project explicitly targets.
+    rt.contextWindow = 8_000;
+    rt.contextTokens = 7_800;
+    rt.history.replace([
+      { role: "user", content: "a".repeat(2_000), timestamp: 1 },
+      { role: "assistant", content: "b".repeat(2_000), timestamp: 2 },
+      { role: "user", content: "c".repeat(2_000), timestamp: 3 },
+      { role: "assistant", content: "d".repeat(2_000), timestamp: 4 },
+    ]);
+
+    await provider.maybeCompactDuringRun("s1");
+
+    // The ceiling used to subtract a FIXED 8192 (a summary budget nobody had asked for)
+    // plus a 2000 prompt guess: from an 8k window nothing was left, so a compaction under
+    // ~10.2k could never happen and only the trim kept the session alive. Reserving what
+    // the request actually spends gives the small model a real summary again.
+    expect(summarize).toHaveBeenCalledTimes(1);
+    expect(rt.history.conversation()[0].content).not.toBe(TRIM_LABEL);
+  });
+
+  it("reads the NEWEST part that fits and DEFERS the rest — nothing is thrown away", async () => {
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\ncarried");
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 8_000;
+    rt.contextTokens = 7_800;
+    // ~12k tokens of history on an 8k window: more than one summary request can read.
+    rt.history.replace(
+      Array.from({ length: 12 }, (_, i) => ({
+        role: i % 2 === 0 ? ("user" as const) : ("assistant" as const),
+        content: `m${i} ` + "x".repeat(4_000),
+        timestamp: i + 1,
+      })),
+    );
+
+    await provider.maybeCompactDuringRun("s1");
+
+    expect(summarize).toHaveBeenCalledTimes(1);
+    const conv = rt.history.conversation();
+    expect(conv[0].synthetic).toBe(true);
+    expect(conv[0].content).not.toBe(TRIM_LABEL);
+    expect(estimateContextTokens(conv)).toBeLessThan(8_000);
+    // The oldest messages could not be READ: they are DEFERRED — still in the transcript,
+    // ABOVE the new checkpoint, outside the window. Preserved, not summarized, not lost.
+    expect(rt.history.all().some((m) => m.content.startsWith("m0 "))).toBe(true);
+    expect(conv.some((m) => m.content.startsWith("m0 "))).toBe(false);
+  });
+
+  it("a summary that FAILS lands on a trim instead of surfacing an error", async () => {
+    // The ceiling is our PREDICTION of the summarizer's own request size. A prediction
+    // can be wrong (a previous state document bigger than the reserve allows for, a
+    // provider phrasing things differently, a transient failure) — and when it is wrong
+    // the session must still survive: the trim calls no model, so it cannot fail.
+    const summarize = vi.fn(async () => {
+      throw new Error("400 invalid_request_error: this model's maximum context length is exceeded");
+    });
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 200_000;
+    rt.contextTokens = 190_000;
+    rt.history.replace([
+      { role: "user", content: "a".repeat(20_000), timestamp: 1 },
+      { role: "assistant", content: "b".repeat(20_000), timestamp: 2 },
+      { role: "user", content: "c".repeat(20_000), timestamp: 3 },
+      { role: "assistant", content: "d".repeat(20_000), timestamp: 4 },
+      { role: "user", content: "e".repeat(20_000), timestamp: 5 },
+      { role: "assistant", content: "f".repeat(20_000), timestamp: 6 },
+    ]);
+
+    // The run does NOT blow up: no rejection escapes to the user.
+    await expect(provider.maybeCompactDuringRun("s1")).resolves.toBeUndefined();
+    // The summarizer WAS asked (the ceiling said the span would fit)…
+    expect(summarize).toHaveBeenCalled();
+    // …and the window moved anyway, through the path that cannot fail.
+    const conv = rt.history.conversation();
+    expect(conv[0].synthetic).toBe(true);
+    expect(conv[0].content).toBe(TRIM_LABEL);
+    expect(conv.length).toBeLessThan(rt.history.all().length);
+  });
+
+  it("a reply that is NOT a summary lands on a trim: the state document is never written with garbage", async () => {
+    // Seen in the wild: the provider answered with a safety classification, and 108
+    // messages were reduced to "User Safety: safe". Accepting it broke the CHAIN — every
+    // later compaction UPDATES the newest state document, so the garbage propagates and
+    // the messages it replaced become unreachable. It is a failed compaction now, so the
+    // trim carries the PREVIOUS state verbatim and the chain survives.
+    const summarize = vi.fn(async () => "User Safety: safe\nResponse Safety: safe");
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 200_000;
+    rt.contextTokens = 190_000;
+    rt.history.replace([
+      { role: "user", content: "a".repeat(20_000), timestamp: 1 },
+      { role: "assistant", content: "b".repeat(20_000), timestamp: 2 },
+      { role: "user", content: "c".repeat(20_000), timestamp: 3 },
+      { role: "assistant", content: "d".repeat(20_000), timestamp: 4 },
+      { role: "user", content: "e".repeat(20_000), timestamp: 5 },
+      { role: "assistant", content: "f".repeat(20_000), timestamp: 6 },
+    ]);
+
+    await provider.maybeCompactDuringRun("s1");
+
+    expect(summarize).toHaveBeenCalled();
+    const conv = rt.history.conversation();
+    expect(conv[0].content).toBe(TRIM_LABEL);
+    expect(JSON.stringify(conv)).not.toContain("User Safety");
+  });
+
+  it("a MID-RUN compaction rebuilds the transcript, like the manual one does", async () => {
+    // Before this, the auto path only posted `compactStart`/`compactDone`: the divider and
+    // the summary card were left for the next unrelated refresh, and a stand-in bubble
+    // said the older messages had been summarized. The two paths now do the same thing —
+    // the ONE difference that must survive is the absence of `status` posts, because the
+    // run is still in flight and the working indicator has to keep showing.
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\ncarried");
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    const { view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 200_000;
+    rt.contextTokens = 190_000;
+    rt.history.replace([
+      { role: "user", content: "a".repeat(20_000), timestamp: 1 },
+      { role: "assistant", content: "b".repeat(20_000), timestamp: 2 },
+      { role: "user", content: "c".repeat(20_000), timestamp: 3 },
+      { role: "assistant", content: "d".repeat(20_000), timestamp: 4 },
+      { role: "user", content: "e".repeat(20_000), timestamp: 5 },
+      { role: "assistant", content: "f".repeat(20_000), timestamp: 6 },
+    ]);
+    view.webview.postMessage.mockClear();
+
+    await provider.maybeCompactDuringRun("s1");
+
+    const posted = view.webview.postMessage.mock.calls.map((c) => c[0] as any);
+    expect(posted.filter((m) => m.type === "refresh")).toHaveLength(1);
+    // The working indicator is NOT touched mid-run.
+    expect(posted.filter((m) => m.type === "status")).toHaveLength(0);
+    // …and the webview is told the card exists, so it can leave a pointer where the reader is.
+    expect(posted.filter((m) => m.type === "compactDone" && m.ok === true)).toHaveLength(1);
+  });
+
+  it("feeds the summarizer a budget that is a COMPRESSION of the span", async () => {
     const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\nx");
     const options = {
       compactor: { summarize } as unknown as Compactor,
@@ -2396,10 +2830,9 @@ describe("ChatViewProvider compaction", () => {
 
     await handler({ type: "compact" });
 
-    // usable = 100k window − 20k reserve = 80k; the post-compaction target is 50%
-    // of it (40k), and the kept part takes a share of that: the rest is the
-    // summary's. Asserted as a RELATIONSHIP: the exact number depends on how the
-    // kept share is estimated, and pinning it would just re-state the formula.
+    // usable = 100k window − 20k reserve = 80k. The budget is a share of the SPAN it
+    // replaces (10:1), vetoed by the room the post-compaction window leaves. Asserted as
+    // a RELATIONSHIP: pinning the exact number would just re-state the formula.
     expect(summarize).toHaveBeenCalledTimes(1);
     const budget = (summarize.mock.calls[0] as unknown[])[3] as { maxSummaryTokens?: number };
     expect(budget?.maxSummaryTokens).toBeGreaterThanOrEqual(512);
@@ -2501,7 +2934,9 @@ describe("ChatViewProvider compaction", () => {
     const startAt = seq.indexOf("compactStart");
     const doneAt = seq.lastIndexOf("refresh");
     expect(seq[startAt + 1]).toBe("status");
-    expect(seq[doneAt + 1]).toBe("status");
+    // After the rebuild comes the pointer to the card (`compactDone`), THEN the release.
+    expect(seq[doneAt + 1]).toBe("compactDone");
+    expect(seq[doneAt + 2]).toBe("status");
     expect(startAt).toBeLessThan(doneAt);
   });
 
@@ -2875,9 +3310,9 @@ describe("ChatViewProvider compaction", () => {
 
     expect(registry.get("s1")!.history.conversation()[0].role).toBe("user");
     expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactStart" });
-    // Mid-run: the transcript is NOT re-rendered (the run is still streaming),
-    // so the compacted span is shown as a quiet block, not a refresh.
-    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactDone" });
+    // Mid-run the transcript IS re-rendered now — the divider and the card have to appear
+    // at once — and `ok: true` leaves the pointer to it where the reader is.
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactDone", ok: true });
     // The run is still going: NO status message may turn the working bar off.
     expect(view.webview.postMessage).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: "status", active: false }),

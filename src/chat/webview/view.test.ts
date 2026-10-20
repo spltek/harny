@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { vi } from "vitest";
 
 const posted: unknown[] = [];
@@ -972,13 +972,15 @@ describe("view webview client", () => {
     expect(el.textContent).toContain("(100%)");
   });
 
-  it("shows an animated compaction bubble and finalizes it into a thinking-style block", async () => {
+  it("finalizes the compaction bubble — or REMOVES it when nothing was compacted", async () => {
     await loadView();
     hostMessage({ type: "compactStart" });
     const working = [...document.querySelectorAll(".working")];
     expect(working.length).toBe(1);
     expect(working[0].textContent).toContain("Compacting");
-    hostMessage({ type: "compactDone" });
+    // The defensive path: a real compaction wipes this bubble with the rebuild that shows
+    // the card, so finalizing it is only a fallback — but it must stay truthful.
+    hostMessage({ type: "compactDone", ok: true });
     expect(document.querySelectorAll(".working").length).toBe(0);
     const block = document.querySelector(".thinking-block");
     expect(block).not.toBeNull();
@@ -986,6 +988,29 @@ describe("view webview client", () => {
     // quiet styling: NOT an assistant result bubble (blue/result reserved to output)
     const assistantText = document.querySelector(".msg.assistant")?.textContent ?? "";
     expect(assistantText).not.toContain("Conversation compacted");
+  });
+
+  it("REMOVES the provisional bubble when nothing was compacted", async () => {
+    await loadView();
+    hostMessage({ type: "compactStart" });
+    expect(document.querySelectorAll(".working").length).toBe(1);
+    hostMessage({ type: "compactDone", ok: false });
+    // Gone, not spinning — and with no claim that anything was summarized.
+    expect(document.querySelectorAll(".working").length).toBe(0);
+    expect(document.querySelector(".thinking-block")).toBeNull();
+    expect(document.querySelector(".compacted-hint")).toBeNull();
+  });
+
+  it("the compacting bubble joins the pulse cycle instead of restarting it", async () => {
+    await loadView();
+    hostMessage({ type: "compactStart" });
+    const bubble = document.querySelector(".working") as HTMLElement;
+    expect(bubble).toBeTruthy();
+    // harny-pulse is a 1.2s cycle, but a CSS animation starts when its ELEMENT is created:
+    // this bubble appears MID-RUN, so without a negative delay it beats on its own phase —
+    // visibly out of sync with the Working bar and the play key (the reported defect).
+    // phaseLockPulse() aligns it to the clock those already share.
+    expect(bubble.style.animationDelay).toMatch(/^-\d+(\.\d+)?ms$/);
   });
 
   it("shows a red interrupted bubble on abort", async () => {
@@ -3952,6 +3977,112 @@ describe("harness-injected prompts", () => {
   });
 });
 
+describe("the context-window checkpoint in the transcript", () => {
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
+
+  // Everything before the pair is out of the window; everything after it is in.
+  const PAST = [
+    { role: "user", content: "prima domanda", timestamp: 1 },
+    { role: "assistant", content: "prima risposta", timestamp: 2 },
+  ];
+  const CHECKPOINT = [
+    { role: "user", content: "Summary of past interactions", timestamp: 3, synthetic: true },
+    { role: "assistant", content: "## Goal\ncarried", timestamp: 4, synthetic: true },
+  ];
+
+  it("marks where the window starts, saying how much sits above it", async () => {
+    await loadView();
+    hostMessage({ type: "refresh", messages: [...PAST, ...CHECKPOINT, { role: "user", content: "dopo", timestamp: 5 }] });
+
+    const divider = document.querySelector(".ctx-divider") as HTMLElement;
+    expect(divider).toBeTruthy();
+    expect(divider.textContent).toContain("2 messages above");
+    // It sits immediately ABOVE the checkpoint: the line the window opens under.
+    expect(divider.nextElementSibling?.classList.contains("synthetic-summary")).toBe(true);
+  });
+
+  it("renders the checkpoint pair as ONE object: a label and its summary body", async () => {
+    await loadView();
+    hostMessage({ type: "refresh", messages: [...PAST, ...CHECKPOINT, { role: "user", content: "dopo", timestamp: 5 }] });
+
+    const label = document.querySelector(".msg.user.synthetic-summary") as HTMLElement;
+    expect(label).toBeTruthy();
+    expect(label.querySelector(".synthetic-icon")).toBeTruthy();
+    // The summary is the BODY of that card, not an answer the model just gave.
+    const body = document.querySelector(".msg.assistant.synthetic-body") as HTMLElement;
+    expect(body).toBeTruthy();
+    expect(body.textContent).toContain("carried");
+    // Exactly one card, and the body is the message right after the label.
+    expect(document.querySelectorAll(".msg.assistant.synthetic-body").length).toBe(1);
+    expect(label.nextElementSibling).toBe(body);
+    // The message after the checkpoint is a NORMAL bubble again.
+    expect(document.querySelectorAll(".msg.assistant.synthetic-body").length).toBe(1);
+  });
+
+  it("renders none of it while no compaction has happened", async () => {
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [...PAST, { role: "user", content: "dopo", timestamp: 5 }, { role: "assistant", content: "ok", timestamp: 6 }],
+    });
+
+    expect(document.querySelector(".ctx-divider")).toBeNull();
+    expect(document.querySelector(".msg.assistant.synthetic-body")).toBeNull();
+    expect(document.querySelector(".msg.user.synthetic-summary")).toBeNull();
+  });
+
+  it("counts only what is ABOVE the checkpoint (and never the checkpoint itself)", async () => {
+    await loadView();
+    // A second compaction folded the first pair in: the transcript now holds the
+    // whole past, ONE pair, and the active tail.
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "user", content: "antichissima", timestamp: 1 },
+        { role: "assistant", content: "risposta antica", timestamp: 2 },
+        { role: "user", content: "Vecchio riepilogo", timestamp: 3, synthetic: true },
+        { role: "assistant", content: "vecchio stato", timestamp: 4, synthetic: true },
+        { role: "user", content: "in mezzo", timestamp: 5 },
+        { role: "assistant", content: "replica", timestamp: 6 },
+        { role: "user", content: "Summary of past interactions", timestamp: 7, synthetic: true },
+        { role: "assistant", content: "## Goal\nnew", timestamp: 8, synthetic: true },
+        { role: "user", content: "ultimo", timestamp: 9 },
+      ],
+    });
+
+    const dividers = document.querySelectorAll(".ctx-divider");
+    expect(dividers.length).toBe(1); // ONE marker: only the newest checkpoint bounds the window
+    // 4 non-synthetic messages sit above the newest pair (the old pair is not counted).
+    expect(dividers[0].textContent).toContain("4 messages above");
+    expect(document.querySelectorAll(".msg.assistant.synthetic-body").length).toBe(1);
+    // The OLD pair is folded into ONE dim row instead of being rendered as a card again:
+    // its content already lives in the newest summary, and the pile of half-cards was
+    // exactly what a session that shrank several times built up.
+    expect(document.querySelectorAll(".msg.user.synthetic-summary").length).toBe(1);
+    expect(document.querySelector(".old-summaries")?.textContent).toContain("1 earlier summary");
+  });
+
+  it("leaves a pointer to the card where the reader is — and none when nothing compacted", async () => {
+    await loadView();
+    hostMessage({ type: "refresh", messages: [...PAST, ...CHECKPOINT, { role: "user", content: "dopo", timestamp: 5 }] });
+
+    // The card opens the window, which puts it several screens ABOVE the bottom: the
+    // compaction would otherwise have no visible effect where the reader is looking.
+    hostMessage({ type: "compactDone", ok: true });
+    const hint = document.querySelector(".compacted-hint button") as HTMLElement;
+    expect(hint).toBeTruthy();
+    expect(hint.textContent).toContain("the summary is above");
+
+    // A compaction that moved nothing must not leave that claim behind.
+    document.querySelector(".compacted-hint")?.remove();
+    hostMessage({ type: "compactDone", ok: false });
+    expect(document.querySelector(".compacted-hint")).toBeNull();
+  });
+});
+
 describe("version in the main screen", () => {
   beforeEach(() => { posted.length = 0; setupDom(); });
 
@@ -4801,6 +4932,48 @@ describe("soft steering + pending bubbles (webview)", () => {
     hostMessage({ type: "pending", items: [] });
     // With nothing pending the whole SECTION goes away (header included).
     expect((document.getElementById("pending-section") as HTMLElement).classList.contains("hidden")).toBe(true);
+  });
+
+  it("a CHANGE in the pending footer brings the caret back to the prompt", async () => {
+    await loadView();
+    const prompt = document.getElementById("user-input") as HTMLTextAreaElement;
+    const two = [
+      { id: "q1", mode: "queue" as const, text: "later" },
+      { id: "s1", mode: "steer" as const, text: "not Florence" },
+    ];
+    // Prime the baseline, then move the caret away: a RE-PUSH of the SAME list is what a
+    // reload sends, and it must leave the reader exactly where they are.
+    hostMessage({ type: "pending", items: two });
+    prompt.blur();
+    hostMessage({ type: "pending", items: two });
+    expect(document.activeElement).not.toBe(prompt);
+
+    // ADDING one: the user is talking about the run in progress.
+    prompt.blur();
+    hostMessage({ type: "pending", items: [...two, { id: "q2", mode: "queue" as const, text: "also" }] });
+    expect(document.activeElement).toBe(prompt);
+
+    // CONVERTING one (same id, other mode) is a Queue <-> Steer switch.
+    prompt.blur();
+    hostMessage({ type: "pending", items: [{ ...two[0], mode: "steer" as const }, two[1]] });
+    expect(document.activeElement).toBe(prompt);
+
+    // CANCELLING one.
+    prompt.blur();
+    hostMessage({ type: "pending", items: [two[1]] });
+    expect(document.activeElement).toBe(prompt);
+  });
+
+  it("switching Queue <-> Steer by holding the modifier brings the caret back too", async () => {
+    await loadView();
+    hostMessage({ type: "status", active: true }); // a run is in progress
+    const prompt = document.getElementById("user-input") as HTMLTextAreaElement;
+    prompt.blur();
+    // Holding Ctrl really flips the mode: the next message becomes a STEER.
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control", ctrlKey: true }));
+    expect(document.activeElement).toBe(prompt);
+    // Release it, so the module state does not leak into the next test.
+    window.dispatchEvent(new KeyboardEvent("keyup", { key: "Control" }));
   });
 
   it("offers a convert button on each bubble, labelled with the EFFECT it will have", async () => {
@@ -5772,6 +5945,148 @@ describe("Esc closes the TOP-MOST overlay (LIFO)", () => {
     // A second Esc then closes All sessions.
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(sessions.classList.contains("hidden")).toBe(true);
+  });
+});
+
+describe("the reading position survives a transcript rebuild", () => {
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
+
+  const MSGS = [
+    { role: "user", content: "prima domanda", timestamp: 1 },
+    { role: "assistant", content: "prima risposta", timestamp: 2 },
+    { role: "user", content: "seconda domanda", timestamp: 3 },
+  ];
+
+  const box = () => document.getElementById("messages") as HTMLElement;
+  const rect = (top: number, height = 50) =>
+    ({ top, bottom: top + height, left: 0, right: 0, width: 0, height, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+
+  /** jsdom has no layout: EVERY rect is zero, so the anchor code would always conclude
+   *  "nothing spans the edge". Fake the geometry on the prototype, and distinguish the
+   *  OLD nodes from the ones the rebuild creates: the capture reads the old tree, the
+   *  restore reads the new one, and only the difference between the two is the bug. */
+  let topsBefore: number[] = [];
+  let topsAfter: number[] = [];
+  let oldNodes = new WeakSet<Element>();
+  let scrollTop = 0;
+  let originalRect: typeof HTMLElement.prototype.getBoundingClientRect;
+
+  /** Lay the transcript out before the rebuild (`before`) and after it (`after`). */
+  function setHeights(before: number[], after: number[]): void {
+    topsBefore = before;
+    topsAfter = after;
+    oldNodes = new WeakSet<Element>();
+    Array.from(box().children).forEach((el) => oldNodes.add(el));
+  }
+
+  beforeEach(() => {
+    topsBefore = [];
+    topsAfter = [];
+    oldNodes = new WeakSet<Element>();
+    scrollTop = 0;
+    originalRect = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      if (this.id === "messages") return rect(0);
+      const parent = this.parentElement;
+      if (parent && parent.id === "messages") {
+        // Old node → the layout as the reader sees it; anything else was built by the
+        // rebuild that is running right now.
+        const tops = oldNodes.has(this) ? topsBefore : topsAfter;
+        const i = Array.from(parent.children).indexOf(this);
+        return rect(tops[i] ?? -9999);
+      }
+      return originalRect.call(this);
+    };
+  });
+
+  afterEach(() => {
+    HTMLElement.prototype.getBoundingClientRect = originalRect;
+  });
+
+  /** Scroll metrics: a 1000px transcript in a 200px viewport. */
+  function tether(at: number): void {
+    scrollTop = at;
+    const el = box();
+    Object.defineProperty(el, "scrollHeight", { get: () => 1000, configurable: true });
+    Object.defineProperty(el, "clientHeight", { get: () => 200, configurable: true });
+    Object.defineProperty(el, "scrollTop", {
+      get: () => scrollTop,
+      set: (v: number) => {
+        scrollTop = v;
+      },
+      configurable: true,
+    });
+  }
+
+  const scrollTo = (at: number) => {
+    scrollTop = at;
+    box().dispatchEvent(new Event("scroll"));
+  };
+
+  it("keeps the reader on the same bubble when the rebuild changes the height", async () => {
+    await loadView();
+    tether(1000);
+    hostMessage({ type: "refresh", messages: MSGS });
+
+    // Scroll up: 1000 - 300 - 200 is far from the bottom, so autoScroll goes false.
+    tether(300);
+    scrollTo(300);
+    // The first child is entirely above the edge; the SECOND starts 100px above it —
+    // and after the rebuild that same bubble sits 300px lower (content was inserted).
+    setHeights([-100, 100, 200], [-100, 400, 500]);
+    hostMessage({ type: "refresh", messages: MSGS });
+
+    // The reader was at 300; the content above grew by 300 → 600 keeps them on the
+    // SAME bubble. (The old behaviour left scrollTop at 300, i.e. a different place.)
+    expect(box().scrollTop).toBe(600);
+  });
+
+  it("does NOTHING when the transcript grew but the list changed under the anchor", async () => {
+    await loadView();
+    tether(1000);
+    hostMessage({ type: "refresh", messages: MSGS });
+    tether(300);
+    scrollTo(300);
+    // The rebuild produces FEWER children (a cut): children[1] no longer exists.
+    setHeights([-100, 100, 200], [-100]);
+    hostMessage({ type: "refresh", messages: [{ role: "user", content: "solo", timestamp: 1 }] });
+
+    // A wrong scroll would be worse than none: the position is left as the render left it.
+    expect(box().scrollTop).toBe(300);
+  });
+
+  it("does NOTHING when the reader sits in the bottom padding (no bubble spans the edge)", async () => {
+    await loadView();
+    tether(1000);
+    hostMessage({ type: "refresh", messages: MSGS });
+    tether(300);
+    scrollTo(300);
+    // Every bubble ends above the edge: there is nothing to anchor to.
+    setHeights([-300, -200, -100], [-300, 400, 500]);
+    hostMessage({ type: "refresh", messages: MSGS });
+
+    expect(box().scrollTop).toBe(300);
+  });
+
+  it("leaves FOLLOWING alone: a refresh still pins the transcript to the end", async () => {
+    await loadView();
+    tether(1000);
+    hostMessage({ type: "refresh", messages: MSGS });
+    // Still following (no scroll): autoScroll is true, so no anchor is captured.
+    setHeights([-100, 100, 200], [-100, 400, 500]);
+
+    hostMessage({ type: "refresh", messages: MSGS });
+
+    expect(box().scrollTop).toBe(1000); // scrollHeight — unchanged behaviour
+  });
+
+  it("survives an empty transcript", async () => {
+    await loadView();
+    tether(1000);
+    expect(() => hostMessage({ type: "refresh", messages: [] })).not.toThrow();
   });
 });
 

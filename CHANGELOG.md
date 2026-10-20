@@ -17,6 +17,157 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behaviour. To keep the split honest, the orchestrator's planning rules now tell it to **steer**
   a sub-agent — naming the tool or skill it must use, in `goal`/`context`, when that matters.
 
+- **Window trim — the fail-safe for a window that shrank under a session.** A compaction summarizes
+  the span it removes, and the summarizer runs on the *session's* model — so a span larger than that
+  model's window can never be read. A session that had filled up on a big model and was then switched
+  to a small one could therefore neither compact (the summary request was rejected for length) nor
+  send (the request was too long), and died with an opaque error. In that case the window now moves
+  **without a summary**: no model call, so it cannot fail; the state document is carried **verbatim**,
+  so continuity survives; and everything it moves past stays in the session, readable and searchable.
+  One rescue is enough — the span then fits and normal summaries resume. Sub-agents follow the same
+  rule (they share the model), on their own ephemeral history.
+
+- **Compaction tally** (`sessions/compaction-tally.ts`): each compaction and trim now logs its own
+  event AND a running count on the same line, because the question that decides whether the budget is
+  right cannot be read off a single event — *is the trim a rare rescue, or the normal path?* The line
+  to log is returned by the tally, so an event cannot be logged without being counted, and the trim
+  line now carries WHY it fired (`span 41.2k > ceiling 8.9k`). It counts the mechanism, not the
+  quality of a summary: it cannot tell whether the state document carried the right facts.
+
+  **What it found on its first run.** `maxSummaryInputTokens` subtracts the summary budget (a fixed
+  8,192) and the prompt reserve from the window, then floors the rest — so at 10,194 tokens or less
+  the ceiling is exactly 0 and NO span can be read at all. But a non-zero ceiling is not enough: the
+  span grows with the window (~80% minus the kept tail) while the subtraction stays fixed, so the
+  span still loses up to roughly 28,000, and the two alternate in a transition band to ~30,000 above
+  that (measured on the real functions). Below it every compaction is a trim and the state document
+  is never written. The knob is now measured; scaling it to the window is NOT part of this change.
+
+### Changed
+
+- **Compaction no longer discards the part of a conversation it summarizes.** The summarized span
+  stays in the session — still in the transcript, still searchable — and the **context window begins
+  at the summary** instead of the span being replaced by it. Nothing is lost any more, so a long
+  session does not become amnesia, and the boundary is a *stored* marker rather than a position
+  recomputed every turn — which is also what keeps the provider's prompt cache warm. A ✂ cut stays
+  physical: cutting at or before a summary removes it, and the surviving past becomes the window
+  again. The `README` and the manual-compact dialog now describe what actually happens.
+
+- **The context window is now VISIBLE in the transcript.** The summary pair rendered as two unrelated
+  bubbles and the past looked exactly like the live context, so a long session grew with no cue about
+  what the model still receives. A divider now marks the boundary and carries the count (`N messages
+  above · kept in the session, out of the context window`), and the checkpoint reads as ONE card — the
+  orange label with its summary body attached — instead of two bubbles. The boundary comes from
+  `checkpointStart`, the SAME function the request uses, imported into the webview: the marker and the
+  request cannot disagree about where the window begins.
+
+- **A compaction now says so WHERE YOU ARE.** The card that opens the window is the head of the
+  transcript — several screens above the bottom, which is exactly where you are while following the
+  stream. So the compaction was invisible: the bar dropped and nothing else happened. A line now
+  appears at the bottom (`🧹 Context compacted · the summary is above ↑`) and clicking it scrolls to
+  the card. It appears only when a compaction actually happened: the provisional "Compacting…"
+  bubble is now REMOVED when nothing was moved, instead of being finalized into a block claiming
+  "the older messages were summarized" either way.
+
+- **A span bigger than the summary request can read is no longer a dead end.** It used to fall back to the
+  trim: no state document at all, and everything the span held left the window unrecorded. The summary now
+  takes the most RECENT part that fits — the work closest to now is the work that matters — and the
+  messages it could not read are **DEFERRED**: they stay in the transcript, ABOVE the new checkpoint,
+  outside the window, eligible for a later summary. Nothing is destroyed to buy room, which is the whole
+  point. A window that shrank under a full session, or an 8k model, now gets a real state document instead
+  of only a trim. Only a window that can read NOTHING still trims (it calls no model, so it cannot fail).
+
+- **The compaction's numbers are measured or proportional — no flat guesses left.** Three constants
+  were calibrated for one window size and wrong at every other:
+  - the prompt reserve was a flat **2000**: ~6% of a 33k window, ~0.2% of a 1M one. It is now
+    **MEASURED** from the prompt we actually send (~1.1k), because a constant string we own has a size
+    that is a fact;
+  - the **previous state document** travels INSIDE the summary request and was counted nowhere, so a
+    big document pushed the request past the window in silence. It is counted now;
+  - the summary's own budget was **half the window**: 12k on a 33k model, and an impossible ~450k on a
+    1M one — where the reply was also capped far below the instruction. It is now a **COMPRESSION of
+    the span** it replaces (10:1), and the only hard limit is the max output declared for the session.
+    The CAP is deliberately NOT that budget: it is what the model may spend to produce it, and a model
+    that reasons spends the budget before writing a character. Measured on a real session: cap = the
+    budget gave an EMPTY reply 3 times out of 3; cap = the declared output gave a real document 3 out
+    of 3.
+
+  The consequence is the point: **an 8k window can summarize again.** It previously could not at all —
+  8192 + 2000 left nothing — so a local model only ever got the trim, never a state document.
+
+- **A reply that is not the document is a FAILED compaction, not a summary.** Free and auto-routed
+  models sometimes answer the summary request with something else entirely — `User Safety: safe`,
+  a refusal, an empty stream. `splitSummary` accepted any text as the body, so that reply was written
+  into the state document: 108 messages / 236k chars of tool output reduced to two useless lines, with
+  nothing reporting it. It now counts as a failure and lands on the trim, which carries the PREVIOUS
+  state verbatim — the chain survives. Being strict is safe precisely because that fallback exists.
+
+- **Older checkpoints fold into ONE row.** A compaction folds the previous summary into the new one,
+  but a TRIM cannot (it calls no model): it carries the state verbatim and starts a NEW marker,
+  leaving the old pair where it was. A session whose window shrank several times therefore piled up
+  orange cards — half-cards, in fact, since only the newest gets the body styling. The pairs above
+  the boundary are now a single dim line (`3 earlier summaries, folded into the one below`): their
+  content is already inside the newest summary, so re-rendering their bodies said nothing new.
+
+- **The autoscroll pill says what it DOES: `Follow`.** It is not a toggle — it is disabled while you
+  are already at the bottom — so its label has to name the click, not the mode: `Autoscroll`, greyed
+  out, described the very state the button was already in. The tooltip keeps the whole behaviour
+  (jump to the latest message and follow the stream). Order and placement are unchanged: a pill that
+  appears or disappears beside a neighbour reflows the row under the cursor, which is why these two
+  never move.
+
+### Fixed
+
+- **The summarizer could not see what the tools had done.** `serializeConversation` emitted
+  `[Assistant]: <text>` and then bare `[Tool result]` lines: `m.toolCalls` was dropped entirely, so
+  the model writing the state document could not tell a `Write` from a `Grep` and had no idea which
+  file had been changed or which command had produced the output in front of it. Since the summary
+  is the ONLY thing that crosses the window, `## Done` could never name a file — the one fact the
+  next turns cannot re-derive. The span now carries a named, payload-free line per call
+  (`Write src/foo.ts (240 lines)`, `Shell npm test`, `Edit src/a.ts (+4/-2)`), the prompt says what
+  those lines are, and the describer lives in `tools/tool-call-text.ts` — shared with the transcript's
+  tool bubbles, because the webview knowing how to describe a call while the compactor did not is
+  exactly the drift that a second copy would reintroduce. Payloads stay out: a `Write` carries the
+  entire file, so echoing arguments would push the span past what the model could read.
+
+- **The request estimate ignored whole payloads, so the overflow safety net was wider than designed.**
+  The "our own estimate said we were full" leg decides whether a rejection it cannot READ was a size
+  problem, and it counted only text, tool arguments and the system prompt — missing the tool SCHEMAS
+  (every request pays ~3.6k tokens for them), `images`, and the reasoning blocks that are passed back
+  on every later turn. Under-counting makes that leg fire LESS often, and it is the one path where a
+  session dies instead of recovering. Images get a flat ceiling: a data URI's length is wrong by
+  ~2,500× (attachments are never downscaled, while vision is priced per image at ANY size), and
+  over-counting here costs one compaction — the safe direction.
+
+- **A compaction that could not be made now falls back to a trim instead of failing.** The
+  summarizer's ceiling is our PREDICTION of its own request size, and a prediction can be wrong — a
+  previous state document larger than the fixed prompt reserve allows for, a provider phrasing the
+  limit differently, a transient failure. When it was wrong the summary request was sent anyway, got
+  rejected, and the error surfaced: the compaction did not happen, on a session that then had no way
+  to shrink. The summary is the GOOD path and the trim is the one that CANNOT fail (it calls no
+  model), so a failed summary now lands on the trim, with one line in the log saying why. Sub-agents
+  follow the same rule — they share the model, so they shared the failure. A Stop is the only
+  exception: there the user asked to cancel, and degrading would be doing the work they cancelled.
+
+- **The transcript no longer jumps when it is rebuilt.** A `refresh` wipes `#messages` and re-renders
+  it — and a wipe plus a re-render in the same task means the browser never resets `scrollTop`: it
+  keeps the old PIXEL OFFSET, which in the new content is a different place. While you follow the
+  bottom nothing showed, because `scrollDown()` took you back there; once you had scrolled up to
+  read, the view landed somewhere arbitrary — typically around the middle — and whether it happened
+  at all depended on how much the two heights differed. A compaction triggers exactly this refresh
+  and changes the transcript's height the most, which is where it surfaced. The refresh now anchors
+  on the BUBBLE under the top edge and puts it back (`getBoundingClientRect`, never `offsetTop`: the
+  scroller is not positioned), and does NOTHING when the list changed under the anchor or the reader
+  sits in the bottom padding — a wrong scroll would be worse than none.
+
+- **A mid-run compaction shows its result immediately, like the manual one.** The auto path — the
+  one that fires at the threshold — only posted `compactStart`/`compactDone`, so the transcript was
+  never rebuilt: the divider and the summary card appeared only at the next UNRELATED refresh, and a
+  stand-in bubble claimed the older messages had been summarized in the meantime. The manual path
+  already rebuilt the transcript; the two are now aligned. The difference that survives is
+  deliberate: the auto path still posts no `status`, because the run is in flight and the working
+  indicator must keep showing. The webview was already built for it — its `refresh` handler states
+  that a refresh can land MID-RUN on a compaction and restores the in-flight stream.
+
 ## [0.3.2] - 2026-10-16
 
 ### Added

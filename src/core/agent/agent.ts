@@ -52,6 +52,23 @@ const TOOL_SUMMARY_RE = /^🔧 (?:Tool|Tools):/;
  * highlighted "Switch to Build" call to action in the UI). */
 const PREVIEW_FOOTER_MARKER = "Nothing has been applied";
 
+/**
+ * What ONE attached image is charged in the request estimate.
+ *
+ * The obvious rule — the data URI's length — is off by ~2,500×: attachments are
+ * never downscaled (`MAX_IMAGE_BYTES` is 15 MB, so ~20 MB of base64), while vision
+ * costs roughly 1,000–2,800 tokens per image at ANY size, because providers resize
+ * before tiling. Charging the characters would make every rejection look like a
+ * size problem, so a 4xx that is really a bad key or a malformed body would pay a
+ * whole compaction for it.
+ *
+ * A flat ceiling is not a compromise here, it is the right SHAPE for the one thing
+ * this estimate decides (see Agent.estimatedRequestTokens): over-counting costs one
+ * compaction, under-counting is what lets a session die. So it sits at the top of
+ * the real range on purpose.
+ */
+const IMAGE_TOKENS = 2_000;
+
 /** Default cap on concurrently-running sub-agents when neither the session nor
  * the config sets one (the "Parallel sub-agents" control defaults to ON/4). */
 export const DEFAULT_MAX_PARALLEL_SUB_AGENTS = 4;
@@ -954,13 +971,24 @@ export class Agent implements ChatController {
     // Built from the RUN's mode, like the request it estimates (see runMode): an
     // estimate that used a different mode than the request would be off by the whole
     // write-tool set, and this is the leg that decides whether a rejection was size.
-    const system = this.deps.systemPrompt.build(this.runMode, this.deps.tools.definitions());
+    const definitions = this.deps.tools.definitions();
+    const system = this.deps.systemPrompt.build(this.runMode, definitions);
+    // Everything the request actually CARRIES (see toOpenAIMessages) — not just its
+    // text: the tool ARGUMENTS, the images, the reasoning passed back, and the tool
+    // SCHEMAS, which every request pays for and nothing counted. An estimate that
+    // misses a whole payload under-reports the fill, and under-reporting here means a
+    // size rejection goes unrecognised and the session dies instead of recovering.
     return this.llmConversation().reduce(
       (total, m) =>
         total +
         estimateTokens(m.content ?? "") +
-        estimateTokens((m.toolCalls ?? []).map((tc) => JSON.stringify(tc.arguments)).join("")),
-      estimateTokens(system),
+        estimateTokens((m.toolCalls ?? []).map((tc) => JSON.stringify(tc.arguments)).join("")) +
+        (m.images?.length ?? 0) * IMAGE_TOKENS +
+        // Reasoning pass-back: the wire carries reasoning_details OR the plaintext
+        // `thinking`, NEVER both — so counting both would double it. Same rule as the
+        // converter, which is the only place that decides it.
+        estimateTokens(m.reasoningDetails?.length ? JSON.stringify(m.reasoningDetails) : (m.thinking ?? "")),
+      estimateTokens(system) + estimateTokens(JSON.stringify(definitions)),
     );
   }
 

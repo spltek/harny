@@ -327,6 +327,52 @@ ${renderViewConfig(deps)}
        (their contents live in the LLM context, not in the transcript). */
     /* Synthetic compacted prompt: a recognizable icon before the marker. */
     .msg.user.synthetic-summary .synthetic-icon { vertical-align: -2px; margin-right: 5px; }
+    /* The CHECKPOINT — the summary that OPENS the context window. It is not a
+       message the user typed, so it must not read like one: full width, framed, and
+       its bottom corners square so the summary below it reads as the SAME card. */
+    .msg.user.synthetic-summary {
+      align-self: stretch; max-width: 100%; white-space: normal; text-align: left;
+      border-bottom-left-radius: 0; border-bottom-right-radius: 0;
+      opacity: 0.9;
+    }
+    /* The summary BODY: attached under the label, with no bubble chrome of its own. */
+    .msg.assistant.synthetic-body {
+      align-self: stretch; max-width: 100%;
+      border-top-left-radius: 0; border-top-right-radius: 0;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.12); border-top: none;
+    }
+    /* The pointer to the summary card, left where the reader actually is: after a
+       compaction the card opens the window, i.e. several screens ABOVE the bottom. */
+    .compacted-hint { align-self: stretch; text-align: center; margin: 6px 0; }
+    .compacted-hint > button {
+      height: 18px; min-height: 0; padding: 0 10px;
+      display: inline-flex; align-items: center;
+      background: var(--surface-2); color: var(--muted);
+      border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 999px;
+      box-shadow: none; filter: none;
+      font-size: var(--fs-xs); font-weight: 600; line-height: 1; white-space: nowrap;
+      cursor: pointer;
+    }
+    .compacted-hint > button:hover {
+      color: var(--accent); border-color: var(--accent); background: #2c241f;
+    }
+    /* Older checkpoints, folded into ONE dim row: their content already lives in the
+       newest summary above, so their bodies are noise in a long transcript. */
+    .old-summaries {
+      align-self: stretch; text-align: center;
+      margin: 2px 0; color: #6f6f6f;
+      font-size: var(--fs-xs); letter-spacing: 0.04em;
+    }
+    /* The rule that marks where the window starts. */
+    .ctx-divider {
+      align-self: stretch; display: flex; align-items: center; gap: 10px;
+      margin: 12px 0 4px; color: #8a8a8a;
+      font-size: var(--fs-xs); letter-spacing: 0.06em; text-transform: uppercase;
+    }
+    .ctx-divider::before, .ctx-divider::after {
+      content: ""; flex: 1; height: 1px; background: currentColor; opacity: 0.4;
+    }
     .msg-attachments { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 6px; max-width: 100%; }
     .msg-attach-chips { display: flex; flex-wrap: wrap; gap: 4px; }
     /* Non-image attachments: a large per-type icon + name + size. */
@@ -915,7 +961,7 @@ ${renderViewConfig(deps)}
       height: 18px; margin: 8px 10px 0;
       cursor: pointer; user-select: none;
     }
-    /* Transcript action pills ("Collapse all", "Autoscroll"), right-aligned
+    /* Transcript action pills ("Collapse all", "Follow"), right-aligned
        inside this strip. Flat pills, deliberately WITHOUT the 3D key chrome that
        the global button rule applies (accent fill, inset bevel, drop shadow), so
        they read as labels rather than actions.
@@ -1956,7 +2002,7 @@ ${renderViewConfig(deps)}
     </button>
     <div id="transcript-actions">
       <button id="collapse-all" type="button" disabled title="Collapse every expanded section (thinking, tool calls, sub-agents)">Collapse all</button>
-      <button id="autoscroll" type="button" disabled title="Jump to the latest message and resume auto-scrolling">Autoscroll</button>
+      <button id="autoscroll" type="button" disabled title="Jump to the latest message and follow the stream">Follow</button>
     </div>
   </div>
   <div id="input-area">
