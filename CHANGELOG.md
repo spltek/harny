@@ -15,9 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only be reached by typing its name, never by searching for what it does. It now carries the terms
   people actually search (`ai`, `agent`, `chat`, `llm`, `local llm`, `ollama`, `llama.cpp`,
   `openrouter`, `deepseek`, `mcp`, `model context protocol`, `skills`, …), plus a `galleryBanner`
-  matching the app's anthracite and a `bugs` link. No behaviour changes: this release exists to put
-  the extension on the VS Code Marketplace with a listing that does it justice (Open VSX, where it
-  has been published since 0.2.0, gets the same metadata).
+  matching the app's anthracite and a `bugs` link. The tagline sells the PROTOCOL instead of
+  rehearsing the baseline: `tool-calling` and `streaming` are the price of entry for any extension in
+  this category, while *"any OpenAI-compatible endpoint works out of the box"* is the promise that
+  says what the thing actually is (one wire, every provider — local or cloud). No behaviour changes:
+  this release exists to put the extension on the VS Code Marketplace with a listing that does it
+  justice (Open VSX, where it has been published since 0.2.0, gets the same metadata).
 
 ## [0.5.2] - 2026-10-21
 
