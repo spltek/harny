@@ -3025,6 +3025,28 @@ describe("view webview client", () => {
     expect(sent.data.providers.a!.baseUrl).toBe("http://typed.example:9000/v1");
   });
 
+  it("a pending RENAME survives a selection change and lands in the draft", async () => {
+    // Renaming is part of the draft too: switching to another provider used to leave the renamed
+    // entry behind (the name in the form was simply dropped).
+    await loadView();
+    hostMessage({
+      type: "providersEditor",
+      data: { providers: { a: { baseUrl: "http://a/v1" }, b: { baseUrl: "http://b/v1" } } },
+    });
+    const name = document.getElementById("pe-name") as HTMLInputElement;
+    const sel = document.getElementById("provider-select") as HTMLSelectElement;
+    name.value = "renamed";
+    sel.value = "b";
+    sel.dispatchEvent(new Event("change"));
+    // The list is rebuilt with the new name and the entry kept its value.
+    expect(Array.from(sel.options).map((o) => o.value)).toEqual(["b", "renamed"]);
+    sel.value = "renamed";
+    sel.dispatchEvent(new Event("change"));
+    expect((document.getElementById("pe-baseurl") as HTMLInputElement).value).toBe("http://a/v1");
+    // Nothing reached the host yet.
+    expect(posted.filter((m) => (m as { type?: string }).type === "saveProviders")).toEqual([]);
+  });
+
   it("the providers Save button comes back by itself if the host never answers", async () => {
     await loadView();
     hostMessage({ type: "providersEditor", data: { providers: { a: { baseUrl: "http://a/v1" } } } });
@@ -3457,6 +3479,28 @@ describe("view webview client", () => {
       servers: Record<string, { command?: string }>;
     };
     expect(sent.servers.one!.command).toBe("typed-binary");
+  });
+
+  it("MCP + New keeps the edit you were typing", async () => {
+    await loadView();
+    hostMessage({
+      type: "mcpServers",
+      data: { servers: { one: { command: "node" } }, statuses: [] },
+      open: true,
+    });
+    const command = document.getElementById("mcp-command") as HTMLInputElement;
+    const name = document.getElementById("mcp-name") as HTMLInputElement;
+    const sel = document.getElementById("mcp-select") as HTMLSelectElement;
+
+    command.value = "typed-binary";
+    (document.getElementById("mcp-add") as HTMLButtonElement).click();
+    // A fresh entry is open…
+    expect(name.value).toMatch(/^server/);
+    // …and the one you were editing kept what you typed.
+    sel.value = "one";
+    sel.dispatchEvent(new Event("change"));
+    expect(command.value).toBe("typed-binary");
+    expect(posted.filter((m) => (m as { type?: string }).type === "saveMcpServers")).toEqual([]);
   });
 
   it("MCP card lists configured servers with their status", async () => {

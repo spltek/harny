@@ -1,5 +1,5 @@
 import { beforeEach, describe, it, expect } from "vitest";
-import { OpenAIChatProvider, describeApiError, needsMaxCompletionTokens, resetMaxCompletionTokensCache } from "./openai-chat-provider";
+import { OpenAIChatProvider, describeApiError, needsMaxCompletionTokens, needsReasoningEcho, requiresReasoningPassBack, resetMaxCompletionTokensCache } from "./openai-chat-provider";
 import { FakeHttpClient, sseResponse } from "./http-client.test-utils";
 import type { HttpResponse } from "./http-client";
 import type { HarnyConfig } from "../config/types";
@@ -861,5 +861,72 @@ describe("describeApiError", () => {
 
   it("keeps the plain message for any other error", () => {
     expect(describeApiError(401, "unauthorized")).toBe("OpenAI API error 401: unauthorized");
+  });
+});
+
+describe("reasoning pass-back: which requests need the field", () => {
+  it("asks for it in the dialects that VALIDATE the field, and nowhere else", () => {
+    // `reasoning` (the DeepSeek echo via OpenRouter) and `type` (`thinking: {type}`, e.g.
+    // opencode-go) reject the NEXT request when a prior assistant message has no
+    // `reasoning_content`.
+    expect(requiresReasoningPassBack("reasoning")).toBe(true);
+    expect(requiresReasoningPassBack("type")).toBe(true);
+    // An extra field where the upstream does not expect it is the OPPOSITE 400.
+    expect(requiresReasoningPassBack("bool")).toBe(false);
+    expect(requiresReasoningPassBack("effort")).toBe(false);
+    expect(requiresReasoningPassBack("unspecified")).toBe(false);
+    expect(requiresReasoningPassBack(undefined)).toBe(false);
+  });
+
+  it("…but the HISTORY can ask for it too, whatever the knob says", () => {
+    const reasoned = [{ role: "assistant" as const, content: "x", thinking: "t" }];
+    const encrypted = [
+      { role: "assistant" as const, content: "x", reasoningDetails: [{ type: "reasoning.encrypted" }] },
+    ];
+    const both = [
+      {
+        role: "assistant" as const,
+        content: "x",
+        thinking: "t",
+        reasoningDetails: [{ type: "reasoning.encrypted" }],
+      },
+    ];
+    // Plaintext reasoning in this very session = this upstream has already produced the field.
+    expect(needsReasoningEcho("bool", reasoned)).toBe(true);
+    expect(needsReasoningEcho("unspecified", reasoned)).toBe(true);
+    // Encrypted/summarized reasoning is already passed back as `reasoning_details`, unchanged:
+    // inventing a plaintext field next to it is the opposite 400 (also when both are present).
+    expect(needsReasoningEcho("bool", encrypted)).toBe(false);
+    expect(needsReasoningEcho("bool", both)).toBe(false);
+    // Nothing reasoned anywhere: nothing to prove, nothing sent.
+    expect(needsReasoningEcho("effort", [{ role: "user", content: "hi" }])).toBe(false);
+  });
+
+  it("the failing shape: a tool-call turn with no reasoning, followed by its result", async () => {
+    // Reproduced against the live gateway (opencode-go / deepseek-v4.1-flash): this is the ONLY
+    // shape that answers 400 — the loop-back after a tool call, where the assistant turn that
+    // made the call left no reasoning behind. The EMPTY field is what makes it pass.
+    const http = new FakeHttpClient();
+    http.respondWith(sseResponse("data: [DONE]"));
+    const provider = new OpenAIChatProvider(
+      { ...config, thinkingMode: "type", thinkingLevel: "high" },
+      http,
+      tools,
+    );
+    await collect(
+      provider.stream([
+        { role: "user", content: "read a.ts" },
+        {
+          role: "assistant",
+          content: "",
+          toolCalls: [{ id: "c1", name: "Read", arguments: { path: "a.ts" } }],
+        },
+        { role: "tool", content: "export const a = 1;", toolCallId: "c1" },
+      ]),
+    );
+    const sent = JSON.parse(http.requests[0].body).messages as Array<Record<string, unknown>>;
+    expect(sent[1].tool_calls).toBeTruthy();
+    expect(sent[1].reasoning_content).toBe("");
+    expect(sent[2].role).toBe("tool");
   });
 });
