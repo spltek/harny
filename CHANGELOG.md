@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-10-21
+
+### Added
+
+- **A Marketplace listing that can be FOUND.** The manifest had no `keywords`: the extension could
+  only be reached by typing its name, never by searching for what it does. It now carries the terms
+  people actually search (`ai`, `agent`, `chat`, `llm`, `local llm`, `ollama`, `llama.cpp`,
+  `openrouter`, `deepseek`, `mcp`, `model context protocol`, `skills`, …), plus a `galleryBanner`
+  matching the app's anthracite and a `bugs` link. No behaviour changes: this release exists to put
+  the extension on the VS Code Marketplace with a listing that does it justice (Open VSX, where it
+  has been published since 0.2.0, gets the same metadata).
+
 ## [0.5.2] - 2026-10-21
 
 ### Changed
@@ -791,7 +803,8 @@ Completions protocol.
 - **Diagnostics**: per-turn lines in *Output > Harny*, an optional request log
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
-[Unreleased]: https://github.com/spltek/harny/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/spltek/harny/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/spltek/harny/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/spltek/harny/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/spltek/harny/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/spltek/harny/compare/v0.4.1...v0.5.0
