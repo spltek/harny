@@ -544,6 +544,73 @@ describe("OpenAIChatProvider reasoning support", () => {
     expect(sent[0].reasoning_content).toBeUndefined();
   });
 
+  it("passes it back in the `type` dialect too (DeepSeek/opencode-go)", async () => {
+    // `thinking: {type: enabled}` is enough to make the field mandatory upstream: the gateway
+    // answered `The reasoning_content in the thinking mode must be passed back to the API` on
+    // the turn AFTER one without it (synthetic state document, a turn from another model).
+    const http = new FakeHttpClient();
+    http.respondWith(sseResponse("data: [DONE]"));
+    const provider = new OpenAIChatProvider(
+      { ...config, thinkingMode: "type", thinkingLevel: "high" },
+      http,
+      tools,
+    );
+    await collect(
+      provider.stream([
+        { role: "assistant", content: "state document" },
+        { role: "assistant", content: "reasoned", thinking: "thought" },
+      ]),
+    );
+    const sent = JSON.parse(http.requests[0].body).messages as Array<Record<string, unknown>>;
+    expect(sent[0].reasoning_content).toBe("");
+    expect(sent[1].reasoning_content).toBe("thought");
+  });
+
+  it("passes it back whenever the HISTORY proves the upstream reasons — whatever the dialect", async () => {
+    // The requirement is the upstream's, not the knob's: a `bool`-configured provider talking to a
+    // DeepSeek-style model has the same rule as a `type` one. The proof is in the history: once
+    // an assistant message carries PLAINTEXT reasoning, every later assistant message must carry
+    // the field.
+    const http = new FakeHttpClient();
+    http.respondWith(sseResponse("data: [DONE]"));
+    const provider = new OpenAIChatProvider(
+      { ...config, thinkingMode: "bool", thinkingLevel: "high" },
+      http,
+      tools,
+    );
+    await collect(
+      provider.stream([
+        { role: "assistant", content: "old", thinking: "reasoned once" },
+        { role: "assistant", content: "state document" },
+      ]),
+    );
+    const sent = JSON.parse(http.requests[0].body).messages as Array<Record<string, unknown>>;
+    expect(sent[0].reasoning_content).toBe("reasoned once");
+    expect(sent[1].reasoning_content).toBe("");
+  });
+
+  it("leaves a session that only ever produced reasoning_details alone", async () => {
+    // Encrypted/summarized reasoning (OpenRouter, o-series) is passed back as `reasoning_details`
+    // and must NOT be turned into a plaintext field: that would be the opposite 400.
+    const http = new FakeHttpClient();
+    http.respondWith(sseResponse("data: [DONE]"));
+    const provider = new OpenAIChatProvider(
+      { ...config, thinkingMode: "unspecified" },
+      http,
+      tools,
+    );
+    await collect(
+      provider.stream([
+        { role: "assistant", content: "old", reasoningDetails: [{ type: "reasoning.encrypted", data: "xx" }] },
+        { role: "assistant", content: "plain answer" },
+      ]),
+    );
+    const sent = JSON.parse(http.requests[0].body).messages as Array<Record<string, unknown>>;
+    expect(sent[0].reasoning_details).toBeTruthy();
+    expect(sent[0].reasoning_content).toBeUndefined();
+    expect(sent[1].reasoning_content).toBeUndefined();
+  });
+
   it("sends nothing when thinkingMode is unspecified", async () => {
     const http = new FakeHttpClient();
     http.respondWith(sseResponse("data: [DONE]"));

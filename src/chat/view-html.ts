@@ -2287,7 +2287,7 @@ ${renderViewConfig(deps)}
     <div class="cs-backdrop"></div>
     <div class="cs-card">
       <h3>Compaction <span class="cs-scope">for this session</span></h3>
-      <p class="cs-hint">Older turns leave the context window and a summary takes their place in the window. The transcript keeps them, readable and searchable.</p>
+      <p class="cs-hint">Older turns leave the context window and a summary takes their place in the window. The transcript keeps them, readable and searchable. <b>Nothing here applies until you press Save</b> — Cancel throws the draft away.</p>
       <div class="cs-field">
         <label for="compact-threshold-input">Auto-compaction trigger: starts when the usable context is this full</label>
         <div class="cs-inline">

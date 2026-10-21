@@ -277,6 +277,14 @@ let compactionTargetIsAuto = true;
 /** The DERIVED floor for an explicit landing % (from the host preview): below it there is
  * nothing left to free, so the smallest explicit value is the floor. */
 let compactionTargetFloorPct = 1;
+// The modal edits a DRAFT. The three variables above are what the HOST has confirmed, and they
+// are what the footer label and the request read: nothing may change there before Save, or
+// Cancel becomes a lie. Sliding used to mutate them straight away, so cancelling left the
+// unsaved trigger behind (reopening showed it) and a config push could snap it back — the same
+// click looked broken in one session and fine in the next.
+let draftThresholdPct = compactionThresholdPct;
+let draftTargetPct = compactionTargetPct;
+let draftTargetIsAuto = compactionTargetIsAuto;
 
 // ── Streaming session state (chronological, per active chat) ──
 let currentResultEl: HTMLDivElement | null = null;
@@ -4574,23 +4582,28 @@ function syncTargetBounds(): void {
   compactTargetInput.max = String(Math.max(0, threshold - 1));
   // The knob shows the EFFECTIVE landing point: Auto is a MODE (the button), not a position.
   compactTargetInput.value = String(
-    compactionTargetIsAuto ? clampAutoTarget(threshold) : compactionTargetPct,
+    draftTargetIsAuto ? clampAutoTarget(threshold) : draftTargetPct,
   );
 }
 
 /** Keep both value labels in sync (a slider carries no text of its own). */
 function renderCompactionValues(): void {
-  compactThresholdValue.textContent = compactionThresholdPct + "%";
-  compactTargetValue.textContent = compactionTargetIsAuto
-    ? "" + clampAutoTarget(compactionThresholdPct) + "% (default)"
-    : compactionTargetPct + "%" + (compactionTargetPct === 0 ? " (min)" : "");
+  compactThresholdValue.textContent = draftThresholdPct + "%";
+  compactTargetValue.textContent = draftTargetIsAuto
+    ? "" + clampAutoTarget(draftThresholdPct) + "% (default)"
+    : draftTargetPct + "%" + (draftTargetPct === 0 ? " (min)" : "");
 }
 
 function openCompactionSettings(): void {
-  compactThresholdInput.value = String(compactionThresholdPct);
+  // A FRESH draft from what the host confirmed: the modal always opens on the STORED policy,
+  // never on the leftovers of a Cancel.
+  draftThresholdPct = compactionThresholdPct;
+  draftTargetPct = compactionTargetPct;
+  draftTargetIsAuto = compactionTargetIsAuto;
+  compactThresholdInput.value = String(draftThresholdPct);
   syncTargetBounds();
   renderCompactionValues();
-  compactTargetAuto.classList.toggle("is-on", compactionTargetIsAuto);
+  compactTargetAuto.classList.toggle("is-on", draftTargetIsAuto);
   compactPreview.textContent = "";
   compactSettingsModal.classList.remove("hidden");
   // The preview is the HOST's plan — and it carries the derived floor with it.
@@ -4598,6 +4611,8 @@ function openCompactionSettings(): void {
   compactThresholdInput.focus();
 }
 
+/** Hide the modal. This is ALL Cancel does: nothing was written, so nothing has to be undone —
+ * the draft is simply dropped and the next open takes a fresh copy of the stored policy. */
 function closeCompactionSettings(): void {
   compactSettingsModal.classList.add("hidden");
 }
@@ -4606,10 +4621,11 @@ compactSettingsBtn.addEventListener("click", openCompactionSettings);
 compactSettingsCancel.addEventListener("click", closeCompactionSettings);
 compactSettingsModal.querySelector(".cs-backdrop")?.addEventListener("click", closeCompactionSettings);
 // Moving the trigger moves the AUTO value with it AND the ceiling of an explicit one.
+// Everything below mutates the DRAFT: the stored policy does not move until Save.
 compactThresholdInput.addEventListener("input", () => {
-  compactionThresholdPct = clampCompactionThreshold(compactThresholdInput.value);
-  if (!compactionTargetIsAuto) {
-    compactionTargetPct = Math.min(compactionTargetPct, Math.max(1, compactionThresholdPct - 1));
+  draftThresholdPct = clampCompactionThreshold(compactThresholdInput.value);
+  if (!draftTargetIsAuto) {
+    draftTargetPct = Math.min(draftTargetPct, Math.max(1, draftThresholdPct - 1));
   }
   syncTargetBounds();
   renderCompactionValues();
@@ -4618,8 +4634,8 @@ compactThresholdInput.addEventListener("input", () => {
 // The landing slider: every position is a decision, and 0 IS a position (the minimum).
 compactTargetInput.addEventListener("input", () => {
   const threshold = clampCompactionThreshold(compactThresholdInput.value);
-  compactionTargetIsAuto = false;
-  compactionTargetPct = clampCompactionTarget(
+  draftTargetIsAuto = false;
+  draftTargetPct = clampCompactionTarget(
     Number(compactTargetInput.value),
     threshold,
     compactionTargetFloorPct,
@@ -4630,8 +4646,8 @@ compactTargetInput.addEventListener("input", () => {
   sendCompactionPreview();
 });
 compactTargetAuto.addEventListener("click", () => {
-  compactionTargetIsAuto = true;
-  compactionTargetPct = clampAutoTarget(clampCompactionThreshold(compactThresholdInput.value));
+  draftTargetIsAuto = true;
+  draftTargetPct = clampAutoTarget(clampCompactionThreshold(compactThresholdInput.value));
   compactTargetAuto.classList.add("is-on");
   syncTargetBounds();
   renderCompactionValues();
@@ -4641,11 +4657,14 @@ compactSettingsSave.addEventListener("click", () => {
   const threshold = clampCompactionThreshold(compactThresholdInput.value);
   // AUTO FOLLOWS the trigger: when it is in force the landing point is derived from the value
   // being saved, not from whatever the slider happened to show before.
-  const target = compactionTargetIsAuto
+  const target = draftTargetIsAuto
     ? clampAutoTarget(threshold)
     : clampCompactionTarget(Number(compactTargetInput.value), threshold, compactionTargetFloorPct);
+  // THE COMMIT: the draft becomes the live policy — the footer label, the next open and the
+  // payload the host stores all read these three from here on.
   compactionThresholdPct = threshold;
   compactionTargetPct = target;
+  compactionTargetIsAuto = draftTargetIsAuto;
   renderCompactionThreshold();
   vscode.postMessage({ type: "setCompactionThreshold", value: threshold });
   // A MISSING value is what CLEARS the override (Auto); 0 is an explicit "only the summary".

@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-21
+
+### Fixed
+
+- **The `reasoning_content` 400, reproduced live and finally closed.** 0.5.0 sent the empty pass-back
+  only in the `reasoning` dialect: the gateway that was actually failing (`opencode-go`) declares
+  `type`, so the gate never fired. Live probes against it also proved that no "normal" shape
+  reproduces the error — not the synthetic state document, not a details-only message, not the whole
+  152-message history from the real database, not the real `x-opencode-session` id. The ONE shape
+  that does is the request that ENDS with a `tool` result (the loop-back after a tool call) when the
+  assistant turn carrying `tool_calls` left no reasoning behind:
+  `[user, assistant(tool_calls), tool]` → 400 `The reasoning_content in the thinking mode must be
+  passed back to the API`, and the same request with `reasoning_content: ""` → 200. So:
+  - the pass-back covers `reasoning` AND `type`;
+  - it also switches on by itself when the HISTORY proves the upstream reasons (an assistant message
+    with plaintext `thinking`), whatever the knob says — the requirement belongs to the upstream,
+    not to our field names. Reasoning that came back as `reasoning_details` never triggers it: that
+    is passed back verbatim, and inventing a plaintext field there is the OPPOSITE 400;
+  - the thinking dialect is computed ONCE per request, so the payload (`thinking` / `reasoning` /
+    `chat_template_kwargs`) and the pass-back cannot disagree about which protocol is in force.
+  Proof with the real converter against the live gateway: old payload → 400
+  `invalid_request_error`, new payload → 200, the only delta being `reasoning_content: ""`.
+
+- **Cancel in the Compaction card now really cancels.** The sliders wrote straight into the LIVE state
+  (`compactionThresholdPct` & co.), so closing with Cancel left the unsaved trigger behind: reopening
+  showed a policy that was never stored, and a later `config` push could snap it back — the same
+  click looked broken in one session and fine in the next. The modal now edits a DRAFT, snapshotted
+  from the stored policy on open; Save is the only commit, Cancel just closes. The card says so
+  (`Nothing here applies until you press Save`), and a regression test pins the whole round trip
+  (edit → Cancel → reopen comes back on the stored values, nothing posted).
+
 ## [0.5.0] - 2026-10-21
 
 ### Fixed
@@ -19,7 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   NEXT request failed with `The reasoning_content in the thinking mode must be passed back to the
   API`. It is now sent as an empty string when there is nothing to send, in that dialect only
   (`bool`, `effort`, `type`, `unspecified` are byte-for-byte unchanged, because an unexpected
-  field where it is not wanted is the opposite 400).
+  field where it is not wanted is the opposite 400). **Superseded by 0.5.1**: the dialect that was
+  actually failing is `type`, and the shape is the tool-call loop-back.
 
 ### Changed
 
@@ -733,7 +765,8 @@ Completions protocol.
 - **Diagnostics**: per-turn lines in *Output > Harny*, an optional request log
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
-[Unreleased]: https://github.com/spltek/harny/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/spltek/harny/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/spltek/harny/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/spltek/harny/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/spltek/harny/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/spltek/harny/compare/v0.3.2...v0.4.0

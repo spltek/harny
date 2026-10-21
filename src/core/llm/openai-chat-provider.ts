@@ -1,4 +1,4 @@
-import type { HarnyConfig } from "../config/types";
+import type { HarnyConfig, ThinkingMode } from "../config/types";
 import type { ToolDefinition } from "../tools/tool";
 import { endpointUrl } from "./endpoint";
 import type { HttpClient, HttpResponse } from "./http-client";
@@ -48,6 +48,57 @@ function abortError(): Error {
  * never goes back.
  */
 const NEEDS_MAX_COMPLETION_TOKENS = new Set<string>();
+
+/**
+ * Dialects whose upstream REFUSES a follow-up request when a prior assistant message carries no
+ * `reasoning_content` — `The reasoning_content in the thinking mode must be passed back to the
+ * API`:
+ *
+ *  - `reasoning` — the DeepSeek-style echo, used by OpenRouter and by proxies of reasoning models;
+ *  - `type` — the `thinking: {type}` toggle (DeepSeek v4, Qwen, Kimi, Anthropic behind an
+ *    OpenAI-shaped gateway such as opencode zen/go). Turning thinking ON is enough to make the
+ *    field MANDATORY from then on, for every assistant message of the session — including the
+ *    ones that never reasoned (a turn from another model, Harny's synthetic state document, the
+ *    forced final report) and an empty string is what satisfies it.
+ *
+ * `bool` (llama.cpp), `effort` (OpenAI) and `unspecified` are deliberately NOT included: an extra
+ * field where the upstream does not expect it is the OPPOSITE 400.
+ */
+export function requiresReasoningPassBack(mode: ThinkingMode | undefined): boolean {
+  return mode === "reasoning" || mode === "type";
+}
+
+/**
+ * Whether `reasoning_content` has to be echoed on EVERY assistant message of this request.
+ *
+ * The requirement belongs to the UPSTREAM, not to our knob: the dialect tells us how thinking is
+ * REQUESTED (`thinking: {type}`, `reasoning_effort`, `chat_template_kwargs`), while what the
+ * upstream VALIDATES is the history. So there are two independent triggers:
+ *
+ *  - the dialect (`reasoning`, `type`) — see `requiresReasoningPassBack`;
+ *  - the HISTORY — some assistant message carries PLAINTEXT reasoning (`thinking` without
+ *    `reasoningDetails`), i.e. this very session has already received `reasoning_content` from
+ *    this very upstream. From that moment the field is part of the contract, whatever the knob
+ *    is set to: a `bool` provider that happens to talk to a DeepSeek-style model has the exact
+ *    same rule.
+ *
+ * The history trigger deliberately IGNORES `reasoningDetails`: reasoning that came back encrypted
+ * or summarized (OpenRouter, OpenAI o-series) is already passed back verbatim and unchanged, and
+ * inventing a plaintext field there is the OPPOSITE 400. That is also why a provider that never
+ * reasoned is left alone.
+ */
+export function needsReasoningEcho(
+  mode: ThinkingMode | undefined,
+  messages: readonly LLMMessage[],
+): boolean {
+  if (requiresReasoningPassBack(mode)) return true;
+  return messages.some(
+    (m) =>
+      m.role === "assistant" &&
+      Boolean(m.thinking) &&
+      !(m.reasoningDetails && m.reasoningDetails.length > 0),
+  );
+}
 
 /** Key for the learned quirk above (endpoint included: two backends can serve the
  * same model name under different rules). */
@@ -111,13 +162,18 @@ export class OpenAIChatProvider implements LLMProvider {
   ): AsyncGenerator<StreamChunk> {
     const effectiveTools = toolDefinitions ?? this.toolDefinitions;
     const url = endpointUrl(this.config.baseUrl, "/chat/completions");
+    // The thinking dialect in force for this session: config first, legacy boolean flag second.
+    // Computed ONCE — the payload and the reasoning pass-back must agree about it.
+    const thinkingMode =
+      this.config.thinkingMode ?? (this.config.enableThinking !== undefined ? "bool" : "unspecified");
 
     const body: Record<string, unknown> = {
       model: this.config.model,
       messages: toOpenAIMessages(messages, {
-        // The `reasoning` dialect wants the field echoed on EVERY assistant message (see the
-        // option): leaving it out is a 400 on the following request.
-        alwaysPassBackReasoning: this.config.thinkingMode === "reasoning",
+        // Some upstreams refuse the NEXT request when a prior assistant message carries no
+        // `reasoning_content` (see `needsReasoningEcho`: the dialect says so, or the history
+        // proves this upstream already produced plaintext reasoning).
+        alwaysPassBackReasoning: needsReasoningEcho(thinkingMode, messages),
       }),
       // The field name this model wants: learned from a rejection before, or
       // `max_tokens` (what every other backend expects) on the first try.
@@ -157,7 +213,7 @@ export class OpenAIChatProvider implements LLMProvider {
     //            passed inside chat_template_kwargs for the model's Jinja template.
     // "effort" → OpenAI-style top-level reasoning_effort (low/medium/high)
     // "unspecified" → nothing is sent (provider default behavior)
-    const mode = this.config.thinkingMode ?? (this.config.enableThinking !== undefined ? "bool" : "unspecified");
+    const mode = thinkingMode;
     if (mode === "bool") {
       if (this.config.thinkingLevel !== undefined) {
         // Level-based control (UI dropdown). `enable_thinking` is the llama.cpp

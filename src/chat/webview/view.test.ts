@@ -4421,6 +4421,37 @@ describe("context metrics line", () => {
     expect(document.getElementById("compact-threshold-label")?.textContent).toBe("Auto 60% ctx · keep 8%");
   });
 
+  it("CANCEL throws the draft away: reopening shows the stored policy, not the edit", async () => {
+    // The sliders used to mutate the LIVE state, so a cancelled edit stayed behind and reopening
+    // showed a policy that was never saved.
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 200000, compactionThresholdPercent: 60 },
+    });
+    const label = () => document.getElementById("compact-threshold-label")?.textContent;
+    expect(label()).toBe("Auto 60% ctx · keep 8%");
+    const threshold = document.getElementById("compact-threshold-input") as HTMLInputElement;
+    const target = document.getElementById("compact-target-input") as HTMLInputElement;
+
+    (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
+    threshold.value = "90";
+    threshold.dispatchEvent(new Event("input"));
+    (document.getElementById("compact-target-auto") as HTMLButtonElement).click();
+    expect(threshold.value).toBe("90");
+    (document.getElementById("compact-settings-cancel") as HTMLButtonElement).click();
+
+    // Nothing was written…
+    expect(posted.filter((m) => (m as { type: string }).type === "setCompactionThreshold")).toEqual([]);
+    // …the footer still describes the STORED policy…
+    expect(label()).toBe("Auto 60% ctx · keep 8%");
+    // …and reopening starts from the stored values, not from the cancelled edit.
+    (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
+    expect(threshold.value).toBe("60");
+    expect(target.value).toBe("8");
+    expect(document.getElementById("compact-target-value")?.textContent).toBe("8% (default)");
+  });
+
   it("the landing slider reaches 0 (minimum) and the Default button restores the derived one", async () => {
     await loadView();
     hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 200000, compactionThresholdPercent: 80 } });
