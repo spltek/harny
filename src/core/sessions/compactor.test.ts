@@ -22,6 +22,79 @@ function a(content: string): ChatMessage {
   return { role: "assistant", content, timestamp: 2 };
 }
 
+describe("window boundaries never split a tool-call pair", () => {
+  /** A turn that calls TWO tools, both answered: the shape a boundary must respect. */
+  function toolTurn(n: number): ChatMessage[] {
+    return [
+      u(`turn ${n}: read two files`),
+      {
+        role: "assistant",
+        content: "",
+        timestamp: 2,
+        toolCalls: [
+          { id: `c${n}a`, name: "Read", arguments: { path: "a.ts" } },
+          { id: `c${n}b`, name: "Read", arguments: { path: "b.ts" } },
+        ],
+      },
+      { role: "tool", content: "export const a = 1;", toolCallId: `c${n}a`, timestamp: 3 },
+      { role: "tool", content: "export const b = 2;", toolCallId: `c${n}b`, timestamp: 4 },
+      a(`done ${n}`),
+    ];
+  }
+  const history = [1, 2, 3, 4, 5, 6].flatMap(toolTurn);
+
+  it("TRIM: every budget lands on a whole turn, so the resumed window is sendable", () => {
+    // The trim moves the window WITHOUT a summary (the fail-safe): the boundary it picks is the
+    // very thing that gets re-sent. A cut inside a call/result pair would be a 400 that names the
+    // wrong culprit (`Messages with role 'tool' must be a response to a preceding message with
+    // 'tool_calls'`), so the sweep is exhaustive: every budget, from nothing to everything.
+    let sawAResult = false;
+    for (const budget of [1, 50, 120, 200, 300, 500, 800, 1200, 2000, 5000]) {
+      const trimmed = trimHistory(history, { budgetTokens: budget, summary: "## State" });
+      if (!trimmed) continue;
+      const resumed = trimmed.history.slice(trimmed.windowStart);
+      expect(conversationFaults(resumed)).toEqual([]);
+      expect(resumed[0]?.role).not.toBe("tool");
+      // The checkpoint pair is what the window opens with.
+      expect(resumed[0]?.synthetic).toBe(true);
+      expect(resumed[1]?.role).toBe("assistant");
+      if (resumed.length > 2) sawAResult = true;
+    }
+    expect(sawAResult).toBe(true); // the sweep really did exercise the interesting cases
+  });
+
+  it("COMPACTION: every landing point keeps a sendable tail, pair included", () => {
+    // Same sweep on the other boundary: the KEPT side is what survives verbatim, and the summary
+    // pair is inserted right above it — so a tail starting on a `tool` message would be an orphan
+    // on the very next request.
+    const usable = 100_000;
+    for (let pct = 0; pct <= 100; pct++) {
+      const target = targetTokensFor(usable, pct);
+      const { plan } = planForTarget(history, target, 8192);
+      expect(conversationFaults(plan.kept)).toEqual([]);
+      expect(plan.kept[0]?.role).not.toBe("tool");
+      // The rebuilt window: the synthetic pair, then the verbatim tail.
+      const pair: ChatMessage[] = [
+        { role: "user", content: TRIM_LABEL, timestamp: 1, synthetic: true },
+        { role: "assistant", content: "summary", timestamp: 2, synthetic: true },
+      ];
+      expect(conversationFaults([...pair, ...plan.kept])).toEqual([]);
+      // Nothing is lost between the two sides: summarize + kept is the whole history.
+      expect(plan.toSummarize.length + plan.kept.length).toBe(history.length);
+    }
+  });
+
+  it("…and a session that came back from an OLDER build is caught, not sent", () => {
+    // The invariant is enforced on the PAYLOAD too (agent.ts refuses to send and names the fault):
+    // a stored sequence that starts with a tool result must not reach the provider as an opaque 400.
+    const broken: ChatMessage[] = [
+      { role: "tool", content: "orphan", toolCallId: "c9", timestamp: 1 },
+      u("continue"),
+    ];
+    expect(conversationFaults(broken).map((f) => f.kind)).toContain("orphan_tool_result");
+  });
+});
+
 describe("serializeConversation — the summarizer's view of the span", () => {
   it("names every tool call, so a result is never anonymous", () => {
     const msgs: ChatMessage[] = [
