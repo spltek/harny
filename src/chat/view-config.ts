@@ -54,6 +54,11 @@ export const PALETTE = {
   accent: "#d95f27",
   "accent-strong": "#c8501c",
   "assistant-msg": "#1e1e1e",
+  // The CHECKPOINT (compaction summary) is neither a typed message nor an answer: its HEADER
+  // gets its own violet, so the card that opens the context window is recognizable at a
+  // glance instead of reading like something the user wrote. The summary BODY stays neutral
+  // (see `.msg.assistant.synthetic-body`): only the label is tinted.
+  "summary-msg": "#6f4fa8",
   "tool-bg": "#1a1a1a",
   muted: "#888888", // secondary text, placeholders, disabled
   error: "#f44747",

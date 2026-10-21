@@ -76,8 +76,20 @@ function setupDom(
         <h3>Compaction settings</h3>
         <div class="cs-field">
           <label for="compact-threshold-input">Compaction threshold (%)</label>
-          <input id="compact-threshold-input" type="number" min="1" max="100" />
+          <div class="cs-inline">
+            <input id="compact-threshold-input" type="range" min="1" max="100" />
+            <span id="compact-threshold-value" class="cs-val"></span>
+          </div>
         </div>
+        <div class="cs-field">
+          <label for="compact-target-input">Land at (%)</label>
+          <div class="cs-inline">
+            <input id="compact-target-input" type="range" min="0" />
+            <span id="compact-target-value" class="cs-val"></span>
+            <button id="compact-target-auto" class="secondary cs-mini" type="button">Auto</button>
+          </div>
+        </div>
+        <pre id="compact-preview" class="cs-preview"></pre>
         <div class="cs-actions">
           <button id="compact-settings-cancel" class="secondary">Cancel</button>
           <button id="compact-settings-save">Save</button>
@@ -4336,7 +4348,7 @@ describe("context metrics line", () => {
     const modal = document.getElementById("compact-settings-modal") as HTMLDivElement;
     expect(modal.classList.contains("hidden")).toBe(true);
     // The label already shows the session's saved threshold from the config push.
-    expect(document.getElementById("compact-threshold-label")?.textContent).toBe("Auto: 60% ctx");
+    expect(document.getElementById("compact-threshold-label")?.textContent).toBe("Auto 60% ctx · keep 8%");
     (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
     expect(modal.classList.contains("hidden")).toBe(false);
     const input = document.getElementById("compact-threshold-input") as HTMLInputElement;
@@ -4346,7 +4358,7 @@ describe("context metrics line", () => {
     expect(modal.classList.contains("hidden")).toBe(true);
     expect(posted).toContainEqual({ type: "setCompactionThreshold", value: 75 });
     // The label between Compact and the gear reflects the saved value.
-    expect(document.getElementById("compact-threshold-label")?.textContent).toBe("Auto: 75% ctx");
+    expect(document.getElementById("compact-threshold-label")?.textContent).toBe("Auto 75% ctx · keep 9%");
 
     // Reopening shows the value saved last (not the config one again).
     (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
@@ -4368,17 +4380,192 @@ describe("context metrics line", () => {
     expect(posted).not.toContainEqual({ type: "setCompactionThreshold", value: 1 });
   });
 
-  it("Enter saves and Escape closes the threshold form", async () => {
+  it("the gear also sets the LANDING point, bounded by the trigger", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 200000,
+        compactionThresholdPercent: 60,
+        compactionTargetPercent: 20,
+        compactionTargetAuto: false,
+      },
+    });
+    // The label shows the whole policy: the AUTO-compaction trigger, then how much survives.
+    expect(document.getElementById("compact-threshold-label")?.textContent).toBe("Auto 60% ctx · keep 20%");
+
+    (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
+    const target = document.getElementById("compact-target-input") as HTMLInputElement;
+    expect(target.value).toBe("20");
+    // The ceiling is the TRIGGER minus one — derived, never a fixed cap.
+    expect(target.max).toBe("59");
+
+    target.value = "55";
+    (document.getElementById("compact-settings-save") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "setCompactionTarget", value: 55 });
+    expect(document.getElementById("compact-threshold-label")?.textContent).toBe("Auto 60% ctx · keep 55%");
+
+    // Default: back to an eighth of the trigger (8 with 60). The SLIDER follows the derived
+    // value and the label marks it as the default; Save posts no explicit value.
+    (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
+    (document.getElementById("compact-target-auto") as HTMLButtonElement).click();
+    expect(target.value).toBe("8");
+    expect(document.getElementById("compact-target-value")?.textContent).toBe("8% (default)");
+    (document.getElementById("compact-settings-save") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "setCompactionTarget", value: undefined });
+    expect(document.getElementById("compact-threshold-label")?.textContent).toBe("Auto 60% ctx · keep 8%");
+  });
+
+  it("the landing slider reaches 0 (minimum) and the Default button restores the derived one", async () => {
+    await loadView();
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 200000, compactionThresholdPercent: 80 } });
+    (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
+    const threshold = document.getElementById("compact-threshold-input") as HTMLInputElement;
+    const target = document.getElementById("compact-target-input") as HTMLInputElement;
+    const targetValue = document.getElementById("compact-target-value") as HTMLSpanElement;
+    // No override in the config: the slider shows the DERIVED default (an eighth of 80) and
+    // the label says so — "Auto" belongs to the trigger, not to this knob.
+    expect(target.value).toBe("10");
+    expect(targetValue.textContent).toBe("10% (default)");
+    expect(document.getElementById("compact-threshold-value")?.textContent).toBe("80%");
+
+    // Moving the trigger moves the DEFAULT with it (and the ceiling).
+    threshold.value = "50";
+    threshold.dispatchEvent(new Event("input"));
+    expect(target.value).toBe("6");
+    expect(targetValue.textContent).toBe("6% (default)");
+    expect(target.max).toBe("49");
+
+    // 0 is a POSITION, not a mode: it means "only the summary remains".
+    target.value = "0";
+    target.dispatchEvent(new Event("input"));
+    expect(targetValue.textContent).toBe("0% (min)");
+    expect(document.getElementById("compact-target-auto")?.classList.contains("is-on")).toBe(false);
+    threshold.value = "90";
+    threshold.dispatchEvent(new Event("input"));
+    expect(target.value).toBe("0"); // an explicit choice does not follow the trigger
+
+    // Default puts it back on the derived value for the CURRENT trigger (round(90/8) = 11).
+    (document.getElementById("compact-target-auto") as HTMLButtonElement).click();
+    expect(target.value).toBe("11");
+    expect(targetValue.textContent).toBe("11% (default)");
+    expect(document.getElementById("compact-target-auto")?.classList.contains("is-on")).toBe(true);
+  });
+
+  it("renders the host's compaction plan in the modal", async () => {
+    await loadView();
+    (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
+    hostMessage({
+      type: "compactionPreview",
+      thresholdPercent: 80,
+      targetPercent: 20,
+      minTargetPercent: 4,
+      autoTargetPercent: 20,
+      usableTokens: 100000,
+      targetTokens: 20000,
+      fillTokens: 90000,
+      fillPercent: 90,
+      aboveThreshold: true,
+      summarizeCount: 12,
+      summarizeTokens: 60000,
+      keepCount: 5,
+      keepTokens: 20000,
+      summaryBudgetTokens: 6000,
+      deferredCount: 2,
+    });
+    const text = (document.getElementById("compact-preview") as HTMLPreElement).textContent ?? "";
+    expect(text).toContain("now 90%");
+    expect(text).toContain("12 message(s) → summary");
+    expect(text).toContain("5 kept verbatim");
+    expect(text).toContain("Lands at ~20k");
+    // A deferred span is NOT hidden: the reader learns that one pass cannot read it all.
+    expect(text).toContain("cannot be read in one request");
+    // Both derived bounds are reported: the DEFAULT and the smallest explicit value.
+    expect(text).toContain("Auto = 20%");
+    expect(text).toContain("smallest explicit = 4%");
+    expect((document.getElementById("compact-target-input") as HTMLInputElement).value).toBe("10");
+  });
+
+  it("says there is nothing to compact yet when the fill is under the trigger", async () => {
+    await loadView();
+    (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
+    hostMessage({
+      type: "compactionPreview",
+      thresholdPercent: 80,
+      targetPercent: 20,
+      minTargetPercent: 4,
+      autoTargetPercent: 20,
+      usableTokens: 100000,
+      targetTokens: 20000,
+      fillTokens: 41000,
+      fillPercent: 41,
+      aboveThreshold: false,
+      summarizeCount: 0,
+      keepCount: 0,
+      summaryBudgetTokens: 0,
+      deferredCount: 0,
+    });
+    const text = (document.getElementById("compact-preview") as HTMLPreElement).textContent ?? "";
+    expect(text).toContain("Nothing to compact yet");
+    expect(text).toContain("41%");
+    expect(text).toContain("trigger 80%");
+  });
+
+  it("a slider position below the derived floor means 0", async () => {
+    await loadView();
+    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 200000, compactionThresholdPercent: 80 } });
+    (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
+    const target = document.getElementById("compact-target-input") as HTMLInputElement;
+    const value = document.getElementById("compact-target-value") as HTMLSpanElement;
+    // The host's plan carries the floor: below it there is nothing left to free.
+    hostMessage({
+      type: "compactionPreview",
+      thresholdPercent: 80,
+      targetPercent: 10,
+      minTargetPercent: 8,
+      autoTargetPercent: 10,
+      usableTokens: 100000,
+      targetTokens: 10000,
+      fillTokens: 90000,
+      fillPercent: 90,
+      aboveThreshold: true,
+      summarizeCount: 10,
+      summarizeTokens: 80000,
+      keepCount: 4,
+      keepTokens: 9000,
+      summaryBudgetTokens: 8000,
+      deferredCount: 0,
+    });
+
+    // Below the floor the slider snaps to 0 ("only the summary remains"), not to Auto.
+    target.value = "4";
+    target.dispatchEvent(new Event("input"));
+    expect(target.value).toBe("0");
+    expect(value.textContent).toBe("0% (min)");
+
+    // A value AT the floor is a real choice and is kept as it is.
+    target.value = "8";
+    target.dispatchEvent(new Event("input"));
+    expect(target.value).toBe("8");
+    expect(value.textContent).toBe("8%");
+  });
+
+  it("Escape closes the policy card, and the sliders do not post until Save", async () => {
     await loadView();
     const modal = document.getElementById("compact-settings-modal") as HTMLDivElement;
     (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
     const input = document.getElementById("compact-threshold-input") as HTMLInputElement;
     input.value = "90";
+    // With sliders there is no Enter-to-save: the value is applied by Save only.
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    expect(posted).toContainEqual({ type: "setCompactionThreshold", value: 90 });
-    expect(modal.classList.contains("hidden")).toBe(true);
+    expect(posted).not.toContainEqual({ type: "setCompactionThreshold", value: 90 });
+    expect(modal.classList.contains("hidden")).toBe(false);
 
-    (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(modal.classList.contains("hidden")).toBe(true);
     expect(posted).not.toContainEqual({ type: "setCompactionThreshold", value: 80 }); // no extra post on Escape
@@ -5800,7 +5987,7 @@ describe("DB vacuum modal (webview)", () => {
       result: { vacuumed: true, before: stats, after: { ...stats, freePages: 0, bytesFree: 0, ratio: 0 }, durationMs: 1200 },
     });
     expect((document.getElementById("db-vacuum-msg") as HTMLElement).textContent).toContain("1.2s");
-    expect((document.getElementById("db-vacuum-run") as HTMLButtonElement).textContent).toBe("Compact & optimize again");
+    expect((document.getElementById("db-vacuum-run") as HTMLButtonElement).textContent).toBe("VACUUM & optimize again");
   });
 
   it("the All-Sessions footer renders the stats + both settings and posts the manual open", async () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { Compactor, DEFAULT_COMPACTION, KEEP_RECENT_TOKENS, MIN_KEEP_RECENT_TOKENS, MIN_SUMMARY_TOKENS, SUMMARY_MAX_TOKENS, TRIM_LABEL, TRIM_NOTE, buildSummaryMessages, carriedState, compactionSpanTokens, estimateContextTokens, estimateTokens, isUsableSummary, keepRecentTokensFor, maxSummaryInputTokens, planCompactionToBudget, planManualCompaction, realWindowTokens, recentStartFor, serializeConversation, shouldCompact, splitSummary, clampCompactionThresholdPercent, toCompactionThresholdPercent, summarizerConfig, summarizerPromptReserve, summaryBudgetTokens, trimHistory } from "./compactor";
+import { Compactor, DEFAULT_COMPACTION, PERCENT_UNIT, SUMMARY_QUALITY_FLOOR, TRIM_LABEL, TRIM_NOTE, autoTargetPercent, buildSummaryMessages, carriedState, clampTargetPercent, compactHistory, compactionSpanTokens, estimateContextTokens, estimateTokens, isUsableSummary, maxSummaryInputTokens, minExplicitTargetPercent, planCompactionToBudget, planForTarget, planManualCompaction, realWindowTokens, recentStartFor, serializeConversation, shouldCompact, splitSummary, clampCompactionThresholdPercent, toCompactionThresholdPercent, toTargetPercent, targetTokensFor, summarizerPromptReserve, summaryBudgetTokens, trimHistory, type CompactedHistory } from "./compactor";
 import type { LLMProviderFactory } from "../llm/types";
 import type { HarnyConfig } from "../config/types";
 import type { ChatMessage } from "../history/types";
@@ -136,12 +136,15 @@ describe("maxSummaryInputTokens — what the summarizer could actually read", ()
   it("is ZERO below the window where a summary request could fit at all", () => {
     // window − output − the MEASURED prompt reserve, then ×0.9 and floored. The ceiling
     // only leaves 0 once that room reaches 2 (room 1 still floors to 0).
-    const empty = SUMMARY_MAX_TOKENS + summarizerPromptReserve();
-    expect(maxSummaryInputTokens(8_000)).toBe(0);
-    expect(maxSummaryInputTokens(empty)).toBe(0);
-    expect(maxSummaryInputTokens(empty + 1)).toBe(0);
-    expect(maxSummaryInputTokens(empty + 2)).toBe(1);
-    expect(maxSummaryInputTokens(empty + 3)).toBe(2);
+    // The cap is the output the session DECLARES — there is no standing constant any more
+    // (8192 here is just what a session that declares nothing ends up with).
+    const cap = 8_192;
+    const empty = cap + summarizerPromptReserve();
+    expect(maxSummaryInputTokens(8_000, cap)).toBe(0);
+    expect(maxSummaryInputTokens(empty, cap)).toBe(0);
+    expect(maxSummaryInputTokens(empty + 1, cap)).toBe(0);
+    expect(maxSummaryInputTokens(empty + 2, cap)).toBe(1);
+    expect(maxSummaryInputTokens(empty + 3, cap)).toBe(2);
   });
 
   it("reserves the prompt it actually sends, not a flat guess", () => {
@@ -156,8 +159,8 @@ describe("maxSummaryInputTokens — what the summarizer could actually read", ()
   it("counts the PREVIOUS state document in what it may read", () => {
     // It travels INSIDE the same request (buildSummaryMessages). Not counting it is how a
     // big document silently pushed the request past the window.
-    const plain = maxSummaryInputTokens(32_000);
-    const withState = maxSummaryInputTokens(32_000, undefined, 4_000);
+    const plain = maxSummaryInputTokens(32_000, 8_192);
+    const withState = maxSummaryInputTokens(32_000, 8_192, 4_000);
     expect(withState).toBeLessThan(plain);
     expect(plain - withState).toBe(3_600); // the 4000, minus the 0.9 margin
   });
@@ -379,7 +382,7 @@ describe("Compactor", () => {
 
   it("returns the model summary text", async () => {
     const c = new Compactor(factoryWith("## Goal\nFix the bug"), () => CONFIG);
-    const summary = await c.summarize([u("fix the bug")]);
+    const summary = await c.summarize([u("fix the bug")], undefined, undefined, { maxReplyTokens: 8_192 });
     expect(summary).toContain("## Goal");
     expect(summary).toContain("Fix the bug");
   });
@@ -389,7 +392,7 @@ describe("Compactor", () => {
     // that PASSES the structural check while carrying nothing, and that REPLACES the
     // previous state instead of preserving it. Empty means: let the caller trim.
     const c = new Compactor(factoryWith("   "), () => CONFIG);
-    expect(await c.summarize([u("Refactor auth")])).toBe("");
+    expect(await c.summarize([u("Refactor auth")], undefined, undefined, { maxReplyTokens: 8_192 })).toBe("");
   });
 
   it("forwards the abort signal to the provider (Stop cancels the summary)", async () => {
@@ -404,11 +407,13 @@ describe("Compactor", () => {
       }),
     } as unknown as LLMProviderFactory;
     const controller = new AbortController();
-    await new Compactor(factory, () => CONFIG).summarize([u("x")], undefined, controller.signal);
+    await new Compactor(factory, () => CONFIG).summarize([u("x")], undefined, controller.signal, {
+      maxReplyTokens: 8_192,
+    });
     expect(seen).toEqual([controller.signal]);
   });
 
-  it("uses the config it is GIVEN, unchanged (the host decides the summary budget)", async () => {
+  it("uses the CAP it is GIVEN, unchanged (the host decides the summary budget)", async () => {
     const seen: HarnyConfig[] = [];
     const factory = {
       create: (cfg: HarnyConfig) => {
@@ -421,29 +426,12 @@ describe("Compactor", () => {
         };
       },
     } as unknown as LLMProviderFactory;
-    await new Compactor(factory, () => ({ ...CONFIG, maxTokens: 777 })).summarize([u("x")]);
-    // No inheritance from the chat turn and no mutation of what it was handed.
+    await new Compactor(factory, () => ({ ...CONFIG, maxTokens: 777 })).summarize([u("x")], undefined, undefined, {
+      maxReplyTokens: 777,
+    });
+    // No inheritance from the chat turn and no mutation of what it was handed: the cap is the
+    // one the CALLER passed (`maxReplyTokens`), which is required for exactly that.
     expect(seen[0].maxTokens).toBe(777);
-  });
-});
-
-describe("summarizerConfig", () => {
-  it("gives the summary its OWN bounded output budget, whatever the turn uses", () => {
-    // A turn on a big model asks for 384k of output. Inheriting that budget makes
-    // the summary request itself oversized (`input + max_tokens` > window), so the
-    // compaction fails silently and the session keeps its full context — the
-    // failure this decoupling removes.
-    const turn: HarnyConfig = { ...CONFIG, model: "deepseek-v4.1-flash", maxTokens: 384_000 };
-    const summary = summarizerConfig(turn);
-    expect(summary.maxTokens).toBe(SUMMARY_MAX_TOKENS);
-    expect(summary.maxTokens).toBeLessThan(turn.maxTokens);
-    // Everything else is carried over untouched: the summary runs on the SAME
-    // provider/model/key as the chat it summarizes.
-    expect(summary.model).toBe("deepseek-v4.1-flash");
-    expect(summary.baseUrl).toBe(turn.baseUrl);
-    expect(summary.apiKey).toBe(turn.apiKey);
-    // …and the turn's own config is not mutated.
-    expect(turn.maxTokens).toBe(384_000);
   });
 });
 
@@ -464,8 +452,8 @@ describe("summary budget (the summary must not eat what the compaction freed)", 
   });
 
   it("never goes below the floor when the cap allows it", () => {
-    expect(summaryBudgetTokens(1_000, 16_384)).toBe(MIN_SUMMARY_TOKENS); // 100 → floor
-    expect(summaryBudgetTokens(0, 16_384)).toBe(MIN_SUMMARY_TOKENS);
+    expect(summaryBudgetTokens(1_000, 16_384)).toBe(SUMMARY_QUALITY_FLOOR); // 100 → floor
+    expect(summaryBudgetTokens(0, 16_384)).toBe(SUMMARY_QUALITY_FLOOR);
   });
 
   it("tells the summarizer the cap, in tokens and in words", () => {
@@ -498,7 +486,7 @@ describe("Compactor — squeezing an oversized summary", () => {
   it("keeps a summary that fits in ONE call (no wasted request)", async () => {
     const factory = scriptedFactory(["Summary of past interactions\n---\n## Goal\nshort"]);
     const c = new Compactor(factory, () => CONFIG);
-    const out = await c.summarize([u("work")], undefined, undefined, { maxSummaryTokens: 10_000 });
+    const out = await c.summarize([u("work")], undefined, undefined, { maxSummaryTokens: 10_000, maxReplyTokens: 8_192 });
     expect(factory.sent).toHaveLength(1);
     expect(out).toContain("short");
   });
@@ -509,7 +497,7 @@ describe("Compactor — squeezing an oversized summary", () => {
     const factory = scriptedFactory([huge, small]);
     const c = new Compactor(factory, () => CONFIG);
 
-    const out = await c.summarize([u("work")], undefined, undefined, { maxSummaryTokens: 1000 });
+    const out = await c.summarize([u("work")], undefined, undefined, { maxSummaryTokens: 1000, maxReplyTokens: 8_192 });
 
     expect(factory.sent).toHaveLength(2); // the second call is the compression
     // …fed with the FIRST summary, inside the data block (the request is ONE message:
@@ -525,24 +513,114 @@ describe("Compactor — squeezing an oversized summary", () => {
     const factory = scriptedFactory([first, worse]);
     const c = new Compactor(factory, () => CONFIG);
     // (the returned summary is trimmed; the point is WHICH text won)
-    expect(await c.summarize([u("work")], undefined, undefined, { maxSummaryTokens: 1000 })).toBe(first.trim());
+    expect(await c.summarize([u("work")], undefined, undefined, { maxSummaryTokens: 1000, maxReplyTokens: 8_192 })).toBe(first.trim());
   });
 
   it("does not squeeze at all when no budget is given (backward compatible)", async () => {
     const huge = `Summary of past interactions\n---\n${"blah ".repeat(4000)}`;
     const factory = scriptedFactory([huge]);
     const c = new Compactor(factory, () => CONFIG);
-    expect(await c.summarize([u("work")])).toBe(huge.trim());
+    expect(await c.summarize([u("work")], undefined, undefined, { maxReplyTokens: 8_192 })).toBe(huge.trim());
     expect(factory.sent).toHaveLength(1);
   });
 });
 
-describe("keep budget (an ABSOLUTE recent tail, not a fraction of the history)", () => {
-  it("scales with the window but is bounded by the reference (pi keeps 20k)", () => {
-    expect(keepRecentTokensFor(100_000)).toBe(MIN_KEEP_RECENT_TOKENS); // 5% < the floor
-    expect(keepRecentTokensFor(200_000)).toBe(10_000);
-    expect(keepRecentTokensFor(616_000)).toBe(KEEP_RECENT_TOKENS); // 30.8k → capped
-    expect(keepRecentTokensFor(2_000_000)).toBe(KEEP_RECENT_TOKENS);
+describe("landing point + keep budget (a TARGET whose bounds are DERIVED, never fixed)", () => {
+  it("covers the whole usable window: no 20k cap and no 8k floor", () => {
+    expect(targetTokensFor(100_000, 20)).toBe(20_000);
+    expect(targetTokensFor(616_000, 20)).toBe(123_200);
+    expect(targetTokensFor(2_000_000, 20)).toBe(400_000);
+    // 0 is a REAL value: the STRUCTURAL minimum (only the last complete turn).
+    expect(targetTokensFor(100_000, 0)).toBe(0);
+  });
+
+  it("AUTO is an EIGHTH of the trigger: a share of the window, derived from the other knob", () => {
+    expect(autoTargetPercent(80)).toBe(10);
+    expect(autoTargetPercent(100)).toBe(13);
+    expect(autoTargetPercent(60)).toBe(8);
+    // Small triggers stay at the unit of the knob instead of collapsing to 0.
+    expect(autoTargetPercent(4)).toBe(1);
+    expect(autoTargetPercent(1)).toBe(1);
+  });
+
+  it("the explicit range is DERIVED from the trigger: `0` or `floor … trigger−1`", () => {
+    expect(clampTargetPercent(25, 80)).toBe(25);
+    expect(clampTargetPercent(95, 80)).toBe(79);
+    // A lower trigger NARROWS the range instead of sharing a global cap.
+    expect(clampTargetPercent(50, 20)).toBe(19);
+  });
+
+  it("0, a missing value or garbage: MISSING is AUTO, 0 is the minimum", () => {
+    // 0 is a REAL position — as low as the structure allows — not a stand-in for Auto.
+    expect(clampTargetPercent(0, 80)).toBe(0);
+    expect(toTargetPercent(0, 80)).toBe(0);
+    // 1 … floor−1 free nothing more than 0 does, so they collapse to it.
+    expect(clampTargetPercent(3, 80, 4)).toBe(0);
+    expect(clampTargetPercent(4, 80, 4)).toBe(4);
+    // A MISSING or unparsable value is AUTO: the derived default.
+    expect(toTargetPercent(undefined, 80)).toBe(10);
+    expect(toTargetPercent("abc", 80)).toBe(10);
+    expect(toTargetPercent(25, 80)).toBe(25);
+  });
+
+  it("the FLOOR is derived from the session, not a constant", () => {
+    // 2k of summary + a 5k last turn on 100k usable = 7%: below it, an explicit value has
+    // nothing left to free.
+    expect(minExplicitTargetPercent(100_000, 2_000, 5_000)).toBe(7);
+    expect(minExplicitTargetPercent(10_000, 2_000, 5_000)).toBe(70);
+    // Nothing occupies anything: one percent is the UNIT of the knob, not a policy cap.
+    expect(minExplicitTargetPercent(100_000, 0, 0)).toBe(PERCENT_UNIT);
+    expect(minExplicitTargetPercent(0, 2_000, 5_000)).toBe(PERCENT_UNIT);
+    // A floor ABOVE the derived ceiling leaves the MINIMUM (0) as the only answer.
+    expect(clampTargetPercent(40, 20, 70)).toBe(0);
+    // …and so does an explicit 0, always: it is the bottom of the range, not a sentinel.
+    expect(clampTargetPercent(0, 20, 70)).toBe(0);
+  });
+
+  it("lands ON the target: the summary is paid out of the SAME budget", () => {
+    const msgs = Array.from({ length: 60 }, (_, i) => [u(`prompt ${i}`), a("x".repeat(4000))]).flat();
+    const target = targetTokensFor(100_000, 10); // 10k of window left after the cut
+    const { plan, keepBudgetTokens, summaryBudgetTokens: budget } = planForTarget(msgs, target, 8_192);
+    // The tail gets what the summary does NOT take…
+    expect(keepBudgetTokens).toBe(Math.max(0, target - budget));
+    // …so the rebuilt window (checkpoint + tail) cannot exceed the target.
+    expect(estimateTokens(serializeConversation(plan.kept))).toBeLessThanOrEqual(target);
+    expect(plan.toSummarize.length).toBeGreaterThan(0);
+    // Whole turns only, and the NEWEST work is what survives.
+    expect(conversationFaults(plan.kept)).toEqual([]);
+    expect(plan.kept[plan.kept.length - 1]).toBe(msgs[msgs.length - 1]);
+  });
+
+  it("AUTO keeps the LAST EXCHANGES verbatim and summarizes the rest", () => {
+    // 60 turns ≈ 60k tokens on a 100k usable window. AUTO (10%) is 10k, and the summary's own
+    // budget comes out of it: what is left for the tail is a real, positive budget — that is
+    // the point of landing at an eighth rather than at the structural minimum.
+    const msgs = Array.from({ length: 60 }, (_, i) => [u(`prompt ${i}`), a("x".repeat(4000))]).flat();
+    const target = targetTokensFor(100_000, autoTargetPercent(80));
+    const { plan, keepBudgetTokens, summaryBudgetTokens: budget } = planForTarget(msgs, target, 8_192);
+    expect(budget).toBeLessThan(target);
+    expect(keepBudgetTokens).toBeGreaterThan(0);
+    expect(plan.toSummarize.length).toBeGreaterThan(0);
+    // The tail is a sequence of complete turns that ENDS at the newest message…
+    expect(conversationFaults(plan.kept)).toEqual([]);
+    expect(plan.kept[plan.kept.length - 1]).toBe(msgs[msgs.length - 1]);
+    // …and it is the RECENT part: nothing early survives verbatim.
+    expect(plan.kept).not.toContainEqual(msgs[0]);
+  });
+
+  it("target 0 is the STRUCTURAL minimum: only the last turn group survives", () => {
+    const msgs = Array.from({ length: 20 }, (_, i) => [u(`p${i}`), a("y".repeat(4000))]).flat();
+    const { plan, keepBudgetTokens } = planForTarget(msgs, 0, 8_192);
+    expect(keepBudgetTokens).toBe(0);
+    expect(plan.toSummarize.length).toBeGreaterThan(0);
+    // Still a COMPLETE turn, because half a turn is a malformed request.
+    expect(plan.kept[0]?.role).toBe("user");
+    expect(plan.kept.length).toBeLessThan(msgs.length);
+  });
+
+  it("is deterministic: the UI previews these exact numbers", () => {
+    const msgs = Array.from({ length: 20 }, (_, i) => [u(`p${i}`), a("y".repeat(2000))]).flat();
+    expect(planForTarget(msgs, 30_000, 8_192)).toEqual(planForTarget(msgs, 30_000, 8_192));
   });
 
   it("keeps about the budget of the NEWEST work, whatever the history length", () => {
@@ -577,16 +655,16 @@ describe("keep budget (an ABSOLUTE recent tail, not a fraction of the history)",
     expect(byFraction.toSummarize).toEqual(byBudget.toSummarize);
   });
 
-  it("a huge window no longer keeps the history alive (the bug: 60% of 1M)", () => {
+  it("a 10% landing point frees real room on a huge window (no fixed cap in the way)", () => {
     // 616k usable (the session that started this work) and a long history: the old
     // fraction policy kept ~60% of it and freed nearly nothing.
     const msgs = Array.from({ length: 200 }, (_, i) => [u(`prompt ${i}`), a("x".repeat(4000))]).flat();
-    const keep = keepRecentTokensFor(616_000);
+    const keep = targetTokensFor(616_000, 10);
     const plan = planCompactionToBudget(msgs, keep);
     const keptTokens = estimateTokens(serializeConversation(plan.kept));
     const before = plan.tokensBefore;
-    expect(keptTokens).toBeLessThanOrEqual(keep * 1.5); // a bounded tail…
-    expect(keptTokens).toBeLessThan(before * 0.2); // …and a real reduction
+    expect(keptTokens).toBeLessThanOrEqual(keep * 1.5); // the tail respects the target…
+    expect(keptTokens).toBeLessThan(before * 0.5); // …and the window really shrinks
   });
 });
 
@@ -799,30 +877,30 @@ describe("recentStartFor — how much 'the recent part' is", () => {
 
 describe("maxSummaryInputTokens — the span the summarizer can actually READ", () => {
   it("scales with the window, reserving the summary's OWN output budget", () => {
-    expect(maxSummaryInputTokens(1_000_000)).toBeGreaterThan(800_000);
-    // The request carries SUMMARY_MAX_TOKENS (not the chat turn's reserve), so
-    // the ceiling must sit below window − 8192 minus a margin.
-    expect(maxSummaryInputTokens(32_000)).toBeLessThan(32_000 - SUMMARY_MAX_TOKENS);
-    expect(maxSummaryInputTokens(32_000)).toBeGreaterThan(10_000);
+    expect(maxSummaryInputTokens(1_000_000, 8_192)).toBeGreaterThan(800_000);
+    // The request carries the session's DECLARED output (not the chat turn's reserve), so
+    // the ceiling must sit below window − that output minus a margin.
+    expect(maxSummaryInputTokens(32_000, 8_192)).toBeLessThan(32_000 - 8_192);
+    expect(maxSummaryInputTokens(32_000, 8_192)).toBeGreaterThan(10_000);
   });
 
   it("is 0 on a window that cannot host the request at all", () => {
     // No room to ask => the caller must move the boundary without a summary
     // rather than send a request that is guaranteed to be rejected.
-    expect(maxSummaryInputTokens(SUMMARY_MAX_TOKENS)).toBe(0);
-    expect(maxSummaryInputTokens(4_000)).toBe(0);
+    expect(maxSummaryInputTokens(8_192, 8_192)).toBe(0);
+    expect(maxSummaryInputTokens(4_000, 8_192)).toBe(0);
   });
 });
 
 describe("compactionSpanTokens — what a compaction would ask the summarizer to read", () => {
   it("is 0 when there is nothing worth summarizing", () => {
-    expect(compactionSpanTokens([u("a"), { role: "assistant", content: "b", timestamp: 2 }], 100_000)).toBe(0);
+    expect(compactionSpanTokens([u("a"), { role: "assistant", content: "b", timestamp: 2 }], 100_000, 8_192)).toBe(0);
   });
 
   it("shrinks as the budget grows (more kept verbatim => less to read)", () => {
     const all = bigHistory(20);
-    const tight = compactionSpanTokens(all, 10_000);
-    const loose = compactionSpanTokens(all, 100_000);
+    const tight = compactionSpanTokens(all, 10_000, 8_192);
+    const loose = compactionSpanTokens(all, 100_000, 8_192);
     expect(tight).toBeGreaterThan(0);
     expect(tight).toBeGreaterThan(loose);
   });
@@ -831,7 +909,64 @@ describe("compactionSpanTokens — what a compaction would ask the summarizer to
     const all = bigHistory(60);
     // Filled on a 1M model, moved to a 32k one: the span is an order of magnitude
     // past what that model could read, which is exactly when the trim must fire.
-    expect(compactionSpanTokens(all, 950_000)).toBeGreaterThan(maxSummaryInputTokens(32_000));
+    expect(compactionSpanTokens(all, 950_000, 8_192)).toBeGreaterThan(maxSummaryInputTokens(32_000, 8_192));
+  });
+});
+
+describe("compactHistory — the LANDING POINT is what decides", () => {
+  const summaryText = "Summary of past interactions\n---\n## Goal\nwork";
+  const turns = (n: number): ChatMessage[] =>
+    Array.from({ length: n }, (_, i) => [u(`prompt ${i}`), a("x".repeat(4000))]).flat();
+  /** A compactor whose summarizer always answers with a USABLE document. */
+  const compactorFor = (): Compactor =>
+    new Compactor(
+      {
+        create: () => ({
+          protocol: "chat" as const,
+          async *stream() {
+            yield { type: "text", content: summaryText };
+          },
+        }),
+      } as unknown as LLMProviderFactory,
+      () => CONFIG,
+    );
+  const compactWith = (msgs: ChatMessage[], targetTokens: number): Promise<CompactedHistory | null> =>
+    compactHistory(msgs, {
+      compactor: compactorFor(),
+      targetTokens,
+      maxOutputTokens: 8_192,
+      maxInputTokens: 1_000_000,
+    });
+
+  it("is the SECOND pass that is planned: the tail gets what the summary does not take", () => {
+    const msgs = turns(60);
+    const target = 20_000;
+    const { plan, keepBudgetTokens, summaryBudgetTokens } = planForTarget(msgs, target, 8_192);
+    expect(summaryBudgetTokens).toBeGreaterThan(0);
+    // The refined budget is the target MINUS what the summary writes…
+    expect(keepBudgetTokens).toBe(target - summaryBudgetTokens);
+    expect(keepBudgetTokens).toBeLessThan(target);
+    // …so the tail is never BIGGER than the first (naive) pass would have kept.
+    expect(plan.kept.length).toBeLessThanOrEqual(planCompactionToBudget(msgs, target).kept.length);
+  });
+
+  it("a BIGGER landing point keeps more messages verbatim (and destroys nothing)", async () => {
+    const msgs = turns(60); // ~60k tokens of history
+    const lean = await compactWith(msgs, 10_000);
+    const deep = await compactWith(msgs, 40_000);
+
+    expect(lean).not.toBeNull();
+    expect(deep).not.toBeNull();
+    // Each run aims where it was told to: the tail plus its own summary stays under the
+    // landing point (the exact split is a rounding of the span estimate).
+    expect(lean!.keepBudgetTokens).toBeLessThan(10_000);
+    expect(deep!.keepBudgetTokens).toBeLessThan(40_000);
+    expect(deep!.keepBudgetTokens).toBeGreaterThan(lean!.keepBudgetTokens);
+    // A wider landing point keeps strictly more of the recent work…
+    expect(lean!.kept.length).toBeLessThan(deep!.kept.length);
+    // …and neither run loses a message: the past stays in the rebuilt history.
+    expect(lean!.history.length).toBeGreaterThan(lean!.kept.length);
+    expect(deep!.history.length).toBeGreaterThan(deep!.kept.length);
   });
 });
 

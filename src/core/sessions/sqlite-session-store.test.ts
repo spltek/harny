@@ -157,6 +157,17 @@ describe("SqliteSessionStore — sessions & messages", () => {
 });
 
 describe("SqliteSessionStore — per-session settings", () => {
+  it("CLEARS the landing point when the patch says undefined (the AUTO value)", () => {
+    const { store } = makeStore();
+    store.create();
+    store.saveSettings("s1", { compactionTargetPercent: 30 });
+    expect(store.load("s1").summary.compactionTargetPercent).toBe(30);
+
+    // A key PRESENT with no number clears it: the landing point goes back to AUTO.
+    store.saveSettings("s1", { compactionTargetPercent: undefined });
+    expect(store.load("s1").summary.compactionTargetPercent).toBeUndefined();
+  });
+
   it("persists settings and carries them across a message save", () => {
     const { store } = makeStore();
     store.create();
@@ -166,6 +177,7 @@ describe("SqliteSessionStore — per-session settings", () => {
       thinkingLevel: "high",
       contextWindow: 200000,
       compactionThresholdPercent: 75,
+      compactionTargetPercent: 30,
       contextTokens: 12345,
       outputTokens: 4096,
       temperature: 0.2,
@@ -188,6 +200,7 @@ describe("SqliteSessionStore — per-session settings", () => {
       thinkingLevel: "high",
       contextWindow: 200000,
       compactionThresholdPercent: 75,
+      compactionTargetPercent: 30,
       contextTokens: 12345,
       outputTokens: 4096,
       temperature: 0.2,

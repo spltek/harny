@@ -29,6 +29,9 @@ export interface SessionSummary {
   contextWindow?: number;
   /** Context fill % (of the window) that triggers auto-compaction; undefined = default 80. */
   compactionThresholdPercent?: number;
+  /** Where the compaction LANDS, as % of the usable context; undefined = AUTO (a quarter
+   * of the trigger, see autoTargetPercent). */
+  compactionTargetPercent?: number;
   /** Current context tokens in use (latest input_tokens), for the fill %. */
   contextTokens?: number;
   /** Max output tokens per response for this session (persisted; undefined = default). */
@@ -73,6 +76,7 @@ export type SessionSettings = Pick<
   | "thinkingLevel"
   | "contextWindow"
   | "compactionThresholdPercent"
+  | "compactionTargetPercent"
   | "contextTokens"
   | "outputTokens"
   | "temperature"

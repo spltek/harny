@@ -165,7 +165,11 @@ describe("renderViewHtml", () => {
     // Its gear (compaction settings) sits right after Compact; the threshold
     // label (compact form: "Auto: <n>% ctx") sits between them; the modal form
     // exists and starts hidden.
-    expect(html).toMatch(/<button id="compact-btn"[\s\S]*?<span id="compact-threshold-label"[\s\S]*?>Auto: 80% ctx<\/span>[\s\S]*?<button id="compact-settings-btn"/);
+    expect(html).toMatch(/<button id="compact-btn"[\s\S]*?<span id="compact-threshold-label"[\s\S]*?>Auto 80% ctx · keep 10%<\/span>[\s\S]*?<button id="compact-settings-btn"/);
+    // The policy card carries BOTH knobs and the plan the host will compute.
+    expect(html).toMatch(/id="compact-target-input"/);
+    expect(html).toMatch(/id="compact-target-auto"/);
+    expect(html).toMatch(/id="compact-preview"/);
     expect(html).toMatch(/id="compact-settings-modal"[\s\S]*?id="compact-threshold-input"/);
     expect(html).toMatch(/id="compact-settings-modal" class="hidden"/);
     expect(html).toContain(`<script src="${base.scriptUri}"></script>`);
@@ -617,6 +621,15 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/\.branch-at,\s*\.truncate-at\s*\{[^}]*top:\s*0[^}]*right:\s*8px/s);
     // The ✂ tab on the orange user bubble uses the bubble's own orange.
     expect(html).toMatch(/\.truncate-at\s*\{[^}]*background:\s*var\(--user-msg\)/s);
+    // The CHECKPOINT (compaction summary) is its OWN colour — violet, not the
+    // terracotta of a typed prompt — but only on the HEADER: the summary body stays
+    // neutral, because that is the text the reader has to read.
+    expect(html).toMatch(/\.msg\.user\.synthetic-summary\s*\{[^}]*background:\s*var\(--summary-msg\)/s);
+    expect(html).toMatch(/--summary-msg:\s*#[0-9a-f]{6}/i);
+    expect(html).toMatch(/\.msg\.assistant\.synthetic-body\s*\{[^}]*background:\s*rgba\(255,\s*255,\s*255,\s*0\.04\)/s);
+    // …and the ✂ tab that slides up over that header is violet too: an orange tab on a
+    // violet card would look like it belongs to another bubble.
+    expect(html).toMatch(/\.msg\.user\.synthetic-summary \.truncate-at\s*\{[^}]*background:\s*var\(--summary-msg\)/s);
     expect(html).toMatch(/translateY\(-100%\)/);
     // The AI Model row (label + select + gear) lives INSIDE the ask box, just
     // below the prompt (after #input-main, before the chips row) — no longer

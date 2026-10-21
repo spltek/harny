@@ -341,14 +341,17 @@ ${renderViewConfig(deps)}
     /* Synthetic compacted prompt: a recognizable icon before the marker. */
     .msg.user.synthetic-summary .synthetic-icon { vertical-align: -2px; margin-right: 5px; }
     /* The CHECKPOINT — the summary that OPENS the context window. It is not a
-       message the user typed, so it must not read like one: full width, framed, and
-       its bottom corners square so the summary below it reads as the SAME card. */
+       message the user typed, so it must not read like one: full width, framed, its
+       own VIOLET (not the terracotta of a typed prompt), and its bottom corners
+       square so the summary below it reads as the SAME card. */
     .msg.user.synthetic-summary {
       align-self: stretch; max-width: 100%; white-space: normal; text-align: left;
       border-bottom-left-radius: 0; border-bottom-right-radius: 0;
+      background: var(--summary-msg);
       opacity: 0.9;
     }
-    /* The summary BODY: attached under the label, with no bubble chrome of its own. */
+    /* The summary BODY: attached under the label, with no bubble chrome of its own. It stays
+       NEUTRAL — the violet marks the header, not the text you have to read. */
     .msg.assistant.synthetic-body {
       align-self: stretch; max-width: 100%;
       border-top-left-radius: 0; border-top-right-radius: 0;
@@ -458,6 +461,10 @@ ${renderViewConfig(deps)}
     .truncate-at:disabled { opacity: 0; pointer-events: none; }
     .branch-at:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); background: #2c241f; }
     .truncate-at:hover:not(:disabled) { color: #fff; border-color: #fff; background: var(--accent-strong); }
+    /* …but on the CHECKPOINT header the ✂ tab is made of the violet the header is made of:
+       a terracotta tab on a violet card would look like it belongs to another bubble. */
+    .msg.user.synthetic-summary .truncate-at { background: var(--summary-msg); }
+    .msg.user.synthetic-summary .truncate-at:hover:not(:disabled) { background: #5b3e96; }
     .msg.assistant.error { background: rgba(244, 71, 71, 0.15); border: 1px solid var(--error); }
     .msg.assistant.loop { background: rgba(245, 166, 35, 0.12); border: 1px solid #f5a623; }
     /* Prominent "Switch to Build" call to action (Analyze prepared previews). */
@@ -1788,7 +1795,7 @@ ${renderViewConfig(deps)}
     #name-input:focus { border-color: var(--accent); }
     #name-modal .name-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
-    /* ── Compaction settings (gear after Compact): threshold % form ── */
+    /* ── Compaction policy (gear after Compact): trigger % + landing point ── */
     #compact-settings-modal { z-index: 100; }
     #compact-settings-modal.hidden { display: none; }
     #compact-settings-modal .cs-backdrop {
@@ -1798,7 +1805,7 @@ ${renderViewConfig(deps)}
     }
     #compact-settings-modal .cs-card {
       position: relative; margin: auto; max-height: 100%; overflow: auto;
-      width: min(360px, 100%);
+      width: min(420px, 100%);
       background: var(--bg);
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -1812,15 +1819,29 @@ ${renderViewConfig(deps)}
     }
     #compact-settings-modal .cs-field { display: flex; flex-direction: column; gap: 6px; }
     #compact-settings-modal .cs-field label { font-size: var(--fs-sm); color: #9a9a9a; }
-    #compact-settings-modal #compact-threshold-input {
-      width: 100%; box-sizing: border-box;
-      background: var(--input-bg); color: var(--fg);
-      border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
-      font-size: var(--fs-lg); outline: none;
+    /* Both knobs are SLIDERS. The landing one has 0 as its leftmost notch, which MEANS
+       AUTO, so the derived default and the explicit values share one control. */
+    #compact-settings-modal .cs-inline { display: flex; align-items: center; gap: 8px; }
+    #compact-settings-modal .cs-inline input[type="range"] {
+      flex: 1 1 auto; min-width: 0; width: 100%; accent-color: var(--accent);
     }
-    #compact-settings-modal #compact-threshold-input:focus { border-color: var(--accent); }
-    #compact-settings-modal #compact-threshold-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-    #compact-settings-modal #compact-threshold-input { -moz-appearance: textfield; }
+    #compact-settings-modal .cs-val {
+      flex: 0 0 auto; min-width: 4.5em; text-align: right;
+      font-size: var(--fs-sm); color: var(--fg); font-variant-numeric: tabular-nums;
+    }
+    #compact-settings-modal .cs-mini { flex: 0 0 auto; padding: 2px 8px; font-size: var(--fs-sm); }
+    /* Auto is ON = the landing point is the derived default (highlighted, never hidden). */
+    #compact-settings-modal .cs-mini.is-on { border-color: var(--accent); color: var(--accent); }
+    #compact-settings-modal .cs-scope {
+      margin-left: 6px; font-size: var(--fs-sm); font-weight: 400; color: #9a9a9a;
+    }
+    /* The plan, as the host computes it: multi-line, never a layout jump. */
+    #compact-settings-modal .cs-preview {
+      margin: 0; padding: 8px;
+      background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px;
+      color: #9a9a9a; font-size: var(--fs-sm); line-height: 1.45;
+      white-space: pre-line; min-height: 1em; overflow-wrap: anywhere;
+    }
     #compact-settings-modal .cs-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
     /* ── In-panel alert / confirm modal (same family as the name modal) ── */
@@ -2244,9 +2265,9 @@ ${renderViewConfig(deps)}
       <span class="met"><span id="met-ctx" title="Usable context: window − response reserve">${DEFAULT_CONTEXT_WINDOW}</span><span class="met-note" id="met-window" title="Window the model declares, BEFORE the reserve is taken out"></span></span>
       <span class="met pct" id="met-pct">(0%)</span>
       <span class="met" id="met-cache" title="Input tokens served from prompt cache"></span>
-      <button id="compact-btn" title="Compact the conversation context">Compact</button>
-      <span id="compact-threshold-label" title="Context fill % that triggers auto-compaction (set via the gear)">Auto: 80% ctx</span>
-      <button id="compact-settings-btn" class="gear-btn" title="Set the context fill % that auto-compacts"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
+      <button id="compact-btn" title="Summarize the older turns and move them out of the context window. The transcript keeps them, readable and searchable.">Compact</button>
+      <span id="compact-threshold-label" title="Auto-compaction: starts when the usable context is this full · how much of it is kept verbatim after the cut">Auto 80% ctx · keep 10%</span>
+      <button id="compact-settings-btn" class="gear-btn" title="Compaction policy for THIS session: when it starts and where it lands"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
     </div>
     <div id="ctx-bar-wrap"><div id="ctx-bar"></div></div>
   </div>
@@ -2265,12 +2286,25 @@ ${renderViewConfig(deps)}
   <div id="compact-settings-modal" class="hidden">
     <div class="cs-backdrop"></div>
     <div class="cs-card">
-      <h3>Compaction settings</h3>
-      <p class="cs-hint">Auto-compaction runs when the conversation reaches this percentage of the declared context window.</p>
+      <h3>Compaction <span class="cs-scope">for this session</span></h3>
+      <p class="cs-hint">Older turns leave the context window and a summary takes their place in the window. The transcript keeps them, readable and searchable.</p>
       <div class="cs-field">
-        <label for="compact-threshold-input">Compaction threshold (%)</label>
-        <input id="compact-threshold-input" type="number" inputmode="numeric" min="1" max="100" step="1" autocomplete="off" spellcheck="false" />
+        <label for="compact-threshold-input">Auto-compaction trigger: starts when the usable context is this full</label>
+        <div class="cs-inline">
+          <input id="compact-threshold-input" type="range" min="1" max="100" step="1" />
+          <span id="compact-threshold-value" class="cs-val"></span>
+        </div>
       </div>
+      <div class="cs-field">
+        <label for="compact-target-input">Land at: usable context left after a compaction</label>
+        <div class="cs-inline">
+          <input id="compact-target-input" type="range" min="0" step="1" />
+          <span id="compact-target-value" class="cs-val"></span>
+          <button id="compact-target-auto" class="secondary cs-mini" type="button" title="Back to the derived default: an eighth of the trigger">Default</button>
+        </div>
+        <p class="cs-hint">0 frees as much as the structure allows: only the last complete turn survives. The <b>Default</b> is an eighth of the trigger (10% with the trigger at 80), so two or three exchanges stay verbatim and follow it while it is untouched. The bounds are derived: the ceiling is the trigger minus one, and a value below what the summary plus the last turn already occupy just means <b>0</b>.</p>
+      </div>
+      <pre id="compact-preview" class="cs-preview"></pre>
       <div class="cs-actions">
         <button id="compact-settings-cancel" class="secondary">Cancel</button>
         <button id="compact-settings-save">Save</button>
@@ -2301,9 +2335,9 @@ ${renderViewConfig(deps)}
       <div id="sessions-manager-list"></div>
       <div id="sm-vacuum" class="sm-vacuum">
         <div class="sm-vacuum-head">
-          <span>Database compaction</span>
+          <span>Database compaction (VACUUM)</span>
           <span class="spacer"></span>
-          <button id="sm-vacuum-btn" class="secondary">Compact &amp; optimize indexes…</button>
+          <button id="sm-vacuum-btn" class="secondary">VACUUM &amp; optimize indexes…</button>
         </div>
         <div class="sm-vacuum-slider">
           <label for="sm-vacuum-threshold">Suggest above</label>
@@ -2325,13 +2359,13 @@ ${renderViewConfig(deps)}
   <div id="db-vacuum-modal" class="hidden">
     <div class="dv-backdrop"></div>
     <div class="dv-card">
-      <h3>Compact &amp; optimize database</h3>
+      <h3>VACUUM &amp; optimize database</h3>
       <p id="db-vacuum-msg" class="sm-hint"></p>
       <div id="db-vacuum-stats" class="db-vacuum-stats"></div>
       <div id="db-vacuum-info" class="sm-vacuum-info"></div>
       <div class="dv-footer">
         <button id="db-vacuum-close" class="secondary">Close</button>
-        <button id="db-vacuum-run">Compact &amp; optimize indexes</button>
+        <button id="db-vacuum-run">VACUUM &amp; optimize indexes</button>
       </div>
     </div>
   </div>

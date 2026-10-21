@@ -108,6 +108,10 @@ interface ConfigState {
   /** Part of the window the INPUT may use (`window − reserve`): the bar's base. */
   contextUsable?: number;
   compactionThresholdPercent?: number;
+  /** Landing fill the compaction aims at (explicit session value, else AUTO). */
+  compactionTargetPercent?: number;
+  /** True when the landing fill is AUTO (a quarter of the trigger). */
+  compactionTargetAuto?: boolean;
   outputTokens?: number;
   /** Slider MAXIMUM for the output tokens (the model's detected value). */
   maxOutputTokens?: number;
@@ -252,6 +256,11 @@ const compactSettingsModal = document.getElementById("compact-settings-modal") a
 const compactThresholdInput = document.getElementById("compact-threshold-input") as HTMLInputElement;
 const compactSettingsCancel = document.getElementById("compact-settings-cancel") as HTMLButtonElement;
 const compactSettingsSave = document.getElementById("compact-settings-save") as HTMLButtonElement;
+const compactTargetInput = document.getElementById("compact-target-input") as HTMLInputElement;
+const compactTargetAuto = document.getElementById("compact-target-auto") as HTMLButtonElement;
+const compactPreview = document.getElementById("compact-preview") as HTMLPreElement;
+const compactThresholdValue = document.getElementById("compact-threshold-value") as HTMLSpanElement;
+const compactTargetValue = document.getElementById("compact-target-value") as HTMLSpanElement;
 
 const init = JSON.parse((document.getElementById("harny-view-init") as HTMLScriptElement).textContent ?? "{}") as InitState;
 
@@ -261,6 +270,13 @@ let currentSessions: SessionInfo[] = init.sessions || [];
 let workingIds = new Set<string>(init.workingIds || []);
 /** Current auto-compaction threshold % of the context window (updated from config pushes). */
 let compactionThresholdPct = 80;
+/** Landing % shown in the settings modal: the session's own, or the derived AUTO. */
+let compactionTargetPct = autoTargetFor(80);
+/** True while the landing % is AUTO (no session override). */
+let compactionTargetIsAuto = true;
+/** The DERIVED floor for an explicit landing % (from the host preview): below it there is
+ * nothing left to free, so the smallest explicit value is the floor. */
+let compactionTargetFloorPct = 1;
 
 // ── Streaming session state (chronological, per active chat) ──
 let currentResultEl: HTMLDivElement | null = null;
@@ -2539,13 +2555,13 @@ let dbVacuumModalId = -1;
 function openDbVacuumModal(msg: { modalId?: number; stats?: VacuumStats; threshold?: number; minFreeMB?: number }): void {
   dbVacuumModalId = typeof msg.modalId === "number" ? msg.modalId : -1;
   dbVacuumMsg.textContent =
-    "Compacting rewrites the database to reclaim the free pages left by deleted sessions and cut conversations, and OPTIMIZES the indexes (query-planner stats + full-text segments). It runs when the chat is idle.";
+    "The VACUUM rewrites the database to reclaim the free pages left by deleted sessions and cut conversations, and OPTIMIZES the indexes (query-planner stats + full-text segments). It runs when the chat is idle.";
   dbVacuumStatsEl.innerHTML = vacuumStatsHtml(msg.stats);
   dbVacuumInfo.innerHTML =
-    `Suggests compaction above <b>${msg.threshold ?? 20}%</b> when at least <b>${msg.minFreeMB ?? 128} MB</b> are reclaimable ` +
+    `Suggests a VACUUM above <b>${msg.threshold ?? 20}%</b> when at least <b>${msg.minFreeMB ?? 128} MB</b> are reclaimable ` +
     "(change them in All sessions).";
   dbVacuumRun.disabled = false;
-  dbVacuumRun.textContent = "Compact & optimize indexes";
+  dbVacuumRun.textContent = "VACUUM & optimize indexes";
   dbVacuumModal.classList.remove("hidden");
   dbVacuumRun.focus();
 }
@@ -4436,24 +4452,150 @@ function renderMetrics(c: ConfigState): void {
 
 compactBtn.addEventListener("click", () => vscode.postMessage({ type: "compact" }));
 
-/** Keep the "Auto: X% ctx" label in sync with the saved %. */
+/** Keep the label between Compact and the gear in sync. "Auto" is the TRIGGER (the automatic
+ * compaction), never the landing point: that one is just how much survives the cut. */
 function renderCompactionThreshold(): void {
-  compactThresholdLabel.textContent = "Auto: " + compactionThresholdPct + "% ctx";
+  compactThresholdLabel.textContent =
+    "Auto " + compactionThresholdPct + "% ctx · keep " + compactionTargetPct + "%";
 }
 
-// ── Auto-compaction threshold % (gear next to Compact) ──
+// ── Compaction policy (gear next to Compact): trigger % + landing point ──
 /** Clamp/round a typed threshold % into 1–100 (invalid -> default 80). */
 function clampCompactionThreshold(raw: string): number {
   const v = Number.parseInt(raw, 10);
   if (!Number.isFinite(v)) return 80;
   return Math.min(100, Math.max(1, Math.round(v)));
 }
+/** AUTO: an EIGHTH of the trigger — the same rule the host applies (a share of the window,
+ * not a token count). With the default 80% trigger that is 10%. */
+function autoTargetFor(threshold: number): number {
+  return Math.max(1, Math.round(Math.max(1, threshold) / 8));
+}
+/** AUTO clamped under the trigger. The derived FLOOR does not apply to it: Auto is a default,
+ * not a choice, and the planner keeps at least one complete turn whatever the number says. */
+function clampAutoTarget(threshold: number): number {
+  return Math.min(autoTargetFor(threshold), Math.max(0, threshold - 1));
+}
+/** Put a slider position into the positions the session can actually use: `0`, or
+ * `floor … trigger−1`. 0 is a REAL choice — "only the summary remains" — and 1 … floor−1
+ * free nothing more than it, so they collapse to 0. */
+function clampCompactionTarget(raw: number, threshold: number, floor: number): number {
+  const v = Math.round(raw);
+  if (!Number.isFinite(v)) return clampAutoTarget(threshold);
+  const max = Math.max(0, threshold - 1);
+  if (v <= 0 || v < floor || floor > max) return 0;
+  return Math.min(max, v);
+}
+
+/** Ask the host for the plan its OWN functions produce (the preview must not guess). */
+const sendCompactionPreview = rafThrottle(() => {
+  const threshold = clampCompactionThreshold(compactThresholdInput.value);
+  vscode.postMessage({
+    type: "previewCompaction",
+    thresholdPercent: threshold,
+    targetPercent: clampCompactionTarget(
+      Number(compactTargetInput.value),
+      threshold,
+      compactionTargetFloorPct,
+    ),
+  });
+});
+
+/** Render the plan the host computed: counts and tokens, never a promise it cannot keep. */
+function renderCompactionPreview(p: {
+  thresholdPercent?: number;
+  targetPercent?: number;
+  minTargetPercent?: number;
+  autoTargetPercent?: number;
+  usableTokens?: number;
+  targetTokens?: number;
+  fillTokens?: number;
+  fillPercent?: number;
+  aboveThreshold?: boolean;
+  summarizeCount?: number;
+  summarizeTokens?: number;
+  keepCount?: number;
+  keepTokens?: number;
+  summaryBudgetTokens?: number;
+  deferredCount?: number;
+}): void {
+  // The DERIVED floor travels with every answer: it is what the form must mark as the
+  // smallest explicit value, and it moves with the session's own work.
+  if (typeof p?.minTargetPercent === "number") {
+    compactionTargetFloorPct = Math.max(1, p.minTargetPercent);
+    syncTargetBounds();
+  }
+  const fmt = (n?: number): string => {
+    const v = typeof n === "number" ? n : 0;
+    return v >= 1000 ? Math.round(v / 1000) + "k" : String(v);
+  };
+  if (!p?.aboveThreshold) {
+    compactPreview.textContent =
+      "Nothing to compact yet: " +
+      (p?.fillPercent ?? 0) +
+      "% of " +
+      fmt(p?.usableTokens) +
+      " usable (trigger " +
+      (p?.thresholdPercent ?? 0) +
+      "%).";
+    return;
+  }
+  const lines = [
+    "Next compaction · now " + (p.fillPercent ?? 0) + "% (" + fmt(p.fillTokens) + " of " + fmt(p.usableTokens) + ")",
+    (p.summarizeCount ?? 0) +
+      " message(s) → summary (reads " +
+      fmt(p.summarizeTokens) +
+      ", writes ≤" +
+      fmt(p.summaryBudgetTokens) +
+      ")",
+    (p.keepCount ?? 0) + " kept verbatim (~" + fmt(p.keepTokens) + ")",
+    "Lands at ~" + fmt(p.targetTokens) + " (" + (p.targetPercent ?? 0) + "% of the usable context)",
+  ];
+  if ((p.deferredCount ?? 0) > 0) {
+    lines.push(
+      (p.deferredCount ?? 0) +
+        " older message(s) cannot be read in one request: they stay in the transcript, unsummarized",
+    );
+  }
+  lines.push(
+    "Auto = " +
+      (p.autoTargetPercent ?? autoTargetFor(p.thresholdPercent ?? compactionThresholdPct)) +
+      "% · smallest explicit = " +
+      (p.minTargetPercent ?? compactionTargetFloorPct) +
+      "%",
+  );
+  compactPreview.textContent = lines.join("\n");
+}
+
+function syncTargetBounds(): void {
+  const threshold = clampCompactionThreshold(compactThresholdInput.value);
+  // 0 is a real position; the ceiling is the trigger minus one (derived from the other knob).
+  compactTargetInput.min = "0";
+  compactTargetInput.max = String(Math.max(0, threshold - 1));
+  // The knob shows the EFFECTIVE landing point: Auto is a MODE (the button), not a position.
+  compactTargetInput.value = String(
+    compactionTargetIsAuto ? clampAutoTarget(threshold) : compactionTargetPct,
+  );
+}
+
+/** Keep both value labels in sync (a slider carries no text of its own). */
+function renderCompactionValues(): void {
+  compactThresholdValue.textContent = compactionThresholdPct + "%";
+  compactTargetValue.textContent = compactionTargetIsAuto
+    ? "" + clampAutoTarget(compactionThresholdPct) + "% (default)"
+    : compactionTargetPct + "%" + (compactionTargetPct === 0 ? " (min)" : "");
+}
 
 function openCompactionSettings(): void {
   compactThresholdInput.value = String(compactionThresholdPct);
+  syncTargetBounds();
+  renderCompactionValues();
+  compactTargetAuto.classList.toggle("is-on", compactionTargetIsAuto);
+  compactPreview.textContent = "";
   compactSettingsModal.classList.remove("hidden");
+  // The preview is the HOST's plan — and it carries the derived floor with it.
+  sendCompactionPreview();
   compactThresholdInput.focus();
-  compactThresholdInput.select();
 }
 
 function closeCompactionSettings(): void {
@@ -4463,17 +4605,51 @@ function closeCompactionSettings(): void {
 compactSettingsBtn.addEventListener("click", openCompactionSettings);
 compactSettingsCancel.addEventListener("click", closeCompactionSettings);
 compactSettingsModal.querySelector(".cs-backdrop")?.addEventListener("click", closeCompactionSettings);
-compactThresholdInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    compactSettingsSave.click();
+// Moving the trigger moves the AUTO value with it AND the ceiling of an explicit one.
+compactThresholdInput.addEventListener("input", () => {
+  compactionThresholdPct = clampCompactionThreshold(compactThresholdInput.value);
+  if (!compactionTargetIsAuto) {
+    compactionTargetPct = Math.min(compactionTargetPct, Math.max(1, compactionThresholdPct - 1));
   }
+  syncTargetBounds();
+  renderCompactionValues();
+  sendCompactionPreview();
+});
+// The landing slider: every position is a decision, and 0 IS a position (the minimum).
+compactTargetInput.addEventListener("input", () => {
+  const threshold = clampCompactionThreshold(compactThresholdInput.value);
+  compactionTargetIsAuto = false;
+  compactionTargetPct = clampCompactionTarget(
+    Number(compactTargetInput.value),
+    threshold,
+    compactionTargetFloorPct,
+  );
+  compactTargetAuto.classList.remove("is-on");
+  syncTargetBounds();
+  renderCompactionValues();
+  sendCompactionPreview();
+});
+compactTargetAuto.addEventListener("click", () => {
+  compactionTargetIsAuto = true;
+  compactionTargetPct = clampAutoTarget(clampCompactionThreshold(compactThresholdInput.value));
+  compactTargetAuto.classList.add("is-on");
+  syncTargetBounds();
+  renderCompactionValues();
+  sendCompactionPreview();
 });
 compactSettingsSave.addEventListener("click", () => {
-  const value = clampCompactionThreshold(compactThresholdInput.value);
-  compactionThresholdPct = value;
+  const threshold = clampCompactionThreshold(compactThresholdInput.value);
+  // AUTO FOLLOWS the trigger: when it is in force the landing point is derived from the value
+  // being saved, not from whatever the slider happened to show before.
+  const target = compactionTargetIsAuto
+    ? clampAutoTarget(threshold)
+    : clampCompactionTarget(Number(compactTargetInput.value), threshold, compactionTargetFloorPct);
+  compactionThresholdPct = threshold;
+  compactionTargetPct = target;
   renderCompactionThreshold();
-  vscode.postMessage({ type: "setCompactionThreshold", value });
+  vscode.postMessage({ type: "setCompactionThreshold", value: threshold });
+  // A MISSING value is what CLEARS the override (Auto); 0 is an explicit "only the summary".
+  vscode.postMessage({ type: "setCompactionTarget", value: compactionTargetIsAuto ? undefined : target });
   closeCompactionSettings();
 });
 const sendContextThrottled = rafThrottle(() => sendContextWindow(Number(ctxRange.value)));
@@ -4825,9 +5001,9 @@ window.addEventListener("message", (e) => {
     case "dbVacuumSkipped":
       // The host refused to run the synchronous VACUUM over a live session.
       dbVacuumMsg.textContent =
-        "Still working — compaction was not run. Stop the run (or close other sessions) and try again.";
+        "Still working: the VACUUM was not run. Stop the run (or close other sessions) and try again.";
       dbVacuumRun.disabled = false;
-      dbVacuumRun.textContent = "Compact & optimize indexes";
+      dbVacuumRun.textContent = "VACUUM & optimize indexes";
       break;
     case "dbVacuumSettings":
       smVacuumThreshold.value = String(msg.threshold);
@@ -4838,14 +5014,14 @@ window.addEventListener("message", (e) => {
     case "dbVacuumResult": {
       const r = msg.result as { vacuumed: boolean; before: VacuumStats; after: VacuumStats; durationMs: number } | undefined;
       if (r) {
-        dbVacuumStatsEl.innerHTML = vacuumStatsHtml(r.before) + "<div>↓ after compaction</div>" + vacuumStatsHtml(r.after);
+        dbVacuumStatsEl.innerHTML = vacuumStatsHtml(r.before) + "<div>↓ after the VACUUM</div>" + vacuumStatsHtml(r.after);
         dbVacuumMsg.textContent = r.vacuumed
-          ? `Compacted & optimized in ${(r.durationMs / 1000).toFixed(1)}s.`
-          : "Nothing to reclaim — the database was already compact and the indexes optimal.";
+          ? `Vacuumed & optimized in ${(r.durationMs / 1000).toFixed(1)}s.`
+          : "Nothing to reclaim: the database was already compact and the indexes optimal.";
         smVacuumStats.innerHTML = vacuumStatsHtml(r.after);
       }
       dbVacuumRun.disabled = false;
-      dbVacuumRun.textContent = "Compact & optimize again";
+      dbVacuumRun.textContent = "VACUUM & optimize again";
       break;
     }
     case "sessionsManager":
@@ -4853,6 +5029,11 @@ window.addEventListener("message", (e) => {
       // click); silent refreshes after open/close/delete never pop the form.
       renderSessionsManagerData({ sessions: msg.sessions || [], currentFolder: msg.currentFolder, vacuum: msg.vacuum });
       if (msg.show) sessionsModal.classList.remove("hidden");
+      break;
+    case "compactionPreview":
+      // The host's OWN plan for the values currently in the form (same functions the
+      // compaction runs): the strip is a fact, not an estimate made up here.
+      renderCompactionPreview(msg as Parameters<typeof renderCompactionPreview>[0]);
       break;
     case "sessionsSearchResult": {
       // Full-text matches from the host (SQLite FTS5). Ignore a STALE reply: the
@@ -4948,7 +5129,11 @@ window.addEventListener("message", (e) => {
       presenceControl.render(msg.config && msg.config.presencePenalty);
       freqControl.render(msg.config && msg.config.frequencyPenalty);
       compactionThresholdPct = (msg.config && msg.config.compactionThresholdPercent) ?? 80;
+      compactionTargetIsAuto = (msg.config && msg.config.compactionTargetAuto) !== false;
+      compactionTargetPct =
+        (msg.config && msg.config.compactionTargetPercent) ?? autoTargetFor(compactionThresholdPct);
       renderCompactionThreshold();
+      renderCompactionValues();
       renderMetrics(msg.config || {});
       break;
     case "providersEditor":
@@ -5040,7 +5225,10 @@ function renderViewState(state: {
   presenceControl.render(state.config && state.config.presencePenalty);
   freqControl.render(state.config && state.config.frequencyPenalty);
   compactionThresholdPct = (state.config && state.config.compactionThresholdPercent) ?? 80;
+  compactionTargetIsAuto = (state.config && state.config.compactionTargetAuto) !== false;
+  compactionTargetPct = (state.config && state.config.compactionTargetPercent) ?? autoTargetFor(compactionThresholdPct);
   renderCompactionThreshold();
+  renderCompactionValues();
   renderMetrics(state.config || {});
   messagesEl.innerHTML = "";
   resetStreamState();

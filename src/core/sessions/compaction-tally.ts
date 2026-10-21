@@ -7,7 +7,7 @@
  * cannot be read off a single line: **is the trim a rare rescue, or is it the
  * normal path?** If it is the normal path the compaction budget is wrong, and on a
  * window small enough that the summary budget cannot fit at all it is ALWAYS the
- * path (see SUMMARY_MAX_TOKENS) — a fact only a ratio shows.
+ * path (see summaryBudgetTokens) — a fact only a ratio shows.
  *
  * Each event records and returns the line to LOG, so the two cannot drift: there
  * is no way to log an event without counting it. No persistence, no UI, no

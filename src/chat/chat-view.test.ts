@@ -3274,6 +3274,215 @@ describe("ChatViewProvider compaction", () => {
     );
   });
 
+  it("setCompactionTarget stores the landing point (bounded by the trigger) and can be cleared", async () => {
+    const options = { compactor: new Compactor(compactorFactory(), () => CONFIG), compaction: DEFAULT_COMPACTION };
+    const { store, registry, provider } = buildHarness(options);
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+
+    await handler({ type: "setCompactionTarget", value: 25 });
+    expect(rt.compactionTargetPercent).toBe(25);
+    expect((store.saveSettings as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+      "s1",
+      expect.objectContaining({ compactionTargetPercent: 25 }),
+    );
+
+    // The upper bound is the TRIGGER minus one (80 by default), not a fixed cap.
+    await handler({ type: "setCompactionTarget", value: 95 });
+    expect(rt.compactionTargetPercent).toBe(79);
+
+    // Lowering the trigger NARROWS the range: the explicit value follows it down.
+    await handler({ type: "setCompactionThreshold", value: 40 });
+    expect(rt.compactionTargetPercent).toBe(39);
+
+    // MISSING clears the override: the landing point is the DERIVED default again…
+    await handler({ type: "setCompactionTarget" });
+    expect(rt.compactionTargetPercent).toBeUndefined();
+    expect((store.saveSettings as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith("s1", {
+      compactionTargetPercent: undefined,
+    });
+
+    // …while 0 is a REAL choice — "only the summary remains" — and is stored as such.
+    await handler({ type: "setCompactionTarget", value: 30 });
+    expect(rt.compactionTargetPercent).toBe(30);
+    await handler({ type: "setCompactionTarget", value: 0 });
+    expect(rt.compactionTargetPercent).toBe(0);
+    expect((store.saveSettings as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith("s1", {
+      compactionTargetPercent: 0,
+    });
+  });
+
+  it("the FLOOR comes from the session's own last turn, and anything below it collapses to 0", async () => {
+    const options = { compactor: new Compactor(compactorFactory(), () => CONFIG), compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 100_000;
+    rt.outputTokens = 4_096;
+    rt.history.replace([
+      { role: "user", content: "old", timestamp: 1 },
+      { role: "assistant", content: "old answer", timestamp: 2 },
+      // One BIG last turn: ~50k tokens on a ~96k usable window, so no explicit landing
+      // point below it can free anything.
+      { role: "user", content: "do the thing", timestamp: 3 },
+      { role: "assistant", content: "x".repeat(200_000), timestamp: 4 },
+    ]);
+    const lastPreview = (): any =>
+      view.webview.postMessage.mock.calls
+        .map((c) => c[0] as any)
+        .filter((m) => m.type === "compactionPreview")
+        .pop();
+
+    await handler({ type: "previewCompaction", thresholdPercent: 80, targetPercent: 10 });
+    const p = lastPreview();
+    // The floor is DERIVED from this history, not the 1% unit.
+    expect(p.minTargetPercent).toBeGreaterThan(40);
+    // …and asking for less than it means "as low as the structure allows": 0.
+    expect(p.targetPercent).toBe(0);
+
+    // The SAME rule applies when the value is saved, not just previewed.
+    await handler({ type: "setCompactionTarget", value: 10 });
+    expect(rt.compactionTargetPercent).toBe(0);
+  });
+
+  it("a sub-agent compacts with the SESSION's landing point", async () => {
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\nsub");
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 100_000;
+    rt.outputTokens = 4_096;
+    const turns = (n: number) =>
+      Array.from({ length: n }, (_, i) => [
+        { role: "user" as const, content: `task ${i}`, timestamp: i * 2 },
+        { role: "assistant" as const, content: "x".repeat(4000), timestamp: i * 2 + 1 },
+      ]).flat();
+    const subHistory = (n: number) => ({
+      messages: turns(n) as ChatMessage[],
+      conversation(): ChatMessage[] {
+        return this.messages;
+      },
+      replace(next: ChatMessage[]): void {
+        this.messages = next;
+      },
+    });
+
+    // 5% of the usable window keeps a couple of turns…
+    const lean = subHistory(60);
+    rt.compactionTargetPercent = 5;
+    expect(await provider.compactSubAgentHistory(lean as never, "s1")).toBe(true);
+
+    // …40% keeps most of them: the policy is inherited, not re-invented per sub-agent.
+    const deep = subHistory(60);
+    rt.compactionTargetPercent = 40;
+    expect(await provider.compactSubAgentHistory(deep as never, "s1")).toBe(true);
+
+    expect(lean.messages.length).toBeLessThan(deep.messages.length);
+    // A summary pair heads the rewritten history (nothing is persisted for a sub-agent).
+    expect(lean.messages[0].synthetic).toBe(true);
+  });
+
+  it("buildConfig posts the EFFECTIVE landing point and whether AUTO is in force", async () => {
+    const options = { compactor: new Compactor(compactorFactory(), () => CONFIG), compaction: DEFAULT_COMPACTION };
+    const { provider } = buildHarness(options);
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const lastConfig = (): any =>
+      view.webview.postMessage.mock.calls
+        .map((c) => c[0] as any)
+        .filter((m) => m.type === "config")
+        .pop()?.config;
+
+    // No override: AUTO lands at an EIGHTH of the trigger (10% with the default 80).
+    await handler({ type: "getConfig" });
+    expect(lastConfig().compactionTargetPercent).toBe(10);
+    expect(lastConfig().compactionTargetAuto).toBe(true);
+
+    // …and it MOVES with the trigger, so the two knobs cannot go stale.
+    await handler({ type: "setCompactionThreshold", value: 60 });
+    await handler({ type: "getConfig" });
+    expect(lastConfig().compactionTargetPercent).toBe(8);
+    expect(lastConfig().compactionTargetAuto).toBe(true);
+
+    // An explicit value is reported as such (the modal shows AUTO vs a decision).
+    await handler({ type: "setCompactionTarget", value: 25 });
+    await handler({ type: "getConfig" });
+    expect(lastConfig().compactionTargetPercent).toBe(25);
+    expect(lastConfig().compactionTargetAuto).toBe(false);
+  });
+
+  it("previewCompaction posts the plan the compaction will run (no model call)", async () => {
+    const options = { compactor: new Compactor(compactorFactory(), () => CONFIG), compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 100_000;
+    const turns = (n: number) =>
+      Array.from({ length: n }, (_, i) => [
+        { role: "user" as const, content: `prompt ${i}`, timestamp: i * 2 },
+        { role: "assistant" as const, content: "x".repeat(4000), timestamp: i * 2 + 1 },
+      ]).flat();
+    rt.history.replace(turns(60));
+    const lastPreview = (): any =>
+      view.webview.postMessage.mock.calls
+        .map((c) => c[0] as any)
+        .filter((m) => m.type === "compactionPreview")
+        .pop();
+
+    await handler({ type: "previewCompaction", thresholdPercent: 50, targetPercent: 20 });
+    const p = lastPreview();
+    expect(p.thresholdPercent).toBe(50);
+    expect(p.targetPercent).toBe(20);
+    // The target is a PERCENTAGE of the usable context: the modal can show both numbers.
+    expect(p.targetTokens).toBe(Math.round(p.usableTokens * 0.2));
+    expect(p.aboveThreshold).toBe(true);
+    expect(p.summarizeCount).toBeGreaterThan(0);
+    // The tail is what the summary does not take, so it never exceeds the landing point.
+    expect(p.keepTokens).toBeLessThanOrEqual(p.targetTokens);
+    expect(p.summaryBudgetTokens).toBeGreaterThan(0);
+    // AUTO (an eighth of the trigger) and the derived FLOOR travel with the answer.
+    expect(p.autoTargetPercent).toBe(Math.max(1, Math.round(50 / 8)));
+    expect(typeof p.minTargetPercent).toBe("number");
+    expect(p.minTargetPercent).toBeGreaterThanOrEqual(0);
+
+    // Nothing to compact below the trigger: the modal says so instead of showing a plan.
+    await handler({ type: "previewCompaction", thresholdPercent: 100, targetPercent: 20 });
+    expect(lastPreview().aboveThreshold).toBe(false);
+  });
+
+  it("the landing point decides HOW MUCH survives (the session's own policy)", async () => {
+    const options = { compactor: new Compactor(compactorFactory(), () => CONFIG), compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 100_000;
+    const turns = (n: number) =>
+      Array.from({ length: n }, (_, i) => [
+        { role: "user" as const, content: `prompt ${i}`, timestamp: i * 2 },
+        { role: "assistant" as const, content: "x".repeat(4000), timestamp: i * 2 + 1 },
+      ]).flat();
+    rt.history.replace(turns(60));
+    const lastPreview = (): any =>
+      view.webview.postMessage.mock.calls
+        .map((c) => c[0] as any)
+        .filter((m) => m.type === "compactionPreview")
+        .pop();
+
+    await handler({ type: "previewCompaction", thresholdPercent: 90, targetPercent: 5 });
+    const lean = lastPreview();
+    await handler({ type: "previewCompaction", thresholdPercent: 90, targetPercent: 45 });
+    const deep = lastPreview();
+    // A lower landing point summarizes MORE and keeps LESS verbatim — that is the setting.
+    expect(lean.summarizeCount).toBeGreaterThan(deep.summarizeCount);
+    expect(lean.keepTokens).toBeLessThan(deep.keepTokens);
+  });
+
   it("auto-compaction follows the session's custom threshold %", async () => {
     const options = {
       compactor: new Compactor(compactorFactory(), () => CONFIG),

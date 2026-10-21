@@ -8,6 +8,12 @@ export interface CompactionSettings {
   enabled: boolean;
   /** Context fill % of the declared context window that triggers auto-compaction. */
   thresholdPercent: number;
+  /**
+   * Where the rebuilt window should LAND, as a % of the USABLE context (window −
+   * output reserve). Absent = AUTO (see {@link autoTargetPercent}), so the default
+   * policy is expressed as a RULE, not as a number a later edit has to keep in sync.
+   */
+  targetPercent?: number;
 }
 
 export const DEFAULT_COMPACTION: CompactionSettings = {
@@ -19,26 +25,18 @@ export const MIN_COMPACTION_THRESHOLD_PERCENT = 1;
 export const MAX_COMPACTION_THRESHOLD_PERCENT = 100;
 
 /**
- * Output budget for the one-shot SUMMARY request. Deliberately INDEPENDENT of
- * the chat turn's `max_tokens`: the summary is a bounded, single-purpose call,
- * while a turn can be configured for hundreds of thousands of output tokens.
- * Since the provider counts `input + max_tokens` against the window, inheriting
- * the turn budget means the summary request itself gets rejected as too long —
- * the compaction fails silently (`auto-compaction failed; continuing`) and the
- * session keeps its full context. Decoupling it costs nothing and removes a
- * whole failure mode.
+ * The summary's OUTPUT budget is DERIVED, not configured.
+ *
+ * `summaryBudgetTokens` sizes it as a share ({@link SUMMARY_SPAN_SHARE}) of the span it
+ * replaces, capped by the output the session DECLARES. There is deliberately no standing
+ * constant here any more: the 8192 that used to live at this spot was inherited by every
+ * summary request even when the session had declared something else, and the only number
+ * that ever mattered was the one the user declared.
+ *
+ * The CAP handed to the provider travels with each call (`maxReplyTokens`, REQUIRED in
+ * {@link Compactor.summarize}): that is also what keeps the chat turn's `max_tokens` out of
+ * a summary, which must not be sized by a budget meant for hundreds of thousands of tokens.
  */
-export const SUMMARY_MAX_TOKENS = 8_192;
-
-/**
- * The config a SUMMARY request runs with: the caller's config with the bounded
- * summary output budget substituted. Lives here (not in the composition root)
- * so the rule is testable and cannot be "simplified" back into inheriting the
- * chat turn's `max_tokens` — which is what made big-session compactions fail.
- */
-export function summarizerConfig(cfg: HarnyConfig): HarnyConfig {
-  return { ...cfg, maxTokens: SUMMARY_MAX_TOKENS };
-}
 
 /** Clamp/round any value into the valid threshold range (1%–100%). */
 export function clampCompactionThresholdPercent(v: number): number {
@@ -169,32 +167,136 @@ export function snapCutToGroup(messages: ChatMessage[], index: number): number {
 }
 
 /**
- * How much RECENT work is kept verbatim after a compaction, in tokens.
+ * Where a compaction LANDS, expressed as a share of the USABLE window.
  *
- * An ABSOLUTE budget, not a fraction: a fraction of the history keeps ~600k on a
- * 1M window and frees almost nothing (the bug this replaces), while the recent
- * work that actually matters — the task at hand, its files, its last results — is
- * bounded whatever the window. Same choice as the reference agents (pi keeps 20k
- * recent tokens, OpenCode ~15k) and the reason their compactions buy room for a
- * long stretch of turns.
+ * This replaces the old absolute recent budget (20k tokens, floor 8k, or 5% of the
+ * window — three constants that contradicted each other: on a 32k model the 8k floor was
+ * a quarter of the window, on a 1M one it was invisible). A fixed number cannot be right
+ * for two models whose windows differ by 30×, and a share of the window alone cannot know
+ * whether it FREES enough to get back under the trigger.
+ *
+ * A landing point can: "leave the rebuilt window at X% of the usable context". Everything
+ * else follows from it — the verbatim tail is whatever the summary does not take (see
+ * {@link planForTarget}) — so there is nothing left to tune per model size.
  */
-export const KEEP_RECENT_TOKENS = 20_000;
 
-/** Never keep fewer than this, or the model loses the task it was doing. */
-export const MIN_KEEP_RECENT_TOKENS = 8_000;
+/** One percent: the GRANULARITY of the knob, not a policy cap (0 means AUTO). */
+export const PERCENT_UNIT = 1;
+
+/** How many times the landing point fits into the trigger: AUTO lands at an EIGHTH of it,
+ *  i.e. 10% with the default 80%. A ratio, so it scales — it is not a percentage standing
+ *  on its own. */
+export const AUTO_TARGET_SHARE = 8;
 
 /**
- * The verbatim tail a compaction should keep for a given usable budget: a small
- * share of the window, bounded by {@link KEEP_RECENT_TOKENS}. It scales DOWN on
- * small models (where 20k would be most of the window), never up on big ones.
+ * AUTO = land at `AUTO_TARGET_SHARE` of the trigger: the window keeps the last EXCHANGES
+ * verbatim and frees the rest.
+ *
+ * Derived on purpose. With the default 80% trigger it lands at 10% (and a 60% trigger at
+ * 8%): the band where a session still sees what it was just doing — two or three exchanges,
+ * not one — without dragging the work it already summarized. Moving the trigger moves it, so
+ * the two knobs cannot go stale. It is a SHARE of the window, never a token count: 10% of
+ * 200k and 10% of 1M both mean "the recent part", which a fixed 20k could not.
+ *
+ * Why not lower: the summary's own budget (a tenth of the span, capped by the declared
+ * output) comes OUT of the landing point, so a target under ~5% leaves the tail with nothing
+ * and collapses to the structural minimum — a few exchanges are what makes the summary
+ * sharper as well (see `keptPreview`).
  */
-export function keepRecentTokensFor(usableTokens: number): number {
+export function autoTargetPercent(thresholdPercent: number): number {
+  const t = Number.isFinite(thresholdPercent) ? Math.round(thresholdPercent) : DEFAULT_COMPACTION.thresholdPercent;
+  return Math.max(PERCENT_UNIT, Math.round(t / AUTO_TARGET_SHARE));
+}
+
+/**
+ * The smallest EXPLICIT landing point that has room of its own: the fill the checkpoint and
+ * the last complete turn already occupy. Below it an explicit number frees nothing more, so
+ * the floor is DERIVED from the session's own numbers instead of being a constant.
+ *
+ * It is NOT the bottom of the range: a landing point of 0 is always available and means "as
+ * low as the structure allows" (only the last complete turn survives).
+ */
+export function minExplicitTargetPercent(
+  usableTokens: number,
+  summaryBudgetTokens: number,
+  lastTurnTokens: number,
+): number {
   const usable = Math.max(0, usableTokens);
-  // Both bounds scale: an 8k floor is right for a 100k model and is 100% of an 8k
-  // one (where keeping "the same" would keep everything and compact nothing).
-  const floor = Math.min(MIN_KEEP_RECENT_TOKENS, Math.round(usable * 0.25));
-  const share = Math.round(usable * 0.05);
-  return Math.min(KEEP_RECENT_TOKENS, Math.max(floor, share));
+  if (usable <= 0) return PERCENT_UNIT;
+  const occupied = Math.max(0, summaryBudgetTokens) + Math.max(0, lastTurnTokens);
+  return Math.max(PERCENT_UNIT, Math.ceil((100 * occupied) / usable));
+}
+
+/**
+ * Clamp a landing % into the positions this session can actually use: `0`, or
+ * `floor … trigger−1`.
+ *
+ * The UPPER bound is derived from the other knob (landing at or above the trigger would free
+ * nothing and the next turn would cross it again, paying for a summary each time). The floor
+ * is derived from the session, and a value between 1 and it frees nothing more than 0 does —
+ * so those collapse to 0 instead of pretending to be a distinct choice.
+ *
+ * Invalid input resolves to the DERIVED default ({@link autoTargetPercent}), not to 0: a
+ * missing value means "nobody chose", while 0 is a deliberate "free everything".
+ */
+export function clampTargetPercent(
+  value: number,
+  thresholdPercent: number,
+  floorPercent = PERCENT_UNIT,
+): number {
+  const t = Number.isFinite(thresholdPercent) ? Math.round(thresholdPercent) : DEFAULT_COMPACTION.thresholdPercent;
+  const v = Number.isFinite(value) ? Math.round(value) : autoTargetPercent(t);
+  const floor = Math.max(PERCENT_UNIT, Math.round(floorPercent));
+  const max = Math.max(0, t - PERCENT_UNIT);
+  // 0 is a REAL position — "as low as the structure allows" — and so is everything that
+  // cannot free more than it (1 … floor−1, or any value when the floor has no room left).
+  if (v <= 0 || v < floor || floor > max) return 0;
+  return Math.min(max, v);
+}
+
+/** Coerce a JSON message value into a landing %: MISSING means AUTO, `0` means minimum. */
+export function toTargetPercent(value: unknown, thresholdPercent: number, floorPercent = PERCENT_UNIT): number {
+  const t = Number.isFinite(thresholdPercent) ? Math.round(thresholdPercent) : DEFAULT_COMPACTION.thresholdPercent;
+  if (value === undefined || value === null) return autoTargetPercent(t);
+  return clampTargetPercent(typeof value === "number" ? value : Number(value), thresholdPercent, floorPercent);
+}
+
+/** Tokens the rebuilt window may occupy: the checkpoint pair + the verbatim tail. */
+export function targetTokensFor(usableTokens: number, targetPercent: number): number {
+  const usable = Math.max(0, usableTokens);
+  const pct = Number.isFinite(targetPercent) ? targetPercent : 0;
+  return Math.max(0, Math.round((usable * pct) / 100));
+}
+
+/** A plan plus the two budgets behind it, for the caller AND for the UI preview. */
+export interface TargetPlan {
+  plan: CompactionPlan;
+  /** Tokens the verbatim tail may take. */
+  keepBudgetTokens: number;
+  /** Tokens the summary may take (a share of the span it replaces). */
+  summaryBudgetTokens: number;
+}
+
+/**
+ * Plan a compaction that LANDS at `targetTokens`.
+ *
+ * TWO passes, because the summary occupies the very budget it frees: planning with the
+ * whole target would land the rebuilt window ABOVE it (summary + tail), and the next turn
+ * would compact again. So the first pass measures the span, the summary budget follows from
+ * its size, and the second pass gives the tail what is left.
+ * Deterministic and model-free: the UI previews these exact numbers instead of
+ * approximating them (a preview that lies is worse than none).
+ */
+export function planForTarget(messages: ChatMessage[], targetTokens: number, maxOutputTokens: number): TargetPlan {
+  const target = Math.max(0, targetTokens);
+  const first = planCompactionToBudget(messages, target);
+  const spanTokens = estimateTokens(serializeConversation(first.toSummarize));
+  const summaryBudget = summaryBudgetTokens(spanTokens, maxOutputTokens);
+  const keepBudget = Math.max(0, target - summaryBudget);
+  // ONE refinement pass. A smaller tail summarizes MORE, so the summary grows and the tail
+  // shrinks again — but chasing that to a fixed point buys a rounding difference.
+  const plan = keepBudget === target ? first : planCompactionToBudget(messages, keepBudget);
+  return { plan, keepBudgetTokens: keepBudget, summaryBudgetTokens: summaryBudget };
 }
 
 /**
@@ -227,7 +329,7 @@ export function planCompactionToBudget(messages: ChatMessage[], keepTokens: numb
     // …and only when there is a span WORTH a model call: one tiny message above the cut is
     // not "something to summarize", and turning a no-op into a request would spend a
     // summary to produce nothing. Below the floor the plan stays empty (the caller skips).
-    if (estimateTokens(serializeConversation(candidate)) >= MIN_SUMMARY_TOKENS) start = safe;
+    if (estimateTokens(serializeConversation(candidate)) >= SUMMARY_QUALITY_FLOOR) start = safe;
   }
   const toSummarize = summarize(start);
   return { toSummarize, kept: visible.slice(start), tokensBefore };
@@ -279,9 +381,9 @@ export function budgetedCut(visible: ChatMessage[], budgetTokens: number): numbe
 
 /**
  * Manual compaction: summarize a FRACTION of the current context. Kept as the
- * entry point of the fraction-based policy (and its tests); the HOST uses
- * {@link planCompactionToBudget} with {@link keepRecentTokensFor} instead, because
- * an absolute recent budget is what makes a compaction actually free room.
+ * entry point of the fraction-based policy (and its tests); the HOST goes through
+ * {@link planForTarget} instead, because a landing point is what makes a compaction
+ * free the room it needs — not a fixed recent budget.
  */
 export function planManualCompaction(messages: ChatMessage[], keepRecentFraction = 0.6): CompactionPlan {
   const visible = messages.filter((m) => m.role !== "system" && !m.uiOnly);
@@ -319,7 +421,7 @@ export interface CompactedHistory {
  * Always returns at least the last message: a single huge one is the caller's problem (its
  * request simply fails, and the trim catches it), not a silent empty summary.
  */
-function newestWithin(messages: ChatMessage[], maxTokens: number): ChatMessage[] {
+export function newestWithin(messages: ChatMessage[], maxTokens: number): ChatMessage[] {
   const budget = Math.max(0, maxTokens);
   let start = messages.length;
   let acc = 0;
@@ -349,7 +451,10 @@ export async function compactHistory(
   messages: ChatMessage[],
   opts: {
     compactor: Compactor;
-    usableTokens: number;
+    /** Where the rebuilt window must LAND, in tokens of the usable context (see
+     *  {@link targetTokensFor}). Replaces the old fixed recent budget: the verbatim
+     *  tail is whatever the summary does not take. */
+    targetTokens: number;
     maxOutputTokens: number;
     /** The largest span the summary request may READ (see maxSummaryInputTokens). When the
      *  span is bigger, the most RECENT part that fits is summarized. */
@@ -361,8 +466,9 @@ export async function compactHistory(
     signal?: AbortSignal;
   },
 ): Promise<CompactedHistory | null> {
-  const keepBudgetTokens = keepRecentTokensFor(opts.usableTokens);
-  const plan = planCompactionToBudget(messages, keepBudgetTokens);
+  // A TARGET, not a fixed recent budget: what stays verbatim is whatever is left once
+  // the summary has taken its share of the landing point (see planForTarget).
+  const { plan, keepBudgetTokens } = planForTarget(messages, opts.targetTokens, opts.maxOutputTokens);
   if (plan.toSummarize.length === 0) return null;
   // A span bigger than the request can read is NOT a reason to give up: the summarizer
   // takes the most RECENT part that fits, and `deferred` stays in the transcript above the
@@ -635,7 +741,7 @@ export function summarizerPromptReserve(): number {
  * The largest span the summarizer can be asked to READ, in tokens.
  *
  * Measured on the MODEL's window, not on the session's usable budget: the summary
- * request carries its OWN output budget (SUMMARY_MAX_TOKENS) instead of the chat
+ * request carries its OWN output budget (see `summaryBudgetTokens`) instead of the chat
  * turn's reserve, so subtracting the turn's reserve here would refuse a summary
  * that would have fitted. The margin exists because the estimate is approximate
  * and a rejection costs the session.
@@ -650,7 +756,7 @@ export function summarizerPromptReserve(): number {
  */
 export function maxSummaryInputTokens(
   windowTokens: number,
-  outputCap = SUMMARY_MAX_TOKENS,
+  outputCap: number,
   stateTokens = 0,
 ): number {
   const room = Math.max(0, windowTokens) - summarizerPromptReserve() - Math.max(0, stateTokens);
@@ -672,8 +778,8 @@ export function maxSummaryInputTokens(
  * that one already runs the summarizer — checking afterwards would mean asking a
  * model to read a request it cannot accept.
  */
-export function compactionSpanTokens(messages: ChatMessage[], usableTokens: number): number {
-  const plan = planCompactionToBudget(messages, keepRecentTokensFor(usableTokens));
+export function compactionSpanTokens(messages: ChatMessage[], targetTokens: number, maxOutputTokens: number): number {
+  const plan = planForTarget(messages, targetTokens, maxOutputTokens).plan;
   return plan.toSummarize.length === 0 ? 0 : estimateTokens(serializeConversation(plan.toSummarize));
 }
 
@@ -727,8 +833,9 @@ export function buildSummaryMessages(
   ];
 }
 
-/** A summary smaller than this is not worth having: too little to continue from. */
-export const MIN_SUMMARY_TOKENS = 512;
+/** A summary smaller than this is not worth having: too little to continue from. It is a
+ * QUALITY floor, not a cap on the context — nothing above depends on it. */
+export const SUMMARY_QUALITY_FLOOR = 512;
 
 /** Overshoot tolerated before the summary is squeezed a second time (+15%). */
 const SUMMARY_OVERSHOOT = 1.15;
@@ -750,7 +857,7 @@ export const SUMMARY_SPAN_SHARE = 0.1;
  */
 export function summaryBudgetTokens(spanTokens: number, maxOutputTokens: number): number {
   const compression = Math.round(Math.max(0, spanTokens) * SUMMARY_SPAN_SHARE);
-  return Math.min(Math.max(0, maxOutputTokens), Math.max(MIN_SUMMARY_TOKENS, compression));
+  return Math.min(Math.max(0, maxOutputTokens), Math.max(SUMMARY_QUALITY_FLOOR, compression));
 }
 
 const COMPRESS_PROMPT = `You are COMPRESSING a summary that is too long for the context budget. Reply with EXACTLY the same two-block structure as the input (block 1: the fixed phrase, in the SAME language as the input; then a line with only "---"; block 2: the compressed Markdown summary).
@@ -780,6 +887,13 @@ export class Compactor {
     private buildConfig: () => HarnyConfig,
   ) {}
 
+  /**
+   * One compaction summary.
+   *
+   * `maxReplyTokens` is the CAP the provider is given, and it belongs to the CALLER: there is
+   * no standing default here (see the note at the top of this file), because the only right
+   * value is the output the session declares. `compactHistory` always passes it.
+   */
   async summarize(
     toSummarize: ChatMessage[],
     previousSummary?: string,

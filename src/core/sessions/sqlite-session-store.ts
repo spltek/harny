@@ -357,6 +357,7 @@ export class SqliteSessionStore implements SessionStore {
       ...(existing?.thinkingLevel ? { thinkingLevel: existing.thinkingLevel } : {}),
       ...(existing?.contextWindow ? { contextWindow: existing.contextWindow } : {}),
       ...(existing?.compactionThresholdPercent ? { compactionThresholdPercent: existing.compactionThresholdPercent } : {}),
+      ...(existing?.compactionTargetPercent !== undefined ? { compactionTargetPercent: existing.compactionTargetPercent } : {}),
       ...(existing?.contextTokens ? { contextTokens: existing.contextTokens } : {}),
       ...(existing?.outputTokens ? { outputTokens: existing.outputTokens } : {}),
       // 0 is a VALID value for these: `!== undefined`, not truthiness.
@@ -391,6 +392,13 @@ export class SqliteSessionStore implements SessionStore {
     if (typeof patch.compactionThresholdPercent === "number") {
       out.compactionThresholdPercent = patch.compactionThresholdPercent;
     }
+    // A key PRESENT clears when it is not a number (the AUTO landing point), the same
+    // semantics temperature/penalties use: `{ compactionTargetPercent: undefined }`
+    // means "follow the trigger again", not "leave it alone".
+    if ("compactionTargetPercent" in patch) {
+      out.compactionTargetPercent =
+        typeof patch.compactionTargetPercent === "number" ? patch.compactionTargetPercent : undefined;
+    }
     if (typeof patch.contextTokens === "number") out.contextTokens = patch.contextTokens;
     if (typeof patch.outputTokens === "number") out.outputTokens = patch.outputTokens;
     if ("temperature" in patch) out.temperature = patch.temperature;
@@ -414,15 +422,17 @@ export class SqliteSessionStore implements SessionStore {
         `INSERT INTO sessions (
            id, name, folder, created_at, updated_at, message_count,
            model, model_provider, thinking_level, context_window, compaction_threshold_percent,
+           compaction_target_percent,
            context_tokens, output_tokens, temperature, presence_penalty, frequency_penalty,
            top_p, sampler, max_parallel_sub_agents, mode, parallel, loop_guard, loop_guard_response, loop_guard_params
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            name=excluded.name, folder=excluded.folder, created_at=excluded.created_at,
            updated_at=excluded.updated_at, message_count=excluded.message_count,
            model=excluded.model, model_provider=excluded.model_provider,
            thinking_level=excluded.thinking_level, context_window=excluded.context_window,
            compaction_threshold_percent=excluded.compaction_threshold_percent,
+           compaction_target_percent=excluded.compaction_target_percent,
            context_tokens=excluded.context_tokens, output_tokens=excluded.output_tokens,
            temperature=excluded.temperature, presence_penalty=excluded.presence_penalty,
            frequency_penalty=excluded.frequency_penalty, top_p=excluded.top_p,
@@ -443,6 +453,7 @@ export class SqliteSessionStore implements SessionStore {
         s.thinkingLevel ?? null,
         s.contextWindow ?? null,
         s.compactionThresholdPercent ?? null,
+        s.compactionTargetPercent ?? null,
         s.contextTokens ?? null,
         s.outputTokens ?? null,
         s.temperature ?? null,
@@ -488,6 +499,9 @@ export class SqliteSessionStore implements SessionStore {
       ...(num(r.context_window) !== undefined ? { contextWindow: num(r.context_window) } : {}),
       ...(num(r.compaction_threshold_percent) !== undefined
         ? { compactionThresholdPercent: num(r.compaction_threshold_percent) }
+        : {}),
+      ...(num(r.compaction_target_percent) !== undefined
+        ? { compactionTargetPercent: num(r.compaction_target_percent) }
         : {}),
       ...(num(r.context_tokens) !== undefined ? { contextTokens: num(r.context_tokens) } : {}),
       ...(num(r.output_tokens) !== undefined ? { outputTokens: num(r.output_tokens) } : {}),

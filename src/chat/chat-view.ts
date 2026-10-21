@@ -21,7 +21,7 @@ import { renderViewHtml } from "./view-html";
 import { toTemperature, toTopP } from "./temperature";
 import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, MAX_CONTEXT_WINDOW, MAX_OUTPUT_TOKENS, MIN_OUTPUT_TOKENS, REQUEST_SAFETY_MARGIN, REQUEST_SAFETY_MARGIN_SHARE, clampAdoptedContextWindow, clampAdoptedOutputTokens, clampContextWindow, clampOutputTokens, toContextWindow, toOutputTokens, usableContext } from "./context-window";
 import { PanelModalQueue } from "./panel-modal-queue";
-import { Compactor, DEFAULT_COMPACTION, CompactionSettings, carriedState, compactHistory, compactionSpanTokens, estimateContextTokens, estimateTokens, keepRecentTokensFor, maxSummaryInputTokens, realWindowTokens, serializeConversation, shouldCompact, toCompactionThresholdPercent, trimHistory, type CompactedHistory, type TrimResult } from "../core/sessions/compactor";
+import { Compactor, DEFAULT_COMPACTION, CompactionSettings, autoTargetPercent, carriedState, clampTargetPercent, compactHistory, compactionSpanTokens, estimateContextTokens, estimateTokens, maxSummaryInputTokens, minExplicitTargetPercent, newestWithin, planForTarget, realWindowTokens, serializeConversation, shouldCompact, targetTokensFor, toCompactionThresholdPercent, toTargetPercent, trimHistory, type CompactedHistory, type TrimResult } from "../core/sessions/compactor";
 import { CompactionTally } from "../core/sessions/compaction-tally";
 import type { SkillRegistry } from "../core/skills/skill-registry";
 import type { McpManager } from "../core/mcp";
@@ -1177,8 +1177,9 @@ export class ChatViewProvider implements WebviewViewProvider {
           kind: "confirm",
           title: "Compact context",
           message:
-            "Run context compaction now? The older messages leave the context window and a summary takes " +
-            "their place in it — the transcript keeps them, readable and searchable.",
+            "Run context compaction now?\n" +
+            "The older messages leave the context window and a summary takes their place.\n" +
+            "The transcript keeps them, readable and searchable.",
           confirmText: "Compact",
         });
         if (!ok) break;
@@ -1209,10 +1210,47 @@ export class ChatViewProvider implements WebviewViewProvider {
         if (!rt) break;
         const value = toCompactionThresholdPercent(msg.value);
         rt.compactionThresholdPercent = value;
+        // The landing point has a DERIVED upper bound (threshold−1): an explicit value at or
+        // above the new trigger would free nothing, so it follows the trigger down.
+        const target =
+          rt.compactionTargetPercent !== undefined
+            ? clampTargetPercent(rt.compactionTargetPercent, value, this.targetFloorFor(rt))
+            : undefined;
+        if (target !== undefined) rt.compactionTargetPercent = target;
         // Threshold only affects auto-compaction, never the per-model overrides.
-        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { compactionThresholdPercent: value }), false);
+        this.commitSetting(
+          rt,
+          () =>
+            this.sessions.saveSettings(rt.sessionId, {
+              compactionThresholdPercent: value,
+              ...(target !== undefined ? { compactionTargetPercent: target } : {}),
+            }),
+          false,
+        );
         break;
       }
+      case "setCompactionTarget": {
+        const rt = this.activeRuntime();
+        if (!rt) break;
+        // MISSING (the Auto button) CLEARS the override, so the landing point follows the
+        // trigger again. 0 is a REAL choice — "only the summary remains" — and so is any other
+        // reachable value, clamped below the trigger and above the derived floor.
+        const thresholdPercent = this.compactionSettings(rt).thresholdPercent;
+        const value =
+          msg.value === undefined || msg.value === null
+            ? undefined
+            : toTargetPercent(msg.value, thresholdPercent, this.targetFloorFor(rt));
+        rt.compactionTargetPercent = value;
+        this.commitSetting(
+          rt,
+          () => this.sessions.saveSettings(rt.sessionId, { compactionTargetPercent: value }),
+          false,
+        );
+        break;
+      }
+      case "previewCompaction":
+        this.postCompactionPreview(msg);
+        break;
       case "setSamplerMode": {
         const rt = this.activeRuntime();
         if (!rt) break;
@@ -1422,10 +1460,41 @@ export class ChatViewProvider implements WebviewViewProvider {
    */
   private compactionSettings(rt: SessionRuntime): CompactionSettings {
     const base = this.options.compaction ?? DEFAULT_COMPACTION;
-    return {
-      ...base,
-      thresholdPercent: rt.compactionThresholdPercent ?? base.thresholdPercent ?? DEFAULT_COMPACTION.thresholdPercent,
-    };
+    const thresholdPercent = rt.compactionThresholdPercent ?? base.thresholdPercent ?? DEFAULT_COMPACTION.thresholdPercent;
+    // AUTO (no session value) lands at a QUARTER of the trigger — a share of the window,
+    // derived from the other knob. An explicit value is clamped below the trigger and above
+    // the derived floor (see targetFloorFor).
+    const targetPercent = clampTargetPercent(
+      rt.compactionTargetPercent ?? base.targetPercent ?? autoTargetPercent(thresholdPercent),
+      thresholdPercent,
+    );
+    return { ...base, thresholdPercent, targetPercent };
+  }
+
+  /** The landing % this session actually uses (see {@link compactionSettings}). */
+  private targetPercentFor(rt: SessionRuntime): number {
+    const settings = this.compactionSettings(rt);
+    return settings.targetPercent ?? autoTargetPercent(settings.thresholdPercent);
+  }
+
+  /**
+   * The DERIVED floor for an EXPLICIT landing point: the fill the checkpoint and the last
+   * complete turn already occupy. Below it an explicit number means less than the structure
+   * allows anyway, so there is no constant to defend — the floor moves with the session.
+   */
+  private targetFloorFor(rt: SessionRuntime): number {
+    const usable = usableContext(this.budgetWindow(rt), this.budgetReserve(rt));
+    const all = rt.history.all();
+    const messages = all.slice(checkpointStart(all));
+    if (messages.length === 0) return 0;
+    // Target 0 = the STRUCTURAL minimum (the last complete turn): its checkpoint + tail is
+    // the smallest fill this session can land at.
+    const { plan, summaryBudgetTokens } = planForTarget(messages, 0, this.configuredOutputTokens(rt));
+    return minExplicitTargetPercent(
+      usable,
+      summaryBudgetTokens,
+      estimateTokens(serializeConversation(plan.kept)),
+    );
   }
 
   /**
@@ -1936,14 +2005,18 @@ export class ChatViewProvider implements WebviewViewProvider {
     const activeStart = checkpointStart(all);
     const messages = all.slice(activeStart);
     const usable = usableContext(this.budgetWindow(rt), this.budgetReserve(rt));
+    // Where the rebuilt window must LAND (session policy, see compactionSettings). This
+    // replaces the old fixed recent budget: the verbatim tail is whatever the summary
+    // does not take, so no 20k/8k constant decides how much of the task survives.
+    const targetTokens = targetTokensFor(usable, this.targetPercentFor(rt));
     // The summarizer runs on the SESSION's model, so a span larger than that model's
     // window cannot be READ by it. That is no longer a reason to give up: the summary takes
     // the most RECENT part that fits and the rest stays in the transcript above the new
     // checkpoint (see compactHistory) — preserved, not summarized, not lost. Only a window
     // that can read NOTHING at all falls back to the trim, which calls no model and
     // therefore cannot fail.
-    const span = this.summarySpan(messages, usable, rt);
-    if (span.ceilingTokens <= 0) return this.trimWindow(rt, usable, span);
+    const span = this.summarySpan(messages, targetTokens, rt);
+    if (span.ceilingTokens <= 0) return this.trimWindow(rt, targetTokens, span);
     // THE compaction strategy lives in core/sessions and is shared with the sub-agents
     // (which compact their own ephemeral history the same way). What stays HERE is what
     // only the session has: persistence, the context counter and the UI.
@@ -1960,7 +2033,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     try {
       result = await compactHistory(messages, {
         compactor,
-        usableTokens: usable,
+        targetTokens,
         maxOutputTokens: this.configuredOutputTokens(rt),
         maxInputTokens: span.ceilingTokens,
         // Say WHY it failed: an empty stream and a reply that is not the document are
@@ -1987,7 +2060,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       // Either way the window still has to move, and the trim is the path that cannot fail.
       // The tally line the trim logs is the record that NO summary was written.
       infoLog("no summary written (nothing to summarize, or the reply was not a summary) — trimming instead");
-      return this.trimWindow(rt, usable, span);
+      return this.trimWindow(rt, targetTokens, span);
     }
     // A deferral must never be silent: the caller has to be able to see that the state
     // document covers the RECENT work and that older messages are still waiting.
@@ -2001,7 +2074,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       this.tally.recordCompaction({
         spanTokens: estimateTokens(serializeConversation(result.summarized)),
         usableTokens: usable,
-        ceilingTokens: maxSummaryInputTokens(this.budgetWindow(rt)),
+        ceilingTokens: maxSummaryInputTokens(this.budgetWindow(rt), this.configuredOutputTokens(rt)),
         keepBudgetTokens: result.keepBudgetTokens,
         keptTokens: estimateTokens(serializeConversation(result.kept)),
         summaryBudgetTokens: result.summaryBudgetTokens,
@@ -2050,12 +2123,12 @@ export class ChatViewProvider implements WebviewViewProvider {
    * working with a narrower window instead of dying. The state document is carried
    * verbatim, and everything that leaves the window stays in the session.
    */
-  private trimWindow(rt: SessionRuntime, usable: number, oversized: { spanTokens: number; ceilingTokens: number }): boolean {
-    const trim = this.trimInto(rt.history.all(), usable);
+  private trimWindow(rt: SessionRuntime, targetTokens: number, oversized: { spanTokens: number; ceilingTokens: number }): boolean {
+    const trim = this.trimInto(rt.history.all(), targetTokens);
     if (!trim) return false;
     rt.history.replace(trim.history);
     this.sessions.saveMessages(rt.sessionId, trim.history, { replace: true });
-    infoLog(this.tally.recordTrim({ ...oversized, moved: trim.moved, budgetTokens: keepRecentTokensFor(usable) }));
+    infoLog(this.tally.recordTrim({ ...oversized, moved: trim.moved, budgetTokens: targetTokens }));
     rt.contextTokens = estimateContextTokens(trim.history.slice(trim.windowStart));
     this.sessions.saveSettings(rt.sessionId, { contextTokens: rt.contextTokens });
     // The prefix was rewritten: any reported cache hit is meaningless now.
@@ -2071,10 +2144,10 @@ export class ChatViewProvider implements WebviewViewProvider {
    * Pure on purpose: what happens to the result belongs to the CALLER. The session
    * persists it; a sub-agent's history is ephemeral and is only swapped in memory.
    */
-  private trimInto(all: ChatMessage[], usable: number): TrimResult | null {
+  private trimInto(all: ChatMessage[], targetTokens: number): TrimResult | null {
     const carried = carriedState(all);
     return trimHistory(all, {
-      budgetTokens: keepRecentTokensFor(usable),
+      budgetTokens: targetTokens,
       ...(carried ? { summary: carried } : {}),
     });
   }
@@ -2084,8 +2157,8 @@ export class ChatViewProvider implements WebviewViewProvider {
    * It returns the NUMBERS, always — the caller needs them to decide (`span > ceiling`)
    * AND to explain the trim it falls back to: `span 41.2k > ceiling 8.9k` is the only
    * reason a reader needs to know why a model call was skipped. */
-  private summarySpan(messages: ChatMessage[], usable: number, rt: SessionRuntime): { spanTokens: number; ceilingTokens: number } {
-    const spanTokens = compactionSpanTokens(messages, usable);
+  private summarySpan(messages: ChatMessage[], targetTokens: number, rt: SessionRuntime): { spanTokens: number; ceilingTokens: number } {
+    const spanTokens = compactionSpanTokens(messages, targetTokens, this.configuredOutputTokens(rt));
     return {
       spanTokens,
       // The request spends the measured prompt, the previous state, and — as a SHARE of
@@ -2097,6 +2170,55 @@ export class ChatViewProvider implements WebviewViewProvider {
         estimateTokens(carriedState(messages) ?? ""),
       ),
     };
+  }
+
+  /**
+   * The numbers the settings modal shows BEFORE anything is saved: the SAME planner a
+   * compaction will run (`planForTarget`) against the live history, so the preview cannot
+   * disagree with what actually happens. Model-free: no provider call answers this.
+   */
+  private postCompactionPreview(msg: { thresholdPercent?: unknown; targetPercent?: unknown }): void {
+    const rt = this.activeRuntime();
+    if (!rt) return;
+    const thresholdPercent = toCompactionThresholdPercent(msg.thresholdPercent);
+    // The floor is DERIVED from this session (summary + last complete turn), so the modal can
+    // mark the smallest value that differs from the structural minimum — no constant.
+    const minTargetPercent = this.targetFloorFor(rt);
+    const targetPercent = toTargetPercent(msg.targetPercent, thresholdPercent, minTargetPercent);
+    const usable = usableContext(this.budgetWindow(rt), this.budgetReserve(rt));
+    const targetTokens = targetTokensFor(usable, targetPercent);
+    const maxOutput = this.configuredOutputTokens(rt);
+    const all = rt.history.all();
+    const messages = all.slice(checkpointStart(all));
+    const { plan, summaryBudgetTokens } = planForTarget(messages, targetTokens, maxOutput);
+    // What the summarizer can READ in one request: the rest is DEFERRED (kept in the
+    // transcript, unsummarized), and the preview has to say so instead of implying that a
+    // single pass will land on the target.
+    const ceiling = maxSummaryInputTokens(
+      this.budgetWindow(rt),
+      maxOutput,
+      estimateTokens(carriedState(messages) ?? ""),
+    );
+    const readable = plan.toSummarize.length > 0 ? newestWithin(plan.toSummarize, ceiling) : [];
+    const fillTokens = estimateContextTokens(messages);
+    this.view?.webview.postMessage({
+      type: "compactionPreview",
+      thresholdPercent,
+      targetPercent,
+      minTargetPercent,
+      autoTargetPercent: autoTargetPercent(thresholdPercent),
+      usableTokens: usable,
+      targetTokens,
+      fillTokens,
+      fillPercent: usable > 0 ? Math.round((fillTokens / usable) * 100) : 0,
+      aboveThreshold: fillTokens > (usable * thresholdPercent) / 100,
+      summarizeCount: readable.length,
+      summarizeTokens: estimateTokens(serializeConversation(readable)),
+      keepCount: plan.kept.length,
+      keepTokens: estimateTokens(serializeConversation(plan.kept)),
+      summaryBudgetTokens,
+      deferredCount: plan.toSummarize.length - readable.length,
+    });
   }
 
   /**
@@ -2169,11 +2291,11 @@ export class ChatViewProvider implements WebviewViewProvider {
    * The trim for a sub-agent's EPHEMERAL history: same rule as the session, different
    * storage — nothing is persisted, only the in-memory history is swapped.
    */
-  private trimSubAgent(history: ChatHistory, usable: number, span: { spanTokens: number; ceilingTokens: number }): boolean {
-    const trim = this.trimInto(history.conversation(), usable);
+  private trimSubAgent(history: ChatHistory, targetTokens: number, span: { spanTokens: number; ceilingTokens: number }): boolean {
+    const trim = this.trimInto(history.conversation(), targetTokens);
     if (!trim) return false;
     history.replace(trim.history);
-    infoLog(this.tally.recordTrim({ ...span, moved: trim.moved, budgetTokens: keepRecentTokensFor(usable), subAgent: true }));
+    infoLog(this.tally.recordTrim({ ...span, moved: trim.moved, budgetTokens: targetTokens, subAgent: true }));
     return true;
   }
 
@@ -2196,16 +2318,18 @@ export class ChatViewProvider implements WebviewViewProvider {
     if (evidence?.limitTokens) this.adoptContextWindow(rt, evidence.limitTokens);
     const messages = history.conversation();
     const usable = usableContext(this.budgetWindow(rt), this.budgetReserve(rt));
+    // Same landing point as the session it belongs to: a sub-agent inherits the policy.
+    const targetTokens = targetTokensFor(usable, this.targetPercentFor(rt));
     // A sub-agent shares the SESSION's model, so an oversized span cannot be read here
     // either — but that is no longer a reason to give up: the summary takes the most
     // recent part that fits, and the rest stays in its history above the new checkpoint.
-    const span = this.summarySpan(messages, usable, rt);
-    if (span.ceilingTokens <= 0) return this.trimSubAgent(history, usable, span);
+    const span = this.summarySpan(messages, targetTokens, rt);
+    if (span.ceilingTokens <= 0) return this.trimSubAgent(history, targetTokens, span);
     let result: CompactedHistory | null = null;
     try {
       result = await compactHistory(messages, {
         compactor,
-        usableTokens: usable,
+        targetTokens,
         maxOutputTokens: this.configuredOutputTokens(rt),
         maxInputTokens: span.ceilingTokens,
         onUnusableReply: (reply) =>
@@ -2225,7 +2349,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     }
     // Same rule as the session: a summary that could not be made lands on the trim
     // (which calls no model), never on an exception that stops the sub-agent.
-    if (!result) return this.trimSubAgent(history, usable, span);
+    if (!result) return this.trimSubAgent(history, targetTokens, span);
     history.replace(result.history);
     if (result.deferred.length > 0) {
       infoLog(
@@ -2238,7 +2362,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         subAgent: true,
         spanTokens: estimateTokens(serializeConversation(result.summarized)),
         usableTokens: usable,
-        ceilingTokens: maxSummaryInputTokens(this.budgetWindow(rt)),
+        ceilingTokens: maxSummaryInputTokens(this.budgetWindow(rt), this.configuredOutputTokens(rt)),
         keepBudgetTokens: result.keepBudgetTokens,
         keptTokens: estimateTokens(serializeConversation(result.kept)),
         summaryBudgetTokens: result.summaryBudgetTokens,
@@ -2348,6 +2472,10 @@ export class ChatViewProvider implements WebviewViewProvider {
      */
     contextUsable?: number;
     compactionThresholdPercent?: number;
+    /** Landing fill actually used for this session (explicit, else the DERIVED auto). */
+    compactionTargetPercent?: number;
+    /** True when that landing fill is AUTO (a quarter of the trigger). */
+    compactionTargetAuto?: boolean;
     outputTokens: number;
     /** Upper bound of the output slider: the model's DETECTED max output, else the global max. */
     maxOutputTokens: number;
@@ -2487,6 +2615,10 @@ export class ChatViewProvider implements WebviewViewProvider {
       // Only the session override, so the UI can show "Auto" (undefined) vs
       // an explicit value. Config-file defaults stay effective but hidden.
       compactionThresholdPercent: this.activeRuntime()?.compactionThresholdPercent,
+      // The EFFECTIVE landing point plus whether AUTO is in force: the modal shows the number
+      // and whether it is a decision or the derived default (no duplicated rule per side).
+      compactionTargetPercent: rt ? this.targetPercentFor(rt) : undefined,
+      compactionTargetAuto: this.activeRuntime()?.compactionTargetPercent === undefined,
       // The displayed value may be SMALLER than the slider MIN (a provider's
       // declared maxTokens like 123 must be honoured) but never above the
       // model's real max (`outMax`).

@@ -83,6 +83,15 @@ const MIGRATIONS: readonly Migration[] = [
         END;
       `),
   },
+  {
+    version: 2,
+    name: "per-session compaction landing point",
+    // The % of the USABLE context a compaction lands at. NULL = AUTO (a quarter of the
+    // trigger), so every existing session keeps the behaviour it has today. Only `sessions`
+    // is touched: the FTS index follows `messages`, and no row of it is rewritten (see the
+    // rule at the top of this file).
+    up: (db) => db.exec("ALTER TABLE sessions ADD COLUMN compaction_target_percent INTEGER; "),
+  },
 ];
 
 /** The version this build expects after running every migration. */

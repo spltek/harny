@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`reasoning_content` is passed back on EVERY assistant message in the `reasoning` dialect.**
+  The pass-back existed but was conditional on the message having captured reasoning, and Harny
+  stores `thinking` only when it is non-empty. So any assistant message without it — a turn made
+  with another model in the same session, the synthetic state document a compaction writes, the
+  forced final report, a turn that reasoned zero tokens — went back without the field, and the
+  NEXT request failed with `The reasoning_content in the thinking mode must be passed back to the
+  API`. It is now sent as an empty string when there is nothing to send, in that dialect only
+  (`bool`, `effort`, `type`, `unspecified` are byte-for-byte unchanged, because an unexpected
+  field where it is not wanted is the opposite 400).
+
+### Changed
+
+- **The checkpoint's label has its own colour: violet.** It used to inherit the terracotta of a typed
+  prompt, which is exactly what it is not — neither a message the user wrote nor an answer the model
+  just gave. It now reads as its own thing at a glance (`--summary-msg`, one palette token in
+  `view-config.ts`). Only the LABEL is tinted: the summary body stays neutral, because that is the
+  text to read, and the ✂ cut tab that slides up over the header takes the same violet (with a
+  deeper violet on hover) instead of flashing the accent orange.
+
+- **Compaction has a LANDING POINT instead of a fixed recent budget.** The verbatim tail used to be
+  a constant — 5% of the usable window, floor 8k, cap 20k tokens — three numbers that contradicted
+  each other: on a 32k model the 8k floor was a quarter of the window, on a 1M one it was invisible.
+  It is now a **percentage of the usable context left after a compaction** (`Land at`, per session),
+  and everything else is derived from it: the tail is whatever the summary does not take, so the
+  rebuilt window cannot land above the target. The summary is paid out of the SAME budget (two
+  passes, model-free), which is what removes the need for a cap.
+- **Defaults, all derived:** `Land at` defaults to an **eighth of the trigger** (10% with the default
+  80%, 8% at 60%) — two or three exchanges stay verbatim. It is a real slider position, and `0` is
+  a real choice too — "as low as the structure allows", i.e. only the last complete turn survives.
+  **"Auto" names the TRIGGER** (the automatic compaction), never the landing point. The ceiling is
+  the trigger minus one — landing at or above it would free nothing and the next turn would compact
+  again — and the floor is what the summary plus the last complete turn already occupy, so it moves
+  with the session's own work; anything below it simply means `0`. Why not lower: the summary's own
+  budget (a tenth of the span, capped by the declared output) comes OUT of the landing point, so a
+  target under ~5% leaves the tail with nothing and collapses to the structural minimum. A few
+  visible exchanges also sharpen the summary itself: Harny tells the summarizer what the tail
+  already shows and to leave it out (`keptPreview`).
+- **The Compaction card is two SLIDERS** (auto-compaction trigger + landing point) with live value
+  labels, a **Default** button that restores the derived landing point, and a **preview of the
+  plan**: how many messages would enter the summary, how many stay verbatim, where the window would
+  land, and how many messages the summary cannot read in one request. The numbers come from the
+  host, which runs the SAME planner the compaction runs — a preview that disagreed with the outcome
+  would be worse than none.
+- **The summary's output budget is derived per call.** The `SUMMARY_MAX_TOKENS = 8192` constant is
+  gone: the budget is a share of the span it replaces, capped by the output the session DECLARES, and
+  the cap travels with each call (`maxReplyTokens`). `MIN_SUMMARY_TOKENS` is now
+  `SUMMARY_QUALITY_FLOOR`, named for what it is — a quality floor for the document, not a context cap.
+
+### Added
+
+- **Migration 2** (`compaction_target_percent`): the per-session landing point. Non-destructive, and
+  `NULL` means Auto, so every existing session keeps the behaviour it has today.
+
 ## [0.4.1] - 2026-10-20
 
 ### Changed
@@ -113,7 +168,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bubbles and the past looked exactly like the live context, so a long session grew with no cue about
   what the model still receives. A divider now marks the boundary and carries the count (`N messages
   above · kept in the session, out of the context window`), and the checkpoint reads as ONE card — the
-  orange label with its summary body attached — instead of two bubbles. The boundary comes from
+  label with its summary body attached — instead of two bubbles. The boundary comes from
   `checkpointStart`, the SAME function the request uses, imported into the webview: the marker and the
   request cannot disagree about where the window begins.
 

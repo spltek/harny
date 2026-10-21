@@ -19,7 +19,7 @@ import { VscodeConfigProvider } from "./core/config/vscode-config-provider";
 import { InMemoryEventBus } from "./core/events/in-memory-event-bus";
 import { SqliteSessionStore } from "./core/sessions/sqlite-session-store";
 import { SessionManager } from "./core/sessions/session-manager";
-import { Compactor, DEFAULT_COMPACTION, summarizerConfig } from "./core/sessions/compactor";
+import { Compactor, DEFAULT_COMPACTION } from "./core/sessions/compactor";
 import { DefaultLlmProviderFactory } from "./core/llm/llm-provider-factory";
 import { nodeHttpClient } from "./core/llm/http-client";
 import { HttpModelListProvider } from "./core/llm/model-list";
@@ -114,10 +114,11 @@ export async function activate(context: ExtensionContext) {
     cwd,
     () => skills.list(),
   );
-  // The summarizer runs with its OWN output budget (see `summarizerConfig`):
-  // inheriting the chat turn's max_tokens (hundreds of thousands of tokens on a
-  // big model) is what made a summary request oversized — and its failure silent.
-  const compactor = new Compactor(llmFactory, () => summarizerConfig(config.get()));
+  // The summary's output budget is DERIVED per call (a share of the span it replaces,
+  // capped by the session's DECLARED output) and travels with it as `maxReplyTokens`:
+  // inheriting the chat turn's max_tokens (hundreds of thousands of tokens on a big model)
+  // is what made a summary request oversized — and its failure silent.
+  const compactor = new Compactor(llmFactory, () => config.get());
 
   // Session storage: ONE SQLite database (node:sqlite, built into Node >= 22.5)
   // holding every workspace's sessions (the `folder` column groups them), so the
