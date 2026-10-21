@@ -500,6 +500,50 @@ describe("OpenAIChatProvider reasoning support", () => {
     expect(body.reasoning).toBeUndefined();
   });
 
+  it("passes reasoning_content back on EVERY assistant message in reasoning mode", async () => {
+    // A session runs on a thinking model but its history holds assistant messages that never
+    // carried reasoning (an earlier non-thinking model, the compaction's synthetic state
+    // document). Leaving the field out makes the NEXT request fail with
+    // `The reasoning_content in the thinking mode must be passed back to the API`.
+    const http = new FakeHttpClient();
+    http.respondWith(sseResponse("data: [DONE]"));
+    const provider = new OpenAIChatProvider(
+      { ...config, thinkingMode: "reasoning", thinkingLevel: "high" },
+      http,
+      tools,
+    );
+    await collect(
+      provider.stream([
+        { role: "user", content: "q" },
+        { role: "assistant", content: "old answer" },
+        { role: "user", content: "more" },
+        { role: "assistant", content: "reasoned answer", thinking: "thought" },
+      ]),
+    );
+    const sent = JSON.parse(http.requests[0].body).messages as Array<Record<string, unknown>>;
+    // The one that HAD reasoning keeps it verbatim…
+    expect(sent[3].reasoning_content).toBe("thought");
+    // …and the one that never had any carries an EMPTY field, not nothing.
+    expect(sent[1].reasoning_content).toBe("");
+    // The user turn is untouched: the field belongs to assistant messages only.
+    expect(sent[0].reasoning_content).toBeUndefined();
+  });
+
+  it("does NOT add reasoning_content in the effort dialect", async () => {
+    // An extra field where the upstream does not expect it is its own 400: the pass-back is
+    // gated on the dialect, not applied everywhere.
+    const http = new FakeHttpClient();
+    http.respondWith(sseResponse("data: [DONE]"));
+    const provider = new OpenAIChatProvider(
+      { ...config, thinkingMode: "effort", thinkingLevel: "medium" },
+      http,
+      tools,
+    );
+    await collect(provider.stream([{ role: "assistant", content: "old answer" }]));
+    const sent = JSON.parse(http.requests[0].body).messages as Array<Record<string, unknown>>;
+    expect(sent[0].reasoning_content).toBeUndefined();
+  });
+
   it("sends nothing when thinkingMode is unspecified", async () => {
     const http = new FakeHttpClient();
     http.respondWith(sseResponse("data: [DONE]"));

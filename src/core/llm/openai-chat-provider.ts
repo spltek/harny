@@ -114,7 +114,11 @@ export class OpenAIChatProvider implements LLMProvider {
 
     const body: Record<string, unknown> = {
       model: this.config.model,
-      messages: toOpenAIMessages(messages),
+      messages: toOpenAIMessages(messages, {
+        // The `reasoning` dialect wants the field echoed on EVERY assistant message (see the
+        // option): leaving it out is a 400 on the following request.
+        alwaysPassBackReasoning: this.config.thinkingMode === "reasoning",
+      }),
       // The field name this model wants: learned from a rejection before, or
       // `max_tokens` (what every other backend expects) on the first try.
       ...(NEEDS_MAX_COMPLETION_TOKENS.has(completionTokensKey(this.config.baseUrl, this.config.model))

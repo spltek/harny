@@ -74,6 +74,43 @@ describe("protocol-level message conversion (generalized rules)", () => {
     expect(out[0].reasoning_details).toBeUndefined();
   });
 
+  it("chat: in the `reasoning` dialect an assistant with NO reasoning gets an EMPTY field", () => {
+    // The upstream rejects the NEXT request when the field is missing
+    // (`The reasoning_content in the thinking mode must be passed back to the API`), so an
+    // empty string is sent instead of nothing — including for the synthetic state document a
+    // compaction writes, and for turns made with a model that does not think.
+    const out = toOpenAIMessages([{ role: "assistant", content: "answer" }], {
+      alwaysPassBackReasoning: true,
+    });
+    expect(out[0].reasoning_content).toBe("");
+  });
+
+  it("chat: the empty pass-back never overwrites real reasoning nor reasoning_details", () => {
+    const details = [{ type: "reasoning.text", text: "encrypted" }];
+    const out = toOpenAIMessages(
+      [
+        { role: "assistant", content: "a", thinking: "reasoned" },
+        { role: "assistant", content: "b", reasoningDetails: details },
+      ],
+      { alwaysPassBackReasoning: true },
+    );
+    expect(out[0].reasoning_content).toBe("reasoned");
+    expect(out[1].reasoning_details).toEqual(details);
+    expect(out[1].reasoning_content).toBeUndefined();
+  });
+
+  it("chat: the empty pass-back is NOT sent for other roles", () => {
+    const out = toOpenAIMessages(
+      [
+        { role: "user", content: "q" },
+        { role: "tool", content: "r", toolCallId: "c1" },
+      ],
+      { alwaysPassBackReasoning: true },
+    );
+    expect(out[0].reasoning_content).toBeUndefined();
+    expect(out[1].reasoning_content).toBeUndefined();
+  });
+
 
 });
 
