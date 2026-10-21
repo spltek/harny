@@ -14,6 +14,48 @@ function cssRule(html: string, selector: string): string {
 }
 
 describe("renderViewHtml", () => {
+  it("every modal footer follows ONE rule: drafts commit, overlays dismiss, prompts name the verb", () => {
+    // The rule the modals are held to:
+    //  - a modal that edits a DRAFT has a commit (Save) and an abort (Cancel);
+    //  - a modal whose content is live, or that only shows something, has Close — a button
+    //    called Cancel where nothing can be cancelled is a lie (the model picker applies on
+    //    click, so there is nothing to abort);
+    //  - a PROMPT or an ACTION names what it will do (Create / Branch / Rename / VACUUM), never
+    //    a bare OK. `alert-ok` is the runtime fallback of those prompts.
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    const label = (id: string) =>
+      new RegExp(`id="${id}"[^>]*>([^<]*)<`).exec(html)?.[1]?.replace(/&amp;/g, "&").trim();
+
+    // DRAFTS — commit + abort.
+    expect(label("providers-save")).toBe("Save");
+    expect(label("providers-cancel")).toBe("Cancel");
+    expect(label("mcp-save")).toBe("Save");
+    expect(label("mcp-cancel")).toBe("Cancel");
+    expect(label("compact-settings-save")).toBe("Save");
+    expect(label("compact-settings-cancel")).toBe("Cancel");
+
+    // DISMISS-ONLY — live content, nothing to abort.
+    expect(label("sessions-close")).toBe("Close");
+    expect(label("model-close")).toBe("Close");
+    expect(label("db-vacuum-close")).toBe("Close");
+
+    // PROMPTS / ACTIONS — a verb.
+    expect(label("name-ok")).toBe("Create");
+    expect(label("db-vacuum-run")).toContain("VACUUM");
+
+    // No modal offers Cancel unless it also offers a commit.
+    for (const prefix of ["providers", "mcp", "compact-settings"]) {
+      expect(label(`${prefix}-cancel`)).toBe("Cancel");
+      expect(label(`${prefix}-save`)).toBe("Save");
+    }
+    // …and the live card says so, because every other card in a modal waits for Save.
+    expect(html).toMatch(/\.sm-vacuum-live\s*\{[^}]*color:\s*var\(--accent\)/s);
+    expect(html).toContain("applies immediately");
+  });
+
   it("renders the brand mark at SPLASH size, as a design token (not a favicon)", () => {
     const html = renderViewHtml({
       ...base,
@@ -185,8 +227,9 @@ describe("renderViewHtml", () => {
     expect(html).toContain('id="model-modal"');
     expect(html).toContain('id="model-search"');
     expect(html).toContain('id="model-list"');
-    // No ✕ in the header: the ONLY close affordance is the Cancel button in the footer.
-    expect(html).toContain('id="model-close" class="secondary">Cancel</button>');
+    // No ✕ in the header: the ONLY close affordance is the footer button — and it says Close,
+    // because the picker applies on click, so there is nothing to cancel.
+    expect(html).toContain('id="model-close" class="secondary">Close</button>');
     expect(html).not.toMatch(/mm-head[\s\S]*?✕/);
     // The old native dropdown is gone.
     expect(html).not.toContain('id="model-select"');

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-21
+
+### Changed
+
+- **The modals now follow one rule, and a test enforces it: drafts commit, overlays dismiss, prompts
+  name the verb.** A dialog that edits a DRAFT has `Save` + `Cancel` (Providers & Models, MCP
+  servers, Compaction); a dialog whose content is LIVE, or that only shows something, has `Close`
+  (All sessions, Select model, VACUUM); a PROMPT or an ACTION names what it will do (`Create`,
+  `Branch`, `Rename`, `Cut`, `Delete`, `VACUUM & optimize indexes`) instead of a bare `OK`.
+  `Cancel` only exists where something can actually be cancelled — the model picker said `Cancel`
+  while applying the choice on click, which taught the wrong thing about every other dialog.
+- **The live card says so.** The two VACUUM sliders inside *All sessions* are global settings stored
+  as you move them, in a dialog that otherwise promises nothing is applied: they now carry an
+  `applies immediately` badge, with the reason in the tooltip.
+
+### Fixed
+
+- **Switching provider or MCP server no longer throws the edit away.** The form was loaded straight
+  over whatever had been typed, with no warning and nothing to undo (the most likely reason the
+  Save/Cancel pair felt pointless). The form is now committed into the DRAFT before the selection
+  moves — on a switch, on `+ New` and on `Delete`, which also stops a pending RENAME from being lost
+  — and nothing is written until `Save`. `Cancel` still discards the whole draft.
+- **A `Save` that never gets an answer comes back.** The Providers save button disabled itself on
+  click and was re-enabled only by the host's reply: if that reply was lost the button stayed dead
+  until the modal was reopened. A watchdog restores it after 8 seconds.
+
 ## [0.5.1] - 2026-10-21
 
 ### Fixed
@@ -765,7 +791,8 @@ Completions protocol.
 - **Diagnostics**: per-turn lines in *Output > Harny*, an optional request log
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
-[Unreleased]: https://github.com/spltek/harny/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/spltek/harny/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/spltek/harny/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/spltek/harny/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/spltek/harny/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/spltek/harny/compare/v0.4.0...v0.4.1

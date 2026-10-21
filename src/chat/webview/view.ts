@@ -2929,10 +2929,16 @@ providersImportBtn.addEventListener("click", () => vscode.postMessage({ type: "i
 
 providerSelect.addEventListener("change", () => {
   const name = providerSelect.value;
-  if (name && providerEditorData.providers[name]) loadProviderIntoForm(name);
+  if (!name || !providerEditorData.providers[name]) return;
+  // Commit what is on screen FIRST: moving the selection must never throw away an edit that was
+  // typed but not saved (it stays a draft — Cancel still discards the whole thing).
+  commitProviderForm();
+  loadProviderIntoForm(name);
 });
 
 providerAddBtn.addEventListener("click", () => {
+  // Same rule as a selection change: the form in front of you is kept before a new entry opens.
+  commitProviderForm();
   const base = "new-provider";
   let name = base;
   let i = 1;
@@ -2972,7 +2978,9 @@ providerDeleteBtn.addEventListener("click", () => {
   }
   providerDeleteArmed = false;
   providerDeleteBtn.textContent = "Delete";
-  const name = providerEditorSelected;
+  // The form may have RENAMED this provider: commit it so Delete hits the entry you see, not the
+  // name it had before the edit.
+  const name = commitProviderForm() || providerEditorSelected;
   if (!name || !providerEditorData.providers[name]) return;
   delete providerEditorData.providers[name];
   const names = Object.keys(providerEditorData.providers);
@@ -2991,19 +2999,23 @@ providerDeleteBtn.addEventListener("click", () => {
   }
 });
 
-providersSaveBtn.addEventListener("click", () => {
-  // Commit the currently edited provider (auto-rename if the name changed).
+/**
+ * Commit the FORM into the local DRAFT: no disk write, no message. Called before the selection
+ * moves (another provider, + New, Delete) so a switch never throws away what was just typed — the
+ * draft is what Save sends, and Cancel still discards the whole draft. Returns the name the entry
+ * has after the commit, because the form can RENAME it.
+ */
+function commitProviderForm(): string {
   const oldName = providerEditorSelected;
-  const newName = peName.value.trim();
-  if (!oldName) return;
+  if (!oldName) return "";
   const entry = providerEditorData.providers[oldName];
-  if (!entry) return;
-  const given = newName || oldName;
+  if (!entry) return oldName;
+  const given = peName.value.trim() || oldName;
   if (given !== oldName) {
     delete providerEditorData.providers[oldName];
   }
   providerEditorData.providers[given] = {
-    // Keys the form does not manage are CARRIED OVER untouched so a save is
+    // Keys the form does not manage are CARRIED OVER untouched so a commit is
     // LOSSLESS: `extra` (models, unknown fields), headers, maxTokens and the
     // provider's default thinkingLevel.
     ...(entry.extra ? { extra: entry.extra } : {}),
@@ -3015,8 +3027,24 @@ providersSaveBtn.addEventListener("click", () => {
     thinking: peThinking.value === "unspecified" ? undefined : peThinking.value,
     ...(peSessionHeader.value.trim() ? { sessionHeader: peSessionHeader.value.trim() } : {}),
   };
+  providerEditorSelected = given;
+  return given;
+}
+
+/** Save is the ONLY thing that writes: it commits the form, then sends the whole draft.
+ * The button must not depend on the host answering (a lost reply used to leave it dead), so a
+ * watchdog brings it back by itself. */
+let providersSaveWatchdog = 0;
+providersSaveBtn.addEventListener("click", () => {
+  const name = commitProviderForm();
+  if (!name) return;
+  refreshProviderList(); // the form can rename the provider
   vscode.postMessage({ type: "saveProviders", data: { ...providerEditorData } });
   providersSaveBtn.disabled = true;
+  window.clearTimeout(providersSaveWatchdog);
+  providersSaveWatchdog = window.setTimeout(() => {
+    providersSaveBtn.disabled = false;
+  }, 8000);
 });
 
 // ── Guardrails card: per-session parallel cap + Loop Guard sensitivity ──
@@ -3650,9 +3678,19 @@ mcpConfigure.addEventListener("click", openMcpEditor);
 mcpCancel.addEventListener("click", closeMcpEditor);
 mcpModal.querySelector(".mcp-backdrop")?.addEventListener("click", closeMcpEditor);
 mcpSelect.addEventListener("change", () => {
-  if (mcpEditorServers[mcpSelect.value]) loadMcpIntoForm(mcpSelect.value);
+  const target = mcpSelect.value;
+  if (!mcpEditorServers[target]) return;
+  // Commit what is on screen FIRST: switching server must not throw away an edit that was typed
+  // but not saved (it stays a draft — Cancel still discards the whole thing). The refresh REBUILDS
+  // the options, so the target has to be selected again before it is loaded.
+  commitMcpForm();
+  refreshMcpSelect();
+  mcpSelect.value = target;
+  loadMcpIntoForm(target);
 });
 mcpAdd.addEventListener("click", () => {
+  // Same rule as a selection change: the form in front of you is kept before a new entry opens.
+  commitMcpForm();
   let name = "server";
   let i = 1;
   while (mcpEditorServers[name]) name = `server-${++i}`;
@@ -3664,7 +3702,8 @@ mcpAdd.addEventListener("click", () => {
   mcpName.select();
 });
 mcpDelete.addEventListener("click", () => {
-  const name = mcpEditorSelected;
+  // The form may have RENAMED this server: commit it so Delete hits the entry you see.
+  const name = commitMcpForm() || mcpEditorSelected;
   if (!name) return;
   delete mcpEditorServers[name];
   mcpEditorSelected = Object.keys(mcpEditorServers)[0] ?? "";
@@ -3683,6 +3722,21 @@ mcpTest.addEventListener("click", () => {
   mcpTestResult.className = "mcp-io";
   vscode.postMessage({ type: "testMcpServer", server: s });
 });
+/**
+ * Commit the FORM into the local DRAFT (no message): the same rule as the providers editor — a
+ * selection change, + New or Delete must not silently drop what was just typed. Returns the name
+ * the entry has after the commit, because the form can RENAME it.
+ */
+function commitMcpForm(): string {
+  const old = mcpEditorSelected;
+  const name = mcpName.value.trim() || old;
+  if (!name) return "";
+  if (old && name !== old) delete mcpEditorServers[old];
+  mcpEditorServers[name] = mcpFormServer();
+  mcpEditorSelected = name;
+  return name;
+}
+
 mcpSave.addEventListener("click", () => {
   const old = mcpEditorSelected;
   const name = mcpName.value.trim() || old;
@@ -5172,6 +5226,8 @@ window.addEventListener("message", (e) => {
       }
       break;
     case "providersSaved":
+      // The reply landed: the watchdog is no longer needed.
+      window.clearTimeout(providersSaveWatchdog);
       providersSaveBtn.disabled = false;
       if (msg.ok) {
         closeProvidersEditor();

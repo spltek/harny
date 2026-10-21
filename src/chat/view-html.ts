@@ -1931,6 +1931,15 @@ ${renderViewConfig(deps)}
     }
     .sm-vacuum-head { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--muted); }
     .sm-vacuum-head .spacer { flex: 1; }
+    /* The one card in a modal whose settings are LIVE: say so, because every other card
+       commits on Save (and its dialog says Close, not Cancel). */
+    .sm-vacuum-live {
+      font-size: var(--fs-xs); font-weight: 600; line-height: 1;
+      padding: 2px 6px; border-radius: 999px;
+      color: var(--accent); background: rgba(217, 95, 39, 0.12);
+      border: 1px solid rgba(217, 95, 39, 0.35);
+      white-space: nowrap;
+    }
     .sm-vacuum-slider {
       display: grid; grid-template-columns: 8.5rem 1fr 4.5rem; align-items: center; gap: 8px;
       font-size: var(--fs-sm); color: var(--muted);
@@ -2336,6 +2345,7 @@ ${renderViewConfig(deps)}
       <div id="sm-vacuum" class="sm-vacuum">
         <div class="sm-vacuum-head">
           <span>Database compaction (VACUUM)</span>
+          <span class="sm-vacuum-live" title="These two sliders are global settings: they are stored as soon as you move them, so this card needs no Save">applies immediately</span>
           <span class="spacer"></span>
           <button id="sm-vacuum-btn" class="secondary">VACUUM &amp; optimize indexes…</button>
         </div>
@@ -2381,7 +2391,7 @@ ${renderViewConfig(deps)}
       <div id="mm-modelsdev-warn" class="mm-warn hidden">⚠ models.dev unreachable — context/output may show “-” for hosts that don’t report them.</div>
       <div id="model-list"></div>
       <div class="mm-footer">
-        <button id="model-close" class="secondary">Cancel</button>
+        <button id="model-close" class="secondary">Close</button>
       </div>
     </div>
   </div>

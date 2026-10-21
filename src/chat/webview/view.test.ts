@@ -2995,6 +2995,51 @@ describe("view webview client", () => {
     expect(data.openrouter!.baseUrl).toBe("https://openrouter.ai/api/v1");
   });
 
+  it("switching provider KEEPS the edit as a draft instead of throwing it away", async () => {
+    // The form is a draft: moving the selection used to load the other entry straight over the
+    // edit, with no warning and nothing to undo. Now the edit is committed into the DRAFT first,
+    // so it is still there when you come back — and NOTHING is written until Save.
+    await loadView();
+    hostMessage({
+      type: "providersEditor",
+      data: { providers: { a: { baseUrl: "http://a/v1" }, b: { baseUrl: "http://b/v1" } } },
+    });
+    const baseUrl = document.getElementById("pe-baseurl") as HTMLInputElement;
+    const sel = document.getElementById("provider-select") as HTMLSelectElement;
+    posted.length = 0;
+
+    baseUrl.value = "typed.example:9000"; // edit "a"
+    sel.value = "b"; // …then look at "b"
+    sel.dispatchEvent(new Event("change"));
+    expect(baseUrl.value).toBe("http://b/v1");
+
+    sel.value = "a"; // …and come back
+    sel.dispatchEvent(new Event("change"));
+    expect(baseUrl.value).toBe("http://typed.example:9000/v1");
+    expect(posted.filter((m) => (m as { type?: string }).type === "saveProviders")).toEqual([]);
+
+    (document.getElementById("providers-save") as HTMLButtonElement).click();
+    const sent = posted.find((m) => (m as { type?: string }).type === "saveProviders") as {
+      data: { providers: Record<string, { baseUrl?: string }> };
+    };
+    expect(sent.data.providers.a!.baseUrl).toBe("http://typed.example:9000/v1");
+  });
+
+  it("the providers Save button comes back by itself if the host never answers", async () => {
+    await loadView();
+    hostMessage({ type: "providersEditor", data: { providers: { a: { baseUrl: "http://a/v1" } } } });
+    const save = document.getElementById("providers-save") as HTMLButtonElement;
+    vi.useFakeTimers();
+    try {
+      save.click();
+      expect(save.disabled).toBe(true);
+      vi.advanceTimersByTime(8000);
+      expect(save.disabled).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("test connection posts testProvider and renders the result", async () => {
     await loadView();
     hostMessage({
@@ -3384,6 +3429,34 @@ describe("view webview client", () => {
     expect((document.getElementById("mcp-modal") as HTMLElement).classList.contains("hidden")).toBe(false);
     (document.getElementById("mcp-cancel") as HTMLButtonElement).click();
     expect((document.getElementById("mcp-modal") as HTMLElement).classList.contains("hidden")).toBe(true);
+  });
+
+  it("switching MCP server keeps the edit as a draft too", async () => {
+    await loadView();
+    hostMessage({
+      type: "mcpServers",
+      data: { servers: { one: { command: "node" }, two: { command: "npx" } }, statuses: [] },
+      open: true,
+    });
+    const command = document.getElementById("mcp-command") as HTMLInputElement;
+    const sel = document.getElementById("mcp-select") as HTMLSelectElement;
+    posted.length = 0;
+
+    command.value = "typed-binary";
+    sel.value = "two";
+    sel.dispatchEvent(new Event("change"));
+    expect(command.value).toBe("npx");
+
+    sel.value = "one";
+    sel.dispatchEvent(new Event("change"));
+    expect(command.value).toBe("typed-binary");
+    expect(posted.filter((m) => (m as { type?: string }).type === "saveMcpServers")).toEqual([]);
+
+    (document.getElementById("mcp-save") as HTMLButtonElement).click();
+    const sent = posted.find((m) => (m as { type?: string }).type === "saveMcpServers") as {
+      servers: Record<string, { command?: string }>;
+    };
+    expect(sent.servers.one!.command).toBe("typed-binary");
   });
 
   it("MCP card lists configured servers with their status", async () => {
