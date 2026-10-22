@@ -288,9 +288,10 @@ describe("renderViewHtml", () => {
     const word = cssRule(html, "#insert-hint-word");
     expect(word).toContain("border-radius: 999px");
     expect(word).toContain("background: var(--surface-2)");
-    // …and muted red (with its glow) for Steer, the old pill's palette.
+    // …and muted red (with its glow) for Steer, the old pill's palette — as ROLES,
+    // so the light theme can darken them instead of glowing on paper.
     const steer = cssRule(html, "#insert-hint.is-steer #insert-hint-word");
-    expect(steer).toContain("linear-gradient(135deg, #b23b3b, #8f2d2d)");
+    expect(steer).toContain("linear-gradient(135deg, var(--steer), var(--steer-strong))");
     expect(steer).toContain("color: #ffffff");
     // Idle dims it, exactly like the disabled pill it replaced.
     expect(cssRule(html, "#insert-hint.is-idle")).toContain("opacity: 0.45");
@@ -310,7 +311,7 @@ describe("renderViewHtml", () => {
     // quiet bed as the rest of the line, and ONLY the word "Build" takes the accent —
     // Analyze stays gray, so the orange marks the turns that actually wrote.
     expect(html).toContain(".msg-meta .meta-mode {");
-    expect(html).toMatch(/\.msg-meta \.meta-mode \{[^}]*background: rgba\(255, 255, 255, 0\.06\)/);
+    expect(html).toMatch(/\.msg-meta \.meta-mode \{[^}]*background: var\(--overlay-1\)/);
     expect(html).toMatch(/\.msg-meta \.meta-mode\.build \{[^}]*color: var\(--accent\)/);
     // The colour lives on the WORD only: no rule paints the whole line.
     expect(html).not.toContain(".msg-meta.build {");
@@ -451,8 +452,10 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/@keyframes stream-border-pulse/);
     // IN PHASE with the play button (harny-pulse peaks at 0%/100%): the area
     // pulse must peak (full accent) at 0%/100% and dim at 50% — not inverted.
-    expect(html).toMatch(/@keyframes stream-border-pulse[\s\S]*0%, 100% \{\s*border-color: #d95f27/);
-    expect(html).toMatch(/@keyframes stream-border-pulse[\s\S]*50% \{\s*border-color: rgba\(217, 95, 39, 0\.4\)/);
+    // The two stops are ROLES, so the halo follows the palette instead of being
+    // stuck on the dark theme's #d95f27 (a fixed glow reads wrong on paper).
+    expect(html).toMatch(/@keyframes stream-border-pulse[\s\S]*0%, 100% \{\s*border-color: var\(--accent\); box-shadow: 0 0 14px 1px var\(--accent-glow\)/);
+    expect(html).toMatch(/@keyframes stream-border-pulse[\s\S]*50% \{\s*border-color: var\(--accent-line\); box-shadow: 0 0 4px 0 var\(--accent-glow-soft\)/);
     expect(html).toMatch(/\.msg\.assistant\.streaming\s*\{[^}]*animation\s*:\s*stream-border-pulse 1\.2s ease-in-out infinite/s);
     expect(html).toMatch(/\.thinking-block\.streaming\s*\{[^}]*animation\s*:\s*stream-border-pulse 1\.2s ease-in-out infinite/s);
     // …and they SETTLE OUT (fade the border back) when the stream ends,
@@ -677,8 +680,12 @@ describe("renderViewHtml", () => {
     // terracotta of a typed prompt — but only on the HEADER: the summary body stays
     // neutral, because that is the text the reader has to read.
     expect(html).toMatch(/\.msg\.user\.synthetic-summary\s*\{[^}]*background:\s*var\(--summary-msg\)/s);
-    expect(html).toMatch(/--summary-msg:\s*#[0-9a-f]{6}/i);
-    expect(html).toMatch(/\.msg\.assistant\.synthetic-body\s*\{[^}]*background:\s*rgba\(255,\s*255,\s*255,\s*0\.04\)/s);
+    // The role must exist in BOTH palettes: it is a colour of its own, not the
+    // terracotta of a typed prompt, and the light theme answers it with its own violet.
+    expect(html).toMatch(/--summary-msg:\s*var\(--dark-summary-msg\)/);
+    expect(html).toMatch(/--dark-summary-msg:\s*#[0-9a-f]{6}/i);
+    expect(html).toMatch(/--light-summary-msg:\s*#[0-9a-f]{6}/i);
+    expect(html).toMatch(/\.msg\.assistant\.synthetic-body\s*\{[^}]*background:\s*var\(--overlay-1\)/s);
     // …and the ✂ tab that slides up over that header is violet too: an orange tab on a
     // violet card would look like it belongs to another bubble.
     expect(html).toMatch(/\.msg\.user\.synthetic-summary \.truncate-at\s*\{[^}]*background:\s*var\(--summary-msg\)/s);
@@ -692,5 +699,40 @@ describe("renderViewHtml", () => {
     // Empty chips row is fully hidden, so the ask box keeps the same 8px
     // internal space at top and bottom (no phantom bottom gap).
     expect(html).toMatch(/#attach-row:has\(#attachment-chips\.hidden\)[\s\S]*?display: none/);
+  });
+
+  it("picks its palette from the editor's theme class, dark as the base, harny.theme able to pin one", () => {
+    const state = { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } };
+    const html = renderViewHtml({ ...base, state });
+
+    // Both palettes live in :root, side by side and PREFIXED, so no colour value
+    // is ever written twice: the selection below is a plain assignment.
+    expect(html).toMatch(/--dark-bg:\s*#111111/i);
+    expect(html).toMatch(/--light-bg:\s*#fbfaf9/i);
+
+    // NO theme class (unit tests, or the first paint before VS Code adds its own)
+    // is the DARK palette: dark is the base rule, not one branch among two.
+    expect(cssRule(html, "body")).toContain("--bg: var(--dark-bg);");
+    expect(cssRule(html, "body")).toContain("color-scheme: dark");
+
+    // The editor's own class selects the light palette, and color-scheme rides
+    // along so NATIVE widgets (provider <select>, sliders, search fields) flip too.
+    const lightRule = cssRule(html, "body.vscode-light, body.vscode-high-contrast-light");
+    expect(lightRule).toContain("--bg: var(--light-bg);");
+    expect(lightRule).toContain("--accent: var(--light-accent);");
+    expect(lightRule).toContain("color-scheme: light");
+
+    // harny.theme must WIN over the editor's class, and both are `body.<class>`:
+    // equal specificity, so only SOURCE ORDER decides — the pinned blocks must
+    // stay LAST. This is the invariant that makes the setting work at all.
+    const lightAt = html.indexOf("body.vscode-light, body.vscode-high-contrast-light");
+    expect(html.indexOf("body.theme-dark")).toBeGreaterThan(lightAt);
+    expect(html.indexOf("body.theme-light")).toBeGreaterThan(html.indexOf("body.theme-dark"));
+
+    // Pinning emits the class on the body; `auto` emits nothing and leaves the
+    // choice to the editor (whose class VS Code swaps live on a theme change).
+    expect(renderViewHtml({ ...base, state, theme: "light" })).toMatch(/<body class="controls-collapsed theme-light">/);
+    expect(renderViewHtml({ ...base, state, theme: "dark" })).toMatch(/<body class="controls-collapsed theme-dark">/);
+    expect(renderViewHtml({ ...base, state, theme: "auto" })).toMatch(/<body class="controls-collapsed">/);
   });
 });

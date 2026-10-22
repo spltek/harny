@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-22
+
+### Added
+
+- **Harny keeps its own look in BOTH themes — it no longer lives only in the dark.** The panel used
+  to carry ONE hardcoded palette, so changing the editor theme did nothing to it. It now carries TWO
+  palettes with the same role names (terracotta on anthracite, terracotta on warm paper) and asks the
+  editor only WHICH one is live: VS Code stamps the theme KIND on the webview body (`vscode-light`,
+  `vscode-dark`, `vscode-high-contrast`, `vscode-high-contrast-light`) and swaps that class on a
+  theme change **without reloading the page**, so the panel re-skins instantly — no host round-trip,
+  no lost prompt. Dark is the BASE rule, not a branch: a page with no class (unit tests, the very
+  first paint before VS Code adds its own) gets the palette Harny always had. `color-scheme` rides
+  along, because it is the part CSS cannot fake: it is what makes the browser draw NATIVE widgets
+  (the provider `<select>`, the sliders, the search fields' clear button, the scrollbars) in the
+  right scheme instead of always-dark.
+- **`harny.theme`** (`auto` | `dark` | `light`, default `auto`): follow the editor, or PIN one palette
+  so the panel keeps its look when the editor is the other kind. The pinned class is emitted on the
+  body and wins over the editor's by SOURCE ORDER — the one invariant that makes the setting work at
+  all, and a test guards it.
+
+### Changed
+
+- **The manifest now declares the API version it actually requires.** `devDependencies` asked for
+  `@types/vscode: ^1.85.0` while `engines.vscode` said `^1.101.0`: the floor was two years older than
+  the minimum supported editor, so a fresh checkout could happily compile against types the extension
+  is not allowed to use. They now agree, and `npm ci` installs the same types as before (1.140).
+- **The Settings UI shows ONE setting: the theme.** Opening *Settings* from the extension used to list
+  eleven keys — the provider preset, the API key, the base URL, the model, the token budget, the
+  sampler, the thinking knobs, `autoOpen` and the two DB thresholds — next to a panel that already has
+  a form for each of them (and a `config.json` the panel writes). They were removed from
+  `contributes.configuration`, so `@ext:spltek.harny` now returns the palette switch alone. Nothing
+  breaks for an existing setup: the keys are still READ from `settings.json` (User or Workspace) with
+  the same defaults (now supplied by the code, which also clamps them), and the panel still WRITES
+  them; they are simply no longer advertised as settings.
+- **Every colour in the stylesheet is now a ROLE, defined twice in `view-config.ts`.** 60 roles, and a
+  missing light value is a type error (`Palette` is derived from the dark object). The ~150 literals
+  that had accumulated were folded into them: nine greys became a four-rung ladder (`--fg-dim`,
+  `--muted`, `--muted-2`, `--muted-3`), the white-alpha overlays became `--overlay-1…4` (black-alpha
+  on paper, where "a slightly lighter patch" does not exist), recessed blocks `--sink-1/2`, scrims
+  `--backdrop`, the button-key shadow `--key-shadow`, floating cards `--modal-shadow`, the scrollbars
+  `--scroll-thumb`, the accent tints and halos `--accent-tint*` / `--accent-line` / `--accent-glow*`,
+  and the Prism tokens `--code-*` (one-dark and one-light are the two readings of the same roles, so
+  a diff is readable instead of washed out). What stays literal is deliberate: what is drawn ON the
+  terracotta (attachment chip, key bevels, bubble text) and what must be dark in both themes (the
+  image lightbox and its scrim).
+- **The light palette DARKENS the accent instead of lightening it.** `#d95f27` on white sits at
+  ~3.2:1; the light theme's `#b8531d` keeps white text on a user bubble at ~4.9:1 and the accent as a
+  link/label colour above 4.5:1, with the semantic hues moved to their 700-ish step (`#98c379` on
+  white is 2:1, `#2f7d32` is 4.9:1).
+
+### Fixed
+
+- **A CSS declaration that never applied.** `.build-cta-static .build-cta-text` asked for
+  `var(--fg-muted)` — a role that exists in no palette: the declaration was invalid, so the colour
+  silently fell back to the inherited one. It now asks for `--muted-2`.
+
+### Security
+
+- **Two advisories closed in the markdown pipeline.** `dompurify` 3.4.16 → 3.4.17
+  (GHSA-c6gr-qvv4-5v3f: the SMIL `attributeName="href"` guard was skipped when `PARSER_MEDIA_TYPE` is
+  `application/xhtml+xml`) and `markdown-it` 15.0.2 → 15.0.3 (GHSA-vfgh-jcmw-g37q and
+  GHSA-gfr2-rv44-r23c: quadratic-time DoS on inline HTML and on a single multi-line link reference
+  definition). Both sit on the path of everything the model writes into the transcript, so the panel
+  was rendering untrusted text through them; `npm audit` is now clean. The remaining patch bumps
+  (`vitest`, `@vitest/coverage-v8`, `prettier`, `@types/node`, `ignore`) ride along, and no declared
+  range had to change.
+
 ## [0.6.0] - 2026-10-22
 
 ### Fixed

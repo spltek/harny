@@ -2,7 +2,7 @@
   "name": "harny",
   "displayName": "Harny - AI Coding Harness",
   "description": "AI coding harness for VSCodium and VS Code — fast and packed with features, built on a SOLID core. Any OpenAI-compatible endpoint works out of the box.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "publisher": "spltek",
   "license": "MIT",
   "repository": {
@@ -75,80 +75,20 @@
     "configuration": {
       "title": "Harny",
       "properties": {
-        "harny.provider": {
-          "type": "string",
-          "default": "openai",
-          "enum": [
-            "openai",
-            "openai-compatible",
-            "anthropic"
-          ],
-          "description": "Provider preset — all use the single OpenAI Chat Completions protocol (/v1/chat/completions): openai (api.openai.com), openai-compatible (Ollama, LM Studio, llama.cpp...), anthropic (Anthropic's OpenAI-compatible endpoint)"
-        },
-        "harny.apiKey": {
-          "type": "string",
-          "default": "",
-          "description": "API key (or set OPENAI_API_KEY env var)"
-        },
-        "harny.baseUrl": {
-          "type": "string",
-          "default": "https://api.openai.com",
-          "description": "Base URL for OpenAI-compatible APIs"
-        },
-        "harny.model": {
-          "type": "string",
-          "default": "gpt-4o",
-          "description": "Model to use for chat completions"
-        },
-        "harny.maxTokens": {
-          "type": "number",
-          "default": 16384,
-          "description": "Maximum tokens per response"
-        },
-        "harny.temperature": {
-          "type": "number",
-          "description": "Sampling temperature"
-        },
-        "harny.thinkingMode": {
+        "harny.theme": {
           "type": "string",
           "enum": [
-            "bool",
-            "effort",
-            "type",
-            "reasoning",
-            "unspecified"
+            "auto",
+            "dark",
+            "light"
           ],
-          "description": "How the provider exposes the reasoning/thinking phase: \"bool\" (llama.cpp chat_template_kwargs.enable_thinking), \"effort\" (OpenAI-style reasoning_effort), \"type\" (DeepSeek/Anthropic thinking.type), \"reasoning\" (OpenRouter-native), \"unspecified\" (nothing sent)"
-        },
-        "harny.thinkingLevel": {
-          "type": "string",
-          "enum": [
-            "off",
-            "low",
-            "medium",
-            "high"
+          "default": "auto",
+          "enumDescriptions": [
+            "Follow the editor: Harny uses its light palette when the VS Code theme is a light one, its dark palette otherwise (default)",
+            "Always the dark palette (terracotta on anthracite), whatever the editor theme is",
+            "Always the light palette (terracotta on warm paper), whatever the editor theme is"
           ],
-          "default": "medium",
-          "description": "Thinking / reasoning effort level (per session, overridable from the chat header dropdown)"
-        },
-        "harny.autoOpen": {
-          "type": "boolean",
-          "default": false,
-          "description": "Automatically open the chat panel when VS Code starts"
-        },
-        "harny.dbVacuumThresholdPercent": {
-          "type": "number",
-          "default": 20,
-          "minimum": 1,
-          "maximum": 100,
-          "description": "Free-page percentage above which Harny suggests compacting the sessions database (VACUUM)."
-        },
-        "harny.dbVacuumMinFreeMB": {
-          "type": "number",
-          "default": 128,
-          "minimum": 0,
-          "maximum": 10240,
-          "description": "Minimum RECLAIMABLE megabytes below which Harny never suggests compacting (0 = no minimum, max 10 GB)."
+          "description": "Which of Harny's two palettes the chat panel uses. Harny keeps its own look in both: it does not adopt the theme's colors, it only follows its light/dark kind, so the panel re-skins instantly when you change theme."
         }
       }
     }
@@ -168,7 +108,7 @@
   "devDependencies": {
     "@types/diff": "^7.0.2",
     "@types/node": "^26.3.0",
-    "@types/vscode": "^1.85.0",
+    "@types/vscode": "^1.101.0",
     "@vitest/coverage-v8": "^5.0.3",
     "@vscode/vsce": "^4.0.0",
     "esbuild": "^0.28.2",

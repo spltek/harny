@@ -149,10 +149,12 @@ export class ChatViewProvider implements WebviewViewProvider {
     // open must rebuild the HTML for the new size to take effect.
     context.subscriptions.push(
       workspace.onDidChangeConfiguration((e) => {
-        // editor.fontSize drives the root font, so ONLY that needs a full
-        // rebuild. Any other `harny.*` change (model/limits/providers) is
-        // applied with a LIGHTWEIGHT refresh so the typed prompt survives.
-        if (e.affectsConfiguration("editor.fontSize")) this.refresh();
+        // editor.fontSize drives the root font and `harny.theme` the body's
+        // palette class, so those two need a full rebuild (a body class cannot
+        // be pushed through a message). Any other `harny.*` change
+        // (model/limits/providers) is applied with a LIGHTWEIGHT refresh so the
+        // typed prompt survives.
+        if (e.affectsConfiguration("editor.fontSize") || e.affectsConfiguration("harny.theme")) this.refresh();
         else if (e.affectsConfiguration("harny")) this.refreshConfig();
       }),
     );
@@ -2814,6 +2816,15 @@ export class ChatViewProvider implements WebviewViewProvider {
     return typeof size === "number" && size > 0 ? size : 14;
   }
 
+  /** `harny.theme`: which of Harny's two palettes the panel uses. `auto` hands
+   * the choice to the editor (its body class decides, and VS Code updates that
+   * class live on a theme change); `dark`/`light` PIN one, so the panel keeps
+   * its look even when the editor theme is the other kind. */
+  private themeMode(): "auto" | "dark" | "light" {
+    const mode = workspace.getConfiguration("harny").get<string>("theme");
+    return mode === "dark" || mode === "light" ? mode : "auto";
+  }
+
   private async buildHtml(): Promise<string> {
     const active = this.activeRuntime();
     const messages = active ? active.agent.getMessages() : [];
@@ -2856,6 +2867,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       cspSource: this.view!.webview.cspSource,
       scriptUri: viewUri.with({ query: "v=" + version }).toString(),
       editorFontSizePx: this.editorFontSizePx(),
+      theme: this.themeMode(),
       state: {
         sessions: this.currentFolderSessions(),
         openIds: this.registry.listOpenIds(),

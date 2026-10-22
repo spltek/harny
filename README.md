@@ -455,8 +455,16 @@ Harny reads configuration from **three sources**, in this order:
 
 #### VS Code settings (`harny.*`)
 
+> **Only `harny.theme` is listed in the Settings UI.** The other keys below still work exactly as
+> before — they are ordinary settings, read from User or Workspace `settings.json` — but the extension
+> no longer *contributes* them, so `@ext:spltek.harny` in the Settings page shows the one knob you
+> actually reach for and nothing else. Set them from the panel (the **Providers & Models** gear and
+> the **DB** gear in the sessions manager write them for you), or add them to `settings.json` by hand;
+> the table stays here because those keys are still the contract.
+
 | Setting | Default | Description |
 |---------|---------|-------------|
+| `harny.theme` | `auto` | Palette: `auto` follows the editor's light/dark kind, `dark` / `light` pin one — the only setting listed in the Settings UI |
 | `harny.provider` | `openai` | Provider preset — all use the OpenAI Chat Completions protocol (`openai`, `openai-compatible`, `anthropic`) |
 | `harny.apiKey` | `""` | API key (falls back to `OPENAI_API_KEY`) |
 | `harny.baseUrl` | `https://api.openai.com` | Base URL (for compatible providers) |
