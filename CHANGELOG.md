@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-22
+
+### Fixed
+
+- **A wide table scrolls inside its own frame instead of pushing the answer off the panel.** The
+  scroll container was `display: inline-block`, so `max-width: 100%` resolved against the table's
+  own content instead of the transcript: the box grew to the full width of the table and the panel
+  clipped it, with no way to reach the right-hand columns. It is now `display: block` with
+  `width: fit-content; max-width: 100%; overflow-x: auto` — the table keeps its natural width, the
+  frame never exceeds the transcript, and a styled horizontal scrollbar makes the overflow visible.
+  Covered by six assertions in `view-html.test.ts` (container rule, per-side behaviour and the
+  scrollbar styling, which browsers only paint with an explicit height).
+
+### Changed
+
+- **“Insert prompt in Queue” instead of “Insert in Queue”.** The indicator above the prompt read as a
+  fragment: insert *what*? The two-word fix makes the line self-explanatory without touching the
+  behaviour — the pill still shows `Queue`, and `Steer` only while a run is active AND Ctrl/Cmd is
+  held, and the webview still rewrites just the single word inside it.
+
 ## [0.5.3] - 2026-10-21
 
 ### Added
@@ -806,7 +826,8 @@ Completions protocol.
 - **Diagnostics**: per-turn lines in *Output > Harny*, an optional request log
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
-[Unreleased]: https://github.com/spltek/harny/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/spltek/harny/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/spltek/harny/compare/v0.5.3...v0.6.0
 [0.5.3]: https://github.com/spltek/harny/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/spltek/harny/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/spltek/harny/compare/v0.5.0...v0.5.1
