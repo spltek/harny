@@ -176,8 +176,8 @@ describe("renderViewHtml", () => {
     expect(html).not.toContain('id="steer-btn"');
     expect(html).toMatch(/id="mode-select"[\s\S]*?<button type="button" id="parallel-btn"/);
     // The indicator lives in the control-stack strip now: LEFT side, same height as
-    // "Collapse all" (right side). "Insert in " + the word in a pill.
-    expect(html).toMatch(/<div id="ctl-toggle"[^>]*>[\s\S]*?<span id="insert-hint"[^>]*>Insert in <span id="insert-hint-word">Queue<\/span><\/span>/);
+    // "Collapse all" (right side). "Insert prompt in " + the word in a pill.
+    expect(html).toMatch(/<div id="ctl-toggle"[^>]*>[\s\S]*?<span id="insert-hint"[^>]*>Insert prompt in <span id="insert-hint-word">Queue<\/span><\/span>/);
     expect(html).toMatch(/id="insert-hint"[\s\S]*?id="ctl-toggle-btn"[\s\S]*?id="collapse-all"/);
     expect(html).toMatch(/<button id="attach-btn"[\s\S]*?id="user-input"/);
     // It shows a PAPERCLIP glyph (attachment), not a bare "+".

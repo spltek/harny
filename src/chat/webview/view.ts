@@ -1952,7 +1952,7 @@ const pending = createPendingSection({
 let pendingSnapshot: string | null = null;
 
 /**
- * The insert-in hint ("Insert in Queue" / "Insert in Steer") is a pure INDICATOR
+ * The insert-in hint ("Insert prompt in Queue" / "Insert prompt in Steer") is a pure INDICATOR
  * (never clicked): it shows Steer ONLY while a run is active AND Ctrl/Cmd is held,
  * and Queue otherwise. Releasing the key (or the run ending) returns it to Queue; a
  * sent message leaves it as-is (still Steer while the key is down, Queue once

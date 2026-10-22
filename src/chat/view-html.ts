@@ -1036,7 +1036,7 @@ ${renderViewConfig(deps)}
     #transcript-actions > button:not(:disabled):active { transform: none; box-shadow: none; }
     /* Insert-in hint: the LEFT slot of this same strip, mirroring #transcript-actions on
        the right. It replaces the old Queue/Steer pill that lived in the model row:
-       "Insert in Queue" / "Insert in Steer". A pure INDICATOR — never clickable — so it
+       "Insert prompt in Queue" / "Insert prompt in Steer". A pure INDICATOR — never clickable — so it
        is a plain span: no button chrome, no focus ring. Both states keep the word in a
        pill of the strip's own height, so the row cannot reflow when the word changes. */
     #insert-hint {
@@ -2117,7 +2117,7 @@ ${renderViewConfig(deps)}
          pure INDICATOR (never clickable): "Queue" by default, "Steer" (red pill)
          ONLY while a run is active AND Ctrl/Cmd is held — exactly the rule the
          old pill followed, so the keyboard gesture is unchanged. -->
-    <span id="insert-hint" title="Queue: the next message runs after the current run ends">Insert in <span id="insert-hint-word">Queue</span></span>
+    <span id="insert-hint" title="Queue: the next message runs after the current run ends">Insert prompt in <span id="insert-hint-word">Queue</span></span>
     <button id="ctl-toggle-btn" aria-label="Toggle controls">
       <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
     </button>
