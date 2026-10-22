@@ -346,6 +346,15 @@ describe("renderViewHtml", () => {
     // Tabs keep a readable floor and never shrink (the strip scrolls instead).
     expect(html).toMatch(/\.tab \{[\s\S]*?flex-shrink: 0/);
     expect(html).toMatch(/\.tab \{[\s\S]*?min-width: 5\.5rem/);
+    // A wide markdown table scrolls INSIDE its own frame — the prose wraps, the table does
+    // not — and the scrollbar must be VISIBLE: on macOS overlay scrollbars stay invisible
+    // until you scroll, so a working scrollable table looked broken.
+    expect(html).toMatch(/\.table-scroll \{[\s\S]*?display: block/);
+    expect(html).toMatch(/\.table-scroll \{[\s\S]*?width: fit-content/);
+    expect(html).toMatch(/\.table-scroll \{[\s\S]*?max-width: 100%/);
+    expect(html).toMatch(/\.table-scroll \{[\s\S]*?overflow-x: auto/);
+    expect(html).toMatch(/\.table-scroll::-webkit-scrollbar \{[\s\S]*?height: 9px/);
+    expect(html).toMatch(/\.table-scroll table \{[\s\S]*?min-width: max-content/);
   });
 
   it("has NO steer-target affordance (the sub-agent target was removed)", () => {

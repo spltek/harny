@@ -493,17 +493,34 @@ ${renderViewConfig(deps)}
     .msg.assistant th { background: var(--tool-bg); }
     .msg.assistant img { max-width: 100%; border-radius: 4px; }
     /* The wrapper OWNS the whole rounded frame and shrink-wraps the table
-       (inline-block): no full-width line when the table is narrower, and the
+       (fit-content): no full-width line when the table is narrower, and the
        right corners follow the same radius. Cells only draw INTERIOR grid
-       lines (outer edges suppressed — the frame belongs to the wrapper). */
+       lines (outer edges suppressed — the frame belongs to the wrapper).
+       An inline-block wrapper left this UNBOUNDED: a shrink-to-fit width resolves
+       max-width:100% against the CONTENT itself, so a wide table made the wrapper as
+       wide as the table and there was nothing left to scroll — the table was clipped
+       by the panel edge instead (visible as a missing right corner). A block with
+       width:fit-content does the same shrink-wrapping against a DEFINITE containing
+       block, and the styled scrollbar below is what makes the scroll VISIBLE: on macOS
+       overlay scrollbars are invisible until you scroll, so a working scrollable table
+       looked broken. */
     .table-scroll {
-      display: inline-block;
+      display: block;
+      width: fit-content;
       max-width: 100%;
       border: 1px solid var(--border);
       border-radius: 8px;
-      overflow: auto;
+      overflow-x: auto;
+      overflow-y: hidden;
       margin: 6px 0;
     }
+    .table-scroll::-webkit-scrollbar { height: 9px; }
+    .table-scroll::-webkit-scrollbar-track { background: transparent; }
+    .table-scroll::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.22);
+      border-radius: 5px;
+    }
+    .table-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.34); }
     .table-scroll table { min-width: max-content; border-collapse: separate; border-spacing: 0; }
     .msg.assistant .table-scroll th, .msg.assistant .table-scroll td,
     .thinking-body .table-scroll th, .thinking-body .table-scroll td {
