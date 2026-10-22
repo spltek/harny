@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-22
+
+### Fixed
+
+- **A warning in the Problems panel, gone.** The manifest declared
+  `onView:harny.chatView`, which VS Code and VSCodium have generated *implicitly* from
+  `contributes.views` since 1.74: the `package.json` schema flagged it as removable, so every
+  checkout showed a permanent warning on line 51. It is now declared nowhere and still fires — the
+  editor registers the implicit event before it activates the extension, which is exactly what the
+  hand-written one did. `onStartupFinished` STAYS: no contribution generates it, and it is what wakes
+  Harny up at startup for `harny.autoOpen`.
+
 ## [0.7.0] - 2026-10-22
 
 ### Added
