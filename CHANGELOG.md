@@ -7,6 +7,240 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A session open in a tab can no longer vanish from the list.** The main list is the current
+  folder's, which is right — but an OPEN session was filtered out by the same rule, so switching the
+  workspace folder (or opening a cross-folder session from Manage) left a tab you could not get back
+  to, next to an empty list saying "No sessions yet. Create a new session." — a lie about the session
+  sitting right above it. The list is now the folder's sessions PLUS every open session that lives
+  elsewhere (dimmed, its folder in the tooltip), recomputed on open too since opening can add a row.
+  Name uniqueness stays scoped to the FOLDER (`sessionNameTaken` keeps reading
+  `currentFolderSessions`), so two folders may still share a name; and the empty state now says "No
+  sessions in this folder", which is true in every case.
+- **A finished session no longer stays "working" (and its tab × no longer stays locked).** Two
+  defects added up, and the screenshot that reported it was right about both. First, the end-of-run
+  report was fired from INSIDE the send lock (`working = sending || agent.streaming`), so the session
+  was published to the view as still working — and nothing ever corrected it: the run's last event had
+  already been consumed. `workingIds` drives the tab ×, the row actions and the working indicators, so
+  a stale set locks them for good. The report now happens with the lock ALREADY released. Second, the
+  recorder's `summary()` invented a `{kind:"working", label:"working…"}` phase for an EMPTY recorder —
+  and `done` empties it, so the last thing a finishing session did was label itself "working…". The
+  assumption in its comment ("callers ask only while it works") was false: the router asks on every
+  event. Both paths are gone: the per-session live line, the tab/session-list label and the "Running
+  now" panel were removed at the user's request, and `summary()` went with them — the recorder keeps
+  exactly what the view is rebuilt from (`projection()`), and `workingIds` stays as the single source
+  of "this session is busy".
+- **A session that kept working while you looked elsewhere no longer forgets what it was
+  doing.** The transcript is rebuilt from `getMessages()`, and the assistant turn — tool calls
+  included — reaches the history only when the WHOLE tool batch completes, in ONE atomic
+  `addGroup` write (`agent.ts`). In Parallel that batch can run for minutes, so switching tab (or
+  letting the webview reload) rebuilt the view from a history that did not contain the Delegate
+  calls yet: the "Working…" bar survived, the sub-agent bubbles did not — and they only appeared
+  after Stop, because stopping is what forces the batch to commit. Two causes, both fixed: the
+  live state was TEXT-ONLY (`liveThinking`/`liveAnswer`), and every non-text event
+  (`tool_call`/`tool_result`/`subagent_start`/`subagent_event`) was forwarded only
+  `if (active)` and never recorded, so it was gone the moment that session stopped being the
+  visible tab.
+- **The ⏹ you already pressed stays pressed.** Aborting ONE sub-agent was UI state only: switching
+  tab and back rebuilt the bubble with an ENABLED abort button, as if the request had never been
+  made (the host no-ops a dead id, so nothing bad happened — the panel just lied). The request is
+  now part of the recorded call (`abortRequested`) and the replay restores the pending, disabled
+  button. Two related leaks fixed in the same path: the nested tool-line map is released on every
+  rebuild instead of keeping detached nodes, and a replayed sub-agent log is painted immediately
+  instead of waiting for the next animation frame.
+
+### Added
+
+- **`SessionLiveState`** (`src/chat/session-live-state.ts`): the per-session recorder of the
+  in-flight turn — thinking/answer, tool calls with a capped copy of their output, sub-agents with
+  their status (`queued`/`running`/`done`/`failed`/`aborted`) and their nested log. Bounded by
+  hard caps (40 tool calls, 200 nested events, 2 KB per output) because with many sessions open
+  this state must not grow without limit. It is pure — no vscode, no view — and unit-tested
+  directly.
+- **`SessionEngine`** (`src/chat/session-engine.ts`): ONE per open session, created by the
+  registry, owning that recorder and the `projection()` the view is rebuilt from. Extraction step
+  #1 of the strangler plan that moves `send` / `abort` / queue / compaction out of
+  `ChatViewProvider`. Its `projection()` also drops the tool calls the history ALREADY contains
+  (the batch commit is asynchronous): without that dedupe a rebuild would paint a bubble twice.
+- **`liveTurn`** travels with `switchView`, `refresh` and the initial page state. The view
+  replays the in-flight bubbles with the SAME builders the live events use, keeps them registered
+  in `pendingToolCalls` (so the events still arriving keep updating them instead of being
+  dropped for lack of a bubble), and places the live text correctly — a preamble written before
+  the Delegate calls stays ABOVE them, an answer written after a tool result goes BELOW — via
+  `textAfterTools`.
+
+### Changed
+
+- **`StreamTee` is a pure ROUTER now.** It records every open session's events into that
+  session's engine (`rt.engine.live.apply`) and forwards only the ACTIVE one to the view; the
+  shared buffers and their `liveOf`/`clear` API are gone. Recording is deliberately NOT gated on
+  "active": that gate was the bug.
+
+### Added
+
+- **ONE global cap on LLM requests (8 in flight), shared by every session and every sub-agent.**
+  The per-session sub-agent cap MULTIPLIES: ten open sessions with Parallel on and a cap of four are
+  forty requests against the same provider key — a self-inflicted 429 storm, where the agent backs
+  off, the run stalls and the user reads it as a network error. The per-session cap still says how
+  wide ONE run may fan out; this bounds what the whole extension asks of the provider at once. It is
+  a FAIR FIFO gate (a chatty session cannot starve the other nine), the slot covers the WHOLE stream
+  (`yield*` forwards `return()`/`throw()`, so an early `break`, an error and an aborted signal all
+  free it), and a request whose signal aborts while QUEUED never reaches the provider at all.
+  Installed on the provider FACTORY, which is the only seam reaching every turn: the agent builds a
+  provider per turn, so a cap on a provider instance would cover one request.
+- **The context-token metric is coalesced, not written per turn.** It was one `saveSettings` — a
+  synchronous, single-threaded SQLite transaction (upsert + a count query) — on EVERY usage report,
+  i.e. every turn of every session: ten streaming sessions meant ten transactions per turn for a
+  number the UI reads from MEMORY and the next turn recomputes anyway. Now a burst collapses into one
+  write of the LAST value (400 ms), and the write happens immediately when the run ends, when the tab
+  is CLOSED (before its runtime disappears) and on `dispose()`. A metric must never take a run down,
+  so a failing write is logged and swallowed.
+- **`ChatViewProvider.dispose()`**, registered on the extension context: it stops the telemetry probe
+  (it used to keep sampling a host that was going away), clears both coalescing timers, and flushes
+  the pending metric while the store is still open. The one-shot startup vacuum check is no longer a
+  floating `setTimeout`.
+
+- **The prompt and its attachments belong to the SESSION, not to the panel.** Switching tab used to
+  drop the attachment chips while KEEPING the typed text — the worst of both: your files vanished and
+  a draft written for another session followed you around. Both are now parked per session and
+  restored when you come back (chips, thumbnails and sizes included); sending consumes that session's
+  draft, and closing/deleting a session frees it. The TEXT also survives a webview reload via
+  `setState`; attachments do not, because a pasted image can be a 15 MB data URI and that is not
+  what the webview state is for.
+- **A session you come back to is where you left it.** Scroll position and open sections lived only
+  in the page, and every switch (and every run-end refresh) rebuilds the transcript from history: you
+  were always thrown back to the end with everything folded. Both are now remembered per session. The
+  rule respects what you were doing: a session you were FOLLOWING stays pinned to the bottom (the
+  live turn keeps growing), one you had scrolled up returns to that exact offset. Sections are keyed
+  by their position in the transcript — appends only ADD at the end, so the indexes stay valid across
+  a rebuild — and the live streaming block is deliberately excluded: it follows the stream, never the
+  saved state. The `refresh` path keeps its scroll ANCHOR (which survives content growth better than
+  an absolute offset) and takes only the sections from here. A transcript that SHRANK — a compaction,
+  a ✂ cut, a branch — was rewritten in the middle, so the positional keys no longer point at what
+  they did: the saved set is DROPPED (sections come back closed, the default of a fresh session) and
+  the scroll is kept. Guessing is the one outcome worth avoiding: opening a section nobody asked for
+  is worse than closing the one you were reading. The size is tracked PER SESSION, so switching from
+  a long session to a short one is not mistaken for a rewrite.
+- **Telemetry for the multi-session questions.** Set `HARNY_DEBUG` and one line every 30 s reports
+  what decides the NEXT optimisation: the **event-loop lag** (p95/max — in a single-threaded host
+  everything shares that thread), the **webview traffic** (messages and approximate bytes), and the
+  **SQLite write timings** per operation (count, avg, p95, max — the store is synchronous, so a slow
+  COMMIT is a stall for every other streaming session). Idle windows print nothing; with the flag off
+  the cost is a timer tick and two counters.
+- **The webview→host message CONTRACT is now a test.** The boundary is untyped in both directions —
+  the webview writes `postMessage({ type: "x" })`, the provider answers with `case "x":` — so a typo
+  or a forgotten route fails SILENTLY: the click does nothing and nothing throws. `router-contract.test.ts`
+  reads the two sources and asserts both directions: every type the webview POSTS has a route, and
+  every route is producible from the webview (no dead routes left behind by a removed feature).
+  Today's inventory is already consistent (51 posted types, 55 routes), so the test is a guard rather
+  than a fix. The parsers are brace/paren-matched — a nested `data: { … }` payload must not truncate
+  the read — and they are **mutation-tested**: synthetic sources prove a typo and a dead route are
+  both caught, and a real mutation on the product files confirmed the failure message NAMES the
+  offending type.
+- **The measurement is a TEST, not a profiler session.** Two measured suites print their numbers and
+  assert on SHAPE (O(1) vs O(n)) with generous absolute ceilings, so they run in CI and survive a
+  slower machine:
+  - `sqlite-store.perf.test.ts`: an append costs the same at 20 and at 400 messages (0.06 ms at both —
+    no whole-history rewrite), 20 sessions × 15 turns of `saveMessages` + `saveSettings` take ~29 ms in
+    total, reading 300 messages back takes 0.3 ms. **Verdict: the store is NOT the wall — the writer
+    stays on the host thread, and that decision now has a number behind it.**
+  - `session-live-state.perf.test.ts`: 100 000 events across 20 sessions cost 8 ms (0.08 µs/event), a
+    normal 2000-event turn costs 0.06 ms, the caps hold after 3 MB of runaway tool output, and the
+    projection that crosses to the webview stays around 90 KB.
+- **The recorded live turn is freed on `done`/`error`** — the recorder already resets itself when the
+  run ends, so an idle session holds nothing. (The earlier claim that it kept ~80 KB until the next
+  send was wrong; a test now pins the real behaviour.)
+- **The handshake between the global cap and Stop is tested end to end**: a request parked in the
+  semaphore's queue, then `abort()` → `done`, no `error` event. The two modules are coupled by the
+  error NAME (`"AbortError"`); if it ever drifts, a normal Stop turns into a red "provider failed"
+  bubble, and this test fails first.
+- **A draft's ATTACHMENTS now survive a webview reload too.** Only the typed text used to be kept in
+  the webview state, so a window reload silently dropped the files you had picked (the worst kind of
+  loss: they are not on screen, so nothing reminds you). The state now carries the files per session
+  as well, with an explicit BUDGET: a file's payload (a pasted screenshot is a data URI) is kept only
+  up to 256KB. Past that the chip is still there — name and size — but marked ⚠ and `needsReattach`,
+  and sending it is REFUSED with a visible note instead of shipping an empty attachment the model
+  would read as a real file. `drafts` keeps its old `{key: text}` shape, so a state written by an
+  older version still loads.
+- **The webview test harness now keeps its `setState`.** It used to be a no-op, which made the whole
+  persistence path untestable: a test could seed a state but never see what the view wrote. It now
+  stores, and `reloadView()` rebuilds the DOM and re-imports the module while the state carries over —
+  a real reload, so the save/restore ROUND TRIP is what gets tested. (The fresh DOM matters as much
+  as the fresh module: re-importing alone left the old instance's click listeners on the same buttons,
+  and one click ran two views.)
+
+### Changed
+
+- **The engine's port split in two, because the old one over-served it.** `SessionEnginePort` had 17
+  methods and `abort()` used two of them (the other fifteen were for `send`), which forced every
+  `abort` fake to implement a stand-in — the defect was visible in this module's own test, where
+  `{ ...port, clearQueue }` existed only to silence the compiler. It is now `SessionSendPort` (14,
+  also dropping `postError`, which the engine never called) and `SessionAbortPort` (2). The host still
+  builds ONE object (`SessionSendPort & SessionAbortPort`), so no call site changed shape.
+- **The RUN moved into the engine: `send` and `abort` live there now.** The sequence — prepare the
+  agent, validate, build the prompt, compact, clamp the budget, reset the live turn, start the run,
+  post the status, refresh only if the session is still the visible tab, evaluate the post-response
+  fill — IS the contract, and it now sits in one place that can be exercised with a fake port and no
+  vscode (`session-engine.send.test.ts`, 13 tests; `session-engine.ts` at 100% line coverage). The
+  host keeps what belongs to it — prompt building (attachments, `/skill`, modalities) and the view
+  posts — behind an explicit `SessionEnginePort`. Two behaviours moved verbatim, with their
+  ordering comments: the status is still posted AFTER `agent.send` (so the row locks from the first
+  instant) and `/skills` still never triggers a compaction. The interruption notice
+  (`❌ ⏹ Processing interrupted.`) now lives next to the history it writes, `uiOnly` included: a real
+  assistant message there would split a turn's `tool_calls` from its results, which every provider
+  rejects on every later request.
+- **The session's RUN facts moved to its engine.** `sending` and `compacting` were two `Set`s on
+  `ChatViewProvider`, and `agent.streaming || sending.has(id)` was repeated in five places (the send
+  guard, `isWorking`, the switch payload, the live lines, the initial HTML). They are now
+  `engine.sending`, `engine.compacting` and ONE `engine.working` predicate that everything reads — the
+  same question answered once. That duplication is exactly how the destructive row actions ended up
+  enabled during a send preamble: two of the five copies had been fixed, three had not.
+  No behaviour change: the 1793 tests that existed before this move pass untouched (only the four
+  that reached into the private Sets now drive `engine.beginSend()` / `beginCompaction()`, which is
+  the honest way to say what they simulate).
+- **The two setup gears stay USABLE while sessions work.** A blanket lock meant that with several
+  concurrent runs you could never open the managers again. What is destructive stays locked where it
+  lives: the rows of a working session (branch/rename/delete), and now the providers **save** itself,
+  which the host refuses while anything streams — a provider edit rewrites the endpoint/key that
+  every open run resolves on its NEXT request.
+- **Config pushes are gated on the ACTIVE session and coalesced.** Every session reports token usage
+  at every turn; a hidden one used to rebuild and post the whole config for numbers nobody could see.
+  The noisy callers (usage, background compaction) now skip the push entirely when they are not the
+  active session, and bursts collapse into one build+post.
+- **A plain tab switch no longer re-sends the sessions list.** `currentFolderSessions()` is a
+  `SELECT *` on the session table and it ran on every click; the list only changes when a session is
+  created, branched, renamed or closed, and those paths still send it (`undefined` now means "keep
+  the list you have").
+
+### Fixed
+
+- **A session being PREPARED can no longer be edited away.** "Busy" meant `agent.streaming` only, so
+  during the SEND PREAMBLE (attachment build, pre-request auto-compaction — seconds, not milliseconds)
+  branch / rename / delete / truncate looked enabled and were refused only by the host's silent
+  guard; the runtime they would have mutated already had a run on the way. `workingIds` now uses the
+  same `isWorking` as the send path — streaming, or preparing a send, or draining the queue — so the
+  tab ×, the row actions and the manager all agree with the host.
+- **Switching tabs can no longer show you the wrong session.** `postSwitchView` awaits the
+  config build, so two quick clicks were two switches in flight: the older one could land LAST
+  and paint the tab you had already left — with the config of the current one (model, mode,
+  Parallel, window). The host now drops a stale switch (`switchSeq`, kept SEPARATE from
+  `configSeq` so an unrelated config push cannot invalidate a legitimate switch) and the webview
+  ignores a switch older than the one it has applied.
+- **A sent message stays visible while its PREAMBLE runs.** The attachment build and the
+  pre-request auto-compaction happen BEFORE `agent.streaming` flips: coming back to that session
+  showed an idle transcript — no working bar, unlocked input — while the host considered it busy.
+- **Compaction is per session.** The "is a compaction running" flag was GLOBAL: Compact on B was
+  a silent no-op while A was summarizing, B's auto-compaction was skipped, and returning to a
+  compacting session showed nothing (the "● Compacting…" bubble is DOM-only and was left
+  pointing at a detached node, so it never came back). The flag is now a set of session ids, the
+  bubble is restored from the per-session state on switch, and the node reference is released on
+  every rebuild.
+- **Streamed messages say WHICH session they belong to.** A delta of the session you just
+  switched to can arrive before its `switchView` (the switch awaits a config build): it is now
+  dropped by the view instead of being drawn into the tab you are leaving. Nothing is lost — the
+  switchView replays that session's whole live turn.
+
 ## [0.7.1] - 2026-10-22
 
 ### Fixed

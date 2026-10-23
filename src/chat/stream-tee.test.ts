@@ -1,9 +1,14 @@
 import { describe, it, expect, vi } from "vitest";
 import { StreamTee } from "./stream-tee";
+import { SessionEngine } from "./session-engine";
 import type { SessionRuntime } from "./session-registry";
+import type { ChatController } from "../core/agent/chat-controller";
 import type { AgentEvent } from "../core/agent/types";
+import type { ChatHistory } from "../core/history/chat-history";
 
-function fakeRuntime(id: string): { rt: SessionRuntime; emit: (e: AgentEvent) => void } {
+/** A runtime carrying its OWN engine: the recorder is what the tests assert on,
+ * exactly what the view is rebuilt from. */
+function fakeRuntime(id: string): { rt: SessionRuntime; emit: (e: AgentEvent) => void; engine: SessionEngine } {
   const handlers: ((e: AgentEvent) => void)[] = [];
   const agent = {
     onEvent: (fn: (e: AgentEvent) => void) => {
@@ -14,8 +19,10 @@ function fakeRuntime(id: string): { rt: SessionRuntime; emit: (e: AgentEvent) =>
       };
     },
   };
-  const rt = { sessionId: id, agent, history: {} } as unknown as SessionRuntime;
-  return { rt, emit: (e: AgentEvent) => handlers.forEach((fn) => fn(e)) };
+  const history = { all: () => [] } as unknown as ChatHistory;
+  const engine = new SessionEngine(id, history, agent as unknown as ChatController);
+  const rt = { sessionId: id, agent, history, engine } as unknown as SessionRuntime;
+  return { rt, emit: (e: AgentEvent) => handlers.forEach((fn) => fn(e)), engine };
 }
 
 function makeTee() {
@@ -44,12 +51,36 @@ describe("StreamTee", () => {
 
     // Only the active session's events were posted…
     expect(deps.onPost).toHaveBeenCalledTimes(1);
-    expect(deps.onPost).toHaveBeenCalledWith({ type: "thinkingDelta", content: "A think" });
+    expect(deps.onPost).toHaveBeenCalledWith({ type: "thinkingDelta", content: "A think", sessionId: "a" });
     // …but both buffers accumulated independently.
-    expect(tee.liveOf("a")?.thinking).toBe("A think");
-    expect(tee.liveOf("b")?.thinking).toBe("B think");
-    expect(tee.liveOf("b")?.answer).toBe("B answer");
-    expect(tee.liveOf("a")?.answer).toBe("");
+    expect(a.engine.live.text()).toEqual({ thinking: "A think", answer: "" });
+    expect(b.engine.live.text()).toEqual({ thinking: "B think", answer: "B answer" });
+  });
+
+  it("records the WHOLE in-flight turn of an INACTIVE session (tool calls + sub-agents)", () => {
+    // THE BUG THIS FIXES: the assistant turn reaches the history only when the
+    // whole tool batch commits, so a session that is not the active tab used to
+    // lose its sub-agent bubbles entirely until you pressed Stop.
+    const { tee, deps } = makeTee();
+    deps.isActive.mockImplementation((id: string) => id === "b");
+    const a = fakeRuntime("a");
+    const b = fakeRuntime("b");
+    tee.attachAll([a.rt, b.rt]);
+
+    a.emit({ type: "text_delta", content: "Lancio i sub-agent." });
+    a.emit({ type: "tool_call", toolCall: { id: "d1", name: "Delegate", arguments: { id: "api", goal: "leggi le API" } } });
+    a.emit({ type: "subagent_start", toolCallId: "d1" });
+    a.emit({ type: "subagent_event", toolCallId: "d1", event: { type: "text_delta", content: "sto leggendo" } });
+
+    expect(deps.onPost).not.toHaveBeenCalled(); // nothing reaches the view…
+    const live = a.engine.live.projection()!; // …but everything is replayable
+    expect(live.answer).toBe("Lancio i sub-agent.");
+    expect(live.textAfterTools).toBe(false); // the preamble stays ABOVE the bubbles
+    expect(live.toolCalls).toEqual([
+      { id: "d1", name: "Delegate", args: { id: "api", goal: "leggi le API" }, done: false, isError: false },
+    ]);
+    expect(live.subAgents.d1.status).toBe("running");
+    expect(live.subAgents.d1.events).toHaveLength(1);
   });
 
   it("resets the buffer only when the turn commits (not on tool_call, which fires pre-commit)", () => {
@@ -59,11 +90,13 @@ describe("StreamTee", () => {
 
     a.emit({ type: "thinking_delta", content: "reasoning" });
     a.emit({ type: "tool_call", toolCall: { id: "c1", name: "Read", arguments: {} } });
-    expect(tee.liveOf("a")?.thinking).toBe("reasoning"); // NOT reset yet
+    expect(a.engine.live.thinking).toBe("reasoning"); // NOT reset yet
 
     a.emit({ type: "tool_result", toolResult: { toolCallId: "c1", output: "ok", isError: false } });
-    expect(tee.liveOf("a")?.thinking).toBe("");
-    expect(tee.liveOf("a")?.answer).toBe("");
+    expect(a.engine.live.thinking).toBe("");
+    expect(a.engine.live.answer).toBe("");
+    // The call itself stays until the batch commits (dedupe happens there).
+    expect(a.engine.live.projection()?.toolCalls).toHaveLength(1);
   });
 
   it("routes steer_applied to the host and the view (active only for the view)", () => {
@@ -81,7 +114,7 @@ describe("StreamTee", () => {
     expect(deps.onSteerApplied).toHaveBeenCalledWith("a", ["s1"]);
     expect(deps.onSteerApplied).toHaveBeenCalledWith("b", ["s2"]);
     // …but only the active session's bubble is posted to the view.
-    expect(deps.onPost).toHaveBeenCalledWith({ type: "steerApplied", ids: ["s1"], content: "use Rome" });
+    expect(deps.onPost).toHaveBeenCalledWith({ type: "steerApplied", ids: ["s1"], content: "use Rome", sessionId: "a" });
     expect(deps.onPost).not.toHaveBeenCalledWith(expect.objectContaining({ ids: ["s2"] }));
   });
 
@@ -106,10 +139,11 @@ describe("StreamTee", () => {
       content: "guarda qui",
       images: ["data:image/png;base64,iVBORw0KGgo="],
       attachments,
+      sessionId: "a",
     });
   });
 
-  it("forwards loop_intervention to the view and resets the live buffer", () => {
+  it("forwards loop_intervention to the view and resets the live text", () => {
     const { tee, deps } = makeTee();
     const a = fakeRuntime("a");
     tee.attach(a.rt);
@@ -122,11 +156,12 @@ describe("StreamTee", () => {
       loopType: "reasoning",
       level: 1,
       message: "reasoning loop detected",
+      sessionId: "a",
     });
-    expect(tee.liveOf("a")?.thinking).toBe("");
+    expect(a.engine.live.thinking).toBe("");
   });
 
-  it("forwards harness_nudge to the view and resets the live buffer", () => {
+  it("forwards harness_nudge to the view and resets the live text", () => {
     const { tee, deps } = makeTee();
     const a = fakeRuntime("a");
     tee.attach(a.rt);
@@ -135,9 +170,9 @@ describe("StreamTee", () => {
     a.emit({ type: "text_delta", content: "answer" });
     a.emit({ type: "harness_nudge", content: "**Stop** repeating." });
 
-    expect(deps.onPost).toHaveBeenCalledWith({ type: "harnessNudge", content: "**Stop** repeating." });
-    expect(tee.liveOf("a")?.thinking).toBe("");
-    expect(tee.liveOf("a")?.answer).toBe("");
+    expect(deps.onPost).toHaveBeenCalledWith({ type: "harnessNudge", content: "**Stop** repeating.", sessionId: "a" });
+    expect(a.engine.live.thinking).toBe("");
+    expect(a.engine.live.answer).toBe("");
   });
 
   it("forwards preview_ready to the view when the session is active", () => {
@@ -145,7 +180,7 @@ describe("StreamTee", () => {
     const a = fakeRuntime("a");
     tee.attach(a.rt);
     a.emit({ type: "preview_ready" });
-    expect(deps.onPost).toHaveBeenCalledWith({ type: "previewReady" });
+    expect(deps.onPost).toHaveBeenCalledWith({ type: "previewReady", sessionId: "a" });
   });
 
   it("forwards subagent_start to the view when the session is active", () => {
@@ -153,7 +188,7 @@ describe("StreamTee", () => {
     const a = fakeRuntime("a");
     tee.attach(a.rt);
     a.emit({ type: "subagent_start", toolCallId: "d1" });
-    expect(deps.onPost).toHaveBeenCalledWith({ type: "subagentStart", toolCallId: "d1" });
+    expect(deps.onPost).toHaveBeenCalledWith({ type: "subagentStart", toolCallId: "d1", sessionId: "a" });
   });
 
   it("forwards subagent_event (nested streaming) to the view when active", () => {
@@ -165,6 +200,7 @@ describe("StreamTee", () => {
       type: "subagentEvent",
       toolCallId: "d1",
       event: { type: "text_delta", content: "x" },
+      sessionId: "a",
     });
   });
 
@@ -173,12 +209,13 @@ describe("StreamTee", () => {
     const a = fakeRuntime("a");
     tee.attach(a.rt);
     a.emit({ type: "thinking_delta", content: "x" });
+    a.emit({ type: "tool_call", toolCall: { id: "c1", name: "Read", arguments: {} } });
     a.emit({ type: "done" });
-    expect(tee.liveOf("a")?.thinking).toBe("");
+    expect(a.engine.live.projection()).toBeUndefined();
 
     a.emit({ type: "thinking_delta", content: "y" });
     a.emit({ type: "error", error: "boom" });
-    expect(tee.liveOf("a")?.thinking).toBe("");
+    expect(a.engine.live.projection()).toBeUndefined();
   });
 
   it("routes usage to the onUsage callback", () => {
@@ -189,7 +226,7 @@ describe("StreamTee", () => {
     expect(deps.onUsage).toHaveBeenCalledWith("a", { input: 10, output: 2, total: 12 });
   });
 
-  it("detach stops forwarding and removes the buffer", () => {
+  it("detach stops both forwarding AND recording (the engine dies with the runtime)", () => {
     const { tee, deps } = makeTee();
     const a = fakeRuntime("a");
     tee.attach(a.rt);
@@ -198,21 +235,24 @@ describe("StreamTee", () => {
     tee.detach("a");
     a.emit({ type: "thinking_delta", content: "y" });
 
-    expect(tee.liveOf("a")).toBeUndefined();
+    // No longer recorded: the engine is going away with the runtime.
+    expect(a.engine.live.thinking).toBe("x");
     deps.onPost.mockClear();
     a.emit({ type: "done" });
     expect(deps.onPost).not.toHaveBeenCalled();
   });
 
-  it("clear resets the buffered text (start of a new turn / abort)", () => {
+  it("reset clears the buffered turn (start of a new turn / abort)", () => {
     const { tee } = makeTee();
     const a = fakeRuntime("a");
     tee.attach(a.rt);
     a.emit({ type: "thinking_delta", content: "x" });
+    a.emit({ type: "tool_call", toolCall: { id: "c1", name: "Read", arguments: {} } });
 
-    tee.clear("a");
-    expect(tee.liveOf("a")?.thinking).toBe("");
-    expect(tee.liveOf("a")?.answer).toBe("");
+    a.engine.live.reset();
+    expect(a.engine.live.thinking).toBe("");
+    expect(a.engine.live.answer).toBe("");
+    expect(a.engine.live.projection()).toBeUndefined();
   });
 });
 describe("StreamTee — turn_meta", () => {
@@ -228,7 +268,7 @@ describe("StreamTee — turn_meta", () => {
     b.emit({ type: "turn_meta", meta: { inputTokens: 456 } });
 
     expect(deps.onPost).toHaveBeenCalledTimes(1);
-    expect(deps.onPost).toHaveBeenCalledWith({ type: "turnMeta", meta: { inputTokens: 123, durationMs: 5 } });
+    expect(deps.onPost).toHaveBeenCalledWith({ type: "turnMeta", meta: { inputTokens: 123, durationMs: 5 }, sessionId: "a" });
   });
 });
 

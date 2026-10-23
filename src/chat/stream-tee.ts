@@ -18,43 +18,54 @@ export interface StreamTeeDeps {
 }
 
 /**
- * Per-session streaming router + live buffers.
+ * Per-session event ROUTER.
  *
- * Owns one subscription per OPEN session (not just the active tab): events are
- * forwarded to the view only for the ACTIVE session, but the live (uncommitted)
- * thinking/answer of EVERY running session is accumulated, so switching back to
- * a session that is still working can replay its progress — the text lives here
- * in the host, not in the discarded page DOM.
+ * Owns one subscription per OPEN session (not just the active tab). Two
+ * distinct jobs, and the split matters:
  *
- * Extraction point: this used to live inside ChatViewProvider (SRP). It only
- * talks to the outside through the deps callbacks (DI-friendly, testable).
+ *  · RECORD — `rt.engine.live.apply(event)` runs for EVERY session, active or
+ *    not. That state belongs to the session's engine (see `session-engine.ts`),
+ *    not to this router: it is the per-session memory the view is rebuilt from.
+ *  · FORWARD — the view only ever sees the ACTIVE session's events.
+ *
+ * Why the record must not be gated on "active": the assistant turn (tool calls
+ * included) reaches the history only when the WHOLE tool batch completes, in one
+ * atomic `addGroup` write. A Parallel run can spend minutes in a turn the
+ * history does not know yet, so a rebuild driven by `getMessages()` alone would
+ * silently drop the sub-agent bubbles — which is exactly the bug the recorder
+ * fixes.
+ *
+ * It talks to the outside only through the deps callbacks (DI-friendly,
+ * testable without vscode).
  */
 export class StreamTee {
   private subs = new Map<string, () => void>();
-  private live = new Map<string, { thinking: string; answer: string }>();
 
   constructor(private deps: StreamTeeDeps) {}
 
   /** Subscribe a session's agent; idempotent per session. */
   attach(rt: SessionRuntime): void {
     if (this.subs.has(rt.sessionId)) return;
-    const live = { thinking: "", answer: "" };
-    this.live.set(rt.sessionId, live);
     const unsub = rt.agent.onEvent((event: AgentEvent) => {
+      // RECORD FIRST, always: this is the per-session memory of the turn.
+      rt.engine.live.apply(event);
+
+      // …then forward the event to the view, but only for the session on screen.
       const active = this.deps.isActive(rt.sessionId);
-      const post = (m: unknown) => this.deps.onPost(m);
+      // Every message carries its session: the view drops the ones addressed to a
+      // tab it has already left (the switch is async, so a delta of the NEW
+      // session can arrive while the OLD one is still on screen).
+      const post = (m: object) => this.deps.onPost({ ...m, sessionId: rt.sessionId });
       switch (event.type) {
         case "text_delta":
-          live.answer += event.content;
           if (active) post({ type: "textDelta", content: event.content });
           break;
         case "thinking_delta":
-          live.thinking += event.content;
           if (active) post({ type: "thinkingDelta", content: event.content });
           break;
         case "tool_call":
-          // NOTE: this event fires BEFORE the assistant turn is committed, so
-          // the buffer is reset only later (on tool_result / done / error).
+          // NOTE: this event fires BEFORE the assistant turn is committed; the
+          // recorder keeps the call until the batch commits (dedupe by id).
           if (active) post({ type: "toolCall", id: event.toolCall.id, name: event.toolCall.name, arguments: event.toolCall.arguments });
           break;
         case "subagent_start":
@@ -66,9 +77,6 @@ export class StreamTee {
           if (active) post({ type: "subagentEvent", toolCallId: event.toolCallId, event: event.event });
           break;
         case "tool_result":
-          // The assistant message (thinking included) is now in history.
-          live.thinking = "";
-          live.answer = "";
           if (active) post({ type: "toolResult", toolCallId: event.toolResult.toolCallId, output: event.toolResult.output, isError: event.toolResult.isError });
           break;
         case "preview_ready":
@@ -80,28 +88,19 @@ export class StreamTee {
           }
           break;
         case "loop_intervention":
-          // A degenerate loop was broken and the run continues: drop the
-          // interrupted live text so the next turn starts fresh.
-          live.thinking = "";
-          live.answer = "";
+          // A degenerate loop was broken and the run continues.
           if (active)
             post({ type: "loopIntervention", loopType: event.loopType, level: event.level, message: event.message });
           break;
         case "harness_nudge":
           // A corrective HARNESS prompt: surface it LIVE (light-blue bubble).
-          live.thinking = "";
-          live.answer = "";
           if (active) post({ type: "harnessNudge", content: event.content });
           break;
         case "steer_applied":
           // Soft-steer messages reached a boundary and were MERGED into one
-          // user turn: the host removes every consumed draft; the UI shows a
-          // single steer bubble.
-          live.thinking = "";
-          live.answer = "";
+          // user turn: the host removes every consumed draft (EVERY session),
+          // the view shows a single steer bubble (active only).
           this.deps.onSteerApplied(rt.sessionId, event.ids);
-          // Forward the attachments too: the view renders the live steer bubble
-          // with them, exactly as the refresh path does from the transcript.
           if (active)
             post({
               type: "steerApplied",
@@ -112,13 +111,9 @@ export class StreamTee {
             });
           break;
         case "done":
-          live.thinking = "";
-          live.answer = "";
           if (active) post({ type: "done" });
           break;
         case "error":
-          live.thinking = "";
-          live.answer = "";
           if (active) post({ type: "error", error: event.error });
           break;
         case "usage":
@@ -139,27 +134,13 @@ export class StreamTee {
     for (const rt of runtimes) this.attach(rt);
   }
 
-  /** Unsubscribe a session and drop its live buffer (close/delete). */
+  /** Unsubscribe a session (close/delete). Its live state belongs to the engine,
+   * which dies with the runtime. */
   detach(id: string): void {
     const unsub = this.subs.get(id);
     if (unsub) {
       unsub();
       this.subs.delete(id);
-    }
-    this.live.delete(id);
-  }
-
-  /** Live (uncommitted) text of a session's in-flight turn. */
-  liveOf(id: string): { thinking: string; answer: string } | undefined {
-    return this.live.get(id);
-  }
-
-  /** Reset a session's buffered text (a new turn starts / abort). */
-  clear(id: string): void {
-    const l = this.live.get(id);
-    if (l) {
-      l.thinking = "";
-      l.answer = "";
     }
   }
 }

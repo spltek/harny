@@ -410,7 +410,9 @@ describe("ChatViewProvider", () => {
     await handler({ type: "switchTab", id: "s2" });
     view.webview.postMessage.mockClear();
     a1.emit({ type: "thinking_delta", content: "s1 reasoning" });
-    expect(view.webview.postMessage).not.toHaveBeenCalled();
+    // Nothing reaches the view: a background session's stream is recorded in its own
+    // engine and replayed on switch, never painted into the tab you are looking at.
+    expect(view.webview.postMessage.mock.calls.map((c) => c[0]).filter((m: any) => m?.type !== "status" && m?.type !== "getConfig")).toHaveLength(0);
 
     // Back on s1: the switchView replays ONLY s1's buffer (s2 stays empty).
     await handler({ type: "switchTab", id: "s1" });
@@ -435,6 +437,214 @@ describe("ChatViewProvider", () => {
     const calls3 = view.webview.postMessage.mock.calls;
     const last3 = calls3[calls3.length - 1][0];
     expect(last3.liveAnswer).toContain("s2 answer");
+  });
+
+  it("ships the WHOLE in-flight turn (tool calls + sub-agents) on switchView, not just text", async () => {
+    // The history has NOTHING for an in-flight Parallel batch: the assistant turn
+    // is committed with ONE addGroup when the whole batch ends. Without liveTurn,
+    // returning to a working session showed a bare "Working…" bar until Stop.
+    const { registry, provider } = buildHarness({ emitEvents: true });
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await provider.createNew(); // s2 (active)
+    const a1: any = registry.get("s1")!.agent;
+    a1.streaming = true;
+
+    a1.emit({ type: "text_delta", content: "Lancio i sub-agent." });
+    a1.emit({ type: "tool_call", toolCall: { id: "d1", name: "Delegate", arguments: { id: "api", goal: "g" } } });
+    a1.emit({ type: "subagent_start", toolCallId: "d1" });
+    a1.emit({ type: "subagent_event", toolCallId: "d1", event: { type: "text_delta", content: "leggo" } });
+
+    await handler({ type: "switchTab", id: "s1" });
+    const last = view.webview.postMessage.mock.calls.slice(-1)[0][0];
+    expect(last.type).toBe("switchView");
+    expect(last.liveTurn).toMatchObject({
+      answer: "Lancio i sub-agent.",
+      textAfterTools: false, // the preamble stays above the Delegate bubbles
+      toolCalls: [{ id: "d1", name: "Delegate", done: false }],
+      subAgents: { d1: { status: "running" } },
+    });
+    expect(last.liveTurn.subAgents.d1.events).toHaveLength(1);
+
+    // The other session's engine is empty: nothing of s1 leaks into it.
+    await handler({ type: "switchTab", id: "s2" });
+    const last2 = view.webview.postMessage.mock.calls.slice(-1)[0][0];
+    expect(last2.liveTurn).toBeUndefined();
+  });
+
+  it("drops a switchView that resolves OUT OF ORDER (the newer tab always wins)", async () => {
+    // `postSwitchView` awaits the config build, so two clicks can be in flight at
+    // once. If the older one lands last it would paint the tab you already left.
+    const { provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await provider.createNew(); // s2
+
+    const p = provider as any;
+    const real = p.buildConfig.bind(p);
+    const gates: (() => void)[] = [];
+    p.buildConfig = () => new Promise((resolve) => gates.push(() => resolve(real())));
+    view.webview.postMessage.mockClear();
+
+    const first = handler({ type: "switchTab", id: "s1" });
+    await new Promise((r) => setTimeout(r, 0));
+    const second = handler({ type: "switchTab", id: "s2" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(gates).toHaveLength(2);
+
+    gates[1](); // the NEWEST switch (s2) applies…
+    await second;
+    gates[0](); // …and the stale one (s1) lands late and must be dropped
+    await first;
+
+    const switches = view.webview.postMessage.mock.calls
+      .map((c) => c[0])
+      .filter((m: any) => m?.type === "switchView");
+    expect(switches).toHaveLength(1);
+    expect(switches[0].activeId).toBe("s2");
+  });
+
+  it("reports a session as streaming while its SEND PREAMBLE is still running", async () => {
+    // The attachment build and the pre-request auto-compaction run BEFORE
+    // `agent.streaming` flips: coming back to such a session must still show the
+    // working bar and the locked input, not an idle transcript.
+    const { registry, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    registry.get("s1")!.engine.beginSend();
+    view.webview.postMessage.mockClear();
+
+    await handler({ type: "switchTab", id: "s1" });
+
+    const last = view.webview.postMessage.mock.calls.slice(-1)[0][0];
+    expect(last.type).toBe("switchView");
+    expect(last.streaming).toBe(true);
+    registry.get("s1")!.engine.endSend();
+  });
+
+  it("compacts session B while session A is ALREADY compacting", async () => {
+    // The guard is per session: a global flag made Compact on B a silent no-op
+    // (and skipped B's auto-compaction) whenever A was summarizing.
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\nx");
+    const { provider, registry } = buildHarness({
+      compactor: { summarize } as unknown as Compactor,
+      compaction: DEFAULT_COMPACTION,
+    });
+    resolveWith(provider);
+    await provider.createNew(); // s1
+    await provider.createNew(); // s2
+    const msgs = [
+      { role: "user", content: "a", timestamp: 1 },
+      { role: "assistant", content: "b", timestamp: 2 },
+      { role: "user", content: "c", timestamp: 3 },
+      { role: "assistant", content: "d", timestamp: 4 },
+      { role: "user", content: "e", timestamp: 5 },
+      { role: "assistant", content: "f", timestamp: 6 },
+      { role: "user", content: "g", timestamp: 7 },
+      { role: "assistant", content: "h", timestamp: 8 },
+    ];
+    registry.get("s1")!.history.replace(msgs);
+    registry.get("s2")!.history.replace(msgs);
+
+    registry.get("s1")!.engine.beginCompaction(); // A is busy
+    const ok = await provider.compactForOverflow("s2");
+
+    expect(ok).toBe(true);
+    expect(summarize).toHaveBeenCalled();
+  });
+
+  it("does NOT rebuild the config for the usage of a session you are not watching", async () => {
+    // Every session reports usage at every turn: a hidden one must not trigger a
+    // config build + post (the numbers on screen are the ACTIVE session's).
+    const { registry, provider } = buildHarness({ emitEvents: true });
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await provider.createNew(); // s2 (active)
+    const a1: any = registry.get("s1")!.agent;
+    a1.streaming = true;
+    view.webview.postMessage.mockClear();
+
+    a1.emit({ type: "usage", usage: { input: 100, output: 10, total: 110 } });
+
+    const configs = view.webview.postMessage.mock.calls.map((c) => c[0]).filter((m: any) => m?.type === "config");
+    expect(configs).toHaveLength(0);
+    // The value is still recorded, so opening that session shows it.
+    expect(registry.get("s1")!.contextTokens).toBe(100);
+    void handler;
+  });
+
+  it("pushes the config for the ACTIVE session's usage, ONCE for a burst", async () => {
+    const { registry, provider } = buildHarness({ emitEvents: true });
+    resolveWith(provider);
+    await provider.createNew(); // s1 (active)
+    const a1: any = registry.get("s1")!.agent;
+    a1.streaming = true;
+    const view = (provider as unknown as { view: { webview: { postMessage: any } } }).view;
+    view.webview.postMessage.mockClear();
+
+    a1.emit({ type: "usage", usage: { input: 42, output: 1, total: 43 } });
+    a1.emit({ type: "usage", usage: { input: 43, output: 1, total: 44 } });
+    a1.emit({ type: "usage", usage: { input: 44, output: 1, total: 45 } });
+
+    await vi.waitFor(() => {
+      const configs = view.webview.postMessage.mock.calls.map((c: any[]) => c[0]).filter((m: any) => m?.type === "config");
+      expect(configs).toHaveLength(1); // three reports, ONE push
+    });
+  });
+
+  it("refuses to SAVE providers while a session is streaming", async () => {
+    // A provider edit rewrites the endpoint/key every open run resolves on its next
+    // request: the gears stay usable, this specific save does not.
+    const { registry, provider } = buildHarness({ emitEvents: true });
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1 (active)
+    (registry.get("s1")!.agent as any).streaming = true;
+    view.webview.postMessage.mockClear();
+
+    await handler({ type: "saveProviders", data: { providers: {} } });
+
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "providersSaved", ok: false });
+  });
+
+  it("does not re-send the sessions list on a plain tab switch (but does on create)", async () => {
+    // `currentFolderSessions()` is a SELECT * on the session table: sending it on
+    // every click is pure waste, and the list only changes on create/branch/close.
+    const { provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await provider.createNew(); // s2
+    view.webview.postMessage.mockClear();
+    const switchViews = () =>
+      view.webview.postMessage.mock.calls.map((c) => c[0]).filter((m: any) => m?.type === "switchView");
+
+    await handler({ type: "switchTab", id: "s1" });
+    expect(switchViews().slice(-1)[0].sessions).toBeUndefined(); // "keep what you have"
+
+    await provider.createNew(); // the list CHANGED: it must travel
+    expect(Array.isArray(switchViews().slice(-1)[0].sessions)).toBe(true);
+  });
+
+  it("keeps the ⏹ (abort-requested) state of a sub-agent across a tab switch", async () => {
+    const { registry, provider } = buildHarness({ emitEvents: true });
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await provider.createNew(); // s2 (active)
+    const rt = registry.get("s1")!;
+    const a1: any = rt.agent;
+    a1.streaming = true;
+    a1.emit({ type: "tool_call", toolCall: { id: "d1", name: "Delegate", arguments: { id: "api" } } });
+    a1.emit({ type: "subagent_start", toolCallId: "d1" });
+
+    await handler({ type: "switchTab", id: "s1" });
+    await handler({ type: "abortSubAgent", toolCallId: "d1" });
+    expect(a1.abortSubAgent).toHaveBeenCalledWith("d1");
+
+    // Away and back: the projection still carries the request, so the rebuilt
+    // bubble does not offer an abort button that was already pressed.
+    await handler({ type: "switchTab", id: "s2" });
+    await handler({ type: "switchTab", id: "s1" });
+    const last = view.webview.postMessage.mock.calls.slice(-1)[0][0];
+    expect(last.liveTurn.toolCalls[0]).toMatchObject({ id: "d1", abortRequested: true });
   });
 
   it("does not push a refresh when the sending session is no longer the active tab", async () => {
@@ -636,6 +846,44 @@ describe("ChatViewProvider", () => {
     expect(registry.isOpen("s1")).toBe(false);
     expect(store.remove).toHaveBeenCalledWith("s1");
     expect(sessions.list()).toEqual([]);
+  });
+
+  it("refuses to delete and rename a session whose SEND PREAMBLE is still running", async () => {
+    // "Working" used to mean `agent.streaming` only: during the preamble (attachment
+    // build, pre-request auto-compaction — seconds) the destructive actions looked
+    // available and only the host's silent guard stood between them and a runtime
+    // that already had a run on the way. `workingIds`/the guards now use `isWorking`.
+    const { store, registry, provider } = buildHarness();
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    registry.get("s1")!.engine.beginSend();
+    try {
+      await handler({ type: "deleteSession", id: "s1" });
+      expect(registry.isOpen("s1")).toBe(true);
+      expect(store.remove).not.toHaveBeenCalled();
+
+      await handler({ type: "renameSession", id: "s1" });
+      expect(store.rename).not.toHaveBeenCalled(); // the name modal never opened
+    } finally {
+      registry.get("s1")?.engine.endSend();
+    }
+  });
+
+  it("reports a session as BUSY (workingIds) while its send preamble runs", async () => {
+    const { registry, provider } = buildHarness();
+    const { view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    registry.get("s1")!.engine.beginSend();
+    try {
+      await provider.setActive("s1");
+      const last = view.webview.postMessage.mock.calls.slice(-1)[0][0];
+      expect(last.type).toBe("switchView");
+      // The tab × , the row actions and the manager all read workingIds: it must
+      // agree with the host about what "busy" means.
+      expect(last.workingIds).toContain("s1");
+    } finally {
+      registry.get("s1")!.engine.endSend();
+    }
   });
 
   it("refuses to delete a session that is still working", async () => {
@@ -1535,12 +1783,45 @@ describe("ChatViewProvider", () => {
 
   it("usage events update the session context tokens and persist them", async () => {
     const { store, registry, provider } = buildHarness({ emitEvents: true });
-    const { handler } = resolveWith(provider);
+    void resolveWith(provider);
     await provider.createNew(); // s1
     const rt = registry.get("s1")!;
     (rt.agent as any).emit({ type: "usage", usage: { input: 50, output: 4, total: 54 } });
-    expect(rt.contextTokens).toBe(50);
+    expect(rt.contextTokens).toBe(50); // in memory at once: that is what the UI reads
+
+    // NOT on every report: the write is coalesced (see persistContextTokensSoon), and
+    // closing the tab is one of the moments that flushes it while `rt` still exists.
+    await provider.closeTab("s1");
     expect(store.saveSettings).toHaveBeenCalledWith("s1", { contextTokens: 50 });
+  });
+
+  it("coalesces the token metric: a burst of usage reports costs ONE write, of the LAST value", async () => {
+    const { store, registry, provider } = buildHarness({ emitEvents: true });
+    void resolveWith(provider);
+    await provider.createNew(); // s1
+    store.saveSettings.mockClear();
+    const rt = registry.get("s1")!;
+    const tokenWrites = () => store.saveSettings.mock.calls.filter(([, patch]) => "contextTokens" in (patch as object));
+
+    for (const input of [100, 200, 300]) {
+      (rt.agent as any).emit({ type: "usage", usage: { input, output: 1, total: input + 1 } });
+    }
+    expect(rt.contextTokens).toBe(300);
+    expect(tokenWrites()).toEqual([]); // no transaction per turn
+
+    await vi.waitFor(() => expect(tokenWrites()).toEqual([["s1", { contextTokens: 300 }]]), { timeout: 3000 });
+  });
+
+  it("dispose() flushes the last metric, so nothing is lost when the panel goes away", async () => {
+    const { store, registry, provider } = buildHarness({ emitEvents: true });
+    void resolveWith(provider);
+    await provider.createNew(); // s1
+    store.saveSettings.mockClear();
+    const rt = registry.get("s1")!;
+    (rt.agent as any).emit({ type: "usage", usage: { input: 77, output: 2, total: 79 } });
+
+    provider.dispose();
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { contextTokens: 77 });
   });
 
   it("setModel with a named provider applies its overrides", async () => {
@@ -2186,6 +2467,60 @@ describe("ChatViewProvider all-sessions manager", () => {
     await handler({ type: "sessionsManagerOpenFolder", id: "x" });
     expect(state.executeCommand).not.toHaveBeenCalled();
     expect(store.saveSettings).toHaveBeenCalledWith("x", { folder: "/home/me/new" });
+  });
+
+  it("lists an OPEN session of ANOTHER folder too, marked (a tab must never be orphaned)", async () => {
+    // The list is the only navigation surface: hiding an open session from it leaves a
+    // tab you cannot get back to once you close it — and an empty list next to an open
+    // tab reads as "no sessions yet", which is simply false. Switching the workspace
+    // folder and the cross-folder Manage form both make it reachable.
+    const { store, registry, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
+    const local = { id: "a1", name: "Local", createdAt: 1, updatedAt: 3, messageCount: 0, folder: "/home/me/a", folderMissing: false };
+    const foreign = { id: "b1", name: "Elsewhere", createdAt: 1, updatedAt: 2, messageCount: 0, folder: "/home/me/b", folderMissing: false };
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue([local, foreign]);
+    const { handler, view } = resolveWith(provider);
+
+    // Nothing open yet: the list is the folder's alone.
+    await vi.waitFor(() => expect(view.webview.html).not.toContain('"name":"Elsewhere"'), { timeout: 2000 });
+
+    await handler({ type: "openSession", id: "b1" });
+    expect(registry.listOpenIds()).toContain("b1");
+
+    // Now it is open, so it travels with the list — and says it is not from here.
+    await vi.waitFor(
+      () => {
+        const sw = view.webview.postMessage.mock.calls
+          .map((c) => c[0])
+          .filter((m: any) => m?.type === "switchView" && Array.isArray(m.sessions))
+          .slice(-1)[0];
+        expect(sw?.sessions).toContainEqual(expect.objectContaining({ id: "b1", foreign: true }));
+      },
+      { timeout: 2000 },
+    );
+    const last = view.webview.postMessage.mock.calls
+      .map((c) => c[0])
+      .filter((m: any) => m?.type === "switchView" && Array.isArray(m.sessions))
+      .slice(-1)[0];
+    // The folder's own session is NOT marked.
+    expect(last.sessions).toContainEqual(expect.objectContaining({ id: "a1" }));
+    expect(last.sessions.find((s: any) => s.id === "a1").foreign).toBeUndefined();
+  });
+
+  it("still scopes NAME uniqueness to the folder (a foreign session is navigation, not a neighbour)", async () => {
+    const { store, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "b1", name: "Shared", createdAt: 1, updatedAt: 2, messageCount: 0, folder: "/home/me/b", folderMissing: false },
+    ]);
+    const { handler, view } = resolveWith(provider);
+    view.webview.postMessage.mockClear();
+
+    // Creating a session named like another folder's is allowed: it prompts, so a
+    // "name taken" alert means the rule leaked into the union.
+    await handler({ type: "createNew", name: "Shared" });
+
+    expect(view.webview.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Name already in use" }),
+    );
   });
 
   it("the MAIN sessions list shows only the current folder's sessions", async () => {
@@ -3817,13 +4152,16 @@ describe("ChatViewProvider soft steering + queue", () => {
         parts: [],
       })),
     } as unknown as AttachmentService;
-    const { provider, rt, view } = await setupStreaming({ attachments });
+    const { handler, agent, view } = await setupStreaming({ attachments });
+    // Its turn has come: the previous run is over and the queued message starts.
+    agent.streaming = false;
     view.webview.postMessage.mockClear();
 
     // The view did NOT append a bubble when this was typed (it waited in the
     // pending footer) and the host owns that list, so without this post the row
     // vanished and the transcript stayed empty until the end-of-run refresh.
-    await (provider as unknown as { dispatchSend(rt: unknown, msg: unknown): Promise<void> }).dispatchSend(rt, {
+    await handler({
+      type: "send",
       mode: "queue",
       text: "guarda qui",
       attachments: [{ name: "relazione.pdf", path: "/tmp/relazione.pdf", size: 42, isImage: false }],
@@ -3838,12 +4176,11 @@ describe("ChatViewProvider soft steering + queue", () => {
   });
 
   it("does NOT re-post the bubble for a direct send (the view already showed it)", async () => {
-    const { provider, rt, view } = await setupStreaming();
+    const { handler, agent, view } = await setupStreaming();
+    agent.streaming = false;
     view.webview.postMessage.mockClear();
 
-    await (provider as unknown as { dispatchSend(rt: unknown, msg: unknown): Promise<void> }).dispatchSend(rt, {
-      text: "hello",
-    });
+    await handler({ type: "send", text: "hello" });
 
     expect(view.webview.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "userMessage" }));
   });
@@ -4134,7 +4471,7 @@ describe("ChatViewProvider soft steering + queue", () => {
     agent.emit({ type: "steer_applied", ids: ["s1x"], content: "x" });
 
     expect(pending()).toEqual([]);
-    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "steerApplied", ids: ["s1x"], content: "x" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "steerApplied", ids: ["s1x"], content: "x", sessionId: "s1" });
   });
 
   it("Stop clears the pending queue so the run does not silently restart", async () => {
@@ -4177,6 +4514,7 @@ describe("ChatViewProvider soft steering + queue", () => {
       type: "steerApplied",
       ids: ["sA", "sB"],
       content: "one\n\ntwo",
+      sessionId: "s1",
     });
   });
 

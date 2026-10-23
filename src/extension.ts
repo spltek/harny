@@ -21,6 +21,7 @@ import { SqliteSessionStore } from "./core/sessions/sqlite-session-store";
 import { SessionManager } from "./core/sessions/session-manager";
 import { Compactor, DEFAULT_COMPACTION } from "./core/sessions/compactor";
 import { DefaultLlmProviderFactory } from "./core/llm/llm-provider-factory";
+import { DEFAULT_MAX_CONCURRENT_LLM_REQUESTS, Semaphore, limitLlmFactory } from "./core/llm/concurrency";
 import { nodeHttpClient } from "./core/llm/http-client";
 import { HttpModelListProvider } from "./core/llm/model-list";
 import { ModelsDevCatalog } from "./core/llm/models-dev";
@@ -93,7 +94,12 @@ export async function activate(context: ExtensionContext) {
       skills,
     }),
   );
-  const llmFactory = new DefaultLlmProviderFactory(nodeHttpClient, tools.definitions());
+  const llmFactory = limitLlmFactory(
+    new DefaultLlmProviderFactory(nodeHttpClient, tools.definitions()),
+    // ONE semaphore for the whole extension: sessions AND sub-agents come through
+    // this factory, so a dozen open sessions cannot put forty requests in flight.
+    new Semaphore(DEFAULT_MAX_CONCURRENT_LLM_REQUESTS),
+  );
   // MCP servers (Model Context Protocol): connect on activation and register
   // their tools as mcp__<server>__<tool>. Reconnect is driven by the UI save.
   const mcp = new McpManager({
@@ -277,6 +283,9 @@ export async function activate(context: ExtensionContext) {
 
   context.subscriptions.push(
     window.registerWebviewViewProvider("harny.chatView", viewProvider, { webviewOptions: { retainContextWhenHidden: true } }),
+    // The provider outlives the panel: its telemetry probe and coalescing timers must
+    // stop with the extension (see ChatViewProvider.dispose).
+    { dispose: () => viewProvider.dispose() },
   );
 
   // Reveals the secondary side bar on the RIGHT and focuses the Harny view.

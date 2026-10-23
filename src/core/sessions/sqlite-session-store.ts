@@ -5,6 +5,7 @@ import type { ChatMessage } from "../history/types";
 import { isThinkingLevel } from "../config/types";
 import { clampLoopGuardOverrides, normalizeLoopGuardSensitivity, type LoopGuardOptions } from "../agent/loop-guard";
 import { runMigrations } from "./migrations";
+import { noteDbOp } from "./store-metrics";
 import type { DbVacuumResult, DbVacuumStats, LoadedSession, SessionSettingsPatch, SessionStore, SessionSummary } from "./types";
 
 /** One full-text search hit: which message matched, its snippet and BM25 rank. */
@@ -109,6 +110,17 @@ export class SqliteSessionStore implements SessionStore {
    * a safety net for a caller that forgets the flag.
    */
   saveMessages(id: string, messages: ChatMessage[], options: { replace?: boolean } = {}): SessionSummary {
+    // Timed because it is SYNCHRONOUS on the single extension-host thread: a slow
+    // COMMIT here is a stall for every OTHER streaming session (see store-metrics).
+    const startedAt = performance.now();
+    try {
+      return this.saveMessagesNow(id, messages, options);
+    } finally {
+      noteDbOp("saveMessages", performance.now() - startedAt);
+    }
+  }
+
+  private saveMessagesNow(id: string, messages: ChatMessage[], options: { replace?: boolean } = {}): SessionSummary {
     const existing = this.getSummary(id);
     const storedCount = this.countMessages(id);
     const replace = options.replace === true || !this.storedMessagesArePrefix(id, messages, storedCount);
@@ -163,6 +175,15 @@ export class SqliteSessionStore implements SessionStore {
    * present (even `undefined`) SETS or CLEARS that field.
    */
   saveSettings(id: string, patch: SessionSettingsPatch): SessionSummary {
+    const startedAt = performance.now();
+    try {
+      return this.saveSettingsNow(id, patch);
+    } finally {
+      noteDbOp("saveSettings", performance.now() - startedAt);
+    }
+  }
+
+  private saveSettingsNow(id: string, patch: SessionSettingsPatch): SessionSummary {
     const existing = this.getSummary(id);
     const summary = this.carrySummary(id, existing, [], { ...this.normalizePatch(patch), updatedAt: Date.now() });
     summary.messageCount = this.countMessages(id);

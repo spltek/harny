@@ -13,8 +13,10 @@ import type { SessionRegistry, SessionRuntime } from "./session-registry";
 import { PendingInputQueue, type PendingInput } from "./pending-input-queue";
 import { checkpointStart, conversationFaults, turnEnd, turnStart } from "../core/history/conversation-validity";
 import { StreamTee } from "./stream-tee";
+import { Telemetry } from "./telemetry";
+import type { PreparedPrompt, SendIntent, SessionAbortPort, SessionSendPort } from "./session-engine";
 import type { AttachmentService } from "./attachment-service";
-import type { AttachmentInfo, AttachmentPart } from "./attachment-types";
+import type { AttachmentPart } from "./attachment-types";
 import { debugLog, infoLog } from "../logger";
 import { preprocessJsonc } from "../core/config/jsonc";
 import { renderViewHtml } from "./view-html";
@@ -33,6 +35,21 @@ import { DEFAULT_MAX_PARALLEL_SUB_AGENTS } from "../core/agent/agent";
 import type { ContextOverflowEvidence } from "../core/agent/agent";
 import type { ChatHistory } from "../core/history/chat-history";
 import type { ChatMessage } from "../core/history/types";
+
+/**
+ * Coalescing window for BACKGROUND config pushes (see `pushConfigSoon`): a burst
+ * of usage reports collapses into one build+post. Small enough to be invisible,
+ * large enough to swallow a whole turn's worth of noise from several sessions.
+ */
+const CONFIG_COALESCE_MS = 120;
+
+/**
+ * Coalescing window for the context-token METRIC write (see `persistContextTokensSoon`).
+ * Generous on purpose: the value is recomputed by the next turn, so a lost tail is
+ * worth nothing, while one transaction per turn per session is a real cost on the
+ * single host thread.
+ */
+const CONTEXT_TOKENS_FLUSH_MS = 400;
 
 /**
  * Single side-view (webview view) hosting: a hideable sessions list, a tab bar
@@ -65,6 +82,11 @@ export class ChatViewProvider implements WebviewViewProvider {
    * resolve AFTER a newer one and would clobber the UI (e.g. revert the mode).
    * Every push gets a seq; stale results are dropped. */
   private configSeq = 0;
+  /** Monotonic id for `switchView` posts. SEPARATE from `configSeq` on purpose:
+   * a sibling `pushConfig` (a model-limits adoption, a metrics update) bumps that
+   * counter, and sharing it would let an unrelated push invalidate a legitimate
+   * tab switch. */
+  private switchSeq = 0;
   private hostCache = new Map<string, { at: number; models: ModelInfo[] }>();
   /** models.dev context windows resolved for hosts that do NOT report one
    * (e.g. opencode-go), keyed by `provider|model`. Filled in the background so
@@ -80,22 +102,33 @@ export class ChatViewProvider implements WebviewViewProvider {
   // started after the panel) shows up on the next open. Kept short because the
   // fetch itself is bounded by HOST_MODEL_TIMEOUT_MS anyway.
   private static readonly HOST_CACHE_TTL = 5_000;
-  private compacting = false;
   /** Counts what compaction DID, and says so on the line each event already logs.
    *  A log answers "what happened here"; only a ratio answers "is the trim a rare
    *  rescue or the normal path" — which is a question about the tuning. */
   private readonly tally = new CompactionTally();
   /** Per-session queue of messages typed while the agent works (queue/steer). */
   private readonly pendingQueue: PendingInputQueue;
-  /** True while an async SEND PREAMBLE is in flight for a session (attachment
-   * build / auto-compaction), before `agent.send` flips `streaming` to true.
-   * Without it a second message arriving in that window would start a second
-   * overlapping run on the same agent. */
-  private readonly sending = new Set<string>();
   /** FIFO queue for in-panel modals (name dialog, alerts, confirms…). */
   private modals: PanelModalQueue;
   /** True while the shared "compact database" modal is open (avoid re-prompts). */
   private vacuumPromptOpen = false;
+
+  /** Event-loop + webview-traffic probe (see telemetry.ts). It prints one line every
+   * 30 s through the env-gated debug log, so it costs nothing with the flag off. */
+  private readonly telemetry = new Telemetry();
+  /** Coalesced config push in flight (see pushConfigSoon). */
+  private configSoonTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Sessions whose context-token metric is waiting for its coalesced write. */
+  private readonly pendingTokenFlush = new Set<string>();
+  private tokenFlushTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The one-shot startup vacuum check (cleared on dispose). */
+  private startupVacuumTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Is THIS session compacting? The flag lives on the ENGINE (`engine.compacting`):
+   * per session, so one session's summary cannot swallow another's. */
+  private isCompacting(sessionId: string): boolean {
+    return this.registry.get(sessionId)?.engine.compacting === true;
+  }
   /** A refresh was requested while a modal was open: run it once the queue
    * drains, instead of rebuilding the page (which would wipe the modal). */
   private refreshDeferred = false;
@@ -175,6 +208,10 @@ export class ChatViewProvider implements WebviewViewProvider {
     if (s?.folderMissing) return;
     this.registry.openOrCreate(id);
     await this.setActive(id);
+    // Opening can ADD a row to the main list (a session of another folder becomes
+    // visible now that it is open), so this is one of the "the list changed" paths
+    // that re-sends it.
+    await this.postSwitchView(true);
     // Silent refresh of the manage form (if open) — no-op for the main list.
     this.pushSessionsManager();
   }
@@ -188,6 +225,32 @@ export class ChatViewProvider implements WebviewViewProvider {
   private currentFolderSessions(): SessionSummary[] {
     const folder = this.currentFolder();
     return this.sessions.list().filter((s) => !folder || s.folder === folder);
+  }
+
+  /**
+   * What the MAIN LIST should show: this folder's sessions PLUS every OPEN session
+   * that lives elsewhere.
+   *
+   * Why the union: the list is the only navigation surface, so hiding an OPEN session
+   * from it leaves a tab you cannot get back to once you close it — and an empty list
+   * that says "no sessions yet" while a tab sits there is a lie the user has to
+   * decode. Switching the workspace folder keeps the open tabs (the registry is not
+   * reset), and the cross-folder Manage form can open any session, so the mismatch is
+   * reachable; the list simply follows what is open.
+   *
+   * The folder stays authoritative for the UNIQUENESS of names (`currentFolderSessions`
+   * is what `sessionNameTaken` reads), so two folders may still share a name.
+   */
+  private sessionsForView(): (SessionSummary & { foreign?: boolean })[] {
+    const scoped = this.currentFolderSessions();
+    const shown = new Set(scoped.map((s) => s.id));
+    const openElsewhere = this.registry
+      .listOpenIds()
+      .filter((id) => !shown.has(id))
+      .map((id) => this.sessions.list().find((s) => s.id === id))
+      .filter((s): s is SessionSummary => !!s)
+      .map((s) => ({ ...s, foreign: true }));
+    return [...scoped, ...openElsewhere];
   }
 
   /** Live data for the manage-sessions form (ALL folders, sorted by the manager). */
@@ -279,7 +342,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     const rt = this.registry.create(name);
     // A NEW session always starts with Parallel OFF (orchestration is opt-in).
     rt.agent.setDelegation(false);
-    await this.setActive(rt.sessionId);
+    await this.setActive(rt.sessionId, true);
   }
 
   /**
@@ -312,10 +375,12 @@ export class ChatViewProvider implements WebviewViewProvider {
   private async branchSession(id: string): Promise<void> {
     const existing = this.sessions.list().find((s) => s.id === id);
     if (!existing) return;
-    const rt = this.registry.get(id);
     // The ⎇ buttons are DISABLED while the session works: this is only a
     // silent safety guard (no alert — the UI already reflects the state).
-    if (rt?.agent.streaming) return;
+    // `isWorking` and not just `streaming`: the SEND PREAMBLE (attachment build,
+    // pre-request auto-compaction) is work too, and the runtime must not be
+    // branched away while a run is being prepared.
+    if (this.isWorking(id)) return;
     const name = await this.askName("branch", id);
     if (name === undefined) return;
     if (this.sessionNameTaken(name)) {
@@ -334,7 +399,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     const rt = this.activeRuntime();
     if (!rt) return;
     // The bubble ⎇ keys are DISABLED while the session works (silent guard).
-    if (rt.agent.streaming) return;
+    if (this.isWorking(rt.sessionId)) return;
     if (!Number.isInteger(index) || index < 0) return;
     const loaded = this.sessions.load(rt.sessionId);
     if (index >= loaded.messages.length) return; // stale bubble, treat as gone
@@ -371,7 +436,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     const rt = this.activeRuntime();
     if (!rt) return;
     // The ✂ keys are DISABLED while the session works (silent guard).
-    if (rt.agent.streaming) return;
+    if (this.isWorking(rt.sessionId)) return;
     if (!Number.isInteger(index) || index < 0) return;
     // Slice the SAME array the UI rendered (the agent's in-memory history), so
     // the bubble index matches exactly.
@@ -436,7 +501,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       ...(existing?.loopGuardResponse !== undefined ? { loopGuardResponse: existing.loopGuardResponse } : {}),
     };
     if (Object.keys(settings).length > 0) this.sessions.saveSettings(created.id, settings);
-    await this.setActive(created.id);
+    await this.setActive(created.id, true);
   }
 
   /**
@@ -533,7 +598,7 @@ export class ChatViewProvider implements WebviewViewProvider {
    * session that is still working relocks and keeps streaming when you return
    * to it.
    */
-  async setActive(id: string): Promise<void> {
+  async setActive(id: string, sessionsChanged = false): Promise<void> {
     this.activeId = id;
     this.resubscribe();
     this.applyActiveModel();
@@ -544,7 +609,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     if (rt?.model && (rt.contextWindow === undefined || rt.outputTokens === undefined)) {
       void this.ensureModelLimits(rt, rt.model, rt.modelProvider, false);
     }
-    await this.postSwitchView();
+    await this.postSwitchView(sessionsChanged);
   }
 
   async closeTab(id: string): Promise<void> {
@@ -553,6 +618,10 @@ export class ChatViewProvider implements WebviewViewProvider {
     // covers the start-of-run race, when the webview's workingIds is still
     // stale. Closing VS Code still kills everything, of course.
     if (this.isWorking(id)) return;
+    // The tab is going away and its metric is not on disk yet: write it while the
+    // runtime still exists (the flush reads `rt.contextTokens`).
+    this.pendingTokenFlush.add(id);
+    this.flushContextTokens();
     this.streamTee.detach(id);
     this.registry.close(id);
     this.pendingQueue.drop(id);
@@ -568,9 +637,12 @@ export class ChatViewProvider implements WebviewViewProvider {
     this.pushSessionsManager();
   }
 
-  /** Session ids whose agent is currently streaming (blocks delete, drives the lock). */
+  /** Session ids that are BUSY (streaming, or preparing a send, or draining the
+   * queue) — the tab strip, the rows and the manager read this, so "busy" must
+   * mean the same thing everywhere (it used to mean `streaming` only, which left
+   * the destructive buttons enabled during a send preamble). */
   private workingIds(): string[] {
-    return this.registry.listOpenIds().filter((id) => this.registry.get(id)?.agent.streaming);
+    return this.registry.listOpenIds().filter((id) => this.isWorking(id));
   }
 
   /**
@@ -604,7 +676,7 @@ export class ChatViewProvider implements WebviewViewProvider {
   /** True when a session is mid-run (streaming, sending or draining its queue):
    * it must not be closed. Mirrors the condition used to guard send(). */
   private isWorking(id: string): boolean {
-    return !!this.registry.get(id)?.agent.streaming || this.sending.has(id) || this.pendingQueue.isDraining(id);
+    return !!this.registry.get(id)?.engine.working || this.pendingQueue.isDraining(id);
   }
 
   /** True when a SYNCHRONOUS VACUUM would freeze something live. */
@@ -701,26 +773,45 @@ export class ChatViewProvider implements WebviewViewProvider {
   }
 
   /** Push the full view state WITHOUT reloading the webview page. */
-  private async postSwitchView(): Promise<void> {
+  private async postSwitchView(includeSessions = true): Promise<void> {
     if (!this.view) return;
     try {
       const active = this.activeRuntime();
-      const seq = ++this.configSeq;
+      const seq = ++this.switchSeq;
+      const configSeq = ++this.configSeq;
       const config = await this.buildConfig();
-      const live = this.streamTee.liveOf(this.activeId ?? "");
+      // A STALER switchView must never be applied: `buildConfig` awaits, and a
+      // second switch can start while this one is in flight. Posting the older
+      // one LAST would pair the transcript of the current tab with the config of
+      // the tab the user already left (model, mode, Parallel, window…).
+      if (seq !== this.switchSeq) return;
+      const live = active?.engine.projection();
+      // A session can be busy BEFORE the agent streams (attachment build,
+      // auto-compaction in the send preamble): switching away and back must not
+      // make the working bar and the input lock disappear.
+      const busy = !!active && active.engine.working;
       this.view.webview.postMessage({
         type: "switchView",
         activeId: this.activeId,
         openIds: this.registry.listOpenIds(),
-        sessions: this.currentFolderSessions(),
+        // A plain tab switch does NOT re-send the list: it is `SELECT *` on the
+        // session table, and on every click it is pure waste (the list only changes
+        // when a session is created, branched, renamed or closed — those paths ask
+        // for it). `undefined` means "keep what you have".
+        sessions: includeSessions ? this.sessionsForView() : undefined,
         messages: active ? active.agent.getMessages() : [],
         config,
-        configSeq: seq,
+        configSeq,
+        switchSeq: seq,
         workingIds: this.workingIds(),
-        streaming: !!active?.agent.streaming,
+        streaming: busy,
+        compacting: !!active && this.isCompacting(active.sessionId),
         pending: active ? this.pendingQueue.items(active.sessionId) : [],
         liveThinking: live?.thinking ?? "",
         liveAnswer: live?.answer ?? "",
+        // The WHOLE in-flight turn (tool calls + sub-agents), so the view can
+        // rebuild the bubbles the history does not contain yet.
+        ...(live ? { liveTurn: live } : {}),
       });
     } catch (e) {
       debugLog("postSwitchView failed", e);
@@ -740,8 +831,32 @@ export class ChatViewProvider implements WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage((msg) => this.onMessage(msg));
     this.resubscribe();
     this.refresh();
+    // Measure the two walls that matter with several sessions running (event loop
+    // + webview traffic). Prints nothing unless HARNY_DEBUG is set.
+    this.telemetry.start();
     // Startup suggestion: cheap O(1) check once the page is up.
-    setTimeout(() => void this.maybeSuggestVacuum(), 3000);
+    this.startupVacuumTimer = setTimeout(() => void this.maybeSuggestVacuum(), 3000);
+    this.startupVacuumTimer.unref?.();
+  }
+
+  /**
+   * Release what outlives the panel: the telemetry probe, the coalescing timers and
+   * the pending metric. VS Code disposes the provider on deactivation; without this
+   * the 30 s probe kept sampling a host that was going away, and a debounced write
+   * could fire against a closed store.
+   */
+  dispose(): void {
+    this.telemetry.stop();
+    if (this.configSoonTimer !== undefined) {
+      clearTimeout(this.configSoonTimer);
+      this.configSoonTimer = undefined;
+    }
+    if (this.startupVacuumTimer !== undefined) {
+      clearTimeout(this.startupVacuumTimer);
+      this.startupVacuumTimer = undefined;
+    }
+    // Last chance for the metric: the store is still open at this point.
+    this.flushContextTokens();
   }
 
   /** Rebuild the whole view (host-side refresh after any change). */
@@ -941,6 +1056,22 @@ export class ChatViewProvider implements WebviewViewProvider {
       case "saveProviders": {
         const data = msg.data;
         if (!data || typeof data !== "object") break;
+        // A provider edit rewrites the endpoint/key that EVERY open run resolves on
+        // its NEXT request: while anything streams, that would silently change a run
+        // already in flight (the gears stay usable — the session manager does not
+        // touch runs — but this save does).
+        if (this.workingIds().length > 0) {
+          await this.inPanelAlert({
+            kind: "info",
+            title: "Sessions still working",
+            message:
+              "A session is still working: changing providers now would change the endpoint or key of a run already in flight.\n" +
+              "Stop the running sessions, then save.",
+            confirmText: "OK",
+          });
+          this.view?.webview.postMessage({ type: "providersSaved", ok: false });
+          break;
+        }
         // The modal no longer edits the legacy global cap: carry the existing
         // config value through so a providers save never wipes it.
         const merged: ProviderEditorData = {
@@ -1174,7 +1305,7 @@ export class ChatViewProvider implements WebviewViewProvider {
 
       case "compact": {
         const r = this.activeRuntime();
-        if (!r || this.compacting) break;
+        if (!r || this.isCompacting(r.sessionId)) break;
         const ok = await this.inPanelAlert({
           kind: "confirm",
           title: "Compact context",
@@ -1308,40 +1439,23 @@ export class ChatViewProvider implements WebviewViewProvider {
         break;
       }
       case "send":
-        if (rt) await this.send(rt, msg);
+        // The run SEQUENCE (lock, queue, status, refresh) lives in the session's
+        // engine; this route only hands it the port (services + view posts).
+        if (rt) await rt.engine.send(msg as SendIntent, this.enginePort(rt));
         break;
       case "abort":
-        if (rt?.agent.streaming) {
-          // Stop = the user regains control: drop anything still queued/steered
-          // so the run does not silently restart from the pending list.
-          this.pendingQueue.clear(rt);
-          rt.agent.abort();
-          this.streamTee.clear(rt.sessionId);
-          // Red bubble "Processing interrupted" in the transcript.
-          this.view?.webview.postMessage({ type: "interrupted" });
-          // Persist the notice too, so it survives refresh / session reload and
-          // keeps the story visible in the transcript — but as uiOnly, i.e. NOT
-          // part of what is sent to the model. Two reasons:
-          //  · the model already learns the interruption from the aborted tool
-          //    results themselves, which is where it belongs;
-          //  · more importantly, an assistant message written here would land in
-          //    the middle of the turn's `tool_calls` → results pairing (the agent
-          //    appends the two together, at its own pace), and a message between
-          //    them is rejected by every provider on EVERY later request.
-          // The ❌ prefix makes it render as a red bubble like the other errors.
-          rt.history.add({
-            role: "assistant",
-            content: "❌ ⏹ Processing interrupted.",
-            timestamp: Date.now(),
-            uiOnly: true,
-          });
-        }
+        if (rt) await rt.engine.abort(this.enginePort(rt));
         break;
       case "abortSubAgent":
         // Stop ONE sub-agent (its Delegate bubble), leaving the run alive. The
         // orchestrator still receives that Delegate's tool result (interrupted)
         // so it can continue with the remaining work.
-        if (rt && typeof msg.toolCallId === "string") rt.agent.abortSubAgent(msg.toolCallId);
+        if (rt && typeof msg.toolCallId === "string") {
+          // Record the request FIRST: a rebuild must keep the ⏹ state on that
+          // bubble instead of resurrecting an enabled abort button.
+          rt.engine.live.markAbortRequested(msg.toolCallId);
+          rt.agent.abortSubAgent(msg.toolCallId);
+        }
         break;
       case "cancelPending":
         // Drop a queued/steer message the user changed their mind about.
@@ -1386,7 +1500,7 @@ export class ChatViewProvider implements WebviewViewProvider {
    * only the ACTIVE tab; a background session's compaction stays silent.
    */
   private async compactNow(rt: SessionRuntime, signal?: AbortSignal): Promise<void> {
-    this.compacting = true;
+    rt.engine.beginCompaction();
     const isActive = this.activeId === rt.sessionId;
     if (isActive) {
       this.view?.webview.postMessage({ type: "compactStart" });
@@ -1396,7 +1510,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     try {
       compacted = await this.performCompaction(rt, signal);
     } finally {
-      this.compacting = false;
+      rt.engine.endCompaction();
       if (isActive) {
         // Re-render the transcript so the SYNTHETIC user prompt (orange) +
         // assistant response that replaced the summarized span are visible.
@@ -1409,7 +1523,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     }
     // Update the metrics immediately via a lightweight config push (no full
     // HTML rebuild, so the user's input/scroll are preserved).
-    void this.pushConfig();
+    if (isActive) this.pushConfigSoon();
   }
 
   /**
@@ -1420,7 +1534,7 @@ export class ChatViewProvider implements WebviewViewProvider {
    */
   async maybeCompactDuringRun(sessionId: string, signal?: AbortSignal): Promise<void> {
     const rt = this.registry.get(sessionId);
-    if (!rt || this.compacting) return;
+    if (!rt || this.isCompacting(rt.sessionId)) return;
     // Re-clamp the output budget at EVERY turn boundary: the context grows
     // during the run, so what fitted at the start may not fit now.
     this.applySessionBudget(rt);
@@ -1429,7 +1543,7 @@ export class ChatViewProvider implements WebviewViewProvider {
   }
 
   private async compactDuringRun(rt: SessionRuntime, signal?: AbortSignal): Promise<void> {
-    this.compacting = true;
+    rt.engine.beginCompaction();
     const isActive = this.activeId === rt.sessionId;
     if (isActive) this.view?.webview.postMessage({ type: "compactStart" });
     let compacted = false;
@@ -1438,7 +1552,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     } catch (e: any) {
       infoLog("mid-run auto-compaction failed; continuing:", e?.message || String(e));
     } finally {
-      this.compacting = false;
+      rt.engine.endCompaction();
       if (isActive) {
         // ALIGNED with the manual path (`compactNow`): a compaction has a VISIBLE result —
         // the divider and the summary card — and this path used to leave it for the next
@@ -1453,7 +1567,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         this.view?.webview.postMessage({ type: "compactDone", ok: compacted });
       }
     }
-    void this.pushConfig();
+    if (isActive) this.pushConfigSoon();
   }
 
   /**
@@ -1674,53 +1788,97 @@ export class ChatViewProvider implements WebviewViewProvider {
    * routed to the pending list (queue) or injected as a soft steer instead of
    * being dropped; otherwise it runs a full send and then drains the queue.
    */
-  private async send(rt: SessionRuntime, msg: any): Promise<void> {
-    if (rt.agent.streaming || this.sending.has(rt.sessionId) || this.pendingQueue.isDraining(rt.sessionId)) {
-      this.pendingQueue.enqueue(rt, msg);
-      return;
-    }
-    await this.dispatchSendTracked(rt, msg);
-    await this.pendingQueue.drain(rt, (item) => this.dispatchSendTracked(rt, item));
+  /**
+   * The port a session's run talks to: services and view posts, nothing else.
+   * Built per call over `rt` — a handful of closures — and kept HERE (not inside
+   * the engine) so the run SEQUENCE can be tested with a fake port and no vscode.
+   */
+  private enginePort(rt: SessionRuntime): SessionSendPort & SessionAbortPort {
+    return {
+      prepareAgent: () => {
+        // Re-assert the controls right before the run: a session created before a
+        // UI toggle (or a reloaded panel) must not send with stale mode/Parallel.
+        rt.agent.setMode(rt.mode ?? "analyze");
+        rt.agent.setDelegation(rt.parallel === true);
+        rt.agent.setMaxParallelSubAgents(rt.maxParallelSubAgents);
+        this.applyLoopGuard(rt);
+      },
+      hasModel: () => !!rt.model,
+      rejectMissingModel: (intent) => this.rejectMissingModel(rt, intent),
+      preparePrompt: (intent) => this.preparePrompt(rt, intent),
+      compactBeforeRun: async () => {
+        // Auto-compaction before the request when already over the threshold: the
+        // EXACT same routine as the manual Compact button. BEST-EFFORT — if the
+        // summarizer errors (network), the user's request must still run.
+        if (!this.needsAutoCompact(rt) || this.isCompacting(rt.sessionId)) return;
+        try {
+          await this.compactNow(rt);
+        } catch (e: any) {
+          infoLog("auto-compaction failed; continuing with the request:", e?.message || String(e));
+        }
+      },
+      compactAfterRun: async () => {
+        // Post-response: evaluate the CURRENT fill right after every final answer.
+        if (!this.needsAutoCompact(rt) || this.isCompacting(rt.sessionId)) return;
+        try {
+          await this.compactNow(rt);
+        } catch (e: any) {
+          infoLog("post-response auto-compaction failed:", e?.message || String(e));
+        }
+      },
+      applyBudget: () => this.applySessionBudget(rt),
+      isDraining: () => this.pendingQueue.isDraining(rt.sessionId),
+      enqueue: (intent) => this.pendingQueue.enqueue(rt, intent),
+      drain: (dispatch) => this.pendingQueue.drain(rt, dispatch),
+      isActive: () => this.activeId === rt.sessionId,
+      showQueuedUser: (prompt) => {
+        this.view?.webview.postMessage({
+          type: "userMessage",
+          content: prompt.displayText ?? prompt.text,
+          ...(prompt.attachments ? { attachments: prompt.attachments } : {}),
+          ...(prompt.images ? { images: prompt.images } : {}),
+        });
+      },
+      onRunStarted: () => this.postStatus(rt, true),
+      onRunFinished: (hadError) => {
+        // The turn is over: flush the coalesced metric NOW, so the number on disk is
+        // the run's last one even if the panel is never touched again.
+        this.flushContextTokens();
+        // Only touch the view when this session is still the active tab: the user
+        // may have switched away while it streamed, and their refresh/status must
+        // not clobber the session they are looking at.
+        if (this.activeId !== rt.sessionId) return;
+        this.postStatus(rt, false);
+        if (!hadError) this.refreshTranscript(rt, true);
+      },
+      clearQueue: () => this.pendingQueue.clear(rt),
+      onInterrupted: () => this.view?.webview.postMessage({ type: "interrupted" }),
+    };
   }
 
-  /** `dispatchSend` with the per-session SEND lock held for its whole async
-   * preamble, so a second send arriving before `agent.send` starts is queued
-   * instead of launching an overlapping run. */
-  private async dispatchSendTracked(rt: SessionRuntime, msg: any): Promise<void> {
-    this.sending.add(rt.sessionId);
-    try {
-      await this.dispatchSend(rt, msg);
-    } finally {
-      this.sending.delete(rt.sessionId);
-    }
+  /**
+   * Tell the user — IN the history, so a rebuild still shows it — that the session
+   * has no model yet. Keeping BOTH the message and the error matters: otherwise the
+   * follow-up "now do it" reaches the agent with an EMPTY history.
+   */
+  private rejectMissingModel(rt: SessionRuntime, intent: SendIntent): void {
+    const rawText = typeof intent.text === "string" ? intent.text : "";
+    const attached = intent.attachments ?? [];
+    const userContent = rawText.trim() ? rawText : `📎 ${attached.map((a) => a.name).join(", ")}`;
+    rt.history.add({ role: "user", content: userContent, timestamp: Date.now() });
+    const errorMsg = "Select a model for this session first (dropdown in the header).";
+    rt.history.add({ role: "assistant", content: `❌ ${errorMsg}`, timestamp: Date.now() });
+    this.view?.webview.postMessage({ type: "error", error: errorMsg });
   }
 
-  /** Run ONE message to completion (the original send body). */
-  private async dispatchSend(rt: SessionRuntime, msg: any): Promise<void> {
-    // Re-assert the controls on the agent right before it runs: a session
-    // created before a UI toggle (or a reloaded panel) must not send with
-    // stale mode/parallel state.
-    rt.agent.setMode(rt.mode ?? "analyze");
-    rt.agent.setDelegation(rt.parallel === true);
-    rt.agent.setMaxParallelSubAgents(rt.maxParallelSubAgents);
-    this.applyLoopGuard(rt);
-    const rawText = typeof msg.text === "string" ? msg.text : "";
-    const attached = (msg.attachments as AttachmentInfo[] | undefined) ?? [];
-    // A message may carry text, attachments, or both — an attachment-only send
-    // is valid ("look at this file").
-    if (!rawText.trim() && attached.length === 0) return;
-    // New sessions start with no model: the user must pick one first. Keep BOTH
-    // the user message and an explanatory error IN the history — otherwise the
-    // transcript rebuild (refresh/switch) drops them and the follow-up "now do
-    // it" reaches the agent with an EMPTY history.
-    if (!rt.model) {
-      const userContent = rawText.trim() ? rawText : `📎 ${attached.map((a) => a.name).join(", ")}`;
-      rt.history.add({ role: "user", content: userContent, timestamp: Date.now() });
-      const errorMsg = "Select a model for this session first (dropdown in the header).";
-      rt.history.add({ role: "assistant", content: `❌ ${errorMsg}`, timestamp: Date.now() });
-      this.view?.webview.postMessage({ type: "error", error: errorMsg });
-      return;
-    }
+  /**
+   * Turn what the user typed into what the MODEL receives: attachments inlined,
+   * `/skill` applied, modalities checked. `undefined` = already handled (an error
+   * was posted, or a local command ran and nothing must be sent).
+   */
+  private async preparePrompt(rt: SessionRuntime, intent: SendIntent): Promise<PreparedPrompt | undefined> {
+    const rawText = typeof intent.text === "string" ? intent.text : "";
+    const attached = intent.attachments ?? [];
     let text = rawText;
     let images: string[] | undefined;
     let displayText: string | undefined;
@@ -1775,70 +1933,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       text = text && text !== rawText ? `${injected}\n\n${text}` : injected;
       displayText = rawText.trim();
     }
-    // Auto-compaction before the request when already over the threshold:
-    // runs the EXACT same routine as the manual Compact button. BEST-EFFORT:
-    // if the summarizer errors (network), the user's request must still run —
-    // otherwise the send never starts and the working indicator hangs.
-    if (this.needsAutoCompact(rt) && !this.compacting) {
-      try {
-        await this.compactNow(rt);
-      } catch (e: any) {
-        infoLog("auto-compaction failed; continuing with the request:", e?.message || String(e));
-      }
-    }
-    // AFTER (possibly) compacting: clamp the output budget to the room the
-    // request actually has left, so a full context can never turn into a 400.
-    this.applySessionBudget(rt);
-    this.streamTee.clear(rt.sessionId);
-    // A QUEUED message: the view deliberately did NOT append a bubble when it was
-    // typed — it sat in the pending footer until its turn came — so the host has
-    // to show it NOW. Without this the pending row disappears and the transcript
-    // stays empty until the end-of-run refresh, i.e. the user cannot see what
-    // they sent, attachments included. A direct send already showed its own.
-    if (msg.mode === "queue" && this.activeId === rt.sessionId) {
-      this.view?.webview.postMessage({
-        type: "userMessage",
-        content: displayText ?? rawText,
-        ...(attachmentMeta ? { attachments: attachmentMeta } : {}),
-        ...(images ? { images } : {}),
-      });
-    }
-    // send() sets _streaming synchronously on invocation: start it first, THEN
-    // push the status — otherwise workingIds() is still empty and the session
-    // row never locks (branch/rename/delete stay hoverable during the work).
-    const sending = rt.agent.send(text, {
-      images,
-      attachments: attachmentMeta,
-      displayText,
-      attachmentParts: attachmentParts,
-    });
-    this.postStatus(rt, true);
-    let hadError = false;
-    const unsub = rt.agent.onEvent((e) => {
-      if (e.type === "error") hadError = true;
-    });
-    try {
-      await sending;
-    } finally {
-      unsub();
-      // Only touch the view when this session is still the active tab: the
-      // user may have switched to another session while this one streamed
-      // (parallel work), and their refresh/status must not clobber it.
-      if (this.activeId === rt.sessionId) {
-        this.postStatus(rt, false);
-        if (!hadError) this.refreshTranscript(rt, true);
-      }
-    }
-    // Post-response auto-compaction: evaluate the CURRENT fill right after
-    // every final response; if the threshold was crossed, run the EXACT same
-    // routine as pressing Compact -> OK.
-    if (this.needsAutoCompact(rt) && !this.compacting) {
-      try {
-        await this.compactNow(rt);
-      } catch (e: any) {
-        infoLog("post-response auto-compaction failed:", e?.message || String(e));
-      }
-    }
+    return { text, images, attachments: attachmentMeta, displayText, attachmentParts };
   }
 
   private postStatus(rt: SessionRuntime, active: boolean): void {
@@ -1946,9 +2041,8 @@ export class ChatViewProvider implements WebviewViewProvider {
   }
 
   private async renameSession(id: string): Promise<void> {
-    const rt = this.registry.get(id);
     // The ✎ buttons are DISABLED while the session works (silent guard).
-    if (rt?.agent.streaming) return;
+    if (this.isWorking(id)) return;
     const name = await this.askName("rename", id);
     if (name === undefined) return;
     // Same-name renames are allowed (self excluded); any OTHER collision is not.
@@ -1961,9 +2055,8 @@ export class ChatViewProvider implements WebviewViewProvider {
 
   private async deleteSession(id: string): Promise<void> {
     const existing = this.sessions.list().find((s) => s.id === id);
-    const rt = this.registry.get(id);
     // The 🗑 buttons are DISABLED while the session works (silent guard).
-    if (rt?.agent.streaming) return;
+    if (this.isWorking(id)) return;
     const ok = await this.inPanelAlert({
       kind: "confirm",
       title: "Delete session",
@@ -2238,13 +2331,13 @@ export class ChatViewProvider implements WebviewViewProvider {
     evidence?: ContextOverflowEvidence,
   ): Promise<boolean> {
     const rt = this.registry.get(sessionId);
-    if (!rt || this.compacting) return false;
+    if (!rt || this.isCompacting(rt.sessionId)) return false;
     // FIRST, before the budget math below reads the window: adopt the limit the
     // provider itself stated. An unknown local model otherwise keeps a guessed
     // (optimistic) 128k for the whole session, so the threshold never fires and
     // every request risks the same rejection.
     if (evidence?.limitTokens) this.adoptContextWindow(rt, evidence.limitTokens);
-    this.compacting = true;
+    rt.engine.beginCompaction();
     try {
       const compacted = await this.performCompaction(rt, signal);
       infoLog(`context overflow: compaction ${compacted ? "rewrote the session" : "had nothing to summarize"}`);
@@ -2257,7 +2350,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       infoLog("overflow compaction failed:", e?.message || String(e));
       return false;
     } finally {
-      this.compacting = false;
+      rt.engine.endCompaction();
     }
   }
 
@@ -2272,7 +2365,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     infoLog(`context window adopted from the provider: ${rt.contextWindow} -> ${adopted} tokens (session ${rt.sessionId})`);
     rt.contextWindow = adopted;
     this.sessions.saveSettings(rt.sessionId, { contextWindow: adopted });
-    if (this.activeId === rt.sessionId) void this.pushConfig();
+    if (this.activeId === rt.sessionId) this.pushConfigSoon();
   }
 
   /**
@@ -2392,15 +2485,23 @@ export class ChatViewProvider implements WebviewViewProvider {
    */
   private streamTee = new StreamTee({
     isActive: (id) => id === this.activeId,
-    onPost: (m) => this.view?.webview.postMessage(m),
+    onPost: (m) => {
+      this.telemetry.notePost(m);
+      this.view?.webview.postMessage(m);
+    },
     onUsage: (sessionId, usage) => {
       const rt = this.registry.get(sessionId);
       if (!rt) return;
       rt.contextTokens = usage.input;
-      this.sessions.saveSettings(sessionId, { contextTokens: usage.input });
+      // The metric is already where every reader looks (memory); the DB write is
+      // COALESCED — see persistContextTokensSoon.
+      this.persistContextTokensSoon(rt);
       if (typeof usage.cached === "number") rt.cachedTokens = usage.cached;
       if (typeof usage.cachedWrite === "number") rt.cachedWriteTokens = usage.cachedWrite;
-      void this.pushConfig();
+      // The numbers the config shows belong to the ACTIVE session: a hidden
+      // session's usage must not trigger a rebuild+post (it used to, for every
+      // session, every turn).
+      if (this.activeId === sessionId) this.pushConfigSoon();
     },
     onSteerApplied: (sessionId, ids) => this.pendingQueue.onSteerApplied(sessionId, ids),
     onPreviewReady: (sessionId) => void this.promptSwitchToBuild(sessionId),
@@ -2786,13 +2887,72 @@ export class ChatViewProvider implements WebviewViewProvider {
    * live text whenever this session is running — one place to get it right.
    */
   private refreshTranscript(rt: SessionRuntime, withSkills = false): void {
-    const live = this.streamTee.liveOf(rt.sessionId);
+    const live = rt.engine.projection();
     this.view?.webview.postMessage({
       type: "refresh",
       messages: rt.agent.getMessages(),
       ...(withSkills ? { skills: this.skillCatalog() } : {}),
-      ...(rt.agent.streaming && live ? { streaming: true, liveThinking: live.thinking, liveAnswer: live.answer } : {}),
+      ...(rt.agent.streaming && live
+        ? { streaming: true, liveThinking: live.thinking, liveAnswer: live.answer, liveTurn: live }
+        : {}),
     });
+  }
+
+  /**
+   * Coalesced variant for BACKGROUND config pushes (a usage report from a session
+   * you are not watching, a compaction that is not on screen): N calls in a burst
+   * collapse into ONE build + ONE post. It carries no new information of its own —
+   * the metrics it renders are the ACTIVE session's — so the noisy callers skip it
+   * entirely when they are not the active one.
+   */
+  private pushConfigSoon(): void {
+    if (this.configSoonTimer !== undefined) return;
+    this.configSoonTimer = setTimeout(() => {
+      this.configSoonTimer = undefined;
+      void this.pushConfig();
+    }, CONFIG_COALESCE_MS);
+    this.configSoonTimer.unref?.();
+  }
+
+  /**
+   * Persist the context-token METRIC, coalesced.
+   *
+   * It used to be one `saveSettings` — a synchronous, single-threaded SQLite
+   * transaction (upsert + a count query) — on EVERY usage report, i.e. every turn of
+   * every session. With ten sessions streaming that is ten transactions per turn for
+   * a number that is (a) recomputed from scratch by the next turn and (b) read by the
+   * UI from MEMORY (`rt.contextTokens`), never from the DB. So the writes bought
+   * nothing and cost the host thread the thing it has least of.
+   *
+   * Coalesced, not dropped: the last value lands on the debounce, and IMMEDIATELY when
+   * the run ends or the session is closed (a closed session would otherwise lose it).
+   */
+  private persistContextTokensSoon(rt: SessionRuntime): void {
+    this.pendingTokenFlush.add(rt.sessionId);
+    if (this.tokenFlushTimer !== undefined) return;
+    this.tokenFlushTimer = setTimeout(() => this.flushContextTokens(), CONTEXT_TOKENS_FLUSH_MS);
+    this.tokenFlushTimer.unref?.();
+  }
+
+  /** Write every pending metric NOW (run end, tab close, or the debounce firing). */
+  private flushContextTokens(): void {
+    if (this.tokenFlushTimer !== undefined) {
+      clearTimeout(this.tokenFlushTimer);
+      this.tokenFlushTimer = undefined;
+    }
+    if (this.pendingTokenFlush.size === 0) return;
+    const ids = [...this.pendingTokenFlush];
+    this.pendingTokenFlush.clear();
+    for (const id of ids) {
+      const rt = this.registry.get(id);
+      if (!rt || typeof rt.contextTokens !== "number") continue;
+      try {
+        this.sessions.saveSettings(id, { contextTokens: rt.contextTokens });
+      } catch (e: any) {
+        // A metric must never take a run down with it.
+        infoLog("could not persist the token metric:", e?.message || String(e));
+      }
+    }
   }
 
   private async pushConfig(): Promise<void> {
@@ -2828,7 +2988,7 @@ export class ChatViewProvider implements WebviewViewProvider {
   private async buildHtml(): Promise<string> {
     const active = this.activeRuntime();
     const messages = active ? active.agent.getMessages() : [];
-    const live = this.streamTee.liveOf(this.activeId ?? "");
+    const live = active?.engine.projection();
     const config = await this.buildConfig();
     // Cache-bust the webview bundle: VS Code caches webview resources strongly,
     // so a plain asWebviewUri may keep serving an OLD media/view.js after a
@@ -2869,7 +3029,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       editorFontSizePx: this.editorFontSizePx(),
       theme: this.themeMode(),
       state: {
-        sessions: this.currentFolderSessions(),
+        sessions: this.sessionsForView(),
         openIds: this.registry.listOpenIds(),
         activeId: this.activeId,
         messages,
@@ -2878,10 +3038,12 @@ export class ChatViewProvider implements WebviewViewProvider {
         logoUri: logoUri.with({ query: "v=" + logoVersion }).toString(),
         brand,
         workingIds: this.workingIds(),
-        streaming: !!active?.agent.streaming,
+        streaming: !!active && active.engine.working,
+        compacting: !!active && this.isCompacting(active.sessionId),
         pending: active ? this.pendingQueue.items(active.sessionId) : [],
         liveThinking: live?.thinking ?? "",
         liveAnswer: live?.answer ?? "",
+        ...(live ? { liveTurn: live } : {}),
       },
     });
   }

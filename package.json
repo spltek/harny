@@ -99,6 +99,7 @@
     "watch": "npx tsc -p tsconfig.json --watch",
     "dev": "node scripts/dev.mjs",
     "test": "vitest run",
+    "check": "npm run typecheck && npm test",
     "test:watch": "vitest",
     "coverage": "vitest run --coverage",
     "package": "vsce package --no-dependencies",

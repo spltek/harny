@@ -3,6 +3,7 @@ import { panelMinWidthCss } from "./panel-width";
 import type { ChatMessage } from "../core/history/types";
 import type { SessionSummary } from "../core/sessions/types";
 import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, MAX_CONTEXT_WINDOW, MAX_OUTPUT_TOKENS, MIN_CONTEXT_WINDOW, MIN_OUTPUT_TOKENS } from "./context-window";
+import type { SessionLiveProjection } from "./session-live-state";
 
 export interface ViewConfigState {
   provider: string;
@@ -44,6 +45,13 @@ export interface ViewState {
   /** Live (uncommitted) thinking/answer of the in-flight turn, for replay. */
   liveThinking: string;
   liveAnswer: string;
+  /** The WHOLE in-flight turn: tool calls, sub-agent bubbles and their nested
+   * logs. The history does not have them until the tool batch commits, so a
+   * rebuild (tab switch / panel reload) must restore them from here. */
+  liveTurn?: SessionLiveProjection;
+  /** A compaction is running on the active session: the provisional bubble must
+   * come back after a rebuild instead of vanishing. */
+  compacting?: boolean;
   /** Messages typed while working (queue/steer), rendered as pending bubbles. */
   pending?: {
     id: string;
@@ -271,6 +279,9 @@ ${renderViewConfig(deps)}
     }
     .srow .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
     .srow.open .name { color: var(--accent); }
+    /* An open session that lives in ANOTHER folder: listed so its tab is never
+       orphaned, dimmed so it never reads as one of this folder's. */
+    .srow.foreign .name { opacity: 0.75; font-style: italic; }
     .srow-actions { display: inline-flex; align-items: center; gap: 8px; }
     .srow-actions button {
       background: transparent; border: none; color: var(--fg);
@@ -1017,6 +1028,11 @@ ${renderViewConfig(deps)}
       font-size: var(--fs-sm); color: var(--fg);
     }
     .attach-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 12rem; }
+    /* An attachment that came back from a reload WITHOUT its payload: the chip keeps its
+       place (name, size) but says so, and send() refuses it instead of sending an empty
+       file. Amber, not red: it is recoverable (re-attach the file). */
+    .attach-chip.attach-stale { border-color: var(--warn, #d19a11); }
+    .attach-warn { color: var(--warn, #d19a11); }
     .attach-icon { display: inline-flex; align-items: center; line-height: 0; flex: 0 0 auto; }
     /* Thumbnail preview of a pasted clipboard image in its attachment chip. */
     .attach-thumb { width: 22px; height: 22px; object-fit: cover; border-radius: 3px; border: 1px solid var(--border); cursor: zoom-in; }

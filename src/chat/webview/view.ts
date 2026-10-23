@@ -11,6 +11,7 @@ import { clampTemperature, clampTopP, TEMPERATURE_MAX, TEMPERATURE_MIN, TEMPERAT
 // request from ever disagreeing about where the window starts.
 import { checkpointStart } from "../../core/history/conversation-validity";
 import { toolArgTarget } from "../../core/tools/tool-call-text";
+import type { SessionLiveProjection } from "../session-live-state";
 
 declare function acquireVsCodeApi(): {
   postMessage(message: unknown): void;
@@ -81,6 +82,10 @@ interface SessionInfo {
   folder?: string;
   /** Whether that folder is not available (missing path -> red row). */
   folderMissing?: boolean;
+  /** Open, but belonging to ANOTHER folder: listed so the tab is never orphaned
+   * (see ChatViewProvider.sessionsForView). The folder stays authoritative for name
+   * uniqueness, so this is about NAVIGATION, not about where the session lives. */
+  foreign?: boolean;
 }
 interface ConfigState {
   provider: string;
@@ -155,6 +160,13 @@ interface InitState {
   streaming?: boolean;
   liveThinking?: string;
   liveAnswer?: string;
+  /** The WHOLE in-flight turn (tool calls + sub-agent bubbles), from the host's
+   * per-session engine: the history does not have them until the tool batch
+   * commits, so a rebuild must restore them from here. */
+  liveTurn?: SessionLiveProjection;
+  /** A compaction is running on the active session: the provisional bubble must
+   * come back after a rebuild instead of vanishing. */
+  compacting?: boolean;
   /** Queue/steer messages typed while working (host re-pushes on reload). */
   pending?: PendingViewItem[];
   /** Extension version (shown in the empty hero). */
@@ -300,9 +312,195 @@ let terminalShown = false;
 const pendingToolCalls = new Map<string, HTMLDivElement>();
 
 // ── Pending attachments: files picked via the "+" button and queued for the
-// next send. Transient (never persisted); cleared on send or session switch. ──
-interface AttachedFile { name: string; path: string; size: number; isImage: boolean; dataUri?: string; content?: string; }
+// next send. Per session (they belong to that session's draft) and PERSISTED across a
+// webview reload since this change — see persistCompositions for the size budget. ──
+interface AttachedFile { name: string; path: string; size: number; isImage: boolean; dataUri?: string; content?: string; needsReattach?: boolean; }
 let attachedFiles: AttachedFile[] = [];
+
+// ── Per-session COMPOSITION: the prompt AND its attachments ──
+/**
+ * What you have typed/picked belongs to the SESSION, not to the panel: switching
+ * tab parks it and coming back brings it back, chips included. `""` is the slot
+ * used while no session is open.
+ */
+interface Composition {
+  text: string;
+  files: AttachedFile[];
+}
+const compositions = new Map<string, Composition>();
+
+function draftKey(id: string | undefined): string {
+  return id ?? "";
+}
+
+/** Park the current box under `id` (called right before switching away). */
+function stashComposition(id: string | undefined): void {
+  const key = draftKey(id);
+  const text = inputEl.value;
+  if (!text && attachedFiles.length === 0) compositions.delete(key);
+  else compositions.set(key, { text, files: attachedFiles.slice() });
+  persistCompositions();
+}
+
+/** Put the composition of `id` back in the box (empty when there is none). */
+function restoreComposition(id: string | undefined): void {
+  const saved = compositions.get(draftKey(id));
+  inputEl.value = saved?.text ?? "";
+  attachedFiles = saved ? saved.files.slice() : [];
+  renderAttachmentChips();
+  resizeInput();
+}
+
+/**
+ * How much of an attachment's PAYLOAD may live in the webview state.
+ *
+ * `setState` keeps the value for the whole life of the panel, so it is not the place
+ * for a pasted screenshot: 256KB per file is already generous, and the alternative —
+ * keeping 15MB "just in case" — is exactly the kind of cost nobody can see in a
+ * profile. Past the budget the file is still remembered (name, size, path) but marked
+ * `needsReattach`, so nothing is silently sent as an empty attachment.
+ */
+const MAX_PERSISTED_ATTACHMENT_BYTES = 256 * 1024;
+
+/**
+ * Persist every session's draft — TEXT and ATTACHMENTS — so a webview reload (a VS
+ * Code window reload, a view moved to another side bar) does not silently drop the
+ * files you picked.
+ *
+ * Two shapes, and the split is deliberate:
+ *  · `drafts` is the historical `{ key: text }` map, kept as-is so a state written by
+ *    an older version still loads;
+ *  · `draftFiles` carries the attachments, pruned by `forPersist` (see the budget).
+ */
+function persistCompositions(): void {
+  const prev = (vscode.getState() as Record<string, unknown> | undefined) ?? {};
+  const drafts: Record<string, string> = {};
+  const draftFiles: Record<string, AttachedFile[]> = {};
+  for (const [key, c] of compositions) {
+    if (c.text) drafts[key] = c.text;
+    if (c.files.length > 0) draftFiles[key] = c.files.map(forPersist);
+  }
+  vscode.setState({ ...prev, drafts, draftFiles });
+}
+
+/** Metadata always; the payload only while it fits the budget. See above. */
+function forPersist(file: AttachedFile): AttachedFile {
+  const meta: AttachedFile = { name: file.name, path: file.path, size: file.size, isImage: file.isImage };
+  const payload = file.dataUri ?? file.content;
+  if (payload === undefined || payload.length <= MAX_PERSISTED_ATTACHMENT_BYTES) {
+    return {
+      ...meta,
+      ...(file.dataUri ? { dataUri: file.dataUri } : {}),
+      ...(file.content ? { content: file.content } : {}),
+    };
+  }
+  return { ...meta, needsReattach: true };
+}
+
+/** Rebuild an attachment from the persisted state, ignoring anything malformed (the
+ * state is a JSON blob that a FUTURE or an OLDER version may have written). */
+function fromPersisted(raw: unknown): AttachedFile | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const f = raw as Partial<AttachedFile>;
+  if (typeof f.name !== "string") return undefined;
+  const file: AttachedFile = {
+    name: f.name,
+    path: typeof f.path === "string" ? f.path : "",
+    size: typeof f.size === "number" ? f.size : 0,
+    isImage: f.isImage === true,
+  };
+  if (typeof f.dataUri === "string") file.dataUri = f.dataUri;
+  if (typeof f.content === "string") file.content = f.content;
+  if (f.needsReattach === true) file.needsReattach = true;
+  return file;
+}
+
+/** The message was sent: the session's draft is consumed. */
+function clearComposition(id: string | undefined): void {
+  compositions.delete(draftKey(id));
+  persistCompositions();
+}
+
+// ── Per-session VIEW MEMORY: where you were, and what you had open ──
+/**
+ * A transcript is rebuilt from history on every switch (and on every refresh), so
+ * without this a session you were reading comes back scrolled to the end with every
+ * section folded. That is the last thing a tab switch must not throw away.
+ */
+interface ViewMemory {
+  scrollTop: number;
+  /** True when the transcript was FOLLOWING the stream (pinned to the bottom):
+   * those sessions must keep following it, the others go back where they were. */
+  pinned: boolean;
+  /** Indexes (document order) of the EXPANDED sections. Appends only ADD sections
+   * at the end, so the indexes of an existing transcript stay valid. */
+  open: number[];
+}
+const viewMemory = new Map<string, ViewMemory>();
+
+/** Every collapsible section of the transcript (thinking, tool, sub-agent). */
+function transcriptSections(): HTMLElement[] {
+  return Array.from(messagesEl.querySelectorAll<HTMLElement>(TRANSCRIPT_SECTIONS));
+}
+
+/** Park scroll position and expanded sections of the session we are leaving. */
+function stashViewMemory(id: string | undefined): void {
+  const open: number[] = [];
+  transcriptSections().forEach((body, i) => {
+    if (!body.classList.contains("collapsed")) open.push(i);
+  });
+  viewMemory.set(draftKey(id), { scrollTop: messagesEl.scrollTop, pinned: autoScroll, open });
+}
+
+/**
+ * How many messages each session had at its last rebuild.
+ *
+ * The open sections are keyed by DOCUMENT ORDER, which is only stable while the
+ * transcript grows at the end. A COMPACTION (and a ✂ cut, and a branch) rewrites the
+ * head: the kept messages slide down, so index 3 stops being the section you opened —
+ * the panel would open a section nobody asked for, or silently close the one you were
+ * reading. A shrinking transcript is the honest, cheap signal that this happened
+ * (compaction always folds the head into a summary), so the saved set is dropped and
+ * the sections come back CLOSED: the default of a session opened from scratch, which
+ * is predictable. Guessing is the one thing worth avoiding here.
+ */
+const transcriptSize = new Map<string, number>();
+
+function noteTranscriptSize(id: string | undefined, size: number): void {
+  const key = draftKey(id);
+  const previous = transcriptSize.get(key);
+  transcriptSize.set(key, size);
+  if (previous === undefined || size >= previous) return; // first visit, or it grew
+  const mem = viewMemory.get(key);
+  if (mem) mem.open = [];
+}
+
+/** Put scroll position and expanded sections back (no-op on a first visit).
+ * `withScroll: false` restores only the sections — the `refresh` path already owns
+ * the scroll through its anchor (which survives content growth better than an
+ * absolute offset). */
+function restoreViewMemory(id: string | undefined, withScroll = true): void {
+  const mem = viewMemory.get(draftKey(id));
+  if (!mem) return;
+  // What was open. The live streaming block is skipped: it follows the stream, not
+  // the saved state. Sections replayed LIVE after this point start collapsed (they
+  // are recreated, not restored) — clicking one is the only cost, and it is the
+  // honest one: a live bubble can differ on every rebuild.
+  const open = new Set(mem.open);
+  transcriptSections().forEach((body, i) => {
+    if (body === currentThinkingBlock) return;
+    const wantOpen = open.has(i);
+    if (!body.classList.contains("collapsed") === wantOpen) return;
+    body.classList.toggle("collapsed", !wantOpen);
+    const tog = sectionToggle(body);
+    if (tog) tog.textContent = wantOpen ? "▼" : "▶";
+  });
+  if (withScroll && !mem.pinned) {
+    messagesEl.scrollTop = mem.scrollTop;
+    autoScroll = false; // still parked above the bottom: do not chase the stream
+    updateTranscriptActions();
+  }
+}
 
 // ── Pending messages (queue/steer) typed while the session works: rendered by
 // pending-section.ts; the host is the source of truth (it re-pushes on reload). ──
@@ -504,7 +702,7 @@ function renderSessions(sessions: SessionInfo[]): void {
   if (visible.length === 0) {
     const p = document.createElement("div");
     p.className = "empty" + (sessionSearchIds ? " no-match" : "");
-    p.textContent = sessionSearchIds ? "No session matches the search." : "No sessions yet. Create a new session.";
+    p.textContent = sessionSearchIds ? "No session matches the search." : "No sessions in this folder. Create a new session.";
     sessionsEl.appendChild(p);
     return;
   }
@@ -513,6 +711,12 @@ function renderSessions(sessions: SessionInfo[]): void {
     const row = document.createElement("div");
     row.className = "srow" + (openSet.has(s.id) ? " open" : "") + (workingIds.has(s.id) ? " is-working" : "");
     row.dataset.id = s.id;
+    // An OPEN session of another folder is listed here on purpose (navigation must not
+    // hide what is open): say where it lives instead of pretending it is local.
+    if (s.foreign) {
+      row.classList.add("foreign");
+      row.title = s.folder ? `Open, from another folder: ${s.folder}` : "Open, created outside a workspace folder";
+    }
     // Creation + last-modified dates, shown before the name.
     const meta = document.createElement("span");
     meta.className = "smeta";
@@ -1385,6 +1589,20 @@ function handleSubAgentEvent(parentId: string, event: SubAgentStreamEvent): void
   }
 }
 
+/** The provisional "Compacting…" bubble (idempotent: one per transcript). */
+function ensureCompactionBubble(): void {
+  if (compactionEl) return;
+  compactionEl = document.createElement("div");
+  compactionEl.className = "working";
+  compactionEl.textContent = "● Compacting…";
+  // Same beat as the Working bar and the play key. This bubble is created mid-run,
+  // so a plain CSS animation would start its cycle at zero and pulse OUT OF PHASE
+  // with everything already on screen — the reported defect.
+  phaseLockPulse(compactionEl);
+  messagesEl.appendChild(compactionEl);
+  scrollDown();
+}
+
 function addWorking(): HTMLDivElement {
   workingEl = workingBar;
   workingBar.classList.remove("hidden");
@@ -1559,6 +1777,9 @@ function addOldSummariesLine(count: number): HTMLDivElement {
 }
 
 function renderMessages(msgs: ChatMsg[]): boolean {
+  // A transcript that SHRANK was rewritten in the middle (a compaction, a ✂ cut, a
+  // branch): the positionally-keyed open sections no longer point at what they did.
+  noteTranscriptSize(activeId, msgs.length);
   historyLength = msgs.length;
   const outputs = new Map<string, string>();
   for (const m of msgs) {
@@ -1738,6 +1959,14 @@ function resetStreamState(): void {
   hideWorking();
   aborted = false;
   pendingToolCalls.clear();
+  // The compaction bubble is DOM-only state pointing at a node that is about to be
+  // thrown away: keeping it would make `compactStart` skip re-creating it, so the
+  // bubble never came back after a tab switch.
+  compactionEl = null;
+  // The nested tool lines of the sub-agent logs go with the bubbles they lived
+  // in: keeping the entries would only grow a map of detached nodes across every
+  // rebuild (a replay re-registers the ones that still matter).
+  subAgentToolEls.clear();
 }
 
 function formatArgs(args: unknown): string {
@@ -1894,6 +2123,16 @@ function renderAttachmentChips(): void {
     const name = document.createElement("span");
     name.className = "attach-name";
     name.textContent = file.name;
+    // A file that came back from a reload without its payload says so, on the chip:
+    // the ⚠ is the only warning before send() refuses it.
+    if (file.needsReattach) {
+      chip.classList.add("attach-stale");
+      chip.title = `${file.path || file.name} — too large to keep across a reload: re-attach it`;
+      const warn = document.createElement("span");
+      warn.className = "attach-warn";
+      warn.textContent = "⚠";
+      chip.appendChild(warn);
+    }
     // Non-image files get the SAME per-type icon as the message cards, small.
     if (!file.dataUri) {
       const icon = document.createElement("span");
@@ -1927,7 +2166,6 @@ function clearAttachments(): void {
   attachedFiles = [];
   renderAttachmentChips();
 }
-
 // The queue/steer footer lives in its own module (pending-section.ts): the section
 // with its counts, the per-bubble fold and the two commands. It is built once at
 // load, with the DOM it owns and the ONE way it may talk to the host.
@@ -1991,11 +2229,23 @@ function send(): void {
   if (!activeId) return;
   const text = inputEl.value.trim();
   const attachments = attachedFiles.slice();
+  // A file whose payload could not survive a reload must NOT be sent as an empty
+  // attachment: the model would receive a name and nothing else, and the mistake would
+  // look like a successful send. Ask for it again instead.
+  const stuck = attachments.find((f) => f.needsReattach);
+  if (stuck) {
+    // A LOCAL refusal, not a host round-trip: the run never starts, and the note goes
+    // away on the next refresh because it is not part of the conversation.
+    addMessage("assistant", `❌ Re-attach "${stuck.name}": it was too large to keep across a reload.`);
+    scrollDown();
+    return;
+  }
   if (!text && attachments.length === 0) return;
   const effectiveMode: "queue" | "steer" = effectiveSendMode();
   inputEl.value = "";
   inputEl.style.height = "auto"; // back to a single line for the next message
   clearAttachments();
+  clearComposition(activeId);
   if (streamingActive) {
     // The session works: the message is pending. The HOST owns the bubble (it
     // re-pushes the list on reload), so do NOT append a user bubble here.
@@ -3905,6 +4155,8 @@ let runParallelAtStart: boolean | null = null;
 /** Highest config sequence applied: older async config pushes are IGNORED, so a
  * slow response can never clobber the current mode/controls with a stale one. */
 let lastConfigSeq = -1;
+/** Last `switchView` applied (see the stale-switch guard). */
+let lastSwitchSeq = 0;
 
 function isChatMode(v: unknown): v is ChatMode {
   return v === "analyze" || v === "agent";
@@ -4743,6 +4995,11 @@ outRange.addEventListener("change", () => sendOutputTokens(Number(outRange.value
 // ── Host messages ──
 window.addEventListener("message", (e) => {
   const msg = e.data;
+  // STREAMED messages say WHICH session they belong to. A delta of the session you
+  // just switched TO can arrive before its `switchView` (the switch awaits a config
+  // build), and it must never be drawn into the tab you are leaving. Dropping it
+  // loses nothing: the switchView replays that session's whole live turn.
+  if (typeof msg?.sessionId === "string" && msg.sessionId !== activeId) return;
   switch (msg.type) {
     case "attachments": {
       // Host response to "pickFiles": APPEND the picked files (several picks
@@ -4898,17 +5155,7 @@ window.addEventListener("message", (e) => {
     }
     case "compactStart": {
       // Animated in-chat bubble while the LLM-backed compaction is running.
-      if (!compactionEl) {
-        compactionEl = document.createElement("div");
-        compactionEl.className = "working";
-        compactionEl.textContent = "● Compacting…";
-        // Same beat as the Working bar and the play key. This bubble is created mid-run,
-        // so a plain CSS animation would start its cycle at zero and pulse OUT OF PHASE
-        // with everything already on screen — the reported defect.
-        phaseLockPulse(compactionEl);
-        messagesEl.appendChild(compactionEl);
-        scrollDown();
-      }
+      ensureCompactionBubble();
       break;
     }
     case "compactDone": {
@@ -5012,6 +5259,9 @@ window.addEventListener("message", (e) => {
       // Capture the reading position BEFORE the wipe: without it the rebuild lands at
       // the same pixel offset in a DIFFERENT transcript (see captureScrollAnchor).
       const anchor = captureScrollAnchor();
+      // Sections survive the rebuild too (the ANCHOR below owns the scroll): folding
+      // everything back on every run-end refresh is the same loss as on a switch.
+      stashViewMemory(activeId);
       messagesEl.innerHTML = "";
       resetStreamState();
       // A refresh rebuilds the transcript from host messages; drop the stale
@@ -5034,6 +5284,8 @@ window.addEventListener("message", (e) => {
       // A refresh (e.g. after a ✂ cut) rebuilds the transcript: return the caret
       // to the prompt so the user can keep typing from the clean point.
       if (Array.isArray(msg.skills)) renderSkills(msg.skills);
+      // Open sections back, scroll NOT (the anchor below is authoritative there).
+      restoreViewMemory(activeId, false);
       // The content is settled: put the reader back where they were.
       restoreScrollAnchor(anchor);
       focusPrompt();
@@ -5145,6 +5397,15 @@ window.addEventListener("message", (e) => {
       // Incremental tab switch WITHOUT reloading the page: the streaming state
       // (working bubble, buffers) survives, so returning to a session that is
       // still working relocks and keeps streaming.
+      //
+      // A STALER switch must not be applied: the host posts one per click and each
+      // awaits a config build, so two clicks can resolve out of order. Applying the
+      // older one last would show the tab you already left — with the config of the
+      // current one.
+      if (typeof msg.switchSeq === "number") {
+        if (msg.switchSeq < lastSwitchSeq) break;
+        lastSwitchSeq = msg.switchSeq;
+      }
       if (typeof msg.configSeq === "number") lastConfigSeq = Math.max(lastConfigSeq, msg.configSeq);
       renderViewState({
         sessions: msg.sessions || [],
@@ -5155,6 +5416,9 @@ window.addEventListener("message", (e) => {
         workingIds: msg.workingIds || [],
       });
       restoreLiveStream(msg); // replay the in-flight thinking/answer
+      // A compaction that was running when you left must come back too: the bubble
+      // is DOM-only, so without this the session looks idle until it finishes.
+      if (msg.compacting) ensureCompactionBubble();
       setStreaming(!!msg.streaming);
       // …and the run we are now following has ITS OWN policies: a marker taken for the
       // previous session would be a lie about this one (see resetPolicySnapshot).
@@ -5258,18 +5522,26 @@ window.addEventListener("message", (e) => {
  * moment the last working session finishes). Mirrors the per-row locks. */
 function applyWorkingLock(): void {
   const busy = workingIds.size > 0;
-  sessionsGearBtn.disabled = busy;
-  gearBtn.disabled = busy;
+  // The gears stay USABLE while a session works: with several concurrent runs a
+  // blanket lock would mean you can never open the managers again. What is
+  // destructive is already locked where it lives — the rows of a working session
+  // (branch/rename/delete) and the providers SAVE, which the host refuses while a
+  // run is in flight.
+  sessionsGearBtn.disabled = false;
+  gearBtn.disabled = false;
   sessionsGearBtn.title = busy
-    ? "Stop the current work before managing sessions"
+    ? "Manage all sessions (the working ones are locked)"
     : "Manage all sessions (every folder)";
   gearBtn.title = busy
-    ? "Stop the current work before configuring providers & models"
+    ? "Configure providers & models (saving is blocked while a session works)"
     : "Configure providers & models";
 }
 
 function renderViewState(state: {
-  sessions: SessionInfo[];
+  /** Absent = "keep the list you already have": a plain tab switch does not re-send
+   * it (it is a `SELECT *` on the session table, and the list only changes when a
+   * session is created, branched, renamed or closed). */
+  sessions?: SessionInfo[];
   openIds: string[];
   activeId?: string;
   messages: ChatMsg[];
@@ -5279,9 +5551,27 @@ function renderViewState(state: {
   openIds = state.openIds || [];
   const prevActiveId = activeId;
   activeId = state.activeId;
-  // Attachments are per-composition: drop them when the active session changes.
-  if (prevActiveId !== activeId) clearAttachments();
-  currentSessions = state.sessions || [];
+  // The prompt AND its attachments belong to the SESSION: park the one you are
+  // leaving, bring back the one you are entering. Nothing is thrown away, so a
+  // half-written prompt (and the files picked for it) survives a tab switch.
+  if (prevActiveId !== activeId) {
+    stashComposition(prevActiveId);
+    restoreComposition(activeId);
+    stashViewMemory(prevActiveId);
+  }
+  // A session that no longer exists (closed tab, deleted): free its draft.
+  for (const key of [...compositions.keys()]) {
+    if (key && !openIds.includes(key)) compositions.delete(key);
+  }
+  for (const key of [...viewMemory.keys()]) {
+    if (key && !openIds.includes(key)) viewMemory.delete(key);
+  }
+  for (const key of [...transcriptSize.keys()]) {
+    if (key && !openIds.includes(key)) transcriptSize.delete(key);
+  }
+  // An omitted list means "unchanged": keep the one already rendered (see the
+  // `sessions?` note on the parameter type).
+  if (state.sessions) currentSessions = state.sessions;
   workingIds = new Set(state.workingIds || []);
   renderSessions(currentSessions);
   renderTabs(currentSessions);
@@ -5320,24 +5610,67 @@ function renderViewState(state: {
   // from its END, so the live streaming is visible without manual scrolling.
   autoScroll = true;
   messagesEl.scrollTop = messagesEl.scrollHeight;
+  // …unless you had left THIS session mid-read: then its scroll offset and its
+  // open sections come back instead of being thrown away (see stashViewMemory).
+  restoreViewMemory(activeId);
   applyWorkingLock();
 }
 
 /**
- * Replay the live (uncommitted) part of a session's in-flight turn: the
- * thinking/answer text the host accumulated while this session streamed.
- * Needed on switchView (and on the first load) so returning to a session that
- * is mid-thinking shows its progress instead of a blank new working bubble.
+ * Replay the live (uncommitted) part of a session's in-flight turn.
+ *
+ * Two sources, because the turn has two halves the history cannot provide yet:
+ *  · the BUBBLES (tool calls, sub-agent bubbles + their nested logs) — the
+ *    assistant turn reaches the history only when the WHOLE tool batch commits
+ *    (`history.addGroup`), which in Parallel can be minutes;
+ *  · the TEXT of the current segment (thinking / answer).
+ *
+ * Needed on switchView, on `refresh` and on the first load: returning to a
+ * session that is still working must show its progress, not a blank bar. The
+ * replayed bubbles stay registered in `pendingToolCalls`, so the live events
+ * that keep arriving land in them instead of being dropped.
  */
-function restoreLiveStream(state: { streaming?: boolean; liveThinking?: string; liveAnswer?: string }): void {
+function restoreLiveStream(state: {
+  streaming?: boolean;
+  liveThinking?: string;
+  liveAnswer?: string;
+  liveTurn?: SessionLiveProjection;
+}): void {
   if (!state.streaming) return;
   if (!workingEl) addWorking();
   const thinking = String(state.liveThinking || "");
+  const answer = String(state.liveAnswer || "");
+  const lt = state.liveTurn;
+  const hasBubbles =
+    (lt?.toolCalls?.length ?? 0) > 0 || Object.keys(lt?.subAgents ?? {}).length > 0;
+  // Text written BEFORE the tool calls belongs ABOVE their bubbles (the live DOM
+  // never removes it: clearStreamingBubble only drops the reference). Text
+  // written after a tool result belongs below.
+  const textFirst = !lt?.textAfterTools;
+  if (textFirst) appendLiveText(thinking, answer);
+  replayLiveTurn(lt);
+  // With bubbles replayed BELOW it, the restored text is no longer the bubble the
+  // next delta must extend (the live path drops the reference on `toolCall` for
+  // the same reason). Without this, post-rebuild text would keep growing above
+  // the sub-agent bubbles.
+  if (textFirst && hasBubbles) {
+    clearStreamingBubble();
+    clearThinkingBlock();
+  }
+  if (!textFirst) appendLiveText(thinking, answer);
+  // Re-pin to the TRUE bottom: renderViewState anchored the scroll BEFORE this
+  // function added the working bar and the replayed content below it. Without
+  // this, the viewport sits above "Working…" and the stream seems to continue
+  // below the fold.
+  scrollDown();
+}
+
+/** Append the current segment's thinking + answer text as live bubbles. */
+function appendLiveText(thinking: string, answer: string): void {
   if (thinking) {
     currentThinkingText = thinking;
     currentThinkingBlock = addThinkingBlock(thinking);
   }
-  const answer = String(state.liveAnswer || "");
   if (answer) {
     currentRawText = answer;
     currentResultEl = document.createElement("div");
@@ -5346,11 +5679,67 @@ function restoreLiveStream(state: { streaming?: boolean; liveThinking?: string; 
     currentResultEl.innerHTML = renderMarkdown(answer);
     messagesEl.appendChild(currentResultEl);
   }
-  // Re-pin to the TRUE bottom: renderViewState anchored the scroll BEFORE this
-  // function added the working bar and the replayed content below it. Without
-  // this, the viewport sits above "Working…" and the stream seems to continue
-  // below the fold.
-  scrollDown();
+}
+
+/**
+ * Rebuild the in-flight turn's TOOL bubbles from the host's projection, with
+ * the SAME builders the live events use — so a replayed bubble is
+ * indistinguishable from one that never left the page, and the events still to
+ * come keep updating it.
+ */
+function replayLiveTurn(lt: SessionLiveProjection | undefined): void {
+  if (!lt) return;
+  for (const tc of lt.toolCalls ?? []) {
+    const el = tc.name === "Delegate" ? addSubAgentCall(tc.args) : addToolCall(tc.name, tc.args);
+    el.dataset.toolCallId = tc.id;
+    // Kept registered: the run continues, so the next live event for this call
+    // must land HERE (otherwise it would be dropped — no bubble to paint).
+    pendingToolCalls.set(tc.id, el);
+    if (tc.abortRequested && !tc.done) {
+      // The user already pressed ⏹ on this sub-agent before the rebuild: keep the
+      // button pending instead of resurrecting it as clickable.
+      el.dataset.aborting = "1";
+      const abortBtn = el.querySelector(".subagent-abort") as HTMLButtonElement | null;
+      if (abortBtn) {
+        abortBtn.disabled = true;
+        abortBtn.classList.add("pending");
+      }
+    }
+    if (tc.done) {
+      el.classList.remove("tool-call-pending");
+      const out = el.querySelector(".tool-result") as HTMLElement | null;
+      const text = String(tc.output ?? "");
+      if (out) {
+        if (tc.name === "Delegate") {
+          out.innerHTML = renderMarkdown(text.slice(0, 12000));
+          setSubAgentStatus(
+            el,
+            /aborted|interrupted/i.test(text) ? "aborted" : tc.isError || / failed:/.test(text) ? "failed" : "done",
+          );
+        } else {
+          renderToolOutput(out as HTMLPreElement, text.slice(0, 12000));
+          out.classList.toggle("tool-result-error", tc.isError);
+        }
+      }
+    } else if (workingEl) {
+      // The in-flight call is the run's current phase: say so on the bar.
+      workingEl.innerHTML =
+        tc.name === "Delegate"
+          ? "● Working... " + SUBAGENT_ICON + " sub-agent"
+          : "● Working... 🔧 " + escapeHtml(tc.name);
+    }
+  }
+  // Then the nested logs, through the SAME handler the live events use
+  // (markdown coalescing, tool lines, terminal states included).
+  for (const [parentId, sa] of Object.entries(lt.subAgents ?? {})) {
+    const el = pendingToolCalls.get(parentId);
+    if (!el) continue;
+    for (const event of sa.events) handleSubAgentEvent(parentId, event);
+    // Paint the replayed log NOW: the markdown coalescer would otherwise wait a
+    // frame, and a rebuild must show what the bubble already contained.
+    flushSubAgentMd(el);
+    setSubAgentStatus(el, sa.status);
+  }
 }
 
 // ── Session-name modal (in-panel name prompt) ──
@@ -5370,6 +5759,23 @@ nameInput.addEventListener("keydown", (e) => {
 // ── Initial render ──
 // Control stack: COLLAPSED by default; a previously chosen state wins.
 const savedCollapsed = (vscode.getState() as { controlsCollapsed?: boolean } | undefined)?.controlsCollapsed;
+// Drafts that survived a webview reload: their TEXT and their ATTACHMENTS (see
+// persistCompositions — the payload is bounded per file).
+const savedDrafts = (vscode.getState() as { drafts?: Record<string, string> } | undefined)?.drafts;
+if (savedDrafts) {
+  for (const [key, text] of Object.entries(savedDrafts)) compositions.set(key, { text, files: [] });
+}
+const savedDraftFiles = (vscode.getState() as { draftFiles?: Record<string, unknown> } | undefined)?.draftFiles;
+if (savedDraftFiles) {
+  for (const [key, rawList] of Object.entries(savedDraftFiles)) {
+    const files = (Array.isArray(rawList) ? rawList : [])
+      .map(fromPersisted)
+      .filter((f): f is AttachedFile => !!f);
+    if (files.length === 0) continue;
+    const existing = compositions.get(key) ?? { text: "", files: [] };
+    compositions.set(key, { text: existing.text, files });
+  }
+}
 const collapsedDefault = savedCollapsed ?? true;
 document.body.classList.toggle("controls-collapsed", collapsedDefault);
 ctlToggle.setAttribute("aria-expanded", String(!collapsedDefault));
@@ -5387,6 +5793,10 @@ renderViewState({
   workingIds: init.workingIds || [],
 });
 restoreLiveStream(init);
+if (init.compacting) ensureCompactionBubble();
+// The initial render did not switch session (prev === active), so the parked draft
+// of the session we are opening is restored HERE.
+restoreComposition(activeId);
 setStreaming(!!init.streaming);
 pending.render(init.pending || []);
 if (activeId) vscode.postMessage({ type: "getConfig" });

@@ -18,6 +18,17 @@ const PARALLEL_ON = {
   },
 };
 
+/**
+ * The webview state, as VS Code keeps it across reloads.
+ *
+ * `setState` USED to be a no-op here, which made the whole persistence path untestable:
+ * a test could seed a state but never observe what the view wrote. Now it stores, so a
+ * reload is simulated honestly — call `loadView()` twice and the second instance starts
+ * from exactly what the first one persisted. That is the difference between testing the
+ * save function and testing that the save/restore ROUND TRIP works.
+ */
+let persistedState: Record<string, unknown> = {};
+
 function setupDom(
   initOverrides: Record<string, unknown> = {},
   savedState: Record<string, unknown> = {},
@@ -38,6 +49,7 @@ function setupDom(
     <div id="session-search-row"><input id="session-search" type="search" placeholder="Search sessions" /></div>
     <div id="sessions"></div>
     <div id="tabs"></div>
+    <div id="running" class="hidden"></div>
     <div id="messages"></div>
     <div id="pending-section" class="hidden">
       <div id="pending-head" role="button" tabindex="0" aria-expanded="true"><span class="toggle">▼</span><span id="pending-head-text"></span></div>
@@ -214,10 +226,13 @@ function setupDom(
     </div>
     <script id="harny-view-init" type="application/json">${JSON.stringify(init)}</script>
   `;
+  persistedState = { ...savedState };
   (globalThis as Record<string, unknown>).acquireVsCodeApi = () => ({
     postMessage: (m: unknown) => posted.push(m),
-    getState: () => savedState,
-    setState: () => {},
+    getState: () => persistedState,
+    setState: (state: unknown) => {
+      persistedState = state as Record<string, unknown>;
+    },
   });
 }
 
@@ -241,6 +256,19 @@ function detachGlobalListeners(): void {
     target.removeEventListener(type, fn, options);
   }
   globalListeners = [];
+}
+
+/**
+ * Reload the panel the way VS Code does: a FRESH DOM, a re-imported module, and the
+ * state carrying over.
+ *
+ * The fresh DOM is not cosmetic. Re-importing alone leaves the previous instance's
+ * click listeners on the SAME buttons, so one click runs two views and the assertions
+ * measure the wrong one (that is exactly how the first version of these tests failed).
+ */
+async function reloadView(initOverrides: Record<string, unknown> = {}): Promise<void> {
+  setupDom(initOverrides, persistedState);
+  await loadView();
 }
 
 async function loadView(): Promise<void> {
@@ -892,6 +920,34 @@ describe("view webview client", () => {
 
     hostMessage({ type: "switchView", activeId: "b", sessions: [], openIds: ["a", "b"], messages: [], config: {}, workingIds: [] });
     expect(chips.classList.contains("hidden")).toBe(true);
+  });
+
+  it("keeps the prompt AND its attachments PER SESSION (switch away and back)", async () => {
+    // What you typed/picked belongs to the session, not to the panel: switching tab
+    // must not throw it away (it used to drop the chips and keep the text — the
+    // worst of both).
+    await loadView(); // activeId "a"
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    const chips = document.getElementById("attachment-chips") as HTMLDivElement;
+    hostMessage({ type: "attachments", files: [{ name: "relazione.pdf", path: "/rel", size: 2048, isImage: false }] });
+    input.value = "bozza per A";
+
+    // Away: A's composition is parked and the box is CLEAN for B.
+    hostMessage({ type: "switchView", activeId: "b", sessions: [], openIds: ["a", "b"], messages: [], config: {}, workingIds: [] });
+    expect(input.value).toBe("");
+    expect(chips.classList.contains("hidden")).toBe(true);
+
+    // Back: the text AND the chip are there again.
+    hostMessage({ type: "switchView", activeId: "a", sessions: [], openIds: ["a", "b"], messages: [], config: {}, workingIds: [] });
+    expect(input.value).toBe("bozza per A");
+    expect(chips.classList.contains("hidden")).toBe(false);
+    expect(chips.textContent).toContain("relazione.pdf");
+  });
+
+  it("restores the typed prompt after a webview reload (text only)", async () => {
+    setupDom({}, { drafts: { a: "riprendi da qui" } });
+    await loadView();
+    expect((document.getElementById("user-input") as HTMLTextAreaElement).value).toBe("riprendi da qui");
   });
 
   it("sends an attachment-only message (no text typed)", async () => {
@@ -1577,6 +1633,239 @@ describe("view webview client", () => {
     expect(bubbles[bubbles.length - 1].textContent).toContain("partial answer more");
   });
 
+  it("switchView rebuilds the in-flight TOOL and SUB-AGENT bubbles from liveTurn", async () => {
+    // The history does not contain them: the assistant turn (tool calls
+    // included) is committed only when the WHOLE batch ends. Before liveTurn,
+    // returning to a working session showed a bare "Working…" bar until Stop.
+    const frame = (): Promise<void> => new Promise((r) => setTimeout(r, 40));
+    await loadView();
+    hostMessage({
+      type: "switchView",
+      sessions: [{ id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 1 }],
+      openIds: ["a"],
+      activeId: "a",
+      messages: [{ role: "user", content: "go", timestamp: 1 }],
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, thinkingMode: "bool", thinkingLevel: "high", models: [], providerModels: [], contextWindow: 128000 },
+      workingIds: ["a"],
+      streaming: true,
+      liveThinking: "",
+      liveAnswer: "Lancio tre sub-agent.",
+      liveTurn: {
+        thinking: "",
+        answer: "Lancio tre sub-agent.",
+        textAfterTools: false,
+        toolCalls: [
+          { id: "d1", name: "Delegate", args: { id: "api", goal: "leggi le API" }, done: false, isError: false },
+          { id: "d2", name: "Delegate", args: { id: "db", goal: "leggi lo schema" }, done: true, isError: false, output: "schema letto" },
+        ],
+        subAgents: { d1: { status: "running", events: [{ type: "text_delta", content: "sto leggendo" }] } },
+      },
+    });
+    await frame();
+
+    const subAgents = [...document.querySelectorAll(".msg.tool.subagent")];
+    expect(subAgents).toHaveLength(2);
+    // Per-sub-agent status survives: one still running, one already reported.
+    expect(subAgents[0].querySelector(".subagent-status")?.textContent).toBe("running…");
+    expect(subAgents[1].querySelector(".subagent-status")?.textContent).toBe("done");
+    expect(subAgents[1].textContent).toContain("schema letto");
+    // The nested live log survived the rebuild (it is NOT in the history either).
+    expect(subAgents[0].textContent).toContain("sto leggendo");
+
+    // The preamble was written BEFORE the Delegate calls: it stays ABOVE them.
+    const all = [...document.querySelectorAll("#messages > *")];
+    const textIdx = all.findIndex((el) => (el.textContent || "").includes("Lancio tre sub-agent."));
+    const toolIdx = all.findIndex((el) => el.classList.contains("subagent"));
+    expect(textIdx).toBeGreaterThan(-1);
+    expect(toolIdx).toBeGreaterThan(textIdx);
+
+    // …and the events still arriving keep updating the REBUILT bubbles.
+    hostMessage({ type: "subagentEvent", toolCallId: "d1", event: { type: "text_delta", content: " e scrivo" } });
+    await frame();
+    expect(subAgents[0].textContent).toContain("e scrivo");
+  });
+
+  it("places the replayed text AFTER the bubbles when it was written after a tool result", async () => {
+    const frame = (): Promise<void> => new Promise((r) => setTimeout(r, 40));
+    await loadView();
+    hostMessage({
+      type: "switchView",
+      sessions: [{ id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 1 }],
+      openIds: ["a"],
+      activeId: "a",
+      messages: [{ role: "user", content: "go", timestamp: 1 }],
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 },
+      workingIds: ["a"],
+      streaming: true,
+      liveThinking: "",
+      liveAnswer: "Ecco cosa ho letto.",
+      liveTurn: {
+        thinking: "",
+        answer: "Ecco cosa ho letto.",
+        textAfterTools: true,
+        toolCalls: [
+          { id: "c1", name: "Read", args: { path: "a.ts" }, done: true, isError: false, output: "body" },
+        ],
+        subAgents: {},
+      },
+    });
+    await frame();
+
+    const all = [...document.querySelectorAll("#messages > *")];
+    const toolIdx = all.findIndex((el) => el.classList.contains("tool"));
+    const textIdx = all.findIndex((el) => (el.textContent || "").includes("Ecco cosa ho letto."));
+    expect(toolIdx).toBeGreaterThan(-1);
+    expect(textIdx).toBeGreaterThan(toolIdx);
+  });
+
+  it("keeps the ⏹ of a sub-agent disabled after a rebuild (abort already pressed)", async () => {
+    await loadView();
+    hostMessage({
+      type: "switchView",
+      sessions: [{ id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 1 }],
+      openIds: ["a"],
+      activeId: "a",
+      messages: [{ role: "user", content: "go", timestamp: 1 }],
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 },
+      workingIds: ["a"],
+      streaming: true,
+      liveThinking: "",
+      liveAnswer: "",
+      liveTurn: {
+        thinking: "",
+        answer: "",
+        textAfterTools: false,
+        toolCalls: [
+          { id: "d1", name: "Delegate", args: { id: "api", goal: "g" }, done: false, isError: false, abortRequested: true },
+        ],
+        subAgents: { d1: { status: "running", events: [] } },
+      },
+    });
+
+    const el = document.querySelector(".msg.tool.subagent") as HTMLElement;
+    expect(el.dataset.aborting).toBe("1");
+    const abortBtn = el.querySelector(".subagent-abort") as HTMLButtonElement;
+    expect(abortBtn.disabled).toBe(true);
+    expect(abortBtn.classList.contains("pending")).toBe(true);
+  });
+
+  it("says WHY the list is empty (never claiming there are no sessions while a tab is open)", async () => {
+    await loadView();
+    const empty = () => (document.getElementById("sessions") as HTMLElement).textContent ?? "";
+    hostMessage({
+      type: "switchView",
+      switchSeq: 1,
+      sessions: [],
+      openIds: ["b"],
+      activeId: "b",
+      messages: [],
+      config: {},
+      workingIds: [],
+      streaming: false,
+    });
+    // "No sessions yet" was a lie in the case that actually happens — a folder switched
+    // under your open tabs: there IS a session, it just is not from this folder.
+    expect(empty()).toContain("No sessions in this folder");
+  });
+
+  it("lists an OPEN session of another folder, dimmed and explained", async () => {
+    await loadView();
+    hostMessage({
+      type: "switchView",
+      switchSeq: 1,
+      sessions: [
+        { id: "a", name: "Local", createdAt: 1, updatedAt: 3, messageCount: 1, folder: "/home/me/a" },
+        { id: "b", name: "Elsewhere", createdAt: 1, updatedAt: 2, messageCount: 1, folder: "/home/me/b", foreign: true },
+      ],
+      openIds: ["b"],
+      activeId: "b",
+      messages: [],
+      config: {},
+      workingIds: [],
+      streaming: false,
+    });
+
+    const row = document.querySelector('.srow[data-id="b"]') as HTMLElement;
+    expect(row.classList.contains("foreign")).toBe(true);
+    expect(row.classList.contains("open")).toBe(true);
+    // It says WHERE it lives instead of pretending to be local.
+    expect(row.title).toContain("/home/me/b");
+    // The folder's own session carries no such mark.
+    const local = document.querySelector('.srow[data-id="a"]') as HTMLElement;
+    expect(local.classList.contains("foreign")).toBe(false);
+    expect(local.title).toBe("");
+  });
+
+  it("ignores a STALE switchView (two quick clicks resolving out of order)", async () => {
+    // The host posts one switchView per click and each awaits a config build, so
+    // the OLDER one can land last. Applying it would jump the UI back to the tab
+    // the user already left.
+    await loadView();
+    const A = { id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 1 };
+    const B = { id: "b", name: "B", createdAt: 1, updatedAt: 2, messageCount: 1 };
+    hostMessage({ type: "switchView", switchSeq: 2, sessions: [A, B], openIds: ["a", "b"], activeId: "b", messages: [], config: {}, workingIds: [] });
+    hostMessage({
+      type: "switchView",
+      switchSeq: 1,
+      sessions: [A, B],
+      openIds: ["a", "b"],
+      activeId: "a",
+      messages: [{ role: "user", content: "vecchia", timestamp: 1 }],
+      config: {},
+      workingIds: [],
+    });
+    expect(document.querySelector(".tab.active")?.getAttribute("data-id")).toBe("b");
+    expect(document.getElementById("messages")?.textContent).not.toContain("vecchia");
+  });
+
+  it("drops a streamed message addressed to ANOTHER session", async () => {
+    // A delta of the session you just switched TO can arrive before its switchView.
+    // It must never be drawn into the tab you are leaving (nothing is lost: the
+    // switchView replays that session's live turn).
+    await loadView();
+    const A = { id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 1 };
+    hostMessage({
+      type: "switchView",
+      switchSeq: 1,
+      sessions: [A],
+      openIds: ["a"],
+      activeId: "a",
+      messages: [],
+      config: {},
+      workingIds: ["a"],
+      streaming: true,
+    });
+
+    hostMessage({ type: "textDelta", sessionId: "b", content: "di B" });
+    expect(document.querySelector(".msg.assistant")).toBe(null);
+
+    hostMessage({ type: "textDelta", sessionId: "a", content: "di A" });
+    expect(document.querySelector(".msg.assistant")?.textContent).toContain("di A");
+  });
+
+  it("restores the Compacting bubble on a tab switch (it used to vanish for good)", async () => {
+    await loadView();
+    hostMessage({ type: "compactStart" });
+    expect(document.querySelector("#messages .working")?.textContent).toContain("Compacting…");
+
+    // A switch rebuilds the transcript: the bubble is DOM-only, so it must come
+    // back from the host's per-session flag.
+    const A = { id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 1 };
+    hostMessage({
+      type: "switchView",
+      switchSeq: 1,
+      sessions: [A],
+      openIds: ["a"],
+      activeId: "a",
+      messages: [{ role: "user", content: "go", timestamp: 1 }],
+      config: {},
+      workingIds: ["a"],
+      streaming: false,
+      compacting: true,
+    });
+    expect(document.querySelector("#messages .working")?.textContent).toContain("Compacting…");
+  });
+
   it("renders the Diff section after a refresh re-render of tool results", async () => {
     await loadView();
     hostMessage({
@@ -2044,6 +2333,394 @@ describe("view webview client", () => {
     // A subsequent delta stays at the bottom (auto-scroll was re-enabled).
     hostMessage({ type: "thinkingDelta", content: "thinking" });
     expect(msgs.scrollTop).toBe(500);
+  });
+
+  it("restores the reading position of a session you come back to", async () => {
+    await loadView(); // activeId "a"
+    const msgs = document.getElementById("messages") as HTMLElement;
+    Object.defineProperty(msgs, "scrollHeight", { configurable: true, value: 900 });
+    Object.defineProperty(msgs, "clientHeight", { configurable: true, value: 300 });
+    Object.defineProperty(msgs, "scrollTop", { configurable: true, writable: true, value: 120 });
+    msgs.dispatchEvent(new Event("scroll")); // the user scrolled UP: not following
+
+    const A = { id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 1 };
+    const B = { id: "b", name: "B", createdAt: 1, updatedAt: 2, messageCount: 1 };
+    const go = (id: string, seq: number) =>
+      hostMessage({
+        type: "switchView",
+        switchSeq: seq,
+        sessions: [A, B],
+        openIds: ["a", "b"],
+        activeId: id,
+        messages: [{ role: "user", content: "go", timestamp: 1 }],
+        config: {},
+        workingIds: [],
+        streaming: false,
+      });
+
+    go("b", 1); // leave A…
+    expect(msgs.scrollTop).toBe(900); // B is a first visit: pinned to its end
+    go("a", 2); // …and come back
+
+    // Back where the reader was, not yanked to the end.
+    expect(msgs.scrollTop).toBe(120);
+  });
+
+  it("keeps following the stream when the session was PINNED when you left it", async () => {
+    await loadView();
+    const msgs = document.getElementById("messages") as HTMLElement;
+    Object.defineProperty(msgs, "scrollHeight", { configurable: true, value: 900 });
+    Object.defineProperty(msgs, "clientHeight", { configurable: true, value: 300 });
+    Object.defineProperty(msgs, "scrollTop", { configurable: true, writable: true, value: 900 });
+    msgs.dispatchEvent(new Event("scroll")); // at the bottom → following ON
+
+    const A = { id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 1 };
+    const B = { id: "b", name: "B", createdAt: 1, updatedAt: 2, messageCount: 1 };
+    const go = (id: string, seq: number) =>
+      hostMessage({
+        type: "switchView",
+        switchSeq: seq,
+        sessions: [A, B],
+        openIds: ["a", "b"],
+        activeId: id,
+        messages: [{ role: "user", content: "go", timestamp: 1 }],
+        config: {},
+        workingIds: [],
+        streaming: true,
+      });
+
+    go("b", 1);
+    go("a", 2);
+    expect(msgs.scrollTop).toBe(900); // still pinned: the live turn keeps growing
+  });
+
+  it("keeps the sections you had opened across a tab switch (and the ones you had not)", async () => {
+    const messages = [
+      { role: "user", content: "go", timestamp: 1 },
+      { role: "assistant", content: "answer", timestamp: 2, thinking: "deep thought" },
+      {
+        role: "assistant",
+        content: "🔧 Tools: Read",
+        timestamp: 3,
+        toolCalls: [{ id: "c1", name: "Read", arguments: { path: "a.ts" } }],
+      },
+      { role: "tool", toolCallId: "c1", content: "body", timestamp: 4 },
+    ];
+    await loadView();
+    const A = { id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 4 };
+    const B = { id: "b", name: "B", createdAt: 1, updatedAt: 2, messageCount: 1 };
+    const go = (id: string, seq: number) =>
+      hostMessage({
+        type: "switchView",
+        switchSeq: seq,
+        sessions: [A, B],
+        openIds: ["a", "b"],
+        activeId: id,
+        messages: id === "a" ? messages : [{ role: "user", content: "other", timestamp: 9 }],
+        config: {},
+        workingIds: [],
+        streaming: false,
+      });
+
+    go("a", 1);
+    const thinkingBody = document.querySelector(".thinking-body") as HTMLElement;
+    const toolBody = document.querySelector(".tool-details") as HTMLElement;
+    expect(thinkingBody.classList.contains("collapsed")).toBe(true);
+    expect(toolBody.classList.contains("collapsed")).toBe(true);
+
+    // The user opens the THINKING block only.
+    (thinkingBody.parentElement!.querySelector(".thinking-header") as HTMLElement).click();
+    expect(thinkingBody.classList.contains("collapsed")).toBe(false);
+
+    go("b", 2); // away…
+    go("a", 3); // …and back: the transcript is rebuilt from the same history
+
+    const thinkingAfter = document.querySelector(".thinking-body") as HTMLElement;
+    const toolAfter = document.querySelector(".tool-details") as HTMLElement;
+    expect(thinkingAfter.classList.contains("collapsed")).toBe(false); // still open
+    expect(thinkingAfter.parentElement!.querySelector(".toggle")?.textContent).toBe("▼");
+    expect(toolAfter.classList.contains("collapsed")).toBe(true); // never opened: stays closed
+  });
+
+  it("keeps the open sections across a run-end refresh too", async () => {
+    const messages = [
+      { role: "user", content: "go", timestamp: 1 },
+      { role: "assistant", content: "answer", timestamp: 2, thinking: "deep thought" },
+    ];
+    await loadView();
+    hostMessage({ type: "refresh", messages });
+    const body = document.querySelector(".thinking-body") as HTMLElement;
+    (body.parentElement!.querySelector(".thinking-header") as HTMLElement).click();
+    expect(body.classList.contains("collapsed")).toBe(false);
+
+    // The host refreshes the transcript (a completed turn): folding everything back
+    // would be the same loss as on a switch.
+    hostMessage({ type: "refresh", messages });
+    const after = document.querySelector(".thinking-body") as HTMLElement;
+    expect(after.classList.contains("collapsed")).toBe(false);
+  });
+
+  // ── Drafts that survive a webview RELOAD (state round-trip) ──
+  // `loadView()` twice is a reload: the second instance starts from what the first
+  // persisted (see `persistedState` in the harness).
+  it("an attachment picked before a reload is still attached after it", async () => {
+    await loadView();
+    hostMessage({
+      type: "attachments",
+      files: [{ name: "relazione.pdf", path: "/tmp/relazione.pdf", size: 4096, isImage: false }],
+    });
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "riassumi questo";
+    // Switching tab is what parks the composition (and persists it).
+    hostMessage({
+      type: "switchView",
+      switchSeq: 1,
+      sessions: [
+        { id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 1 },
+        { id: "b", name: "B", createdAt: 1, updatedAt: 2, messageCount: 1 },
+      ],
+      openIds: ["a", "b"],
+      activeId: "b",
+      messages: [{ role: "user", content: "go", timestamp: 1 }],
+      config: {},
+      workingIds: [],
+      streaming: false,
+    });
+
+    await reloadView();
+
+    // Session "a" is not the active one, but its composition is intact…
+    expect(JSON.stringify(persistedState.draftFiles)).toContain("relazione.pdf");
+    // …and going back brings the chip and the text with it.
+    hostMessage({
+      type: "switchView",
+      switchSeq: 2,
+      sessions: [
+        { id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 1 },
+        { id: "b", name: "B", createdAt: 1, updatedAt: 2, messageCount: 1 },
+      ],
+      openIds: ["a", "b"],
+      activeId: "a",
+      messages: [{ role: "user", content: "go", timestamp: 1 }],
+      config: {},
+      workingIds: [],
+      streaming: false,
+    });
+    const chips = document.querySelectorAll(".attach-chip");
+    expect(chips).toHaveLength(1);
+    expect(chips[0].textContent).toContain("relazione.pdf");
+    expect((document.getElementById("user-input") as HTMLTextAreaElement).value).toBe("riassumi questo");
+  });
+
+  it("a SMALL pasted image keeps its data across a reload (and is sent with it)", async () => {
+    await loadView();
+    const dataUri = "data:image/png;base64," + "A".repeat(2048); // ~2KB: under the budget
+    hostMessage({ type: "attachments", files: [{ name: "shot.png", path: "", size: 2048, isImage: true, dataUri }] });
+    hostMessage({
+      type: "switchView",
+      switchSeq: 1,
+      sessions: [
+        { id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 1 },
+        { id: "b", name: "B", createdAt: 1, updatedAt: 2, messageCount: 1 },
+      ],
+      openIds: ["a", "b"],
+      activeId: "b",
+      messages: [],
+      config: {},
+      workingIds: [],
+      streaming: false,
+    });
+
+    await reloadView();
+    // Back to "a", type something and send: the payload must travel again.
+    hostMessage({
+      type: "switchView",
+      switchSeq: 2,
+      sessions: [
+        { id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 1 },
+        { id: "b", name: "B", createdAt: 1, updatedAt: 2, messageCount: 1 },
+      ],
+      openIds: ["a", "b"],
+      activeId: "a",
+      messages: [],
+      config: {},
+      workingIds: [],
+      streaming: false,
+    });
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "che cos'è?";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+
+    const send = posted.find((m) => (m as { type?: string }).type === "send") as
+      | { attachments?: { name: string; dataUri?: string }[] }
+      | undefined;
+    expect(send).toBeDefined();
+    expect(send!.attachments?.[0].dataUri).toBe(dataUri);
+  });
+
+  it("a LARGE pasted image is marked instead of bloating the state, and is refused instead of sent empty", async () => {
+    await loadView();
+    const huge = "data:image/png;base64," + "B".repeat(300 * 1024); // over the 256KB budget
+    hostMessage({ type: "attachments", files: [{ name: "big.png", path: "", size: huge.length, isImage: true, dataUri: huge }] });
+    hostMessage({
+      type: "switchView",
+      switchSeq: 1,
+      sessions: [
+        { id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 1 },
+        { id: "b", name: "B", createdAt: 1, updatedAt: 2, messageCount: 1 },
+      ],
+      openIds: ["a", "b"],
+      activeId: "b",
+      messages: [],
+      config: {},
+      workingIds: [],
+      streaming: false,
+    });
+
+    // The state must NOT carry the payload: that is the whole point of the budget.
+    expect(JSON.stringify(persistedState.draftFiles)).not.toContain("BBBB");
+    expect(JSON.stringify(persistedState.draftFiles).length).toBeLessThan(4096);
+
+    await reloadView();
+    hostMessage({
+      type: "switchView",
+      switchSeq: 2,
+      sessions: [
+        { id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 1 },
+        { id: "b", name: "B", createdAt: 1, updatedAt: 2, messageCount: 1 },
+      ],
+      openIds: ["a", "b"],
+      activeId: "a",
+      messages: [],
+      config: {},
+      workingIds: [],
+      streaming: false,
+    });
+    // The chip is still there, marked…
+    const chip = document.querySelector(".attach-chip") as HTMLElement;
+    expect(chip.textContent).toContain("big.png");
+    expect(chip.textContent).toContain("⚠");
+
+    posted.length = 0;
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "descrivi";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+
+    // …and NOTHING was sent: an empty attachment must never reach the model silently.
+    expect(posted.some((m) => (m as { type?: string }).type === "send")).toBe(false);
+    const bodies = [...document.querySelectorAll("#messages .msg")].map((el) => el.textContent ?? "");
+    expect(bodies.some((t) => t.includes("Re-attach") && t.includes("big.png"))).toBe(true);
+  });
+
+  it("clears the persisted draft (attachments included) once the message is sent", async () => {
+    await loadView();
+    hostMessage({ type: "attachments", files: [{ name: "a.ts", path: "/w/a.ts", size: 10, isImage: false }] });
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+
+    expect(posted.some((m) => (m as { type?: string }).type === "send")).toBe(true);
+    expect(JSON.stringify(persistedState.draftFiles ?? {})).not.toContain("a.ts");
+  });
+
+  it("still restores the TEXT from a state written by an older version (files map absent)", async () => {
+    setupDom({}, { drafts: { a: "draft scritto dalla versione vecchia" } });
+    await loadView();
+
+    expect((document.getElementById("user-input") as HTMLTextAreaElement).value).toBe("draft scritto dalla versione vecchia");
+    expect(document.querySelectorAll(".attach-chip")).toHaveLength(0);
+  });
+
+  it("a malformed persisted attachment is ignored instead of crashing the panel", async () => {
+    setupDom({}, { draftFiles: { a: [{ name: 42 }, null, { path: "senza-nome" }] } });
+    await loadView();
+
+    expect(document.querySelectorAll(".attach-chip")).toHaveLength(0);
+  });
+
+  it("a transcript that SHRANK (a compaction) drops the open sections instead of guessing", async () => {
+    // The open sections are keyed by document order: after a compaction the kept
+    // messages slide down, so index 3 stops being the section you opened. Closed is the
+    // honest default — opening a section nobody asked for is the one outcome to avoid.
+    const long = [
+      { role: "user", content: "go", timestamp: 1 },
+      { role: "assistant", content: "a1", timestamp: 2, thinking: "deep thought" },
+      { role: "assistant", content: "a2", timestamp: 3, thinking: "second thought" },
+    ];
+    await loadView();
+    hostMessage({ type: "refresh", messages: long });
+    const bodies = () => [...document.querySelectorAll(".thinking-body")] as HTMLElement[];
+    (bodies()[0].parentElement!.querySelector(".thinking-header") as HTMLElement).click();
+    (bodies()[1].parentElement!.querySelector(".thinking-header") as HTMLElement).click();
+    expect(bodies().every((b) => !b.classList.contains("collapsed"))).toBe(true);
+
+    // FOLDED: the head became a summary, so the transcript is shorter.
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "user", content: "## Goal\nsummary", timestamp: 9 },
+        { role: "assistant", content: "a2", timestamp: 3, thinking: "second thought" },
+      ],
+    });
+
+    const after = bodies();
+    expect(after.length).toBe(1);
+    expect(after[0].classList.contains("collapsed")).toBe(true); // closed, not random
+  });
+
+  it("a transcript that GREW keeps them (the append case is what the keys are for)", async () => {
+    const messages = [
+      { role: "user", content: "go", timestamp: 1 },
+      { role: "assistant", content: "a1", timestamp: 2, thinking: "deep thought" },
+    ];
+    await loadView();
+    hostMessage({ type: "refresh", messages });
+    const body = () => document.querySelector(".thinking-body") as HTMLElement;
+    (body().parentElement!.querySelector(".thinking-header") as HTMLElement).click();
+    expect(body().classList.contains("collapsed")).toBe(false);
+
+    hostMessage({
+      type: "refresh",
+      messages: [...messages, { role: "user", content: "next", timestamp: 3 }],
+    });
+
+    expect(body().classList.contains("collapsed")).toBe(false); // still open
+  });
+
+  it("does not confuse a SMALLER session with a rewritten one (the size is per session)", async () => {
+    // A global counter would read "A had 4 messages, B has 1" as a rewrite and wipe B's
+    // open sections every time you switch to it.
+    const A = { id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 4 };
+    const B = { id: "b", name: "B", createdAt: 1, updatedAt: 2, messageCount: 1 };
+    const bigA = [
+      { role: "user", content: "go", timestamp: 1 },
+      { role: "assistant", content: "a1", timestamp: 2, thinking: "A thought" },
+      { role: "assistant", content: "a2", timestamp: 3 },
+      { role: "user", content: "more", timestamp: 4 },
+    ];
+    const smallB = [
+      { role: "user", content: "go", timestamp: 1 },
+      { role: "assistant", content: "b1", timestamp: 2, thinking: "B thought" },
+    ];
+    const go = (id: string, seq: number) =>
+      hostMessage({
+        type: "switchView",
+        switchSeq: seq,
+        sessions: [A, B],
+        openIds: ["a", "b"],
+        activeId: id,
+        messages: id === "a" ? bigA : smallB,
+        config: {},
+        workingIds: [],
+        streaming: false,
+      });
+
+    await loadView();
+    go("b", 1);
+    const bBody = () => document.querySelector(".thinking-body") as HTMLElement;
+    (bBody().parentElement!.querySelector(".thinking-header") as HTMLElement).click();
+    expect(bBody().classList.contains("collapsed")).toBe(false);
+
+    go("a", 2); // a BIGGER session
+    go("b", 3); // back to the small one: 4 -> 2 messages, but not a rewrite
+
+    expect(bBody().classList.contains("collapsed")).toBe(false);
   });
 
   it("disables auto-scroll when scrolled up and re-enables at the bottom", async () => {
@@ -5204,25 +5881,33 @@ describe("all-sessions manager (gear)", () => {
     expect(rows[1].textContent).not.toContain("this folder");
   });
 
-  it("disables ONLY the two setup gears while any session is working", async () => {
-    // Init already has a working session: both gears start locked.
+  it("keeps the two setup gears USABLE while sessions work (rows stay locked)", async () => {
+    // A blanket lock meant that with several concurrent runs you could never open
+    // the managers again. What is destructive stays locked where it lives: the rows
+    // of a working session, and the providers SAVE (refused by the host while a run
+    // is in flight).
     setupDom({ workingIds: ["a"] });
     await loadView();
     const sessGear = document.getElementById("sessions-gear-btn") as HTMLButtonElement;
     const provGear = document.getElementById("gear-btn") as HTMLButtonElement;
-    expect(sessGear.disabled).toBe(true);
-    expect(provGear.disabled).toBe(true);
-    expect(provGear.title).toContain("Stop the current work");
-    // All work finished: both gears unlock.
-    hostMessage({ type: "status", active: false, workingIds: [] });
     expect(sessGear.disabled).toBe(false);
     expect(provGear.disabled).toBe(false);
-    expect(sessGear.title).toContain("Manage all sessions");
-    // A new working session locks them again.
+    expect(sessGear.title).toContain("the working ones are locked");
+    expect(provGear.title).toContain("saving is blocked");
+
+    // Nothing working: the titles go back to neutral.
+    hostMessage({ type: "status", active: false, workingIds: [] });
+    expect(sessGear.title).toBe("Manage all sessions (every folder)");
+    expect(provGear.title).toBe("Configure providers & models");
+
+    // A session starts working again: still usable, title explains the limits.
     hostMessage({ type: "status", active: true, workingIds: ["b"] });
-    expect(sessGear.disabled).toBe(true);
-    expect(provGear.disabled).toBe(true);
-    // Row buttons in the manage form stay ENABLED regardless (only the gears lock).
+    expect(sessGear.disabled).toBe(false);
+    expect(provGear.disabled).toBe(false);
+    expect(provGear.title).toContain("saving is blocked");
+
+    // Row buttons in the manage form stay ENABLED regardless (only the gear locks
+    // were ever about the gears — the rows are the host's business).
     hostMessage({
       type: "sessionsManager",
       currentFolder: "/home/me/a",

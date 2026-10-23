@@ -1,0 +1,150 @@
+import { describe, it, expect } from "vitest";
+import { SessionEngine } from "./session-engine";
+import type { ChatController } from "../core/agent/chat-controller";
+import type { ChatHistory } from "../core/history/chat-history";
+import type { ChatMessage } from "../core/history/types";
+
+/** The engine only reads `all()`: a fake keeps the test free of the store. */
+function fakeHistory(messages: ChatMessage[] = []): ChatHistory {
+  return { all: () => messages } as unknown as ChatHistory;
+}
+
+/** The only agent field the engine reads is `streaming` (see `working`). */
+function fakeAgent(streaming = false): ChatController {
+  return { streaming } as unknown as ChatController;
+}
+
+function engineWith(messages: ChatMessage[] = [], streaming = false): SessionEngine {
+  return new SessionEngine("s1", fakeHistory(messages), fakeAgent(streaming));
+}
+
+describe("SessionEngine", () => {
+  it("owns the run facts: sending, compacting and the ONE `working` predicate", () => {
+    const agent = fakeAgent();
+    const engine = new SessionEngine("s1", fakeHistory(), agent);
+    expect(engine.working).toBe(false);
+    expect(engine.sending).toBe(false);
+    expect(engine.compacting).toBe(false);
+
+    // The SEND PREAMBLE (attachment build, auto-compaction): no run yet, still busy.
+    engine.beginSend();
+    expect(engine.sending).toBe(true);
+    expect(engine.working).toBe(true);
+
+    // The run starts: the lock is released but the session stays busy.
+    (agent as { streaming: boolean }).streaming = true;
+    engine.endSend();
+    expect(engine.sending).toBe(false);
+    expect(engine.working).toBe(true);
+
+    (agent as { streaming: boolean }).streaming = false;
+    expect(engine.working).toBe(false);
+
+    // A compaction is its own fact: it does NOT make the session "working" (a send
+    // is not queued behind it), but callers that care ask `compacting`.
+    engine.beginCompaction();
+    expect(engine.compacting).toBe(true);
+    expect(engine.working).toBe(false);
+    engine.endCompaction();
+    expect(engine.compacting).toBe(false);
+  });
+
+  it("has no projection when nothing is in flight", () => {
+    expect(engineWith().projection()).toBeUndefined();
+  });
+
+  it("projects the in-flight turn: text, tool calls and sub-agents", () => {
+    const engine = engineWith();
+    engine.live.apply({ type: "text_delta", content: "Lancio i sub-agent." });
+    engine.live.apply({ type: "tool_call", toolCall: { id: "d1", name: "Delegate", arguments: { id: "api" } } });
+    engine.live.apply({ type: "subagent_start", toolCallId: "d1" });
+    engine.live.apply({ type: "subagent_event", toolCallId: "d1", event: { type: "text_delta", content: "leggo" } });
+
+    const p = engine.projection()!;
+    expect(p.answer).toBe("Lancio i sub-agent.");
+    expect(p.textAfterTools).toBe(false);
+    expect(p.toolCalls.map((t) => t.id)).toEqual(["d1"]);
+    expect(p.subAgents.d1.status).toBe("running");
+    expect(p.subAgents.d1.events).toHaveLength(1);
+  });
+
+  it("drops the calls the history ALREADY contains (the batch commit is async)", () => {
+    // The tool batch is committed with ONE addGroup write, AFTER the results are
+    // emitted: for a moment the recorder holds calls that are already rendered
+    // in the transcript. Replaying those would duplicate the bubbles.
+    const engine = engineWith([
+      { role: "user", content: "go", timestamp: 1 },
+      {
+        role: "assistant",
+        content: "🔧 Tools: Delegate",
+        timestamp: 2,
+        toolCalls: [{ id: "d1", name: "Delegate", arguments: {} }],
+      },
+      { role: "tool", toolCallId: "d1", content: "report", timestamp: 3 },
+    ]);
+    engine.live.apply({ type: "tool_call", toolCall: { id: "d1", name: "Delegate", arguments: {} } });
+    engine.live.apply({ type: "tool_call", toolCall: { id: "d2", name: "Delegate", arguments: {} } });
+
+    expect(engine.projection()!.toolCalls.map((t) => t.id)).toEqual(["d2"]);
+  });
+
+  it("is undefined when EVERYTHING in flight is already committed", () => {
+    const engine = engineWith([
+      {
+        role: "assistant",
+        content: "🔧 Tools: Read",
+        timestamp: 1,
+        toolCalls: [{ id: "c1", name: "Read", arguments: {} }],
+      },
+      { role: "tool", toolCallId: "c1", content: "ok", timestamp: 2 },
+    ]);
+    engine.live.apply({ type: "tool_call", toolCall: { id: "c1", name: "Read", arguments: {} } });
+    expect(engine.projection()).toBeUndefined();
+  });
+
+  it("dedupes a call committed FAR BACK in a long run (the scan is structural, not a window)", () => {
+    // A single run can commit MANY tool batches; the recorder holds the calls of
+    // all of them (it is reset only when the run starts/ends). With a fixed
+    // 100-message window the oldest batch would fall out of reach and be
+    // replayed as a DUPLICATE bubble. The scan stops at the run's user prompt.
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go", timestamp: 1 },
+      {
+        role: "assistant",
+        content: "🔧 Tools: Delegate",
+        timestamp: 2,
+        toolCalls: [{ id: "d-old", name: "Delegate", arguments: {} }],
+      },
+      { role: "tool", toolCallId: "d-old", content: "report", timestamp: 3 },
+    ];
+    // …then 150 more messages of the SAME run (no user prompt: it is still running).
+    for (let i = 0; i < 150; i++) {
+      messages.push({ role: "assistant", content: `turn ${i}`, timestamp: 10 + i });
+    }
+    const engine = engineWith(messages);
+    engine.live.apply({ type: "tool_call", toolCall: { id: "d-old", name: "Delegate", arguments: {} } });
+
+    expect(engine.projection()).toBeUndefined(); // still deduped, 150 messages later
+  });
+
+  it("keeps the text even when the bubbles are all committed", () => {
+    // A turn can stream new text after its tools are committed: the text must
+    // still travel (otherwise the bubble is rebuilt blank).
+    const engine = engineWith([
+      {
+        role: "assistant",
+        content: "🔧 Tools: Read",
+        timestamp: 1,
+        toolCalls: [{ id: "c1", name: "Read", arguments: {} }],
+      },
+      { role: "tool", toolCallId: "c1", content: "ok", timestamp: 2 },
+    ]);
+    engine.live.apply({ type: "tool_call", toolCall: { id: "c1", name: "Read", arguments: {} } });
+    engine.live.apply({ type: "text_delta", content: "Ecco il risultato" });
+
+    const p = engine.projection()!;
+    expect(p.answer).toBe("Ecco il risultato");
+    expect(p.toolCalls).toEqual([]);
+    expect(p.textAfterTools).toBe(true);
+  });
+});

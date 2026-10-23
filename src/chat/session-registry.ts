@@ -5,12 +5,16 @@ import type { ThinkingLevel } from "../core/config/types";
 import type { LoopGuardOptions, LoopGuardSensitivity } from "../core/agent/loop-guard";
 import type { SessionStore } from "../core/sessions/types";
 import type { SessionManager } from "../core/sessions/session-manager";
+import { SessionEngine } from "./session-engine";
 
 /** A session that is currently open in the side view, with its own agent+history. */
 export interface SessionRuntime {
   sessionId: string;
   agent: ChatController;
   history: ChatHistory;
+  /** The session's own engine: owns the LIVE state of the in-flight turn and the
+   * projection the view is rebuilt from (see `session-engine.ts`). */
+  engine: SessionEngine;
   /** Last model selected in this session (undefined = use the default). */
   model?: string;
   /** Named provider of the last selected model. */
@@ -146,7 +150,7 @@ export class SessionRegistry {
 
   private spawn(id: string, history: ChatHistory): SessionRuntime {
     const agent = this.deps.createAgent(history, id);
-    const rt: SessionRuntime = { sessionId: id, agent, history };
+    const rt: SessionRuntime = { sessionId: id, agent, history, engine: new SessionEngine(id, history, agent) };
     this.open.set(id, rt);
     return rt;
   }

@@ -9,6 +9,7 @@ import { StaticConfigProvider } from "../config/static-config-provider";
 import { ToolRegistry } from "../tools/tool-registry";
 import type { HarnyConfig } from "../config/types";
 import type { LLMMessage, LLMProviderFactory, StreamChunk } from "../llm/types";
+import { Semaphore, limitLlmFactory } from "../llm/concurrency";
 import type { Tool, ToolResult } from "../tools/tool";
 import type { ToolDefinition } from "../tools/tool";
 import { toolDefinitionsForMode } from "../tools/mode-policy";
@@ -2758,6 +2759,31 @@ describe("Orchestration (Delegate)", () => {
     // The read-only sub-agent ran; the writer was refused (read-only mode).
     expect(spawned).toEqual(["A"]);
     expect(history.all().some((m) => m.role === "tool" && /read-only/i.test(m.content ?? ""))).toBe(true);
+  });
+
+  it("a Stop while the request is QUEUED behind the global cap ends like a Stop: done, no phantom error", async () => {
+    // The global cap (core/llm/concurrency.ts) rejects a QUEUED request with an
+    // AbortError when the run is stopped. The agent classifies errors by NAME
+    // (`err.name === "AbortError"` → done), so the two modules are coupled by a string:
+    // if that name ever changes, a normal Stop turns into a red "provider failed"
+    // bubble. This test is the handshake.
+    const sem = new Semaphore(1);
+    const hold = await sem.acquire(); // the only slot is taken: the next request waits
+    const { agent, events } = buildHarness({
+      llmFactory: limitLlmFactory(fakeFactory([{ type: "text", content: "never" }]), sem),
+    });
+
+    const running = agent.send("go");
+    // The request is parked in the queue, not in flight: exactly the fragile window.
+    await vi.waitFor(() => expect(sem.queued).toBe(1));
+    agent.abort();
+    await running;
+
+    expect(events.filter((e) => e.type === "error")).toEqual([]);
+    expect(events.some((e) => e.type === "done")).toBe(true);
+    hold();
+    expect(sem.inFlight).toBe(0);
+    expect(sem.queued).toBe(0);
   });
 
   it("abort() cascades to the sub-agents via onAbort", () => {
