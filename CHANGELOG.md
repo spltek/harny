@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-23
+
+### Fixed
+
+- **The prompt size is re-based when a provider reports the cache OUTSIDE `prompt_tokens`.** Two
+  conventions coexist on the wire (OpenAI: `prompt_tokens` INCLUDES the cached subset; Anthropic:
+  reads arrive separately as `cache_read_input_tokens`, which this provider already summed). A third,
+  mixed shape exists — a gateway that sends the UNCACHED prompt as `prompt_tokens` and the cached
+  count as a subset field — and there the two numbers sit on different bases, so `cached` exceeds the
+  prompt we counted and every ratio built from them is impossible (a "cache 100%" that is an artefact,
+  not a fully cached turn). The anomaly is the detector (a SUBSET cannot exceed its whole), so the
+  base is corrected without knowing which provider is talking; the same total keeps `total_tokens`
+  consistent. This is not cosmetic: that number is what the context bar shows and what triggers the
+  automatic compaction, and an understated context compacts TOO LATE.
+
 ## [0.8.0] - 2026-10-23
 
 ### Added
@@ -1135,7 +1150,8 @@ Completions protocol.
 - **Diagnostics**: per-turn lines in *Output > Harny*, an optional request log
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
-[Unreleased]: https://github.com/spltek/harny/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/spltek/harny/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/spltek/harny/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/spltek/harny/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/spltek/harny/compare/v0.7.0...v0.7.1
 [0.6.0]: https://github.com/spltek/harny/compare/v0.5.3...v0.6.0

@@ -757,6 +757,53 @@ describe("OpenAIChatProvider usage", () => {
     const usage = chunks.find((c) => c.type === "usage");
     expect(usage).toEqual({ type: "usage", usage: { input: 100, output: 20, total: 120, cached: 10, cachedWrite: 55 } });
   });
+
+  it("re-bases the input when the cache is reported OUTSIDE prompt_tokens (mixed convention)", async () => {
+    // A gateway that sends the UNCACHED prompt as prompt_tokens and the cached count as a
+    // subset field puts the two numbers on different bases: `cached` then exceeds what we
+    // call input, so every ratio built from them is impossible (a "100% cache" that no
+    // clamp can fix, and a context bar that understates the real fill — which is what the
+    // automatic compaction triggers on). A subset cannot exceed its whole: that anomaly is
+    // the detector, and it corrects the base without knowing the provider.
+    const http = new FakeHttpClient();
+    http.respondWith(
+      sseResponse(
+        'data: {"choices":[],"usage":{"prompt_tokens":500,"completion_tokens":20,"total_tokens":520,"prompt_tokens_details":{"cached_tokens":12000}}}',
+      ),
+    );
+    const provider = new OpenAIChatProvider(config, http, tools);
+    const chunks: StreamChunk[] = [];
+    for await (const c of provider.stream([{ role: "user", content: "x" }])) chunks.push(c);
+    const usage = chunks.find((c) => c.type === "usage");
+
+    expect(usage).toEqual({
+      type: "usage",
+      // 500 uncached + 12000 cached: the REAL prompt, so cached/input = 96% is meaningful.
+      usage: { input: 12500, output: 20, total: 12520, cached: 12000, cachedWrite: 0 },
+    });
+    expect(usage!.type === "usage" && usage!.usage.cached! <= usage!.usage.input).toBe(true);
+  });
+
+  it("keeps the Anthropic-shaped base (prompt_tokens + cache_read) without double counting", async () => {
+    // The convention this provider ALREADY handled: reads live outside prompt_tokens.
+    // cached equals input here — a fully cached prompt — and that is legitimate, not a
+    // clamp artefact: the whole prompt came from the cache.
+    const http = new FakeHttpClient();
+    http.respondWith(
+      sseResponse(
+        'data: {"choices":[],"usage":{"completion_tokens":20,"total_tokens":20,"cache_read_input_tokens":12000}}',
+      ),
+    );
+    const provider = new OpenAIChatProvider(config, http, tools);
+    const chunks: StreamChunk[] = [];
+    for await (const c of provider.stream([{ role: "user", content: "x" }])) chunks.push(c);
+    const usage = chunks.find((c) => c.type === "usage");
+
+    expect(usage).toEqual({
+      type: "usage",
+      usage: { input: 12000, output: 20, total: 12020, cached: 12000, cachedWrite: 0 },
+    });
+  });
 });
 
 describe("OpenAIChatProvider tools guard", () => {

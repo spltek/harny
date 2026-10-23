@@ -371,29 +371,42 @@ export class OpenAIChatProvider implements LLMProvider {
       // With stream_options.include_usage the last chunk carries usage.
       if (parsed.usage) {
         const u = parsed.usage;
+        const prompt = Number(u.prompt_tokens ?? 0);
+        // Anthropic-shaped usage keeps the reads OUT of the prompt count, so the
+        // convention is `prompt_tokens + cache_read_input_tokens`. OpenAI-shaped usage
+        // already includes them (there cache_read is absent, and the cached SUBSET comes
+        // in prompt_tokens_details).
+        const cacheRead = Number(u.cache_read_input_tokens ?? 0);
+        const cached = Number(
+          u.prompt_tokens_details?.cached_tokens ?? u.prompt_cache_hit_tokens ?? cacheRead ?? 0,
+        );
+        const cachedWrite = Number(
+          u.prompt_tokens_details?.cache_write_tokens ?? u.cache_creation_input_tokens ?? 0,
+        );
+        // LAST MIXED CASE: a gateway that reports `prompt_tokens` WITHOUT the cache but
+        // the cached count as a subset field. There the two numbers sit on different
+        // bases, `cached` can exceed the prompt we counted, and every ratio built from
+        // them is arithmetically impossible (cache at "100%" by construction, clamp
+        // aside). The anomaly itself is the detector — a SUBSET cannot exceed its whole —
+        // so the base is corrected without knowing which provider is talking. The number
+        // fixed here is not cosmetic: it is what the context bar shows and what triggers
+        // the automatic compaction, and an understated context compacts too late.
+        const promptTotal = cached > prompt + cacheRead ? prompt + cacheRead + cached + cachedWrite : prompt + cacheRead;
+        const output = Number(u.completion_tokens ?? 0);
         yield {
           type: "usage",
           usage: {
-            // input is left EXACTLY as before (no regression): some providers
-            // report cache_read_input_tokens separately, so total input is the sum.
-            input: Number(u.prompt_tokens ?? 0) + Number(u.cache_read_input_tokens ?? 0),
-            output: Number(u.completion_tokens ?? 0),
-            total: Number(u.total_tokens ?? 0),
+            input: promptTotal,
+            output,
+            // Kept consistent with `input`: a total smaller than its own prompt would be
+            // a nonsense number for anything that adds the two up.
+            total: Math.max(Number(u.total_tokens ?? 0), promptTotal + output),
             // cached is informational only and never affects input/output/total.
-            cached: Number(
-              u.prompt_tokens_details?.cached_tokens ??
-                u.prompt_cache_hit_tokens ??
-                u.cache_read_input_tokens ??
-                0,
-            ),
+            cached,
             // The WRITE side (tokens stored into the cache) is a provider
             // extension of the OpenAI protocol: OpenRouter reports
             // cache_write_tokens, llama.cpp/vLLM cache_creation_input_tokens.
-            cachedWrite: Number(
-              u.prompt_tokens_details?.cache_write_tokens ??
-                u.cache_creation_input_tokens ??
-                0,
-            ),
+            cachedWrite,
           },
         };
       }
