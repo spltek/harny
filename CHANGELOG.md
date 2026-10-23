@@ -7,48 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- **A session open in a tab can no longer vanish from the list.** The main list is the current
-  folder's, which is right — but an OPEN session was filtered out by the same rule, so switching the
-  workspace folder (or opening a cross-folder session from Manage) left a tab you could not get back
-  to, next to an empty list saying "No sessions yet. Create a new session." — a lie about the session
-  sitting right above it. The list is now the folder's sessions PLUS every open session that lives
-  elsewhere (dimmed, its folder in the tooltip), recomputed on open too since opening can add a row.
-  Name uniqueness stays scoped to the FOLDER (`sessionNameTaken` keeps reading
-  `currentFolderSessions`), so two folders may still share a name; and the empty state now says "No
-  sessions in this folder", which is true in every case.
-- **A finished session no longer stays "working" (and its tab × no longer stays locked).** Two
-  defects added up, and the screenshot that reported it was right about both. First, the end-of-run
-  report was fired from INSIDE the send lock (`working = sending || agent.streaming`), so the session
-  was published to the view as still working — and nothing ever corrected it: the run's last event had
-  already been consumed. `workingIds` drives the tab ×, the row actions and the working indicators, so
-  a stale set locks them for good. The report now happens with the lock ALREADY released. Second, the
-  recorder's `summary()` invented a `{kind:"working", label:"working…"}` phase for an EMPTY recorder —
-  and `done` empties it, so the last thing a finishing session did was label itself "working…". The
-  assumption in its comment ("callers ask only while it works") was false: the router asks on every
-  event. Both paths are gone: the per-session live line, the tab/session-list label and the "Running
-  now" panel were removed at the user's request, and `summary()` went with them — the recorder keeps
-  exactly what the view is rebuilt from (`projection()`), and `workingIds` stays as the single source
-  of "this session is busy".
-- **A session that kept working while you looked elsewhere no longer forgets what it was
-  doing.** The transcript is rebuilt from `getMessages()`, and the assistant turn — tool calls
-  included — reaches the history only when the WHOLE tool batch completes, in ONE atomic
-  `addGroup` write (`agent.ts`). In Parallel that batch can run for minutes, so switching tab (or
-  letting the webview reload) rebuilt the view from a history that did not contain the Delegate
-  calls yet: the "Working…" bar survived, the sub-agent bubbles did not — and they only appeared
-  after Stop, because stopping is what forces the batch to commit. Two causes, both fixed: the
-  live state was TEXT-ONLY (`liveThinking`/`liveAnswer`), and every non-text event
-  (`tool_call`/`tool_result`/`subagent_start`/`subagent_event`) was forwarded only
-  `if (active)` and never recorded, so it was gone the moment that session stopped being the
-  visible tab.
-- **The ⏹ you already pressed stays pressed.** Aborting ONE sub-agent was UI state only: switching
-  tab and back rebuilt the bubble with an ENABLED abort button, as if the request had never been
-  made (the host no-ops a dead id, so nothing bad happened — the panel just lied). The request is
-  now part of the recorded call (`abortRequested`) and the replay restores the pending, disabled
-  button. Two related leaks fixed in the same path: the nested tool-line map is released on every
-  rebuild instead of keeping detached nodes, and a replayed sub-agent log is painted immediately
-  instead of waiting for the next animation frame.
+## [0.8.0] - 2026-10-23
 
 ### Added
 
@@ -69,15 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dropped for lack of a bubble), and places the live text correctly — a preamble written before
   the Delegate calls stays ABOVE them, an answer written after a tool result goes BELOW — via
   `textAfterTools`.
-
-### Changed
-
-- **`StreamTee` is a pure ROUTER now.** It records every open session's events into that
-  session's engine (`rt.engine.live.apply`) and forwards only the ACTIVE one to the view; the
-  shared buffers and their `liveOf`/`clear` API are gone. Recording is deliberately NOT gated on
-  "active": that gate was the bug.
-
-### Added
 
 - **ONE global cap on LLM requests (8 in flight), shared by every session and every sub-agent.**
   The per-session sub-agent cap MULTIPLIES: ten open sessions with Parallel on and a cap of four are
@@ -172,6 +122,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`StreamTee` is a pure ROUTER now.** It records every open session's events into that
+  session's engine (`rt.engine.live.apply`) and forwards only the ACTIVE one to the view; the
+  shared buffers and their `liveOf`/`clear` API are gone. Recording is deliberately NOT gated on
+  "active": that gate was the bug.
+
 - **The engine's port split in two, because the old one over-served it.** `SessionEnginePort` had 17
   methods and `abort()` used two of them (the other fifteen were for `send`), which forced every
   `abort` fake to implement a stand-in — the defect was visible in this module's own test, where
@@ -214,6 +169,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the list you have").
 
 ### Fixed
+
+- **A session open in a tab can no longer vanish from the list.** The main list is the current
+  folder's, which is right — but an OPEN session was filtered out by the same rule, so switching the
+  workspace folder (or opening a cross-folder session from Manage) left a tab you could not get back
+  to, next to an empty list saying "No sessions yet. Create a new session." — a lie about the session
+  sitting right above it. The list is now the folder's sessions PLUS every open session that lives
+  elsewhere (dimmed, its folder in the tooltip), recomputed on open too since opening can add a row.
+  Name uniqueness stays scoped to the FOLDER (`sessionNameTaken` keeps reading
+  `currentFolderSessions`), so two folders may still share a name; and the empty state now says "No
+  sessions in this folder", which is true in every case.
+- **A finished session no longer stays "working" (and its tab × no longer stays locked).** Two
+  defects added up, and the screenshot that reported it was right about both. First, the end-of-run
+  report was fired from INSIDE the send lock (`working = sending || agent.streaming`), so the session
+  was published to the view as still working — and nothing ever corrected it: the run's last event had
+  already been consumed. `workingIds` drives the tab ×, the row actions and the working indicators, so
+  a stale set locks them for good. The report now happens with the lock ALREADY released. Second, the
+  recorder's `summary()` invented a `{kind:"working", label:"working…"}` phase for an EMPTY recorder —
+  and `done` empties it, so the last thing a finishing session did was label itself "working…". The
+  assumption in its comment ("callers ask only while it works") was false: the router asks on every
+  event. Both paths are gone: the per-session live line, the tab/session-list label and the "Running
+  now" panel were removed at the user's request, and `summary()` went with them — the recorder keeps
+  exactly what the view is rebuilt from (`projection()`), and `workingIds` stays as the single source
+  of "this session is busy".
+- **A session that kept working while you looked elsewhere no longer forgets what it was
+  doing.** The transcript is rebuilt from `getMessages()`, and the assistant turn — tool calls
+  included — reaches the history only when the WHOLE tool batch completes, in ONE atomic
+  `addGroup` write (`agent.ts`). In Parallel that batch can run for minutes, so switching tab (or
+  letting the webview reload) rebuilt the view from a history that did not contain the Delegate
+  calls yet: the "Working…" bar survived, the sub-agent bubbles did not — and they only appeared
+  after Stop, because stopping is what forces the batch to commit. Two causes, both fixed: the
+  live state was TEXT-ONLY (`liveThinking`/`liveAnswer`), and every non-text event
+  (`tool_call`/`tool_result`/`subagent_start`/`subagent_event`) was forwarded only
+  `if (active)` and never recorded, so it was gone the moment that session stopped being the
+  visible tab.
+- **The ⏹ you already pressed stays pressed.** Aborting ONE sub-agent was UI state only: switching
+  tab and back rebuilt the bubble with an ENABLED abort button, as if the request had never been
+  made (the host no-ops a dead id, so nothing bad happened — the panel just lied). The request is
+  now part of the recorded call (`abortRequested`) and the replay restores the pending, disabled
+  button. Two related leaks fixed in the same path: the nested tool-line map is released on every
+  rebuild instead of keeping detached nodes, and a replayed sub-agent log is painted immediately
+  instead of waiting for the next animation frame.
 
 - **A session being PREPARED can no longer be edited away.** "Busy" meant `agent.streaming` only, so
   during the SEND PREAMBLE (attachment build, pre-request auto-compaction — seconds, not milliseconds)
@@ -1139,7 +1135,9 @@ Completions protocol.
 - **Diagnostics**: per-turn lines in *Output > Harny*, an optional request log
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
-[Unreleased]: https://github.com/spltek/harny/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/spltek/harny/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/spltek/harny/compare/v0.7.1...v0.8.0
+[0.7.1]: https://github.com/spltek/harny/compare/v0.7.0...v0.7.1
 [0.6.0]: https://github.com/spltek/harny/compare/v0.5.3...v0.6.0
 [0.5.3]: https://github.com/spltek/harny/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/spltek/harny/compare/v0.5.1...v0.5.2
