@@ -557,6 +557,25 @@ describe("view webview client", () => {
     expect(document.querySelector(".msg.user")?.textContent).toBe("hello");
   });
 
+  it("a plain tab switch keeps the LIST and the tab NAMES (an omitted list means unchanged)", async () => {
+    // The host re-sends the session list only when it really changes (create, rename,
+    // branch, delete, open-from-a-row); on a tab click it posts `sessions: undefined`,
+    // meaning "keep what you have". Coercing that omission to `[]` — which is TRUTHY —
+    // emptied the list on EVERY click, and with no id left to look up, every tab fell
+    // back to the generic "Session" label. One coercion, two very visible symptoms.
+    await loadView();
+    expect(document.querySelectorAll(".srow").length).toBe(2);
+
+    // NO `sessions` key at all: exactly the payload a tab click produces.
+    hostMessage({ type: "switchView", activeId: "b", openIds: ["a", "b"], messages: [], config: {}, workingIds: [], switchSeq: 2 });
+
+    expect(document.querySelectorAll(".srow").length).toBe(2);
+    const nameOf = (id: string) =>
+      document.querySelector(`.tab[data-id="${id}"] span:first-child`)?.textContent;
+    expect(nameOf("a")).toBe("Refactor");
+    expect(nameOf("b")).toBe("Debug");
+  });
+
   it("wraps the user text in a left-aligned shrink-to-fit block (centered by the bubble)", async () => {
     await loadView();
     const bubble = document.querySelector(".msg.user") as HTMLElement;

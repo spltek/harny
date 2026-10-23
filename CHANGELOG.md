@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-10-23
+
+### Fixed
+
+- **The session list is no longer emptied by switching tabs, and tabs keep their names.** The host
+  re-sends the list only when it really changes (create, rename, branch, delete, opening from a row);
+  on a plain tab click it omits it, and the omitted list means "keep the one you have". The webview
+  turned that omission into `[]` — which is TRUTHY — so EVERY click emptied the list, and with no id
+  left to look up every tab fell back to the generic "Session" label: two symptoms, one coercion. The
+  old tests could not catch it because they posted an explicit `sessions: []`, i.e. they exercised the
+  other branch; the new one posts a payload with no `sessions` key at all, which is what the host
+  actually sends.
+- **The × on a tab sits on the tab's right edge.** The close button used to hug the end of the name,
+  so tabs of different widths had their × at different distances from the edge. The label now takes
+  the free space (`flex: 1; min-width: 0`), which also keeps a long name ellipsizing correctly.
+
 ## [0.8.1] - 2026-10-23
 
 ### Fixed
@@ -1150,7 +1166,8 @@ Completions protocol.
 - **Diagnostics**: per-turn lines in *Output > Harny*, an optional request log
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
-[Unreleased]: https://github.com/spltek/harny/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/spltek/harny/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/spltek/harny/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/spltek/harny/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/spltek/harny/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/spltek/harny/compare/v0.7.0...v0.7.1

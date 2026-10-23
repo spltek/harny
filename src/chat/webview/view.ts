@@ -5408,7 +5408,12 @@ window.addEventListener("message", (e) => {
       }
       if (typeof msg.configSeq === "number") lastConfigSeq = Math.max(lastConfigSeq, msg.configSeq);
       renderViewState({
-        sessions: msg.sessions || [],
+        // Passed through UNTOUCHED: an omitted list means "keep the one you have" (a
+        // plain tab switch does not re-send it). Coercing it to `[]` — as this line
+        // did — turned "unchanged" into "empty", and `[]` is TRUTHY: every tab click
+        // wiped the list, and every tab then fell back to the generic "Session" name
+        // because no id could be found. One coercion, two very visible symptoms.
+        sessions: msg.sessions,
         openIds: msg.openIds || [],
         activeId: msg.activeId,
         messages: msg.messages || [],

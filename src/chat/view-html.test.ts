@@ -347,6 +347,10 @@ describe("renderViewHtml", () => {
     // Tabs keep a readable floor and never shrink (the strip scrolls instead).
     expect(html).toMatch(/\.tab \{[\s\S]*?flex-shrink: 0/);
     expect(html).toMatch(/\.tab \{[\s\S]*?min-width: 5\.5rem/);
+    // The label takes the free space so the × lands on the tab's RIGHT edge instead of
+    // hugging the end of the name (min-width 0 is what keeps the ellipsis working).
+    expect(html).toMatch(/\.tab > span:first-child \{[^}]*flex: 1/);
+    expect(html).toMatch(/\.tab > span:first-child \{[^}]*min-width: 0/);
     // A wide markdown table scrolls INSIDE its own frame — the prose wraps, the table does
     // not — and the scrollbar must be VISIBLE: on macOS overlay scrollbars stay invisible
     // until you scroll, so a working scrollable table looked broken.

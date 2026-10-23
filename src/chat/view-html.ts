@@ -327,7 +327,10 @@ ${renderViewConfig(deps)}
       /* sits flush on the strip's border (active covers it with its face) */
       margin-bottom: -1px;
     }
-    .tab > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+    /* The label takes the FREE space, so the × sits on the tab's right edge instead of
+       hugging the end of the name. min-width 0 is what makes the ellipsis work: a flex
+       item refuses to shrink below its content without it. */
+    .tab > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     .tab:hover:not(.active) {
       color: var(--fg);
       background: linear-gradient(to bottom, var(--overlay-2), var(--overlay-1));
