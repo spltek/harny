@@ -1064,7 +1064,9 @@ export class ChatViewProvider implements WebviewViewProvider {
         servers[name] = { ...servers[name], enabled };
         const ok = this.providers.saveMcpServers?.(servers) ?? false;
         if (ok) {
-          await this.options.mcp?.connect();
+          // ONLY this server: a full pass would respawn every other npx process, and the
+          // card would rewrite every row while the user is clicking in it.
+          await this.options.mcp?.connect(name);
           this.view?.webview.postMessage({ type: "mcpServers", data: this.mcpEditorData() });
           void this.pushConfig();
         }
@@ -1094,7 +1096,9 @@ export class ChatViewProvider implements WebviewViewProvider {
         servers[name] = current;
         const ok = this.providers.saveMcpServers?.(servers) ?? false;
         if (ok) {
-          await this.options.mcp?.connect();
+          // The exclusion list belongs to ONE server: reconnecting all of them would respawn
+          // every other npx process for nothing.
+          await this.options.mcp?.connect(name);
           this.view?.webview.postMessage({ type: "mcpServers", data: this.mcpEditorData() });
           void this.pushConfig();
         }

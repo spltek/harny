@@ -4161,7 +4161,15 @@ function renderSkills(skills: { name: string; description: string }[]): void {
   }
 }
 
+/** What `renderMcp` last drew. A config push arrives often (metrics, tokens, every
+ * session switch) and rebuilding the list each time made the rows flicker and re-create
+ * themselves while the user was clicking in the card. Same data → same DOM. */
+let mcpDrawn = "";
+
 function renderMcp(mcp: ConfigState["mcp"]): void {
+  const signature = JSON.stringify({ servers: mcp?.servers ?? {}, statuses: mcp?.statuses ?? [] });
+  if (signature === mcpDrawn) return;
+  mcpDrawn = signature;
   mcpStatuses = mcp?.statuses ?? [];
   const names = Object.keys(mcp?.servers ?? {});
   mcpCard.classList.toggle("hidden", names.length === 0);
@@ -4213,6 +4221,9 @@ function renderMcp(mcp: ConfigState["mcp"]): void {
       const detail = document.createElement("span");
       detail.className = "mcp-detail";
       detail.textContent = st?.error ?? "not connected";
+      // The row is ONE line, always: the full error (npm's log path, an HTTP body) stays in
+      // the tooltip, so the card's height never changes under the cursor.
+      detail.title = detail.textContent;
       row.appendChild(detail);
     }
     mcpList.appendChild(row);

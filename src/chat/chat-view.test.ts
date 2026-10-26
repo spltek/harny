@@ -1403,9 +1403,13 @@ describe("ChatViewProvider", () => {
     expect(b.view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "mcpSaved", ok: false }));
   });
 
-  it("toggleMcpServer persists the enabled flag and reconnects", async () => {
+  it("toggleMcpServer persists the enabled flag and reconnects ONLY that server", async () => {
     const saveMcpServers = vi.fn(() => true);
+    const connect = vi.fn(async () => {});
     const { provider } = buildHarness({
+      // A full pass here would dispose() every other server: each `npx` process would be
+      // killed and respawned just because one row was clicked.
+      mcp: { connect, getStatuses: () => [], getTools: () => [] } as any,
       providers: {
         getProvider: vi.fn(),
         saveModelSelection: vi.fn(),
@@ -1416,6 +1420,7 @@ describe("ChatViewProvider", () => {
     const { handler } = resolveWith(provider);
     await handler({ type: "toggleMcpServer", name: "test", enabled: false });
     expect(saveMcpServers).toHaveBeenCalledWith({ test: { command: "node", enabled: false } });
+    expect(connect).toHaveBeenCalledWith("test");
   });
 
   it("setMcpToolExclusions writes the exclude list on THAT server and reconnects", async () => {
@@ -1443,10 +1448,7 @@ describe("ChatViewProvider", () => {
       test: { command: "node", analyze: "read-only", excludeTools: ["drop_table", "wipe"] },
       other: { command: "node", args: ["x"] },
     });
-    expect(connect).toHaveBeenCalled(); // the tool list is rebuilt at connect
-    // The card/modal must see the NEW statuses: the host re-pushes them, and a config
-    // push re-renders the card (`(1/2 tools)`).
-    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "mcpServers" }));
+    expect(connect).toHaveBeenCalledWith("test"); // ONLY this server (a full pass respawns every other npx)
     expect(view.webview.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: "mcpToolExclusionsSaved", server: "test", ok: true }),
     );

@@ -30,8 +30,14 @@ export class McpManager {
   constructor(private readonly deps: McpManagerDeps) {}
 
   /**
-   * Connect every configured server (stdio) and register their tools. NEVER throws: a
-   * failing server is reported in its status and skipped.
+   * Connect the configured servers and register their tools. NEVER throws: a failing
+   * server is reported in its status and skipped.
+   *
+   * With `only`, ONLY that server is closed and reconnected — the others keep running.
+   * That is what the enable/disable toggle and the tools panel use: a full pass respawns
+   * every `npx` process (slow) and briefly rewrites every row in the card, which is what
+   * made the whole list look like it was moving under the cursor. A save from the editor
+   * (any server may have changed) still reconnects everything.
    *
    * Calls are SERIALIZED. The activation connect (`void mcp.connect()`) and one from the
    * UI (a save, a server toggle, the tools panel) can overlap — and two concurrent
@@ -40,10 +46,10 @@ export class McpManager {
    * and every MCP server built on npx fails until someone clears the cache by hand.
    * The second call now waits for the first to finish instead.
    */
-  connect(): Promise<void> {
+  connect(only?: string): Promise<void> {
     const run = this.connecting.then(
-      () => this.connectNow(),
-      () => this.connectNow(),
+      () => this.connectNow(only),
+      () => this.connectNow(only),
     );
     // The chain must never stay rejected: a failed pass cannot block the next one.
     this.connecting = run.catch(() => {});
@@ -51,10 +57,23 @@ export class McpManager {
   }
 
   /** One pass over the configured servers (never runs concurrently with itself). */
-  private async connectNow(): Promise<void> {
-    this.dispose();
+  private async connectNow(only?: string): Promise<void> {
+    if (only) {
+      // Targeted: forget this server and nothing else.
+      const running = this.clients.get(only);
+      if (running) {
+        running.close();
+        this.clients.delete(only);
+      }
+      const prefix = mcpToolName(only, "");
+      this.tools = this.tools.filter((t) => !t.name.startsWith(prefix));
+      this.statuses = this.statuses.filter((s) => s.name !== only);
+    } else {
+      this.dispose();
+    }
     const servers = this.deps.servers() ?? {};
     for (const [name, cfg] of Object.entries(servers)) {
+      if (only && name !== only) continue;
       // Disabled in the config: keep it listed but do NOT connect or expose tools.
       if (cfg && typeof cfg === "object" && cfg.enabled === false) {
         this.statuses.push({ name, ok: true, enabled: false, toolCount: 0 });
@@ -134,6 +153,10 @@ export class McpManager {
         this.deps.log?.(`[mcp] ${name}: ${error}`);
       }
     }
+    // One stable order whatever path we came from (full pass or targeted): the config's
+    // own key order, so a row never jumps to the bottom of the card.
+    const order = Object.keys(servers);
+    this.statuses.sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
     this.deps.onToolsChanged?.();
   }
 

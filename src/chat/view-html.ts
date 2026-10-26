@@ -1355,13 +1355,20 @@ ${renderViewConfig(deps)}
       max-width: 100%; overflow-wrap: anywhere;
     }
     .skill-item:hover { text-decoration: underline; }
-    /* MCP card + editor modal (mirrors the providers editor). */
-    #mcp-list { display: flex; flex-direction: column; gap: 3px; }
-    .mcp-status { font-size: var(--fs-sm); }
+    /* MCP card + editor modal (mirrors the providers editor).
+       ONE row per server, ONE line each: a long error (npm's log path, an HTTP body) used
+       to wrap to three lines and change the card's height, so the whole control stack moved
+       under the cursor every time a server was toggled. The full text stays in the tooltip. */
+    #mcp-list { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+    .mcp-status { font-size: var(--fs-sm); display: flex; align-items: baseline; gap: 4px; min-width: 0; }
     .mcp-status.ok { color: var(--ok); }
     .mcp-status.err { color: var(--error, #f05555); }
-    .mcp-status .mcp-name { cursor: pointer; }
-    .mcp-status .mcp-detail { color: var(--muted-2); }
+    .mcp-status .mcp-name { cursor: pointer; flex: none; white-space: nowrap; }
+    .mcp-status .mcp-detail {
+      color: var(--muted-2); flex: 1 1 auto; min-width: 0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .mcp-status .mcp-tools-btn { flex: none; }
     .mcp-tools-btn {
       background: transparent; border: none; padding: 0; cursor: pointer;
       color: var(--accent); font-size: var(--fs-sm); text-decoration: underline;

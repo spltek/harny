@@ -5588,6 +5588,55 @@ describe("view webview client", () => {
     expect(text).toContain("URL");
   });
 
+  it("the MCP card keeps its rows when nothing changed (they used to be rebuilt under the cursor)", async () => {
+    await loadView();
+    const push = (statuses: unknown[]) =>
+      hostMessage({
+        type: "config",
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          contextWindow: 128000,
+          mcp: { servers: { a: { command: "node" } }, statuses },
+        },
+      });
+    push([{ name: "a", ok: true, enabled: true, toolCount: 2 }]);
+    const row = document.querySelector("#mcp-list .mcp-status") as HTMLElement;
+    // A config push arrives often (metrics, tokens): the same mcp section must not replace
+    // the nodes, or a click lands on a row that was removed a millisecond earlier.
+    push([{ name: "a", ok: true, enabled: true, toolCount: 2 }]);
+    expect(document.querySelector("#mcp-list .mcp-status")).toBe(row);
+
+    // A real change (the server failed) still redraws.
+    push([{ name: "a", ok: false, enabled: true, toolCount: 0, error: "boom" }]);
+    expect(document.querySelector("#mcp-list .mcp-status")).not.toBe(row);
+  });
+
+  it("a long MCP error stays ONE element with the full text in the tooltip", async () => {
+    // The row is one line (CSS): a whole npm log used to wrap to three lines and change the
+    // card's height, moving the control stack while the user was clicking.
+    await loadView();
+    const long = "npm error " + "x".repeat(400);
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        contextWindow: 128000,
+        mcp: {
+          servers: { a: { command: "node" } },
+          statuses: [{ name: "a", ok: false, enabled: true, toolCount: 0, error: long }],
+        },
+      },
+    });
+    const details = document.querySelectorAll("#mcp-list .mcp-detail");
+    expect(details).toHaveLength(1);
+    expect(details[0].textContent).toBe(long);
+    expect((details[0] as HTMLElement).title).toBe(long);
+  });
+
   it("typing '/' at the start of the prompt shows the skill list", async () => {
     await loadView();
     hostMessage({

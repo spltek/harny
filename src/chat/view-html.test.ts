@@ -523,6 +523,33 @@ describe("renderViewHtml", () => {
     expect(html).not.toContain("#steer-btn");
   });
 
+  it("keeps an MCP row on ONE line, so the card cannot change height while you click", () => {
+    // The row is rebuilt on every config push and carries an error string that can be a
+    // whole npm log: wrapped, it changed the card's height and moved the control stack under
+    // the cursor every time a server was toggled.
+    const html = renderViewHtml({
+      ...base,
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      } as never,
+    });
+    const detail = cssRule(html, ".mcp-status .mcp-detail");
+    expect(detail).toContain("white-space: nowrap");
+    expect(detail).toContain("text-overflow: ellipsis");
+    expect(detail).toContain("min-width: 0"); // …or flex refuses to shrink it
+    expect(cssRule(html, ".mcp-status")).toContain("display: flex");
+  });
+
   it("styles the per-turn metrics badge under assistant bubbles", () => {
     const html = renderViewHtml({
       ...base,

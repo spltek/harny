@@ -169,6 +169,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Toggling one MCP server no longer stirs the whole card.** Two separate causes, reported as one symptom ("they all
+  move around"). **(a)** the toggle saved the flag and called `connect()`, which disposes EVERY client and reconnects
+  every server: clicking one row killed and respawned the other `npx` processes, and their status churned with them.
+  `connect(only?)` now reconnects one server — closes just that client, drops just its tools by prefix, removes just
+  its status — and re-sorts the statuses into the config's own key order, so a row can never jump to the bottom. The
+  toggle and the tools panel pass the name; a save from the editor (any server may have changed) still does a full
+  pass. A `pid` tool in the tests proves it: the untouched server answers with the SAME pid afterwards. **(b)** the
+  row carried the error text in a wrapping span, and an npm log (or an HTTP body — the messages got much longer with
+  the new diagnostics) wrapped to three lines and pushed everything below it. The row is ONE line now (`flex`,
+  `nowrap`, `ellipsis`, `min-width: 0` so it can shrink) with the full text in the tooltip, and the list is no longer
+  rebuilt when the mcp section is unchanged: config pushes are frequent (metrics, tokens), and re-creating the rows
+  under the cursor also made a click land on a node that had just been removed.
 - **An MCP server that dies now says WHY — and, when we recognise it, what to do.** The exit message was a
   `stderr.slice(-300)` of the tail, so a failing `npx` install (npm prints the cause FIRST and the echo LAST) reached
   the panel as `MCP server exited (code=190 signal=-): y not empty, rename '…/content-disposition' -> …` — the middle

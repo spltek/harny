@@ -108,6 +108,51 @@ describe("McpManager", () => {
     expect(manager.getTools().map((t) => t.name)).toEqual(["mcp__test__echo", "mcp__test__ping"]);
   });
 
+  it("a targeted reconnect touches ONLY that server (the others keep their processes)", async () => {
+    // Toggling one server used to dispose() everything: every other npx process was killed
+    // and respawned — slow, and the card's whole state churned. The `pid` tool proves it: a
+    // respawned process answers with a different pid.
+    const PID = `
+let buf = "";
+process.stdin.on("data", (d) => {
+  buf += d;
+  let i;
+  while ((i = buf.indexOf("\\n")) >= 0) {
+    const line = buf.slice(0, i); buf = buf.slice(i + 1);
+    if (!line.trim()) continue;
+    const m = JSON.parse(line);
+    if (m.method === "initialize") process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "p", version: "1" } } }) + "\\n");
+    else if (m.method === "tools/list") process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { tools: [{ name: "pid" }] } }) + "\\n");
+    else if (m.method === "tools/call") process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { content: [{ type: "text", text: String(process.pid) }] } }) + "\\n");
+  }
+});
+`;
+    const manager = new McpManager({
+      servers: () => ({
+        a: { command: process.execPath, args: ["-e", PID] },
+        b: { command: process.execPath, args: ["-e", PID] },
+      }),
+    });
+    const pidOf = async (name: string) =>
+      (
+        await manager
+          .getTools()
+          .find((t) => t.name === `mcp__${name}__pid`)!
+          .execute({})
+      ).content;
+
+    await manager.connect();
+    const before = await pidOf("b");
+    await manager.connect("a"); // what the enable/disable toggle does
+    expect(await pidOf("b")).toBe(before); // same process: b was never touched
+    expect(manager.getStatuses().map((s) => s.name)).toEqual(["a", "b"]); // order preserved
+
+    // …and a FULL pass (a save from the editor) does respawn it: that is the difference.
+    await manager.connect();
+    expect(await pidOf("b")).not.toBe(before);
+    manager.dispose();
+  });
+
   it("a server that dies AFTER connecting is marked down and its tools withdrawn", async () => {
     // onExit existed but nobody subscribed: a crashed server stayed GREEN and its tools
     // stayed registered, so every call failed with "MCP server is not running" and the model
