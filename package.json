@@ -99,11 +99,12 @@
     "watch": "npx tsc -p tsconfig.json --watch",
     "dev": "node scripts/dev.mjs",
     "test": "vitest run",
-    "check": "npm run typecheck && npm test",
+    "check": "npm run typecheck && npm run format:check && npm test",
     "test:watch": "vitest",
     "coverage": "vitest run --coverage",
     "package": "vsce package --no-dependencies",
-    "format": "prettier --write 'src/**/*.ts'"
+    "format": "prettier --write 'src/**/*.ts'",
+    "format:check": "prettier --check 'src/**/*.ts'"
   },
   "devDependencies": {
     "@types/diff": "^7.0.2",
