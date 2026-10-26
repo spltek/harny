@@ -107,8 +107,7 @@ export class McpHttpClient implements McpClient {
       if (expectId === undefined) return undefined; // notification: no reply body
 
       if (!resp.ok) {
-        const body = await resp.text().catch(() => "");
-        throw new Error(`HTTP ${resp.status}${body ? `: ${body.slice(0, 300)}` : ""}`);
+        throw new Error(httpFailure(resp.status, contentType, await resp.text().catch(() => "")));
       }
       const payload = contentType.includes("text/event-stream")
         ? await this.readSse(resp, expectId)
@@ -194,4 +193,51 @@ function isAnnotations(value: unknown): value is McpToolAnnotations {
   return ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"].some(
     (k) => typeof rec[k] === "boolean",
   );
+}
+
+/**
+ * A non-2xx answer as a message a human can act on.
+ *
+ * The body of a failing MCP server is usually a JSON-RPC error (spec-shaped) or a wall of
+ * HTML from a proxy, and dumping it raw into the panel —
+ * `HTTP 503: {"jsonrpc":"2.0","error":{"code":-32000,"message":"…"},"id":null}` — buries
+ * the one useful sentence inside it. So: take the message OUT of the JSON-RPC error, name
+ * a web page for what it is, and append the remedy for the statuses we can recognise.
+ */
+function httpFailure(status: number, contentType: string, body: string): string {
+  const text = body.trim();
+  let detail = "";
+  if (text) {
+    const rpc = rpcErrorMessage(text);
+    if (rpc) detail = rpc;
+    else if (contentType.includes("html") || text.startsWith("<")) {
+      detail = "the endpoint answered with a web page, not JSON-RPC — is this really an MCP URL?";
+    } else detail = text.replace(/\s+/g, " ").slice(0, 200);
+  }
+  const hint = httpHint(status);
+  return `HTTP ${status}${detail ? `: ${detail}` : ""}${hint ? ` — ${hint}` : ""}`;
+}
+
+/** The `error.message` of a JSON-RPC body, when that is what we got. */
+function rpcErrorMessage(text: string): string | undefined {
+  try {
+    const parsed = JSON.parse(text) as { error?: unknown };
+    const err = parsed?.error as Record<string, unknown> | undefined;
+    if (!err) return undefined;
+    return typeof err.message === "string" ? err.message : JSON.stringify(err).slice(0, 200);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The one-line cure for the statuses we can name (401 is the one that actually bites). */
+function httpHint(status: number): string {
+  if (status === 401 || status === 403) {
+    return "this server wants credentials: put them in the Headers box (e.g. Authorization=Bearer …) or in the URL";
+  }
+  if (status === 404 || status === 405) {
+    return "the path is not an MCP endpoint — check the URL (some servers want /mcp, some /sse)";
+  }
+  if (status === 429) return "rate limited: wait a moment and Test again";
+  return "";
 }

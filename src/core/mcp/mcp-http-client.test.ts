@@ -118,6 +118,53 @@ describe("McpHttpClient (streamable HTTP)", () => {
     c.close();
   });
 
+  it("a non-2xx answer becomes ONE readable line, not the raw body", async () => {
+    // The shape a real mock returns when it is down: HTTP 503 with a spec-shaped JSON-RPC
+    // error inside. Dumped raw it read `HTTP 503: {"jsonrpc":"2.0","error":…,"id":null}`
+    // and the one useful sentence was buried in the middle of it.
+    const s = await serve((_m, _req, res) => {
+      res.writeHead(503, { "content-type": "application/json" }).end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          error: { code: -32000, message: "The mock is temporarily offline for maintenance." },
+          id: null,
+        }),
+      );
+    });
+    closers.push(s.close);
+    const err = await new McpHttpClient({ url: s.url }).start().catch((e) => e as Error);
+    expect(err.message).toBe("HTTP 503: The mock is temporarily offline for maintenance.");
+    expect(err.message).not.toContain("jsonrpc");
+  });
+
+  it("a 401 says what to do about it (credentials go in the headers)", async () => {
+    const s = await serve((_m, _req, res) => res.writeHead(401, { "www-authenticate": "Bearer" }).end("unauthorized"));
+    closers.push(s.close);
+    const err = await new McpHttpClient({ url: s.url }).start().catch((e) => e as Error);
+    expect(err.message).toContain("HTTP 401");
+    expect(err.message).toContain("Headers box");
+    expect(err.message).toContain("Authorization");
+  });
+
+  it("an HTML answer is named for what it is (not an MCP endpoint)", async () => {
+    const s = await serve((_m, _req, res) =>
+      res.writeHead(404, { "content-type": "text/html" }).end("<!doctype html><h1>Not found</h1>"),
+    );
+    closers.push(s.close);
+    const err = await new McpHttpClient({ url: s.url }).start().catch((e) => e as Error);
+    expect(err.message).toContain("HTTP 404");
+    expect(err.message).toContain("not JSON-RPC");
+    expect(err.message).toContain("check the URL");
+    expect(err.message).not.toContain("<!doctype");
+  });
+
+  it("a 429 mentions the rate limit", async () => {
+    const s = await serve((_m, _req, res) => res.writeHead(429).end(""));
+    closers.push(s.close);
+    const err = await new McpHttpClient({ url: s.url }).start().catch((e) => e as Error);
+    expect(err.message).toBe("HTTP 429 — rate limited: wait a moment and Test again");
+  });
+
   it("logs the critical points (request, status, session, errors)", async () => {
     const logs: string[] = [];
     const s = await serve((m, _req, res) => {

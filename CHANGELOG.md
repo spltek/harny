@@ -167,6 +167,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   24x24 viewBox, no `width`/`height` on the root, `currentColor` everywhere, no ids or gradients, comments allowed
   because they are stripped — so a restyle is a matter of opening that folder, not of searching for `<svg`.
 
+### Fixed
+
+- **An MCP server that dies now says WHY — and, when we recognise it, what to do.** The exit message was a
+  `stderr.slice(-300)` of the tail, so a failing `npx` install (npm prints the cause FIRST and the echo LAST) reached
+  the panel as `MCP server exited (code=190 signal=-): y not empty, rename '…/content-disposition' -> …` — the middle
+  of "directory not empty", with the one line that names the fault (`npm error code ENOTEMPTY`) cut off. The client
+  keeps **both ends** of stderr (4 KB head + 2 KB tail), builds a bounded message out of them, waits for `close` when
+  it comes before the `exit` report, and appends a **remedy** for the failures we can name: `ENOTEMPTY` / `~/.npm/_npx`
+  → "run `rm -rf ~/.npm/_npx` and Test again", `EACCES` → check path and permissions, `ENOENT` → not on PATH. The
+  same for HTTP: a non-2xx answer used to be dumped raw (`HTTP 503: {"jsonrpc":"2.0","error":…,"id":null}`); it is
+  now one line — the message EXTRACTED from the JSON-RPC error, a web page named for what it is, plus the cure for
+  401/403 ("put the credentials in the Headers box"), 404/405 (wrong path) and 429 (rate limited).
+- **A server that died AFTER connecting stayed green with its tools still registered.** `onExit` existed on the stdio
+  client and nobody subscribed to it: after a crash the card kept saying ok, the tools stayed in the registry, and
+  every call failed with "MCP server is not running" until someone reconnected by hand. The manager now marks that
+  server down (with the real exit message), withdraws its tools **by prefix** and lets the registry re-register; a
+  deliberate `close()` marks the client `disposed`, so a reconnect is never mistaken for a crash.
+- **The MCP `inputSchema` was rebuilt instead of forwarded.** Only `type`, `properties` and `required` survived, so
+  `oneOf`/`anyOf`, `additionalProperties`, `$defs`/`$ref` and defaults were dropped — a schema using a `$ref` arrived
+  pointing at nothing. It is passed through now (`type: "object"` and a `properties` fallback are still ours), which
+  is what the spec asks of a client.
+- **Two MCP tools could silently collapse into one.** `a-b` and `a_b` sanitize to the same Harny name
+  (`mcp__server__a_b`): the registry kept the first and the second vanished without a word. The collision is logged,
+  the first wins, and the count on the card says what the model actually gets.
+- **`Test` demanded a command, so every remote server was untestable.** With the URL filled in and the command
+  legitimately empty, the panel answered "Enter a command first". It now accepts either transport; the editor's
+  **Save** is also refused while a run is working, because saving reconnects the servers — the guard the name toggle
+  and the tools panel already had.
+- **`McpManager.connect()` is serialized.** Activation fires `void mcp.connect()` and the UI fires its own (a save, a
+  toggle, the tools panel): two passes could run at once, each calling `dispose()` and killing the other's handshake
+  mid-flight — and two concurrent spawns of the same `npx -y <package>` extract into the SAME `_npx` cache entry,
+  which is one of the ways npm reaches the `ENOTEMPTY` above. Calls now queue, and a failed pass cannot block the next.
+
 ## [0.8.2] - 2026-10-23
 
 ### Fixed
