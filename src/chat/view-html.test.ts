@@ -155,6 +155,23 @@ describe("renderViewHtml", () => {
     expect(cssRule(html, ".subagent-status")).not.toContain("margin-left: auto");
   });
 
+  it("gives the queue/steer badge a box exactly one TEXT LINE tall", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    // Measured in Chromium: with the inherited default line-height the pill came out
+    // 14px against a 16.38px text line, and because the row aligns its children
+    // to the top (align-items: flex-start) all of the 3px padding ended up below
+    // it — 3 above, 5.38 below, on the Steer pill and on the Queued one alike.
+    // Matching the line box is what makes the two gaps equal without centring the
+    // label in a bubble that can grow to four lines.
+    const badge = cssRule(html, ".pending-badge");
+    expect(badge).toContain("line-height: calc(var(--fs-md) * 1.4)");
+    expect(badge).toContain("padding: 0 5px"); // no vertical padding: the line IS the height
+    expect(cssRule(html, ".pending-text")).toContain("line-height: 1.4"); // the value the badge mirrors
+  });
+
   it("renders sessions, tabs, messages and input containers", () => {
     const html = renderViewHtml({
       ...base,

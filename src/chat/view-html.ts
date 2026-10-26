@@ -740,7 +740,15 @@ ${renderViewConfig(deps)}
     .pending-msg.pending-steer { border-color: var(--accent); color: var(--fg); }
     .pending-badge {
       flex: 0 0 auto; font-size: var(--fs-sm); text-transform: uppercase; letter-spacing: 0.04em;
-      padding: 1px 5px; border-radius: 999px; background: var(--tool-bg); color: var(--muted);
+      /* ONE text line tall: the ROW's line-height x its font-size, the same box the
+         text next to it occupies. The badge used to inherit the default line-height,
+         so it came out 2.38px shorter than that line and — the row aligns children to
+         the top (align-items: flex-start) — all of the 3px padding ended up BELOW it
+         (measured: 3 above, 5.38 below, on both the Steer pill and the Queued one).
+         Matching the box makes the two gaps equal WITHOUT centring the label in a
+         bubble that can grow to several lines. */
+      line-height: calc(var(--fs-md) * 1.4);
+      padding: 0 5px; border-radius: 999px; background: var(--tool-bg); color: var(--muted);
     }
     .pending-msg.pending-steer .pending-badge { background: var(--accent); color: #fff; }
     /* The row is badge + content + actions: the text and its attachments share the
