@@ -805,6 +805,9 @@ function renderTabs(sessions: SessionInfo[]): void {
     tab.appendChild(close);
     tabsEl.appendChild(tab);
     tab.addEventListener("click", () => {
+      // A drag that just ended still fires a CLICK on the tab it started on: the
+      // tab was being moved, so it must not also switch session.
+      if (Date.now() - dragEndedAt < DRAG_CLICK_GRACE_MS) return;
       if (id !== activeId) vscode.postMessage({ type: "switchTab", id });
     });
   }
@@ -832,6 +835,170 @@ tabsEl.addEventListener(
   },
   { passive: false },
 );
+
+// ── Dragging a tab to reorder the strip ──
+// POINTER EVENTS, not HTML5 drag & drop: installDragAndDrop() claims dragenter /
+// dragover / drop on the WINDOW to attach dropped FILES, so a native tab drag would
+// be read as a file drop (empty dataTransfer, the "drag-over" glow, a pointless
+// attach attempt). Pointer events stay inside the strip and give the visuals for free.
+//
+// TWO visuals, because "what am I dragging?" and "where will it land?" are two
+// different questions:
+//  · the GHOST — the dragged tab ITSELF is lifted out of the flow (position: fixed;
+//    the same node, so its name and listeners travel with it) and follows the
+//    pointer, tilted and shadowed, so it reads as held in the hand;
+//  · the SLOT — a dashed placeholder of exactly the tab's width stays IN the strip
+//    and hops between the other tabs as the pointer crosses their midpoints, so the
+//    landing position is visible BEFORE releasing, and the tab lands exactly there.
+// Nothing is re-rendered mid-drag (a re-render would destroy the nodes the gesture
+// lives on): only the slot moves.
+const DRAG_THRESHOLD_PX = 4;
+/** Window after a drag in which the trailing click must NOT switch tab. */
+const DRAG_CLICK_GRACE_MS = 300;
+/** How close to the strip's edge the pointer must be for the strip to scroll itself. */
+const DRAG_EDGE_PX = 24;
+/** Pixels scrolled per move event while the pointer sits in the edge zone. */
+const DRAG_EDGE_STEP_PX = 10;
+/** The tab being dragged, floating out of the flow (undefined = no drag). */
+let dragTab: HTMLElement | undefined;
+/** The slot showing where the dragged tab will land. */
+let dragPlaceholder: HTMLElement | undefined;
+/** Where the pointer went down: the threshold is what separates a click from a drag. */
+let dragStartX = 0;
+/** Pointer position inside the tab at grab time, so the ghost does not jump on lift. */
+let dragOffsetX = 0;
+let dragOffsetY = 0;
+/** True once the pointer travelled past the threshold. */
+let dragMoved = false;
+/** When the last drag ended (see DRAG_CLICK_GRACE_MS). */
+let dragEndedAt = 0;
+
+tabsEl.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) return;
+  const target = e.target as HTMLElement | null;
+  if (target?.closest(".close")) return; // the × is not a drag handle
+  const tab = target?.closest<HTMLElement>(".tab");
+  if (!tab) return;
+  dragTab = tab;
+  dragStartX = e.clientX;
+  dragMoved = false;
+  // Keep receiving move/up even if the pointer leaves the panel: without the capture
+  // a drag that ends outside the bar would leave the strip mid-reorder, with no
+  // pointerup to commit it. jsdom has no capture — hence the optional call.
+  tab.setPointerCapture?.(e.pointerId);
+});
+
+/** Lift the dragged tab into a floating ghost and open the slot it leaves behind. */
+function startTabGhost(tab: HTMLElement, pointerX: number, pointerY: number): void {
+  const r = tab.getBoundingClientRect();
+  // The EXACT grab point: the ghost must not jump under the cursor when it lifts.
+  dragOffsetX = pointerX - r.left;
+  dragOffsetY = pointerY - r.top;
+  const slot = document.createElement("div");
+  slot.className = "tab-placeholder";
+  // The SAME box as the tab it replaces: the strip's layout must not jump either.
+  slot.style.width = r.width + "px";
+  slot.style.height = r.height + "px";
+  tabsEl.insertBefore(slot, tab);
+  dragPlaceholder = slot;
+  tab.classList.add("dragging");
+  tab.style.width = r.width + "px";
+  tab.style.height = r.height + "px";
+  tab.style.left = r.left + "px";
+  tab.style.top = r.top + "px";
+  tabsEl.classList.add("reordering");
+}
+
+/** Move the slot to the index the pointer is over: before the first tab whose
+ * midpoint lies to its right, else at the end. The ghost and the slot are skipped —
+ * they are the gesture, not targets. */
+function moveTabSlot(ghost: HTMLElement, pointerX: number): void {
+  const slot = dragPlaceholder;
+  if (!slot?.isConnected) return;
+  const tabs = [...tabsEl.querySelectorAll<HTMLElement>(".tab")].filter((t) => t !== ghost);
+  const before = tabs.find((t) => {
+    const r = t.getBoundingClientRect();
+    return pointerX < r.left + r.width / 2;
+  });
+  if (before) {
+    if (slot.nextElementSibling !== before) tabsEl.insertBefore(slot, before);
+  } else if (tabsEl.lastElementChild !== slot) {
+    tabsEl.appendChild(slot);
+  }
+}
+
+/** Scroll the strip while the pointer is held near one of its edges: a long row of
+ * tabs must stay reachable WITHOUT dropping the tab first. */
+function autoScrollStrip(pointerX: number): void {
+  const r = tabsEl.getBoundingClientRect();
+  if (!r.width) return; // no layout yet (or nothing to scroll)
+  if (pointerX < r.left + DRAG_EDGE_PX) tabsEl.scrollLeft -= DRAG_EDGE_STEP_PX;
+  else if (pointerX > r.right - DRAG_EDGE_PX) tabsEl.scrollLeft += DRAG_EDGE_STEP_PX;
+}
+
+window.addEventListener("pointermove", (e) => {
+  const tab = dragTab;
+  // A rebuild (switchView / refresh) replaced the nodes: that drag is over. Bailing
+  // out here is what keeps a stale reference from moving a node nobody can see.
+  if (!tab?.isConnected) {
+    dragTab = undefined;
+    dragPlaceholder = undefined; // it went with the rebuild
+    tabsEl.classList.remove("reordering");
+    return;
+  }
+  if (!dragMoved) {
+    if (Math.abs(e.clientX - dragStartX) < DRAG_THRESHOLD_PX) return;
+    dragMoved = true;
+    startTabGhost(tab, e.clientX, e.clientY);
+  }
+  e.preventDefault();
+  // The GHOST follows the pointer…
+  tab.style.left = e.clientX - dragOffsetX + "px";
+  tab.style.top = e.clientY - dragOffsetY + "px";
+  // …and the SLOT says where it will land.
+  moveTabSlot(tab, e.clientX);
+  autoScrollStrip(e.clientX);
+});
+
+/** Drop the ghost: put the tab where the slot is, or snap back when cancelled. */
+function endTabDrag(commit: boolean): void {
+  const tab = dragTab;
+  const slot = dragPlaceholder;
+  const moved = dragMoved;
+  dragTab = undefined;
+  dragPlaceholder = undefined;
+  dragMoved = false;
+  tabsEl.classList.remove("reordering");
+  if (!tab) return;
+  tab.classList.remove("dragging");
+  // Back into the flow BEFORE it is re-inserted, or it would keep its floating box.
+  tab.style.left = "";
+  tab.style.top = "";
+  tab.style.width = "";
+  tab.style.height = "";
+  // The tab LANDS exactly where the slot was drawn: the preview cannot lie.
+  if (slot?.isConnected) {
+    if (tab.isConnected) slot.parentNode?.replaceChild(tab, slot);
+    else slot.remove();
+  }
+  if (!moved) return; // a plain click: nothing to reorder
+  dragEndedAt = Date.now();
+  if (!commit || !tab.isConnected) {
+    // Cancelled: the strip goes back to the order the host still believes in.
+    if (tab.isConnected) renderTabs(currentSessions);
+    return;
+  }
+  const ids = [...tabsEl.querySelectorAll<HTMLElement>(".tab")].map((t) => t.dataset.id ?? "").filter(Boolean);
+  // Only a REAL change travels: dropping a tab where it already was must not
+  // cost the host a message.
+  if (ids.length !== openIds.length || ids.some((id, i) => id !== openIds[i])) {
+    openIds = ids; // the strip IS the order until the host sends the next state
+    vscode.postMessage({ type: "reorderTabs", ids });
+  }
+}
+
+window.addEventListener("pointerup", () => endTabDrag(true));
+window.addEventListener("pointercancel", () => endTabDrag(false));
 
 /** Disable the × of every WORKING session's tab (switching stays allowed). */
 function applyTabLocks(): void {

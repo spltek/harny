@@ -49,6 +49,31 @@ describe("SessionRegistry", () => {
     expect(store.create).toHaveBeenCalledWith("Project X");
   });
 
+  it("reorder re-applies the strip order and keeps the runtimes", () => {
+    const { registry } = build();
+    registry.create(); // s1
+    registry.create(); // s2
+    registry.create(); // s3
+    const before = new Map(registry.listOpenIds().map((id) => [id, registry.get(id)]));
+
+    registry.reorder(["s3", "s1", "s2"]);
+
+    expect(registry.listOpenIds()).toEqual(["s3", "s1", "s2"]);
+    // A reorder is cosmetic: same runtimes, same agents, nothing reloaded.
+    for (const [id, rt] of before) expect(registry.get(id)).toBe(rt);
+  });
+
+  it("reorder ignores unknown ids and APPENDS the open sessions the list forgot", () => {
+    const { registry } = build();
+    registry.create(); // s1
+    registry.create(); // s2
+
+    // A stale drag: "nope" is not open, s1 is missing from the list.
+    registry.reorder(["nope", "s2"]);
+
+    expect(registry.listOpenIds()).toEqual(["s2", "s1"]);
+  });
+
   it("openOrCreate reuses an already-open runtime", () => {
     const { registry, createAgent } = build();
     registry.create();

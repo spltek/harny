@@ -84,6 +84,25 @@ export class SessionRegistry {
     return [...this.open.keys()];
   }
 
+  /**
+   * Re-apply the strip order coming from the view (a tab dragged left or right).
+   *
+   * The Map's INSERTION order IS the tab order (`listOpenIds` feeds the strip), so
+   * reordering means rebuilding it. Defensive by design: ids that are not open are
+   * ignored (a stale drag) and open sessions missing from the list are APPENDED in
+   * their previous order — a partial list must never drop a runtime, which would
+   * make a tab (and a possibly still working agent) vanish from the strip.
+   */
+  reorder(ids: string[]): void {
+    const next = new Map<string, SessionRuntime>();
+    for (const id of ids) {
+      const rt = this.open.get(id);
+      if (rt && !next.has(id)) next.set(id, rt);
+    }
+    for (const [id, rt] of this.open) if (!next.has(id)) next.set(id, rt);
+    this.open = next;
+  }
+
   isOpen(id: string): boolean {
     return this.open.has(id);
   }

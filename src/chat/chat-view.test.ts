@@ -331,6 +331,21 @@ describe("ChatViewProvider", () => {
     expect(registry.isOpen("s1")).toBe(true);
   });
 
+  it("reorderTabs applies the dragged order without rebuilding the transcript", async () => {
+    const { provider, registry } = buildHarness();
+    const { view, handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await provider.createNew(); // s2
+    view.webview.postMessage.mockClear();
+
+    await handler({ type: "reorderTabs", ids: ["s2", "s1"] });
+
+    expect(registry.listOpenIds()).toEqual(["s2", "s1"]);
+    // The view already shows the new order: a switchView here would wipe and
+    // re-render the transcript for a purely cosmetic change.
+    expect(view.webview.postMessage).not.toHaveBeenCalled();
+  });
+
   it("queues modals FIFO: a second modal is only shown after the first resolves", async () => {
     const { provider } = buildHarness();
     const { handler, view } = resolveWith(provider);

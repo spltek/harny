@@ -903,6 +903,15 @@ export class ChatViewProvider implements WebviewViewProvider {
       case "closeTab":
         if (typeof msg.id === "string") await this.closeTab(msg.id);
         break;
+      case "reorderTabs":
+        // Drag & drop on the tab strip. The view has ALREADY moved the tab, so only
+        // the host's order is updated: a postSwitchView here would rebuild the
+        // transcript (and restore its scroll position) for a purely cosmetic change,
+        // and every later switchView carries the new order anyway.
+        if (Array.isArray(msg.ids)) {
+          this.registry.reorder(msg.ids.filter((id: unknown): id is string => typeof id === "string"));
+        }
+        break;
       case "newSession":
         await this.createNew();
         break;

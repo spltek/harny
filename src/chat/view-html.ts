@@ -326,12 +326,14 @@ ${renderViewConfig(deps)}
       max-width: 12rem; min-width: 5.5rem; flex-shrink: 0;
       /* sits flush on the strip's border (active covers it with its face) */
       margin-bottom: -1px;
+      /* Dragging a tab must MOVE it, never select its name. */
+      user-select: none;
     }
     /* The label takes the FREE space, so the × sits on the tab's right edge instead of
        hugging the end of the name. min-width 0 is what makes the ellipsis work: a flex
        item refuses to shrink below its content without it. */
     .tab > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-    .tab:hover:not(.active) {
+    .tab:hover:not(.active):not(.dragging) {
       color: var(--fg);
       background: linear-gradient(to bottom, var(--overlay-2), var(--overlay-1));
     }
@@ -354,6 +356,41 @@ ${renderViewConfig(deps)}
     /* A WORKING session's tab cannot be closed: its × is inert (switching the
        tab stays allowed). */
     .tab .close.disabled { opacity: 0.35; pointer-events: none; }
+
+    /* Dragging a tab to reorder the strip (view.ts uses POINTER events, not HTML5
+       drag & drop: that channel belongs to the file drops).
+
+       The GHOST is the dragged tab ITSELF, taken OUT of the flow: it follows the
+       pointer, lifted and slightly tilted, so it reads as held in the hand and the
+       strip shows where it came from. */
+    .tab.dragging {
+      position: fixed; z-index: 30; margin: 0; pointer-events: none;
+      cursor: grabbing; opacity: 0.96;
+      color: var(--fg); border-color: var(--border); border-bottom: 1px solid var(--border);
+      border-radius: 6px;
+      background: linear-gradient(to bottom, var(--overlay-3), var(--overlay-1)),
+        var(--assistant-msg);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45), inset 0 1px 0 var(--overlay-3);
+      transform: scale(1.04) rotate(-0.6deg);
+    }
+    /* The SLOT is where it will land: the tabs part around it, a dashed accent frame
+       fills the gap, and the solid bar on its leading edge is the "lineetta" that says
+       exactly where the tab drops. */
+    .tab-placeholder {
+      position: relative; flex-shrink: 0;
+      border-radius: 6px 6px 0 0; margin-bottom: -1px;
+      border: 1px dashed var(--accent-line);
+      background: var(--accent-tint-soft);
+    }
+    .tab-placeholder::before {
+      content: ""; position: absolute; left: -3px; top: 2px; bottom: -1px; width: 2px;
+      border-radius: 1px; background: var(--accent);
+      box-shadow: 0 0 6px var(--accent-glow);
+    }
+    /* While reordering: the whole strip shows the grabbing cursor and the tabs do
+       not repaint their hover state as the slot hops between them. */
+    #tabs.reordering { cursor: grabbing; }
+    #tabs.reordering .tab { transition: none; }
 
     /* Chat */
     /* scrollbar-gutter: stable reserves the scrollbar slot even when no

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Session tabs can be dragged left or right.** The strip only ever showed the sessions in the order
+  they were opened, so the tab you were working on could sit at the far end of a long row and the only
+  way to bring it closer was to close and reopen everything. Dragging a tab now moves it wherever you
+  drop it, and the move is SHOWN before you release: the tab itself lifts out of the strip and follows
+  the pointer as a tilted, shadowed GHOST (same node, so its name travels with it), while a dashed SLOT
+  of exactly its width hops between the other tabs with an accent bar on its leading edge — the drop
+  position is drawn, not guessed, and the tab lands precisely where the slot was. The new order is
+  committed on release, one message to the host; cancelling (or a `switchView` arriving mid-drag)
+  snaps the strip back. It is deliberately NOT HTML5 drag & drop: that channel is already claimed by
+  the window-level file-drop handlers, which would have read a tab drag as a file drop (empty
+  `dataTransfer`, the "drag-over" glow, a pointless attach attempt). Pointer events also give the two
+  things a tab strip needs — a click/tap still switches session (a 4px threshold tells them apart, and
+  the click a drag leaves behind is swallowed) and the strip auto-scrolls while the pointer is held
+  near one of its edges, so a tab can be carried past the visible row. Host-side the order is the
+  registry's insertion order, so `reorder` rebuilds it: runtimes are untouched (no reload, no
+  re-render of the transcript) and a stale or partial list can never lose a tab — unknown ids are
+  ignored and open sessions missing from the list are appended.
+
 ## [0.8.2] - 2026-10-23
 
 ### Fixed

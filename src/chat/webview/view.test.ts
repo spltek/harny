@@ -557,6 +557,76 @@ describe("view webview client", () => {
     expect(document.querySelector(".msg.user")?.textContent).toBe("hello");
   });
 
+  it("dragging a tab left or right reorders the strip and tells the host", async () => {
+    await loadView();
+    const order = () => [...document.querySelectorAll<HTMLElement>("#tabs .tab")].map((t) => t.dataset.id);
+    expect(order()).toEqual(["a", "b"]);
+
+    // jsdom has no layout, so every tab measures 0: a pointer past all midpoints
+    // means "past the last tab" — the dragged one lands at the end.
+    const first = document.querySelector<HTMLElement>('.tab[data-id="a"]')!;
+    first.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 10 }));
+    window.dispatchEvent(new MouseEvent("pointermove", { clientX: 120 }));
+    window.dispatchEvent(new MouseEvent("pointerup"));
+
+    expect(order()).toEqual(["b", "a"]);
+    expect(posted).toContainEqual({ type: "reorderTabs", ids: ["b", "a"] });
+  });
+
+  it("while dragging, the tab lifts into a ghost and a slot shows where it lands", async () => {
+    await loadView();
+    // The strip as the user reads it: the ghost is the tab in flight, so it is not
+    // part of "the order"; the SLOT is the hole it left.
+    const slots = () =>
+      [...document.querySelectorAll<HTMLElement>("#tabs > *")]
+        .filter((el) => !el.classList.contains("dragging"))
+        .map((el) => (el.classList.contains("tab-placeholder") ? "SLOT" : (el.dataset.id as string)));
+    expect(slots()).toEqual(["a", "b"]);
+
+    const first = document.querySelector<HTMLElement>('.tab[data-id="a"]')!;
+    first.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 10 }));
+    window.dispatchEvent(new MouseEvent("pointermove", { clientX: 120 }));
+
+    // The tab is HELD: out of the flow, positioned at the pointer, and the strip now
+    // shows the gap at the END — where it will drop.
+    expect(first.classList.contains("dragging")).toBe(true);
+    expect(first.style.left).not.toBe("");
+    expect(slots()).toEqual(["b", "SLOT"]);
+
+    // Dropped: the slot is gone and the tab sits exactly where it was drawn.
+    window.dispatchEvent(new MouseEvent("pointerup"));
+    expect(document.querySelector(".tab-placeholder")).toBeNull();
+    expect(first.classList.contains("dragging")).toBe(false);
+    expect(first.style.left).toBe("");
+    expect(slots()).toEqual(["b", "a"]);
+  });
+
+  it("cancelling a drag snaps the strip back and posts nothing", async () => {
+    await loadView();
+    const first = document.querySelector<HTMLElement>('.tab[data-id="a"]')!;
+    first.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 10 }));
+    window.dispatchEvent(new MouseEvent("pointermove", { clientX: 120 }));
+    window.dispatchEvent(new MouseEvent("pointercancel"));
+
+    expect(document.querySelector(".tab-placeholder")).toBeNull();
+    expect([...document.querySelectorAll<HTMLElement>("#tabs .tab")].map((t) => t.dataset.id)).toEqual(["a", "b"]);
+    expect(posted.some((m: any) => m?.type === "reorderTabs")).toBe(false);
+  });
+
+  it("a tab dropped where it already was posts nothing, and the trailing click does not switch", async () => {
+    await loadView();
+    const second = document.querySelector<HTMLElement>('.tab[data-id="b"]')!;
+    second.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 10 }));
+    window.dispatchEvent(new MouseEvent("pointermove", { clientX: 120 }));
+    window.dispatchEvent(new MouseEvent("pointerup"));
+
+    // Already the last tab: nothing to report.
+    expect(posted.some((m: any) => m?.type === "reorderTabs")).toBe(false);
+    // The click the browser fires after a drag must NOT switch session.
+    second.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(posted.some((m: any) => m?.type === "switchTab")).toBe(false);
+  });
+
   it("a plain tab switch keeps the LIST and the tab NAMES (an omitted list means unchanged)", async () => {
     // The host re-sends the session list only when it really changes (create, rename,
     // branch, delete, open-from-a-row); on a tab click it posts `sessions: undefined`,
