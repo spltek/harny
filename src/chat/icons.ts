@@ -157,15 +157,29 @@ function flatten(markup: string): string {
  * only what belongs to the CALLER is overridden — width/height (always the
  * requested size) and aria-hidden (icons are decorative here: the accessible
  * name always comes from the button or from the text next to the icon).
+ *
+ * An attribute in `attrs` OVERRIDES the artwork's own, so the same drawing can
+ * live at two weights: the trash is 1.5 like every other tool mark, and the
+ * session row — where it sits next to a 13px pencil at 2 — asks for 2 back.
+ * Without this, one of the two families would have had to keep a copy of the
+ * file, which is how two marks drift apart.
  */
 export function icon(name: IconName, size = 14, attrs = ""): string {
   const raw = flatten(ARTWORK[name]);
   const open = /^<svg\b([^>]*)>/.exec(raw);
   // Defensive: a file without an <svg> root is passed through untouched.
   if (!open) return raw;
-  const kept = open[1].replace(/\s(?:width|height|aria-hidden)="[^"]*"/g, "").trimEnd();
   const extra = attrs.trim() ? " " + attrs.trim() : "";
-  return `<svg${extra} width="${size}" height="${size}"${kept} aria-hidden="true">${raw.slice(open[0].length)}`;
+  // width/height/aria-hidden always belong to the caller; anything else only
+  // when the caller actually passes it.
+  const overridden = new Set([...attrs.matchAll(/([a-zA-Z-]+)\s*=/g)].map((m) => m[1]));
+  const drop = ["width", "height", "aria-hidden", ...overridden].filter((a) => a !== "width" && a !== "height");
+  let kept = open[1].replace(/\s(?:width|height)="[^"]*"/g, "");
+  for (const attr of drop) {
+    kept = kept.replace(new RegExp(`\\s${attr}="[^"]*"`, "g"), "");
+  }
+  const keptAttrs = kept.trimEnd();
+  return `<svg${extra} width="${size}" height="${size}"${keptAttrs} aria-hidden="true">${raw.slice(open[0].length)}`;
 }
 
 /**

@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
-  <!-- Sub-agent bubble glyph: a small robot head. -->
-  <rect x="4" y="8" width="16" height="11" rx="3" stroke="currentColor" stroke-width="2"/>
-  <circle cx="9.2" cy="13" r="1.5" fill="currentColor"/>
-  <circle cx="14.8" cy="13" r="1.5" fill="currentColor"/>
-  <path d="M12 4.2v3.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-  <circle cx="12" cy="3" r="1.4" fill="currentColor"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Sub-agent / Delegate: the bot face that stands for "someone else doing the
+       work". The drawing came in as an SVG; the geometry is verbatim (head,
+       eyes, antenna, ears). The 20% face fill is dropped, like the replace mark,
+       so the set stays outline-only; paint lives on the root. -->
+  <path d="M9.3 11.48v2.64m5.65-2.64v2.64m5.25-.39h2.12m-20.65 0H3.8m8.5-6.62c0-1.35 0-2.03-.32-2.52a2 2 0 0 0-.61-.6c-.5-.32-1.17-.32-2.52-.32h-.21"/>
+  <rect width="16.4" height="12.76" x="3.8" y="7.11" rx="3"/>
 </svg>

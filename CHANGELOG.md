@@ -55,6 +55,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `stroke-width 1.5`, the ones that arrived as production drawings keep their own (the trash and the swap
   arrows are 2) and `skill` is the only filled one — `media/icons/ui/icon-sheet.html` shows them all at
   14 · 16 · 24 · 48 px on both surfaces, which is how that decision gets settled.
+- **One weight for the tool marks, and the bot that was missing.** The marks had arrived in two weights — the trash
+  kept the 2 it had as a row button while everything else was 1.5 — so the set is now uniform at 1.5 on the same
+  24×24 grid. The one drawing that genuinely serves two families (the trash: Delete's mark *and* the session
+  row's button, where it sits next to a 13 px pencil at 2) is still ONE file: `icon()` now lets the caller
+  override an artwork attribute, so the row asks for `stroke-width="2"` and the transcript gets 1.5. A second
+  copy of the file was the alternative, and a copy is exactly how two marks drift apart. `skill` remains the only
+  filled mark, because it came in that way — a fill is not a weight. The sub-agent/Delegate mark is now the bot
+  face that came in as an SVG (head, eyes, antenna, ears, geometry verbatim), with its 20% face fill dropped like
+  the replace mark's, so the glyph matches the rest of the set.
 
 ### Changed
 

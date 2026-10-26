@@ -750,7 +750,7 @@ function renderSessions(sessions: SessionInfo[]): void {
     actions.innerHTML =
       '<button class="branch" title="Branch (copy) this session">' + icon("branch", 13) + "</button>" +
       '<button class="rename" title="Rename">' + icon("pencil", 13) + "</button>" +
-      '<button class="del" title="Delete">' + icon("trash", 13) + "</button>";
+      '<button class="del" title="Delete">' + icon("trash", 13, 'stroke-width="2"') + "</button>";
     const branchBtn = actions.querySelector(".branch") as HTMLButtonElement;
     (actions.querySelector(".rename") as HTMLButtonElement).addEventListener("click", (e) => {
       e.stopPropagation();
@@ -3161,7 +3161,7 @@ function renderSessionsManager(): void {
     const del = document.createElement("button");
     del.className = "secondary-ghost del-btn";
     del.title = "Delete this session";
-    del.innerHTML = icon("trash", 13);
+    del.innerHTML = icon("trash", 13, 'stroke-width="2"');
     del.addEventListener("click", () => vscode.postMessage({ type: "deleteSession", id: s.id }));
     actions.appendChild(folderBtn);
     actions.appendChild(del);

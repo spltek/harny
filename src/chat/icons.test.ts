@@ -117,6 +117,17 @@ describe("icon registry", () => {
     expect(() => readFileSync(join(process.cwd(), "media", "icons", "ui", "delete.svg"), "utf8")).toThrow();
   });
 
+  it("lets the caller override an artwork attribute (one drawing, two weights)", () => {
+    // The trash is a tool mark (1.5, like every other mark) AND a row button,
+    // where it sits next to a 13px pencil at 2. One file, two weights — a copy
+    // of the file is how two marks drift apart.
+    expect(icon("trash", 13)).toContain('stroke-width="1.5"');
+    const heavy = icon("trash", 13, 'stroke-width="2"');
+    expect(heavy).toContain('stroke-width="2"');
+    expect(heavy).not.toContain('stroke-width="1.5"');
+    expect(heavy.match(/stroke-width=/g)).toHaveLength(1);
+  });
+
   it("falls back to the wrench for a tool nobody has drawn", () => {
     // Not a hole in the header: an unknown tool must still read as "some tool".
     // The wrench keeps a trailing space: it is text, the svg gets its gap in CSS.

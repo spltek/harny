@@ -37,9 +37,11 @@
       <code>strreplace.svg</code>, every MCP tool shares the plug, and an unknown name keeps the wrench.
     </p>
     <p class="lead">
-      Weight is not uniform, on purpose: most are <code>stroke-width 1.5</code>, while the marks that came in
-      as production drawings keep their own weight (the trash and the swap arrows are 2) and <code>skill</code>
-      is the only FILLED one.
+      One weight, one family: every tool mark is <code>stroke-width 1.5</code> on the same 24×24 grid. The
+      chrome (buttons, chevrons) keeps its own heavier weights — at 11–15 px a thinner line disappears — and where
+      the same drawing has to serve both, the call site asks for the weight it needs
+      (<code>icon("trash", 13, 'stroke-width="2"')</code>) instead of keeping a second copy of the file.
+      <code>skill</code> is the only filled mark: it came in that way.
     </p>
 
     <h2>On a light surface</h2>
