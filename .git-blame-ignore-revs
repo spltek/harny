@@ -1,0 +1,12 @@
+# Commits whose only content is formatting: git blame should look THROUGH them,
+# so a line still points at the person who decided what it does, not at the day
+# prettier rewrapped it.
+#
+# Enable it (once per clone):
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Everything listed here must be a commit that changed NO behaviour. The one
+# below passed typecheck and all 1881 tests before and after, untouched.
+
+# chore(format): run prettier over src (mechanical, no behaviour change)
+d61882bb0bca1f97d2395115570383238055a31e
