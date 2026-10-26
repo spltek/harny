@@ -3044,6 +3044,35 @@ describe("view webview client", () => {
     expect(block.querySelectorAll(".todo-item.status-completed")).toHaveLength(1);
   });
 
+  it("keeps a task's text as TEXT — a todo is model data, never markup", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    hostMessage({ type: "toolCall", id: "td5", name: "TodoWrite", arguments: { todos: [] } });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "td5",
+      output: '## Task List\n\n[pending] <img src=x onerror="boom()"> **not bold**',
+      isError: false,
+    });
+    const block = document.querySelector(".todo-block") as HTMLElement;
+    expect(block.querySelector("img")).toBeNull();
+    expect(block.querySelector("strong")).toBeNull();
+    expect(block.querySelector(".todo-text")?.textContent).toBe('<img src=x onerror="boom()"> **not bold**');
+  });
+
+  it("shows no task list when the result has no recognisable status", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    // A changed result shape must degrade to "no list", never to a broken one.
+    hostMessage({ type: "toolCall", id: "td6", name: "TodoWrite", arguments: { todos: [] } });
+    hostMessage({ type: "toolResult", toolCallId: "td6", output: "## Task List\n\nnothing to do", isError: false });
+    expect(document.querySelector(".todo-block")).toBeNull();
+  });
+
   it("renders a Write preview as an all-additions diff bubble", async () => {
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;

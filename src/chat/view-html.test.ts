@@ -172,6 +172,33 @@ describe("renderViewHtml", () => {
     expect(cssRule(html, ".pending-text")).toContain("line-height: 1.4"); // the value the badge mirrors
   });
 
+  it("styles the Tasks block as a scannable list, not a wall of text", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+    });
+    // The block hangs off the tool header with a rule on the left: it reads as a
+    // continuation of the tool, not as another tool.
+    const block = cssRule(html, ".todo-block");
+    expect(block).toContain("border-left: 2px solid var(--border)");
+    expect(block).toContain("padding-left: 8px");
+    // The two ways a list like this breaks: the mark shrinking under a long task, and
+    // the text refusing to wrap. Both are pinned here.
+    expect(cssRule(html, ".todo-mark")).toContain("flex: 0 0 auto");
+    const text = cssRule(html, ".todo-text");
+    expect(text).toContain("min-width: 0");
+    expect(text).toContain("overflow-wrap: anywhere");
+    // Rows align to the TOP: a task that wraps to two lines must not push its mark
+    // down to the middle (the pending-badge lesson, one year of pixel grief ago).
+    expect(cssRule(html, ".todo-item")).toContain("align-items: flex-start");
+    // The states must be readable without reading: struck through + tinted tick for
+    // done, accent for the running one.
+    expect(cssRule(html, ".todo-item.status-completed .todo-text")).toContain("line-through");
+    expect(cssRule(html, ".todo-item.status-completed .todo-mark")).toContain("var(--ok)");
+    expect(cssRule(html, ".todo-item.status-cancelled .todo-text")).toContain("line-through");
+    expect(cssRule(html, ".todo-item.status-in_progress .todo-mark")).toContain("var(--accent)");
+  });
+
   it("renders sessions, tabs, messages and input containers", () => {
     const html = renderViewHtml({
       ...base,
