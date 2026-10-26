@@ -8,7 +8,7 @@ import { clampContextWindow, clampOutputTokens, DEFAULT_CONTEXT_WINDOW, DEFAULT_
 import { clampTemperature, clampTopP, TEMPERATURE_MAX, TEMPERATURE_MIN, TEMPERATURE_STEP } from "../temperature";
 // Icon/glyph artwork is FILES under media/icons/, never markup in here (see
 // src/chat/icons.ts): this module only names the icon and its size.
-import { icon, fileBadgeIcon } from "../icons";
+import { icon, toolIcon, fileBadgeIcon } from "../icons";
 // The SAME boundary the core uses to decide what the model receives: importing it
 // (it is pure and dependency-free) is what keeps the transcript's marker and the
 // request from ever disagreeing about where the window starts.
@@ -1425,7 +1425,7 @@ function closeImageLightbox(): void {
 }
 
 function addThinkingBlock(text: string, beforeEl?: HTMLElement | null, opts?: { pulse?: boolean; label?: string }): HTMLDivElement {
-  const block = makeThinkingBlock(opts?.label ?? "🤔 Thinking...", text, undefined, beforeEl);
+  const block = makeThinkingBlock(opts?.label ?? icon("thinking", 13) + "Thinking...", text, undefined, beforeEl);
   // Live reasoning in progress: the block pulses (accent edges) until done.
   // Historical blocks re-rendered from the transcript pass pulse:false —
   // they are not animating and must stay quiet (otherwise they pulse forever).
@@ -1484,7 +1484,7 @@ function addToolCall(name: string, args: unknown, beforeEl?: HTMLElement | null)
   div.innerHTML =
     '<div class="tool-header">' +
     '<span class="tool-toggle">▶</span>' +
-    '<span class="tool-name">🔧 ' + escapeHtml(name) + "</span>" +
+    '<span class="tool-name">' + toolIcon(name) + escapeHtml(name) + "</span>" +
     (target ? '<span class="tool-path" title="' + escapeHtml(target) + '">' + escapeHtml(target) + "</span>" : "") +
     "</div>" +
     '<div class="tool-details collapsed">' +
@@ -1758,7 +1758,8 @@ function handleSubAgentEvent(parentId: string, event: SubAgentStreamEvent): void
     const id = event.toolCall.id ?? event.toolCall.name;
     line.dataset.id = id;
     const target = toolTargetArg(event.toolCall.arguments);
-    line.textContent = "🔧 " + event.toolCall.name + (target ? " " + target : "");
+    line.innerHTML = toolIcon(event.toolCall.name) + escapeHtml(event.toolCall.name) +
+      (target ? " " + escapeHtml(target) : "");
     log.appendChild(line);
     subAgentToolEls.set(parentId + ":" + id, line);
     scrollDown();
@@ -5243,7 +5244,7 @@ window.addEventListener("message", (e) => {
         const duringAnswer = Boolean(currentResultEl && currentRawText.trim());
         flushStreamingMd();
         if (duringAnswer) {
-          currentThinkingBlock = addThinkingBlock("", currentResultEl, { label: "💭 Thought during this answer" });
+          currentThinkingBlock = addThinkingBlock("", currentResultEl, { label: icon("thinking", 13) + "Thought during this answer" });
           currentThinkingText = "";
           // NOTE: the bubble is NOT closed and `currentRawText` is NOT reset: the
           // next deltas repaint the SAME bubble with the whole answer.
@@ -5282,7 +5283,7 @@ window.addEventListener("message", (e) => {
         workingEl.innerHTML =
           msg.name === "Delegate"
             ? "● Working... " + SUBAGENT_ICON + " sub-agent"
-            : "● Working... 🔧 " + escapeHtml(msg.name);
+            : "● Working... " + toolIcon(msg.name) + escapeHtml(msg.name);
       }
       clearThinkingBlock();
       currentThinkingText = "";
@@ -5930,7 +5931,7 @@ function replayLiveTurn(lt: SessionLiveProjection | undefined): void {
       workingEl.innerHTML =
         tc.name === "Delegate"
           ? "● Working... " + SUBAGENT_ICON + " sub-agent"
-          : "● Working... 🔧 " + escapeHtml(tc.name);
+          : "● Working... " + toolIcon(tc.name) + escapeHtml(tc.name);
     }
   }
   // Then the nested logs, through the SAME handler the live events use

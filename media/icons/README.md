@@ -1,22 +1,44 @@
 # media/icons — the graphic assets
 
-Every icon and glyph the chat panel draws lives here as a standalone SVG file.
-No icon artwork is written inside TypeScript anymore: the code asks for a name
-(`icon("gear", 14)`) and `src/chat/icons.ts` renders the file.
+Every icon and glyph the panel draws lives here as a standalone SVG file.
+No icon artwork is written inside TypeScript: the code asks for a name
+(`icon("gear", 14)`, `toolIcon(name)`) and `src/chat/icons.ts` renders the file.
 
 ```
 media/icons/
-  ui/       chrome: buttons, chevrons, toggles (24x24, currentColor)
+  ui/       chrome (buttons, chevrons, toggles) and ONE MARK PER TOOL
   glyphs/   semantic marks inside the transcript (sub-agent, history, file badge)
 ```
+
+`icon-sheet.html` in `ui/` is the contact sheet: open it in a browser to see
+every mark at 14 · 16 · 24 · 48 px on a light and a dark surface.
 
 The brand mark (`media/icon.svg`) stays one level up: it is served at runtime
 through `asWebviewUri` (activity bar icon + empty-state logo), not inlined.
 
+## The tool marks
+
+One file per tool, named after the tool (`StrReplace` → `strreplace.svg`).
+`toolIcon(name)` in `src/chat/icons.ts` owns the mapping, so a new tool needs a
+file and one line there — nothing else.
+
+| Tool | Artwork |
+|---|---|
+| Read · Write · StrReplace · Edit | `read` · `write` · `strreplace` · `edit` |
+| Shell · Grep · Glob · ReadLints | `shell` · `grep` · `glob` · `readlints` |
+| Skill · TodoWrite · WebSearch · WebFetch | `skill` · `todowrite` · `websearch` · `webfetch` |
+| Delete | **`trash`** — the same drawing as the session trash, one file, so they cannot drift |
+| every MCP tool (`mcp__server__tool`) | `mcp` — one plug for all of them |
+| Delegate | `glyphs/subagent` |
+| Thinking | `thinking` |
+
+A name nobody has drawn yet keeps the old wrench (🔧): a tool must still read as
+"some tool" rather than leaving a hole in the header.
+
 ## Drawing rules
 
-1. **24x24 `viewBox`.** Every file is drawn on the same square canvas; the call
-   site picks the rendered size (`icon(name, 14)`).
+1. **24x24 `viewBox`.** Every file is drawn on the same canvas; the call site
+   picks the rendered size (`icon(name, 14)`).
 2. **No `width`/`height`** on the root `<svg>`: the caller owns the size.
 3. **`currentColor`** for every `stroke` and `fill`. That is what makes an icon
    follow the palette and the light/dark theme without a second copy.
@@ -25,9 +47,14 @@ through `asWebviewUri` (activity bar icon + empty-state logo), not inlined.
    is an image, not an icon.)
 5. **Comments are allowed** (`<!-- … -->`): they are stripped at build time, so
    design notes can stay next to the path they explain.
-6. **Round caps** (`stroke-linecap="round"`) for anything hand-drawn; stroke
-   widths stay in the 1.8–2.5 range, with 2.5 reserved for the small 10–15 px
-   chrome icons where a thinner line would disappear.
+6. **Paint lives on the root** when it is uniform (`fill`, `stroke`,
+   `stroke-width`, caps, joins). It stays per-element only where the drawing is
+   not uniform — the file badge template, and nothing else today.
+
+Weight is deliberately not uniform: most marks are `stroke-width 1.5`, the ones
+that arrived as production drawings keep their own weight (the trash and the
+swap arrows are 2), and `skill` is the only FILLED one. That is a design
+decision to settle, not an accident — see the icon sheet.
 
 ## How the files reach the bundle
 
@@ -44,6 +71,8 @@ Because the artwork is inlined, this folder is excluded from the packaged VSIX
 ## Adding an icon
 
 1. Drop the file in `ui/` or `glyphs/` (kebab-case name).
-2. Import it in `src/chat/icons.ts` and add it to the `ARTWORK` map. The map is
-   typed, so a typo in a call site fails `npm run typecheck`.
-3. Use `icon("name", size)` where you need it.
+2. Import it in `src/chat/icons.ts` and add it to the `ARTWORK` map (plus, for a
+   tool, the `TOOL_ARTWORK` line). The maps are typed, so a typo in a call site
+   fails `npm run typecheck`.
+3. Use `icon("name", size)` — or nothing at all, if it is a tool: `toolIcon`
+   picks it up from the tool name.

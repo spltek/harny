@@ -41,6 +41,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-render of the transcript) and a stale or partial list can never lose a tab — unknown ids are
   ignored and open sessions missing from the list are appended.
 
+- **A tool call now wears the mark of ITS tool.** The transcript header read `🔧 Read` for every tool in the
+  registry — the same wrench for `StrReplace`, for `Grep`, for `Delegate`, and for anything an MCP server
+  exposed — and the thinking block opened on a 🤔. Both are gone: `media/icons/ui/` now holds one drawing per
+  tool (`read`, `write`, `strreplace`, `edit`, `shell`, `grep`, `glob`, `skill`, `todowrite`, `websearch`,
+  `webfetch`, `readlints`, `thinking`), `src/chat/icons.ts` maps a tool NAME to its artwork (`toolIcon`), and
+  the bubble, the working bar and the sub-agent log all ask that map. Rules worth knowing: **Delete has no file
+  of its own** — it is the same drawing as the session trash, one file, so the two can never drift; **every MCP
+  tool shares one mark** (the plug), because there can be any number of them and a per-server drawing would be
+  noise; and a name nobody has drawn **keeps the wrench**, since a tool must still read as "some tool" rather
+  than leaving a hole in the header. The thinking block's label is the brain, in both places it appears (live
+  reasoning and the "thought during this answer" note). Weight is deliberately not uniform yet: most marks are
+  `stroke-width 1.5`, the ones that arrived as production drawings keep their own (the trash and the swap
+  arrows are 2) and `skill` is the only filled one — `media/icons/ui/icon-sheet.html` shows them all at
+  14 · 16 · 24 · 48 px on both surfaces, which is how that decision gets settled.
+
 ### Changed
 
 - **Icons and glyphs are graphic ASSETS now, not markup buried in the code.** Every icon the panel draws used to be an

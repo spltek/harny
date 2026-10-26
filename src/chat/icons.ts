@@ -2,10 +2,11 @@
  * Icon registry — the ONLY place icon artwork enters Harny's code.
  *
  * The artwork lives as standalone files under media/icons/ (see the README
- * there): `ui/` is the chrome — buttons, chevrons, toggles — and `glyphs/` are
- * the semantic marks inside the transcript. Redrawing the whole set means
- * editing those files: no markup, no test and no CSS change (the shapes use
- * `currentColor`, so they keep following the palette).
+ * there): `ui/` is the chrome and the tool marks — buttons, chevrons, toggles,
+ * and one mark per tool — and `glyphs/` are the semantic marks inside the
+ * transcript. Redrawing a set means editing those files: no markup, no test and
+ * no CSS change (the shapes use `currentColor`, so they keep following the
+ * palette).
  *
  * The files are inlined at BUILD time, never fetched at runtime:
  *   - esbuild   → `loader: { ".svg": "text" }` (scripts/build-*.mjs, dev.mjs)
@@ -30,6 +31,21 @@ import sparkles from "../../media/icons/ui/sparkles.svg";
 import check from "../../media/icons/ui/check.svg";
 import model from "../../media/icons/ui/model.svg";
 import eye from "../../media/icons/ui/eye.svg";
+// One mark per tool: these are what a tool call wears in the transcript.
+import read from "../../media/icons/ui/read.svg";
+import write from "../../media/icons/ui/write.svg";
+import strreplace from "../../media/icons/ui/strreplace.svg";
+import edit from "../../media/icons/ui/edit.svg";
+import shell from "../../media/icons/ui/shell.svg";
+import grep from "../../media/icons/ui/grep.svg";
+import glob from "../../media/icons/ui/glob.svg";
+import skill from "../../media/icons/ui/skill.svg";
+import todowrite from "../../media/icons/ui/todowrite.svg";
+import websearch from "../../media/icons/ui/websearch.svg";
+import webfetch from "../../media/icons/ui/webfetch.svg";
+import readlints from "../../media/icons/ui/readlints.svg";
+import mcp from "../../media/icons/ui/mcp.svg";
+import thinking from "../../media/icons/ui/thinking.svg";
 import subagent from "../../media/icons/glyphs/subagent.svg";
 import history from "../../media/icons/glyphs/history.svg";
 import fileBadge from "../../media/icons/glyphs/file-badge.svg";
@@ -53,6 +69,20 @@ const ARTWORK = {
   check,
   model,
   eye,
+  read,
+  write,
+  strreplace,
+  edit,
+  shell,
+  grep,
+  glob,
+  skill,
+  todowrite,
+  websearch,
+  webfetch,
+  readlints,
+  mcp,
+  thinking,
   subagent,
   history,
   fileBadge,
@@ -62,6 +92,50 @@ export type IconName = keyof typeof ARTWORK;
 
 /** The registered names, in the order they are declared (tests walk this). */
 export const ICON_NAMES = Object.keys(ARTWORK) as IconName[];
+
+/**
+ * Tool name → artwork. The keys are the tool names as the registry spells them,
+ * lowered and stripped of anything that is not a letter ("StrReplace" →
+ * "strreplace"), so a call site can pass the raw name it already has.
+ *
+ * Delete is NOT a file of its own: it is the same drawing as the session trash
+ * (media/icons/ui/trash.svg), and one file means they can never drift apart.
+ */
+const TOOL_ARTWORK: Record<string, IconName> = {
+  read: "read",
+  write: "write",
+  strreplace: "strreplace",
+  edit: "edit",
+  delete: "trash",
+  shell: "shell",
+  grep: "grep",
+  glob: "glob",
+  skill: "skill",
+  todowrite: "todowrite",
+  websearch: "websearch",
+  webfetch: "webfetch",
+  readlints: "readlints",
+  delegate: "subagent",
+};
+
+/**
+ * The mark a tool call wears: `toolIcon("StrReplace")` → its artwork.
+ *
+ * Every tool exposed by an MCP server shares ONE mark (the plug): there can be
+ * any number of them and a per-server drawing is not worth the noise.
+ *
+ * An unknown name returns the wrench it always had: a tool we have not drawn yet
+ * must still be recognisable as "some tool", and silently rendering nothing
+ * would leave an empty space in the header. The wrench carries its OWN trailing
+ * space — it is text, and the flex `gap` that separates an <svg> from the name
+ * does not exist for it.
+ */
+export function toolIcon(name: string, size = 13): string {
+  if (name.startsWith("mcp__")) return icon("mcp", size);
+  const key = name.toLowerCase().replace(/[^a-z]/g, "");
+  const artwork = TOOL_ARTWORK[key];
+  return artwork ? icon(artwork, size) : "🔧 ";
+}
 
 /** The artwork is written for humans (one tag per line); the DOM only cares
  * about the drawing. Comments stay available for design notes, and the

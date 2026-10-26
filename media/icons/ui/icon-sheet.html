@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Harny — icon sheet</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0; padding: 28px 30px 42px; background: #191919; color: #e9e2da;
+        font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      h1 { font: 600 17px/1.25 ui-sans-serif, system-ui, sans-serif; margin: 0 0 6px; }
+      p.lead { margin: 0 0 8px; color: #9d958d; max-width: 84ch; }
+      h2 {
+        font: 600 11px/1 ui-sans-serif, system-ui, sans-serif; text-transform: uppercase;
+        letter-spacing: 0.09em; color: #8a827a; margin: 30px 0 10px;
+      }
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 10px; }
+      .card { border-radius: 10px; padding: 12px 13px 10px; }
+      .card.light { background: #f7f3ef; color: #1b1b1b; }
+      .card.dark { background: #242424; color: #eae3db; }
+      .sizes { display: flex; align-items: center; gap: 15px; height: 46px; }
+      .sizes img { display: block; }
+      /* The artwork is currentColor: inside an <img> that resolves to black, so
+         the dark cards flip it — the same trick the panel does with the theme. */
+      .card.dark .sizes img { filter: invert(1) brightness(1.12); }
+      .name { margin-top: 10px; font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; opacity: 0.7; }
+      .desc { font-size: 11px; line-height: 1.35; opacity: 0.5; }
+      footer { margin-top: 34px; color: #6f6862; font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <h1>Icon sheet</h1>
+    <p class="lead">
+      All of them are registered in <code>src/chat/icons.ts</code> and inlined at build time, so what you see
+      here is what the panel renders. A tool call wears its own mark: <code>toolIcon("StrReplace")</code> →
+      <code>strreplace.svg</code>, every MCP tool shares the plug, and an unknown name keeps the wrench.
+    </p>
+    <p class="lead">
+      Weight is not uniform, on purpose: most are <code>stroke-width 1.5</code>, while the marks that came in
+      as production drawings keep their own weight (the trash and the swap arrows are 2) and <code>skill</code>
+      is the only FILLED one.
+    </p>
+
+    <h2>On a light surface</h2>
+    <div class="grid" id="light"></div>
+
+    <h2>On a dark surface</h2>
+    <div class="grid" id="dark"></div>
+
+    <footer>media/icons/ui/*.svg — 14 · 16 · 24 · 48 px</footer>
+
+    <script>
+      const ICONS = [
+        ["read.svg", "Read", "read a file from the filesystem"],
+        ["write.svg", "Write", "write a whole file"],
+        ["strreplace.svg", "StrReplace", "swap one string inside a file"],
+        ["edit.svg", "Edit", "several surgical edits per call"],
+        ["trash.svg", "Delete", "delete a file (same drawing as the session trash)"],
+        ["shell.svg", "Shell", "run a shell command"],
+        ["grep.svg", "Grep", "search file CONTENTS"],
+        ["glob.svg", "Glob", "find files by PATTERN"],
+        ["skill.svg", "Skill", "activate a skill"],
+        ["todowrite.svg", "TodoWrite", "keep the task list"],
+        ["websearch.svg", "WebSearch", "search the web"],
+        ["webfetch.svg", "WebFetch", "fetch a URL"],
+        ["readlints.svg", "ReadLints", "read the linter's errors"],
+        ["mcp.svg", "MCP", "every server tool (one mark)"],
+        ["thinking.svg", "Thinking", "the model is thinking"],
+        ["subagent.svg", "Delegate", "a sub-agent bubble"],
+      ];
+      const SIZES = [14, 16, 24, 48];
+
+      function card([file, name, desc], theme) {
+        const el = document.createElement("div");
+        el.className = "card " + theme;
+        const sizes = document.createElement("div");
+        sizes.className = "sizes";
+        for (const size of SIZES) {
+          const img = document.createElement("img");
+          img.src = file;
+          img.width = size;
+          img.height = size;
+          img.alt = size + "px";
+          sizes.appendChild(img);
+        }
+        const label = document.createElement("div");
+        label.className = "name";
+        label.textContent = name;
+        const text = document.createElement("div");
+        text.className = "desc";
+        text.textContent = desc;
+        el.append(sizes, label, text);
+        return el;
+      }
+
+      for (const [id, theme] of [["light", "light"], ["dark", "dark"]]) {
+        const grid = document.getElementById(id);
+        for (const icon of ICONS) grid.appendChild(card(icon, theme));
+      }
+    </script>
+  </body>
+</html>

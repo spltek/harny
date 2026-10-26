@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Grep: the CONTENT is what you look for — that is what the lines inside
+       the lens say, and what tells it apart from a plain search. -->
+  <circle cx="10.75" cy="10.75" r="8.25" stroke="currentColor"/>
+  <path d="M16.6 16.6 21.5 21.5" stroke="currentColor"/>
+  <path d="M7.4 8.9h6.7M7.4 12.6h4" stroke="currentColor"/>
+</svg>

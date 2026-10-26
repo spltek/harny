@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ICON_NAMES, fileBadgeIcon, icon } from "./icons";
+import { ICON_NAMES, fileBadgeIcon, icon, toolIcon } from "./icons";
 
 /** Every .ts file under src/ (the walk never enters node_modules). */
 function tsSources(dir: string, out: string[] = []): string[] {
@@ -95,5 +95,31 @@ describe("icon registry", () => {
       .filter((file) => readFileSync(file, "utf8").includes("<svg"))
       .map(relative);
     expect(offenders).toEqual([]);
+  });
+
+  it("gives a tool call its own mark, whatever the spelling", () => {
+    // The registry spells tools in TitleCase; the mapping does not care.
+    expect(toolIcon("Read")).toBe(icon("read", 13));
+    expect(toolIcon("StrReplace")).toBe(icon("strreplace", 13));
+    expect(toolIcon("TodoWrite")).toBe(icon("todowrite", 13));
+    expect(toolIcon("ReadLints", 16)).toBe(icon("readlints", 16));
+    expect(toolIcon("Shell")).not.toBe("🔧 ");
+  });
+
+  it("gives every MCP tool the same plug (there can be any number of them)", () => {
+    expect(toolIcon("mcp__filesystem__read_file")).toBe(icon("mcp", 13));
+    expect(toolIcon("mcp__git__commit")).toBe(icon("mcp", 13));
+  });
+
+  it("keeps Delete on the trash artwork — one file, so they cannot drift", () => {
+    expect(toolIcon("Delete")).toBe(icon("trash", 13));
+    // A delete.svg must NOT exist: a copy is exactly how two marks drift apart.
+    expect(() => readFileSync(join(process.cwd(), "media", "icons", "ui", "delete.svg"), "utf8")).toThrow();
+  });
+
+  it("falls back to the wrench for a tool nobody has drawn", () => {
+    // Not a hole in the header: an unknown tool must still read as "some tool".
+    // The wrench keeps a trailing space: it is text, the svg gets its gap in CSS.
+    expect(toolIcon("read_file")).toBe("🔧 ");
   });
 });

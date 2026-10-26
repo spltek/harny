@@ -3068,6 +3068,23 @@ describe("view webview client", () => {
     expect(messagesElLastContent()).toContain("Answers");
   });
 
+  it("gives a tool call the mark of ITS tool, not a generic wrench", async () => {
+    await loadView();
+    hostMessage({ type: "toolCall", id: "t1", name: "StrReplace", arguments: { path: "a.ts" } });
+    hostMessage({ type: "toolCall", id: "t2", name: "mcp__fs__read_file", arguments: { path: "b.ts" } });
+    const [swap, plug] = Array.from(document.querySelectorAll(".msg.tool .tool-name")) as HTMLElement[];
+
+    // A known tool wears its own artwork and no emoji at all…
+    expect(swap.querySelector("svg")).toBeTruthy();
+    expect(swap.textContent).toContain("StrReplace");
+    expect(swap.textContent).not.toContain("🔧");
+
+    // …every MCP tool wears the same plug, whatever the server calls it…
+    expect(plug.querySelector("svg")).toBeTruthy();
+    expect(plug.querySelector("svg")?.innerHTML).toContain("M5.5 7.5h13"); // the plug body
+    expect(plug.textContent).toContain("mcp__fs__read_file");
+  });
+
   it("renders a dedicated sub-agent bubble for Delegate calls with a live status", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);

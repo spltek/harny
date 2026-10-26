@@ -838,7 +838,10 @@ ${renderViewConfig(deps)}
     .tool-header { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; font-weight: 600; color: var(--accent); min-width: 0; }
     .tool-header:hover { color: var(--fg); }
     .tool-toggle { font-size: var(--fs-sm); width: 12px; color: var(--muted); flex-shrink: 0; }
-    .tool-name { white-space: nowrap; }
+    /* Tool call header: the tool's own mark, then its name. inline-flex keeps the
+       icon on the text's baseline whatever the font-size does. */
+    .tool-name { white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
+    .tool-name > svg { flex: 0 0 auto; }
     /* Target file path shown after the tool name (light azure, ellipsized,
        truncated softly when the bubble is narrow — full path on hover). */
     .tool-path { color: var(--info); font-weight: 400; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.95; }
@@ -984,6 +987,10 @@ ${renderViewConfig(deps)}
     .sa-thinking pre code, .sa-answer pre code, .subagent-report pre code { background: transparent; padding: 0; }
     .sa-thinking a, .sa-answer a, .subagent-report a { color: var(--accent); }
     .subagent-report.tool-result-error { color: var(--error); }
+    /* Icons inlined in a TEXT line (the working bar, the sub-agent tool log)
+       need to sit on the baseline: they are flex-less inline boxes here. */
+    #working-bar svg, .sa-tool svg { vertical-align: -2px; margin-right: 4px; }
+
     .sa-tool {
       color: var(--muted-2); font-size: var(--fs-sm); font-family: var(--font-mono);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -1004,6 +1011,7 @@ ${renderViewConfig(deps)}
     .thinking-block { width: 100%; border: 1px dashed var(--border); border-radius: 6px; margin: 4px 0; padding: 0; font-size: var(--fs-md); }
     .thinking-header { display: flex; align-items: center; gap: 5px; padding: 5px 8px; cursor: pointer; user-select: none; color: var(--muted-2); font-style: italic; }
     .thinking-header:hover { color: var(--accent); }
+    .thinking-header > svg { flex: 0 0 auto; }
     .thinking-header .toggle { font-size: var(--fs-sm); width: 12px; }
     /* Thinking is now rendered as Markdown (md on the reasoning text), so the
        body uses normal whitespace + breaks:true like the assistant bubbles. */
