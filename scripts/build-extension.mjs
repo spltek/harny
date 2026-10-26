@@ -30,4 +30,7 @@ await build({
   minify: false,
   sourcemap: false,
   logLevel: "info",
+  // Icon artwork is authored as files under media/icons/ and inlined here as
+  // text (see src/chat/icons.ts): the panel markup ships plain SVG strings.
+  loader: { ".svg": "text" },
 });

@@ -24,6 +24,8 @@ const extension = await context({
   minify: false,
   sourcemap: false,
   logLevel: "info",
+  // Icon artwork (media/icons/) is inlined as text — see src/chat/icons.ts.
+  loader: { ".svg": "text" },
 });
 
 const webview = await context({
@@ -40,6 +42,8 @@ const webview = await context({
   // identifier to the bundled instance (see src/chat/webview/prism-inject.ts).
   inject: [join(root, "src/chat/webview/prism-inject.ts")],
   define: { Prism: "__webview_prism" },
+  // Icon artwork (media/icons/) is inlined as text — see src/chat/icons.ts.
+  loader: { ".svg": "text" },
 });
 
 await Promise.all([extension.watch(), webview.watch()]);

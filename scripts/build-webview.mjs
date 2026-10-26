@@ -23,4 +23,7 @@ await build({
   // src/chat/webview/prism.ts / prism-inject.ts).
   inject: [join(root, "src/chat/webview/prism-inject.ts")],
   define: { Prism: "__webview_prism" },
+  // Icon artwork is authored as files under media/icons/ and inlined here as
+  // text (see src/chat/icons.ts): no runtime fetch, no CSP entry to add.
+  loader: { ".svg": "text" },
 });

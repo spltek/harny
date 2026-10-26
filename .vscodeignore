@@ -11,6 +11,10 @@ node_modules/**
 # Keep the built host bundle (excluded above by nothing, but be explicit)
 !dist/**
 
+# Icon artwork is INLINED into the bundles at build time (loader: .svg = text),
+# so the sources of media/icons/ (and its README) never ship.
+media/icons/**
+
 # Repo/tooling files not needed at runtime
 tsconfig.json
 tsconfig.webview.json

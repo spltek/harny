@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <!-- History/clock glyph: marks the synthetic "Summary of past interactions"
+       prompt that replaces a compacted span. -->
+  <path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  <path d="M3.5 4.5V9H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M12 8v4.2l2.8 1.7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+</svg>

@@ -4,6 +4,9 @@ import type { ChatMessage } from "../core/history/types";
 import type { SessionSummary } from "../core/sessions/types";
 import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, MAX_CONTEXT_WINDOW, MAX_OUTPUT_TOKENS, MIN_CONTEXT_WINDOW, MIN_OUTPUT_TOKENS } from "./context-window";
 import type { SessionLiveProjection } from "./session-live-state";
+// Icon artwork is FILES under media/icons/ (see media/icons/README.md and
+// src/chat/icons.ts): the panel markup only names an icon and its size.
+import { icon } from "./icons";
 
 export interface ViewConfigState {
   provider: string;
@@ -2240,8 +2243,8 @@ ${renderViewConfig(deps)}
     <div id="session-head">
       <span class="toggle">▼</span><span>Sessions</span>
       <span class="spacer"></span>
-      <button id="new-session" title="New session"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg></button>
-      <button id="sessions-gear-btn" class="gear-btn" title="Manage all sessions (every folder)"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
+      <button id="new-session" title="New session">${icon("plus", 15)}</button>
+      <button id="sessions-gear-btn" class="gear-btn" title="Manage all sessions (every folder)">${icon("gear", 14)}</button>
     </div>
     <div id="session-search-row">
       <input id="session-search" type="search" placeholder="Search sessions" spellcheck="false" autocomplete="off" aria-label="Search sessions" />
@@ -2288,7 +2291,7 @@ ${renderViewConfig(deps)}
          old pill followed, so the keyboard gesture is unchanged. -->
     <span id="insert-hint" title="Queue: the next message runs after the current run ends">Insert prompt in <span id="insert-hint-word">Queue</span></span>
     <button id="ctl-toggle-btn" aria-label="Toggle controls">
-      <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+      ${icon("chevronDown", 15)}
     </button>
     <div id="transcript-actions">
       <button id="collapse-all" type="button" disabled title="Collapse every expanded section (thinking, tool calls, sub-agents)">Collapse all</button>
@@ -2297,10 +2300,10 @@ ${renderViewConfig(deps)}
   </div>
   <div id="input-area">
     <div id="input-main">
-      <button id="attach-btn" class="secondary" title="Attach files" aria-label="Attach files"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+      <button id="attach-btn" class="secondary" title="Attach files" aria-label="Attach files">${icon("paperclip", 15)}</button>
       <textarea id="user-input" rows="1" placeholder="Ask Harny... (Enter to send, Esc to abort)"></textarea>
-      <button id="send-btn" aria-label="Send"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg></button>
-      <button id="abort-btn" class="secondary" disabled aria-label="Abort"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg></button>
+      <button id="send-btn" aria-label="Send">${icon("play", 15)}</button>
+      <button id="abort-btn" class="secondary" disabled aria-label="Abort">${icon("stop", 15)}</button>
     </div>
     <!-- AI Model row: the mode select (Analyze/Agent) sits on the SAME
          horizontal line as the label, model select and gear button. The
@@ -2310,23 +2313,23 @@ ${renderViewConfig(deps)}
            title="Analyze: read-only · Build: full tool use (create, modify, run)">
         <button type="button" id="mode-btn" aria-haspopup="listbox" aria-expanded="false"
                 aria-label="Mode">
-          <svg id="mode-btn-icon-analyze" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M20 20l-4.3-4.3" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
-          <svg id="mode-btn-icon-agent" class="hidden" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+          ${icon("search", 12, 'id="mode-btn-icon-analyze"')}
+          ${icon("sparkles", 12, 'id="mode-btn-icon-agent" class="hidden"')}
           <span id="mode-btn-label">Analyze</span>
-          <svg class="mode-btn-chevron" width="10" height="10" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+          ${icon("chevronDown", 10, 'class="mode-btn-chevron"')}
         </button>
         <div id="mode-menu" class="hidden" role="listbox" aria-label="Mode">
           <button type="button" class="mode-item is-active" data-mode="analyze" role="option" aria-selected="true"
                   title="Analyze: read-only — inspects but never modifies files">
-            <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M20 20l-4.3-4.3" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+            ${icon("search", 12)}
             <span>Analyze</span>
-            <svg class="mode-check" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+            ${icon("check", 12, 'class="mode-check"')}
           </button>
           <button type="button" class="mode-item" data-mode="agent" role="option" aria-selected="false"
                   title="Build: full tool use — create, modify and run (files, shell, search)">
-            <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+            ${icon("sparkles", 12)}
             <span>Build</span>
-            <svg class="mode-check" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+            ${icon("check", 12, 'class="mode-check"')}
           </button>
         </div>
       </div>
@@ -2334,16 +2337,16 @@ ${renderViewConfig(deps)}
            for the current mode. Blue when pressed. -->
       <button type="button" id="parallel-btn" aria-pressed="false"
               title="Parallel: let the agent launch sub-agents (read-only in Analyze)">
-        <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><circle cx="7.5" cy="9" r="2.4" fill="currentColor"/><circle cx="16.5" cy="9" r="2.4" fill="currentColor"/><circle cx="10" cy="15.5" r="2.2" fill="currentColor"/><circle cx="14" cy="15.5" r="2.2" fill="currentColor"/></svg>
+        ${icon("model", 12)}
         <span>Parallel</span>
       </button>
       <span class="model-label">AI Model:</span>
       <button type="button" id="model-btn" class="model-btn" title="Select a model" aria-haspopup="dialog">
         <span id="model-btn-label">Select a model</span>
         <span id="model-warn" class="warn-badge hidden" title="models.dev unreachable — some model limits may be unknown">⚠</span>
-        <svg class="model-btn-chevron" width="10" height="10" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+        ${icon("chevronDown", 10, 'class="model-btn-chevron"')}
       </button>
-      <button id="gear-btn" class="gear-btn" title="Configure providers & models"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
+      <button id="gear-btn" class="gear-btn" title="Configure providers & models">${icon("gear", 14)}</button>
     </div>
     <div id="attach-row">
       <div id="attachment-chips" class="hidden"></div>
@@ -2431,7 +2434,7 @@ ${renderViewConfig(deps)}
               <label class="sampler-opt" title="Also apply the Loop Guard to the final answer text (detects the model repeating the same response). Default off."><input type="checkbox" id="lg-response" />Include response</label>
             </div>
             <button id="lg-collapse" class="lg-collapse" aria-expanded="false" aria-controls="lg-params-field" title="Show the Loop Guard parameters">
-              <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              ${icon("chevronDown", 13)}
             </button>
           </div>
         </div>
@@ -2446,7 +2449,7 @@ ${renderViewConfig(deps)}
       <div class="ctl-card ctl-card-wide hidden" id="mcp-card">
         <div class="ctl-inline" style="justify-content: space-between;">
           <span class="card-title">MCP</span>
-          <button id="mcp-configure" class="gear-btn" title="Configure MCP servers" aria-label="Configure MCP servers"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
+          <button id="mcp-configure" class="gear-btn" title="Configure MCP servers" aria-label="Configure MCP servers">${icon("gear", 14)}</button>
         </div>
         <div id="mcp-list"></div>
       </div>
@@ -2462,7 +2465,7 @@ ${renderViewConfig(deps)}
       <span class="met" id="met-cache" title="Input tokens served from prompt cache"></span>
       <button id="compact-btn" title="Summarize the older turns and move them out of the context window. The transcript keeps them, readable and searchable.">Compact</button>
       <span id="compact-threshold-label" title="Auto-compaction: starts when the usable context is this full · how much of it is kept verbatim after the cut">Auto 80% ctx · keep 10%</span>
-      <button id="compact-settings-btn" class="gear-btn" title="Compaction policy for THIS session: when it starts and where it lands"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 .1-1 7.6 7.6 0 0 0-.1-1l2.1-1.7a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.6 7.6 0 0 0-1.7-1L14.5 2.4a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.7L4.5 11a7.6 7.6 0 0 0-.1 1 7.6 7.6 0 0 0 .1 1l-2.1 1.7a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .6.2l2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.5a.5.5 0 0 0 .5.4h4a.5.5 0 0 0 .5-.4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.5 1a.5.5 0 0 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.7zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" fill="currentColor"/></svg></button>
+      <button id="compact-settings-btn" class="gear-btn" title="Compaction policy for THIS session: when it starts and where it lands">${icon("gear", 14)}</button>
     </div>
     <div id="ctx-bar-wrap"><div id="ctx-bar"></div></div>
   </div>
@@ -2610,7 +2613,7 @@ ${renderViewConfig(deps)}
             <div class="pe-secret">
               <input id="pe-apikey" type="password" spellcheck="false" placeholder="sk-..." autocomplete="off" />
               <button type="button" id="pe-apikey-reveal" class="pe-eye" title="Hold to show the key" aria-label="Hold to show the API key">
-                <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
+                ${icon("eye", 15)}
               </button>
             </div>
           </div>

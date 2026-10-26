@@ -6,6 +6,9 @@ import Prism from "./prism";
 import { langIdForPath } from "./lang-map";
 import { clampContextWindow, clampOutputTokens, DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, MAX_CONTEXT_WINDOW, MAX_OUTPUT_TOKENS, MIN_CONTEXT_WINDOW, MIN_OUTPUT_TOKENS } from "../context-window";
 import { clampTemperature, clampTopP, TEMPERATURE_MAX, TEMPERATURE_MIN, TEMPERATURE_STEP } from "../temperature";
+// Icon/glyph artwork is FILES under media/icons/, never markup in here (see
+// src/chat/icons.ts): this module only names the icon and its size.
+import { icon, fileBadgeIcon } from "../icons";
 // The SAME boundary the core uses to decide what the model receives: importing it
 // (it is pure and dependency-free) is what keeps the transcript's marker and the
 // request from ever disagreeing about where the window starts.
@@ -745,9 +748,9 @@ function renderSessions(sessions: SessionInfo[]): void {
     const actions = document.createElement("span");
     actions.className = "srow-actions";
     actions.innerHTML =
-      '<button class="branch" title="Branch (copy) this session">' + icon("i-branch", 13) + "</button>" +
-      '<button class="rename" title="Rename">' + icon("i-pencil", 13) + "</button>" +
-      '<button class="del" title="Delete">' + icon("i-trash", 13) + "</button>";
+      '<button class="branch" title="Branch (copy) this session">' + icon("branch", 13) + "</button>" +
+      '<button class="rename" title="Rename">' + icon("pencil", 13) + "</button>" +
+      '<button class="del" title="Delete">' + icon("trash", 13) + "</button>";
     const branchBtn = actions.querySelector(".branch") as HTMLButtonElement;
     (actions.querySelector(".rename") as HTMLButtonElement).addEventListener("click", (e) => {
       e.stopPropagation();
@@ -800,7 +803,7 @@ function renderTabs(sessions: SessionInfo[]): void {
     label.textContent = s?.name || "Session";
     const close = document.createElement("span");
     close.className = "close";
-    close.innerHTML = icon("i-x", 11);
+    close.innerHTML = icon("close", 11);
     close.addEventListener("click", (e) => {
       e.stopPropagation();
       // A WORKING session's tab cannot be closed: stop it first.
@@ -1308,8 +1311,9 @@ function addSwitchToBuildBanner(): void {
   scrollDown();
 }
 
-/** Large, per-type icon for a non-image attachment (document shape + the
- * extension, tinted by category). Pure SVG, no dependency. */
+/** Large, per-type icon for a non-image attachment: the category picks the
+ * COLOUR and the label (data), the document shape itself is artwork and lives
+ * in media/icons/glyphs/file-badge.svg. */
 function attachmentIcon(name: string, size = 44): string {
   const ext = (name.split(".").pop() ?? "").toLowerCase();
   const code = ["js","jsx","ts","tsx","py","rb","go","rs","java","c","cc","cpp","h","hpp","cs","php","swift","kt","sh","bash","zsh","sql","html","css","scss","vue","svelte"];
@@ -1325,13 +1329,7 @@ function attachmentIcon(name: string, size = 44): string {
   else if (archive.includes(ext)) color = "#e5c07b";
   else if (data.includes(ext)) color = "#e5c07b";
   else if (["png","jpg","jpeg","gif","webp","bmp","svg"].includes(ext)) color = "#56b6c2";
-  return (
-    `<svg width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true">` +
-    `<path d="M6 2h8l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" fill="none" stroke="${color}" stroke-width="1.5"/>` +
-    `<path d="M14 2v5h5" fill="none" stroke="${color}" stroke-width="1.5"/>` +
-    `<text x="11" y="17" text-anchor="middle" font-size="5" font-family="monospace" font-weight="700" fill="${color}">${label}</text>` +
-    `</svg>`
-  );
+  return fileBadgeIcon(label, color, size);
 }
 
 function messageAttachmentRow(
@@ -1349,13 +1347,13 @@ function messageAttachmentRow(
       const card = document.createElement("div");
       card.className = "msg-attach-file";
       card.title = file.size > 0 ? `${file.name} · ${formatBytes(file.size)}` : file.name;
-      const icon = document.createElement("div");
-      icon.className = "msg-attach-file-icon";
-      icon.innerHTML = attachmentIcon(file.name);
+      const badge = document.createElement("div");
+      badge.className = "msg-attach-file-icon";
+      badge.innerHTML = attachmentIcon(file.name);
       const name = document.createElement("div");
       name.className = "msg-attach-file-name";
       name.textContent = file.name;
-      card.append(icon, name);
+      card.append(badge, name);
       if (file.size > 0) {
         const size = document.createElement("div");
         size.className = "msg-attach-file-size";
@@ -1597,24 +1595,12 @@ function setSubAgentStatus(
  * clear text, and the declared resources/access (what it may touch) in the
  * collapsed details together with the final report.
  */
-/** Recognizable "history/clock" icon shown before the synthetic
+/** Recognizable "history/clock" glyph shown before the synthetic
  * "Summary of past interactions" prompt that replaces a compacted span. */
-const SYNTHETIC_SUMMARY_ICON =
-  '<svg class="synthetic-icon" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">' +
-  '<path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>' +
-  '<path d="M3.5 4.5V9H8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
-  '<path d="M12 8v4.2l2.8 1.7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>' +
-  "</svg>";
+const SYNTHETIC_SUMMARY_ICON = icon("history", 13, 'class="synthetic-icon"');
 
-/** A small robot glyph for sub-agent bubbles (SVG, currentColor). */
-const SUBAGENT_ICON =
-  '<svg class="subagent-icon" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">' +
-  '<rect x="4" y="8" width="16" height="11" rx="3" stroke="currentColor" stroke-width="2" fill="none"/>' +
-  '<circle cx="9.2" cy="13" r="1.5" fill="currentColor"/>' +
-  '<circle cx="14.8" cy="13" r="1.5" fill="currentColor"/>' +
-  '<path d="M12 4.2v3.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>' +
-  '<circle cx="12" cy="3" r="1.4" fill="currentColor"/>' +
-  "</svg>";
+/** A small robot glyph for sub-agent bubbles. */
+const SUBAGENT_ICON = icon("subagent", 13, 'class="subagent-icon"');
 
 /** A short, readable label for a sub-agent bubble: its id when that id is
  * descriptive, otherwise the first words of its goal — never a bare "A"/"1". */
@@ -1666,7 +1652,7 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
     (role ? '<span class="subagent-role">' + escapeHtml(role) + "</span>" : "") +
     '<span class="subagent-status queued">queued…</span>' +
     '<button class="subagent-abort" type="button" title="Abort this sub-agent" aria-label="Abort this sub-agent">' +
-    '<svg width="10" height="10" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>' +
+    icon("stop", 10) +
     "</button>" +
     "</div>" +
     '<div class="subagent-body collapsed">' +
@@ -2104,12 +2090,6 @@ function renderMessages(msgs: ChatMsg[]): boolean {
   return hasVisible;
 }
 
-function icon(id: keyof typeof ICON_GLYPHS, size = 14): string {
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true">${ICON_GLYPHS[id]}</svg>`;
-}
-
-const ICON_GLYPHS: Record<string, string> = {"i-play":"<path d=\"M8 5v14l11-7z\" fill=\"currentColor\"/>","i-stop":"<rect x=\"6\" y=\"6\" width=\"12\" height=\"12\" rx=\"2\" fill=\"currentColor\"/>","i-plus":"<path d=\"M12 5v14M5 12h14\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" fill=\"none\"/>","i-minus":"<path d=\"M5 12h14\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" fill=\"none\"/>","i-x":"<path d=\"M18 6 6 18M6 6l12 12\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" fill=\"none\"/>","i-pencil":"<path d=\"M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linejoin=\"round\" fill=\"none\"/>","i-trash":"<path d=\"M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" fill=\"none\"/>","i-branch":"<path d=\"M6 3v12\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" fill=\"none\"/><circle cx=\"18\" cy=\"6\" r=\"3\" fill=\"currentColor\"/><circle cx=\"6\" cy=\"18\" r=\"3\" fill=\"currentColor\"/><path d=\"M18 9a9 9 0 0 1-9 9\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" fill=\"none\"/>","i-scissors":"<circle cx=\"6\" cy=\"6\" r=\"3\" stroke=\"currentColor\" stroke-width=\"2\" fill=\"none\"/><circle cx=\"6\" cy=\"18\" r=\"3\" stroke=\"currentColor\" stroke-width=\"2\" fill=\"none\"/><path d=\"M20 4 8.12 15.88M14.47 14.48 20 20M8.12 8.12 12 12\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" fill=\"none\"/>"};
-
 /**
  * Small ⎇ key on an assistant reply: branches the session UP TO AND
  * INCLUDING this message (popup-modal naming, uniqueness enforced, mirror of
@@ -2119,7 +2099,7 @@ function attachBranchAt(el: HTMLElement, index: number): void {
   const b = document.createElement("button");
   b.className = "branch-at";
   b.title = "Branch session from this point (up to and including this reply)";
-  b.innerHTML = icon("i-branch", 12);
+  b.innerHTML = icon("branch", 12);
   b.addEventListener("click", (e) => {
     e.stopPropagation();
     vscode.postMessage({ type: "branchAt", index });
@@ -2138,7 +2118,7 @@ function attachTruncateAt(el: HTMLElement, index: number): void {
   const b = document.createElement("button");
   b.className = "truncate-at";
   b.title = "Cut the conversation from here down (removes this message and everything after it)";
-  b.innerHTML = icon("i-scissors", 12);
+  b.innerHTML = icon("scissors", 12);
   b.addEventListener("click", (e) => {
     e.stopPropagation();
     vscode.postMessage({ type: "truncateAt", index });
@@ -2346,10 +2326,10 @@ function renderAttachmentChips(): void {
     }
     // Non-image files get the SAME per-type icon as the message cards, small.
     if (!file.dataUri) {
-      const icon = document.createElement("span");
-      icon.className = "attach-icon";
-      icon.innerHTML = attachmentIcon(file.name, 16);
-      chip.appendChild(icon);
+      const badge = document.createElement("span");
+      badge.className = "attach-icon";
+      badge.innerHTML = attachmentIcon(file.name, 16);
+      chip.appendChild(badge);
     }
 
     const size = document.createElement("span");
@@ -3180,7 +3160,7 @@ function renderSessionsManager(): void {
     const del = document.createElement("button");
     del.className = "secondary-ghost del-btn";
     del.title = "Delete this session";
-    del.innerHTML = icon("i-trash", 13);
+    del.innerHTML = icon("trash", 13);
     del.addEventListener("click", () => vscode.postMessage({ type: "deleteSession", id: s.id }));
     actions.appendChild(folderBtn);
     actions.appendChild(del);

@@ -1,0 +1,107 @@
+/**
+ * Icon registry — the ONLY place icon artwork enters Harny's code.
+ *
+ * The artwork lives as standalone files under media/icons/ (see the README
+ * there): `ui/` is the chrome — buttons, chevrons, toggles — and `glyphs/` are
+ * the semantic marks inside the transcript. Redrawing the whole set means
+ * editing those files: no markup, no test and no CSS change (the shapes use
+ * `currentColor`, so they keep following the palette).
+ *
+ * The files are inlined at BUILD time, never fetched at runtime:
+ *   - esbuild   → `loader: { ".svg": "text" }` (scripts/build-*.mjs, dev.mjs)
+ *   - vitest    → the svg-as-text plugin in vitest.config.mts
+ * So the bundles carry plain strings: no `asWebviewUri`, no CSP change, no
+ * async load, and the jsdom tests see exactly the markup the panel renders.
+ */
+import plus from "../../media/icons/ui/plus.svg";
+import minus from "../../media/icons/ui/minus.svg";
+import close from "../../media/icons/ui/close.svg";
+import pencil from "../../media/icons/ui/pencil.svg";
+import trash from "../../media/icons/ui/trash.svg";
+import branch from "../../media/icons/ui/branch.svg";
+import scissors from "../../media/icons/ui/scissors.svg";
+import play from "../../media/icons/ui/play.svg";
+import stop from "../../media/icons/ui/stop.svg";
+import chevronDown from "../../media/icons/ui/chevron-down.svg";
+import gear from "../../media/icons/ui/gear.svg";
+import paperclip from "../../media/icons/ui/paperclip.svg";
+import search from "../../media/icons/ui/search.svg";
+import sparkles from "../../media/icons/ui/sparkles.svg";
+import check from "../../media/icons/ui/check.svg";
+import model from "../../media/icons/ui/model.svg";
+import eye from "../../media/icons/ui/eye.svg";
+import subagent from "../../media/icons/glyphs/subagent.svg";
+import history from "../../media/icons/glyphs/history.svg";
+import fileBadge from "../../media/icons/glyphs/file-badge.svg";
+
+/** Every icon the UI can ask for, keyed by the name the call sites use. */
+const ARTWORK = {
+  plus,
+  minus,
+  close,
+  pencil,
+  trash,
+  branch,
+  scissors,
+  play,
+  stop,
+  chevronDown,
+  gear,
+  paperclip,
+  search,
+  sparkles,
+  check,
+  model,
+  eye,
+  subagent,
+  history,
+  fileBadge,
+};
+
+export type IconName = keyof typeof ARTWORK;
+
+/** The registered names, in the order they are declared (tests walk this). */
+export const ICON_NAMES = Object.keys(ARTWORK) as IconName[];
+
+/** The artwork is written for humans (one tag per line); the DOM only cares
+ * about the drawing. Comments stay available for design notes, and the
+ * whitespace BETWEEN elements goes away with them: an icon is inlined inside
+ * text-bearing nodes (buttons, message bubbles), where a stray text node would
+ * show up in `textContent` — a user prompt must stay "hi", never "hi    ". */
+function flatten(markup: string): string {
+  return markup
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/>\s+</g, "><")
+    .trim();
+}
+
+/**
+ * Render one icon at `size` px, with optional extra root attributes:
+ * `icon("gear", 14)` or `icon("sparkles", 12, 'class="hidden"')`.
+ *
+ * The artwork's own root attributes are KEPT (viewBox, fill, stroke-width…):
+ * only what belongs to the CALLER is overridden — width/height (always the
+ * requested size) and aria-hidden (icons are decorative here: the accessible
+ * name always comes from the button or from the text next to the icon).
+ */
+export function icon(name: IconName, size = 14, attrs = ""): string {
+  const raw = flatten(ARTWORK[name]);
+  const open = /^<svg\b([^>]*)>/.exec(raw);
+  // Defensive: a file without an <svg> root is passed through untouched.
+  if (!open) return raw;
+  const kept = open[1].replace(/\s(?:width|height|aria-hidden)="[^"]*"/g, "").trimEnd();
+  const extra = attrs.trim() ? " " + attrs.trim() : "";
+  return `<svg${extra} width="${size}" height="${size}"${kept} aria-hidden="true">${raw.slice(open[0].length)}`;
+}
+
+/**
+ * Document badge for a non-image attachment (message cards, attachment chips).
+ * The extension label and its colour are DATA, so they are substituted into
+ * the artwork template (media/icons/glyphs/file-badge.svg) at render time.
+ */
+export function fileBadgeIcon(label: string, color: string, size = 44): string {
+  const safeLabel = label.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+  return icon("fileBadge", size)
+    .replace(/\{\{COLOR\}\}/g, color)
+    .replace(/\{\{LABEL\}\}/g, safeLabel);
+}

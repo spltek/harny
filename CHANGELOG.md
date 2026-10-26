@@ -41,6 +41,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-render of the transcript) and a stale or partial list can never lose a tab — unknown ids are
   ignored and open sessions missing from the list are appended.
 
+### Changed
+
+- **Icons and glyphs are graphic ASSETS now, not markup buried in the code.** Every icon the panel draws used to be an
+  SVG string inlined in the middle of a template literal (twenty of them in `view-html.ts`) or in an `ICON_GLYPHS`
+  record inside the webview bundle — so the only way to redraw one was to edit TypeScript, and the same gear appeared
+  four times, character for character, with no single place to change it. The artwork now lives in `media/icons/` as
+  one file per icon — `ui/` for the chrome (play, stop, plus, close, pencil, trash, branch, scissors, chevron, gear,
+  paperclip, search, sparkles, check, model, eye) and `glyphs/` for the semantic marks in the transcript (the
+  sub-agent robot, the history/clock of a compacted span, and the document badge of an attached file) — and the code
+  only asks for a name and a size: `icon("gear", 14)`. `src/chat/icons.ts` is the single registry in front of them,
+  typed, so a typo in a call site fails `npm run typecheck` instead of rendering nothing. The files are still
+  **inlined at build time** (esbuild `loader: {".svg": "text"}`, and an svg-as-text plugin in vitest so the jsdom
+  tests keep asserting on the real markup): no runtime fetch, no `asWebviewUri`, no CSP entry to add, no async
+  render, and nothing new to ship — `media/icons/` is excluded from the VSIX precisely because it is inlined. The
+  file badge keeps being per-extension data: its colour and label are substituted into the artwork template at
+  render time (and the label is now escaped, which it was not). `media/icons/README.md` states the drawing rules —
+  24x24 viewBox, no `width`/`height` on the root, `currentColor` everywhere, no ids or gradients, comments allowed
+  because they are stripped — so a restyle is a matter of opening that folder, not of searching for `<svg`.
+
 ## [0.8.2] - 2026-10-23
 
 ### Fixed

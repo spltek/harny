@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- TEMPLATE: {{COLOR}} and {{LABEL}} are substituted at render time by
+       fileBadgeIcon() in src/chat/icons.ts (the extension of an attached
+       file is data, not artwork). Everything else is ordinary artwork. -->
+  <path d="M6 2h8l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" fill="none" stroke="{{COLOR}}" stroke-width="1.5"/>
+  <path d="M14 2v5h5" fill="none" stroke="{{COLOR}}" stroke-width="1.5"/>
+  <text x="11" y="17" text-anchor="middle" font-size="5" font-family="monospace" font-weight="700" fill="{{COLOR}}">{{LABEL}}</text>
+</svg>
