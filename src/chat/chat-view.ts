@@ -599,6 +599,13 @@ export class ChatViewProvider implements WebviewViewProvider {
    * to it.
    */
   async setActive(id: string, sessionsChanged = false): Promise<void> {
+    // Tell the view AT ONCE that a switch is in flight. The state itself cannot
+    // follow before `buildConfig` answers (and a host busy with a running turn can
+    // take a while), and until it does the OLD transcript sits there looking final —
+    // the click reads as lost, which is how a user ends up clicking three more
+    // times. The NAME is resolved by the view from the list it already has, so this
+    // costs no extra query on the click path.
+    this.view?.webview.postMessage({ type: "switching", id });
     this.activeId = id;
     this.resubscribe();
     this.applyActiveModel();

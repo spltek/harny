@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A session switch now says that it is happening.** Neither opening a session nor switching tab is instant:
+  the host rebuilds the config (`buildConfig` awaits) and may be finishing a turn, and the new state only travels
+  once that is done. Until then the OLD transcript sat there looking final, so the click read as lost — which is
+  how a user ends up clicking three more times. Now the transcript is covered by a soft veil (a 2px
+  `backdrop-filter` blur) with a small card in the middle: a terracotta arc turning and the name of what is
+  opening (`Opening “Debug”…`). It comes up the instant you click — the view names the session from the list it
+  already has, so nothing is added to the very click being made feel fast — and the host also announces the
+  switch (`{type:"switching", id}`) as its FIRST message, so switches it starts itself (a row, the manager, a
+  branch) get the same treatment. Two details keep it honest: the veil fades in with a **120ms delay**, so a
+  switch that lands quickly shows nothing at all (a spinner that flashes for 40ms is worse than no spinner), and
+  an 8s safety net takes it down if the state never arrives, so a failure cannot leave a spinner spinning
+  forever. It covers ONLY the transcript and never eats clicks: the strip and the session list stay live, so a
+  wrong click is corrected at once. The markup gains a `#messages-wrap` (the veil's positioned parent); `#messages`
+  stays unpositioned on purpose, because its children are measured with `getBoundingClientRect`.
 - **Session tabs can be dragged left or right.** The strip only ever showed the sessions in the order
   they were opened, so the tab you were working on could sit at the far end of a long row and the only
   way to bring it closer was to close and reopen everything. Dragging a tab now moves it wherever you

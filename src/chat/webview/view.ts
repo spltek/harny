@@ -205,6 +205,8 @@ const sessionHead = document.getElementById("session-head") as HTMLDivElement;
 const sessionsGearBtn = document.getElementById("sessions-gear-btn") as HTMLButtonElement;
 const newSessionBtn = document.getElementById("new-session") as HTMLButtonElement;
 const tabsEl = document.getElementById("tabs") as HTMLDivElement;
+/** Overlay shown while a session is being loaded/activated (see showSwitchVeil). */
+const switchVeil = document.getElementById("switch-veil");
 const messagesEl = document.getElementById("messages") as HTMLDivElement;
 // The pulsing working indicator: a REAL footer glued below the transcript (NOT
 // a bubble in the flow), shown/hidden instead of being appended/removed.
@@ -728,6 +730,10 @@ function renderSessions(sessions: SessionInfo[]): void {
     name.className = "name";
     name.textContent = s.name || "Session";
     name.addEventListener("click", () => {
+      // Same veil as a tab click — opening can take longer still (the messages come
+      // off disk) and the list collapses right after, so the transcript is what
+      // stays on screen: it must say that something is happening.
+      showSwitchVeil(s.name);
       vscode.postMessage({ type: "openSession", id: s.id });
       // Picking a session ENDS the gesture: the list collapses so the transcript
       // gets the space back. The header is one click away to reopen it, and an
@@ -808,7 +814,11 @@ function renderTabs(sessions: SessionInfo[]): void {
       // A drag that just ended still fires a CLICK on the tab it started on: the
       // tab was being moved, so it must not also switch session.
       if (Date.now() - dragEndedAt < DRAG_CLICK_GRACE_MS) return;
-      if (id !== activeId) vscode.postMessage({ type: "switchTab", id });
+      if (id === activeId) return;
+      // Veil AT ONCE: the host cannot post the new state until it has rebuilt the
+      // config, and a switch that looks like a lost click is worse than a spinner.
+      showSwitchVeil(s?.name);
+      vscode.postMessage({ type: "switchTab", id });
     });
   }
   applyTabLocks();
@@ -1010,6 +1020,40 @@ function applyTabLocks(): void {
       close.classList.toggle("disabled", w);
       close.title = w ? "Session is working — stop it before closing the tab" : "Close tab";
     }
+  }
+}
+
+// ── Switching a session ──
+/** Safety net: a switch that never completes must not leave the veil up forever. */
+const SWITCH_VEIL_TIMEOUT_MS = 8000;
+let switchVeilTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * Announce that a session is being opened/activated, on the transcript.
+ *
+ * A switch is NOT instant: the host rebuilds the config (`buildConfig`) and can be
+ * busy finishing a turn before it posts the new state, and until it does the OLD
+ * transcript sits there looking final — the click seems to have been ignored, which
+ * is exactly how a user ends up clicking three more times. Naming the session is
+ * the other half: a wrong click is noticed at once instead of after the fact.
+ *
+ * `name` is optional on purpose: a switch started by the host (a row, the manager,
+ * a branch) may name a session the strip has not listed yet.
+ */
+function showSwitchVeil(name?: string): void {
+  const label = switchVeil?.querySelector<HTMLElement>(".switch-label");
+  if (label) label.textContent = name ? `Opening “${name}”…` : "Opening session…";
+  switchVeil?.classList.add("visible");
+  if (switchVeilTimer !== undefined) clearTimeout(switchVeilTimer);
+  switchVeilTimer = setTimeout(hideSwitchVeil, SWITCH_VEIL_TIMEOUT_MS);
+}
+
+/** Take the veil down: the state it was waiting for has arrived (or never will). */
+function hideSwitchVeil(): void {
+  switchVeil?.classList.remove("visible");
+  if (switchVeilTimer !== undefined) {
+    clearTimeout(switchVeilTimer);
+    switchVeilTimer = undefined;
   }
 }
 
@@ -5560,6 +5604,12 @@ window.addEventListener("message", (e) => {
       applyWorkingLock();
       setStreaming(!!msg.active);
       break;
+    case "switching":
+      // The host is loading/activating a session right now. The name is resolved from
+      // the list we ALREADY have (the tab's own title): asking the host for it would
+      // add a `SELECT *` to the very click we are trying to make feel fast.
+      showSwitchVeil(typeof msg.id === "string" ? currentSessions.find((s) => s.id === msg.id)?.name : undefined);
+      break;
     case "switchView": {
       // Incremental tab switch WITHOUT reloading the page: the streaming state
       // (working bubble, buffers) survives, so returning to a session that is
@@ -5574,6 +5624,8 @@ window.addEventListener("message", (e) => {
         lastSwitchSeq = msg.switchSeq;
       }
       if (typeof msg.configSeq === "number") lastConfigSeq = Math.max(lastConfigSeq, msg.configSeq);
+      // The state is here: whatever was being opened is on screen now.
+      hideSwitchVeil();
       renderViewState({
         // Passed through UNTOUCHED: an omitted list means "keep the one you have" (a
         // plain tab switch does not re-send it). Coercing it to `[]` — as this line

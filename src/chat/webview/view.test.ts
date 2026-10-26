@@ -50,7 +50,15 @@ function setupDom(
     <div id="sessions"></div>
     <div id="tabs"></div>
     <div id="running" class="hidden"></div>
-    <div id="messages"></div>
+    <div id="messages-wrap">
+      <div id="messages"></div>
+      <div id="switch-veil" role="status" aria-live="polite">
+        <div class="switch-card">
+          <span class="switch-spinner" aria-hidden="true"></span>
+          <span class="switch-label">Opening session…</span>
+        </div>
+      </div>
+    </div>
     <div id="pending-section" class="hidden">
       <div id="pending-head" role="button" tabindex="0" aria-expanded="true"><span class="toggle">▼</span><span id="pending-head-text"></span></div>
       <div id="pending-area" class="hidden"></div>
@@ -625,6 +633,60 @@ describe("view webview client", () => {
     // The click the browser fires after a drag must NOT switch session.
     second.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(posted.some((m: any) => m?.type === "switchTab")).toBe(false);
+  });
+
+  it("clicking another tab veils the transcript until the new state arrives", async () => {
+    await loadView();
+    const veil = () => document.getElementById("switch-veil") as HTMLElement;
+    const label = () => veil().querySelector(".switch-label")?.textContent;
+    expect(veil().classList.contains("visible")).toBe(false);
+
+    (document.querySelector('.tab[data-id="b"]') as HTMLElement).click();
+
+    // Up immediately, named from the list the view ALREADY has (no round-trip on the
+    // very click we are trying to make feel fast).
+    expect(veil().classList.contains("visible")).toBe(true);
+    expect(label()).toBe("Opening “Debug”…");
+    expect(posted).toContainEqual({ type: "switchTab", id: "b" });
+
+    hostMessage({
+      type: "switchView",
+      activeId: "b",
+      openIds: ["a", "b"],
+      messages: [],
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 },
+    });
+    // The state is on screen: the veil has nothing left to announce.
+    expect(veil().classList.contains("visible")).toBe(false);
+  });
+
+  it("a host-initiated switch veils too, and an unlisted session falls back to a generic label", async () => {
+    await loadView();
+    const veil = () => document.getElementById("switch-veil") as HTMLElement;
+    const label = () => veil().querySelector(".switch-label")?.textContent;
+
+    hostMessage({ type: "switching", id: "b" });
+    expect(veil().classList.contains("visible")).toBe(true);
+    expect(label()).toBe("Opening “Debug”…");
+
+    // A session the strip has never listed (opened from the manager, a branch…).
+    hostMessage({ type: "switching", id: "zzz" });
+    expect(label()).toBe("Opening session…");
+  });
+
+  it("a switch that never completes takes the veil down on its own", async () => {
+    await loadView();
+    const veil = () => document.getElementById("switch-veil") as HTMLElement;
+    vi.useFakeTimers();
+    try {
+      (document.querySelector('.tab[data-id="b"]') as HTMLElement).click();
+      expect(veil().classList.contains("visible")).toBe(true);
+      // No switchView ever arrives: the safety net must not leave a spinner forever.
+      vi.advanceTimersByTime(8000);
+      expect(veil().classList.contains("visible")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a plain tab switch keeps the LIST and the tab NAMES (an omitted list means unchanged)", async () => {

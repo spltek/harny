@@ -346,6 +346,23 @@ describe("ChatViewProvider", () => {
     expect(view.webview.postMessage).not.toHaveBeenCalled();
   });
 
+  it("setActive announces the switch BEFORE the state, so the view can veil the wait", async () => {
+    const { provider } = buildHarness();
+    const { view, handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await provider.createNew(); // s2
+    view.webview.postMessage.mockClear();
+
+    await handler({ type: "switchTab", id: "s1" });
+
+    const sent = view.webview.postMessage.mock.calls.map((c: any[]) => c[0]);
+    // FIRST message out: the button was pressed and the state is still being built
+    // (`buildConfig` awaits). Posting it later would be a spinner for a wait that
+    // already happened.
+    expect(sent[0]).toMatchObject({ type: "switching", id: "s1" });
+    expect(sent.map((m: any) => m?.type)).toContain("switchView");
+  });
+
   it("queues modals FIFO: a second modal is only shown after the first resolves", async () => {
     const { provider } = buildHarness();
     const { handler, view } = resolveWith(provider);

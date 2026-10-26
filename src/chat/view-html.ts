@@ -393,6 +393,14 @@ ${renderViewConfig(deps)}
     #tabs.reordering .tab { transition: none; }
 
     /* Chat */
+    /* The transcript's POSITIONED parent: the switching veil is an overlay, and
+       #messages itself must stay UNPOSITIONED (its children are measured with
+       getBoundingClientRect, and a containing block there would change what
+       "viewport" means for them). Same flex role #messages had as a body child. */
+    #messages-wrap {
+      position: relative; flex: 1; min-height: 0;
+      display: flex; flex-direction: column;
+    }
     /* scrollbar-gutter: stable reserves the scrollbar slot even when no
        scrollbar is shown — the bubble column width stays IDENTICAL whether or
        not the scrollbar appears. padding-right:0 lets the 10px gutter play the
@@ -405,6 +413,36 @@ ${renderViewConfig(deps)}
       padding: 24px 0 0 10px;
       display: flex; flex-direction: column; gap: 6px;
     }
+    /* Switching a session (view.ts showSwitchVeil): the transcript blurs behind a
+       small card while the new state is being built, with the accent arc turning.
+       Faded in with a DELAY on purpose: a switch that lands quickly must show
+       NOTHING — a spinner that flashes for 40ms is worse than no spinner at all. */
+    #switch-veil {
+      position: absolute; inset: 0; z-index: 5;
+      display: flex; align-items: center; justify-content: center;
+      backdrop-filter: blur(2px);
+      opacity: 0; transition: opacity 0.16s ease;
+      /* Never in the way: the transcript under it is about to be replaced anyway,
+         and a veil that eats clicks would only add a way to lose one. */
+      pointer-events: none;
+    }
+    #switch-veil.visible { opacity: 1; transition-delay: 0.12s; }
+    .switch-card {
+      display: flex; align-items: center; gap: 9px;
+      padding: 7px 14px; border-radius: 999px;
+      background: var(--input-bg); border: 1px solid var(--border);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+      color: var(--fg); font-size: var(--fs-md);
+    }
+    .switch-spinner {
+      width: 14px; height: 14px; flex-shrink: 0; border-radius: 50%;
+      border: 2px solid var(--accent-line); border-top-color: var(--accent);
+      animation: switch-spin 0.7s linear infinite;
+    }
+    @keyframes switch-spin { to { transform: rotate(360deg); } }
+    .switch-label { max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* Reduced motion: the card stays (the wait is still announced), the arc stops. */
+    @media (prefers-reduced-motion: reduce) { .switch-spinner { animation: none; } }
     .msg { padding: 8px 10px; border-radius: 8px; max-width: 92%; min-width: 0; word-wrap: break-word; word-break: break-word; overflow-wrap: break-word; line-height: 1.4; font-size: var(--fs-lg); }
     /* pre-wrap only for plain-text bubbles (user messages); markdown bubbles
        (assistant/tool) use breaks:true and white-space normal to avoid the
@@ -2211,7 +2249,20 @@ ${renderViewConfig(deps)}
     <div id="sessions"></div>
   </div>
   <div id="tabs"></div>
-  <div id="messages"></div>
+  <div id="messages-wrap">
+    <div id="messages"></div>
+    <!-- Switching a session: the host cannot post the new state until it has rebuilt
+         the config (and it may be busy finishing a turn), and until then the OLD
+         transcript sits there looking final — the click seems lost. The veil makes
+         the wait visible and names what is opening. It covers ONLY the transcript:
+         the strip and the list stay live, so a wrong click is corrected at once. -->
+    <div id="switch-veil" role="status" aria-live="polite">
+      <div class="switch-card">
+        <span class="switch-spinner" aria-hidden="true"></span>
+        <span class="switch-label">Opening session…</span>
+      </div>
+    </div>
+  </div>
   <!-- Messages typed while the session works (queue/steer): a real footer,
        outside #messages, so they survive streaming re-renders. A COLLAPSIBLE
        section like the sessions list: the header carries the counts, so a
