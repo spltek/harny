@@ -8,7 +8,7 @@ import { clampContextWindow, clampOutputTokens, DEFAULT_CONTEXT_WINDOW, DEFAULT_
 import { clampTemperature, clampTopP, TEMPERATURE_MAX, TEMPERATURE_MIN, TEMPERATURE_STEP } from "../temperature";
 // Icon/glyph artwork is FILES under media/icons/, never markup in here (see
 // src/chat/icons.ts): this module only names the icon and its size.
-import { icon, toolIcon, fileBadgeIcon } from "../icons";
+import { icon, toolIcon, todoStatusIcon, fileBadgeIcon } from "../icons";
 // The SAME boundary the core uses to decide what the model receives: importing it
 // (it is pure and dependency-free) is what keeps the transcript's marker and the
 // request from ever disagreeing about where the window starts.
@@ -1480,6 +1480,9 @@ function toolTargetArg(args: unknown): string | undefined {
 function addToolCall(name: string, args: unknown, beforeEl?: HTMLElement | null): HTMLDivElement {
   const div = document.createElement("div");
   div.className = "msg tool tool-call-pending";
+  // The NAME travels with the bubble: the result handler has to know WHICH tool it
+  // is describing (TodoWrite renders a task list, every other tool a <pre>).
+  div.dataset.tool = name;
   const target = toolTargetArg(args);
   div.innerHTML =
     '<div class="tool-header">' +
@@ -2043,6 +2046,12 @@ function renderMessages(msgs: ChatMsg[]): boolean {
             if (tc.name === "Delegate") out.innerHTML = renderMarkdown((text ?? "").slice(0, 12000));
             else renderToolOutput(out as HTMLPreElement, text !== undefined ? text.slice(0, 12000) : "");
           }
+          // A todo list is a LIST: rendered under the header so it survives a reload
+          // the same way it appeared live (same renderer, same single block).
+          if (tc.name === "TodoWrite") {
+            const todoText = outputs.get(id);
+            if (todoText !== undefined) renderTodoBlock(el, todoText);
+          }
           if (tc.name === "Delegate") {
             const report = outputs.get(id) ?? "";
             setSubAgentStatus(
@@ -2269,6 +2278,71 @@ function renderToolOutput(el: HTMLElement, text: string): void {
   } else {
     el.textContent = text;
   }
+}
+
+const TODO_STATUSES = ["pending", "in_progress", "completed", "cancelled"] as const;
+type TodoStatusKey = (typeof TODO_STATUSES)[number];
+
+/**
+ * `<icon> [status] content` — the BRACKET is the contract, the emoji is decoration
+ * that may go away. Lines without a known status are ignored, so a different
+ * result shape can never produce a broken list.
+ */
+function parseTodoList(text: string): Array<{ status: TodoStatusKey; content: string }> {
+  const items: Array<{ status: TodoStatusKey; content: string }> = [];
+  for (const line of text.split("\n")) {
+    const found = /\[(pending|in_progress|completed|cancelled)\]\s*(.*)$/.exec(line);
+    if (found) items.push({ status: found[1] as TodoStatusKey, content: found[2].trim() });
+  }
+  return items;
+}
+
+/**
+ * A TodoWrite result is a TASK LIST, not a log line — and inside the collapsed
+ * `.tool-details` it was invisible in practice: one closed bubble per update, and the
+ * tool is called once per change. So the list gets its own block under the header,
+ * readable without expanding, and there is only ever ONE in the transcript: the
+ * newest state. The raw output stays in the details, where it belongs.
+ */
+function renderTodoBlock(bubble: HTMLElement, text: string): void {
+  const items = parseTodoList(text);
+  if (!items.length) return;
+  // The newest list WINS: five copies of the same thing, each behind a click, is
+  // exactly what made the list invisible in the first place.
+  document.querySelectorAll(".todo-block").forEach((old) => old.remove());
+  const done = items.filter((item) => item.status === "completed").length;
+
+  const block = document.createElement("div");
+  block.className = "todo-block";
+  const head = document.createElement("div");
+  head.className = "todo-head";
+  const count = document.createElement("span");
+  count.className = "todo-count";
+  count.textContent = done + "/" + items.length;
+  const title = document.createElement("span");
+  title.textContent = "Tasks";
+  head.append(count, title);
+
+  const list = document.createElement("ul");
+  list.className = "todo-list";
+  for (const item of items) {
+    const row = document.createElement("li");
+    row.className = "todo-item status-" + item.status;
+    const mark = document.createElement("span");
+    mark.className = "todo-mark";
+    mark.innerHTML = todoStatusIcon(item.status, 12);
+    const label = document.createElement("span");
+    label.className = "todo-text";
+    // textContent: the task text is MODEL data, never markup.
+    label.textContent = item.content;
+    row.append(mark, label);
+    list.appendChild(row);
+  }
+  block.append(head, list);
+
+  const header = bubble.querySelector(".tool-header");
+  if (header) header.insertAdjacentElement("afterend", block);
+  else bubble.prepend(block);
 }
 
 // ── Actions ──
@@ -5326,6 +5400,9 @@ window.addEventListener("message", (e) => {
           else renderToolOutput(resultEl as HTMLPreElement, String(msg.output).slice(0, 12000));
           resultEl.classList.toggle("tool-result-error", !!msg.isError);
         }
+        // A todo list is a LIST: rendered under the header, so it is readable
+        // without opening the (still collapsed) details.
+        if (el.dataset.tool === "TodoWrite") renderTodoBlock(el, String(msg.output));
         pendingToolCalls.delete(msg.toolCallId);
       }
       if (workingEl) workingEl.textContent = "● Working...";

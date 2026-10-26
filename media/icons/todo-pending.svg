@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Todo status: PENDING — the box and nothing else. The four status marks share
+       this exact box, so they read as four states of the same thing; only the
+       "baffo" inside changes. -->
+  <path d="M8.5 6h7A2.5 2.5 0 0 1 18 8.5v7A2.5 2.5 0 0 1 15.5 18h-7A2.5 2.5 0 0 1 6 15.5v-7A2.5 2.5 0 0 1 8.5 6Z" stroke="currentColor"/>
+</svg>

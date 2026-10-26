@@ -46,6 +46,11 @@ import webfetch from "../../media/icons/webfetch.svg";
 import readlints from "../../media/icons/readlints.svg";
 import mcp from "../../media/icons/mcp.svg";
 import thinking from "../../media/icons/thinking.svg";
+// The four states of a todo: one box, four baffi.
+import todoPending from "../../media/icons/todo-pending.svg";
+import todoActive from "../../media/icons/todo-active.svg";
+import todoDone from "../../media/icons/todo-done.svg";
+import todoCancelled from "../../media/icons/todo-cancelled.svg";
 import subagent from "../../media/icons/subagent.svg";
 import history from "../../media/icons/history.svg";
 import fileBadge from "../../media/icons/file-badge.svg";
@@ -83,6 +88,10 @@ const ARTWORK = {
   readlints,
   mcp,
   thinking,
+  todoPending,
+  todoActive,
+  todoDone,
+  todoCancelled,
   subagent,
   history,
   fileBadge,
@@ -135,6 +144,23 @@ export function toolIcon(name: string, size = 13): string {
   const key = name.toLowerCase().replace(/[^a-z]/g, "");
   const artwork = TOOL_ARTWORK[key];
   return artwork ? icon(artwork, size) : "🔧 ";
+}
+
+/** A todo's status, as the TodoWrite tool spells it. */
+export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
+
+/**
+ * The mark for one todo status. All four share the same box and differ only in the
+ * baffo inside: at 12px that is enough to tell them apart, and the shared box is
+ * what makes them read as four states of one thing rather than four icons.
+ */
+export function todoStatusIcon(status: TodoStatus, size = 12): string {
+  const artwork: IconName =
+    status === "completed" ? "todoDone"
+      : status === "in_progress" ? "todoActive"
+        : status === "cancelled" ? "todoCancelled"
+          : "todoPending";
+  return icon(artwork, size);
 }
 
 /** The artwork is written for humans (one tag per line); the DOM only cares

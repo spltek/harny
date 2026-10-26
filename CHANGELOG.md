@@ -64,6 +64,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   filled mark, because it came in that way — a fill is not a weight. The sub-agent/Delegate mark is now the bot
   face that came in as an SVG (head, eyes, antenna, ears, geometry verbatim), with its 20% face fill dropped like
   the replace mark's, so the glyph matches the rest of the set.
+- **The TodoWrite list is now a list you can SEE.** It lived only inside the tool output: every update landed in a
+  `.tool-details` that is collapsed by default, and the tool is called once per change, so the transcript filled
+  with closed bubbles and the task list was effectively invisible — never in an answer, never in a thinking
+  block. The result of a TodoWrite call now renders as a **Tasks block** under its tool header (`2/5` plus the
+  rows), readable without expanding anything, and there is **one block per transcript**: a new update replaces
+  the previous one instead of piling up stale copies. The raw output stays inside the details, where it belongs.
+  Each row carries a mark from a new family of four — one box, four "baffi" (`todo-pending`, `todo-active`,
+  `todo-done`, `todo-cancelled`) — so the states read as four faces of the same thing; a completed row is struck
+  through with its tick tinted. Parsing keys on the `[status]` bracket, not on the emoji, so the list keeps
+  working if those emoji markers ever go away.
 
 ### Changed
 

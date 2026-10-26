@@ -855,6 +855,23 @@ ${renderViewConfig(deps)}
     .tool-path { color: var(--info); font-weight: 400; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.95; }
     .tool-details { margin-top: 2px; font-size: var(--fs-md); }
     .tool-details.collapsed { display: none; }
+    /* TodoWrite: a task LIST, not a log line. Inside the collapsed .tool-details the
+       list was invisible in practice (one closed bubble per update, and the tool is
+       called once per change), so it gets its own block under the header — visible
+       without expanding. There is only ever ONE in the transcript: the newest state. */
+    .todo-block { margin: 3px 0 1px; padding-left: 8px; border-left: 2px solid var(--border); }
+    .todo-head { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--muted-2); text-transform: uppercase; letter-spacing: 0.04em; }
+    .todo-count { color: var(--fg-strong); font-weight: 700; }
+    .todo-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+    .todo-item { display: flex; align-items: flex-start; gap: 6px; min-width: 0; font-size: var(--fs-md); color: var(--fg); }
+    .todo-mark { flex: 0 0 auto; display: inline-flex; color: var(--muted-2); }
+    .todo-text { min-width: 0; overflow-wrap: anywhere; }
+    .todo-item.status-completed { color: var(--muted); }
+    .todo-item.status-completed .todo-text { text-decoration: line-through; }
+    .todo-item.status-completed .todo-mark { color: var(--ok); }
+    .todo-item.status-cancelled { color: var(--muted); }
+    .todo-item.status-cancelled .todo-text { text-decoration: line-through; }
+    .todo-item.status-in_progress .todo-mark { color: var(--accent); }
     .tool-label { display: block; color: var(--muted); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.4px; margin: 6px 0 2px; }
     .tool-details pre { background: var(--sink-1); border: 1px solid var(--border); border-radius: 4px; padding: 5px 7px; white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow-y: auto; font-size: var(--fs-md); line-height: 1.4; }
     /* The Task/Input arguments block is a <pre>: WRAP it at the bubble width

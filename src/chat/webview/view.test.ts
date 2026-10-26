@@ -2978,6 +2978,72 @@ describe("view webview client", () => {
     expect(chips).toEqual(["1 - fix parser - pending", "harny vs code", "https://example.com", "a.ts, b.ts"]);
   });
 
+  it("renders a TodoWrite result as a readable task list — one block, the newest state", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+
+    hostMessage({ type: "toolCall", id: "td1", name: "TodoWrite", arguments: { todos: [{ id: "1", content: "fix parser", status: "pending" }], merge: false } });
+    hostMessage({ type: "toolResult", toolCallId: "td1", output: "## Task List\n\n⏳ [pending] fix parser", isError: false });
+
+    const first = document.querySelector(".todo-block") as HTMLElement;
+    expect(first).toBeTruthy();
+    // The raw output stays behind the collapsed details — the LIST does not.
+    expect(document.querySelector(".msg.tool .tool-details")?.classList.contains("collapsed")).toBe(true);
+    expect(first.previousElementSibling?.classList.contains("tool-header")).toBe(true);
+    expect(first.querySelector(".todo-count")?.textContent).toBe("0/1");
+    expect(first.querySelectorAll(".todo-item")).toHaveLength(1);
+    expect(first.querySelector(".todo-item")?.classList.contains("status-pending")).toBe(true);
+    expect(first.querySelector(".todo-mark svg")).toBeTruthy();
+    expect(first.querySelector(".todo-text")?.textContent).toBe("fix parser");
+
+    // A second update REPLACES the block: five stale copies is what made the list
+    // invisible in the first place.
+    hostMessage({ type: "toolCall", id: "td2", name: "TodoWrite", arguments: { todos: [], merge: true } });
+    hostMessage({ type: "toolResult", toolCallId: "td2", output: "## Task List\n\n✅ [completed] fix parser\n🔄 [in_progress] ship it", isError: false });
+
+    expect(document.querySelectorAll(".todo-block")).toHaveLength(1);
+    const second = document.querySelector(".todo-block") as HTMLElement;
+    expect(second.querySelector(".todo-count")?.textContent).toBe("1/2");
+    expect(second.querySelectorAll(".todo-item")).toHaveLength(2);
+    expect(second.querySelectorAll(".todo-item.status-completed")).toHaveLength(1);
+    expect(second.querySelectorAll(".todo-item.status-in_progress")).toHaveLength(1);
+    // The task text is MODEL data: it lands as text, never as markup.
+    expect(second.querySelectorAll(".todo-text")[0].textContent).toBe("fix parser");
+    expect(second.querySelectorAll(".todo-mark svg")).toHaveLength(2);
+  });
+
+  it("does not turn another tool's output into a task list", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    // The text LOOKS like a list: only the tool NAME decides.
+    hostMessage({ type: "toolCall", id: "rd1", name: "Read", arguments: { path: "a.ts" } });
+    hostMessage({ type: "toolResult", toolCallId: "rd1", output: "## Task List\n\n✅ [completed] x", isError: false });
+    expect(document.querySelector(".todo-block")).toBeNull();
+  });
+
+  it("rebuilds ONE task list from a replayed transcript (the newest call wins)", async () => {
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "assistant", content: "🔧 Tools: TodoWrite", timestamp: 1, toolCalls: [{ id: "td1", name: "TodoWrite", arguments: { todos: [{ id: "1", content: "fix parser", status: "pending" }] } }] },
+        { role: "tool", toolCallId: "td1", content: "## Task List\n\n⏳ [pending] fix parser", timestamp: 2 },
+        { role: "assistant", content: "🔧 Tools: TodoWrite", timestamp: 3, toolCalls: [{ id: "td2", name: "TodoWrite", arguments: { todos: [], merge: true } }] },
+        { role: "tool", toolCallId: "td2", content: "## Task List\n\n✅ [completed] fix parser\n⏳ [pending] ship it", timestamp: 4 },
+      ],
+    });
+    // The same rule as the live path: a reload must not resurrect five stale lists.
+    expect(document.querySelectorAll(".todo-block")).toHaveLength(1);
+    const block = document.querySelector(".todo-block") as HTMLElement;
+    expect(block.querySelector(".todo-count")?.textContent).toBe("1/2");
+    expect(block.querySelectorAll(".todo-item")).toHaveLength(2);
+    expect(block.querySelectorAll(".todo-item.status-completed")).toHaveLength(1);
+  });
+
   it("renders a Write preview as an all-additions diff bubble", async () => {
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;

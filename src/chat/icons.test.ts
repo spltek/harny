@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ICON_NAMES, fileBadgeIcon, icon, toolIcon } from "./icons";
+import { ICON_NAMES, fileBadgeIcon, icon, toolIcon, todoStatusIcon } from "./icons";
 
 /** Every .ts file under src/ (the walk never enters node_modules). */
 function tsSources(dir: string, out: string[] = []): string[] {
@@ -134,6 +134,23 @@ describe("icon registry", () => {
     expect(heavy).toContain('stroke-width="2"');
     expect(heavy).not.toContain('stroke-width="1.5"');
     expect(heavy.match(/stroke-width=/g)).toHaveLength(1);
+  });
+
+  it("gives each todo status its own mark, differing only in the baffo", () => {
+    // One box, four baffi: the box is what makes them read as four states of the
+    // SAME thing, so it must be identical in all four files.
+    const marks = (["pending", "in_progress", "completed", "cancelled"] as const)
+      .map((status) => todoStatusIcon(status, 12));
+    expect(new Set(marks).size).toBe(4);
+    for (const mark of marks) {
+      expect(mark).toContain('width="12"');
+      expect(mark).toContain("M8.5 6h7A2.5");
+    }
+    // …and the baffo is what changes: the tick is the one the eye must catch.
+    expect(todoStatusIcon("completed", 12)).toContain("M9.4 12.2 11.2 14 14.8 10");
+    expect(todoStatusIcon("in_progress", 12)).toContain("M10.6 9.6 13.4 12 10.6 14.4");
+    expect(todoStatusIcon("cancelled", 12)).toContain("M9.4 12h5.2");
+    expect(todoStatusIcon("pending", 12)).not.toContain("M9.4 12h5.2");
   });
 
   it("falls back to the wrench for a tool nobody has drawn", () => {

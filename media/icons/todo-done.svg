@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Todo status: COMPLETED — the shared box with the tick. This is the one the eye
+       has to catch at 12px, so the tick is the biggest baffo of the four. -->
+  <path d="M8.5 6h7A2.5 2.5 0 0 1 18 8.5v7A2.5 2.5 0 0 1 15.5 18h-7A2.5 2.5 0 0 1 6 15.5v-7A2.5 2.5 0 0 1 8.5 6Z" stroke="currentColor"/>
+  <path d="M9.4 12.2 11.2 14 14.8 10" stroke="currentColor"/>
+</svg>
