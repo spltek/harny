@@ -3120,6 +3120,7 @@ const alertTitle = document.getElementById("alert-title") as HTMLElement;
 const alertMessage = document.getElementById("alert-message") as HTMLDivElement;
 const alertOk = document.getElementById("alert-ok") as HTMLButtonElement;
 const alertCancel = document.getElementById("alert-cancel") as HTMLButtonElement;
+const alertActions = alertOk.parentElement as HTMLElement;
 let alertId = -1;
 
 function openAlert(a: {
@@ -3131,6 +3132,7 @@ function openAlert(a: {
   message: string;
   confirmText?: string;
   danger?: boolean;
+  extraActions?: { value: string; text: string; title?: string; disabled?: boolean }[];
 }): void {
   alertId = typeof a.modalId === "number" ? a.modalId : typeof a.id === "number" ? a.id : -1;
   alertTitle.textContent = a.title;
@@ -3139,16 +3141,35 @@ function openAlert(a: {
   alertCancel.style.display = confirm ? "" : "none";
   alertOk.textContent = a.confirmText ?? "OK";
   alertOk.classList.toggle("danger", !!a.danger);
+  // A question can have MORE than two answers: the trash asks delete / rewind /
+  // empty in ONE dialog. The buttons are built here and never in the HTML —
+  // WHICH answers exist is the host's decision, and a hard-coded set would make
+  // every new question a new modal.
+  alertActions.querySelectorAll(".alert-extra").forEach((b) => b.remove());
+  for (const extra of a.extraActions ?? []) {
+    const b = document.createElement("button");
+    b.className = "secondary alert-extra";
+    b.textContent = extra.text;
+    if (extra.title) b.title = extra.title;
+    // A choice that cannot apply ("rewind" on a session with no summary) is
+    // shown DISABLED, not hidden: the row of buttons stays a fixed answer set
+    // and nothing jumps around between one session and the next.
+    b.disabled = extra.disabled === true;
+    b.addEventListener("click", () => closeAlert(extra.value));
+    alertActions.insertBefore(b, alertOk);
+  }
   alertModal.classList.remove("hidden");
   alertOk.focus();
 }
 
-function closeAlert(ok: boolean): void {
+/** Answer the open modal. `value` is the answer itself: `true`/`false` for the
+ * plain confirm, or the action's own string for a question with extra choices. */
+function closeAlert(value: boolean | string): void {
   if (alertId < 0) return;
   const id = alertId;
   alertId = -1;
   alertModal.classList.add("hidden");
-  vscode.postMessage({ type: "modalResponse", id, value: ok });
+  vscode.postMessage({ type: "modalResponse", id, value });
 }
 
 alertOk.addEventListener("click", () => closeAlert(true));

@@ -252,3 +252,24 @@ export function checkpointStart(messages: readonly CheckpointMessage[]): number 
   }
   return 0;
 }
+
+/**
+ * The cut point (EXCLUSIVE) that ENDS the OLDEST summary checkpoint: where a
+ * transcript stops when it is REWOUND to its first summary.
+ *
+ * The counterpart of {@link checkpointStart}, which finds the NEWEST checkpoint —
+ * the one the context window starts from. A rewind keeps the history up to and
+ * including the FIRST summary and drops everything after it, so what is left is a
+ * session whose whole past is condensed into that single state document: the
+ * latest checkpoint of the shortened array IS the pair that was kept, and the
+ * model's window opens on it exactly as a compaction leaves it.
+ *
+ * Returns 0 when there is no summary at all: nothing to rewind to.
+ */
+export function firstCheckpointEnd(messages: readonly CheckpointMessage[]): number {
+  const i = messages.findIndex((m) => m.synthetic === true);
+  if (i < 0) return 0;
+  // Cut AFTER the pair, never between its halves: a label without its summary
+  // would open the window on a promise with no state behind it.
+  return i + 1 < messages.length && messages[i + 1]?.synthetic ? i + 2 : i + 1;
+}

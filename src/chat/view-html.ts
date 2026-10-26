@@ -2090,7 +2090,9 @@ ${renderViewConfig(deps)}
       font-size: var(--fs-md); color: var(--fg-dim); line-height: 1.5;
       word-wrap: break-word; white-space: pre-wrap;
     }
-    #alert-modal .alert-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    /* wrap: a question can offer three answers (the session trash asks delete /
+       rewind / empty at once) and they must not spill out of the 340px card. */
+    #alert-modal .alert-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
     #alert-ok.danger { background: var(--error); }
 
     /* ── All-sessions manager (gear next to New session ──

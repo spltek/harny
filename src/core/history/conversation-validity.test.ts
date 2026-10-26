@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { checkpointStart, describeFaults, conversationFaults, turnEnd, turnStart } from "./conversation-validity";
+import {
+  checkpointStart,
+  describeFaults,
+  conversationFaults,
+  firstCheckpointEnd,
+  turnEnd,
+  turnStart,
+} from "./conversation-validity";
 import type { ChatMessage } from "./types";
 
 const user = (content = "u"): ChatMessage => ({ role: "user", content, timestamp: 1 });
@@ -240,5 +247,56 @@ describe("checkpointStart — the ONE point the context window starts from", () 
       user("now"),
     ];
     expect(checkpointStart(msgs)).toBe(2);
+  });
+});
+
+describe("firstCheckpointEnd — where a REWIND stops", () => {
+  const label = (content = "Summary of past interactions"): ChatMessage => ({
+    role: "user",
+    content,
+    timestamp: 1,
+    synthetic: true,
+  });
+  const state = (content = "## Goal\nx"): ChatMessage => ({
+    role: "assistant",
+    content,
+    timestamp: 2,
+    synthetic: true,
+  });
+
+  it("is 0 without a summary: there is nothing to rewind to", () => {
+    expect(firstCheckpointEnd([])).toBe(0);
+    expect(firstCheckpointEnd([user("q"), answer("a")])).toBe(0);
+  });
+
+  it("lands AFTER the pair, so the summary that is kept stays whole", () => {
+    // [past][pair][tail] -> the rewind keeps [past][pair] and drops the tail.
+    const msgs = [user("old"), answer("old"), label(), state(), user("after"), answer("after")];
+    expect(firstCheckpointEnd(msgs)).toBe(4);
+    expect(msgs.slice(0, firstCheckpointEnd(msgs)).map((m) => m.content)).toEqual([
+      "old",
+      "old",
+      "Summary of past interactions",
+      "## Goal\nx",
+    ]);
+  });
+
+  it("uses the FIRST pair, never a later one", () => {
+    const msgs = [user("a"), label("L1"), state("S1"), user("b"), label("L2"), state("S2"), user("c")];
+    expect(firstCheckpointEnd(msgs)).toBe(3);
+    // And the kept array carries exactly ONE checkpoint, so the window opens on it.
+    const kept = msgs.slice(0, firstCheckpointEnd(msgs));
+    expect(checkpointStart(kept)).toBe(1);
+    expect(kept.slice(checkpointStart(kept))).toHaveLength(2);
+  });
+
+  it("cuts after a LONE synthetic message instead of dropping it", () => {
+    expect(firstCheckpointEnd([state("head"), user("q")])).toBe(1);
+    expect(firstCheckpointEnd([user("old"), state("head"), user("q")])).toBe(2);
+  });
+
+  it("is the whole transcript when the summary is already the tail", () => {
+    const msgs = [user("old"), label(), state()];
+    expect(firstCheckpointEnd(msgs)).toBe(3); // a rewind is then a no-op, not a wipe
   });
 });

@@ -17,7 +17,13 @@ import type { SessionManager } from "../core/sessions/session-manager";
 import type { DbVacuumStats, SessionSettingsPatch, SessionSummary } from "../core/sessions/types";
 import type { SessionRegistry, SessionRuntime } from "./session-registry";
 import { PendingInputQueue, type PendingInput } from "./pending-input-queue";
-import { checkpointStart, conversationFaults, turnEnd, turnStart } from "../core/history/conversation-validity";
+import {
+  checkpointStart,
+  conversationFaults,
+  firstCheckpointEnd,
+  turnEnd,
+  turnStart,
+} from "../core/history/conversation-validity";
 import { StreamTee } from "./stream-tee";
 import { Telemetry } from "./telemetry";
 import type { PreparedPrompt, SendIntent, SessionAbortPort, SessionSendPort } from "./session-engine";
@@ -2143,14 +2149,24 @@ export class ChatViewProvider implements WebviewViewProvider {
     const existing = this.sessions.list().find((s) => s.id === id);
     // The 🗑 buttons are DISABLED while the session works (silent guard).
     if (this.isWorking(id)) return;
-    const ok = await this.inPanelAlert({
-      kind: "confirm",
-      title: "Delete session",
-      message: `Delete session "${existing?.name ?? id}"? This removes its transcript and settings.`,
-      confirmText: "Delete",
-      danger: true,
-    });
-    if (!ok) return;
+    const messages = this.transcriptOf(id);
+    // "Rewind" needs a checkpoint to rewind TO: a session that never compacted is
+    // offered the other two answers and says why this one is unavailable.
+    const rewindEnd = firstCheckpointEnd(messages);
+    const answer = await this.askSessionCleanup(existing?.name ?? id, rewindEnd > 0);
+    if (answer === "empty") {
+      this.rewriteTranscript(id, []);
+      return;
+    }
+    if (answer === "rewind") {
+      // Leave the summary, drop what came after it: the transcript ends where the
+      // FIRST summary ends, so the model's window opens on that state document.
+      // A rewind that landed at 0 would be an EMPTY wearing another name, so it
+      // is refused when there is no checkpoint (the answer is sent disabled).
+      if (rewindEnd > 0) this.rewriteTranscript(id, messages.slice(0, rewindEnd));
+      return;
+    }
+    if (answer !== "delete") return;
     this.registry.close(id);
     if (this.activeId === id) {
       this.activeId = undefined;
@@ -2165,6 +2181,107 @@ export class ChatViewProvider implements WebviewViewProvider {
     this.resubscribe();
     await this.postSwitchView();
     // The manage-sessions form (if open) must drop the deleted row too.
+    this.pushSessionsManager();
+  }
+
+  /**
+   * The 🗑 question, with THREE answers instead of two: delete the session, rewind
+   * it to its first compaction summary, or empty its transcript.
+   *
+   * They are asked together because they are one gesture — "this session has
+   * become too big" — and because "start over without losing my settings or the
+   * state of the work" is what people usually want, while a second dialog would
+   * make it look like a follow-up to the deletion instead of an alternative to it.
+   *
+   * `rewindable` is FALSE when the transcript holds no summary yet: there is no
+   * checkpoint to rewind to, so that answer is shown disabled rather than hidden
+   * (the set of answers must not move around between two sessions).
+   */
+  private async askSessionCleanup(
+    name: string,
+    rewindable: boolean,
+  ): Promise<"delete" | "rewind" | "empty" | undefined> {
+    const message =
+      `What do you want to do with "${name}"?\n\n` +
+      "Rewind: keep the session up to its first compaction summary and drop everything after it.\n" +
+      "Empty: keep the session and its settings, drop the whole transcript.\n" +
+      "Delete: remove the session itself, transcript and settings included.";
+    const DEL = "Delete";
+    const REWIND = "Rewind to first summary";
+    const EMPTY = "Empty transcript";
+    if (!this.view) {
+      const { window } = await import("vscode");
+      const items = rewindable ? [DEL, REWIND, EMPTY] : [DEL, EMPTY];
+      const r = await window.showWarningMessage(message, { modal: true }, ...items);
+      return r === DEL ? "delete" : r === REWIND ? "rewind" : r === EMPTY ? "empty" : undefined;
+    }
+    const v = await this.requestPanelModal({
+      kind: "alert",
+      alertKind: "confirm",
+      title: "Delete or empty session",
+      message,
+      confirmText: "Delete",
+      danger: true,
+      extraActions: [
+        {
+          value: "rewind",
+          text: "Rewind",
+          title: rewindable
+            ? "Keep everything up to the first compaction summary and drop what came after it"
+            : "This session has no summary to rewind to yet",
+          disabled: !rewindable,
+        },
+        { value: "empty", text: "Empty", title: "Keep the session and its settings, drop the whole transcript" },
+      ],
+    });
+    return v === true ? "delete" : v === "rewind" ? "rewind" : v === "empty" ? "empty" : undefined;
+  }
+
+  /**
+   * The session's messages as the UI has them: the LIVE array when the session is
+   * open, the stored one otherwise (the manager form can act on a closed session).
+   */
+  private transcriptOf(id: string): ChatMessage[] {
+    const rt = this.registry.get(id);
+    if (rt) return rt.agent.getMessages();
+    try {
+      return this.sessions.load(id).messages;
+    } catch (e) {
+      debugLog("cannot read the transcript", id, e);
+      return [];
+    }
+  }
+
+  /**
+   * Replace a session's transcript with `kept`, keeping the SESSION (name,
+   * settings, tab, position in the list): the shared body of "rewind" and "empty".
+   *
+   * Same bookkeeping as a ✂ cut down to zero messages — persist with `replace`,
+   * re-estimate the context metric from what is left, drop the cache counters
+   * (they described a prefix that no longer exists) — and it works for a CLOSED
+   * session too: only the store is touched then.
+   */
+  private rewriteTranscript(id: string, kept: ChatMessage[]): void {
+    const rt = this.registry.get(id);
+    this.sessions.saveMessages(id, kept, { replace: true });
+    // Measured on what the MODEL will see: the window opens at the newest
+    // checkpoint, which after a rewind IS the summary that was kept.
+    const tokens = estimateContextTokens(kept.slice(checkpointStart(kept)).filter((m) => !m.uiOnly));
+    this.sessions.saveSettings(id, { contextTokens: tokens });
+    if (rt) {
+      rt.history.replace(kept);
+      rt.contextTokens = tokens;
+      rt.cachedTokens = 0;
+      rt.cachedWriteTokens = 0;
+    }
+    void this.maybeSuggestVacuum();
+    // Only the ACTIVE session is on screen; the others are re-rendered when the
+    // user opens them (their transcript is read off disk).
+    if (rt && this.activeId === id) {
+      void this.pushConfig();
+      this.refreshTranscript(rt, true);
+    }
+    // The manage form (if open) shows message counts and dates: refresh its rows.
     this.pushSessionsManager();
   }
 

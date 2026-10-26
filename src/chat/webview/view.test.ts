@@ -6086,6 +6086,56 @@ describe("in-panel alert modal", () => {
     hostMessage({ type: "modal", modalId: 1, kind: "alert", alertKind: "error", title: "E", message: "M" });
     expect((document.getElementById("alert-cancel") as HTMLButtonElement).style.display).toBe("none");
   });
+
+  it("extra answers come from the HOST and respond with their own value", async () => {
+    await loadView();
+    // The trash asks three things at once: the modal has to relay WHICH one was
+    // clicked, not just "confirmed".
+    hostMessage({
+      type: "modal",
+      modalId: 11,
+      kind: "alert",
+      alertKind: "confirm",
+      title: "Delete or empty session",
+      message: "What do you want to do?",
+      confirmText: "Delete",
+      extraActions: [
+        { value: "rewind", text: "Rewind", title: "no summary yet", disabled: true },
+        { value: "empty", text: "Empty", title: "drop the transcript" },
+      ],
+    });
+    const extras = document.querySelectorAll<HTMLButtonElement>("#alert-modal .alert-extra");
+    expect(extras).toHaveLength(2);
+    expect(extras[0].textContent).toBe("Rewind");
+    // Disabled, not hidden: a choice that cannot apply still names itself.
+    expect(extras[0].disabled).toBe(true);
+    expect(extras[0].title).toBe("no summary yet");
+    extras[0].click(); // a disabled button answers nothing
+    expect(posted.some((m: any) => m.type === "modalResponse")).toBe(false);
+    extras[1].click();
+    expect(posted).toContainEqual({ type: "modalResponse", id: 11, value: "empty" });
+    expect((document.getElementById("alert-modal") as HTMLDivElement).classList.contains("hidden")).toBe(true);
+  });
+
+  it("a later alert does not inherit the previous question's extra answers", async () => {
+    await loadView();
+    hostMessage({
+      type: "modal",
+      modalId: 12,
+      kind: "alert",
+      alertKind: "confirm",
+      title: "T",
+      message: "M",
+      extraActions: [{ value: "empty", text: "Empty" }],
+    });
+    expect(document.querySelectorAll("#alert-modal .alert-extra")).toHaveLength(1);
+    (document.getElementById("alert-cancel") as HTMLButtonElement).click();
+    hostMessage({ type: "modal", modalId: 13, kind: "alert", alertKind: "confirm", title: "T2", message: "M2" });
+    expect(document.querySelectorAll("#alert-modal .alert-extra")).toHaveLength(0);
+    // …and the plain confirm still answers true/false.
+    (document.getElementById("alert-ok") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "modalResponse", id: 13, value: true });
+  });
 });
 
 it("updates the context-window slider + label from the host-pushed value", async () => {

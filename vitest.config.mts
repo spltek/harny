@@ -1,7 +1,19 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  resolve: {
+    alias: [
+      // `vscode` does not exist on disk — it is injected by the editor at runtime.
+      // Bare imports are resolved at TRANSFORM time, so without a target a dynamic
+      // `await import("vscode")` inside the extension code fails to resolve in the
+      // jsdom environment and takes the whole file down before a single test runs
+      // (see the stub's own note). `vi.mock("vscode", …)` still wins at runtime:
+      // it is registered before the module graph is evaluated.
+      { find: /^vscode$/, replacement: fileURLToPath(new URL("./src/test/vscode.test-utils.ts", import.meta.url)) },
+    ],
+  },
   plugins: [
     {
       // Icon artwork lives as real .svg files under media/icons/ and reaches the

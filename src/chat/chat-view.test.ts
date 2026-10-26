@@ -934,6 +934,157 @@ describe("ChatViewProvider", () => {
     expect(sessions.list()).toEqual([]);
   });
 
+  // ── The 🗑 question: delete / rewind / empty ──
+  // The trash asks ONE question with three answers. These tests answer it by hand
+  // (`state.noAutoAlert`) because the auto-reply can only say true/false.
+  const cleanupModal = (view: any) =>
+    view.webview.postMessage.mock.calls
+      .map((c: any[]) => c[0] as any)
+      .filter((m) => m.type === "modal" && m.kind === "alert")
+      .pop();
+
+  it("the trash asks delete / rewind / empty in ONE modal, rewind disabled without a summary", async () => {
+    const { provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1: never compacted, so there is nothing to rewind to
+    state.noAutoAlert = true;
+    try {
+      const p = handler({ type: "deleteSession", id: "s1" });
+      const modal = cleanupModal(view);
+      expect(modal.confirmText).toBe("Delete");
+      expect(modal.danger).toBe(true);
+      expect(modal.extraActions.map((a: any) => a.value)).toEqual(["rewind", "empty"]);
+      // Disabled, NOT hidden: the answer set must not move between two sessions.
+      expect(modal.extraActions[0].disabled).toBe(true);
+      expect(modal.extraActions[1].disabled).toBeFalsy();
+      expect(modal.message).toContain("first compaction summary");
+      await handler({ type: "modalResponse", id: modal.modalId, value: false });
+      await p;
+    } finally {
+      state.noAutoAlert = false;
+    }
+  });
+
+  it("the trash can EMPTY a session: the session and its settings stay, the transcript goes", async () => {
+    const { store, registry, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.history.replace([
+      { role: "user", content: "q", timestamp: 1 },
+      { role: "assistant", content: "a", timestamp: 2 },
+    ]);
+    rt.contextTokens = 4242;
+    rt.cachedTokens = 900;
+    state.noAutoAlert = true;
+    try {
+      const p = handler({ type: "deleteSession", id: "s1" });
+      const modal = cleanupModal(view);
+      await handler({ type: "modalResponse", id: modal.modalId, value: "empty" });
+      await p;
+    } finally {
+      state.noAutoAlert = false;
+    }
+    expect(store.remove).not.toHaveBeenCalled();
+    expect(registry.isOpen("s1")).toBe(true);
+    expect(rt.history.all()).toEqual([]);
+    expect(store.saveMessages).toHaveBeenCalledWith("s1", [], { replace: true });
+    // The metric belonged to the transcript that was just dropped.
+    expect(rt.contextTokens).toBe(0);
+    expect(rt.cachedTokens).toBe(0);
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { contextTokens: 0 });
+  });
+
+  it("the trash can REWIND to the first summary: the summary stays, everything after it goes", async () => {
+    const { store, registry, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    const pair = [
+      { role: "user", content: "Summary of past interactions", timestamp: 3, synthetic: true },
+      { role: "assistant", content: "## Goal\nship it", timestamp: 4, synthetic: true },
+    ];
+    const msgs = [
+      { role: "user", content: "q", timestamp: 1 },
+      { role: "assistant", content: "a", timestamp: 2 },
+      ...pair,
+      { role: "user", content: "after", timestamp: 5 },
+      { role: "assistant", content: "after-a", timestamp: 6 },
+    ];
+    rt.history.replace(msgs);
+    rt.contextTokens = 99999;
+    state.noAutoAlert = true;
+    try {
+      const p = handler({ type: "deleteSession", id: "s1" });
+      const modal = cleanupModal(view);
+      expect(modal.extraActions[0].disabled).toBe(false);
+      await handler({ type: "modalResponse", id: modal.modalId, value: "rewind" });
+      await p;
+    } finally {
+      state.noAutoAlert = false;
+    }
+    const kept = msgs.slice(0, 4);
+    expect(store.remove).not.toHaveBeenCalled();
+    expect(registry.isOpen("s1")).toBe(true);
+    expect(rt.history.all()).toEqual(kept);
+    expect(store.saveMessages).toHaveBeenCalledWith("s1", kept, { replace: true });
+    // The window now OPENS on the kept summary: the metric is that state document,
+    // not the tail that was dropped.
+    expect(rt.contextTokens).toBe(estimateContextTokens(pair));
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { contextTokens: rt.contextTokens });
+  });
+
+  it("a rewind without a summary is refused instead of emptying the session", async () => {
+    // The answer is sent DISABLED, so a stale or scripted client cannot turn
+    // "rewind" into a wipe: no checkpoint means no rewrite at all.
+    const { store, registry, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1: never compacted
+    const msgs = [
+      { role: "user", content: "q", timestamp: 1 },
+      { role: "assistant", content: "a", timestamp: 2 },
+    ];
+    const rt = registry.get("s1")!;
+    rt.history.replace(msgs);
+    state.noAutoAlert = true;
+    try {
+      const p = handler({ type: "deleteSession", id: "s1" });
+      const modal = cleanupModal(view);
+      await handler({ type: "modalResponse", id: modal.modalId, value: "rewind" });
+      await p;
+    } finally {
+      state.noAutoAlert = false;
+    }
+    expect(rt.history.all()).toEqual(msgs);
+    expect(store.saveMessages).not.toHaveBeenCalled();
+    expect(store.remove).not.toHaveBeenCalled();
+  });
+
+  it("cancelling the trash question changes nothing", async () => {
+    const { store, registry, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const msgs = [
+      { role: "user", content: "q", timestamp: 1 },
+      { role: "assistant", content: "a", timestamp: 2 },
+    ];
+    const rt = registry.get("s1")!;
+    rt.history.replace(msgs);
+    state.noAutoAlert = true;
+    try {
+      const p = handler({ type: "deleteSession", id: "s1" });
+      const modal = cleanupModal(view);
+      await handler({ type: "modalResponse", id: modal.modalId, value: undefined });
+      await p;
+    } finally {
+      state.noAutoAlert = false;
+    }
+    expect(store.remove).not.toHaveBeenCalled();
+    expect(registry.isOpen("s1")).toBe(true);
+    expect(rt.history.all()).toEqual(msgs);
+    expect(store.saveMessages).not.toHaveBeenCalled();
+  });
+
   it("refuses to delete and rename a session whose SEND PREAMBLE is still running", async () => {
     // "Working" used to mean `agent.streaming` only: during the preamble (attachment
     // build, pre-request auto-compaction — seconds) the destructive actions looked

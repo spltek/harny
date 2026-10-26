@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The session trash asks ONE question with THREE answers: delete / rewind / empty.** It used to ask a plain
+  yes/no ("Delete session X? This removes its transcript and settings"), which is the wrong question for the case
+  that actually comes up: a session that grew too big, where throwing away the *state of the work* is a last
+  resort and the usual intent is "start over, but keep what we decided so far". Clicking 🗑 (in the sessions list
+  and in the All-sessions manager alike) now opens one in-panel dialog with the three outcomes spelled out:
+  **Delete** removes the session, transcript and settings included; **Rewind** keeps everything up to the
+  session's **first compaction summary** and drops everything after it — the transcript then ENDS on that state
+  document, which is exactly where the model's window opens, so the session continues from its condensed past
+  with a nearly empty context; **Empty** keeps the session (name, per-session settings, tab and position) and
+  drops only the whole transcript. **Rewind is offered DISABLED when the session never compacted**, because there
+  is no summary to rewind to — shown rather than hidden, so the set of answers does not move around between one
+  session and the next. Both rewrites are the same bookkeeping as a ✂ cut down to zero messages: `saveMessages`
+  with `replace`, the context metric re-estimated from what is left (the summary pair for a rewind, 0 for an
+  empty), the cache counters dropped since they described a prefix that no longer exists, and the vacuum
+  suggestion checked. They also work on a CLOSED session (only the store is touched), and none of them is
+  allowed to touch a session that is still working. Underneath, the modal is no longer a two-button dialog: the
+  host sends `extraActions` (`value`, `text`, tooltip, disabled) and the webview builds those buttons at runtime,
+  answering `modalResponse` with the action's own `value` — so the next question with more than two answers needs
+  no new modal, only new buttons. The footer wraps for the same reason (`flex-wrap` on `.alert-actions`). One new
+  pure function carries the cut: `firstCheckpointEnd(messages)` in `conversation-validity.ts`, the counterpart of
+  `checkpointStart` — it lands AFTER the oldest synthetic pair, never between its halves, and returns 0 when there
+  is no summary at all. The flow is also covered END TO END, host ⇄ webview, in
+  `session-cleanup.integration.test.ts`: the provider runs over a real in-memory store, the page is the one
+  `renderViewHtml` produces, the client is the real bundle module, and the test only CLICKS (the row's 🗑, then an
+  answer in the dialog). That file exists because the two unit suites cannot see the seam: renaming the real page's
+  `#alert-ok` leaves all 33 fixture-based webview/HTML tests green while the integration one goes red on all four
+  cases — the failure mode this dialog could have shipped with.
 - **A session switch now says that it is happening.** Neither opening a session nor switching tab is instant:
   the host rebuilds the config (`buildConfig` awaits) and may be finishing a turn, and the new state only travels
   once that is done. Until then the OLD transcript sat there looking final, so the click read as lost — which is
