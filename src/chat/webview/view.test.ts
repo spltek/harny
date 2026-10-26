@@ -114,11 +114,12 @@ function setupDom(initOverrides: Record<string, unknown> = {}, savedState: Recor
         <div class="cs-field">
           <label for="compact-target-input">Land at (%)</label>
           <div class="cs-inline">
-            <input id="compact-target-input" type="range" min="0" />
+            <input id="compact-target-input" type="range" min="0" max="100" />
             <span id="compact-target-value" class="cs-val"></span>
             <button id="compact-target-auto" class="secondary cs-mini" type="button">Auto</button>
           </div>
         </div>
+        <p id="compact-note" class="cs-hint cs-note"></p>
         <pre id="compact-preview" class="cs-preview"></pre>
         <div class="cs-actions">
           <button id="compact-settings-cancel" class="secondary">Cancel</button>
@@ -5588,6 +5589,70 @@ describe("view webview client", () => {
     expect(text).toContain("URL");
   });
 
+  it("each MCP row has a SWITCH whose knob slides, and clicking it toggles that server", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        contextWindow: 128000,
+        mcp: {
+          servers: { a: { command: "node" }, b: { command: "node", enabled: false } },
+          statuses: [
+            { name: "a", ok: true, enabled: true, toolCount: 2 },
+            { name: "b", ok: true, enabled: false, toolCount: 0 },
+          ],
+        },
+      },
+    });
+    const sw = [...document.querySelectorAll<HTMLButtonElement>("#mcp-list .mcp-switch")];
+    expect(sw.map((s) => s.getAttribute("role"))).toEqual(["switch", "switch"]);
+    // The knob position IS the state (the CSS reads aria-checked), so the switch cannot lie.
+    expect(sw.map((s) => s.getAttribute("aria-checked"))).toEqual(["true", "false"]);
+    expect(sw.map((s) => s.disabled)).toEqual([false, false]);
+    // …and the name carries no state of its own any more: the leading ● is gone.
+    expect(document.querySelector("#mcp-list .mcp-name")!.textContent).toBe("a");
+
+    posted.length = 0;
+    sw[0].click();
+    expect(posted).toContainEqual({ type: "toggleMcpServer", name: "a", enabled: false });
+    posted.length = 0;
+    sw[1].click(); // the disabled one enables
+    expect(posted).toContainEqual({ type: "toggleMcpServer", name: "b", enabled: true });
+  });
+
+  it("the MCP switches dim while a run is working and come back when it stops", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        contextWindow: 128000,
+        mcp: {
+          servers: { a: { command: "node" } },
+          statuses: [{ name: "a", ok: true, enabled: true, toolCount: 1 }],
+        },
+      },
+    });
+    const sw = () => document.querySelector("#mcp-list .mcp-switch") as HTMLButtonElement;
+    expect(sw().disabled).toBe(false);
+
+    hostMessage({ type: "status", active: true });
+    expect(sw().disabled).toBe(true);
+    expect(sw().title).toContain("Stop the run first");
+    posted.length = 0;
+    sw().click();
+    expect(posted.some((m) => (m as { type?: string }).type === "toggleMcpServer")).toBe(false);
+
+    hostMessage({ type: "status", active: false });
+    expect(sw().disabled).toBe(false);
+    expect(sw().title).toContain("Enable or disable a");
+  });
+
   it("the MCP card keeps its rows when nothing changed (they used to be rebuilt under the cursor)", async () => {
     await loadView();
     const push = (statuses: unknown[]) =>
@@ -5635,6 +5700,213 @@ describe("view webview client", () => {
     expect(details).toHaveLength(1);
     expect(details[0].textContent).toBe(long);
     expect((details[0] as HTMLElement).title).toBe(long);
+  });
+
+  it("a slider paints the accent fill under its knob (--fill follows the value)", async () => {
+    await loadView();
+    const par = document.getElementById("par-range") as HTMLInputElement;
+    // The initial state comes from a config push, which sets .value PROGRAMMATICALLY: no input
+    // event fires, so the render pass has to paint it (the fill would otherwise sit at 0%).
+    expect(par.style.getPropertyValue("--fill")).not.toBe("");
+
+    par.value = "40";
+    par.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(par.style.getPropertyValue("--fill")).toBe("40%");
+
+    par.value = "100";
+    par.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(par.style.getPropertyValue("--fill")).toBe("100%");
+  });
+
+  it("a PARTIAL config push repaints the fill too (this is what changing the model sends)", async () => {
+    // The bug on screen: after a model change the context slider's knob sat at 100% while the
+    // orange fill stopped at 67%. That push writes `.value` from its own handler, never through
+    // renderViewState — so the reconciliation must also hang off the message itself.
+    await loadView();
+    const range = document.getElementById("ctx-range") as HTMLInputElement;
+
+    hostMessage({ type: "config", config: { contextWindow: 1000000, maxContextWindow: 1000000 } });
+
+    const min = Number(range.min || 0);
+    const pct = ((Number(range.value) - min) / (Number(range.max || 100) - min)) * 100;
+    expect(range.value).toBe("1000000");
+    expect(range.style.getPropertyValue("--fill")).toBe(`${pct}%`);
+  });
+
+  it("dragging a slider still drives the panel (value → label), whatever the CSS does", async () => {
+    // The mechanics, end to end: `input` on the range must reach the app's own handler. This is
+    // the guard against a styling change quietly killing the control.
+    await loadView();
+    const range = document.getElementById("ctx-range") as HTMLInputElement;
+    const label = document.getElementById("ctx-value") as HTMLElement;
+    range.value = "32000";
+    range.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(label.textContent).toContain("32");
+    expect(range.style.getPropertyValue("--fill")).not.toBe("");
+  });
+
+  it("a slider with a non-zero min paints its fill from the min, not from zero", async () => {
+    await loadView();
+    // #out-range starts well above 0: a naive (value / max) would pin it to the top instead of
+    // showing the real position — the classic range-fill bug.
+    const out = document.getElementById("out-range") as HTMLInputElement;
+    expect(Number(out.min)).toBeGreaterThan(0);
+    out.value = out.min;
+    out.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(out.style.getPropertyValue("--fill")).toBe("0%");
+    out.value = out.max;
+    out.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(out.style.getPropertyValue("--fill")).toBe("100%");
+  });
+
+  it("a modal opener repaints the fill of the sliders whose values it just wrote", async () => {
+    // The compaction opener writes .value from the DRAFT (no input event fires, and no config
+    // push follows), so without its own paint the track would keep the previous fill. Stale
+    // state is simulated by removing the variable, which is exactly what "never painted" means.
+    await loadView();
+    const thr = document.getElementById("compact-threshold-input") as HTMLInputElement;
+    thr.style.removeProperty("--fill");
+    (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
+    const min = Number(thr.min || 0);
+    const pct = ((Number(thr.value) - min) / (Number(thr.max || 100) - min)) * 100;
+    expect(thr.style.getPropertyValue("--fill")).toBe(`${pct}%`);
+  });
+
+  it("the two compaction knobs are INDEPENDENT: moving the trigger leaves the landing one alone", async () => {
+    // The bug: the landing slider's max was derived from the trigger, so shrinking it made the
+    // browser clamp the WIDGET while the draft kept the old value — the label and the knob
+    // disagreed, and every later write put the knob back where the stale draft pointed.
+    await loadView();
+    (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
+    const trigger = document.getElementById("compact-threshold-input") as HTMLInputElement;
+    const landing = document.getElementById("compact-target-input") as HTMLInputElement;
+    expect(landing.max).toBe("100");
+
+    // Take MANUAL control first: in AUTO the landing point follows the trigger by definition.
+    landing.value = "30";
+    landing.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(document.getElementById("compact-target-value")?.textContent).toBe("30%");
+
+    trigger.value = "20";
+    trigger.dispatchEvent(new Event("input", { bubbles: true }));
+
+    expect(landing.value).toBe("30"); // untouched by the other knob
+    expect(landing.max).toBe("100"); // …and its range never shrinks under the finger
+  });
+
+  it("a landing point at or above the trigger is said in the label and clamped when saved", async () => {
+    await loadView();
+    (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
+    const trigger = document.getElementById("compact-threshold-input") as HTMLInputElement;
+    const landing = document.getElementById("compact-target-input") as HTMLInputElement;
+    const label = document.getElementById("compact-target-value") as HTMLElement;
+
+    trigger.value = "40";
+    trigger.dispatchEvent(new Event("input", { bubbles: true }));
+    landing.value = "90";
+    landing.dispatchEvent(new Event("input", { bubbles: true }));
+
+    // The consequence is visible BEFORE saving…
+    expect(label.textContent).toContain("→ saved as 39%");
+    posted.length = 0;
+    (document.getElementById("compact-settings-save") as HTMLButtonElement).click();
+    // …and that is exactly what is stored.
+    expect(posted).toContainEqual({ type: "setCompactionTarget", value: 39 });
+  });
+
+  it("the note under the knobs follows the EFFECTS, at both limits", async () => {
+    // The sliders are free, so the consequences are told here — before Save, not after.
+    await loadView();
+    (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
+    const trigger = document.getElementById("compact-threshold-input") as HTMLInputElement;
+    const landing = document.getElementById("compact-target-input") as HTMLInputElement;
+    const note = document.getElementById("compact-note") as HTMLElement;
+
+    // Everything compatible: nothing to say.
+    trigger.value = "60";
+    trigger.dispatchEvent(new Event("input", { bubbles: true }));
+    landing.value = "20";
+    landing.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(note.textContent).toBe("");
+
+    // Above the trigger: says it frees nothing and what will be stored.
+    landing.value = "90";
+    landing.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(note.textContent).toContain("would free nothing");
+    expect(note.textContent).toContain("saved as 59%");
+
+    // Below the floor the host reported (8%): the other limit.
+    hostMessage({
+      type: "compactionPreview",
+      thresholdPercent: 60,
+      targetPercent: 20,
+      minTargetPercent: 8,
+      aboveThreshold: true,
+    });
+    landing.value = "4";
+    landing.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(note.textContent).toContain("nothing left to free");
+    expect(note.textContent).toContain("saved as 0%");
+
+    // …and it clears again as soon as the pair makes sense.
+    landing.value = "20";
+    landing.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(note.textContent).toBe("");
+  });
+
+  it("what Save stores is what the next open shows: the EFFECTIVE landing point, not the draft", async () => {
+    // The whole rule, one round trip: pick a landing point above the trigger, save, reopen.
+    await loadView();
+    const open = () => (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
+    open();
+    const trigger = document.getElementById("compact-threshold-input") as HTMLInputElement;
+    const landing = document.getElementById("compact-target-input") as HTMLInputElement;
+    const label = document.getElementById("compact-target-value") as HTMLElement;
+
+    trigger.value = "40";
+    trigger.dispatchEvent(new Event("input", { bubbles: true }));
+    landing.value = "90";
+    landing.dispatchEvent(new Event("input", { bubbles: true }));
+    (document.getElementById("compact-settings-save") as HTMLButtonElement).click();
+
+    expect(posted).toContainEqual({ type: "setCompactionTarget", value: 39 });
+    open();
+    expect(landing.value).toBe("39"); // the stored (effective) value, not the 90 you dragged
+    expect(label.textContent).toBe("39%");
+    expect(document.getElementById("compact-note")?.textContent).toBe(""); // nothing to warn about now
+  });
+
+  it("Cancel throws the draft away: nothing of the pair survives", async () => {
+    // The promise the modal makes ("nothing here applies until you press Save") must hold for the
+    // landing knob too now that the two are independent.
+    await loadView();
+    const open = () => (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
+    open();
+    const trigger = document.getElementById("compact-threshold-input") as HTMLInputElement;
+    const landing = document.getElementById("compact-target-input") as HTMLInputElement;
+    trigger.value = "50";
+    trigger.dispatchEvent(new Event("input", { bubbles: true }));
+    landing.value = "25";
+    landing.dispatchEvent(new Event("input", { bubbles: true }));
+    (document.getElementById("compact-settings-cancel") as HTMLButtonElement).click();
+
+    open();
+    expect(trigger.value).toBe("80"); // the stored trigger
+    expect(landing.value).toBe("10"); // …and AUTO, an eighth of it
+  });
+
+  it("Save stores the DRAFT, never the widget: a stray .value cannot override your choice", async () => {
+    // Reading the widget was how an AUTO value got stored as an explicit choice once the old code
+    // had rewritten the slider behind the draft. A programmatic write must count for nothing.
+    await loadView();
+    (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
+    const landing = document.getElementById("compact-target-input") as HTMLInputElement;
+    landing.value = "30";
+    landing.dispatchEvent(new Event("input", { bubbles: true }));
+    landing.value = "5"; // no event: not a decision, just a stray write
+    posted.length = 0;
+    (document.getElementById("compact-settings-save") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "setCompactionTarget", value: 30 });
   });
 
   it("typing '/' at the start of the prompt shows the skill list", async () => {
@@ -6698,7 +6970,7 @@ describe("context metrics line", () => {
     expect(posted).not.toContainEqual({ type: "setCompactionThreshold", value: 1 });
   });
 
-  it("the gear also sets the LANDING point, bounded by the trigger", async () => {
+  it("the gear also sets the LANDING point, with its own range", async () => {
     await loadView();
     hostMessage({
       type: "config",
@@ -6720,10 +6992,12 @@ describe("context metrics line", () => {
     (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
     const target = document.getElementById("compact-target-input") as HTMLInputElement;
     expect(target.value).toBe("20");
-    // The ceiling is the TRIGGER minus one — derived, never a fixed cap.
-    expect(target.max).toBe("59");
+    // Its own range now: the knobs do not constrain each other, and the one rule between them
+    // (landing < trigger) is applied when you save and stated in the label.
+    expect(target.max).toBe("100");
 
     target.value = "55";
+    target.dispatchEvent(new Event("input"));
     (document.getElementById("compact-settings-save") as HTMLButtonElement).click();
     expect(posted).toContainEqual({ type: "setCompactionTarget", value: 55 });
     expect(document.getElementById("compact-threshold-label")?.textContent).toBe("Auto 60% ctx · keep 55%");
@@ -6802,12 +7076,13 @@ describe("context metrics line", () => {
     expect(targetValue.textContent).toBe("10% (default)");
     expect(document.getElementById("compact-threshold-value")?.textContent).toBe("80%");
 
-    // Moving the trigger moves the DEFAULT with it (and the ceiling).
+    // Moving the trigger moves the DEFAULT with it — AUTO is the one mode that follows — but the
+    // landing slider's own range never shrinks.
     threshold.value = "50";
     threshold.dispatchEvent(new Event("input"));
     expect(target.value).toBe("6");
     expect(targetValue.textContent).toBe("6% (default)");
-    expect(target.max).toBe("49");
+    expect(target.max).toBe("100");
 
     // 0 is a POSITION, not a mode: it means "only the summary remains".
     target.value = "0";
@@ -6921,13 +7196,18 @@ describe("context metrics line", () => {
       deferredCount: 0,
     });
 
-    // Below the floor the slider snaps to 0 ("only the summary remains"), not to Auto.
+    // Below the floor the SLIDER keeps the position you chose (nothing jumps under your finger),
+    // and the label states what will be stored: the floor rule is applied at save time.
     target.value = "4";
     target.dispatchEvent(new Event("input"));
-    expect(target.value).toBe("0");
-    expect(value.textContent).toBe("0% (min)");
+    expect(target.value).toBe("4");
+    expect(value.textContent).toContain("→ saved as 0%");
+    posted.length = 0;
+    (document.getElementById("compact-settings-save") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "setCompactionTarget", value: 0 });
 
     // A value AT the floor is a real choice and is kept as it is.
+    (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
     target.value = "8";
     target.dispatchEvent(new Event("input"));
     expect(target.value).toBe("8");

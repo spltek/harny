@@ -523,6 +523,105 @@ describe("renderViewHtml", () => {
     expect(html).not.toContain("#steer-btn");
   });
 
+  it("every slider thumb is the SAME sphere as the MCP switch's dot", () => {
+    // `accent-color` colours the native thumb but cannot shade it, so the parts are drawn by
+    // hand — in both engines, or the slider looks native in one and custom in the other.
+    const html = renderViewHtml({
+      ...base,
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      } as never,
+    });
+    for (const sel of ['input[type="range"]::-webkit-slider-thumb', 'input[type="range"]::-moz-range-thumb']) {
+      const thumb = cssRule(html, sel);
+      // A plain orange circle…
+      expect(thumb).toContain("background: var(--accent)");
+      // …wearing the SAME shadow as the switch's dot.
+      expect(thumb).toContain("box-shadow: var(--knob-shadow)");
+      expect(thumb).toContain("border-radius: 50%");
+      expect(thumb).toContain("width: 14px");
+    }
+    // The bar is the thin rounded one, with the ORANGE fill left of the knob…
+    const track = cssRule(html, 'input[type="range"]::-webkit-slider-runnable-track');
+    expect(track).toContain("height: 4px");
+    expect(track).toContain("border-radius: 999px");
+    expect(track).toContain("var(--accent) 0 var(--fill, 0%)");
+    // …and Firefox draws that same fill with its native progress pseudo-element.
+    expect(cssRule(html, 'input[type="range"]::-moz-range-progress')).toContain("background: var(--accent)");
+    // Nothing composed: a gradient-on-gradient custom property was dropped as invalid at
+    // computed-value time and the ball disappeared, leaving only its rim.
+    expect(html).not.toContain("--knob-sphere-accent");
+    expect(html).not.toContain("color-mix");
+  });
+
+  it("the MCP switch slides its knob, and the track is exactly as tall as it", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      } as never,
+    });
+    const track = cssRule(html, ".mcp-switch");
+    const knob = cssRule(html, ".mcp-switch::after");
+    const px = (rule: string, prop: string) => Number(new RegExp(`(?:^|[\\s;])${prop}:\\s*(\\d+)px`).exec(rule)?.[1]);
+    // "the seat must be as tall as the knob": no slack above or below it, so the switch reads
+    // as one object (14px track with a 10px knob looked like a hobby project).
+    expect(px(knob, "height")).toBeGreaterThan(0);
+    expect(px(track, "height")).toBe(px(knob, "height"));
+    // …which only WORKS if the global `button` rule is neutralized here: `min-height: 1.54rem`
+    // wins over `height`, and that is what left the knob sitting at the top of a taller pill
+    // with empty space below it.
+    expect(track).toContain("min-height: 0");
+    expect(track).toContain("padding: 0");
+    expect(track).toContain("box-shadow: none"); // no "key" bevel on a switch
+    expect(px(track, "width")).toBeGreaterThan(px(knob, "width"));
+    expect(knob).toContain("border-radius: 50%");
+    // …and the knob travels exactly the leftover track, so nothing pokes out on either side.
+    expect(cssRule(html, '.mcp-switch[aria-checked="true"]::after')).toContain(
+      `translateX(${px(track, "width") - px(knob, "width")}px)`,
+    );
+    // OFF: a white veil (overlay-3 is white-alpha on the dark theme, black-alpha on paper) and
+    // a grey dot — the "disabled" look; ON: accent track + a WHITE sphere (see below).
+    expect(track).toContain("background: var(--overlay-3)");
+    expect(knob).toContain("background: var(--muted-2)");
+    expect(cssRule(html, '.mcp-switch[aria-checked="true"]')).toContain("background: var(--accent)");
+    const onDot = cssRule(html, '.mcp-switch[aria-checked="true"]::after');
+    // A LITERAL colour, not a themed role: the dot must look the same on both themes, so no
+    // var() it could re-resolve into…
+    expect(onDot).not.toContain("var(--bg)");
+    // …and it wears the panel's ONE sphere, defined once in :root.
+    expect(onDot).toContain("background: var(--knob-sphere)");
+    expect(onDot).toContain("box-shadow: var(--knob-shadow)");
+    // The sphere itself: white, but NOT flat — the radial gradient (lighter top-left, darker
+    // bottom-right) is what makes it read as a tiny ball.
+    expect(html).toContain("--knob-sphere: radial-gradient(circle at 34% 30%");
+    expect(html).toContain("--knob-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);");
+    // The theme-dependent role from an earlier attempt is GONE, not orphaned in the palette.
+    expect(html).not.toContain("switch-dot");
+    // …and it is visibly unavailable while a run is working.
+    expect(cssRule(html, ".mcp-switch:disabled")).toContain("opacity: 0.3");
+  });
+
   it("keeps an MCP row on ONE line, so the card cannot change height while you click", () => {
     // The row is rebuilt on every config push and carries an error string that can be a
     // whole npm log: wrapped, it changed the card's height and moved the control stack under

@@ -308,6 +308,7 @@ const compactSettingsSave = document.getElementById("compact-settings-save") as 
 const compactTargetInput = document.getElementById("compact-target-input") as HTMLInputElement;
 const compactTargetAuto = document.getElementById("compact-target-auto") as HTMLButtonElement;
 const compactPreview = document.getElementById("compact-preview") as HTMLPreElement;
+const compactNote = document.getElementById("compact-note") as HTMLParagraphElement;
 const compactThresholdValue = document.getElementById("compact-threshold-value") as HTMLSpanElement;
 const compactTargetValue = document.getElementById("compact-target-value") as HTMLSpanElement;
 
@@ -4180,10 +4181,26 @@ function renderMcp(mcp: ConfigState["mcp"]): void {
     const row = document.createElement("div");
     row.className = "mcp-status " + (!enabled ? "off" : st?.ok ? "ok" : "err");
 
-    // The name IS the toggle: click to enable/disable (colored ↔ gray).
+    // The SWITCH is the control: a pill with a knob that slides right when the server is ON.
+    // It exists because the affordance was invisible — the name was the toggle and nothing
+    // said so. The name stays clickable as a shortcut (its tooltip still says it).
+    const sw = document.createElement("button");
+    sw.type = "button";
+    sw.className = "mcp-switch";
+    sw.setAttribute("role", "switch");
+    sw.setAttribute("aria-checked", String(enabled));
+    sw.setAttribute("aria-label", `${enabled ? "Disable" : "Enable"} ${name}`);
+    sw.dataset.name = name;
+    sw.addEventListener("click", () => {
+      if (streamingActive) return;
+      vscode.postMessage({ type: "toggleMcpServer", name, enabled: !enabled });
+    });
+    row.appendChild(sw);
+
+    // The name is just the name now: the switch carries the state, so the leading ● is gone.
     const nameEl = document.createElement("span");
     nameEl.className = "mcp-name";
-    nameEl.textContent = `● ${name}`;
+    nameEl.textContent = name;
     nameEl.title = enabled ? "Click to disable this server" : "Click to enable this server";
     nameEl.addEventListener("click", () => {
       // Not while the session is working: the current run's tool list is already
@@ -4227,6 +4244,20 @@ function renderMcp(mcp: ConfigState["mcp"]): void {
       row.appendChild(detail);
     }
     mcpList.appendChild(row);
+  }
+  // The switches must LOOK unavailable while a run is working (a mid-run toggle only lands
+  // on the next turn), and a run can start or stop between two config pushes.
+  refreshMcpSwitches();
+}
+
+/** Keep the switches in sync with `streamingActive` without rebuilding the rows. */
+function refreshMcpSwitches(): void {
+  for (const sw of document.querySelectorAll<HTMLButtonElement>("#mcp-list .mcp-switch")) {
+    sw.disabled = streamingActive;
+    const name = sw.dataset.name ?? "this server";
+    sw.title = streamingActive
+      ? "Stop the run first — a mid-run toggle only lands on the next turn"
+      : `Enable or disable ${name}`;
   }
 }
 
@@ -4805,6 +4836,9 @@ function followAndFocus(): void {
 function setStreaming(active: boolean): void {
   const rising = active && !streamingActive;
   streamingActive = active;
+  // The MCP switches dim the moment a run starts (a mid-run toggle only lands on the next
+  // turn) and come back when it stops: the guard is now VISIBLE, not just enforced.
+  refreshMcpSwitches();
   if (rising) {
     // The policies of THIS run are the ones on screen at this instant (see Agent.runMode).
     // This snapshot is the safety net: the two pills are disabled below, so a change can only
@@ -5577,7 +5611,7 @@ const sendCompactionPreview = rafThrottle(() => {
   vscode.postMessage({
     type: "previewCompaction",
     thresholdPercent: threshold,
-    targetPercent: clampCompactionTarget(Number(compactTargetInput.value), threshold, compactionTargetFloorPct),
+    targetPercent: draftTargetIsAuto ? clampAutoTarget(threshold) : effectiveDraftTarget(),
   });
 });
 
@@ -5603,7 +5637,9 @@ function renderCompactionPreview(p: {
   // smallest explicit value, and it moves with the session's own work.
   if (typeof p?.minTargetPercent === "number") {
     compactionTargetFloorPct = Math.max(1, p.minTargetPercent);
-    syncTargetBounds();
+    // No bounds to re-derive here: the knobs are independent, and a host preview must never move
+    // the widget the user is holding.
+    renderCompactionValues();
   }
   const fmt = (n?: number): string => {
     const v = typeof n === "number" ? n : 0;
@@ -5647,21 +5683,67 @@ function renderCompactionPreview(p: {
   compactPreview.textContent = lines.join("\n");
 }
 
-function syncTargetBounds(): void {
+/**
+ * Push the DRAFT onto the landing slider.
+ *
+ * The landing slider no longer derives anything from the trigger: two INDEPENDENT knobs (1..100 and
+ * 0..100). That dependency was the bug — shrinking `max` made the browser clamp the WIDGET while
+ * the draft kept the old number, so the label and the knob disagreed, and every later write put the
+ * knob where the stale draft pointed (clamped again). A value the user can see, a widget that lies.
+ */
+function showDraftTarget(): void {
   const threshold = clampCompactionThreshold(compactThresholdInput.value);
-  // 0 is a real position; the ceiling is the trigger minus one (derived from the other knob).
-  compactTargetInput.min = "0";
-  compactTargetInput.max = String(Math.max(0, threshold - 1));
-  // The knob shows the EFFECTIVE landing point: Auto is a MODE (the button), not a position.
   compactTargetInput.value = String(draftTargetIsAuto ? clampAutoTarget(threshold) : draftTargetPct);
+}
+
+/** The landing point that will actually be SAVED: the ONE place that knows the rule. */
+function effectiveDraftTarget(): number {
+  const threshold = clampCompactionThreshold(compactThresholdInput.value);
+  return draftTargetIsAuto
+    ? clampAutoTarget(threshold)
+    : clampCompactionTarget(draftTargetPct, threshold, compactionTargetFloorPct);
+}
+
+/**
+ * The line under the knobs: what the PAIR you picked actually does.
+ *
+ * The sliders are free (nothing constrains them while you drag), so the consequences live here,
+ * and they follow the drafts in real time — including the two limits: landing at or above the
+ * trigger frees nothing, and landing below the floor (what the summary plus the last turn already
+ * occupy) frees nothing either. Both are still SAVED as their effective value; this line is where
+ * you find that out, before pressing Save rather than after.
+ */
+function renderCompactionNote(): void {
+  const threshold = clampCompactionThreshold(compactThresholdInput.value);
+  const effective = effectiveDraftTarget();
+  const atOrAbove = !draftTargetIsAuto && draftTargetPct >= threshold;
+  const belowFloor = !draftTargetIsAuto && draftTargetPct < compactionTargetFloorPct && draftTargetPct > 0;
+  if (!atOrAbove && !belowFloor) {
+    compactNote.textContent = "";
+    return;
+  }
+  compactNote.textContent = atOrAbove
+    ? `Landing at ${draftTargetPct}% with the trigger at ${threshold}% would free nothing: it is saved as ` +
+      `${effective}%, the highest value below the trigger.`
+    : `Below ${compactionTargetFloorPct}% there is nothing left to free — the summary and the last turn ` +
+      `already occupy that much. It is saved as ${effective}% (only the summary remains).`;
 }
 
 /** Keep both value labels in sync (a slider carries no text of its own). */
 function renderCompactionValues(): void {
   compactThresholdValue.textContent = draftThresholdPct + "%";
-  compactTargetValue.textContent = draftTargetIsAuto
-    ? "" + clampAutoTarget(draftThresholdPct) + "% (default)"
-    : draftTargetPct + "%" + (draftTargetPct === 0 ? " (min)" : "");
+  renderCompactionNote();
+  if (draftTargetIsAuto) {
+    compactTargetValue.textContent = clampAutoTarget(draftThresholdPct) + "% (default)";
+    return;
+  }
+  const effective = effectiveDraftTarget();
+  // The knobs do not constrain each other any more, so the CONSEQUENCE is stated instead of
+  // happening silently at save time: "62% → saved as 36%".
+  compactTargetValue.textContent =
+    effective === draftTargetPct
+      ? draftTargetPct + "%" + (draftTargetPct === 0 ? " (min)" : "")
+      : draftTargetPct + "% → saved as " + effective + "%";
 }
 
 function openCompactionSettings(): void {
@@ -5671,7 +5753,7 @@ function openCompactionSettings(): void {
   draftTargetPct = compactionTargetPct;
   draftTargetIsAuto = compactionTargetIsAuto;
   compactThresholdInput.value = String(draftThresholdPct);
-  syncTargetBounds();
+  showDraftTarget();
   renderCompactionValues();
   compactTargetAuto.classList.toggle("is-on", draftTargetIsAuto);
   compactPreview.textContent = "";
@@ -5690,24 +5772,22 @@ function closeCompactionSettings(): void {
 compactSettingsBtn.addEventListener("click", openCompactionSettings);
 compactSettingsCancel.addEventListener("click", closeCompactionSettings);
 compactSettingsModal.querySelector(".cs-backdrop")?.addEventListener("click", closeCompactionSettings);
-// Moving the trigger moves the AUTO value with it AND the ceiling of an explicit one.
-// Everything below mutates the DRAFT: the stored policy does not move until Save.
+// Moving the trigger changes the TRIGGER and nothing else: the landing knob is independent, and
+// the one rule between the two (landing < trigger) is applied when you save and SAID in the label.
+// Everything here mutates the DRAFT: the stored policy does not move until Save.
 compactThresholdInput.addEventListener("input", () => {
   draftThresholdPct = clampCompactionThreshold(compactThresholdInput.value);
-  if (!draftTargetIsAuto) {
-    draftTargetPct = Math.min(draftTargetPct, Math.max(1, draftThresholdPct - 1));
-  }
-  syncTargetBounds();
+  // AUTO is the one case where the landing point DOES follow the trigger — that is what the mode
+  // means (an eighth of it), and the label says "(default)". An EXPLICIT value never moves.
+  if (draftTargetIsAuto) showDraftTarget();
   renderCompactionValues();
   sendCompactionPreview();
 });
 // The landing slider: every position is a decision, and 0 IS a position (the minimum).
 compactTargetInput.addEventListener("input", () => {
-  const threshold = clampCompactionThreshold(compactThresholdInput.value);
   draftTargetIsAuto = false;
-  draftTargetPct = clampCompactionTarget(Number(compactTargetInput.value), threshold, compactionTargetFloorPct);
+  draftTargetPct = Math.max(0, Math.min(100, Number(compactTargetInput.value) || 0));
   compactTargetAuto.classList.remove("is-on");
-  syncTargetBounds();
   renderCompactionValues();
   sendCompactionPreview();
 });
@@ -5715,17 +5795,15 @@ compactTargetAuto.addEventListener("click", () => {
   draftTargetIsAuto = true;
   draftTargetPct = clampAutoTarget(clampCompactionThreshold(compactThresholdInput.value));
   compactTargetAuto.classList.add("is-on");
-  syncTargetBounds();
+  showDraftTarget();
   renderCompactionValues();
   sendCompactionPreview();
 });
 compactSettingsSave.addEventListener("click", () => {
   const threshold = clampCompactionThreshold(compactThresholdInput.value);
-  // AUTO FOLLOWS the trigger: when it is in force the landing point is derived from the value
-  // being saved, not from whatever the slider happened to show before.
-  const target = draftTargetIsAuto
-    ? clampAutoTarget(threshold)
-    : clampCompactionTarget(Number(compactTargetInput.value), threshold, compactionTargetFloorPct);
+  // From the DRAFT, never from the widget: reading the widget is how an auto value got stored as
+  // an explicit choice once the old code had rewritten the slider behind the draft.
+  const target = effectiveDraftTarget();
   // THE COMMIT: the draft becomes the live policy — the footer label, the next open and the
   // payload the host stores all read these three from here on.
   compactionThresholdPct = threshold;
@@ -6331,6 +6409,40 @@ function applyWorkingLock(): void {
     : "Configure providers & models";
 }
 
+/**
+ * Keep every slider's accent fill in sync with its value — the ONE rule that applies to all of
+ * them.
+ *
+ * `--fill` is DERIVED state: anything can write `.value` (a config push, a bound derived from
+ * another knob, a modal opening on a draft) and most of those writes fire no event at all. So
+ * there is no per-slider wiring to forget and no call site to remember — one reconciliation
+ * repaints whatever drifted, and it only touches the DOM when the value really changed.
+ */
+function syncRangeFills(): void {
+  for (const el of document.querySelectorAll<HTMLInputElement>('input[type="range"]')) {
+    const min = Number(el.min || "0");
+    const max = Number(el.max || "100");
+    const span = max - min;
+    const pct = span > 0 ? ((Number(el.value) - min) / span) * 100 : 0;
+    const next = `${Math.max(0, Math.min(100, pct))}%`;
+    if (el.style.getPropertyValue("--fill") !== next) el.style.setProperty("--fill", next);
+  }
+}
+
+// BUBBLE phase on purpose (no capture): this runs AFTER the panel's own handlers, so a handler
+// that re-bounds another slider (the compaction trigger driving the landing knob) has already
+// written the new value by the time we look. Painting ten sliders is a string compare each.
+for (const type of ["input", "change", "click"] as const) {
+  document.addEventListener(type, syncRangeFills);
+}
+
+// …and after EVERY host message. The panel's own `message` listener is registered earlier, so
+// by the time this one runs the message has been applied. That matters because a partial
+// `config` push — what changing the model sends — writes the context slider's `.value` straight
+// from its own handler, never through renderViewState: the knob moved and the orange fill stayed
+// at the previous value (67% fill under a knob at 100%). One registration covers every message.
+window.addEventListener("message", syncRangeFills);
+
 function renderViewState(state: {
   /** Absent = "keep the list you already have": a plain tab switch does not re-send
    * it (it is a `SELECT *` on the session table, and the list only changes when a
@@ -6408,6 +6520,9 @@ function renderViewState(state: {
   // open sections come back instead of being thrown away (see stashViewMemory).
   restoreViewMemory(activeId);
   applyWorkingLock();
+  // The accent fill under every knob follows its value, and a config push is what moves them
+  // without an `input` event (renderContextWindow & co. write `.value` directly).
+  syncRangeFills();
 }
 
 /**

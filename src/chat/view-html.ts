@@ -183,6 +183,53 @@ export function renderViewHtml(deps: ViewHtmlDeps): string {
   <style>
 ${renderViewConfig(deps)}
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    /* ONE sphere for every round knob in the panel (slider thumbs, the MCP switch's dot): lit
+       at the top-left, a shade darker at the bottom-right, resting on a soft shadow. Defined
+       here, once, so a knob looks like a knob wherever it appears — and so "more shadow" is a
+       single number, not a hunt through the sheet. */
+    :root {
+      --knob-sphere: radial-gradient(circle at 34% 30%, #ffffff 0%, #ededed 55%, #bdbdbd 100%);
+      --knob-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+    }
+    /* Sliders: a thin rounded bar with the ORANGE fill left of the knob, and the knob itself
+       drawn by us (accent-color can colour the native thumb but cannot shade it). Both engines'
+       parts are here, or the slider would look native in one and custom in the other. */
+    input[type="range"] {
+      -webkit-appearance: none; appearance: none; background: transparent;
+      height: 14px; margin: 0; cursor: pointer;
+    }
+    input[type="range"]::-webkit-slider-runnable-track {
+      height: 4px; border-radius: 999px;
+      /* Filled LEFT of the knob in the accent, neutral to the right: --fill is written by the
+         view whenever the value moves (WebKit has no ::-slider-progress). */
+      background: linear-gradient(
+        to right,
+        var(--accent) 0 var(--fill, 0%),
+        var(--overlay-3) var(--fill, 0%) 100%
+      );
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 14px; height: 14px; margin-top: -5px;
+      border: none; border-radius: 50%;
+      /* A plain ORANGE circle with the same shadow as every other knob (a composed gradient
+         custom property on this pseudo-element was dropped as invalid and only its rim stayed). */
+      background: var(--accent);
+      box-shadow: var(--knob-shadow);
+    }
+    input[type="range"]::-moz-range-track {
+      height: 4px; border-radius: 999px; background: var(--overlay-3);
+    }
+    /* Firefox HAS a progress pseudo-element: no --fill needed on this side. */
+    input[type="range"]::-moz-range-progress {
+      height: 4px; border-radius: 999px; background: var(--accent);
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 14px; height: 14px; border: none; border-radius: 50%;
+      background: var(--accent);
+      box-shadow: var(--knob-shadow);
+    }
+    input[type="range"]:disabled { opacity: 0.5; cursor: default; }
     /* UI: one sans family everywhere (inherited); only real code/diff
        content switches to the single mono family. Grouped selectors so every
        element — including form controls, which do NOT inherit by default —
@@ -1360,10 +1407,47 @@ ${renderViewConfig(deps)}
        to wrap to three lines and change the card's height, so the whole control stack moved
        under the cursor every time a server was toggled. The full text stays in the tooltip. */
     #mcp-list { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-    .mcp-status { font-size: var(--fs-sm); display: flex; align-items: baseline; gap: 4px; min-width: 0; }
+    .mcp-status { font-size: var(--fs-sm); display: flex; align-items: center; gap: 4px; min-width: 0; }
     .mcp-status.ok { color: var(--ok); }
     .mcp-status.err { color: var(--error, #f05555); }
     .mcp-status .mcp-name { cursor: pointer; flex: none; white-space: nowrap; }
+    /* The enable/disable switch: a pill whose knob SLIDES right when the server is on. It is
+       the control, and it exists because the affordance used to be invisible — the name was
+       the toggle and nothing said so. The name keeps working as a shortcut.
+       The TRACK is exactly as tall as the knob (no slack above/below it), so the switch reads
+       as one object; the knob travels the rest of the track.
+       min-height / min-width / padding / box-shadow MUST be reset: the global button rule sets
+       min-height: 1.54rem, padding 0 .46rem and a beveled shadow, and min-height WINS over
+       height — the track rendered ~25px tall with the 12px knob stuck at the top and empty
+       space below it. Same trap the compact buttons elsewhere in this sheet already dodge. */
+    .mcp-switch {
+      position: relative; display: block; flex: none; width: 26px; height: 12px;
+      min-width: 0; min-height: 0; padding: 0;
+      /* OFF: a WHITE veil on the dark theme (--overlay-* is white-alpha here and
+         black-alpha on paper, so the same rule reads as a light grey track in both). */
+      border: none; border-radius: 999px; background: var(--overlay-3);
+      box-shadow: none; filter: none;
+      cursor: pointer; transition: background 0.12s ease;
+    }
+    .mcp-switch::after {
+      content: ""; position: absolute; top: 0; left: 0; width: 12px; height: 12px;
+      /* A dot must contrast with ITS track: grey on the white veil (the "disabled" look),
+         white on the accent (see below). */
+      border-radius: 50%; background: var(--muted-2);
+      transition: transform 0.12s ease, background 0.12s ease;
+    }
+    /* ON: the TRACK is the accent and the DOT is WHITE with a small radial gradient — lit from
+       the top-left, a shade darker at the bottom-right, plus a hairline shadow underneath — so
+       it reads as a tiny sphere instead of a flat sticker. One literal value for both themes:
+       white sits on either terracotta. */
+    .mcp-switch[aria-checked="true"] { background: var(--accent); }
+    .mcp-switch[aria-checked="true"]::after {
+      transform: translateX(14px);
+      background: var(--knob-sphere);
+      box-shadow: var(--knob-shadow);
+    }
+    /* A working session cannot flip a server: the switch says so instead of ignoring the click. */
+    .mcp-switch:disabled { opacity: 0.3; cursor: default; }
     .mcp-status .mcp-detail {
       color: var(--muted-2); flex: 1 1 auto; min-width: 0;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -2072,6 +2156,9 @@ ${renderViewConfig(deps)}
     #compact-settings-modal .cs-hint {
       margin: 0; font-size: var(--fs-sm); color: var(--muted-2); line-height: 1.45;
     }
+    /* The line that follows the EFFECTS of the two knobs. Empty = it takes no room. */
+    #compact-settings-modal .cs-note:empty { display: none; }
+    #compact-settings-modal .cs-note { color: var(--warn-soft); }
     #compact-settings-modal .cs-field { display: flex; flex-direction: column; gap: 6px; }
     #compact-settings-modal .cs-field label { font-size: var(--fs-sm); color: var(--muted-2); }
     /* Both knobs are SLIDERS. The landing one has 0 as its leftmost notch, which MEANS
@@ -2587,11 +2674,12 @@ ${renderViewConfig(deps)}
       <div class="cs-field">
         <label for="compact-target-input">Land at: usable context left after a compaction</label>
         <div class="cs-inline">
-          <input id="compact-target-input" type="range" min="0" step="1" />
+          <input id="compact-target-input" type="range" min="0" max="100" step="1" />
           <span id="compact-target-value" class="cs-val"></span>
           <button id="compact-target-auto" class="secondary cs-mini" type="button" title="Back to the derived default: an eighth of the trigger">Default</button>
         </div>
-        <p class="cs-hint">0 frees as much as the structure allows: only the last complete turn survives. The <b>Default</b> is an eighth of the trigger (10% with the trigger at 80), so two or three exchanges stay verbatim and follow it while it is untouched. The bounds are derived: the ceiling is the trigger minus one, and a value below what the summary plus the last turn already occupy just means <b>0</b>.</p>
+        <p class="cs-hint">The two knobs are <b>independent</b> — moving one never moves the other. <b>0</b> frees as much as the structure allows: only the last complete turn survives. <b>Default</b> sets an eighth of the trigger (10% with the trigger at 80), so two or three exchanges stay verbatim while it is untouched. The two knobs are free, and the line below says what the pair you picked actually DOES — nothing moves under your finger, and nothing is silently rewritten when you save.</p>
+        <p id="compact-note" class="cs-hint cs-note"></p>
       </div>
       <pre id="compact-preview" class="cs-preview"></pre>
       <div class="cs-actions">

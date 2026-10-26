@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Each MCP server has a real SWITCH now — a pill whose knob slides right when the server is on.** The control
+  existed but was INVISIBLE: the server's name was the toggle and nothing on screen said so, so the only way to find
+  out was to click something and see what happened. The row now leads with a `role="switch"` button whose
+  `aria-checked` drives the look (off: white veil with a gray dot at the left — the "disabled" reading; on: ACCENT
+track with a WHITE dot), and
+  the name still works as a shortcut — the leading `●` is gone, since the switch now carries the state. The track is
+  exactly as tall as the knob (26×12 with a 12×12 knob, no border, knob flush) so the switch reads as one object; that
+  took resetting `min-height`, `padding` and `box-shadow`, because the global `button` rule's `min-height: 1.54rem`
+  BEATS `height` and left a ~25px track with the knob stuck at the top and empty space below it. The guard while a run
+  is working became visible too: the switches dim with a tooltip ("Stop the run first — a mid-run toggle only lands on
+  the next turn") instead of silently swallowing the click. Because a run can start or stop between two config pushes —
+  and the card is deliberately NOT redrawn when the mcp section is unchanged — the switches are refreshed on every
+  streaming change, so what is on screen cannot lag behind what is being enforced.
+- **Every knob in the panel wears the SAME shadow, and every slider is orange.** `--knob-shadow` in `:root` is one
+  value (0 1px 2px at 60%), used by the MCP switch's dot and by **every slider thumb** — those are a plain orange
+  circle (`var(--accent)`, 14px) with that shadow, which is all they needed: an earlier attempt composed a
+  gradient-on-gradient custom property for the thumb, the browser dropped the whole `background` as invalid at
+  computed-value time, and the ball vanished leaving only its rim on screen. `accent-color` can colour the native thumb but cannot shade it,
+  so the range inputs draw their own parts in both engines (`::-webkit-slider-thumb` / `::-moz-range-thumb`). The
+  filled part of the track stays **orange**: a thin rounded 4px bar, orange left of the knob, neutral to the right.
+  WebKit has no `::-slider-progress`, so the view writes `--fill` (a percentage) into that gradient; Firefox draws the
+  same fill with its native progress pseudo-element. `--fill` is DERIVED state, and
+  one rule owns it for **every** slider: `syncRangeFills()` reconciles them all (writing only what drifted) and
+  runs on `input`/`change`/`click` in the BUBBLE phase — i.e. after the panel's own handlers, so a handler that
+  re-bounds another knob (the compaction trigger driving the landing slider) is already done when it looks — after
+  **every host message** (a partial `config` push, which is what changing the model sends, writes the context
+  slider's `.value` from its own handler and never through `renderViewState`: the knob went to 100% while the orange
+  fill stayed at 6%) and once per render. No call site has to remember.
+- **The two compaction knobs are independent now, and the one rule between them is stated instead of applied behind your
+  back.** The landing slider used to have a maximum DERIVED from the trigger (`threshold − 1`), re-written on every movement
+  of the other knob and on every preview message. That was the bug: shrinking `max` makes the browser clamp the WIDGET
+  while the draft keeps its number, so the label and the knob disagreed — and each later write put the knob where the
+  stale draft pointed, clamped again. Both knobs now have their own fixed range (1..100 and 0..100), moving one never
+  moves the other (AUTO excepted, which follows the trigger by definition), and the physical rule that remains — landing
+  at or above the trigger frees nothing — is applied ONCE when you save, with the label saying the number it will
+  actually store (`62% → saved as 36%`). The Save handler also reads the DRAFT instead of the widget, which is how an
+  auto value could be stored as an explicit choice. A **note under the knobs follows the EFFECTS** of the pair you
+  picked, live: it names the limit it hit ("landing at 90% with the trigger at 60% would free nothing: it is saved as
+  59%") or the other one ("below 8% there is nothing left to free — the summary and the last turn already occupy that
+  much"), and disappears when the pair makes sense.
 - **The MCP editor can configure an HTTP server — URL and headers are fields now.** It had only Command / Args / Env,
   so a `url` server existed only if you hand-edited `config.json` — while the README promised "a command (stdio) **or**
   a URL (HTTP)". The form now has a **URL (HTTP)** field and a **Headers** box (`KEY=VALUE` or `KEY: VALUE`, the HTTP
