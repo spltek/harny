@@ -43,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A tool call now wears the mark of ITS tool.** The transcript header read `🔧 Read` for every tool in the
   registry — the same wrench for `StrReplace`, for `Grep`, for `Delegate`, and for anything an MCP server
-  exposed — and the thinking block opened on a 🤔. Both are gone: `media/icons/ui/` now holds one drawing per
+  exposed — and the thinking block opened on a 🤔. Both are gone: `media/icons/` now holds one drawing per
   tool (`read`, `write`, `strreplace`, `edit`, `shell`, `grep`, `glob`, `skill`, `todowrite`, `websearch`,
   `webfetch`, `readlints`, `thinking`), `src/chat/icons.ts` maps a tool NAME to its artwork (`toolIcon`), and
   the bubble, the working bar and the sub-agent log all ask that map. Rules worth knowing: **Delete has no file
@@ -53,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   than leaving a hole in the header. The thinking block's label is the brain, in both places it appears (live
   reasoning and the "thought during this answer" note). Weight is deliberately not uniform yet: most marks are
   `stroke-width 1.5`, the ones that arrived as production drawings keep their own (the trash and the swap
-  arrows are 2) and `skill` is the only filled one — `media/icons/ui/icon-sheet.html` shows them all at
+  arrows are 2) and `skill` is the only filled one — `media/icons/icon-sheet.html` shows them all at
   14 · 16 · 24 · 48 px on both surfaces, which is how that decision gets settled.
 - **One weight for the tool marks, and the bot that was missing.** The marks had arrived in two weights — the trash
   kept the 2 it had as a row button while everything else was 1.5 — so the set is now uniform at 1.5 on the same
@@ -71,10 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SVG string inlined in the middle of a template literal (twenty of them in `view-html.ts`) or in an `ICON_GLYPHS`
   record inside the webview bundle — so the only way to redraw one was to edit TypeScript, and the same gear appeared
   four times, character for character, with no single place to change it. The artwork now lives in `media/icons/` as
-  one file per icon — `ui/` for the chrome (play, stop, plus, close, pencil, trash, branch, scissors, chevron, gear,
-  paperclip, search, sparkles, check, model, eye) and `glyphs/` for the semantic marks in the transcript (the
-  sub-agent robot, the history/clock of a compacted span, and the document badge of an attached file) — and the code
-  only asks for a name and a size: `icon("gear", 14)`. `src/chat/icons.ts` is the single registry in front of them,
+  one file per icon — ONE flat folder, chrome and transcript marks together, because the split between "ui" and
+  "glyphs" was a judgement rather than a fact and the sub-agent mark kept landing on the wrong side of it — and the
+  code only asks for a name and a size: `icon("gear", 14)`. `src/chat/icons.ts` is the single registry in front of them,
   typed, so a typo in a call site fails `npm run typecheck` instead of rendering nothing. The files are still
   **inlined at build time** (esbuild `loader: {".svg": "text"}`, and an svg-as-text plugin in vitest so the jsdom
   tests keep asserting on the real markup): no runtime fetch, no `asWebviewUri`, no CSP entry to add, no async

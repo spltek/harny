@@ -14,41 +14,41 @@
  * So the bundles carry plain strings: no `asWebviewUri`, no CSP change, no
  * async load, and the jsdom tests see exactly the markup the panel renders.
  */
-import plus from "../../media/icons/ui/plus.svg";
-import minus from "../../media/icons/ui/minus.svg";
-import close from "../../media/icons/ui/close.svg";
-import pencil from "../../media/icons/ui/pencil.svg";
-import trash from "../../media/icons/ui/trash.svg";
-import branch from "../../media/icons/ui/branch.svg";
-import scissors from "../../media/icons/ui/scissors.svg";
-import play from "../../media/icons/ui/play.svg";
-import stop from "../../media/icons/ui/stop.svg";
-import chevronDown from "../../media/icons/ui/chevron-down.svg";
-import gear from "../../media/icons/ui/gear.svg";
-import paperclip from "../../media/icons/ui/paperclip.svg";
-import search from "../../media/icons/ui/search.svg";
-import sparkles from "../../media/icons/ui/sparkles.svg";
-import check from "../../media/icons/ui/check.svg";
-import model from "../../media/icons/ui/model.svg";
-import eye from "../../media/icons/ui/eye.svg";
+import plus from "../../media/icons/plus.svg";
+import minus from "../../media/icons/minus.svg";
+import close from "../../media/icons/close.svg";
+import pencil from "../../media/icons/pencil.svg";
+import trash from "../../media/icons/trash.svg";
+import branch from "../../media/icons/branch.svg";
+import scissors from "../../media/icons/scissors.svg";
+import play from "../../media/icons/play.svg";
+import stop from "../../media/icons/stop.svg";
+import chevronDown from "../../media/icons/chevron-down.svg";
+import gear from "../../media/icons/gear.svg";
+import paperclip from "../../media/icons/paperclip.svg";
+import search from "../../media/icons/search.svg";
+import sparkles from "../../media/icons/sparkles.svg";
+import check from "../../media/icons/check.svg";
+import model from "../../media/icons/model.svg";
+import eye from "../../media/icons/eye.svg";
 // One mark per tool: these are what a tool call wears in the transcript.
-import read from "../../media/icons/ui/read.svg";
-import write from "../../media/icons/ui/write.svg";
-import strreplace from "../../media/icons/ui/strreplace.svg";
-import edit from "../../media/icons/ui/edit.svg";
-import shell from "../../media/icons/ui/shell.svg";
-import grep from "../../media/icons/ui/grep.svg";
-import glob from "../../media/icons/ui/glob.svg";
-import skill from "../../media/icons/ui/skill.svg";
-import todowrite from "../../media/icons/ui/todowrite.svg";
-import websearch from "../../media/icons/ui/websearch.svg";
-import webfetch from "../../media/icons/ui/webfetch.svg";
-import readlints from "../../media/icons/ui/readlints.svg";
-import mcp from "../../media/icons/ui/mcp.svg";
-import thinking from "../../media/icons/ui/thinking.svg";
-import subagent from "../../media/icons/glyphs/subagent.svg";
-import history from "../../media/icons/glyphs/history.svg";
-import fileBadge from "../../media/icons/glyphs/file-badge.svg";
+import read from "../../media/icons/read.svg";
+import write from "../../media/icons/write.svg";
+import strreplace from "../../media/icons/strreplace.svg";
+import edit from "../../media/icons/edit.svg";
+import shell from "../../media/icons/shell.svg";
+import grep from "../../media/icons/grep.svg";
+import glob from "../../media/icons/glob.svg";
+import skill from "../../media/icons/skill.svg";
+import todowrite from "../../media/icons/todowrite.svg";
+import websearch from "../../media/icons/websearch.svg";
+import webfetch from "../../media/icons/webfetch.svg";
+import readlints from "../../media/icons/readlints.svg";
+import mcp from "../../media/icons/mcp.svg";
+import thinking from "../../media/icons/thinking.svg";
+import subagent from "../../media/icons/subagent.svg";
+import history from "../../media/icons/history.svg";
+import fileBadge from "../../media/icons/file-badge.svg";
 
 /** Every icon the UI can ask for, keyed by the name the call sites use. */
 const ARTWORK = {
@@ -99,7 +99,7 @@ export const ICON_NAMES = Object.keys(ARTWORK) as IconName[];
  * "strreplace"), so a call site can pass the raw name it already has.
  *
  * Delete is NOT a file of its own: it is the same drawing as the session trash
- * (media/icons/ui/trash.svg), and one file means they can never drift apart.
+ * (media/icons/trash.svg), and one file means they can never drift apart.
  */
 const TOOL_ARTWORK: Record<string, IconName> = {
   read: "read",
@@ -185,7 +185,7 @@ export function icon(name: IconName, size = 14, attrs = ""): string {
 /**
  * Document badge for a non-image attachment (message cards, attachment chips).
  * The extension label and its colour are DATA, so they are substituted into
- * the artwork template (media/icons/glyphs/file-badge.svg) at render time.
+ * the artwork template (media/icons/file-badge.svg) at render time.
  */
 export function fileBadgeIcon(label: string, color: string, size = 44): string {
   const safeLabel = label.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);

@@ -50,7 +50,10 @@
     <h2>On a dark surface</h2>
     <div class="grid" id="dark"></div>
 
-    <footer>media/icons/ui/*.svg — 14 · 16 · 24 · 48 px</footer>
+    <footer>
+      The marks the TRANSCRIPT draws: one per tool, plus Sub-agent and Thinking. The chrome (buttons, chevrons,
+      toggles) is not in this sheet — it keeps its own heavier weights. media/icons — 14 · 16 · 24 · 48 px
+    </footer>
 
     <script>
       const ICONS = [
@@ -69,7 +72,9 @@
         ["readlints.svg", "ReadLints", "read the linter's errors"],
         ["mcp.svg", "MCP", "every server tool (one mark)"],
         ["thinking.svg", "Thinking", "the model is thinking"],
-        ["subagent.svg", "Delegate", "a sub-agent bubble"],
+        // One flat folder: every mark here is a file in media/icons/, sibling to
+        // this sheet — no sub-folder to resolve, no path to get wrong.
+        ["subagent.svg", "Sub-agent", "delegated work in flight — Delegate has NO separate mark: its call IS this bubble"],
       ];
       const SIZES = [14, 16, 24, 48];
 

@@ -6,12 +6,22 @@ No icon artwork is written inside TypeScript: the code asks for a name
 
 ```
 media/icons/
-  ui/       chrome (buttons, chevrons, toggles) and ONE MARK PER TOOL
-  glyphs/   semantic marks inside the transcript (sub-agent, history, file badge)
+  *.svg            one file per mark — flat, no sub-groups
+  icon-sheet.html  the contact sheet (open it in a browser)
+  README.md        this file
 ```
 
-`icon-sheet.html` in `ui/` is the contact sheet: open it in a browser to see
-every mark at 14 · 16 · 24 · 48 px on a light and a dark surface.
+It used to be split into `ui/` (chrome and tool marks) and `glyphs/` (semantic
+marks inside the transcript). That split did not survive contact with the work:
+the line between "chrome" and "glyph" is a judgement, not a fact, and the
+sub-agent mark — chrome in one hand (it heads a bubble), a glyph in the other —
+kept landing in the wrong folder. One flat folder, and `src/chat/icons.ts` is the
+only thing that maps names to files.
+
+`icon-sheet.html` is the contact sheet: every mark the TRANSCRIPT draws at
+14 · 16 · 24 · 48 px on a light and a dark surface. It is not the whole UI — the
+chrome (buttons, chevrons, toggles) keeps its own heavier weights and is not in
+the sheet.
 
 The brand mark (`media/icon.svg`) stays one level up: it is served at runtime
 through `asWebviewUri` (activity bar icon + empty-state logo), not inlined.
@@ -29,7 +39,7 @@ file and one line there — nothing else.
 | Skill · TodoWrite · WebSearch · WebFetch | `skill` · `todowrite` · `websearch` · `webfetch` |
 | Delete | **`trash`** — the same drawing as the session trash, one file, so they cannot drift |
 | every MCP tool (`mcp__server__tool`) | `mcp` — one plug for all of them |
-| Delegate | `glyphs/subagent` |
+| Delegate | `subagent` |
 | Thinking | `thinking` |
 
 A name nobody has drawn yet keeps the old wrench (🔧): a tool must still read as
@@ -70,7 +80,7 @@ Because the artwork is inlined, this folder is excluded from the packaged VSIX
 
 ## Adding an icon
 
-1. Drop the file in `ui/` or `glyphs/` (kebab-case name).
+1. Drop the file in `media/icons/` (kebab-case name).
 2. Import it in `src/chat/icons.ts` and add it to the `ARTWORK` map (plus, for a
    tool, the `TOOL_ARTWORK` line). The maps are typed, so a typo in a call site
    fails `npm run typecheck`.

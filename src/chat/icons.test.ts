@@ -69,19 +69,27 @@ describe("icon registry", () => {
     }
   });
 
-  it("keeps one drawn file per icon in media/icons/", () => {
+  it("keeps one drawn file per icon in media/icons/ — one flat folder, no sub-groups", () => {
     const dir = join(process.cwd(), "media", "icons");
-    for (const group of ["ui", "glyphs"]) {
-      const files = readdirSync(join(dir, group)).filter((name) => name.endsWith(".svg"));
-      expect(files.length, group).toBeGreaterThan(0);
-      for (const file of files) {
-        const markup = readFileSync(join(dir, group, file), "utf8");
-        // The shared canvas is what lets any icon be swapped for another…
-        expect(markup, file).toContain('viewBox="0 0 24 24"');
-        // …and currentColor is what makes it follow the palette. A template
-        // (the file badge) colours the placeholder instead, at render time.
-        expect(markup.includes("currentColor") || markup.includes("{{COLOR}}"), file).toBe(true);
-      }
+    const files = readdirSync(dir).filter((name) => name.endsWith(".svg"));
+    expect(files.length).toBeGreaterThan(0);
+    // Flat on purpose: a sub-folder means a rule the register would have to
+    // guess ("is a tool mark chrome or a glyph?"), and the answer changed twice
+    // while this set was being drawn — the sub-agent mark ended up in the wrong
+    // one. The registry is the only mapping that matters.
+    // …and nothing hides in a sub-folder: the layout is flat, and a folder that
+    // reappears would reintroduce the rule that kept misfiling the sub-agent.
+    const subFolders = readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+    expect(subFolders).toEqual([]);
+    for (const file of files) {
+      const markup = readFileSync(join(dir, file), "utf8");
+      // The shared canvas is what lets any icon be swapped for another…
+      expect(markup, file).toContain('viewBox="0 0 24 24"');
+      // …and currentColor is what makes it follow the palette. A template
+      // (the file badge) colours the placeholder instead, at render time.
+      expect(markup.includes("currentColor") || markup.includes("{{COLOR}}"), file).toBe(true);
     }
   });
 
@@ -114,7 +122,7 @@ describe("icon registry", () => {
   it("keeps Delete on the trash artwork — one file, so they cannot drift", () => {
     expect(toolIcon("Delete")).toBe(icon("trash", 13));
     // A delete.svg must NOT exist: a copy is exactly how two marks drift apart.
-    expect(() => readFileSync(join(process.cwd(), "media", "icons", "ui", "delete.svg"), "utf8")).toThrow();
+    expect(() => readFileSync(join(process.cwd(), "media", "icons", "delete.svg"), "utf8")).toThrow();
   });
 
   it("lets the caller override an artwork attribute (one drawing, two weights)", () => {

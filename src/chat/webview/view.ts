@@ -1313,7 +1313,7 @@ function addSwitchToBuildBanner(): void {
 
 /** Large, per-type icon for a non-image attachment: the category picks the
  * COLOUR and the label (data), the document shape itself is artwork and lives
- * in media/icons/glyphs/file-badge.svg. */
+ * in media/icons/file-badge.svg. */
 function attachmentIcon(name: string, size = 44): string {
   const ext = (name.split(".").pop() ?? "").toLowerCase();
   const code = ["js","jsx","ts","tsx","py","rb","go","rs","java","c","cc","cpp","h","hpp","cs","php","swift","kt","sh","bash","zsh","sql","html","css","scss","vue","svelte"];
