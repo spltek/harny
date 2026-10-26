@@ -80,13 +80,42 @@ function makeStore(): SessionStore {
   let c = 0;
   return {
     list: vi.fn(() => []),
-    create: vi.fn((name?: string) => ({ id: `s${++c}`, name: name?.trim() || "New Session", createdAt: 1, updatedAt: 1, messageCount: 0 })),
-    load: vi.fn((id: string) => ({ summary: { id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 0 }, messages: [] })),
-    saveMessages: vi.fn((id: string, messages) => ({ id, name: "S", createdAt: 1, updatedAt: 2, messageCount: messages.length })),
-    saveSettings: vi.fn((id, patch) => ({ id, name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 0, ...patch })),
+    create: vi.fn((name?: string) => ({
+      id: `s${++c}`,
+      name: name?.trim() || "New Session",
+      createdAt: 1,
+      updatedAt: 1,
+      messageCount: 0,
+    })),
+    load: vi.fn((id: string) => ({
+      summary: { id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 0 },
+      messages: [],
+    })),
+    saveMessages: vi.fn((id: string, messages) => ({
+      id,
+      name: "S",
+      createdAt: 1,
+      updatedAt: 2,
+      messageCount: messages.length,
+    })),
+    saveSettings: vi.fn((id, patch) => ({
+      id,
+      name: "New Session",
+      createdAt: 1,
+      updatedAt: 2,
+      messageCount: 0,
+      ...patch,
+    })),
     rename: vi.fn((id, name) => ({ id, name, createdAt: 1, updatedAt: 2, messageCount: 0 })),
     remove: vi.fn(() => true),
-    dbVacuumStats: vi.fn(() => ({ pageCount: 100, freePages: 0, pageSize: 4096, bytesFree: 0, bytesTotal: 409600, ratio: 0 })),
+    dbVacuumStats: vi.fn(() => ({
+      pageCount: 100,
+      freePages: 0,
+      pageSize: 4096,
+      bytesFree: 0,
+      bytesTotal: 409600,
+      ratio: 0,
+    })),
     maintain: vi.fn(() => ({
       vacuumed: false,
       before: { pageCount: 100, freePages: 0, pageSize: 4096, bytesFree: 0, bytesTotal: 409600, ratio: 0 },
@@ -121,7 +150,10 @@ function makeView() {
       html: "",
       cspSource: "vscode-webview://test",
       onDidReceiveMessage,
-      asWebviewUri: vi.fn(() => ({ with: (opts: any) => ({ toString: () => "https://r/view.js?" + opts.query }), toString: () => "https://r/view.js" })),
+      asWebviewUri: vi.fn(() => ({
+        with: (opts: any) => ({ toString: () => "https://r/view.js?" + opts.query }),
+        toString: () => "https://r/view.js",
+      })),
       postMessage,
       options: {},
     },
@@ -198,21 +230,37 @@ function buildHarness(opts: Record<string, unknown> = {}) {
   vi.spyOn(modelSelector, "set");
   vi.spyOn(modelSelector, "clear");
   const config = new CompositeConfigProvider(base, [modelSelector]);
-  const attachments = (opts.attachments as AttachmentService | undefined) ?? ({ pick: vi.fn(async () => []), buildContext: vi.fn(async () => ({ text: "", images: [] })) } as unknown as AttachmentService);
-  const providers = (opts.providers as ProviderCatalog | undefined) ?? {
-    getProvider: vi.fn(() => opts.providerEntry as import("../core/config/types").ResolvedNamedProvider | undefined),
-    saveModelSelection: vi.fn(),
-    readProvidersEditor: vi.fn(() => ({ providers: {} })),
-    saveProvidersEditor: vi.fn(() => true),
-    readMcpServers: vi.fn(() => (opts.mcpServers as Record<string, unknown> | undefined) ?? {}),
-    saveMcpServers: vi.fn(() => (opts.mcpSaveOk as boolean | undefined) ?? true),
-  } as unknown as ProviderCatalog;
+  const attachments =
+    (opts.attachments as AttachmentService | undefined) ??
+    ({
+      pick: vi.fn(async () => []),
+      buildContext: vi.fn(async () => ({ text: "", images: [] })),
+    } as unknown as AttachmentService);
+  const providers =
+    (opts.providers as ProviderCatalog | undefined) ??
+    ({
+      getProvider: vi.fn(() => opts.providerEntry as import("../core/config/types").ResolvedNamedProvider | undefined),
+      saveModelSelection: vi.fn(),
+      readProvidersEditor: vi.fn(() => ({ providers: {} })),
+      saveProvidersEditor: vi.fn(() => true),
+      readMcpServers: vi.fn(() => (opts.mcpServers as Record<string, unknown> | undefined) ?? {}),
+      saveMcpServers: vi.fn(() => (opts.mcpSaveOk as boolean | undefined) ?? true),
+    } as unknown as ProviderCatalog);
   const modelList = {
     fetchModels: vi.fn(opts.fetchModels ?? (async () => [])),
     ...(opts.fetchModelInfos ? { fetchModelInfos: vi.fn(opts.fetchModelInfos as () => Promise<unknown[]>) } : {}),
   } as unknown as ModelListProvider;
 
-  const provider = new ChatViewProvider(config, modelSelector, attachments, providers, modelList, sessions, registry, opts);
+  const provider = new ChatViewProvider(
+    config,
+    modelSelector,
+    attachments,
+    providers,
+    modelList,
+    sessions,
+    registry,
+    opts,
+  );
   provider.setContext({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as any);
   return { store, sessions, registry, createAgent, provider, modelSelector };
 }
@@ -301,7 +349,11 @@ describe("ChatViewProvider", () => {
     await handler({ type: "newSession" });
     expect(store.create).not.toHaveBeenCalled();
     expect(view.webview.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "modal", kind: "alert", message: expect.stringContaining("exactly one open folder") }),
+      expect.objectContaining({
+        type: "modal",
+        kind: "alert",
+        message: expect.stringContaining("exactly one open folder"),
+      }),
     );
   });
 
@@ -311,9 +363,7 @@ describe("ChatViewProvider", () => {
     state.noAutoName = true;
     try {
       const pending = provider.createNew();
-      const modalPost = view.webview.postMessage.mock.calls
-        .map((c) => c[0] as any)
-        .find((m) => m.type === "modal");
+      const modalPost = view.webview.postMessage.mock.calls.map((c) => c[0] as any).find((m) => m.type === "modal");
       await handler({ type: "modalResponse", id: modalPost.modalId, value: undefined });
       await pending;
       expect(registry.listOpenIds().length).toBe(0);
@@ -444,7 +494,11 @@ describe("ChatViewProvider", () => {
     a1.emit({ type: "thinking_delta", content: "s1 reasoning" });
     // Nothing reaches the view: a background session's stream is recorded in its own
     // engine and replayed on switch, never painted into the tab you are looking at.
-    expect(view.webview.postMessage.mock.calls.map((c) => c[0]).filter((m: any) => m?.type !== "status" && m?.type !== "getConfig")).toHaveLength(0);
+    expect(
+      view.webview.postMessage.mock.calls
+        .map((c) => c[0])
+        .filter((m: any) => m?.type !== "status" && m?.type !== "getConfig"),
+    ).toHaveLength(0);
 
     // Back on s1: the switchView replays ONLY s1's buffer (s2 stays empty).
     await handler({ type: "switchTab", id: "s1" });
@@ -529,9 +583,7 @@ describe("ChatViewProvider", () => {
     gates[0](); // …and the stale one (s1) lands late and must be dropped
     await first;
 
-    const switches = view.webview.postMessage.mock.calls
-      .map((c) => c[0])
-      .filter((m: any) => m?.type === "switchView");
+    const switches = view.webview.postMessage.mock.calls.map((c) => c[0]).filter((m: any) => m?.type === "switchView");
     expect(switches).toHaveLength(1);
     expect(switches[0].activeId).toBe("s2");
   });
@@ -619,7 +671,9 @@ describe("ChatViewProvider", () => {
     a1.emit({ type: "usage", usage: { input: 44, output: 1, total: 45 } });
 
     await vi.waitFor(() => {
-      const configs = view.webview.postMessage.mock.calls.map((c: any[]) => c[0]).filter((m: any) => m?.type === "config");
+      const configs = view.webview.postMessage.mock.calls
+        .map((c: any[]) => c[0])
+        .filter((m: any) => m?.type === "config");
       expect(configs).toHaveLength(1); // three reports, ONE push
     });
   });
@@ -950,9 +1004,7 @@ describe("ChatViewProvider", () => {
     await handler({ type: "setModel", model: "gpt-4o", provider: undefined });
     await handler({ type: "setThinkingLevel", level: "high" });
     expect(store.saveSettings).toHaveBeenCalledWith("s1", { thinkingLevel: "high" });
-    const configPosts = view.webview.postMessage.mock.calls
-      .map((c) => c[0] as any)
-      .filter((m) => m.type === "config");
+    const configPosts = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
     expect(configPosts[configPosts.length - 1].config.thinkingLevel).toBe("high");
   });
 
@@ -971,9 +1023,7 @@ describe("ChatViewProvider", () => {
     expect(rt.mode).toBe("analyze");
     expect(rt.agent.setMode).toHaveBeenCalledWith("analyze");
 
-    const configPosts = view.webview.postMessage.mock.calls
-      .map((c) => c[0] as any)
-      .filter((m) => m.type === "config");
+    const configPosts = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
     expect(configPosts[configPosts.length - 1].config.mode).toBe("analyze");
 
     // invalid modes are rejected
@@ -1015,16 +1065,12 @@ describe("ChatViewProvider", () => {
     expect(rt.parallel).toBe(true);
     expect(rt.agent.setDelegation).toHaveBeenCalledWith(true);
     expect(store.saveSettings).toHaveBeenCalledWith("s1", { parallel: true });
-    const configPosts = view.webview.postMessage.mock.calls
-      .map((c) => c[0] as any)
-      .filter((m) => m.type === "config");
+    const configPosts = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
     expect(configPosts[configPosts.length - 1].config.parallel).toBe(true);
 
     // non-boolean payloads are rejected
     await handler({ type: "setParallel", parallel: "yes" });
-    const after = view.webview.postMessage.mock.calls
-      .map((c) => c[0] as any)
-      .filter((m) => m.type === "config");
+    const after = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
     expect(after[after.length - 1].config.parallel).toBe(true);
   });
 
@@ -1043,9 +1089,7 @@ describe("ChatViewProvider", () => {
 
     // Switching back to s1 restores ITS Parallel ON.
     await handler({ type: "switchTab", id: "s1" });
-    const back = view.webview.postMessage.mock.calls
-      .map((c) => c[0] as any)
-      .filter((m) => m.type === "switchView");
+    const back = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "switchView");
     expect(back[back.length - 1].config.parallel).toBe(true);
   });
 
@@ -1073,9 +1117,7 @@ describe("ChatViewProvider", () => {
     await handler({ type: "setModel", model: "gpt-4o", provider: undefined }); // runtime needs a model
     await handler({ type: "setOutputTokens", value: 16384 });
     expect(store.saveSettings).toHaveBeenCalledWith("s1", { outputTokens: 16384 });
-    const configPosts = view.webview.postMessage.mock.calls
-      .map((c) => c[0] as any)
-      .filter((m) => m.type === "config");
+    const configPosts = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
     expect(configPosts[configPosts.length - 1].config.outputTokens).toBe(16384);
   });
 
@@ -1088,9 +1130,7 @@ describe("ChatViewProvider", () => {
     await handler({ type: "setFrequencyPenalty", value: 0.5 });
     expect(store.saveSettings).toHaveBeenCalledWith("s1", { presencePenalty: 1.5 });
     expect(store.saveSettings).toHaveBeenCalledWith("s1", { frequencyPenalty: 0.5 });
-    const configPosts = view.webview.postMessage.mock.calls
-      .map((c) => c[0] as any)
-      .filter((m) => m.type === "config");
+    const configPosts = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
     const cfg = configPosts[configPosts.length - 1].config;
     expect(cfg.presencePenalty).toBe(1.5);
     expect(cfg.frequencyPenalty).toBe(0.5);
@@ -1103,18 +1143,14 @@ describe("ChatViewProvider", () => {
     await handler({ type: "setMaxParallelSubAgents", value: 6 });
     expect(store.saveSettings).toHaveBeenCalledWith("s1", { maxParallelSubAgents: 6 });
     expect(registry.get("s1")!.agent.setMaxParallelSubAgents).toHaveBeenCalledWith(6);
-    const configPosts = view.webview.postMessage.mock.calls
-      .map((c) => c[0] as any)
-      .filter((m) => m.type === "config");
+    const configPosts = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
     expect(configPosts[configPosts.length - 1].config.maxParallelSubAgents).toBe(6);
 
     // Off = 0 (explicitly no cap), still persisted as a number.
     await handler({ type: "setMaxParallelSubAgents", value: 0 });
     expect(store.saveSettings).toHaveBeenCalledWith("s1", { maxParallelSubAgents: 0 });
     await vi.waitFor(() => {
-      const posts = view.webview.postMessage.mock.calls
-        .map((c) => c[0] as any)
-        .filter((m) => m.type === "config");
+      const posts = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
       expect(posts[posts.length - 1].config.maxParallelSubAgents).toBe(0);
     });
   });
@@ -1126,9 +1162,7 @@ describe("ChatViewProvider", () => {
     await handler({ type: "setLoopGuard", value: "high" });
     expect(store.saveSettings).toHaveBeenCalledWith("s1", { loopGuard: "high" });
     expect(registry.get("s1")!.agent.setLoopGuardOptions).toHaveBeenCalled();
-    const configPosts = view.webview.postMessage.mock.calls
-      .map((c) => c[0] as any)
-      .filter((m) => m.type === "config");
+    const configPosts = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
     expect(configPosts[configPosts.length - 1].config.loopGuard).toBe("high");
 
     await handler({ type: "setLoopGuard", value: undefined });
@@ -1146,9 +1180,7 @@ describe("ChatViewProvider", () => {
     await handler({ type: "setLoopGuard", value: "off" });
     expect(store.saveSettings).toHaveBeenCalledWith("s1", { loopGuard: "off" });
     expect(agent.setLoopGuardOptions).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }));
-    const configPosts = view.webview.postMessage.mock.calls
-      .map((c) => c[0] as any)
-      .filter((m) => m.type === "config");
+    const configPosts = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
     expect(configPosts[configPosts.length - 1].config.loopGuard).toBe("off");
 
     // A client still sending the pre-rename name is migrated, never stored verbatim.
@@ -1177,9 +1209,7 @@ describe("ChatViewProvider", () => {
     expect(store.saveSettings).toHaveBeenCalledWith("s1", { loopGuardResponse: true });
     expect(registry.get("s1")!.agent.setLoopGuardOptions).toHaveBeenCalled();
     await vi.waitFor(() => {
-      const posts = view.webview.postMessage.mock.calls
-        .map((c) => c[0] as any)
-        .filter((m) => m.type === "config");
+      const posts = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
       expect(posts[posts.length - 1].config.loopGuardResponse).toBe(true);
     });
   });
@@ -1270,7 +1300,9 @@ describe("ChatViewProvider", () => {
     await handler({ type: "send", text: "/skills" });
 
     const msgs = registry.get("s1")!.agent.getMessages();
-    expect(msgs.some((m: any) => m.role === "assistant" && /Skills/.test(m.content) && m.content.includes("pdf"))).toBe(true);
+    expect(msgs.some((m: any) => m.role === "assistant" && /Skills/.test(m.content) && m.content.includes("pdf"))).toBe(
+      true,
+    );
   });
 
   it("/skill with an unknown name answers with the installed list (no agent run)", async () => {
@@ -1351,14 +1383,14 @@ describe("ChatViewProvider", () => {
     // temperature was set (0), so it is cleared to Auto in the same patch.
     expect(store.saveSettings).toHaveBeenCalledWith("s1", { sampler: "topP", temperature: undefined });
     // Only the active sampler carries a value: temperature cleared to none.
-    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ topP: undefined, temperature: undefined }));
+    expect(modelSelector.set).toHaveBeenCalledWith(
+      expect.objectContaining({ topP: undefined, temperature: undefined }),
+    );
 
     // Now the shared value lands on topP (0.9 valid on the 0–1 scale).
     await handler({ type: "setSamplerValue", value: 0.9 });
     expect(store.saveSettings).toHaveBeenCalledWith("s1", { topP: 0.9 });
-    const configPosts = view.webview.postMessage.mock.calls
-      .map((c) => c[0] as any)
-      .filter((m) => m.type === "config");
+    const configPosts = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
     const cfg = configPosts[configPosts.length - 1].config;
     expect(cfg.sampler).toBe("topP");
     expect(cfg.topP).toBe(0.9);
@@ -1489,12 +1521,34 @@ describe("ChatViewProvider", () => {
     await handler({ type: "setModel", model: "gpt-4o", provider: undefined });
     await handler({ type: "setOutputTokens", value: 16384 });
     (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
-      { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 2, model: "gpt-4o", outputTokens: 16384, maxParallelSubAgents: 6, loopGuard: "high", loopGuardResponse: true },
+      {
+        id: "s1",
+        name: "New Session",
+        createdAt: 1,
+        updatedAt: 2,
+        messageCount: 2,
+        model: "gpt-4o",
+        outputTokens: 16384,
+        maxParallelSubAgents: 6,
+        loopGuard: "high",
+        loopGuardResponse: true,
+      },
     ]);
     (store.load as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
       id === "s1"
         ? {
-            summary: { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 2, model: "gpt-4o", outputTokens: 16384, maxParallelSubAgents: 6, loopGuard: "high", loopGuardResponse: true },
+            summary: {
+              id: "s1",
+              name: "New Session",
+              createdAt: 1,
+              updatedAt: 2,
+              messageCount: 2,
+              model: "gpt-4o",
+              outputTokens: 16384,
+              maxParallelSubAgents: 6,
+              loopGuard: "high",
+              loopGuardResponse: true,
+            },
             messages: [
               { role: "user", content: "hi", timestamp: 1 },
               { role: "assistant", content: "hello", timestamp: 2 },
@@ -1542,7 +1596,10 @@ describe("ChatViewProvider", () => {
     ]);
     (store.load as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
       id === "s1"
-        ? { summary: { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 6, model: "gpt-4o" }, messages: msgs }
+        ? {
+            summary: { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 6, model: "gpt-4o" },
+            messages: msgs,
+          }
         : { summary: { id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 0 }, messages: [] },
     );
     state.autoName = "Branch copy";
@@ -1567,7 +1624,12 @@ describe("ChatViewProvider", () => {
     // results and the final answer.
     const msgs = [
       { role: "user", content: "q1", timestamp: 1 },
-      { role: "assistant", content: "let me check", toolCalls: [{ id: "c1", name: "Shell", arguments: {} }], timestamp: 2 },
+      {
+        role: "assistant",
+        content: "let me check",
+        toolCalls: [{ id: "c1", name: "Shell", arguments: {} }],
+        timestamp: 2,
+      },
       { role: "tool", content: "out", toolCallId: "c1", timestamp: 3 },
       { role: "assistant", content: "all good", timestamp: 4 },
     ];
@@ -1576,7 +1638,10 @@ describe("ChatViewProvider", () => {
     ]);
     (store.load as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
       id === "s1"
-        ? { summary: { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 4, model: "gpt-4o" }, messages: msgs }
+        ? {
+            summary: { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 4, model: "gpt-4o" },
+            messages: msgs,
+          }
         : { summary: { id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 0 }, messages: [] },
     );
     state.autoName = "Branch copy";
@@ -1603,7 +1668,10 @@ describe("ChatViewProvider", () => {
     ]);
     (store.load as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
       id === "s1"
-        ? { summary: { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 5, model: "gpt-4o" }, messages: msgs }
+        ? {
+            summary: { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 5, model: "gpt-4o" },
+            messages: msgs,
+          }
         : { summary: { id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 0 }, messages: [] },
     );
     state.autoName = "Branch copy";
@@ -1619,7 +1687,10 @@ describe("ChatViewProvider", () => {
     await provider.createNew(); // s1
     (store.load as ReturnType<typeof vi.fn>).mockReturnValue({
       summary: { id: "s1", name: "New Session", createdAt: 1, updatedAt: 2, messageCount: 2 },
-      messages: [{ role: "user", content: "q", timestamp: 1 }, { role: "assistant", content: "a", timestamp: 2 }],
+      messages: [
+        { role: "user", content: "q", timestamp: 1 },
+        { role: "assistant", content: "a", timestamp: 2 },
+      ],
     });
     state.autoName = "X";
     await handler({ type: "branchAt", index: 99 }); // stale bubble
@@ -1728,7 +1799,10 @@ describe("ChatViewProvider", () => {
     const { handler } = resolveWith(provider);
     await provider.createNew(); // s1
     const rt = registry.get("s1")!;
-    rt.history.replace([{ role: "user", content: "q", timestamp: 1 }, { role: "assistant", content: "a", timestamp: 2 }]);
+    rt.history.replace([
+      { role: "user", content: "q", timestamp: 1 },
+      { role: "assistant", content: "a", timestamp: 2 },
+    ]);
 
     await handler({ type: "truncateAt", index: 0 });
 
@@ -1741,7 +1815,10 @@ describe("ChatViewProvider", () => {
     const { handler } = resolveWith(provider);
     await provider.createNew(); // s1
     const rt = registry.get("s1")!;
-    rt.history.replace([{ role: "user", content: "q", timestamp: 1 }, { role: "assistant", content: "a", timestamp: 2 }]);
+    rt.history.replace([
+      { role: "user", content: "q", timestamp: 1 },
+      { role: "assistant", content: "a", timestamp: 2 },
+    ]);
     (rt.agent as { streaming: boolean }).streaming = true;
 
     await handler({ type: "truncateAt", index: 1 });
@@ -1754,7 +1831,10 @@ describe("ChatViewProvider", () => {
     const { handler } = resolveWith(provider);
     await provider.createNew(); // s1
     const rt = registry.get("s1")!;
-    rt.history.replace([{ role: "user", content: "q", timestamp: 1 }, { role: "assistant", content: "a", timestamp: 2 }]);
+    rt.history.replace([
+      { role: "user", content: "q", timestamp: 1 },
+      { role: "assistant", content: "a", timestamp: 2 },
+    ]);
 
     await handler({ type: "truncateAt", index: 99 }); // stale bubble
     await handler({ type: "truncateAt", index: -1 });
@@ -1778,7 +1858,12 @@ describe("ChatViewProvider", () => {
     await handler({ type: "branchSession", id: "s1" });
     expect(store.create).toHaveBeenCalledTimes(1); // only the original creation
     expect(view.webview.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "modal", kind: "alert", alertKind: "error", message: expect.stringContaining("already exists") }),
+      expect.objectContaining({
+        type: "modal",
+        kind: "alert",
+        alertKind: "error",
+        message: expect.stringContaining("already exists"),
+      }),
     );
   });
 
@@ -1792,7 +1877,12 @@ describe("ChatViewProvider", () => {
     await handler({ type: "newSession" });
     expect(store.create).not.toHaveBeenCalled();
     expect(view.webview.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "modal", kind: "alert", alertKind: "error", message: expect.stringContaining("already exists") }),
+      expect.objectContaining({
+        type: "modal",
+        kind: "alert",
+        alertKind: "error",
+        message: expect.stringContaining("already exists"),
+      }),
     );
   });
 
@@ -1809,7 +1899,12 @@ describe("ChatViewProvider", () => {
     await handler({ type: "renameSession", id: "s1" });
     expect(store.rename).not.toHaveBeenCalled();
     expect(view.webview.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "modal", kind: "alert", alertKind: "error", message: expect.stringContaining("already exists") }),
+      expect.objectContaining({
+        type: "modal",
+        kind: "alert",
+        alertKind: "error",
+        message: expect.stringContaining("already exists"),
+      }),
     );
   });
 
@@ -1960,9 +2055,7 @@ describe("ChatViewProvider", () => {
     await provider.createNew(); // s1
     await handler({ type: "getConfig" });
     await handler({ type: "getConfig" });
-    const configPosts = view.webview.postMessage.mock.calls
-      .map((c) => c[0] as any)
-      .filter((m) => m.type === "config");
+    const configPosts = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
     const cfg = configPosts[configPosts.length - 1].config;
     expect(cfg.providerModels).toContainEqual({ provider: "opencode-go", model: "h1" });
     expect(fetchModels).toHaveBeenCalledTimes(1); // cached (HOST_CACHE_TTL)
@@ -1979,23 +2072,24 @@ describe("ChatViewProvider", () => {
         providerModels: [{ provider: "opencode-go", model: "stale-declared" }],
         hostModelProviders: ["host-only"],
       },
-      providerEntry: { name: "opencode-go", baseUrl: "https://declared/v1", apiKey: "k", models: [{ id: "stale-declared" }] },
+      providerEntry: {
+        name: "opencode-go",
+        baseUrl: "https://declared/v1",
+        apiKey: "k",
+        models: [{ id: "stale-declared" }],
+      },
       fetchModels,
     });
     const { handler, view } = resolveWith(provider);
     await handler({ type: "getConfig" });
-    const configPosts = view.webview.postMessage.mock.calls
-      .map((c) => c[0] as any)
-      .filter((m) => m.type === "config");
+    const configPosts = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
     const cfg = configPosts[configPosts.length - 1].config;
     // The stale declared list is NOT shown: only the fetched live lists are.
     expect(cfg.providerModels).not.toContainEqual({ provider: "opencode-go", model: "stale-declared" });
     expect(cfg.providerModels).toContainEqual({ provider: "opencode-go", model: "d1" });
     // The DECLARED provider got fetched like any other (before the fix it was
     // never fetched: only hostModelProviders were).
-    expect(fetchModels).toHaveBeenCalledWith(
-      expect.objectContaining({ baseUrl: "https://declared/v1" }),
-    );
+    expect(fetchModels).toHaveBeenCalledWith(expect.objectContaining({ baseUrl: "https://declared/v1" }));
   });
 
   it("buildConfig reports a red error for a provider without baseUrl", async () => {
@@ -2006,9 +2100,7 @@ describe("ChatViewProvider", () => {
     });
     const { handler, view } = resolveWith(provider);
     await handler({ type: "getConfig" });
-    const configPosts = view.webview.postMessage.mock.calls
-      .map((c) => c[0] as any)
-      .filter((m) => m.type === "config");
+    const configPosts = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
     const cfg = configPosts[configPosts.length - 1].config;
     expect(cfg.hostModelErrors).toContainEqual({ provider: "no-base", error: "no baseUrl configured" });
   });
@@ -2046,12 +2138,17 @@ describe("ChatViewProvider", () => {
       } as unknown as ProviderCatalog,
     });
     const { handler, view } = resolveWith(provider);
-    await handler({ type: "saveProviders", data: { activeProvider: "x", providers: { x: { baseUrl: "http://x/v1" } } } });
+    await handler({
+      type: "saveProviders",
+      data: { activeProvider: "x", providers: { x: { baseUrl: "http://x/v1" } } },
+    });
     expect(saveProvidersEditor).toHaveBeenCalledWith({
       activeProvider: "x",
       providers: { x: { baseUrl: "http://x/v1" } },
     });
-    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "providersSaved", ok: true }));
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "providersSaved", ok: true }),
+    );
   });
 
   it("saveProviders failure replies providersSaved ok:false", async () => {
@@ -2065,7 +2162,9 @@ describe("ChatViewProvider", () => {
     });
     const { handler, view } = resolveWith(provider);
     await handler({ type: "saveProviders", data: { providers: {} } });
-    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "providersSaved", ok: false }));
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "providersSaved", ok: false }),
+    );
   });
 
   it("exportProviders writes the config to the chosen file", async () => {
@@ -2079,7 +2178,9 @@ describe("ChatViewProvider", () => {
     await handler({ type: "exportProviders" });
     expect(exportProviders).toHaveBeenCalled();
     expect(state.fsWriteFile).toHaveBeenCalled();
-    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "providersExported", ok: true }));
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "providersExported", ok: true }),
+    );
   });
 
   it("exportProviders cancelled writes nothing", async () => {
@@ -2098,14 +2199,21 @@ describe("ChatViewProvider", () => {
     const importProviders = vi.fn(() => true);
     const readProvidersEditor = vi.fn(() => ({ providers: { a: { baseUrl: "http://a/v1" } } }));
     const { provider } = buildHarness({
-      providers: { getProvider: vi.fn(), saveModelSelection: vi.fn(), importProviders, readProvidersEditor } as unknown as ProviderCatalog,
+      providers: {
+        getProvider: vi.fn(),
+        saveModelSelection: vi.fn(),
+        importProviders,
+        readProvidersEditor,
+      } as unknown as ProviderCatalog,
     });
     const { handler, view } = resolveWith(provider);
     state.showOpenDialog.mockResolvedValue([{ fsPath: "/tmp/in.json" }]);
     state.fsReadFile.mockResolvedValue(new TextEncoder().encode('{"providers":{"a":{"baseUrl":"http://a/v1"}}}'));
     await handler({ type: "importProviders" });
     expect(importProviders).toHaveBeenCalledWith(expect.anything(), "merge");
-    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "providersImported", ok: true }));
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "providersImported", ok: true }),
+    );
     expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "providersEditor" }));
   });
 
@@ -2123,7 +2231,9 @@ describe("ChatViewProvider", () => {
     state.showOpenDialog.mockResolvedValue([{ fsPath: "/tmp/in.json" }]);
     state.fsReadFile.mockResolvedValue(new TextEncoder().encode('{"nope":true}'));
     await handler({ type: "importProviders" });
-    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "providersImported", ok: false }));
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "providersImported", ok: false }),
+    );
   });
 
   it("testProvider fetches live models and posts the outcome", async () => {
@@ -2132,16 +2242,22 @@ describe("ChatViewProvider", () => {
     const { handler, view } = resolveWith(provider);
     await handler({ type: "testProvider", data: { baseUrl: "http://localhost:8090/v1", apiKey: "k" } });
     expect(fetchModels).toHaveBeenCalledWith({ baseUrl: "http://localhost:8090/v1", apiKey: "k" });
-    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "providersTested", ok: true, models: ["m1", "m2"] }));
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "providersTested", ok: true, models: ["m1", "m2"] }),
+    );
   });
 
   it("testProvider failure posts the error", async () => {
-    const { provider } = buildHarness({ fetchModels: vi.fn(async () => {
-      throw new Error("HTTP 500");
-    }) });
+    const { provider } = buildHarness({
+      fetchModels: vi.fn(async () => {
+        throw new Error("HTTP 500");
+      }),
+    });
     const { handler, view } = resolveWith(provider);
     await handler({ type: "testProvider", data: { baseUrl: "http://x/v1" } });
-    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "providersTested", ok: false, error: "HTTP 500" }));
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "providersTested", ok: false, error: "HTTP 500" }),
+    );
   });
 
   it("send routes to the active runtime agent", async () => {
@@ -2157,9 +2273,7 @@ describe("ChatViewProvider", () => {
     // id in workingIds — otherwise the row never locks (regression guard for
     // the postStatus-after-send timing).
     const statusPosts = view.webview.postMessage.mock.calls.map((c) => c[0]);
-    expect(statusPosts).toContainEqual(
-      expect.objectContaining({ type: "status", workingIds: ["s1"] }),
-    );
+    expect(statusPosts).toContainEqual(expect.objectContaining({ type: "status", workingIds: ["s1"] }));
   });
 
   it("abort while streaming posts an interrupted notice and persists it as uiOnly", async () => {
@@ -2228,7 +2342,6 @@ describe("ChatViewProvider", () => {
     );
   });
 });
-
 
 describe("ChatViewProvider per-session model", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -2307,15 +2420,21 @@ describe("ChatViewProvider output tokens reload", () => {
     const { handler, view } = resolveWith(provider);
     // Simulate a session persisted on disk with both model and outputTokens.
     (store.load as ReturnType<typeof vi.fn>).mockReturnValue({
-      summary: { id: "s9", name: "S", createdAt: 1, updatedAt: 1, messageCount: 0, model: "gpt-4o", outputTokens: 16384 },
+      summary: {
+        id: "s9",
+        name: "S",
+        createdAt: 1,
+        updatedAt: 1,
+        messageCount: 0,
+        model: "gpt-4o",
+        outputTokens: 16384,
+      },
       messages: [],
     });
     await handler({ type: "openSession", id: "s9" });
     await handler({ type: "switchTab", id: "s9" }); // makes it the active runtime
     await handler({ type: "getConfig" });
-    const configPosts = view.webview.postMessage.mock.calls
-      .map((c) => c[0] as any)
-      .filter((m) => m.type === "config");
+    const configPosts = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
     expect(configPosts[configPosts.length - 1].config.outputTokens).toBe(16384);
   });
 });
@@ -2332,9 +2451,7 @@ describe("ChatViewProvider temperature reload", () => {
     await handler({ type: "openSession", id: "s9" });
     await handler({ type: "switchTab", id: "s9" }); // makes it the active runtime
     await handler({ type: "getConfig" });
-    const configPosts = view.webview.postMessage.mock.calls
-      .map((c) => c[0] as any)
-      .filter((m) => m.type === "config");
+    const configPosts = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
     expect(configPosts[configPosts.length - 1].config.temperature).toBe(0.3);
   });
 });
@@ -2357,7 +2474,15 @@ describe("ChatViewProvider all-sessions manager", () => {
   it("opens a session of the CURRENT folder in place (no window switching)", async () => {
     const { store, registry, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
     (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
-      { id: "x", name: "Local", createdAt: 1, updatedAt: 2, messageCount: 0, folder: "/home/me/a", folderMissing: false },
+      {
+        id: "x",
+        name: "Local",
+        createdAt: 1,
+        updatedAt: 2,
+        messageCount: 0,
+        folder: "/home/me/a",
+        folderMissing: false,
+      },
     ]);
     const { handler, view } = resolveWith(provider);
     await handler({ type: "openSession", id: "x" });
@@ -2459,9 +2584,7 @@ describe("ChatViewProvider all-sessions manager", () => {
     const { handler, view } = resolveWith(provider);
     await handler({ type: "sessionsManagerChangeFolder", id: "x" });
     expect(store.saveSettings).not.toHaveBeenCalled();
-    expect(view.webview.postMessage).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: "sessionsManager" }),
-    );
+    expect(view.webview.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "sessionsManager" }));
   });
 
   it("sessionsManagerOpenFolder opens the session's folder in VS Code (no picker)", async () => {
@@ -2478,7 +2601,15 @@ describe("ChatViewProvider all-sessions manager", () => {
   it("sessionsManagerOpenFolder forwards Windows and POSIX paths verbatim", async () => {
     const { store, provider } = buildHarness({ currentFolder: () => "C:\\Users\\Me\\A" });
     (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
-      { id: "w", name: "W", createdAt: 1, updatedAt: 2, messageCount: 0, folder: "C:\\Users\\Me\\B", folderMissing: false },
+      {
+        id: "w",
+        name: "W",
+        createdAt: 1,
+        updatedAt: 2,
+        messageCount: 0,
+        folder: "C:\\Users\\Me\\B",
+        folderMissing: false,
+      },
       { id: "p", name: "P", createdAt: 1, updatedAt: 1, messageCount: 0, folder: "/home/me/b", folderMissing: false },
     ]);
     const { handler } = resolveWith(provider);
@@ -2507,8 +2638,24 @@ describe("ChatViewProvider all-sessions manager", () => {
     // tab reads as "no sessions yet", which is simply false. Switching the workspace
     // folder and the cross-folder Manage form both make it reachable.
     const { store, registry, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
-    const local = { id: "a1", name: "Local", createdAt: 1, updatedAt: 3, messageCount: 0, folder: "/home/me/a", folderMissing: false };
-    const foreign = { id: "b1", name: "Elsewhere", createdAt: 1, updatedAt: 2, messageCount: 0, folder: "/home/me/b", folderMissing: false };
+    const local = {
+      id: "a1",
+      name: "Local",
+      createdAt: 1,
+      updatedAt: 3,
+      messageCount: 0,
+      folder: "/home/me/a",
+      folderMissing: false,
+    };
+    const foreign = {
+      id: "b1",
+      name: "Elsewhere",
+      createdAt: 1,
+      updatedAt: 2,
+      messageCount: 0,
+      folder: "/home/me/b",
+      folderMissing: false,
+    };
     (store.list as ReturnType<typeof vi.fn>).mockReturnValue([local, foreign]);
     const { handler, view } = resolveWith(provider);
 
@@ -2541,7 +2688,15 @@ describe("ChatViewProvider all-sessions manager", () => {
   it("still scopes NAME uniqueness to the folder (a foreign session is navigation, not a neighbour)", async () => {
     const { store, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
     (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
-      { id: "b1", name: "Shared", createdAt: 1, updatedAt: 2, messageCount: 0, folder: "/home/me/b", folderMissing: false },
+      {
+        id: "b1",
+        name: "Shared",
+        createdAt: 1,
+        updatedAt: 2,
+        messageCount: 0,
+        folder: "/home/me/b",
+        folderMissing: false,
+      },
     ]);
     const { handler, view } = resolveWith(provider);
     view.webview.postMessage.mockClear();
@@ -2558,8 +2713,24 @@ describe("ChatViewProvider all-sessions manager", () => {
   it("the MAIN sessions list shows only the current folder's sessions", async () => {
     const { store, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
     (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
-      { id: "a", name: "Local", createdAt: 1, updatedAt: 3, messageCount: 0, folder: "/home/me/a", folderMissing: false },
-      { id: "b", name: "Foreign", createdAt: 1, updatedAt: 2, messageCount: 0, folder: "/home/me/b", folderMissing: false },
+      {
+        id: "a",
+        name: "Local",
+        createdAt: 1,
+        updatedAt: 3,
+        messageCount: 0,
+        folder: "/home/me/a",
+        folderMissing: false,
+      },
+      {
+        id: "b",
+        name: "Foreign",
+        createdAt: 1,
+        updatedAt: 2,
+        messageCount: 0,
+        folder: "/home/me/b",
+        folderMissing: false,
+      },
     ]);
     const { view } = resolveWith(provider);
     await vi.waitFor(() => expect(view.webview.html).toContain('"name":"Local"'), { timeout: 2000 });
@@ -2599,7 +2770,7 @@ describe("ChatViewProvider compaction", () => {
     const conv = registry.get("s1")!.history.conversation();
     expect(conv[0].role).toBe("user"); // the summary was injected
     expect(String(conv[1].content)).toContain("## Goal");
-    expect((store.saveSettings as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
+    expect(store.saveSettings as ReturnType<typeof vi.fn>).toHaveBeenCalled();
     // A compaction REBUILDS the history: the store must be told to REPLACE
     // (the rebuilt history can have the same length as the old one).
     expect(store.saveMessages).toHaveBeenCalledWith("s1", expect.any(Array), { replace: true });
@@ -2685,7 +2856,9 @@ describe("ChatViewProvider compaction", () => {
     };
     store.saveMessages.mockClear();
 
-    const compacted = await provider.compactSubAgentHistory(subHistory as never, "s1", undefined, { limitTokens: 32_000 } as never);
+    const compacted = await provider.compactSubAgentHistory(subHistory as never, "s1", undefined, {
+      limitTokens: 32_000,
+    } as never);
 
     expect(compacted).toBe(true);
     // The ephemeral history was rewritten in place: a synthetic pair + the kept tail.
@@ -2737,7 +2910,10 @@ describe("ChatViewProvider compaction", () => {
 
   it("says no when a sub-agent's history has nothing worth summarizing", async () => {
     const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\nx");
-    const { provider } = buildHarness({ compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION });
+    const { provider } = buildHarness({
+      compactor: { summarize } as unknown as Compactor,
+      compaction: DEFAULT_COMPACTION,
+    });
     resolveWith(provider);
     await provider.createNew();
     const short = {
@@ -3380,7 +3556,7 @@ describe("ChatViewProvider compaction", () => {
     const conv = registry.get("s1")!.history.conversation();
     expect(conv[0].role).toBe("user");
     expect(String(conv[1].content)).toContain("## Goal");
-    expect((store.saveSettings as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+    expect(store.saveSettings as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ contextTokens: expect.any(Number) }),
     );
@@ -3391,12 +3567,11 @@ describe("ChatViewProvider compaction", () => {
       expect.objectContaining({ type: "status", active: true, message: "Compacting…" }),
     );
     expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "refresh" }));
-    expect(view.webview.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "status", active: false }),
-    );
+    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "status", active: false }));
     // …and they arrive in the blocking order: bubble, status-IN, note, status-OUT.
-    const seq = (view.webview.postMessage as ReturnType<typeof vi.fn>)
-      .mock.calls.map((c: unknown[]) => (c[0] as { type: string }).type);
+    const seq = (view.webview.postMessage as ReturnType<typeof vi.fn>).mock.calls.map(
+      (c: unknown[]) => (c[0] as { type: string }).type,
+    );
     const startAt = seq.indexOf("compactStart");
     const doneAt = seq.lastIndexOf("refresh");
     expect(seq[startAt + 1]).toBe("status");
@@ -3433,10 +3608,7 @@ describe("ChatViewProvider compaction", () => {
   it("adopts the host-reported context window when a model is selected", async () => {
     const { store, registry, provider } = buildHarness({
       providerEntry: { name: "openrouter", baseUrl: "http://x/v1", models: [] },
-      fetchModelInfos: async () => [
-        { id: "openrouter/x", contextLength: 131072 },
-        { id: "openrouter/plain" },
-      ],
+      fetchModelInfos: async () => [{ id: "openrouter/x", contextLength: 131072 }, { id: "openrouter/plain" }],
     });
     const { view, handler } = resolveWith(provider);
     await provider.createNew(); // s1
@@ -3606,7 +3778,10 @@ describe("ChatViewProvider compaction", () => {
     // entry then carries the contextLength (so it shows in the model modal).
     await vi.waitFor(() => {
       const configs = view.webview.postMessage.mock.calls
-        .map((c: unknown[]) => c[0] as { type?: string; config?: { providerModels?: { model: string; contextLength?: number }[] } })
+        .map(
+          (c: unknown[]) =>
+            c[0] as { type?: string; config?: { providerModels?: { model: string; contextLength?: number }[] } },
+        )
         .filter((m) => m?.type === "config");
       const models = configs.flatMap((c) => c.config?.providerModels ?? []);
       expect(models.some((m) => m.model === "kimi-k3" && m.contextLength === 1048576)).toBe(true);
@@ -3623,7 +3798,7 @@ describe("ChatViewProvider compaction", () => {
 
     await handler({ type: "setCompactionThreshold", value: 65 });
     expect(rt.compactionThresholdPercent).toBe(65);
-    expect((store.saveSettings as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+    expect(store.saveSettings as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
       "s1",
       expect.objectContaining({ compactionThresholdPercent: 65 }),
     );
@@ -3635,7 +3810,7 @@ describe("ChatViewProvider compaction", () => {
     // Invalid values fall back to the default 80.
     await handler({ type: "setCompactionThreshold", value: "abc" });
     expect(rt.compactionThresholdPercent).toBe(80);
-    expect((store.saveSettings as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+    expect(store.saveSettings as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
       "s1",
       expect.objectContaining({ compactionThresholdPercent: 80 }),
     );
@@ -3650,7 +3825,7 @@ describe("ChatViewProvider compaction", () => {
 
     await handler({ type: "setCompactionTarget", value: 25 });
     expect(rt.compactionTargetPercent).toBe(25);
-    expect((store.saveSettings as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+    expect(store.saveSettings as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
       "s1",
       expect.objectContaining({ compactionTargetPercent: 25 }),
     );
@@ -3666,7 +3841,7 @@ describe("ChatViewProvider compaction", () => {
     // MISSING clears the override: the landing point is the DERIVED default again…
     await handler({ type: "setCompactionTarget" });
     expect(rt.compactionTargetPercent).toBeUndefined();
-    expect((store.saveSettings as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith("s1", {
+    expect(store.saveSettings as ReturnType<typeof vi.fn>).toHaveBeenCalledWith("s1", {
       compactionTargetPercent: undefined,
     });
 
@@ -3675,7 +3850,7 @@ describe("ChatViewProvider compaction", () => {
     expect(rt.compactionTargetPercent).toBe(30);
     await handler({ type: "setCompactionTarget", value: 0 });
     expect(rt.compactionTargetPercent).toBe(0);
-    expect((store.saveSettings as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith("s1", {
+    expect(store.saveSettings as ReturnType<typeof vi.fn>).toHaveBeenCalledWith("s1", {
       compactionTargetPercent: 0,
     });
   });
@@ -3926,9 +4101,7 @@ describe("ChatViewProvider compaction", () => {
       expect.objectContaining({ type: "status", active: true, message: "Compacting…" }),
     );
     expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "refresh" }));
-    expect(view.webview.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "status", active: false }),
-    );
+    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "status", active: false }));
   });
 
   it("best-effort: a failed auto-compaction does not abort the request or hang", async () => {
@@ -4034,16 +4207,14 @@ describe("ChatViewProvider compaction", () => {
     const conv = registry.get("s1")!.history.conversation();
     expect(conv[0].role).toBe("user"); // REALLY compacted (manual plan)
     expect(String(conv[1].content)).toContain("## Goal");
-    expect((store.saveSettings as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
+    expect(store.saveSettings as ReturnType<typeof vi.fn>).toHaveBeenCalled();
     // Exactly the button's visible flow: bubble -> block -> note -> release.
     expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactStart" });
     expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "refresh" }));
     expect(view.webview.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: "status", active: true, message: "Compacting…" }),
     );
-    expect(view.webview.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "status", active: false }),
-    );
+    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "status", active: false }));
   });
 
   it("does NOT auto-compact after a response that stays under the threshold", async () => {
@@ -4305,7 +4476,10 @@ describe("ChatViewProvider soft steering + queue", () => {
     await provider.compactForOverflow("s1", undefined, { signature: "generic" });
 
     expect(rt.contextWindow).toBe(128000);
-    expect(store.saveSettings).not.toHaveBeenCalledWith("s1", expect.objectContaining({ contextWindow: expect.anything() }));
+    expect(store.saveSettings).not.toHaveBeenCalledWith(
+      "s1",
+      expect.objectContaining({ contextWindow: expect.anything() }),
+    );
   });
 
   it("a MID-RUN refresh carries the live answer (a rebuild must not eat it)", async () => {
@@ -4341,9 +4515,7 @@ describe("ChatViewProvider soft steering + queue", () => {
     const compacted = await provider.compactForOverflow("s1");
 
     expect(compacted).toBe(true);
-    const refresh = view.webview.postMessage.mock.calls
-      .map((c) => c[0])
-      .find((m: any) => m?.type === "refresh");
+    const refresh = view.webview.postMessage.mock.calls.map((c) => c[0]).find((m: any) => m?.type === "refresh");
     expect(refresh).toMatchObject({ streaming: true, liveAnswer: frase });
   });
 
@@ -4373,9 +4545,7 @@ describe("ChatViewProvider soft steering + queue", () => {
 
     await provider.compactForOverflow("s1");
 
-    const refresh = view.webview.postMessage.mock.calls
-      .map((c) => c[0])
-      .find((m: any) => m?.type === "refresh");
+    const refresh = view.webview.postMessage.mock.calls.map((c) => c[0]).find((m: any) => m?.type === "refresh");
     expect(refresh).toBeTruthy();
     expect(refresh).not.toHaveProperty("liveAnswer");
   });
@@ -4503,7 +4673,12 @@ describe("ChatViewProvider soft steering + queue", () => {
     agent.emit({ type: "steer_applied", ids: ["s1x"], content: "x" });
 
     expect(pending()).toEqual([]);
-    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "steerApplied", ids: ["s1x"], content: "x", sessionId: "s1" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith({
+      type: "steerApplied",
+      ids: ["s1x"],
+      content: "x",
+      sessionId: "s1",
+    });
   });
 
   it("Stop clears the pending queue so the run does not silently restart", async () => {
@@ -4904,9 +5079,13 @@ describe("ChatViewProvider slider maxima", () => {
     await handler({ type: "setModel", model: "m1", provider: "openrouter" });
     await vi.waitFor(() => {
       const configs = view.webview.postMessage.mock.calls
-        .map((c: unknown[]) => c[0] as { type?: string; config?: { maxContextWindow?: number; maxOutputTokens?: number } })
+        .map(
+          (c: unknown[]) => c[0] as { type?: string; config?: { maxContextWindow?: number; maxOutputTokens?: number } },
+        )
         .filter((m) => m?.type === "config");
-      expect(configs.some((c) => c.config?.maxContextWindow === 128000 && c.config?.maxOutputTokens === 16384)).toBe(true);
+      expect(configs.some((c) => c.config?.maxContextWindow === 128000 && c.config?.maxOutputTokens === 16384)).toBe(
+        true,
+      );
     });
   });
 });

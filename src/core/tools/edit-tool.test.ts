@@ -40,10 +40,7 @@ describe("EditTool", () => {
   it("dry-run (Analyze preview): validates + diffs but writes NOTHING", () => {
     const f = join(dir, "a.js");
     writeFileSync(f, "x = 1;\n");
-    const r = tool().execute(
-      { path: f, edits: [{ oldText: "x = 1;", newText: "x = 2;" }] },
-      { dryRun: true },
-    );
+    const r = tool().execute({ path: f, edits: [{ oldText: "x = 1;", newText: "x = 2;" }] }, { dryRun: true });
     expect(r.isError).toBe(false);
     expect(r.content).toContain("PROPOSED");
     expect(r.content).not.toContain("Applied");

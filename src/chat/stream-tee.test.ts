@@ -68,7 +68,10 @@ describe("StreamTee", () => {
     tee.attachAll([a.rt, b.rt]);
 
     a.emit({ type: "text_delta", content: "Lancio i sub-agent." });
-    a.emit({ type: "tool_call", toolCall: { id: "d1", name: "Delegate", arguments: { id: "api", goal: "leggi le API" } } });
+    a.emit({
+      type: "tool_call",
+      toolCall: { id: "d1", name: "Delegate", arguments: { id: "api", goal: "leggi le API" } },
+    });
     a.emit({ type: "subagent_start", toolCallId: "d1" });
     a.emit({ type: "subagent_event", toolCallId: "d1", event: { type: "text_delta", content: "sto leggendo" } });
 
@@ -114,7 +117,12 @@ describe("StreamTee", () => {
     expect(deps.onSteerApplied).toHaveBeenCalledWith("a", ["s1"]);
     expect(deps.onSteerApplied).toHaveBeenCalledWith("b", ["s2"]);
     // …but only the active session's bubble is posted to the view.
-    expect(deps.onPost).toHaveBeenCalledWith({ type: "steerApplied", ids: ["s1"], content: "use Rome", sessionId: "a" });
+    expect(deps.onPost).toHaveBeenCalledWith({
+      type: "steerApplied",
+      ids: ["s1"],
+      content: "use Rome",
+      sessionId: "a",
+    });
     expect(deps.onPost).not.toHaveBeenCalledWith(expect.objectContaining({ ids: ["s2"] }));
   });
 
@@ -268,7 +276,11 @@ describe("StreamTee — turn_meta", () => {
     b.emit({ type: "turn_meta", meta: { inputTokens: 456 } });
 
     expect(deps.onPost).toHaveBeenCalledTimes(1);
-    expect(deps.onPost).toHaveBeenCalledWith({ type: "turnMeta", meta: { inputTokens: 123, durationMs: 5 }, sessionId: "a" });
+    expect(deps.onPost).toHaveBeenCalledWith({
+      type: "turnMeta",
+      meta: { inputTokens: 123, durationMs: 5 },
+      sessionId: "a",
+    });
   });
 });
 

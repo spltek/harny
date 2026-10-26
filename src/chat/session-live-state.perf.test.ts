@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { SessionLiveState, MAX_LIVE_SUBAGENT_EVENTS, MAX_LIVE_TOOL_CALLS, MAX_LIVE_TOOL_OUTPUT } from "./session-live-state";
+import {
+  SessionLiveState,
+  MAX_LIVE_SUBAGENT_EVENTS,
+  MAX_LIVE_TOOL_CALLS,
+  MAX_LIVE_TOOL_OUTPUT,
+} from "./session-live-state";
 import type { AgentEvent } from "../core/agent/types";
 
 /**
@@ -23,7 +28,10 @@ function mixedStream(session: number): AgentEvent[] {
   const events: AgentEvent[] = [];
   for (let i = 0; i < 5000; i++) {
     if (i % 50 === 0) {
-      events.push({ type: "tool_call", toolCall: { id: `s${session}-c${i}`, name: "Read", arguments: { path: "/a.ts" } } });
+      events.push({
+        type: "tool_call",
+        toolCall: { id: `s${session}-c${i}`, name: "Read", arguments: { path: "/a.ts" } },
+      });
     } else if (i % 50 === 25) {
       events.push({
         type: "tool_result",
@@ -32,7 +40,11 @@ function mixedStream(session: number): AgentEvent[] {
     } else if (i % 50 === 40) {
       events.push({ type: "subagent_start", toolCallId: `s${session}-c${i - 40}` });
     } else if (i % 50 === 45) {
-      events.push({ type: "subagent_event", toolCallId: `s${session}-c${i - 45}`, event: { type: "text_delta", content: "sub " } });
+      events.push({
+        type: "subagent_event",
+        toolCallId: `s${session}-c${i - 45}`,
+        event: { type: "text_delta", content: "sub " },
+      });
     } else {
       events.push(delta(i));
     }
@@ -65,7 +77,10 @@ describe("SessionLiveState — the price of remembering every session's turn", (
     // 300 tool calls each hammered with 10 KB of output (3 MB), then 3000 sub-agent events.
     for (let i = 0; i < 300; i++) {
       live.apply({ type: "tool_call", toolCall: { id: `c${i}`, name: "Shell", arguments: {} } });
-      live.apply({ type: "tool_result", toolResult: { toolCallId: `c${i}`, output: "z".repeat(10_000), isError: false } });
+      live.apply({
+        type: "tool_result",
+        toolResult: { toolCallId: `c${i}`, output: "z".repeat(10_000), isError: false },
+      });
     }
     for (let i = 0; i < 3000; i++) {
       live.apply({ type: "subagent_event", toolCallId: "c0", event: { type: "text_delta", content: `line ${i}` } });

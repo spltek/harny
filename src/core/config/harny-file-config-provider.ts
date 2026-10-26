@@ -154,9 +154,7 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
     try {
       const base = this.dir();
       if (!base) return false;
-      const path = this.fs.exists(join(base, "config.json"))
-        ? join(base, "config.json")
-        : join(base, "config.jsonc");
+      const path = this.fs.exists(join(base, "config.json")) ? join(base, "config.json") : join(base, "config.jsonc");
       if (this.fs.exists(path)) {
         let text = this.fs.readText(path);
         text = setTopLevelString(text, "model", model);
@@ -191,9 +189,8 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
       thinkingLevel: this.thinkingLevel(entry),
       maxTokens: entry.maxTokens,
       extraHeaders: this.headers(entry),
-      sessionHeader: typeof entry.sessionHeader === "string" && entry.sessionHeader.trim()
-        ? entry.sessionHeader.trim()
-        : undefined,
+      sessionHeader:
+        typeof entry.sessionHeader === "string" && entry.sessionHeader.trim() ? entry.sessionHeader.trim() : undefined,
       models: this.rawModels(entry),
     };
   }
@@ -238,9 +235,7 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
     return {
       activeProvider: data ? this.activeProviderName(data, map ?? {}) : undefined,
       providers,
-      ...(data && isPositiveInt(data.maxParallelSubAgents)
-        ? { maxParallelSubAgents: data.maxParallelSubAgents }
-        : {}),
+      ...(data && isPositiveInt(data.maxParallelSubAgents) ? { maxParallelSubAgents: data.maxParallelSubAgents } : {}),
     };
   }
 
@@ -311,7 +306,6 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
     }
   }
 
-
   /**
    * Raw providers section (exactly the config-file shape: baseUrl, apiKey,
    * api, models, thinking, …) for EXPORT. Lossless and portable.
@@ -342,7 +336,7 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
       const jsonExists = this.fs.exists(jsonPath);
       const jsoncExists = this.fs.exists(jsoncPath);
       const path = jsonExists ? jsonPath : jsoncExists ? jsoncPath : jsonPath;
-      const data: Record<string, unknown> = jsonExists || jsoncExists ? this.parseFile() ?? {} : {};
+      const data: Record<string, unknown> = jsonExists || jsoncExists ? (this.parseFile() ?? {}) : {};
       const current = (this.asProviderMap(data) ?? {}) as Record<string, unknown>;
       const providers = mode === "merge" ? { ...current, ...incoming.providers } : incoming.providers;
       data.providers = providers;
@@ -372,7 +366,7 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
       const jsonExists = this.fs.exists(jsonPath);
       const jsoncExists = this.fs.exists(jsoncPath);
       const path = jsonExists ? jsonPath : jsoncExists ? jsoncPath : jsonPath;
-      const parsed: Record<string, unknown> = jsonExists || jsoncExists ? this.parseFile() ?? {} : {};
+      const parsed: Record<string, unknown> = jsonExists || jsoncExists ? (this.parseFile() ?? {}) : {};
       const clean = normalizeMcpServers(servers);
       if (Object.keys(clean).length > 0) parsed.mcpServers = clean;
       else delete parsed.mcpServers;
@@ -387,9 +381,7 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
   private parseFile(): Record<string, unknown> | undefined {
     const base = this.dir();
     if (!base) return undefined;
-    const path = this.fs.exists(join(base, "config.json"))
-      ? join(base, "config.json")
-      : join(base, "config.jsonc");
+    const path = this.fs.exists(join(base, "config.json")) ? join(base, "config.json") : join(base, "config.jsonc");
     if (!this.fs.exists(path)) return undefined;
 
     let data: Record<string, unknown>;
@@ -414,10 +406,7 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
     return Object.keys(out).length > 0 ? out : undefined;
   }
 
-  private activeProviderName(
-    data: Record<string, unknown>,
-    providers: Record<string, NamedProviderEntry>,
-  ): string {
+  private activeProviderName(data: Record<string, unknown>, providers: Record<string, NamedProviderEntry>): string {
     const names = Object.keys(providers);
     return typeof data.provider === "string" && providers[data.provider] ? data.provider : names[0];
   }

@@ -78,14 +78,18 @@ export class GrepTool implements Tool {
   readonly definition: ToolDefinition = {
     name: "Grep",
     description:
-      "A fast content search tool. Results are capped for responsiveness; when truncated, the results report \"at least\" counts, but are otherwise accurate.\n\n" +
+      'A fast content search tool. Results are capped for responsiveness; when truncated, the results report "at least" counts, but are otherwise accurate.\n\n' +
       "DIRECTORY searches skip hidden (dot-)files by default — pass hidden: true to include them, or target " +
       "the file path directly. Binary files are not displayed (a single binary target is flagged explicitly).",
     parameters: {
       type: "object",
       properties: {
         pattern: { type: "string", description: "The regular expression pattern to search for in file contents" },
-        path: { type: "string", description: "File or directory to search in, absolute or relative to the working directory (defaults to workspace root)." },
+        path: {
+          type: "string",
+          description:
+            "File or directory to search in, absolute or relative to the working directory (defaults to workspace root).",
+        },
         glob: { type: "string", description: 'Glob pattern to filter files (e.g. "*.js", "*.{ts,tsx}")' },
         output_mode: {
           type: "string",
@@ -99,7 +103,10 @@ export class GrepTool implements Tool {
         type: { type: "string", description: "File type to search (e.g. ts, py, go)." },
         head_limit: { type: "number", minimum: 0, description: "Limit output size." },
         offset: { type: "number", minimum: 0, description: "Skip first N entries." },
-        hidden: { type: "boolean", description: "Include hidden (dot-)files when searching a directory. Default false." },
+        hidden: {
+          type: "boolean",
+          description: "Include hidden (dot-)files when searching a directory. Default false.",
+        },
         multiline: { type: "boolean", description: "Enable multiline mode ('.' also matches newlines)." },
       },
       required: ["pattern"],
@@ -256,11 +263,8 @@ export class GrepTool implements Tool {
       }
     }
 
-    const incomplete = budgetHit
-      ? "\n\n[Scan stopped early: size budget reached — results may be incomplete.]"
-      : "";
-    const raw =
-      outputMode === "files_with_matches" ? matchedFiles : outputMode === "count" ? counts : contentLines;
+    const incomplete = budgetHit ? "\n\n[Scan stopped early: size budget reached — results may be incomplete.]" : "";
+    const raw = outputMode === "files_with_matches" ? matchedFiles : outputMode === "count" ? counts : contentLines;
 
     if (raw.length === 0) {
       let hint = "";

@@ -16,15 +16,15 @@ export class WriteTool implements Tool {
     description:
       "Writes a file to the local filesystem and reports the character and UTF-8 byte counts written " +
       "(verifiable UTF-8 integrity). Both arguments are REQUIRED and must never be omitted. " +
-      "Path may be absolute or relative to the working directory (e.g. \"style.css\"). " +
-      "Put the full file content in \"contents\". Example call: " +
+      'Path may be absolute or relative to the working directory (e.g. "style.css"). ' +
+      'Put the full file content in "contents". Example call: ' +
       JSON.stringify({ path: "style.css", contents: "<full file content>" }),
     parameters: {
       type: "object",
       properties: {
         path: {
           type: "string",
-          description: "REQUIRED. File path, absolute or relative to the working directory (e.g. \"style.css\")",
+          description: 'REQUIRED. File path, absolute or relative to the working directory (e.g. "style.css")',
         },
         contents: {
           type: "string",
@@ -49,10 +49,10 @@ export class WriteTool implements Tool {
       return {
         content:
           "Tool Write is missing BOTH required arguments:" +
-          "\n- \"path\": absolute path or path relative to the working directory \"" +
+          '\n- "path": absolute path or path relative to the working directory "' +
           cwd +
-          "\" (e.g. \"style.css\")" +
-          "\n- \"contents\": full file content (string)" +
+          '" (e.g. "style.css")' +
+          '\n- "contents": full file content (string)' +
           "\nCall Write again with valid JSON, e.g. " +
           JSON.stringify({ path: cwd + "/style.css", contents: "<full file content>" }),
         isError: true,
@@ -61,10 +61,10 @@ export class WriteTool implements Tool {
     if (!pathArg) {
       return {
         content:
-          "Tool Write: you provided \"contents\" but forgot the REQUIRED \"path\". " +
-          "Send both fields. Use a path relative to the working directory \"" +
+          'Tool Write: you provided "contents" but forgot the REQUIRED "path". ' +
+          'Send both fields. Use a path relative to the working directory "' +
           cwd +
-          "\", e.g. \"style.css\" or \"src/main.js\". " +
+          '", e.g. "style.css" or "src/main.js". ' +
           "Correct call: " +
           JSON.stringify({ path: "style.css", contents: contents || "<full file content>" }),
         isError: true,
@@ -73,7 +73,7 @@ export class WriteTool implements Tool {
     if (contents === undefined) {
       return {
         content:
-          "Tool Write: you provided \"path\" but forgot the REQUIRED \"contents\" " +
+          'Tool Write: you provided "path" but forgot the REQUIRED "contents" ' +
           "(the full file content as a string). Send both fields. Correct call: " +
           JSON.stringify({ path: pathArg, contents: "<full file content>" }),
         isError: true,

@@ -22,10 +22,7 @@ describe("HarnyFileConfigProvider", () => {
   });
 
   it("reads configured keys from config.json", () => {
-    writeFileSync(
-      join(dir, "config.json"),
-      JSON.stringify({ apiKey: "sk-file", model: "llama3.2", temperature: 0.7 }),
-    );
+    writeFileSync(join(dir, "config.json"), JSON.stringify({ apiKey: "sk-file", model: "llama3.2", temperature: 0.7 }));
     const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
 
     expect(provider.read()).toEqual({
@@ -229,10 +226,7 @@ describe("HarnyFileConfigProvider multi-provider format", () => {
       thinkingMode: "bool",
       thinkingLevel: "medium",
       maxTokens: undefined,
-      models: [
-        { id: "LLM/qwen.gguf", input: ["text", "image"] },
-        { id: "LLM/gemma.gguf" },
-      ],
+      models: [{ id: "LLM/qwen.gguf", input: ["text", "image"] }, { id: "LLM/gemma.gguf" }],
     });
     expect(provider.getProvider("missing")).toBeUndefined();
   });
@@ -247,7 +241,6 @@ describe("HarnyFileConfigProvider multi-provider format", () => {
       }),
     );
     const provider = new HarnyFileConfigProvider(tmp, nodeFileSystem);
-
   });
 
   it("selects the configured model", () => {
@@ -521,7 +514,14 @@ describe("HarnyFileConfigProvider multi-provider format", () => {
   it("reads flat thinkingMode / thinkingLevel keys", () => {
     writeFileSync(
       join(dir, "config.json"),
-      JSON.stringify({ apiKey: "sk-x", provider: "openai-compatible", baseUrl: "http://localhost:11434", model: "qwen", thinkingMode: "effort", thinkingLevel: "low" }),
+      JSON.stringify({
+        apiKey: "sk-x",
+        provider: "openai-compatible",
+        baseUrl: "http://localhost:11434",
+        model: "qwen",
+        thinkingMode: "effort",
+        thinkingLevel: "low",
+      }),
     );
     const provider = new HarnyFileConfigProvider(tmp, nodeFileSystem);
 
@@ -537,8 +537,19 @@ describe("HarnyFileConfigProvider multi-provider format", () => {
         provider: "llamacpp",
         model: "qwen",
         providers: {
-          llamacpp: { baseUrl: "http://localhost:8090/v1", api: "openai-completions", apiKey: "local", thinking: "bool", thinkingLevel: "medium" },
-          openrouter: { baseUrl: "https://openrouter.ai/api/v1", api: "openai-completions", apiKey: "sk-or", thinking: "effort" },
+          llamacpp: {
+            baseUrl: "http://localhost:8090/v1",
+            api: "openai-completions",
+            apiKey: "local",
+            thinking: "bool",
+            thinkingLevel: "medium",
+          },
+          openrouter: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-completions",
+            apiKey: "sk-or",
+            thinking: "effort",
+          },
         },
       }),
     );
@@ -621,7 +632,9 @@ describe("HarnyFileConfigProvider multi-provider format", () => {
     expect(existsSync(join(dir, "config.json"))).toBe(true);
     expect(existsSync(join(dir, "config.jsonc"))).toBe(false);
     expect(JSON.parse(readFileSync(join(dir, "config.json"), "utf8"))).toEqual({
-      providers: { llamacpp: { api: "openai-completions", baseUrl: "http://localhost:8090/v1", apiKey: "local", thinking: "bool" } },
+      providers: {
+        llamacpp: { api: "openai-completions", baseUrl: "http://localhost:8090/v1", apiKey: "local", thinking: "bool" },
+      },
       provider: "llamacpp",
     });
     const data = provider.read();
@@ -653,14 +666,25 @@ describe("HarnyFileConfigProvider multi-provider format", () => {
   it("saveProvidersEditor keeps existing top-level keys (model, temp) and writes config.json", () => {
     writeFileSync(
       join(dir, "config.json"),
-      JSON.stringify({ provider: "old", model: "kept-model", temperature: 0.5, providers: { old: { baseUrl: "http://x/v1", api: "openai-completions" } } }),
+      JSON.stringify({
+        provider: "old",
+        model: "kept-model",
+        temperature: 0.5,
+        providers: { old: { baseUrl: "http://x/v1", api: "openai-completions" } },
+      }),
     );
     const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
     provider.saveProvidersEditor({ providers: { newp: { baseUrl: "http://y/v1" } } });
-    const raw = JSON.parse(require("node:fs").readFileSync(join(dir, "config.json"), "utf8")) as Record<string, unknown>;
+    const raw = JSON.parse(require("node:fs").readFileSync(join(dir, "config.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
     expect(raw.model).toBe("kept-model");
     expect(raw.temperature).toBe(0.5);
-    expect((raw.providers as Record<string, unknown>).newp).toEqual({ api: "openai-completions", baseUrl: "http://y/v1" });
+    expect((raw.providers as Record<string, unknown>).newp).toEqual({
+      api: "openai-completions",
+      baseUrl: "http://y/v1",
+    });
     expect((raw.providers as Record<string, unknown>).old).toBeUndefined();
   });
 
@@ -671,7 +695,10 @@ describe("HarnyFileConfigProvider multi-provider format", () => {
     );
     const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
     provider.saveProvidersEditor({ activeProvider: "b", providers: { b: { baseUrl: "http://b/v1" } } });
-    const raw = JSON.parse(require("node:fs").readFileSync(join(dir, "config.json"), "utf8")) as Record<string, unknown>;
+    const raw = JSON.parse(require("node:fs").readFileSync(join(dir, "config.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
     expect(raw.provider).toBe("b");
   });
 });
@@ -746,7 +773,10 @@ describe("HarnyFileConfigProvider opencode session header fields", () => {
         },
       },
     });
-    const raw = JSON.parse(require("node:fs").readFileSync(join(dir, "config.json"), "utf8")) as Record<string, unknown>;
+    const raw = JSON.parse(require("node:fs").readFileSync(join(dir, "config.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
     expect((raw.providers as Record<string, unknown>)["opencode-go"]).toEqual({
       api: "openai-completions",
       baseUrl: "https://opencode.ai/go/v1",
@@ -804,7 +834,9 @@ describe("exportProviders / importProviders", () => {
       }),
     );
     const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
-    expect(provider.importProviders({ providers: { a: { baseUrl: "http://new/v1" }, c: { baseUrl: "http://c/v1" } } })).toBe(true);
+    expect(
+      provider.importProviders({ providers: { a: { baseUrl: "http://new/v1" }, c: { baseUrl: "http://c/v1" } } }),
+    ).toBe(true);
     const raw = readRaw();
     expect(raw.keep).toBe("yes");
     const providers = raw.providers as Record<string, { baseUrl: string }>;
@@ -832,8 +864,12 @@ describe("exportProviders / importProviders", () => {
 
 describe("HarnyFileConfigProvider MCP servers", () => {
   let dir: string;
-  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "harny-mcp-")); });
-  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "harny-mcp-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   it("reads + normalizes mcpServers (stdio and http, dropping malformed)", () => {
     writeFileSync(
@@ -878,7 +914,10 @@ describe("HarnyFileConfigProvider MCP servers", () => {
   });
 
   it("saves mcpServers losslessly (preserving other keys) and removes the key when empty", () => {
-    writeFileSync(join(dir, "config.json"), JSON.stringify({ provider: "p", providers: { p: { baseUrl: "http://x" } } }));
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({ provider: "p", providers: { p: { baseUrl: "http://x" } } }),
+    );
     const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
 
     expect(provider.saveMcpServers({ test: { command: "node", args: ["server.js"] } })).toBe(true);

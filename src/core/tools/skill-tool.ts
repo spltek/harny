@@ -40,7 +40,11 @@ export class SkillTool implements Tool {
     if (!name) return { content: "Skill: missing required 'name'.", isError: true };
     const skill = this.skills.get(name);
     if (!skill) {
-      const available = this.skills.list().map((s) => s.name).join(", ") || "(none installed)";
+      const available =
+        this.skills
+          .list()
+          .map((s) => s.name)
+          .join(", ") || "(none installed)";
       return {
         content: `Unknown skill "${name}". Installed skills: ${available}.`,
         isError: true,

@@ -123,7 +123,10 @@ function buildHarness(
   events.subscribe((e) => eventsLog.push(e));
   const factory = opts.llmFactory ?? fakeFactory(...(opts.chunks ?? [[{ type: "text", content: "hi" }]]));
   const tools = new ToolRegistry(opts.tools ?? [makeTool("FakeTool")]);
-  const systemPrompt = new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/workspace");
+  const systemPrompt = new DefaultSystemPromptBuilder(
+    () => tools.definitions(),
+    () => "/workspace",
+  );
 
   const agent = new Agent({
     config,
@@ -169,7 +172,10 @@ describe("Agent", () => {
       tools,
       history,
       events,
-      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/workspace"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => tools.definitions(),
+        () => "/workspace",
+      ),
       streamIdleTimeoutMs: 20,
     });
 
@@ -218,7 +224,10 @@ describe("Agent", () => {
       tools: new ToolRegistry([makeTool("FakeTool")]),
       history,
       events,
-      systemPrompt: new DefaultSystemPromptBuilder(() => [], () => "/workspace"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => [],
+        () => "/workspace",
+      ),
     });
 
     await agent.send("hello");
@@ -262,7 +271,10 @@ describe("Agent", () => {
     const history = new InMemoryChatHistory();
     const events = new InMemoryEventBus<AgentEvent>();
     const tools = new ToolRegistry([]);
-    const systemPrompt = new DefaultSystemPromptBuilder(() => [], () => "/workspace");
+    const systemPrompt = new DefaultSystemPromptBuilder(
+      () => [],
+      () => "/workspace",
+    );
     const agent = new Agent({ config, llmFactory: factory, tools, history, events, systemPrompt });
 
     await agent.send("cosa vedi?", { images: ["data:image/png;base64,AAAA"] });
@@ -290,15 +302,19 @@ describe("Agent", () => {
 
   it("streams text and stores the assistant message", async () => {
     const { agent, events, history, factory } = buildHarness({
-      chunks: [[{ type: "text", content: "Hel" }, { type: "text", content: "lo" }]],
+      chunks: [
+        [
+          { type: "text", content: "Hel" },
+          { type: "text", content: "lo" },
+        ],
+      ],
     });
 
     await agent.send("hello");
 
-    expect(events.filter((e) => e.type === "text_delta").map((e) => (e.type === "text_delta" ? e.content : ""))).toEqual([
-      "Hel",
-      "lo",
-    ]);
+    expect(
+      events.filter((e) => e.type === "text_delta").map((e) => (e.type === "text_delta" ? e.content : "")),
+    ).toEqual(["Hel", "lo"]);
     expect(events.some((e) => e.type === "done")).toBe(true);
     expect(factory.calls).toBe(1);
 
@@ -309,10 +325,12 @@ describe("Agent", () => {
 
   it("emits thinking_delta when provider returns thinking type", async () => {
     const { agent, events, history } = buildHarness({
-      chunks: [[
-        { type: "thinking", content: "let me reason about this" },
-        { type: "text", content: "Here is the answer" },
-      ]],
+      chunks: [
+        [
+          { type: "thinking", content: "let me reason about this" },
+          { type: "text", content: "Here is the answer" },
+        ],
+      ],
     });
 
     await agent.send("complicated question");
@@ -365,7 +383,10 @@ describe("Agent", () => {
       tools: new ToolRegistry([]),
       history,
       events,
-      systemPrompt: new DefaultSystemPromptBuilder(() => [], () => "/workspace"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => [],
+        () => "/workspace",
+      ),
     });
 
     await agent.send("first");
@@ -381,12 +402,14 @@ describe("Agent", () => {
 
   it("parses \u003cthink\u003e tags in text into thinking_delta events", async () => {
     const { agent, events, history } = buildHarness({
-      chunks: [[
-        { type: "text", content: "I need to " },
-        { type: "text", content: "\u003cthink\u003elet me check the API docs" },
-        { type: "text", content: "\u003c/think\u003e" },
-        { type: "text", content: "The answer is 42." },
-      ]],
+      chunks: [
+        [
+          { type: "text", content: "I need to " },
+          { type: "text", content: "\u003cthink\u003elet me check the API docs" },
+          { type: "text", content: "\u003c/think\u003e" },
+          { type: "text", content: "The answer is 42." },
+        ],
+      ],
     });
 
     await agent.send("what is the meaning?");
@@ -412,11 +435,13 @@ describe("Agent", () => {
 
   it("parses \u003creason\u003e tags in text into thinking_delta events", async () => {
     const { agent, events, history } = buildHarness({
-      chunks: [[
-        { type: "text", content: "\u003creason\u003eAnalyzing the algorithm..." },
-        { type: "text", content: "\u003c/reason\u003e" },
-        { type: "text", content: "Use quicksort." },
-      ]],
+      chunks: [
+        [
+          { type: "text", content: "\u003creason\u003eAnalyzing the algorithm..." },
+          { type: "text", content: "\u003c/reason\u003e" },
+          { type: "text", content: "Use quicksort." },
+        ],
+      ],
     });
 
     await agent.send("sort this");
@@ -436,11 +461,13 @@ describe("Agent", () => {
 
   it("handles think tags spanning across multiple text chunks", async () => {
     const { agent, events } = buildHarness({
-      chunks: [[
-        { type: "text", content: "Hello. \u003cthink\u003eStep 1: check" },
-        { type: "text", content: "Step 2: analyze" },
-        { type: "text", content: "Step 3: conclude\u003c/think\u003eDone." },
-      ]],
+      chunks: [
+        [
+          { type: "text", content: "Hello. \u003cthink\u003eStep 1: check" },
+          { type: "text", content: "Step 2: analyze" },
+          { type: "text", content: "Step 3: conclude\u003c/think\u003eDone." },
+        ],
+      ],
     });
 
     await agent.send("multi-chunk thinking");
@@ -552,10 +579,7 @@ describe("Agent", () => {
 
   it("nudges and continues when a turn only produces thinking (no text, no tools)", async () => {
     const { agent, factory, history, events } = buildHarness({
-      chunks: [
-        [{ type: "thinking", content: "let me think about this" }],
-        [{ type: "text", content: "final answer" }],
-      ],
+      chunks: [[{ type: "thinking", content: "let me think about this" }], [{ type: "text", content: "final answer" }]],
     });
 
     await agent.send("x");
@@ -627,7 +651,11 @@ describe("Agent", () => {
     const recording: LLMProviderFactory = {
       create: () => ({
         protocol: "chat" as const,
-        async *stream(_messages: LLMMessage[], _signal?: AbortSignal, tools?: Array<{ name: string; description: string }>) {
+        async *stream(
+          _messages: LLMMessage[],
+          _signal?: AbortSignal,
+          tools?: Array<{ name: string; description: string }>,
+        ) {
           seenDefs.push((tools ?? []).map((t) => ({ name: t.name, description: t.description })));
           call++;
           if (call === 1) {
@@ -681,7 +709,11 @@ describe("Agent", () => {
     let agentRef: Agent | undefined;
     const delegateCall = (id: string): StreamChunk[] => [
       { type: "tool_call_start", index: 0, id, name: "Delegate" } as StreamChunk,
-      { type: "tool_call_delta", index: 0, delta: `{"id":"${id}","goal":"g","access":"read","resources":["a.ts"]}` } as StreamChunk,
+      {
+        type: "tool_call_delta",
+        index: 0,
+        delta: `{"id":"${id}","goal":"g","access":"read","resources":["a.ts"]}`,
+      } as StreamChunk,
       { type: "tool_call_end", index: 0 } as StreamChunk,
     ];
     const factory: LLMProviderFactory = {
@@ -750,7 +782,11 @@ describe("Agent", () => {
     let agentRef: Agent | undefined;
     const delegateWriter = (id: string): StreamChunk[] => [
       { type: "tool_call_start", index: 0, id, name: "Delegate" } as StreamChunk,
-      { type: "tool_call_delta", index: 0, delta: `{"id":"${id}","goal":"write","access":"write","resources":["a.ts"]}` } as StreamChunk,
+      {
+        type: "tool_call_delta",
+        index: 0,
+        delta: `{"id":"${id}","goal":"write","access":"write","resources":["a.ts"]}`,
+      } as StreamChunk,
       { type: "tool_call_end", index: 0 } as StreamChunk,
     ];
     const factory: LLMProviderFactory = {
@@ -796,9 +832,9 @@ describe("Agent", () => {
     await agent.send("two"); // the pending Analyze is the run's policy now: refused
 
     expect(spawned).toEqual(["d1"]);
-    const refusal = history.all().find(
-      (m) => m.role === "tool" && /may only be delegated with access "read"/.test(m.content ?? ""),
-    );
+    const refusal = history
+      .all()
+      .find((m) => m.role === "tool" && /may only be delegated with access "read"/.test(m.content ?? ""));
     expect(refusal).toBeTruthy();
   });
 
@@ -822,7 +858,10 @@ describe("Agent", () => {
     // Two nudges + the final failed attempt = 3 LLM calls, then a clear stop.
     expect(factory.calls).toBe(3);
     expect(history.all().some((m) => m.content === "(empty response)")).toBe(false);
-    const last = history.all().filter((m) => m.role === "assistant").at(-1);
+    const last = history
+      .all()
+      .filter((m) => m.role === "assistant")
+      .at(-1);
     expect(last?.content).toContain("Loop not resolved");
     expect(last?.content).toContain("[empty]");
     expect(events.some((e) => e.type === "error" && /Loop not resolved/.test(e.error))).toBe(true);
@@ -830,14 +869,22 @@ describe("Agent", () => {
 
   it("reports a token-limit truncation when the turn is empty (finish_reason=length)", async () => {
     const { agent, factory, history, events } = buildHarness({
-      chunks: [[{ type: "thinking", content: "lots of reasoning" }, { type: "finish", reason: "length" }]],
+      chunks: [
+        [
+          { type: "thinking", content: "lots of reasoning" },
+          { type: "finish", reason: "length" },
+        ],
+      ],
     });
 
     await agent.send("x");
 
     // "length" is diagnosed immediately — no nudge/retry loop.
     expect(factory.calls).toBe(1);
-    const last = history.all().filter((m) => m.role === "assistant").at(-1);
+    const last = history
+      .all()
+      .filter((m) => m.role === "assistant")
+      .at(-1);
     expect(last?.content).toContain("token limit");
     expect(last?.content).toContain("harny.maxTokens");
     expect(last?.content).toContain("reasoning");
@@ -846,12 +893,20 @@ describe("Agent", () => {
 
   it("marks a partial answer as truncated when finish_reason=length", async () => {
     const { agent, history } = buildHarness({
-      chunks: [[{ type: "text", content: "Partial ans" }, { type: "finish", reason: "length" }]],
+      chunks: [
+        [
+          { type: "text", content: "Partial ans" },
+          { type: "finish", reason: "length" },
+        ],
+      ],
     });
 
     await agent.send("x");
 
-    const last = history.all().filter((m) => m.role === "assistant").at(-1);
+    const last = history
+      .all()
+      .filter((m) => m.role === "assistant")
+      .at(-1);
     expect(last?.content).toContain("Partial ans");
     expect(last?.content).toContain("truncated");
     expect(last?.content).toContain("harny.maxTokens");
@@ -862,7 +917,10 @@ describe("Agent", () => {
     const { agent, factory, history, events } = buildHarness({
       chunks: [
         // Turn 0: a runaway repetitive reasoning stream.
-        [{ type: "thinking", content: loopText }, { type: "finish", reason: "stop" }],
+        [
+          { type: "thinking", content: loopText },
+          { type: "finish", reason: "stop" },
+        ],
         // Turn 1: the model recovers with a final answer.
         [{ type: "text", content: "final answer after loop" }],
       ],
@@ -885,7 +943,10 @@ describe("Agent", () => {
     const loopText = "Let me explain the same thing over and over again. ".repeat(30);
     const chunks = [
       // Turn 0: a runaway repetitive VISIBLE answer.
-      [{ type: "text", content: loopText }, { type: "finish", reason: "stop" }],
+      [
+        { type: "text", content: loopText },
+        { type: "finish", reason: "stop" },
+      ],
       // Turn 1: the model recovers with a concise answer.
       [{ type: "text", content: "concise final answer" }],
     ];
@@ -903,7 +964,6 @@ describe("Agent", () => {
     expect(intervention && intervention.type === "loop_intervention" ? intervention.loopType : "").toBe("response");
     expect(on.history.all().some((m) => m.role === "assistant" && m.content === "concise final answer")).toBe(true);
   });
-
 
   it("reuses a cached read-only result instead of re-running an identical read", async () => {
     let runs = 0;
@@ -996,7 +1056,10 @@ describe("Agent", () => {
       tools: new ToolRegistry([previewTool("StrReplace")]),
       history: new InMemoryChatHistory(),
       events: new InMemoryEventBus<AgentEvent>(),
-      systemPrompt: new DefaultSystemPromptBuilder(() => [], () => "/w"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => [],
+        () => "/w",
+      ),
     });
 
     await agent.send("go");
@@ -1038,7 +1101,10 @@ describe("Agent", () => {
     const signals: AbortSignal[] = [];
     const { agent } = buildHarness({
       chunks: [
-        [{ type: "tool_call_start", index: 0, id: "c", name: "FakeTool" }, { type: "tool_call_end", index: 0 }],
+        [
+          { type: "tool_call_start", index: 0, id: "c", name: "FakeTool" },
+          { type: "tool_call_end", index: 0 },
+        ],
         [{ type: "text", content: "done" }],
       ],
       onTurnBoundary: (signal) => {
@@ -1232,7 +1298,10 @@ describe("Agent", () => {
         tools,
         history: new InMemoryChatHistory(),
         events: new InMemoryEventBus<AgentEvent>(),
-        systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+        systemPrompt: new DefaultSystemPromptBuilder(
+          () => tools.definitions(),
+          () => "/w",
+        ),
         log: (m) => logs.push(m),
       });
 
@@ -1295,7 +1364,10 @@ describe("Agent", () => {
     await agent.send("fix it");
 
     expect(events.some((e) => e.type === "preview_ready")).toBe(true);
-    const final = history.all().filter((m) => m.role === "assistant").at(-1);
+    const final = history
+      .all()
+      .filter((m) => m.role === "assistant")
+      .at(-1);
     expect(final?.previewPrepared).toBe(true);
   });
 
@@ -1358,9 +1430,18 @@ describe("Agent", () => {
     const { agent, factory, events, history } = buildHarness({
       tools: [failingTool],
       chunks: [
-        [{ type: "tool_call_start", index: 0, id: "c1", name: "Read" }, { type: "tool_call_end", index: 0 }],
-        [{ type: "tool_call_start", index: 0, id: "c2", name: "Read" }, { type: "tool_call_end", index: 0 }],
-        [{ type: "tool_call_start", index: 0, id: "c3", name: "Read" }, { type: "tool_call_end", index: 0 }],
+        [
+          { type: "tool_call_start", index: 0, id: "c1", name: "Read" },
+          { type: "tool_call_end", index: 0 },
+        ],
+        [
+          { type: "tool_call_start", index: 0, id: "c2", name: "Read" },
+          { type: "tool_call_end", index: 0 },
+        ],
+        [
+          { type: "tool_call_start", index: 0, id: "c3", name: "Read" },
+          { type: "tool_call_end", index: 0 },
+        ],
       ],
       maxTurns: 8,
     });
@@ -1375,7 +1456,9 @@ describe("Agent", () => {
     expect(message).toContain("Loop not resolved");
     expect(message).toContain("tool-failure");
     expect(history.all().some((m) => m.role === "user" && /SAME arguments/.test(m.content))).toBe(true);
-    const refused = history.all().filter((m) => m.role === "tool" && /already failed and was NOT re-run/.test(m.content));
+    const refused = history
+      .all()
+      .filter((m) => m.role === "tool" && /already failed and was NOT re-run/.test(m.content));
     expect(refused.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -1466,9 +1549,18 @@ describe("Agent", () => {
   it("nudges twice, then stops when the same successful tool call keeps repeating", async () => {
     const { agent, factory, events, history } = buildHarness({
       chunks: [
-        [{ type: "tool_call_start", index: 0, id: "c1", name: "FakeTool" }, { type: "tool_call_end", index: 0 }],
-        [{ type: "tool_call_start", index: 0, id: "c2", name: "FakeTool" }, { type: "tool_call_end", index: 0 }],
-        [{ type: "tool_call_start", index: 0, id: "c3", name: "FakeTool" }, { type: "tool_call_end", index: 0 }],
+        [
+          { type: "tool_call_start", index: 0, id: "c1", name: "FakeTool" },
+          { type: "tool_call_end", index: 0 },
+        ],
+        [
+          { type: "tool_call_start", index: 0, id: "c2", name: "FakeTool" },
+          { type: "tool_call_end", index: 0 },
+        ],
+        [
+          { type: "tool_call_start", index: 0, id: "c3", name: "FakeTool" },
+          { type: "tool_call_end", index: 0 },
+        ],
       ],
       maxTurns: 8,
     });
@@ -1486,9 +1578,18 @@ describe("Agent", () => {
     const { agent, history } = buildHarness({
       tools: [makeTool("A"), makeTool("B"), makeTool("C")],
       chunks: [
-        [{ type: "tool_call_start", index: 0, id: "a1", name: "A" }, { type: "tool_call_end", index: 0 }],
-        [{ type: "tool_call_start", index: 0, id: "b1", name: "B" }, { type: "tool_call_end", index: 0 }],
-        [{ type: "tool_call_start", index: 0, id: "c1", name: "C" }, { type: "tool_call_end", index: 0 }],
+        [
+          { type: "tool_call_start", index: 0, id: "a1", name: "A" },
+          { type: "tool_call_end", index: 0 },
+        ],
+        [
+          { type: "tool_call_start", index: 0, id: "b1", name: "B" },
+          { type: "tool_call_end", index: 0 },
+        ],
+        [
+          { type: "tool_call_start", index: 0, id: "c1", name: "C" },
+          { type: "tool_call_end", index: 0 },
+        ],
       ],
       maxTurns: 3,
     });
@@ -1533,7 +1634,10 @@ describe("Agent", () => {
     const eventsLog: AgentEvent[] = [];
     events.subscribe((e) => eventsLog.push(e));
     const tools = new ToolRegistry([]);
-    const systemPrompt = new DefaultSystemPromptBuilder(() => [], () => "/workspace");
+    const systemPrompt = new DefaultSystemPromptBuilder(
+      () => [],
+      () => "/workspace",
+    );
     const agent = new Agent({ config, llmFactory: factory, tools, history, events, systemPrompt });
 
     const sendPromise = agent.send("x");
@@ -1608,13 +1712,15 @@ describe("Agent follow-through guard", () => {
     expect(factory.calls).toBe(1);
     const userMsgs = history.all().filter((m) => m.role === "user");
     expect(userMsgs).toEqual([expect.objectContaining({ content: "find me the weather?" })]);
-    const assistants = history.all().filter((m) => m.role === "assistant").map((m) => m.content);
+    const assistants = history
+      .all()
+      .filter((m) => m.role === "assistant")
+      .map((m) => m.content);
     expect(assistants).toEqual(["Sure! I will search for it."]);
   });
 });
 
 describe("Analyze (read-only) mode", () => {
-
   // Captures the tool definitions AND the system prompt each LLM turn
   // advertises, so tests can assert what the model was (and was NOT) allowed
   // to call and what rules it was given.
@@ -1691,7 +1797,10 @@ describe("Analyze (read-only) mode", () => {
   it("runs file-mutating tool calls in analyze as DRY-RUN previews (never applied)", async () => {
     const writeTool = {
       ...previewTool("Write"),
-      execute: vi.fn(async (): Promise<ToolResult> => ({ content: "PROPOSED (preview — NOT written): a.txt", isError: false })),
+      execute: vi.fn(async (): Promise<ToolResult> => ({
+        content: "PROPOSED (preview — NOT written): a.txt",
+        isError: false,
+      })),
     };
     const { agent, history } = capturingHarness(
       [writeTool],
@@ -1710,7 +1819,10 @@ describe("Analyze (read-only) mode", () => {
   });
 
   it("runs the same write tool after switching to agent mode", async () => {
-    const writeTool = { ...previewTool("Write"), execute: vi.fn(async (): Promise<ToolResult> => ({ content: "wrote", isError: false })) };
+    const writeTool = {
+      ...previewTool("Write"),
+      execute: vi.fn(async (): Promise<ToolResult> => ({ content: "wrote", isError: false })),
+    };
     const { agent, history } = capturingHarness(
       [writeTool],
       [toolCallChunks("Write", '{"path":"a.txt","content":"x"}'), [{ type: "text", content: "ok" }]],
@@ -1774,7 +1886,10 @@ describe("Analyze (read-only) mode", () => {
 
     await agent.send("fix it");
 
-    const final = history.all().filter((m) => m.role === "assistant").at(-1);
+    const final = history
+      .all()
+      .filter((m) => m.role === "assistant")
+      .at(-1);
     expect(final?.content).toContain("I fixed the bug for you.");
     expect(final?.content).toContain("Nothing has been applied");
     expect(final?.content).toContain("previews");
@@ -1794,7 +1909,10 @@ describe("Analyze (read-only) mode", () => {
 
     await agent.send("do it");
 
-    const final = history.all().filter((m) => m.role === "assistant").at(-1);
+    const final = history
+      .all()
+      .filter((m) => m.role === "assistant")
+      .at(-1);
     expect(final?.content).toContain("Edit `src/a.ts`");
     expect(final?.content).toContain("Write `src/b.ts`");
     expect(final?.content).toContain("Switch to **Build**");
@@ -1812,7 +1930,10 @@ describe("Analyze (read-only) mode", () => {
 
     await agent.send("fix it");
 
-    const final = history.all().filter((m) => m.role === "assistant").at(-1);
+    const final = history
+      .all()
+      .filter((m) => m.role === "assistant")
+      .at(-1);
     const occurrences = (final?.content.match(/Switch to \*\*Build\*\*/g) ?? []).length;
     expect(occurrences).toBe(1);
   });
@@ -1826,7 +1947,10 @@ describe("Analyze (read-only) mode", () => {
 
     await agent.send("fix it");
 
-    const final = history.all().filter((m) => m.role === "assistant").at(-1);
+    const final = history
+      .all()
+      .filter((m) => m.role === "assistant")
+      .at(-1);
     expect(final?.content).toBe("Applied the change.");
   });
 
@@ -1846,7 +1970,10 @@ describe("Analyze (read-only) mode", () => {
 
     await agent.send("compare these models");
 
-    const final = history.all().filter((m) => m.role === "assistant").at(-1);
+    const final = history
+      .all()
+      .filter((m) => m.role === "assistant")
+      .at(-1);
     expect(final?.content).toContain("Here is the comparison table.");
     expect(final?.content).not.toMatch(/switch to\s*\**build\**/i);
   });
@@ -1860,7 +1987,10 @@ describe("Analyze (read-only) mode", () => {
 
     await agent.send("x");
 
-    const final = history.all().filter((m) => m.role === "assistant").at(-1);
+    const final = history
+      .all()
+      .filter((m) => m.role === "assistant")
+      .at(-1);
     expect(final?.content).toBe("Answer.");
   });
 
@@ -1894,8 +2024,6 @@ describe("Analyze (read-only) mode", () => {
   });
 });
 
-
-
 describe("Orchestration (Delegate)", () => {
   function delegateTurn(calls: Array<Record<string, unknown>>): StreamChunk[] {
     const out: StreamChunk[] = [];
@@ -1917,7 +2045,10 @@ describe("Orchestration (Delegate)", () => {
       tools,
       history: new InMemoryChatHistory(),
       events: new InMemoryEventBus<AgentEvent>(),
-      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => tools.definitions(),
+        () => "/w",
+      ),
       spawnSubAgent: async (spec) => {
         sink.push(spec);
         return { content: "r", isError: false };
@@ -1952,7 +2083,10 @@ describe("Orchestration (Delegate)", () => {
     events.subscribe((e) => eventLog.push(e));
     const factory = fakeFactory(delegateTurn(opts.calls), [{ type: "text", content: "done" }]);
     const tools = new ToolRegistry([makeTool("Read")]);
-    const systemPrompt = new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w");
+    const systemPrompt = new DefaultSystemPromptBuilder(
+      () => tools.definitions(),
+      () => "/w",
+    );
     const agent = new Agent({
       config,
       llmFactory: factory,
@@ -2003,7 +2137,10 @@ describe("Orchestration (Delegate)", () => {
 
     await agent.send("go");
 
-    const final = history.all().filter((m) => m.role === "assistant").at(-1);
+    const final = history
+      .all()
+      .filter((m) => m.role === "assistant")
+      .at(-1);
     expect(final?.previewPrepared).toBe(true);
     expect(eventLog.some((e) => e.type === "preview_ready")).toBe(true);
     // The footer LISTS the file prepared by the sub-agent (not an empty list).
@@ -2021,7 +2158,10 @@ describe("Orchestration (Delegate)", () => {
       tools,
       history: new InMemoryChatHistory(),
       events: new InMemoryEventBus<AgentEvent>(),
-      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => tools.definitions(),
+        () => "/w",
+      ),
       spawnSubAgent: async () => {
         spawned++;
         return { content: "r", isError: false };
@@ -2058,7 +2198,10 @@ describe("Orchestration (Delegate)", () => {
       tools,
       history,
       events: new InMemoryEventBus<AgentEvent>(),
-      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => tools.definitions(),
+        () => "/w",
+      ),
       spawnSubAgent: async (spec) => {
         spawned.push(spec);
         return { content: "r", isError: false };
@@ -2086,7 +2229,10 @@ describe("Orchestration (Delegate)", () => {
       tools,
       history,
       events: new InMemoryEventBus<AgentEvent>(),
-      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => tools.definitions(),
+        () => "/w",
+      ),
       spawnSubAgent: async (spec) => {
         spawned.push(spec);
         return { content: "report", isError: false };
@@ -2129,7 +2275,10 @@ describe("Orchestration (Delegate)", () => {
       tools,
       history: new InMemoryChatHistory(),
       events: new InMemoryEventBus<AgentEvent>(),
-      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => tools.definitions(),
+        () => "/w",
+      ),
       spawnSubAgent: async () => ({ content: "r", isError: false }),
     });
     agent.setMode("agent");
@@ -2164,7 +2313,10 @@ describe("Orchestration (Delegate)", () => {
       tools,
       history,
       events: new InMemoryEventBus<AgentEvent>(),
-      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => tools.definitions(),
+        () => "/w",
+      ),
       spawnSubAgent: async (spec) => {
         spawned.push(spec);
         return { content: "report", isError: false };
@@ -2192,7 +2344,10 @@ describe("Orchestration (Delegate)", () => {
       tools,
       history,
       events: new InMemoryEventBus<AgentEvent>(),
-      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => tools.definitions(),
+        () => "/w",
+      ),
       spawnSubAgent: async () => ({ content: "r", isError: false }),
     });
     agent.setMode("agent");
@@ -2217,7 +2372,10 @@ describe("Orchestration (Delegate)", () => {
       tools,
       history: new InMemoryChatHistory(),
       events: new InMemoryEventBus<AgentEvent>(),
-      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => tools.definitions(),
+        () => "/w",
+      ),
       spawnSubAgent: async (spec) => {
         seen.push(spec);
         return { content: "report", isError: false };
@@ -2240,10 +2398,9 @@ describe("Orchestration (Delegate)", () => {
 
   it("forwards ALL attachments when the Delegate selects none", async () => {
     const seen: DelegateSpec[] = [];
-    const factory = fakeFactory(
-      delegateTurn([{ id: "a", goal: "describe docs", access: "read", resources: ["."] }]),
-      [{ type: "text", content: "done" }],
-    );
+    const factory = fakeFactory(delegateTurn([{ id: "a", goal: "describe docs", access: "read", resources: ["."] }]), [
+      { type: "text", content: "done" },
+    ]);
     const tools = new ToolRegistry([makeTool("Delegate"), makeTool("Read")]);
     const agent = new Agent({
       config: new StaticConfigProvider(VALID_CONFIG),
@@ -2251,7 +2408,10 @@ describe("Orchestration (Delegate)", () => {
       tools,
       history: new InMemoryChatHistory(),
       events: new InMemoryEventBus<AgentEvent>(),
-      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => tools.definitions(),
+        () => "/w",
+      ),
       spawnSubAgent: async (spec) => {
         seen.push(spec);
         return { content: "report", isError: false };
@@ -2284,7 +2444,10 @@ describe("Orchestration (Delegate)", () => {
       tools,
       history: new InMemoryChatHistory(),
       events: new InMemoryEventBus<AgentEvent>(),
-      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => tools.definitions(),
+        () => "/w",
+      ),
       spawnSubAgent: async (spec) => {
         seen.push(spec);
         return { content: "report", isError: false };
@@ -2794,7 +2957,10 @@ describe("Orchestration (Delegate)", () => {
       tools: new ToolRegistry([makeTool("Read")]),
       history: new InMemoryChatHistory(),
       events: new InMemoryEventBus<AgentEvent>(),
-      systemPrompt: new DefaultSystemPromptBuilder(() => [], () => "/w"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => [],
+        () => "/w",
+      ),
       allowDelegation: true,
       spawnSubAgent: async () => ({ content: "r", isError: false }),
       onAbort: () => {
@@ -2839,7 +3005,13 @@ describe("Orchestration (Delegate)", () => {
       running--;
       return { content: "r", isError: false };
     };
-    const calls = ["A", "B", "C"].map((id, i) => ({ id, goal: id, access: "read", resources: [`${i}.ts`], parallel: "yes" }));
+    const calls = ["A", "B", "C"].map((id, i) => ({
+      id,
+      goal: id,
+      access: "read",
+      resources: [`${i}.ts`],
+      parallel: "yes",
+    }));
     // Config says 2, but the session override serializes to 1.
     const { agent } = build({ calls, maxParallel: 2, spawn });
     agent.setMaxParallelSubAgents(1);
@@ -2859,7 +3031,13 @@ describe("Orchestration (Delegate)", () => {
       running--;
       return { content: "r", isError: false };
     };
-    const calls = ["A", "B", "C", "D", "E", "F"].map((id, i) => ({ id, goal: id, access: "read", resources: [`${i}.ts`], parallel: "yes" }));
+    const calls = ["A", "B", "C", "D", "E", "F"].map((id, i) => ({
+      id,
+      goal: id,
+      access: "read",
+      resources: [`${i}.ts`],
+      parallel: "yes",
+    }));
     const { agent } = build({ calls, spawn }); // no maxParallel in the config
 
     await agent.send("go");
@@ -2877,7 +3055,13 @@ describe("Orchestration (Delegate)", () => {
       running--;
       return { content: "r", isError: false };
     };
-    const calls = ["A", "B", "C", "D", "E", "F"].map((id, i) => ({ id, goal: id, access: "read", resources: [`${i}.ts`], parallel: "yes" }));
+    const calls = ["A", "B", "C", "D", "E", "F"].map((id, i) => ({
+      id,
+      goal: id,
+      access: "read",
+      resources: [`${i}.ts`],
+      parallel: "yes",
+    }));
     const { agent } = build({ calls, maxParallel: 2, spawn });
     agent.setMaxParallelSubAgents(0); // explicit no cap
 
@@ -2910,9 +3094,7 @@ describe("Orchestration (Delegate)", () => {
     // Only A started; the queued B/C must NEVER start after Stop.
     expect(started).toEqual(["A"]);
     // The not-started calls still get a tool result so the history stays coherent.
-    expect(
-      history.all().some((m) => m.role === "tool" && /aborted before running/i.test(m.content ?? "")),
-    ).toBe(true);
+    expect(history.all().some((m) => m.role === "tool" && /aborted before running/i.test(m.content ?? ""))).toBe(true);
     // …and a tool_result event is EMITTED for them, so the UI marks them ABORTED.
     const abortedEvents = eventLog.filter(
       (e) => e.type === "tool_result" && /aborted before running/i.test(e.toolResult.output),
@@ -3194,7 +3376,10 @@ describe("Orchestration (Delegate)", () => {
       tools,
       history: new InMemoryChatHistory(),
       events: new InMemoryEventBus<AgentEvent>(),
-      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/w"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => tools.definitions(),
+        () => "/w",
+      ),
       spawnSubAgent: async () => {
         spawned++;
         return { content: "report", isError: false };
@@ -3280,14 +3465,16 @@ describe("Orchestration (Delegate)", () => {
     const history = new InMemoryChatHistory();
     const agent = new Agent({
       config: new StaticConfigProvider(VALID_CONFIG),
-      llmFactory: fakeFactory(
-        delegateTurn([{ id: "A", goal: "x", access: "read", resources: ["a.ts"] }]),
-        [{ type: "text", content: "ok" }],
-      ),
+      llmFactory: fakeFactory(delegateTurn([{ id: "A", goal: "x", access: "read", resources: ["a.ts"] }]), [
+        { type: "text", content: "ok" },
+      ]),
       tools: new ToolRegistry([makeTool("Read")]),
       history,
       events: new InMemoryEventBus<AgentEvent>(),
-      systemPrompt: new DefaultSystemPromptBuilder(() => [], () => "/w"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => [],
+        () => "/w",
+      ),
       allowDelegation: true,
       // no spawnSubAgent on purpose
     });
@@ -3421,7 +3608,10 @@ describe("Turn budget + forced final report", () => {
       tools: new ToolRegistry([makeTool("Read")]),
       history,
       events: new InMemoryEventBus<AgentEvent>(),
-      systemPrompt: new DefaultSystemPromptBuilder(() => [], () => "/w"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => [],
+        () => "/w",
+      ),
       maxTurns: 1,
       forceFinalReportOnLimit: true,
     });
@@ -3454,7 +3644,10 @@ describe("Turn budget + forced final report", () => {
       tools: new ToolRegistry([makeTool("Read")]),
       history,
       events: new InMemoryEventBus<AgentEvent>(),
-      systemPrompt: new DefaultSystemPromptBuilder(() => [], () => "/w"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => [],
+        () => "/w",
+      ),
       maxTurns: 1,
     });
 
@@ -3479,7 +3672,10 @@ describe("Repeated-call loop: nudge before hard stop", () => {
       tools: new ToolRegistry([makeTool("Shell")]),
       history,
       events: new InMemoryEventBus<AgentEvent>(),
-      systemPrompt: new DefaultSystemPromptBuilder(() => [], () => "/w"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => [],
+        () => "/w",
+      ),
     });
 
     await agent.send("go");
@@ -3579,7 +3775,10 @@ describe("Repeated-call loop: nudge before hard stop", () => {
       tools: new ToolRegistry([makeTool("Read"), makeTool("Grep")]),
       history,
       events: new InMemoryEventBus<AgentEvent>(),
-      systemPrompt: new DefaultSystemPromptBuilder(() => [], () => "/w"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => [],
+        () => "/w",
+      ),
     });
 
     await agent.send("go");
@@ -3674,11 +3873,7 @@ describe("Agent soft steering", () => {
 
   it("does not leak a steer into a LATER run (cleared per run)", async () => {
     const { agent, history } = buildHarness({
-      chunks: [
-        toolCall(),
-        [{ type: "text", content: "done" }],
-        [{ type: "text", content: "second" }],
-      ],
+      chunks: [toolCall(), [{ type: "text", content: "done" }], [{ type: "text", content: "second" }]],
     });
     // Queue a steer that never reaches a boundary, then end the run.
     agent.onEvent((e) => {
@@ -3761,10 +3956,7 @@ describe("Agent soft steering — fragility", () => {
 describe("Agent soft steering — final-answer boundary", () => {
   it("applies a steer queued during the FINAL answer at the end of the run", async () => {
     const { agent, factory, history, events } = buildHarness({
-      chunks: [
-        [{ type: "text", content: "first answer" }],
-        [{ type: "text", content: "corrected answer" }],
-      ],
+      chunks: [[{ type: "text", content: "first answer" }], [{ type: "text", content: "corrected answer" }]],
     });
     let steered = false;
     agent.onEvent((e) => {
@@ -3870,7 +4062,12 @@ describe("Agent — per-turn meta (real usage + timings)", () => {
 
   it("emits a turn_meta event with the REAL metrics as soon as a turn is committed", async () => {
     const { agent, events } = buildHarness({
-      chunks: [[{ type: "text", content: "hi" }, { type: "usage", usage: { input: 1000, output: 10, total: 1010 } }]],
+      chunks: [
+        [
+          { type: "text", content: "hi" },
+          { type: "usage", usage: { input: 1000, output: 10, total: 1010 } },
+        ],
+      ],
     });
     await agent.send("hello");
     const tm = events.find((e) => e.type === "turn_meta");
@@ -3985,7 +4182,10 @@ describe("context-overflow recovery (cross-provider)", () => {
       tools,
       history,
       events: new InMemoryEventBus<AgentEvent>(),
-      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/workspace"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => tools.definitions(),
+        () => "/workspace",
+      ),
       ...(opts.onContextOverflow ? { onContextOverflow: opts.onContextOverflow } : {}),
       ...(opts.contextBudget ? { contextBudget: opts.contextBudget } : {}),
     });
@@ -4025,7 +4225,9 @@ describe("context-overflow recovery (cross-provider)", () => {
   });
 
   it("does NOT compact on an unrelated rejection (no false recovery)", async () => {
-    const { factory, requests } = flakyFactory('OpenAI API error 400: {"error":{"message":"Invalid schema for function Shell"}}');
+    const { factory, requests } = flakyFactory(
+      'OpenAI API error 400: {"error":{"message":"Invalid schema for function Shell"}}',
+    );
     let compactions = 0;
     const { agent, history } = build({
       factory,
@@ -4043,7 +4245,12 @@ describe("context-overflow recovery (cross-provider)", () => {
 
     expect(compactions).toBe(0);
     expect(requests).toHaveLength(1);
-    expect(history.all().map((m) => m.content ?? "").join(" | ")).toContain("Invalid schema");
+    expect(
+      history
+        .all()
+        .map((m) => m.content ?? "")
+        .join(" | "),
+    ).toContain("Invalid schema");
   });
 
   it("recovers from a rejection we CANNOT read, when our own estimate says we were at the ceiling", async () => {
@@ -4156,7 +4363,10 @@ describe("observation masking in the request", () => {
       tools,
       history,
       events: new InMemoryEventBus<AgentEvent>(),
-      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/workspace"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => tools.definitions(),
+        () => "/workspace",
+      ),
       ...(contextBudget ? { contextBudget } : {}),
     });
     return { agent, history, seen };
@@ -4255,7 +4465,10 @@ describe("tool-call pairing on an interrupted run", () => {
       tools,
       history,
       events,
-      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/workspace"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => tools.definitions(),
+        () => "/workspace",
+      ),
     });
     // Build mode (the default is Analyze, which would refuse a Shell command
     // before running it — and the point here is a tool that is IN FLIGHT).
@@ -4306,7 +4519,10 @@ describe("tool-call pairing on an interrupted run", () => {
       tools,
       history,
       events,
-      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/workspace"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => tools.definitions(),
+        () => "/workspace",
+      ),
     });
     // A history damaged by something OUTSIDE this path: the check must catch it
     // whoever produced it (that is the whole point of putting it at the wire).
@@ -4350,7 +4566,10 @@ describe("tool-call pairing on an interrupted run", () => {
       tools,
       history,
       events,
-      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/workspace"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => tools.definitions(),
+        () => "/workspace",
+      ),
     });
     agent.setMode("agent");
 
@@ -4376,7 +4595,10 @@ describe("tool-call pairing on an interrupted run", () => {
       tools,
       history,
       events,
-      systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/workspace"),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        () => tools.definitions(),
+        () => "/workspace",
+      ),
     });
     agent.setMode("agent");
 

@@ -280,11 +280,7 @@ describe("sub-agents inherit the session's context discipline", () => {
     const seenLengths: number[] = [];
     const runner = new SubAgentRunner({
       config: new StaticConfigProvider(CONFIG),
-      llmFactory: factory([
-        readCall("r1", "a.ts"),
-        readCall("r2", "b.ts"),
-        [{ type: "text", content: "report" }],
-      ]),
+      llmFactory: factory([readCall("r1", "a.ts"), readCall("r2", "b.ts"), [{ type: "text", content: "report" }]]),
       tools: new ToolRegistry([makeReadTool()]),
       cwd: () => "/workspace",
       onTurnBoundary: (history) => {
@@ -477,7 +473,12 @@ describe("SubAgentRunner", () => {
       tools: new ToolRegistry([]),
       cwd: () => "/workspace",
       skills: () => [
-        { name: "pdf", description: "Extract PDF text", dir: "/w/.agents/skills/pdf", path: "/w/.agents/skills/pdf/SKILL.md" },
+        {
+          name: "pdf",
+          description: "Extract PDF text",
+          dir: "/w/.agents/skills/pdf",
+          path: "/w/.agents/skills/pdf/SKILL.md",
+        },
       ],
     });
 
@@ -493,10 +494,7 @@ describe("SubAgentRunner", () => {
       definition: { name: "Write", description: "write", parameters: { type: "object", properties: {} } },
       execute: () => ({ content: "PROPOSED (preview — NOT written): x", isError: false }),
     };
-    const runner = buildRunner(
-      factory([writeCall(), [{ type: "text", content: "REPORT: done" }]]),
-      [write],
-    );
+    const runner = buildRunner(factory([writeCall(), [{ type: "text", content: "REPORT: done" }]]), [write]);
 
     const res = await runner.run(spec({ access: "read" }));
 
@@ -770,7 +768,6 @@ describe("SubAgentRunner", () => {
 });
 
 describe("SubAgentRunner — loop guard parity", () => {
-
   it("applies the EMPTY-turn guard (sub-agent cannot stall forever)", async () => {
     const logs: string[] = [];
     const empty = (): StreamChunk[] => [];
@@ -813,10 +810,9 @@ describe("SubAgentRunner — loop guard parity", () => {
   it("reuses an identical read-only call INSIDE a sub-agent (source dedup)", async () => {
     const read = makeReadTool();
     const readCall = (id: string): StreamChunk[] => toolCallChunks(id, "Read", { path: "a.ts" });
-    const runner = buildRunner(
-      factory([readCall("r1"), readCall("r2"), [{ type: "text", content: "report" }]]),
-      [read],
-    );
+    const runner = buildRunner(factory([readCall("r1"), readCall("r2"), [{ type: "text", content: "report" }]]), [
+      read,
+    ]);
     const outputs: string[] = [];
     const res = await runner.run(spec({ id: "D" }), (e) => {
       if (e.type === "tool_result") outputs.push(e.toolResult.output);
@@ -841,7 +837,12 @@ describe("lastAssistantReport", () => {
   it("returns the last visible assistant text with no pending tool calls", () => {
     const msgs: ChatMessage[] = [
       { role: "user", content: "go", timestamp: 1 },
-      { role: "assistant", content: "🔧 Tool: Read", toolCalls: [{ id: "1", name: "Read", arguments: {} }], timestamp: 2 },
+      {
+        role: "assistant",
+        content: "🔧 Tool: Read",
+        toolCalls: [{ id: "1", name: "Read", arguments: {} }],
+        timestamp: 2,
+      },
       { role: "tool", content: "data", toolCallId: "1", timestamp: 3 },
       { role: "assistant", content: "final report", timestamp: 4 },
     ];

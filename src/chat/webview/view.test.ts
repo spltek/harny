@@ -29,10 +29,7 @@ const PARALLEL_ON = {
  */
 let persistedState: Record<string, unknown> = {};
 
-function setupDom(
-  initOverrides: Record<string, unknown> = {},
-  savedState: Record<string, unknown> = {},
-): void {
+function setupDom(initOverrides: Record<string, unknown> = {}, savedState: Record<string, unknown> = {}): void {
   const init = {
     sessions: [
       { id: "a", name: "Refactor", createdAt: 1, updatedAt: 2, messageCount: 3 },
@@ -41,7 +38,14 @@ function setupDom(
     openIds: ["a", "b"],
     activeId: "a",
     messages: [{ role: "user", content: "hello", timestamp: 1 }],
-    config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 },
+    config: {
+      provider: "openai",
+      model: "gpt-4o",
+      hasKey: true,
+      models: [],
+      providerModels: [],
+      contextWindow: 128000,
+    },
     ...initOverrides,
   };
   document.body.innerHTML = `
@@ -318,7 +322,15 @@ describe("view webview client", () => {
 
     hostMessage({
       type: "config",
-      config: { provider: "openai", model: "old-model", hasKey: true, hostModelErrors: [{ provider: "llamacpp", error: "HTTP 500" }], models: [], providerModels: [{ provider: "openai", model: "gpt-4o" }], contextWindow: 128000 },
+      config: {
+        provider: "openai",
+        model: "old-model",
+        hasKey: true,
+        hostModelErrors: [{ provider: "llamacpp", error: "HTTP 500" }],
+        models: [],
+        providerModels: [{ provider: "openai", model: "gpt-4o" }],
+        contextWindow: 128000,
+      },
     });
     // The saved model is gone: the button shows the placeholder.
     expect(label.textContent).toBe("Select a model");
@@ -333,7 +345,14 @@ describe("view webview client", () => {
     // Models available and reachable: the button shows the real model.
     hostMessage({
       type: "config",
-      config: { provider: "openai-compatible", model: "qwen.gguf", hasKey: true, models: [], providerModels: [{ provider: "llamacpp", model: "qwen.gguf" }], contextWindow: 128000 },
+      config: {
+        provider: "openai-compatible",
+        model: "qwen.gguf",
+        hasKey: true,
+        models: [],
+        providerModels: [{ provider: "llamacpp", model: "qwen.gguf" }],
+        contextWindow: 128000,
+      },
     });
     expect(label.textContent).toContain("qwen.gguf");
     expect(btn.classList.contains("placeholder")).toBe(false);
@@ -401,10 +420,31 @@ describe("view webview client", () => {
     const label = document.getElementById("mode-btn-label") as HTMLSpanElement;
     const btn = document.getElementById("mode-btn") as HTMLButtonElement;
     const agent = document.querySelector('.mode-item[data-mode="agent"]') as HTMLButtonElement;
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
+    });
     expect(label.textContent).toBe("Analyze");
 
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, mode: "agent", models: [], providerModels: [], contextWindow: 128000 } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        mode: "agent",
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
+    });
     expect(label.textContent).toBe("Build");
     expect(btn.classList.contains("is-agent")).toBe(true);
     expect(agent.classList.contains("is-active")).toBe(true);
@@ -430,7 +470,18 @@ describe("view webview client", () => {
   it("Parallel follows the host config and is LOCKED while working (never a silent lock)", async () => {
     await loadView();
     const btn = document.getElementById("parallel-btn") as HTMLButtonElement;
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, parallel: true, models: [], providerModels: [], contextWindow: 128000 } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        parallel: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
+    });
     expect(btn.classList.contains("is-on")).toBe(true);
 
     // A run is in flight: the toggle is disabled — a run keeps the policy it was born with
@@ -491,7 +542,18 @@ describe("view webview client", () => {
     await loadView();
     const btn = document.getElementById("mode-btn") as HTMLButtonElement;
     hostMessage({ type: "status", active: true }); // the run's mode: Analyze
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, mode: "agent", models: [], providerModels: [], contextWindow: 128000 } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        mode: "agent",
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
+    });
 
     expect(btn.classList.contains("is-pending")).toBe(true);
     expect(btn.textContent).toContain("Build");
@@ -530,7 +592,16 @@ describe("view webview client", () => {
 
     hostMessage({
       type: "config",
-      config: { provider: "openai-compatible", model: "qwen.gguf", hasKey: true, thinkingMode: "bool", thinkingLevel: "high", models: [], providerModels: [], contextWindow: 128000 },
+      config: {
+        provider: "openai-compatible",
+        model: "qwen.gguf",
+        hasKey: true,
+        thinkingMode: "bool",
+        thinkingLevel: "high",
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
     });
     expect(off.disabled).toBe(false);
     expect((document.getElementById("thinking-high") as HTMLInputElement).checked).toBe(true);
@@ -544,7 +615,16 @@ describe("view webview client", () => {
     // effort-style providers also enable the radios
     hostMessage({
       type: "config",
-      config: { provider: "openai", model: "gpt-5", hasKey: true, thinkingMode: "effort", thinkingLevel: "medium", models: [], providerModels: [], contextWindow: 128000 },
+      config: {
+        provider: "openai",
+        model: "gpt-5",
+        hasKey: true,
+        thinkingMode: "effort",
+        thinkingLevel: "medium",
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
     });
     expect(off.disabled).toBe(false);
     expect((document.getElementById("thinking-medium") as HTMLInputElement).checked).toBe(true);
@@ -552,7 +632,16 @@ describe("view webview client", () => {
     // DeepSeek/Anthropic toggle (OpenCode Go) also enables them
     hostMessage({
       type: "config",
-      config: { provider: "openai-compatible", model: "deepseek-v4.1-flash", hasKey: true, thinkingMode: "type", thinkingLevel: "high", models: [], providerModels: [], contextWindow: 128000 },
+      config: {
+        provider: "openai-compatible",
+        model: "deepseek-v4.1-flash",
+        hasKey: true,
+        thinkingMode: "type",
+        thinkingLevel: "high",
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
     });
     expect(off.disabled).toBe(false);
     expect((document.getElementById("thinking-high") as HTMLInputElement).checked).toBe(true);
@@ -654,7 +743,14 @@ describe("view webview client", () => {
       activeId: "b",
       openIds: ["a", "b"],
       messages: [],
-      config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 },
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
     });
     // The state is on screen: the veil has nothing left to announce.
     expect(veil().classList.contains("visible")).toBe(false);
@@ -699,11 +795,18 @@ describe("view webview client", () => {
     expect(document.querySelectorAll(".srow").length).toBe(2);
 
     // NO `sessions` key at all: exactly the payload a tab click produces.
-    hostMessage({ type: "switchView", activeId: "b", openIds: ["a", "b"], messages: [], config: {}, workingIds: [], switchSeq: 2 });
+    hostMessage({
+      type: "switchView",
+      activeId: "b",
+      openIds: ["a", "b"],
+      messages: [],
+      config: {},
+      workingIds: [],
+      switchSeq: 2,
+    });
 
     expect(document.querySelectorAll(".srow").length).toBe(2);
-    const nameOf = (id: string) =>
-      document.querySelector(`.tab[data-id="${id}"] span:first-child`)?.textContent;
+    const nameOf = (id: string) => document.querySelector(`.tab[data-id="${id}"] span:first-child`)?.textContent;
     expect(nameOf("a")).toBe("Refactor");
     expect(nameOf("b")).toBe("Debug");
   });
@@ -777,7 +880,19 @@ describe("view webview client", () => {
   it("disables the thinking radios while working (and on config pushes) but keeps sessions/tabs usable", async () => {
     await loadView();
     const off = document.getElementById("thinking-off") as HTMLInputElement;
-    hostMessage({ type: "config", config: { provider: "openai-compatible", model: "x", hasKey: true, thinkingMode: "bool", thinkingLevel: "high", models: [], providerModels: [], contextWindow: 128000 } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai-compatible",
+        model: "x",
+        hasKey: true,
+        thinkingMode: "bool",
+        thinkingLevel: "high",
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
+    });
     expect(off.disabled).toBe(false);
 
     hostMessage({ type: "status", active: true });
@@ -786,7 +901,19 @@ describe("view webview client", () => {
     expect((document.getElementById("new-session") as HTMLButtonElement).disabled).toBe(false);
     expect(document.querySelectorAll(".tab").length).toBeGreaterThan(0);
     // a config push mid-stream must NOT re-enable them
-    hostMessage({ type: "config", config: { provider: "openai-compatible", model: "x", hasKey: true, thinkingMode: "bool", thinkingLevel: "medium", models: [], providerModels: [], contextWindow: 128000 } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai-compatible",
+        model: "x",
+        hasKey: true,
+        thinkingMode: "bool",
+        thinkingLevel: "medium",
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
+    });
     expect(off.disabled).toBe(true);
 
     hostMessage({ type: "status", active: false });
@@ -1026,7 +1153,11 @@ describe("view webview client", () => {
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     expect(posted).not.toContainEqual({ type: "abort" });
     // The LIFO dispatcher closed the alert (response posted with its id).
-    expect(posted.some((m) => (m as { type?: string; id?: number }).type === "modalResponse" && (m as { id?: number }).id === 9)).toBe(true);
+    expect(
+      posted.some(
+        (m) => (m as { type?: string; id?: number }).type === "modalResponse" && (m as { id?: number }).id === 9,
+      ),
+    ).toBe(true);
   });
 
   it("attaches a pasted absolute path via the host", async () => {
@@ -1069,7 +1200,15 @@ describe("view webview client", () => {
     const chips = document.getElementById("attachment-chips") as HTMLDivElement;
     expect(chips.classList.contains("hidden")).toBe(false);
 
-    hostMessage({ type: "switchView", activeId: "b", sessions: [], openIds: ["a", "b"], messages: [], config: {}, workingIds: [] });
+    hostMessage({
+      type: "switchView",
+      activeId: "b",
+      sessions: [],
+      openIds: ["a", "b"],
+      messages: [],
+      config: {},
+      workingIds: [],
+    });
     expect(chips.classList.contains("hidden")).toBe(true);
   });
 
@@ -1084,12 +1223,28 @@ describe("view webview client", () => {
     input.value = "bozza per A";
 
     // Away: A's composition is parked and the box is CLEAN for B.
-    hostMessage({ type: "switchView", activeId: "b", sessions: [], openIds: ["a", "b"], messages: [], config: {}, workingIds: [] });
+    hostMessage({
+      type: "switchView",
+      activeId: "b",
+      sessions: [],
+      openIds: ["a", "b"],
+      messages: [],
+      config: {},
+      workingIds: [],
+    });
     expect(input.value).toBe("");
     expect(chips.classList.contains("hidden")).toBe(true);
 
     // Back: the text AND the chip are there again.
-    hostMessage({ type: "switchView", activeId: "a", sessions: [], openIds: ["a", "b"], messages: [], config: {}, workingIds: [] });
+    hostMessage({
+      type: "switchView",
+      activeId: "a",
+      sessions: [],
+      openIds: ["a", "b"],
+      messages: [],
+      config: {},
+      workingIds: [],
+    });
     expect(input.value).toBe("bozza per A");
     expect(chips.classList.contains("hidden")).toBe(false);
     expect(chips.textContent).toContain("relazione.pdf");
@@ -1139,7 +1294,12 @@ describe("view webview client", () => {
     hostMessage({
       type: "refresh",
       messages: [
-        { role: "user", content: 'Attached file "a.txt":\n```\nSECRET\n```', displayText: "", attachments: [{ name: "a.txt", size: 2 }] },
+        {
+          role: "user",
+          content: 'Attached file "a.txt":\n```\nSECRET\n```',
+          displayText: "",
+          attachments: [{ name: "a.txt", size: 2 }],
+        },
       ],
     });
     const bubble = document.querySelector(".msg.user") as HTMLElement;
@@ -1719,7 +1879,16 @@ describe("view webview client", () => {
       openIds: ["a", "w"],
       activeId: "w",
       messages: [{ role: "user", content: "go", timestamp: 1 }],
-      config: { provider: "openai", model: "gpt-4o", hasKey: true, thinkingMode: "bool", thinkingLevel: "high", models: [], providerModels: [], contextWindow: 128000 },
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        thinkingMode: "bool",
+        thinkingLevel: "high",
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
       workingIds: ["w"],
       streaming: true,
     });
@@ -1749,7 +1918,14 @@ describe("view webview client", () => {
       openIds: ["b"],
       activeId: "b",
       messages: [{ role: "user", content: "hi", timestamp: 1 }],
-      config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 },
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
       workingIds: [],
       streaming: false,
     });
@@ -1766,7 +1942,16 @@ describe("view webview client", () => {
       openIds: ["a"],
       activeId: "a",
       messages: [{ role: "user", content: "go", timestamp: 1 }],
-      config: { provider: "openai", model: "gpt-4o", hasKey: true, thinkingMode: "bool", thinkingLevel: "high", models: [], providerModels: [], contextWindow: 128000 },
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        thinkingMode: "bool",
+        thinkingLevel: "high",
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
       workingIds: ["a"],
       streaming: true,
       liveThinking: "**thinking** about this",
@@ -1796,7 +1981,16 @@ describe("view webview client", () => {
       openIds: ["a"],
       activeId: "a",
       messages: [{ role: "user", content: "go", timestamp: 1 }],
-      config: { provider: "openai", model: "gpt-4o", hasKey: true, thinkingMode: "bool", thinkingLevel: "high", models: [], providerModels: [], contextWindow: 128000 },
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        thinkingMode: "bool",
+        thinkingLevel: "high",
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
       workingIds: ["a"],
       streaming: true,
       liveThinking: "",
@@ -1807,7 +2001,14 @@ describe("view webview client", () => {
         textAfterTools: false,
         toolCalls: [
           { id: "d1", name: "Delegate", args: { id: "api", goal: "leggi le API" }, done: false, isError: false },
-          { id: "d2", name: "Delegate", args: { id: "db", goal: "leggi lo schema" }, done: true, isError: false, output: "schema letto" },
+          {
+            id: "d2",
+            name: "Delegate",
+            args: { id: "db", goal: "leggi lo schema" },
+            done: true,
+            isError: false,
+            output: "schema letto",
+          },
         ],
         subAgents: { d1: { status: "running", events: [{ type: "text_delta", content: "sto leggendo" }] } },
       },
@@ -1845,7 +2046,14 @@ describe("view webview client", () => {
       openIds: ["a"],
       activeId: "a",
       messages: [{ role: "user", content: "go", timestamp: 1 }],
-      config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 },
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
       workingIds: ["a"],
       streaming: true,
       liveThinking: "",
@@ -1854,9 +2062,7 @@ describe("view webview client", () => {
         thinking: "",
         answer: "Ecco cosa ho letto.",
         textAfterTools: true,
-        toolCalls: [
-          { id: "c1", name: "Read", args: { path: "a.ts" }, done: true, isError: false, output: "body" },
-        ],
+        toolCalls: [{ id: "c1", name: "Read", args: { path: "a.ts" }, done: true, isError: false, output: "body" }],
         subAgents: {},
       },
     });
@@ -1877,7 +2083,14 @@ describe("view webview client", () => {
       openIds: ["a"],
       activeId: "a",
       messages: [{ role: "user", content: "go", timestamp: 1 }],
-      config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 },
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
       workingIds: ["a"],
       streaming: true,
       liveThinking: "",
@@ -1887,7 +2100,14 @@ describe("view webview client", () => {
         answer: "",
         textAfterTools: false,
         toolCalls: [
-          { id: "d1", name: "Delegate", args: { id: "api", goal: "g" }, done: false, isError: false, abortRequested: true },
+          {
+            id: "d1",
+            name: "Delegate",
+            args: { id: "api", goal: "g" },
+            done: false,
+            isError: false,
+            abortRequested: true,
+          },
         ],
         subAgents: { d1: { status: "running", events: [] } },
       },
@@ -1926,7 +2146,15 @@ describe("view webview client", () => {
       switchSeq: 1,
       sessions: [
         { id: "a", name: "Local", createdAt: 1, updatedAt: 3, messageCount: 1, folder: "/home/me/a" },
-        { id: "b", name: "Elsewhere", createdAt: 1, updatedAt: 2, messageCount: 1, folder: "/home/me/b", foreign: true },
+        {
+          id: "b",
+          name: "Elsewhere",
+          createdAt: 1,
+          updatedAt: 2,
+          messageCount: 1,
+          folder: "/home/me/b",
+          foreign: true,
+        },
       ],
       openIds: ["b"],
       activeId: "b",
@@ -1954,7 +2182,16 @@ describe("view webview client", () => {
     await loadView();
     const A = { id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 1 };
     const B = { id: "b", name: "B", createdAt: 1, updatedAt: 2, messageCount: 1 };
-    hostMessage({ type: "switchView", switchSeq: 2, sessions: [A, B], openIds: ["a", "b"], activeId: "b", messages: [], config: {}, workingIds: [] });
+    hostMessage({
+      type: "switchView",
+      switchSeq: 2,
+      sessions: [A, B],
+      openIds: ["a", "b"],
+      activeId: "b",
+      messages: [],
+      config: {},
+      workingIds: [],
+    });
     hostMessage({
       type: "switchView",
       switchSeq: 1,
@@ -2029,7 +2266,12 @@ describe("view webview client", () => {
           timestamp: 2,
           toolCalls: [{ id: "e1", name: "Edit", arguments: { path: "a.js" } }],
         },
-        { role: "tool", toolCallId: "e1", content: "Diff (+1/-1):\n```diff\n@@ -1,2 +1,2 @@\n-old\n+new\n```", timestamp: 3 },
+        {
+          role: "tool",
+          toolCallId: "e1",
+          content: "Diff (+1/-1):\n```diff\n@@ -1,2 +1,2 @@\n-old\n+new\n```",
+          timestamp: 3,
+        },
         { role: "assistant", content: "done", timestamp: 4 },
       ],
     });
@@ -2055,12 +2297,34 @@ describe("view webview client", () => {
     // Analyze prepared the previews and the user flipped to Build while that run worked: the
     // banner would tell them to do what they have done, so it is not shown.
     await loadView();
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, mode: "agent", models: [], providerModels: [], contextWindow: 128000 } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        mode: "agent",
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
+    });
     hostMessage({ type: "previewReady" });
     expect(document.querySelector(".build-cta")).toBeFalsy();
 
     // Still in Analyze → the banner IS the point.
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, mode: "analyze", models: [], providerModels: [], contextWindow: 128000 } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        mode: "analyze",
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
+    });
     hostMessage({ type: "previewReady" });
     expect(document.querySelector(".build-cta")).toBeTruthy();
   });
@@ -2225,7 +2489,15 @@ describe("view webview client", () => {
     (document.activeElement as HTMLElement | null)?.blur();
     expect(document.activeElement).not.toBe(input);
 
-    hostMessage({ type: "switchView", activeId: "b", openIds: ["a", "b"], sessions: [], messages: [], config: {}, workingIds: [] });
+    hostMessage({
+      type: "switchView",
+      activeId: "b",
+      openIds: ["a", "b"],
+      sessions: [],
+      messages: [],
+      config: {},
+      workingIds: [],
+    });
 
     expect(document.activeElement).toBe(input);
   });
@@ -2253,7 +2525,16 @@ describe("view webview client", () => {
 
     // Model selection (modal): picking a model returns focus to the prompt.
     blur();
-    hostMessage({ type: "config", config: { provider: "openai", model: "m1", hasKey: true, models: ["m1"], providerModels: [{ provider: "openai", model: "m1" }] } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "m1",
+        hasKey: true,
+        models: ["m1"],
+        providerModels: [{ provider: "openai", model: "m1" }],
+      },
+    });
     (document.getElementById("model-btn") as HTMLButtonElement).click();
     (document.querySelector("#model-list .mm-model") as HTMLButtonElement).click();
     expect(document.activeElement).toBe(input);
@@ -2272,7 +2553,9 @@ describe("view webview client", () => {
     (document.getElementById("model-btn") as HTMLButtonElement).click();
     expect(modal.classList.contains("hidden")).toBe(false);
 
-    document.getElementById("model-search")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    document
+      .getElementById("model-search")!
+      .dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     expect(modal.classList.contains("hidden")).toBe(true);
     expect(document.activeElement).toBe(input);
   });
@@ -2346,12 +2629,15 @@ describe("view webview client", () => {
     expect((boxes[0] as HTMLElement).querySelector("img")).toBeTruthy();
     // Sized in px (half the chat) so it can be resized; the container stacks them.
     expect((boxes[0] as HTMLElement).style.width).toMatch(/^\d+px$/);
-    expect((document.querySelector(".msg-attachments") as HTMLElement)).toBeTruthy();
+    expect(document.querySelector(".msg-attachments") as HTMLElement).toBeTruthy();
   });
 
   it("the LIVE user bubble also gets the ✂ cut key (not only after a refresh)", async () => {
     await loadView();
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000 } });
+    hostMessage({
+      type: "config",
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000 },
+    });
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
     input.value = "hi";
     (document.getElementById("send-btn") as HTMLButtonElement).click();
@@ -2404,7 +2690,16 @@ describe("view webview client", () => {
 
   it("Esc closes the slash menu without posting abort", async () => {
     await loadView();
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, skills: [{ name: "pptx", description: "d" }] } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        contextWindow: 128000,
+        skills: [{ name: "pptx", description: "d" }],
+      },
+    });
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
     input.value = "/";
     input.dispatchEvent(new Event("input"));
@@ -2476,7 +2771,14 @@ describe("view webview client", () => {
       openIds: ["a"],
       activeId: "a",
       messages: [{ role: "user", content: "go", timestamp: 1 }],
-      config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 },
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
       streaming: false,
     });
     // The selected session starts pinned at the bottom.
@@ -2701,8 +3003,7 @@ describe("view webview client", () => {
     (document.getElementById("send-btn") as HTMLButtonElement).click();
 
     const send = posted.find((m) => (m as { type?: string }).type === "send") as
-      | { attachments?: { name: string; dataUri?: string }[] }
-      | undefined;
+      { attachments?: { name: string; dataUri?: string }[] } | undefined;
     expect(send).toBeDefined();
     expect(send!.attachments?.[0].dataUri).toBe(dataUri);
   });
@@ -2710,7 +3011,10 @@ describe("view webview client", () => {
   it("a LARGE pasted image is marked instead of bloating the state, and is refused instead of sent empty", async () => {
     await loadView();
     const huge = "data:image/png;base64," + "B".repeat(300 * 1024); // over the 256KB budget
-    hostMessage({ type: "attachments", files: [{ name: "big.png", path: "", size: huge.length, isImage: true, dataUri: huge }] });
+    hostMessage({
+      type: "attachments",
+      files: [{ name: "big.png", path: "", size: huge.length, isImage: true, dataUri: huge }],
+    });
     hostMessage({
       type: "switchView",
       switchSeq: 1,
@@ -2774,7 +3078,9 @@ describe("view webview client", () => {
     setupDom({}, { drafts: { a: "draft scritto dalla versione vecchia" } });
     await loadView();
 
-    expect((document.getElementById("user-input") as HTMLTextAreaElement).value).toBe("draft scritto dalla versione vecchia");
+    expect((document.getElementById("user-input") as HTMLTextAreaElement).value).toBe(
+      "draft scritto dalla versione vecchia",
+    );
     expect(document.querySelectorAll(".attach-chip")).toHaveLength(0);
   });
 
@@ -2965,7 +3271,12 @@ describe("view webview client", () => {
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
     input.value = "go";
     (document.getElementById("send-btn") as HTMLButtonElement).click();
-    hostMessage({ type: "toolCall", id: "tdo", name: "TodoWrite", arguments: { todos: [{ id: "1", content: "fix parser", status: "pending" }], merge: false } });
+    hostMessage({
+      type: "toolCall",
+      id: "tdo",
+      name: "TodoWrite",
+      arguments: { todos: [{ id: "1", content: "fix parser", status: "pending" }], merge: false },
+    });
     hostMessage({ type: "toolResult", toolCallId: "tdo", output: "## Task List", isError: false });
     hostMessage({ type: "toolCall", id: "ws", name: "WebSearch", arguments: { search_term: "harny vs code" } });
     hostMessage({ type: "toolResult", toolCallId: "ws", output: "results", isError: false });
@@ -2984,8 +3295,18 @@ describe("view webview client", () => {
     input.value = "go";
     (document.getElementById("send-btn") as HTMLButtonElement).click();
 
-    hostMessage({ type: "toolCall", id: "td1", name: "TodoWrite", arguments: { todos: [{ id: "1", content: "fix parser", status: "pending" }], merge: false } });
-    hostMessage({ type: "toolResult", toolCallId: "td1", output: "## Task List\n\n⏳ [pending] fix parser", isError: false });
+    hostMessage({
+      type: "toolCall",
+      id: "td1",
+      name: "TodoWrite",
+      arguments: { todos: [{ id: "1", content: "fix parser", status: "pending" }], merge: false },
+    });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "td1",
+      output: "## Task List\n\n⏳ [pending] fix parser",
+      isError: false,
+    });
 
     const first = document.querySelector(".todo-block") as HTMLElement;
     expect(first).toBeTruthy();
@@ -3001,7 +3322,12 @@ describe("view webview client", () => {
     // A second update REPLACES the block: five stale copies is what made the list
     // invisible in the first place.
     hostMessage({ type: "toolCall", id: "td2", name: "TodoWrite", arguments: { todos: [], merge: true } });
-    hostMessage({ type: "toolResult", toolCallId: "td2", output: "## Task List\n\n✅ [completed] fix parser\n🔄 [in_progress] ship it", isError: false });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "td2",
+      output: "## Task List\n\n✅ [completed] fix parser\n🔄 [in_progress] ship it",
+      isError: false,
+    });
 
     expect(document.querySelectorAll(".todo-block")).toHaveLength(1);
     const second = document.querySelector(".todo-block") as HTMLElement;
@@ -3030,10 +3356,31 @@ describe("view webview client", () => {
     hostMessage({
       type: "refresh",
       messages: [
-        { role: "assistant", content: "🔧 Tools: TodoWrite", timestamp: 1, toolCalls: [{ id: "td1", name: "TodoWrite", arguments: { todos: [{ id: "1", content: "fix parser", status: "pending" }] } }] },
+        {
+          role: "assistant",
+          content: "🔧 Tools: TodoWrite",
+          timestamp: 1,
+          toolCalls: [
+            {
+              id: "td1",
+              name: "TodoWrite",
+              arguments: { todos: [{ id: "1", content: "fix parser", status: "pending" }] },
+            },
+          ],
+        },
         { role: "tool", toolCallId: "td1", content: "## Task List\n\n⏳ [pending] fix parser", timestamp: 2 },
-        { role: "assistant", content: "🔧 Tools: TodoWrite", timestamp: 3, toolCalls: [{ id: "td2", name: "TodoWrite", arguments: { todos: [], merge: true } }] },
-        { role: "tool", toolCallId: "td2", content: "## Task List\n\n✅ [completed] fix parser\n⏳ [pending] ship it", timestamp: 4 },
+        {
+          role: "assistant",
+          content: "🔧 Tools: TodoWrite",
+          timestamp: 3,
+          toolCalls: [{ id: "td2", name: "TodoWrite", arguments: { todos: [], merge: true } }],
+        },
+        {
+          role: "tool",
+          toolCallId: "td2",
+          content: "## Task List\n\n✅ [completed] fix parser\n⏳ [pending] ship it",
+          timestamp: 4,
+        },
       ],
     });
     // The same rule as the live path: a reload must not resurrect five stale lists.
@@ -3230,11 +3577,24 @@ describe("view webview client", () => {
   it("streams a sub-agent's live thinking/text/tools into its bubble", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
-    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] },
+    });
     hostMessage({ type: "subagentStart", toolCallId: "s1" });
     hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "thinking_delta", content: "reasoning" } });
-    hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "tool_call", toolCall: { id: "t1", name: "Read", arguments: { path: "a.ts" } } } });
-    hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "tool_result", toolResult: { toolCallId: "t1", output: "data", isError: false } } });
+    hostMessage({
+      type: "subagentEvent",
+      toolCallId: "s1",
+      event: { type: "tool_call", toolCall: { id: "t1", name: "Read", arguments: { path: "a.ts" } } },
+    });
+    hostMessage({
+      type: "subagentEvent",
+      toolCallId: "s1",
+      event: { type: "tool_result", toolResult: { toolCallId: "t1", output: "data", isError: false } },
+    });
     hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "text_delta", content: "partial answer" } });
 
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
@@ -3251,12 +3611,29 @@ describe("view webview client", () => {
     // .sa-answer); the chat stream was not. Pinned here so they cannot drift apart again.
     await loadView();
     hostMessage(PARALLEL_ON);
-    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] },
+    });
     hostMessage({ type: "subagentStart", toolCallId: "s1" });
 
-    hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "text_delta", content: "Ho letto i file e " } });
-    hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "thinking_delta", content: "ora riordino le idee" } });
-    hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "text_delta", content: "concludo che va bene." } });
+    hostMessage({
+      type: "subagentEvent",
+      toolCallId: "s1",
+      event: { type: "text_delta", content: "Ho letto i file e " },
+    });
+    hostMessage({
+      type: "subagentEvent",
+      toolCallId: "s1",
+      event: { type: "thinking_delta", content: "ora riordino le idee" },
+    });
+    hostMessage({
+      type: "subagentEvent",
+      toolCallId: "s1",
+      event: { type: "text_delta", content: "concludo che va bene." },
+    });
 
     const answers = document.querySelectorAll(".sa-answer");
     expect(answers).toHaveLength(1);
@@ -3267,7 +3644,12 @@ describe("view webview client", () => {
   it("sub-agent bubbles are collapsed by default and expand on click", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
-    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] },
+    });
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
     const body = bubble.querySelector(".subagent-body") as HTMLElement;
     expect(body.classList.contains("collapsed")).toBe(true);
@@ -3281,9 +3663,22 @@ describe("view webview client", () => {
   it("marks a failed nested tool line in red", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
-    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
-    hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "tool_call", toolCall: { id: "t1", name: "Read", arguments: {} } } });
-    hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "tool_result", toolResult: { toolCallId: "t1", output: "boom", isError: true } } });
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] },
+    });
+    hostMessage({
+      type: "subagentEvent",
+      toolCallId: "s1",
+      event: { type: "tool_call", toolCall: { id: "t1", name: "Read", arguments: {} } },
+    });
+    hostMessage({
+      type: "subagentEvent",
+      toolCallId: "s1",
+      event: { type: "tool_result", toolResult: { toolCallId: "t1", output: "boom", isError: true } },
+    });
     const tool = document.querySelector(".sa-tool") as HTMLElement;
     expect(tool.classList.contains("err")).toBe(true);
   });
@@ -3299,9 +3694,19 @@ describe("view webview client", () => {
   it("routes nested events to the right bubble when several sub-agents run", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
-    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "a", access: "read", resources: ["a.ts"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "A", goal: "a", access: "read", resources: ["a.ts"] },
+    });
     hostMessage(PARALLEL_ON);
-    hostMessage({ type: "toolCall", id: "s2", name: "Delegate", arguments: { id: "B", goal: "b", access: "read", resources: ["b.ts"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s2",
+      name: "Delegate",
+      arguments: { id: "B", goal: "b", access: "read", resources: ["b.ts"] },
+    });
     hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "text_delta", content: "alpha" } });
     hostMessage({ type: "subagentEvent", toolCallId: "s2", event: { type: "text_delta", content: "beta" } });
     const bubbles = document.querySelectorAll(".msg.tool.subagent");
@@ -3312,7 +3717,12 @@ describe("view webview client", () => {
   it("flips a sub-agent to done as soon as its own done event arrives", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
-    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "a", access: "read", resources: ["a.ts"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "A", goal: "a", access: "read", resources: ["a.ts"] },
+    });
     hostMessage({ type: "subagentStart", toolCallId: "s1" });
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
     expect(bubble.querySelector(".subagent-status")?.classList.contains("running")).toBe(true);
@@ -3324,9 +3734,19 @@ describe("view webview client", () => {
   it("marks each sub-agent done individually when its own done arrives", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
-    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "a", access: "read", resources: ["a.ts"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "A", goal: "a", access: "read", resources: ["a.ts"] },
+    });
     hostMessage(PARALLEL_ON);
-    hostMessage({ type: "toolCall", id: "s2", name: "Delegate", arguments: { id: "B", goal: "b", access: "read", resources: ["b.ts"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s2",
+      name: "Delegate",
+      arguments: { id: "B", goal: "b", access: "read", resources: ["b.ts"] },
+    });
     hostMessage({ type: "subagentStart", toolCallId: "s1" });
     hostMessage({ type: "subagentStart", toolCallId: "s2" });
     const bubbles = document.querySelectorAll(".msg.tool.subagent");
@@ -3338,7 +3758,12 @@ describe("view webview client", () => {
   it("marks a sub-agent failed on its own error event", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
-    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "a", access: "read", resources: ["a.ts"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "A", goal: "a", access: "read", resources: ["a.ts"] },
+    });
     hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "error", error: "boom" } });
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
     expect(bubble.querySelector(".subagent-status")?.classList.contains("failed")).toBe(true);
@@ -3349,7 +3774,12 @@ describe("view webview client", () => {
     try {
       await loadView();
       hostMessage(PARALLEL_ON);
-      hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+      hostMessage({
+        type: "toolCall",
+        id: "s1",
+        name: "Delegate",
+        arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] },
+      });
       const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
       // Queued: the bubble does NOT pulse yet.
       expect(bubble.classList.contains("subagent-running")).toBe(false);
@@ -3376,9 +3806,18 @@ describe("view webview client", () => {
   it("renders markdown inside the sub-agent live stream (thinking + answer)", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
-    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] },
+    });
     hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "thinking_delta", content: "**plan**" } });
-    hostMessage({ type: "subagentEvent", toolCallId: "s1", event: { type: "text_delta", content: "result: `x`\n\n- a\n- b" } });
+    hostMessage({
+      type: "subagentEvent",
+      toolCallId: "s1",
+      event: { type: "text_delta", content: "result: `x`\n\n- a\n- b" },
+    });
 
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
     // Thinking + answer are rendered as Markdown (strong / inline code / list).
@@ -3390,7 +3829,12 @@ describe("view webview client", () => {
   it("renders the sub-agent REPORT as markdown", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
-    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] },
+    });
     hostMessage({
       type: "toolResult",
       toolCallId: "s1",
@@ -3408,14 +3852,24 @@ describe("view webview client", () => {
     await loadView();
     // No config push yet: the Delegate call must STILL be a sub-agent bubble
     // (the host hides the tool when Parallel is off, so the UI never gates on it).
-    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] },
+    });
     expect(document.querySelector(".msg.tool.subagent")).toBeTruthy();
   });
 
   it("keeps the FULL sub-agent stream text (never trims from the top)", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
-    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] },
+    });
     hostMessage({
       type: "subagentEvent",
       toolCallId: "s1",
@@ -3429,7 +3883,12 @@ describe("view webview client", () => {
   it("maps a stopped sub-agent to the single terminal 'aborted' state (legacy 'interrupted' too)", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
-    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] },
+    });
     hostMessage({ type: "subagentStart", toolCallId: "s1" });
     hostMessage({ type: "toolResult", toolCallId: "s1", output: '⏹ Sub-agent "A" interrupted.', isError: true });
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
@@ -3442,9 +3901,19 @@ describe("view webview client", () => {
   it("marks an INDIVIDUALLY aborted sub-agent as aborted (not interrupted)", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
-    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] },
+    });
     hostMessage({ type: "subagentStart", toolCallId: "s1" });
-    hostMessage({ type: "toolResult", toolCallId: "s1", output: '⏹ Sub-agent "A" aborted by the user.', isError: true });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "s1",
+      output: '⏹ Sub-agent "A" aborted by the user.',
+      isError: true,
+    });
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
     expect(bubble.querySelector(".subagent-status")?.classList.contains("aborted")).toBe(true);
   });
@@ -3452,7 +3921,12 @@ describe("view webview client", () => {
   it("abort button on a running sub-agent posts abortSubAgent with its tool-call id", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
-    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] },
+    });
     hostMessage({ type: "subagentStart", toolCallId: "s1" });
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
     const body = bubble.querySelector(".subagent-body") as HTMLElement;
@@ -3469,7 +3943,12 @@ describe("view webview client", () => {
   it("hides the abort button once the sub-agent reaches a terminal state", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
-    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] },
+    });
     hostMessage({ type: "subagentStart", toolCallId: "s1" });
     hostMessage({ type: "toolResult", toolCallId: "s1", output: '🔁 Sub-agent "A" report:\ndone', isError: false });
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
@@ -3479,7 +3958,12 @@ describe("view webview client", () => {
   it("shows the abort button while a sub-agent is still queued (before it starts)", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
-    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] },
+    });
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
     const btn = bubble.querySelector(".subagent-abort") as HTMLButtonElement;
     expect(bubble.querySelector(".subagent-status")?.classList.contains("queued")).toBe(true);
@@ -3491,9 +3975,19 @@ describe("view webview client", () => {
   it("marks a queued (never-started) sub-agent as aborted", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
-    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] },
+    });
     // No subagentStart: it stayed queued, then Stop arrived.
-    hostMessage({ type: "toolResult", toolCallId: "s1", output: "⏹ aborted before running (Parallel stopped).", isError: true });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "s1",
+      output: "⏹ aborted before running (Parallel stopped).",
+      isError: true,
+    });
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
     expect(bubble.querySelector(".subagent-status")?.classList.contains("aborted")).toBe(true);
   });
@@ -3502,14 +3996,24 @@ describe("view webview client", () => {
     await loadView();
     hostMessage(PARALLEL_ON);
     for (const id of ["s1", "s2", "s3"]) {
-      hostMessage({ type: "toolCall", id, name: "Delegate", arguments: { id, goal: "g", access: "read", resources: ["a.ts"] } });
+      hostMessage({
+        type: "toolCall",
+        id,
+        name: "Delegate",
+        arguments: { id, goal: "g", access: "read", resources: ["a.ts"] },
+      });
     }
     hostMessage({ type: "subagentStart", toolCallId: "s1" });
     hostMessage({ type: "subagentStart", toolCallId: "s2" });
     // s1 finished before Stop; s2 was running; s3 was queued.
     hostMessage({ type: "toolResult", toolCallId: "s1", output: '🔁 Sub-agent "s1" report:\ndone', isError: false });
     hostMessage({ type: "toolResult", toolCallId: "s2", output: '⏹ Sub-agent "s2" interrupted.', isError: true });
-    hostMessage({ type: "toolResult", toolCallId: "s3", output: "⏹ aborted before running (Parallel stopped).", isError: true });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "s3",
+      output: "⏹ aborted before running (Parallel stopped).",
+      isError: true,
+    });
 
     const bubbles = document.querySelectorAll(".msg.tool.subagent");
     expect(bubbles[0].querySelector(".subagent-status")?.classList.contains("done")).toBe(true);
@@ -3520,7 +4024,12 @@ describe("view webview client", () => {
   it("uses a robot SVG icon in the sub-agent bubble header", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
-    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] },
+    });
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
     const icon = bubble.querySelector(".tool-name .subagent-icon");
     expect(icon).toBeTruthy();
@@ -3530,7 +4039,9 @@ describe("view webview client", () => {
   it("keeps a DESCRIPTIVE sub-agent id and still shows its goal in the header", async () => {
     await loadView();
     hostMessage({
-      type: "toolCall", id: "s2", name: "Delegate",
+      type: "toolCall",
+      id: "s2",
+      name: "Delegate",
       arguments: { id: "login-ui", goal: "Build the login form", access: "create", resources: ["src/login.tsx"] },
     });
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
@@ -3549,7 +4060,12 @@ describe("view webview client", () => {
     const goal =
       "Refactor the authentication module, extract the token store, add refresh-token support " +
       "and update every caller across the workspace including the tests";
-    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "auth", goal, access: "write", resources: ["src/auth"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "auth", goal, access: "write", resources: ["src/auth"] },
+    });
 
     const preview = document.querySelector(".subagent-name") as HTMLElement;
     expect(preview.textContent).toBe(goal); // nothing removed, no ellipsis added
@@ -3561,7 +4077,12 @@ describe("view webview client", () => {
   it("marks a failed sub-agent as failed", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
-    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "edit", access: "write", resources: ["a.ts"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "A", goal: "edit", access: "write", resources: ["a.ts"] },
+    });
     hostMessage({ type: "toolResult", toolCallId: "s1", output: '🔁 Sub-agent "A" failed: boom', isError: true });
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
     expect(bubble.querySelector(".subagent-status")?.classList.contains("failed")).toBe(true);
@@ -3578,7 +4099,9 @@ describe("view webview client", () => {
           role: "assistant",
           content: "🔧 Tools: Delegate",
           timestamp: 2,
-          toolCalls: [{ id: "s1", name: "Delegate", arguments: { id: "A", goal: "do it", access: "read", resources: ["a.ts"] } }],
+          toolCalls: [
+            { id: "s1", name: "Delegate", arguments: { id: "A", goal: "do it", access: "read", resources: ["a.ts"] } },
+          ],
         },
         { role: "tool", toolCallId: "s1", content: '🔁 Sub-agent "A" report:\ndone', timestamp: 3 },
         { role: "assistant", content: "final", timestamp: 4 },
@@ -3600,7 +4123,9 @@ describe("view webview client", () => {
           role: "assistant",
           content: "🔧 Tools: Delegate",
           timestamp: 1,
-          toolCalls: [{ id: "s1", name: "Delegate", arguments: { id: "A", goal: "do it", access: "read", resources: ["a.ts"] } }],
+          toolCalls: [
+            { id: "s1", name: "Delegate", arguments: { id: "A", goal: "do it", access: "read", resources: ["a.ts"] } },
+          ],
         },
         { role: "tool", toolCallId: "s1", content: '🔁 Sub-agent "A" report:\ndone', timestamp: 2 },
       ],
@@ -4029,7 +4554,10 @@ describe("view webview client", () => {
 
   it("Parallel card: the cap slider renders and posts setMaxParallelSubAgents", async () => {
     await loadView();
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, maxParallelSubAgents: 6 } });
+    hostMessage({
+      type: "config",
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, maxParallelSubAgents: 6 },
+    });
     const range = document.getElementById("par-range") as HTMLInputElement;
     const label = document.getElementById("par-value") as HTMLElement;
     expect(range.value).toBe("6");
@@ -4049,7 +4577,10 @@ describe("view webview client", () => {
 
   it("Parallel card: 0 means NO cap and shows 'Off'", async () => {
     await loadView();
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, maxParallelSubAgents: 4 } });
+    hostMessage({
+      type: "config",
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, maxParallelSubAgents: 4 },
+    });
     const range = document.getElementById("par-range") as HTMLInputElement;
     const label = document.getElementById("par-value") as HTMLElement;
     posted.length = 0;
@@ -4063,7 +4594,10 @@ describe("view webview client", () => {
 
   it("Guardrails card: Loop Guard level radios post setLoopGuard and reflect the config", async () => {
     await loadView();
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, loopGuard: "high" } });
+    hostMessage({
+      type: "config",
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, loopGuard: "high" },
+    });
     const high = document.getElementById("lg-high") as HTMLInputElement;
     const medium = document.getElementById("lg-medium") as HTMLInputElement;
     const low = document.getElementById("lg-low") as HTMLInputElement;
@@ -4095,12 +4629,24 @@ describe("view webview client", () => {
     expect(respMsg.value).toBe(true);
 
     // An undefined config (no override) selects the MEDIUM preset (the default).
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000 } });
+    hostMessage({
+      type: "config",
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000 },
+    });
     expect(medium.checked).toBe(true);
     expect(response.checked).toBe(false);
 
     // A session persisted under the old name ("normal") lands on Medium, not on Off.
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, loopGuard: "normal" as never } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        contextWindow: 128000,
+        loopGuard: "normal" as never,
+      },
+    });
     expect(medium.checked).toBe(true);
   });
 
@@ -4109,7 +4655,11 @@ describe("view webview client", () => {
     hostMessage({
       type: "config",
       config: {
-        provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, loopGuard: "high",
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        contextWindow: 128000,
+        loopGuard: "high",
         loopGuardRanges: [
           { key: "maxNudges", min: 1, max: 10, step: 1, integer: true },
           { key: "reasoningThreshold", min: 0.05, max: 1, step: 0.05, integer: false },
@@ -4160,7 +4710,11 @@ describe("view webview client", () => {
     hostMessage({
       type: "config",
       config: {
-        provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, loopGuard: "medium",
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        contextWindow: 128000,
+        loopGuard: "medium",
         loopGuardRanges: [
           { key: "maxNudges", min: 1, max: 10, step: 1, integer: true },
           { key: "reasoningThreshold", min: 0.05, max: 1, step: 0.05, integer: false },
@@ -4180,7 +4734,11 @@ describe("view webview client", () => {
     hostMessage({
       type: "config",
       config: {
-        provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, loopGuard: "medium",
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        contextWindow: 128000,
+        loopGuard: "medium",
         loopGuardRanges: [{ key: "maxNudges", min: 1, max: 10, step: 1, integer: true }],
         loopGuardPresets: { medium: { maxNudges: 2 } },
       },
@@ -4284,7 +4842,11 @@ describe("view webview client", () => {
     hostMessage({
       type: "config",
       config: {
-        provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, loopGuard: "off",
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        contextWindow: 128000,
+        loopGuard: "off",
         loopGuardRanges: [{ key: "maxNudges", min: 1, max: 10, step: 1, integer: true }],
         loopGuardPresets: { off: { maxNudges: 2 }, medium: { maxNudges: 2 } },
       },
@@ -4350,7 +4912,10 @@ describe("view webview client", () => {
 
   it("Skills card is hidden when no skills are installed", async () => {
     await loadView();
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, skills: [] } });
+    hostMessage({
+      type: "config",
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, skills: [] },
+    });
     expect((document.getElementById("skills-card") as HTMLElement).classList.contains("hidden")).toBe(true);
   });
 
@@ -4463,7 +5028,19 @@ describe("view webview client", () => {
 
   it("the MCP card: clicking the server name toggles it (posts toggleMcpServer)", async () => {
     await loadView();
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, mcp: { servers: { test: { command: "node" } }, statuses: [{ name: "test", ok: true, enabled: true, toolCount: 2 }] } } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        contextWindow: 128000,
+        mcp: {
+          servers: { test: { command: "node" } },
+          statuses: [{ name: "test", ok: true, enabled: true, toolCount: 2 }],
+        },
+      },
+    });
     const nameEl = document.querySelector(".mcp-name") as HTMLElement;
     expect(nameEl.textContent).toContain("test");
     posted.length = 0;
@@ -4475,7 +5052,19 @@ describe("view webview client", () => {
 
   it("the MCP name toggle is inert while the session is working", async () => {
     await loadView();
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, mcp: { servers: { test: { command: "node" } }, statuses: [{ name: "test", ok: true, enabled: true, toolCount: 1 }] } } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        contextWindow: 128000,
+        mcp: {
+          servers: { test: { command: "node" } },
+          statuses: [{ name: "test", ok: true, enabled: true, toolCount: 1 }],
+        },
+      },
+    });
     hostMessage({ type: "status", active: true });
     const nameEl = document.querySelector(".mcp-name") as HTMLElement;
     posted.length = 0;
@@ -4485,7 +5074,19 @@ describe("view webview client", () => {
 
   it("a disabled MCP server shows an 'off' state (no tools button)", async () => {
     await loadView();
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, mcp: { servers: { off: { command: "node", enabled: false } }, statuses: [{ name: "off", ok: true, enabled: false, toolCount: 0 }] } } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        contextWindow: 128000,
+        mcp: {
+          servers: { off: { command: "node", enabled: false } },
+          statuses: [{ name: "off", ok: true, enabled: false, toolCount: 0 }],
+        },
+      },
+    });
     expect(document.querySelector(".mcp-tools-btn")).toBeNull();
     expect(document.querySelector(".mcp-status.off")).toBeTruthy();
     expect(document.getElementById("mcp-list")!.textContent).toContain("off");
@@ -4493,7 +5094,11 @@ describe("view webview client", () => {
 
   it("the MCP modal shows the enabled flag, aligned with the config", async () => {
     await loadView();
-    hostMessage({ type: "mcpServers", data: { servers: { off: { command: "node", enabled: false } }, statuses: [] }, open: true });
+    hostMessage({
+      type: "mcpServers",
+      data: { servers: { off: { command: "node", enabled: false } }, statuses: [] },
+      open: true,
+    });
     expect((document.getElementById("mcp-enabled") as HTMLInputElement).checked).toBe(false);
     posted.length = 0;
     (document.getElementById("mcp-save") as HTMLButtonElement).click();
@@ -4507,7 +5112,11 @@ describe("view webview client", () => {
     (document.getElementById("mcp-configure") as HTMLButtonElement).click();
     expect(posted.some((m) => (m as { type?: string }).type === "getMcpServers")).toBe(true);
 
-    hostMessage({ type: "mcpServers", data: { servers: { test: { command: "node", args: ["s.js"] } }, statuses: [] }, open: true });
+    hostMessage({
+      type: "mcpServers",
+      data: { servers: { test: { command: "node", args: ["s.js"] } }, statuses: [] },
+      open: true,
+    });
     expect((document.getElementById("mcp-modal") as HTMLElement).classList.contains("hidden")).toBe(false);
     expect((document.getElementById("mcp-name") as HTMLInputElement).value).toBe("test");
     expect((document.getElementById("mcp-command") as HTMLInputElement).value).toBe("node");
@@ -4545,7 +5154,16 @@ describe("view webview client", () => {
 
   it("the MCP card is hidden when no servers are configured", async () => {
     await loadView();
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, mcp: { servers: {}, statuses: [] } } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        contextWindow: 128000,
+        mcp: { servers: {}, statuses: [] },
+      },
+    });
     expect((document.getElementById("mcp-card") as HTMLElement).classList.contains("hidden")).toBe(true);
   });
 
@@ -4560,7 +5178,14 @@ describe("view webview client", () => {
         contextWindow: 128000,
         mcp: {
           servers: { test: { command: "node" } },
-          statuses: [{ name: "test", ok: true, toolCount: 2, tools: [{ name: "echo", description: "Echo text" }, { name: "ping" }] }],
+          statuses: [
+            {
+              name: "test",
+              ok: true,
+              toolCount: 2,
+              tools: [{ name: "echo", description: "Echo text" }, { name: "ping" }],
+            },
+          ],
         },
       },
     });
@@ -4579,7 +5204,16 @@ describe("view webview client", () => {
 
   it("typing '/' at the start of the prompt shows the skill list", async () => {
     await loadView();
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, skills: [{ name: "pptx", description: "Make decks" }] } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        contextWindow: 128000,
+        skills: [{ name: "pptx", description: "Make decks" }],
+      },
+    });
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
     input.value = "/";
     input.dispatchEvent(new Event("input"));
@@ -4609,7 +5243,16 @@ describe("view webview client", () => {
 
   it("Enter picks the highlighted slash item instead of sending", async () => {
     await loadView();
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, skills: [{ name: "pptx", description: "d" }] } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        contextWindow: 128000,
+        skills: [{ name: "pptx", description: "d" }],
+      },
+    });
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
     input.value = "/";
     input.dispatchEvent(new Event("input"));
@@ -4708,9 +5351,11 @@ describe("view webview client", () => {
     posted.length = 0;
     (document.getElementById("providers-save") as HTMLButtonElement).click();
     const saveMsg = posted.find((m) => (m as { type?: string }).type === "saveProviders") as Record<string, unknown>;
-    const data = (saveMsg.data as {
-      providers: Record<string, { extra?: unknown; thinkingLevel?: string }>;
-    }).providers;
+    const data = (
+      saveMsg.data as {
+        providers: Record<string, { extra?: unknown; thinkingLevel?: string }>;
+      }
+    ).providers;
     expect(data.custom).toBeUndefined();
     expect(data.renamed).toBeTruthy();
     expect(data.renamed.extra).toEqual({ models: [{ id: "m1" }], customAnything: 7 });
@@ -4916,7 +5561,18 @@ describe("view webview client", () => {
     hostMessage({ type: "status", active: true }); // session A works, in Analyze
     // A pending choice can only arrive from the HOST while it works (the pill is disabled),
     // so that is what a stale marker would have been built from.
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, mode: "agent", models: [], providerModels: [], contextWindow: 128000 } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        mode: "agent",
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
+    });
     expect(btn.classList.contains("is-pending")).toBe(true);
 
     hostMessage({
@@ -4925,7 +5581,15 @@ describe("view webview client", () => {
       openIds: ["b"],
       activeId: "b",
       messages: [{ role: "user", content: "go", timestamp: 1 }],
-      config: { provider: "openai", model: "gpt-4o", hasKey: true, mode: "agent", models: [], providerModels: [], contextWindow: 128000 },
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        mode: "agent",
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
       workingIds: ["b"],
       streaming: true,
     });
@@ -4994,7 +5658,10 @@ describe("view webview client", () => {
 });
 
 describe("branch from assistant bubble", () => {
-  beforeEach(() => { posted.length = 0; setupDom(); });
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
 
   it("adds a ⎇ key to every visible assistant bubble and posts branchAt with its index", async () => {
     await loadView();
@@ -5022,7 +5689,13 @@ describe("branch from assistant bubble", () => {
 
   it("disables the branch keys while the session is working", async () => {
     await loadView();
-    hostMessage({ type: "refresh", messages: [{ role: "user", content: "q", timestamp: 1 }, { role: "assistant", content: "a", timestamp: 2 }] });
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "user", content: "q", timestamp: 1 },
+        { role: "assistant", content: "a", timestamp: 2 },
+      ],
+    });
     const key = document.querySelector(".msg.assistant .branch-at") as HTMLButtonElement;
     expect(key.disabled).toBe(false);
     hostMessage({ type: "status", active: true });
@@ -5033,7 +5706,10 @@ describe("branch from assistant bubble", () => {
 });
 
 describe("cut from user prompt bubble", () => {
-  beforeEach(() => { posted.length = 0; setupDom(); });
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
 
   it("adds a ✂ key to every USER prompt bubble and posts truncateAt with its index", async () => {
     await loadView();
@@ -5062,7 +5738,9 @@ describe("cut from user prompt bubble", () => {
     await loadView();
     hostMessage({
       type: "refresh",
-      messages: [{ role: "assistant", content: "🔁 **Loop guard** [empty] — empty turn nudged.", timestamp: 1, uiOnly: true }],
+      messages: [
+        { role: "assistant", content: "🔁 **Loop guard** [empty] — empty turn nudged.", timestamp: 1, uiOnly: true },
+      ],
     });
     const el = document.querySelector(".msg.assistant.loop") as HTMLElement;
     expect(el).toBeTruthy();
@@ -5071,7 +5749,13 @@ describe("cut from user prompt bubble", () => {
 
   it("disables the ✂ key while the session is working", async () => {
     await loadView();
-    hostMessage({ type: "refresh", messages: [{ role: "user", content: "q", timestamp: 1 }, { role: "assistant", content: "a", timestamp: 2 }] });
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "user", content: "q", timestamp: 1 },
+        { role: "assistant", content: "a", timestamp: 2 },
+      ],
+    });
     const key = document.querySelector(".msg.user .truncate-at") as HTMLButtonElement;
     expect(key.disabled).toBe(false);
     hostMessage({ type: "status", active: true });
@@ -5082,7 +5766,10 @@ describe("cut from user prompt bubble", () => {
 });
 
 describe("harness-injected prompts", () => {
-  beforeEach(() => { posted.length = 0; setupDom(); });
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
 
   it("renders ONLY the non-typed (harness) messages as light-blue 'Nudge' bubbles", async () => {
     await loadView();
@@ -5136,7 +5823,10 @@ describe("the context-window checkpoint in the transcript", () => {
 
   it("marks where the window starts, saying how much sits above it", async () => {
     await loadView();
-    hostMessage({ type: "refresh", messages: [...PAST, ...CHECKPOINT, { role: "user", content: "dopo", timestamp: 5 }] });
+    hostMessage({
+      type: "refresh",
+      messages: [...PAST, ...CHECKPOINT, { role: "user", content: "dopo", timestamp: 5 }],
+    });
 
     const divider = document.querySelector(".ctx-divider") as HTMLElement;
     expect(divider).toBeTruthy();
@@ -5147,7 +5837,10 @@ describe("the context-window checkpoint in the transcript", () => {
 
   it("renders the checkpoint pair as ONE object: a label and its summary body", async () => {
     await loadView();
-    hostMessage({ type: "refresh", messages: [...PAST, ...CHECKPOINT, { role: "user", content: "dopo", timestamp: 5 }] });
+    hostMessage({
+      type: "refresh",
+      messages: [...PAST, ...CHECKPOINT, { role: "user", content: "dopo", timestamp: 5 }],
+    });
 
     const label = document.querySelector(".msg.user.synthetic-summary") as HTMLElement;
     expect(label).toBeTruthy();
@@ -5167,7 +5860,11 @@ describe("the context-window checkpoint in the transcript", () => {
     await loadView();
     hostMessage({
       type: "refresh",
-      messages: [...PAST, { role: "user", content: "dopo", timestamp: 5 }, { role: "assistant", content: "ok", timestamp: 6 }],
+      messages: [
+        ...PAST,
+        { role: "user", content: "dopo", timestamp: 5 },
+        { role: "assistant", content: "ok", timestamp: 6 },
+      ],
     });
 
     expect(document.querySelector(".ctx-divider")).toBeNull();
@@ -5208,7 +5905,10 @@ describe("the context-window checkpoint in the transcript", () => {
 
   it("leaves a pointer to the card where the reader is — and none when nothing compacted", async () => {
     await loadView();
-    hostMessage({ type: "refresh", messages: [...PAST, ...CHECKPOINT, { role: "user", content: "dopo", timestamp: 5 }] });
+    hostMessage({
+      type: "refresh",
+      messages: [...PAST, ...CHECKPOINT, { role: "user", content: "dopo", timestamp: 5 }],
+    });
 
     // The card opens the window, which puts it several screens ABOVE the bottom: the
     // compaction would otherwise have no visible effect where the reader is looking.
@@ -5225,7 +5925,10 @@ describe("the context-window checkpoint in the transcript", () => {
 });
 
 describe("version in the main screen", () => {
-  beforeEach(() => { posted.length = 0; setupDom(); });
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
 
   it("shows the version in the empty hero", async () => {
     setupDom({ openIds: [], activeId: undefined, messages: [], version: "0.1.0" });
@@ -5241,11 +5944,21 @@ describe("version in the main screen", () => {
 });
 
 describe("in-panel alert modal", () => {
-  beforeEach(() => { posted.length = 0; setupDom(); });
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
 
   it("shows the alert and OK responds true", async () => {
     await loadView();
-    hostMessage({ type: "modal", modalId: 7, kind: "alert", alertKind: "info", title: "Name already in use", message: "A session named X already exists." });
+    hostMessage({
+      type: "modal",
+      modalId: 7,
+      kind: "alert",
+      alertKind: "info",
+      title: "Name already in use",
+      message: "A session named X already exists.",
+    });
     const modal = document.getElementById("alert-modal") as HTMLDivElement;
     expect(modal.classList.contains("hidden")).toBe(false);
     expect(document.getElementById("alert-title")?.textContent).toBe("Name already in use");
@@ -5257,12 +5970,28 @@ describe("in-panel alert modal", () => {
 
   it("confirm shows Cancel; cancel and Escape respond false", async () => {
     await loadView();
-    hostMessage({ type: "modal", modalId: 3, kind: "alert", alertKind: "confirm", title: "Delete session", message: "Delete session X?", confirmText: "Delete" });
+    hostMessage({
+      type: "modal",
+      modalId: 3,
+      kind: "alert",
+      alertKind: "confirm",
+      title: "Delete session",
+      message: "Delete session X?",
+      confirmText: "Delete",
+    });
     expect((document.getElementById("alert-ok") as HTMLButtonElement).textContent).toBe("Delete");
     (document.getElementById("alert-cancel") as HTMLButtonElement).click();
     expect(posted).toContainEqual({ type: "modalResponse", id: 3, value: false });
 
-    hostMessage({ type: "modal", modalId: 4, kind: "alert", alertKind: "confirm", title: "T", message: "M", confirmText: "OK" });
+    hostMessage({
+      type: "modal",
+      modalId: 4,
+      kind: "alert",
+      alertKind: "confirm",
+      title: "T",
+      message: "M",
+      confirmText: "OK",
+    });
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     expect(posted).toContainEqual({ type: "modalResponse", id: 4, value: false });
   });
@@ -5274,37 +6003,48 @@ describe("in-panel alert modal", () => {
   });
 });
 
-  it("updates the context-window slider + label from the host-pushed value", async () => {
-    await loadView();
-    const label = document.getElementById("ctx-value") as HTMLElement;
-    expect(label.textContent).toBe("128000");
-    hostMessage({
-      type: "config",
-      config: { provider: "openai", model: "m", hasKey: true, models: [], providerModels: [], contextWindow: 131072 },
-    });
-    // The LABEL keeps the EXACT value; the slider sits on the nearest step.
-    expect(label.textContent).toBe("131072");
+it("updates the context-window slider + label from the host-pushed value", async () => {
+  await loadView();
+  const label = document.getElementById("ctx-value") as HTMLElement;
+  expect(label.textContent).toBe("128000");
+  hostMessage({
+    type: "config",
+    config: { provider: "openai", model: "m", hasKey: true, models: [], providerModels: [], contextWindow: 131072 },
   });
+  // The LABEL keeps the EXACT value; the slider sits on the nearest step.
+  expect(label.textContent).toBe("131072");
+});
 
 it("presence/frequency sliders render, post on drag and reset to Auto", async () => {
-    await loadView();
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], presencePenalty: 1.5, frequencyPenalty: 0.5 } });
-    const p = document.getElementById("presence-range") as HTMLInputElement;
-    const pv = document.getElementById("presence-value") as HTMLElement;
-    const fv = document.getElementById("freq-value") as HTMLElement;
-    expect(pv.textContent).toBe("1.5");
-    expect(fv.textContent).toBe("0.5");
-    p.value = "1.6";
-    p.dispatchEvent(new Event("input"));
-    expect(pv.textContent).toBe("1.6"); // live mirror
-    p.dispatchEvent(new Event("change"));
-    expect(posted).toContainEqual({ type: "setPresencePenalty", value: 1.6 });
-    (document.getElementById("freq-auto") as HTMLButtonElement).click();
-    expect(posted).toContainEqual({ type: "setFrequencyPenalty", value: null });
-    expect(fv.textContent).toBe("Auto");
-    // Auto SNAPS the slider to the knob's default (0 for a penalty).
-    expect((document.getElementById("freq-range") as HTMLInputElement).value).toBe("0");
+  await loadView();
+  hostMessage({
+    type: "config",
+    config: {
+      provider: "openai",
+      model: "gpt-4o",
+      hasKey: true,
+      models: [],
+      providerModels: [],
+      presencePenalty: 1.5,
+      frequencyPenalty: 0.5,
+    },
   });
+  const p = document.getElementById("presence-range") as HTMLInputElement;
+  const pv = document.getElementById("presence-value") as HTMLElement;
+  const fv = document.getElementById("freq-value") as HTMLElement;
+  expect(pv.textContent).toBe("1.5");
+  expect(fv.textContent).toBe("0.5");
+  p.value = "1.6";
+  p.dispatchEvent(new Event("input"));
+  expect(pv.textContent).toBe("1.6"); // live mirror
+  p.dispatchEvent(new Event("change"));
+  expect(posted).toContainEqual({ type: "setPresencePenalty", value: 1.6 });
+  (document.getElementById("freq-auto") as HTMLButtonElement).click();
+  expect(posted).toContainEqual({ type: "setFrequencyPenalty", value: null });
+  expect(fv.textContent).toBe("Auto");
+  // Auto SNAPS the slider to the knob's default (0 for a penalty).
+  expect((document.getElementById("freq-range") as HTMLInputElement).value).toBe("0");
+});
 
 function messagesElLastContent(): string {
   const els = document.querySelectorAll("#messages > *");
@@ -5318,11 +6058,25 @@ function hostMessage(data: unknown): void {
 }
 
 describe("context metrics line", () => {
-  beforeEach(() => { posted.length = 0; setupDom(); });
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
 
   it("shows tokens, percent and bar, and posts compact", async () => {
     await loadView();
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 200000, contextTokens: 100000 } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 200000,
+        contextTokens: 100000,
+      },
+    });
     expect(document.getElementById("met-tokens")?.textContent).toBe("100k");
     expect(document.getElementById("met-ctx")?.textContent).toBe("200k");
     expect(document.getElementById("met-pct")?.textContent).toBe("(50%)");
@@ -5338,7 +6092,18 @@ describe("context metrics line", () => {
 
   it("flags >= 90% usage as warning", async () => {
     await loadView();
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 100000, contextTokens: 95000 } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 100000,
+        contextTokens: 95000,
+      },
+    });
     expect((document.getElementById("ctx-bar") as HTMLDivElement).classList.contains("warn")).toBe(true);
   });
 
@@ -5401,7 +6166,18 @@ describe("context metrics line", () => {
 
   it("gear opens the threshold form, prefills the current %, saves and posts", async () => {
     await loadView();
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 200000, compactionThresholdPercent: 60 } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 200000,
+        compactionThresholdPercent: 60,
+      },
+    });
     const modal = document.getElementById("compact-settings-modal") as HTMLDivElement;
     expect(modal.classList.contains("hidden")).toBe(true);
     // The label already shows the session's saved threshold from the config push.
@@ -5484,7 +6260,15 @@ describe("context metrics line", () => {
     await loadView();
     hostMessage({
       type: "config",
-      config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 200000, compactionThresholdPercent: 60 },
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 200000,
+        compactionThresholdPercent: 60,
+      },
     });
     const label = () => document.getElementById("compact-threshold-label")?.textContent;
     expect(label()).toBe("Auto 60% ctx · keep 8%");
@@ -5511,7 +6295,18 @@ describe("context metrics line", () => {
 
   it("the landing slider reaches 0 (minimum) and the Default button restores the derived one", async () => {
     await loadView();
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 200000, compactionThresholdPercent: 80 } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 200000,
+        compactionThresholdPercent: 80,
+      },
+    });
     (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
     const threshold = document.getElementById("compact-threshold-input") as HTMLInputElement;
     const target = document.getElementById("compact-target-input") as HTMLInputElement;
@@ -5606,7 +6401,18 @@ describe("context metrics line", () => {
 
   it("a slider position below the derived floor means 0", async () => {
     await loadView();
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 200000, compactionThresholdPercent: 80 } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 200000,
+        compactionThresholdPercent: 80,
+      },
+    });
     (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
     const target = document.getElementById("compact-target-input") as HTMLInputElement;
     const value = document.getElementById("compact-target-value") as HTMLSpanElement;
@@ -5661,11 +6467,24 @@ describe("context metrics line", () => {
 });
 
 describe("context window slider", () => {
-  beforeEach(() => { posted.length = 0; setupDom(); });
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
 
   it("renders the context value from config and posts on drag", async () => {
     await loadView();
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 200000 } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 200000,
+      },
+    });
     const range = document.getElementById("ctx-range") as HTMLInputElement;
     const label = document.getElementById("ctx-value") as HTMLElement;
     expect(label.textContent).toBe("200000");
@@ -5687,7 +6506,10 @@ describe("context window slider", () => {
 });
 
 describe("output tokens slider", () => {
-  beforeEach(() => { posted.length = 0; setupDom(); });
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
 
   it("renders the value from config (default 16384) and posts on drag", async () => {
     await loadView();
@@ -5695,7 +6517,17 @@ describe("output tokens slider", () => {
     const label = document.getElementById("out-value") as HTMLElement;
     expect(label.textContent).toBe("16384");
 
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], outputTokens: 32768 } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        outputTokens: 32768,
+      },
+    });
     expect(label.textContent).toBe("32768");
 
     range.value = "20000";
@@ -5715,7 +6547,10 @@ describe("output tokens slider", () => {
 });
 
 describe("sampler (radio + slider)", () => {
-  beforeEach(() => { posted.length = 0; setupDom(); });
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
 
   it("renders the ACTIVE sampler value and posts on drag", async () => {
     await loadView();
@@ -5727,7 +6562,10 @@ describe("sampler (radio + slider)", () => {
     expect(range.value).toBe("1");
     expect((document.getElementById("sampler-temp") as HTMLInputElement).checked).toBe(true);
 
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], temperature: 0.7 } });
+    hostMessage({
+      type: "config",
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], temperature: 0.7 },
+    });
     expect(label.textContent).toBe("0.7");
 
     range.value = "1.5";
@@ -5755,7 +6593,18 @@ describe("sampler (radio + slider)", () => {
     expect(range.max).toBe("1");
     expect((document.getElementById("samp-range-label") as HTMLElement).textContent).toBe("(0.0 → 1.0)");
 
-    hostMessage({ type: "config", config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], sampler: "topP", topP: 0.9 } });
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        sampler: "topP",
+        topP: 0.9,
+      },
+    });
     expect(label.textContent).toBe("0.9");
     expect((document.getElementById("sampler-topp") as HTMLInputElement).checked).toBe(true);
 
@@ -5767,7 +6616,9 @@ describe("sampler (radio + slider)", () => {
   });
 });
 describe("empty shell (no open session)", () => {
-  beforeEach(() => { posted.length = 0; });
+  beforeEach(() => {
+    posted.length = 0;
+  });
 
   it("hides the control stack and shows the hero when no session is active", async () => {
     setupDom({ sessions: [], openIds: [], activeId: undefined, messages: [] });
@@ -5816,7 +6667,14 @@ describe("empty shell (no open session)", () => {
       openIds: ["a"],
       activeId: "a",
       messages: [{ role: "user", content: "hello", timestamp: 1 }],
-      config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 },
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
       workingIds: [],
     });
     expect(document.body.classList.contains("no-session")).toBe(false);
@@ -5830,7 +6688,15 @@ describe("empty shell (no open session)", () => {
       openIds: [],
       activeId: undefined,
       messages: [],
-      config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000, workspaceReady: false },
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+        workspaceReady: false,
+      },
     });
     await loadView();
     expect(document.body.classList.contains("no-workspace")).toBe(true);
@@ -5841,7 +6707,10 @@ describe("empty shell (no open session)", () => {
 
   it("credits the publisher next to the version, linked to the repository", async () => {
     setupDom({
-      sessions: [], openIds: [], activeId: undefined, messages: [],
+      sessions: [],
+      openIds: [],
+      activeId: undefined,
+      messages: [],
       version: "0.2.1",
       brand: { name: "SPLTek", url: "https://github.com/spltek/harny" },
     });
@@ -5855,7 +6724,10 @@ describe("empty shell (no open session)", () => {
 
   it("shows the publisher as plain text when the manifest has no repository", async () => {
     setupDom({
-      sessions: [], openIds: [], activeId: undefined, messages: [],
+      sessions: [],
+      openIds: [],
+      activeId: undefined,
+      messages: [],
       version: "0.2.1",
       brand: { name: "SPLTek" },
     });
@@ -5873,7 +6745,9 @@ describe("empty shell (no open session)", () => {
 });
 
 describe("welcome greeting (open session, no messages)", () => {
-  beforeEach(() => { posted.length = 0; });
+  beforeEach(() => {
+    posted.length = 0;
+  });
 
   it("shows the real brand mark instead of the 👋 emoji", async () => {
     setupDom({ messages: [], logoUri: "vscode-webview://x/media/icon.svg?v=7" });
@@ -5895,7 +6769,10 @@ describe("welcome greeting (open session, no messages)", () => {
 });
 
 describe("session name modal (unique names)", () => {
-  beforeEach(() => { posted.length = 0; setupDom(); });
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
 
   it("blocks duplicate names for create and lets unique ones pass", async () => {
     await loadView();
@@ -5962,7 +6839,12 @@ describe("main sessions list search", () => {
     );
 
     // Host replies: only the matching session stays visible.
-    hostMessage({ type: "sessionsSearchResult", scope: "main", query: "debug", matches: [{ sessionId: "b", snippet: "x" }] });
+    hostMessage({
+      type: "sessionsSearchResult",
+      scope: "main",
+      query: "debug",
+      matches: [{ sessionId: "b", snippet: "x" }],
+    });
     const rows = document.querySelectorAll("#sessions .srow");
     expect(rows.length).toBe(1);
     expect(rows[0].textContent).toContain("Debug");
@@ -6037,8 +6919,24 @@ describe("all-sessions manager (gear)", () => {
       show: true,
       currentFolder: "/home/me/a",
       sessions: [
-        { id: "x", name: "Rome trip", createdAt: 1, updatedAt: 9, messageCount: 2, folder: "/home/me/a", folderMissing: false },
-        { id: "y", name: "Florence trip", createdAt: 1, updatedAt: 5, messageCount: 1, folder: "/home/me/b", folderMissing: false },
+        {
+          id: "x",
+          name: "Rome trip",
+          createdAt: 1,
+          updatedAt: 9,
+          messageCount: 2,
+          folder: "/home/me/a",
+          folderMissing: false,
+        },
+        {
+          id: "y",
+          name: "Florence trip",
+          createdAt: 1,
+          updatedAt: 5,
+          messageCount: 1,
+          folder: "/home/me/b",
+          folderMissing: false,
+        },
       ],
     });
     expect(document.querySelectorAll("#sessions-manager-list .sm-row").length).toBe(2);
@@ -6052,7 +6950,11 @@ describe("all-sessions manager (gear)", () => {
     );
 
     // Host replies with the matching ids + snippet: only that row remains.
-    hostMessage({ type: "sessionsSearchResult", query: "rome", matches: [{ sessionId: "x", snippet: "in [Rome] today" }] });
+    hostMessage({
+      type: "sessionsSearchResult",
+      query: "rome",
+      matches: [{ sessionId: "x", snippet: "in [Rome] today" }],
+    });
     const rows = document.querySelectorAll("#sessions-manager-list .sm-row");
     expect(rows.length).toBe(1);
     expect(rows[0].textContent).toContain("Rome trip");
@@ -6080,10 +6982,42 @@ describe("all-sessions manager (gear)", () => {
       type: "sessionsManager",
       currentFolder: "/home/me/a",
       sessions: [
-        { id: "x", name: "Local", createdAt: 1, updatedAt: 9, messageCount: 2, folder: "/home/me/a", folderMissing: false },
-        { id: "b", name: "Foreign", createdAt: 1, updatedAt: 7, messageCount: 1, folder: "/home/me/b", folderMissing: false },
-        { id: "d", name: "Gone", createdAt: 1, updatedAt: 5, messageCount: 1, folder: "/home/me/gone", folderMissing: true },
-        { id: "c", name: "NoFolder", createdAt: 1, updatedAt: 3, messageCount: 0, folder: undefined, folderMissing: false },
+        {
+          id: "x",
+          name: "Local",
+          createdAt: 1,
+          updatedAt: 9,
+          messageCount: 2,
+          folder: "/home/me/a",
+          folderMissing: false,
+        },
+        {
+          id: "b",
+          name: "Foreign",
+          createdAt: 1,
+          updatedAt: 7,
+          messageCount: 1,
+          folder: "/home/me/b",
+          folderMissing: false,
+        },
+        {
+          id: "d",
+          name: "Gone",
+          createdAt: 1,
+          updatedAt: 5,
+          messageCount: 1,
+          folder: "/home/me/gone",
+          folderMissing: true,
+        },
+        {
+          id: "c",
+          name: "NoFolder",
+          createdAt: 1,
+          updatedAt: 3,
+          messageCount: 0,
+          folder: undefined,
+          folderMissing: false,
+        },
       ],
     });
     const rows = document.querySelectorAll("#sessions-manager-list .sm-row");
@@ -6120,8 +7054,24 @@ describe("all-sessions manager (gear)", () => {
       type: "sessionsManager",
       currentFolder: "C:\\Users\\Me\\Proj",
       sessions: [
-        { id: "w1", name: "WinSame", createdAt: 1, updatedAt: 9, messageCount: 0, folder: "c:/users/me/proj/", folderMissing: false },
-        { id: "w2", name: "WinOther", createdAt: 1, updatedAt: 5, messageCount: 0, folder: "C:\\Users\\Me\\Other", folderMissing: false },
+        {
+          id: "w1",
+          name: "WinSame",
+          createdAt: 1,
+          updatedAt: 9,
+          messageCount: 0,
+          folder: "c:/users/me/proj/",
+          folderMissing: false,
+        },
+        {
+          id: "w2",
+          name: "WinOther",
+          createdAt: 1,
+          updatedAt: 5,
+          messageCount: 0,
+          folder: "C:\\Users\\Me\\Other",
+          folderMissing: false,
+        },
       ],
     });
     let rows = document.querySelectorAll("#sessions-manager-list .sm-row");
@@ -6135,8 +7085,24 @@ describe("all-sessions manager (gear)", () => {
       type: "sessionsManager",
       currentFolder: "/home/me/proj",
       sessions: [
-        { id: "p1", name: "PosixSame", createdAt: 1, updatedAt: 9, messageCount: 0, folder: "/home/me/proj/", folderMissing: false },
-        { id: "p2", name: "PosixCase", createdAt: 1, updatedAt: 5, messageCount: 0, folder: "/home/me/Proj", folderMissing: false },
+        {
+          id: "p1",
+          name: "PosixSame",
+          createdAt: 1,
+          updatedAt: 9,
+          messageCount: 0,
+          folder: "/home/me/proj/",
+          folderMissing: false,
+        },
+        {
+          id: "p2",
+          name: "PosixCase",
+          createdAt: 1,
+          updatedAt: 5,
+          messageCount: 0,
+          folder: "/home/me/Proj",
+          folderMissing: false,
+        },
       ],
     });
     rows = document.querySelectorAll("#sessions-manager-list .sm-row");
@@ -6175,7 +7141,15 @@ describe("all-sessions manager (gear)", () => {
       type: "sessionsManager",
       currentFolder: "/home/me/a",
       sessions: [
-        { id: "a", name: "Local", createdAt: 1, updatedAt: 5, messageCount: 0, folder: "/home/me/a", folderMissing: false },
+        {
+          id: "a",
+          name: "Local",
+          createdAt: 1,
+          updatedAt: 5,
+          messageCount: 0,
+          folder: "/home/me/a",
+          folderMissing: false,
+        },
       ],
     });
     const row = document.querySelector<HTMLElement>(".sm-row");
@@ -6188,9 +7162,7 @@ describe("all-sessions manager (gear)", () => {
     hostMessage({ type: "sessionsManager", show: true, sessions: [] });
     const modal = document.getElementById("sessions-modal") as HTMLDivElement;
     expect(modal.classList.contains("hidden")).toBe(false);
-    expect(document.querySelector("#sessions-manager-list .sm-empty")?.textContent).toContain(
-      "No sessions yet",
-    );
+    expect(document.querySelector("#sessions-manager-list .sm-empty")?.textContent).toContain("No sessions yet");
     (document.getElementById("sessions-close") as HTMLButtonElement).click();
     expect(modal.classList.contains("hidden")).toBe(true);
   });
@@ -6198,9 +7170,21 @@ describe("all-sessions manager (gear)", () => {
   it("a silent sessionsManager refresh never opens the form — only show:true does", async () => {
     await loadView();
     const modal = document.getElementById("sessions-modal") as HTMLDivElement;
-    const data = { type: "sessionsManager", currentFolder: "/home/me/a", sessions: [
-      { id: "x", name: "Local", createdAt: 1, updatedAt: 5, messageCount: 0, folder: "/home/me/a", folderMissing: false },
-    ] };
+    const data = {
+      type: "sessionsManager",
+      currentFolder: "/home/me/a",
+      sessions: [
+        {
+          id: "x",
+          name: "Local",
+          createdAt: 1,
+          updatedAt: 5,
+          messageCount: 0,
+          folder: "/home/me/a",
+          folderMissing: false,
+        },
+      ],
+    };
     // Silent refresh (open/close/delete paths): rows are rendered, modal stays closed.
     hostMessage(data);
     expect(modal.classList.contains("hidden")).toBe(true);
@@ -6210,9 +7194,6 @@ describe("all-sessions manager (gear)", () => {
     expect(modal.classList.contains("hidden")).toBe(false);
     expect(document.querySelectorAll(".sm-row").length).toBe(1);
   });
-
-
-
 });
 
 describe("soft steering + pending bubbles (webview)", () => {
@@ -6410,9 +7391,7 @@ describe("soft steering + pending bubbles (webview)", () => {
     const row = document.querySelector("#pending-area .pending-msg") as HTMLElement;
     const extras = row.querySelector(".pending-extras") as HTMLElement;
     // The SAME row a user bubble renders: the image as a clickable thumbnail…
-    expect((extras.querySelector("img") as HTMLImageElement).getAttribute("src")).toBe(
-      "data:image/png;base64,AAAA",
-    );
+    expect((extras.querySelector("img") as HTMLImageElement).getAttribute("src")).toBe("data:image/png;base64,AAAA");
     // …and the non-image as a card carrying its name.
     expect(extras.textContent).toContain("notes.txt");
     // The paperclip still leads the text (the row says WHAT is attached at a glance).
@@ -6431,8 +7410,7 @@ describe("soft steering + pending bubbles (webview)", () => {
    * born folded, offered only where a measurement (or the previews) justifies it.
    */
   describe("per-bubble fold", () => {
-    const rowsHere = (): HTMLElement[] =>
-      [...document.querySelectorAll<HTMLElement>("#pending-area .pending-msg")];
+    const rowsHere = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>("#pending-area .pending-msg")];
 
     it("is born folded, one line per message, with its own fold next to the commands", async () => {
       await loadView();
@@ -6824,7 +7802,9 @@ describe("Insert-in hint — Queue/Steer (webview)", () => {
     hostMessage({ type: "status", active: true });
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta" }));
     input().value = "use Rome";
-    (document.getElementById("send-btn") as HTMLButtonElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    (document.getElementById("send-btn") as HTMLButtonElement).dispatchEvent(
+      new MouseEvent("click", { bubbles: true }),
+    );
     expect(posted.find((m: any) => m.type === "send")).toMatchObject({ mode: "steer", text: "use Rome" });
   });
 
@@ -6875,7 +7855,15 @@ describe("per-turn metrics badge (webview)", () => {
           role: "assistant",
           content: "hello",
           timestamp: 2,
-          meta: { inputTokens: 1200, outputTokens: 340, totalTokens: 1540, cachedTokens: 800, cachedWriteTokens: 100, durationMs: 3400, ttftMs: 800 },
+          meta: {
+            inputTokens: 1200,
+            outputTokens: 340,
+            totalTokens: 1540,
+            cachedTokens: 800,
+            cachedWriteTokens: 100,
+            durationMs: 3400,
+            ttftMs: 800,
+          },
         },
       ],
     });
@@ -6911,7 +7899,14 @@ describe("per-turn metrics badge (webview)", () => {
           role: "assistant",
           content: "first",
           timestamp: 2,
-          meta: { model: "qwen3-32b", provider: "llama-local", contextWindow: 32768, maxTokens: 8192, inputTokens: 12000, durationMs: 900 },
+          meta: {
+            model: "qwen3-32b",
+            provider: "llama-local",
+            contextWindow: 32768,
+            maxTokens: 8192,
+            inputTokens: 12000,
+            durationMs: 900,
+          },
         },
         {
           role: "assistant",
@@ -6945,7 +7940,6 @@ describe("per-turn metrics badge (webview)", () => {
   });
 });
 
-
 describe("per-turn metrics badge — tool-only turns", () => {
   beforeEach(() => {
     posted.length = 0;
@@ -6974,8 +7968,6 @@ describe("per-turn metrics badge — tool-only turns", () => {
     expect(badges[0].textContent).toContain("elapsed 1.5s");
   });
 });
-
-
 
 describe("per-turn metrics badge — live turnMeta", () => {
   beforeEach(() => {
@@ -7080,7 +8072,12 @@ describe("DB vacuum modal (webview)", () => {
 
     hostMessage({
       type: "dbVacuumResult",
-      result: { vacuumed: true, before: stats, after: { ...stats, freePages: 0, bytesFree: 0, ratio: 0 }, durationMs: 1200 },
+      result: {
+        vacuumed: true,
+        before: stats,
+        after: { ...stats, freePages: 0, bytesFree: 0, ratio: 0 },
+        durationMs: 1200,
+      },
     });
     expect((document.getElementById("db-vacuum-msg") as HTMLElement).textContent).toContain("1.2s");
     expect((document.getElementById("db-vacuum-run") as HTMLButtonElement).textContent).toBe("VACUUM & optimize again");
@@ -7088,7 +8085,12 @@ describe("DB vacuum modal (webview)", () => {
 
   it("the All-Sessions footer renders the stats + both settings and posts the manual open", async () => {
     await loadView();
-    hostMessage({ type: "sessionsManager", sessions: [], vacuum: { stats, threshold: 25, minFreeMB: 15 }, show: false });
+    hostMessage({
+      type: "sessionsManager",
+      sessions: [],
+      vacuum: { stats, threshold: 25, minFreeMB: 15 },
+      show: false,
+    });
     expect((document.getElementById("sm-vacuum-stats") as HTMLElement).textContent).toContain("50%");
     expect((document.getElementById("sm-vacuum-threshold") as HTMLInputElement).value).toBe("25");
     expect((document.getElementById("sm-vacuum-min") as HTMLInputElement).value).toBe("15");
@@ -7160,7 +8162,17 @@ describe("slider maxima follow the model's detected limits", () => {
     await loadView();
     hostMessage({
       type: "config",
-      config: { provider: "openai", model: "m", hasKey: true, models: [], providerModels: [], contextWindow: 128000, maxContextWindow: 128000, outputTokens: 16384, maxOutputTokens: 16384 },
+      config: {
+        provider: "openai",
+        model: "m",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+        maxContextWindow: 128000,
+        outputTokens: 16384,
+        maxOutputTokens: 16384,
+      },
     });
     const ctx = document.getElementById("ctx-range") as HTMLInputElement;
     const out = document.getElementById("out-range") as HTMLInputElement;
@@ -7174,7 +8186,17 @@ describe("slider maxima follow the model's detected limits", () => {
     await loadView();
     hostMessage({
       type: "config",
-      config: { provider: "openai", model: "m", hasKey: true, models: [], providerModels: [], contextWindow: 128000, maxContextWindow: 2000000, outputTokens: 16384, maxOutputTokens: 262144 },
+      config: {
+        provider: "openai",
+        model: "m",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+        maxContextWindow: 2000000,
+        outputTokens: 16384,
+        maxOutputTokens: 262144,
+      },
     });
     expect((document.getElementById("ctx-range") as HTMLInputElement).max).toBe("2000000");
     expect((document.getElementById("out-range") as HTMLInputElement).max).toBe("262144");
@@ -7224,14 +8246,32 @@ describe("control range labels + sampler scale", () => {
 
   it("adapts the sampler scale to the selected control and shows its (min → max)", async () => {
     await loadView();
-    hostMessage(cfg({ sampler: "temperature", temperature: 0.7, contextWindow: 128000, maxContextWindow: 128000, outputTokens: 16384, maxOutputTokens: 16384 }));
+    hostMessage(
+      cfg({
+        sampler: "temperature",
+        temperature: 0.7,
+        contextWindow: 128000,
+        maxContextWindow: 128000,
+        outputTokens: 16384,
+        maxOutputTokens: 16384,
+      }),
+    );
     const samp = document.getElementById("samp-range") as HTMLInputElement;
     expect(samp.max).toBe("2");
     expect(samp.value).toBe("0.7");
     expect((document.getElementById("samp-range-label") as HTMLElement).textContent).toBe("(0.0 → 2.0)");
 
     // Switching to Top-P re-adapts the scale to the WHOLE track (0.0–1.0).
-    hostMessage(cfg({ sampler: "topP", topP: 0.9, contextWindow: 128000, maxContextWindow: 128000, outputTokens: 16384, maxOutputTokens: 16384 }));
+    hostMessage(
+      cfg({
+        sampler: "topP",
+        topP: 0.9,
+        contextWindow: 128000,
+        maxContextWindow: 128000,
+        outputTokens: 16384,
+        maxOutputTokens: 16384,
+      }),
+    );
     expect(samp.max).toBe("1");
     expect(samp.value).toBe("0.9");
     expect((document.getElementById("samp-range-label") as HTMLElement).textContent).toBe("(0.0 → 1.0)");
@@ -7275,7 +8315,14 @@ describe("models.dev unreachable warning", () => {
   });
   const cfg = (extra: Record<string, unknown>) => ({
     type: "config",
-    config: { provider: "openai", model: "m", hasKey: true, models: [], providerModels: [{ provider: "p", model: "m" }], ...extra },
+    config: {
+      provider: "openai",
+      model: "m",
+      hasKey: true,
+      models: [],
+      providerModels: [{ provider: "p", model: "m" }],
+      ...extra,
+    },
   });
 
   it("shows the ⚠ badge and the modal warning row when modelsDevError is set", async () => {
@@ -7466,7 +8513,10 @@ describe("the reading position survives a transcript rebuild", () => {
 });
 
 describe("transcript action pills (collapse all + autoscroll)", () => {
-  beforeEach(() => { posted.length = 0; setupDom(); });
+  beforeEach(() => {
+    posted.length = 0;
+    setupDom();
+  });
 
   /** One section of each kind: a thinking block, a tool bubble, a sub-agent. */
   async function withAllSections(): Promise<void> {
@@ -7480,12 +8530,24 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
         { role: "user", content: "hi", timestamp: 1 },
         { role: "assistant", content: "ok", thinking: "deep thought", timestamp: 2 },
       ],
-      config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 },
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
       workingIds: [],
     });
     hostMessage(PARALLEL_ON);
     hostMessage({ type: "toolCall", id: "t1", name: "Read", arguments: { path: "a.ts" } });
-    hostMessage({ type: "toolCall", id: "s1", name: "Delegate", arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] } });
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] },
+    });
   }
 
   const tab = () => document.getElementById("collapse-all") as HTMLButtonElement;
@@ -7505,14 +8567,17 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
     Object.defineProperty(messages, "clientHeight", { get: () => 200, configurable: true });
     Object.defineProperty(messages, "scrollTop", {
       get: () => top,
-      set: (v: number) => { top = v; },
+      set: (v: number) => {
+        top = v;
+      },
       configurable: true,
     });
-    return (v) => { top = v; };
+    return (v) => {
+      top = v;
+    };
   }
 
-  const emitScroll = () =>
-    (document.getElementById("messages") as HTMLElement).dispatchEvent(new Event("scroll"));
+  const emitScroll = () => (document.getElementById("messages") as HTMLElement).dispatchEvent(new Event("scroll"));
 
   it("ships both pills present, and disabled is the only thing that changes", async () => {
     await withAllSections();
@@ -7601,7 +8666,14 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
       openIds: ["a"],
       activeId: "a",
       messages: [{ role: "user", content: "again", timestamp: 3 }],
-      config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 },
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
       workingIds: [],
     });
 

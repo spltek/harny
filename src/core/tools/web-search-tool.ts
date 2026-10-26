@@ -19,7 +19,8 @@ export class WebSearchTool implements Tool {
         },
         explanation: {
           type: "string",
-          description: "One sentence explanation as to why this tool is being used, and how it contributes to the goal.",
+          description:
+            "One sentence explanation as to why this tool is being used, and how it contributes to the goal.",
         },
       },
       required: ["search_term"],
@@ -32,7 +33,8 @@ export class WebSearchTool implements Tool {
     const searchTerm = args.search_term as string | undefined;
     if (!searchTerm) {
       return {
-        content: 'Tool WebSearch requires the argument "search_term" (string). Call again with {"search_term": "what to search"}.',
+        content:
+          'Tool WebSearch requires the argument "search_term" (string). Call again with {"search_term": "what to search"}.',
         isError: true,
       };
     }

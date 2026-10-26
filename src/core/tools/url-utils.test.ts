@@ -39,7 +39,9 @@ describe("describeFetchError", () => {
 
   it("classifies TLS failures", () => {
     const err = new TypeError("fetch failed", {
-      cause: Object.assign(new Error("unable to verify the first certificate"), { code: "DEPTH_ZERO_SELF_SIGNED_CERT" }),
+      cause: Object.assign(new Error("unable to verify the first certificate"), {
+        code: "DEPTH_ZERO_SELF_SIGNED_CERT",
+      }),
     });
     const msg = describeFetchError(err, "https://self-signed.example");
     expect(msg).toContain("TLS handshake failed");

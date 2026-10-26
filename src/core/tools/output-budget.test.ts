@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { CHARS_PER_TOKEN, MIN_TOOL_OUTPUT_CHARS, TOOL_OUTPUT_BUDGET_SHARE, toolOutputCapChars, truncationNote } from "./output-budget";
+import {
+  CHARS_PER_TOKEN,
+  MIN_TOOL_OUTPUT_CHARS,
+  TOOL_OUTPUT_BUDGET_SHARE,
+  toolOutputCapChars,
+  truncationNote,
+} from "./output-budget";
 
 const SHELL_CAP = 50_000;
 const GREP_CAP = 30_000;

@@ -9,9 +9,24 @@ function makeStore(): SessionStore {
   let c = 0;
   return {
     list: vi.fn(() => []),
-    create: vi.fn((name?: string) => ({ id: `s${++c}`, name: name?.trim() || "New Session", createdAt: 1, updatedAt: 1, messageCount: 0 })),
-    load: vi.fn((id: string) => ({ summary: { id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 2 }, messages: [{ role: "user", content: "loaded", timestamp: 1 }] })),
-    saveMessages: vi.fn((id: string, messages: { role: string; content: string; timestamp: number }[]) => ({ id, name: "S", createdAt: 1, updatedAt: 2, messageCount: messages.length })),
+    create: vi.fn((name?: string) => ({
+      id: `s${++c}`,
+      name: name?.trim() || "New Session",
+      createdAt: 1,
+      updatedAt: 1,
+      messageCount: 0,
+    })),
+    load: vi.fn((id: string) => ({
+      summary: { id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 2 },
+      messages: [{ role: "user", content: "loaded", timestamp: 1 }],
+    })),
+    saveMessages: vi.fn((id: string, messages: { role: string; content: string; timestamp: number }[]) => ({
+      id,
+      name: "S",
+      createdAt: 1,
+      updatedAt: 2,
+      messageCount: messages.length,
+    })),
     rename: vi.fn((id, name) => ({ id, name, createdAt: 1, updatedAt: 2, messageCount: 0 })),
     remove: vi.fn(() => true),
   } as unknown as SessionStore;
@@ -22,7 +37,12 @@ function build() {
   const sessions = new SessionManager(store);
   const createAgent = vi.fn((h: ChatHistory): ChatController => {
     const history = h;
-    return { getMessages: vi.fn(() => history.conversation()), addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() } as unknown as ChatController;
+    return {
+      getMessages: vi.fn(() => history.conversation()),
+      addUserMessage: vi.fn(),
+      setMode: vi.fn(),
+      setDelegation: vi.fn(),
+    } as unknown as ChatController;
   });
   const registry = new SessionRegistry({ sessions, store, createAgent });
   return { store, sessions, createAgent, registry };
@@ -120,14 +140,24 @@ describe("SessionRegistry per-session model", () => {
   it("loads the persisted model onto the runtime when opening", () => {
     const store = makeStore();
     (store.load as ReturnType<typeof vi.fn>).mockReturnValue({
-      summary: { id: "s9", name: "S", createdAt: 1, updatedAt: 1, messageCount: 0, model: "deepseek-v4-flash", modelProvider: "opencode-go" },
+      summary: {
+        id: "s9",
+        name: "S",
+        createdAt: 1,
+        updatedAt: 1,
+        messageCount: 0,
+        model: "deepseek-v4-flash",
+        modelProvider: "opencode-go",
+      },
       messages: [],
     });
     const sessions = new SessionManager(store);
     const registry = new SessionRegistry({
       sessions,
       store,
-      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() } as unknown as ChatController)),
+      createAgent: vi.fn(
+        (h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() }) as unknown as ChatController,
+      ),
     });
 
     const rt = registry.openOrCreate("s9");
@@ -165,14 +195,24 @@ describe("SessionRegistry per-session model", () => {
   it("loads the persisted output tokens onto the runtime when opening", () => {
     const store = makeStore();
     (store.load as ReturnType<typeof vi.fn>).mockReturnValue({
-      summary: { id: "s9", name: "S", createdAt: 1, updatedAt: 1, messageCount: 0, model: "deepseek-v4-flash", outputTokens: 4096 },
+      summary: {
+        id: "s9",
+        name: "S",
+        createdAt: 1,
+        updatedAt: 1,
+        messageCount: 0,
+        model: "deepseek-v4-flash",
+        outputTokens: 4096,
+      },
       messages: [],
     });
     const sessions = new SessionManager(store);
     const registry = new SessionRegistry({
       sessions,
       store,
-      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() } as unknown as ChatController)),
+      createAgent: vi.fn(
+        (h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() }) as unknown as ChatController,
+      ),
     });
 
     const rt = registry.openOrCreate("s9");
@@ -183,14 +223,24 @@ describe("SessionRegistry per-session model", () => {
   it("loads the persisted compaction threshold % onto the runtime when opening", () => {
     const store = makeStore();
     (store.load as ReturnType<typeof vi.fn>).mockReturnValue({
-      summary: { id: "s9", name: "S", createdAt: 1, updatedAt: 1, messageCount: 0, model: "deepseek-v4-flash", compactionThresholdPercent: 65 },
+      summary: {
+        id: "s9",
+        name: "S",
+        createdAt: 1,
+        updatedAt: 1,
+        messageCount: 0,
+        model: "deepseek-v4-flash",
+        compactionThresholdPercent: 65,
+      },
       messages: [],
     });
     const sessions = new SessionManager(store);
     const registry = new SessionRegistry({
       sessions,
       store,
-      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() } as unknown as ChatController)),
+      createAgent: vi.fn(
+        (h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() }) as unknown as ChatController,
+      ),
     });
 
     const rt = registry.openOrCreate("s9");
@@ -201,14 +251,24 @@ describe("SessionRegistry per-session model", () => {
   it("loads the persisted temperature onto the runtime when opening", () => {
     const store = makeStore();
     (store.load as ReturnType<typeof vi.fn>).mockReturnValue({
-      summary: { id: "s9", name: "S", createdAt: 1, updatedAt: 1, messageCount: 0, model: "deepseek-v4-flash", temperature: 0.3 },
+      summary: {
+        id: "s9",
+        name: "S",
+        createdAt: 1,
+        updatedAt: 1,
+        messageCount: 0,
+        model: "deepseek-v4-flash",
+        temperature: 0.3,
+      },
       messages: [],
     });
     const sessions = new SessionManager(store);
     const registry = new SessionRegistry({
       sessions,
       store,
-      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() } as unknown as ChatController)),
+      createAgent: vi.fn(
+        (h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() }) as unknown as ChatController,
+      ),
     });
 
     const rt = registry.openOrCreate("s9");
@@ -219,14 +279,25 @@ describe("SessionRegistry per-session model", () => {
   it("loads the persisted penalties onto the runtime when opening", () => {
     const store = makeStore();
     (store.load as ReturnType<typeof vi.fn>).mockReturnValue({
-      summary: { id: "s9", name: "S", createdAt: 1, updatedAt: 1, messageCount: 0, model: "deepseek-v4-flash", presencePenalty: 1.5, frequencyPenalty: 0.5 },
+      summary: {
+        id: "s9",
+        name: "S",
+        createdAt: 1,
+        updatedAt: 1,
+        messageCount: 0,
+        model: "deepseek-v4-flash",
+        presencePenalty: 1.5,
+        frequencyPenalty: 0.5,
+      },
       messages: [],
     });
     const sessions = new SessionManager(store);
     const registry = new SessionRegistry({
       sessions,
       store,
-      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() } as unknown as ChatController)),
+      createAgent: vi.fn(
+        (h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() }) as unknown as ChatController,
+      ),
     });
 
     const rt = registry.openOrCreate("s9");
@@ -238,14 +309,25 @@ describe("SessionRegistry per-session model", () => {
   it("loads the persisted top_p and sampler onto the runtime when opening", () => {
     const store = makeStore();
     (store.load as ReturnType<typeof vi.fn>).mockReturnValue({
-      summary: { id: "s9", name: "S", createdAt: 1, updatedAt: 1, messageCount: 0, model: "deepseek-v4-flash", topP: 0.8, sampler: "topP" },
+      summary: {
+        id: "s9",
+        name: "S",
+        createdAt: 1,
+        updatedAt: 1,
+        messageCount: 0,
+        model: "deepseek-v4-flash",
+        topP: 0.8,
+        sampler: "topP",
+      },
       messages: [],
     });
     const sessions = new SessionManager(store);
     const registry = new SessionRegistry({
       sessions,
       store,
-      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() } as unknown as ChatController)),
+      createAgent: vi.fn(
+        (h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() }) as unknown as ChatController,
+      ),
     });
 
     const rt = registry.openOrCreate("s9");
@@ -274,7 +356,9 @@ describe("SessionRegistry per-session model", () => {
     const registry = new SessionRegistry({
       sessions,
       store,
-      createAgent: vi.fn((h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() } as unknown as ChatController)),
+      createAgent: vi.fn(
+        (h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() }) as unknown as ChatController,
+      ),
     });
 
     const rt = registry.openOrCreate("s9");

@@ -3,7 +3,10 @@ import { PendingInputQueue } from "./pending-input-queue";
 import type { SessionRuntime } from "./session-registry";
 
 /** A fake runtime: the queue only touches `sessionId` + `agent`. */
-function fakeRt(id = "s1"): { rt: SessionRuntime; agent: { streaming: boolean; steer: ReturnType<typeof vi.fn>; cancelSteer: ReturnType<typeof vi.fn> } } {
+function fakeRt(id = "s1"): {
+  rt: SessionRuntime;
+  agent: { streaming: boolean; steer: ReturnType<typeof vi.fn>; cancelSteer: ReturnType<typeof vi.fn> };
+} {
   const agent = { streaming: true, steer: vi.fn(), cancelSteer: vi.fn() };
   const rt = { sessionId: id, agent, history: {} } as unknown as SessionRuntime;
   return { rt, agent };

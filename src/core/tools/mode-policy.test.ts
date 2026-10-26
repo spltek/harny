@@ -236,7 +236,7 @@ describe("mode policy", () => {
       "rg --pre 'cmd' foo",
       "curl -o out.json https://x",
       "cat a.txt | python -c \"open('x','w')\"",
-      "echo \"$(rm -rf x)\"",
+      'echo "$(rm -rf x)"',
       "git diff --output=patch.diff",
     ];
     for (const cmd of refused) {

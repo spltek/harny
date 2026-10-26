@@ -30,7 +30,13 @@ describe("parseDelegateSpec", () => {
   it("parses a valid spec and defaults the optional fields", () => {
     const { spec: s, error } = parseDelegateSpec({ goal: "analyze", access: "read", resources: ["src/a.ts"] });
     expect(error).toBeUndefined();
-    expect(s).toMatchObject({ goal: "analyze", access: "read", resources: ["src/a.ts"], parallel: undefined, after: [] });
+    expect(s).toMatchObject({
+      goal: "analyze",
+      access: "read",
+      resources: ["src/a.ts"],
+      parallel: undefined,
+      after: [],
+    });
   });
 
   it("requires goal, a valid access and resources for writers", () => {

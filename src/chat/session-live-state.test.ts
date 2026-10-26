@@ -52,7 +52,10 @@ describe("SessionLiveState", () => {
     const s2 = new SessionLiveState();
     s2.apply({ type: "tool_call", toolCall: { id: "d2", name: "Delegate", arguments: {} } });
     s2.apply({ type: "subagent_start", toolCallId: "d2" });
-    s2.apply({ type: "tool_result", toolResult: { toolCallId: "d2", output: "⏹ aborted before running", isError: true } });
+    s2.apply({
+      type: "tool_result",
+      toolResult: { toolCallId: "d2", output: "⏹ aborted before running", isError: true },
+    });
     expect(s2.projection()?.subAgents.d2.status).toBe("aborted");
 
     const s3 = new SessionLiveState();

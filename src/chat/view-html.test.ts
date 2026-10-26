@@ -24,10 +24,21 @@ describe("renderViewHtml", () => {
     //    a bare OK. `alert-ok` is the runtime fallback of those prompts.
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
-    const label = (id: string) =>
-      new RegExp(`id="${id}"[^>]*>([^<]*)<`).exec(html)?.[1]?.replace(/&amp;/g, "&").trim();
+    const label = (id: string) => new RegExp(`id="${id}"[^>]*>([^<]*)<`).exec(html)?.[1]?.replace(/&amp;/g, "&").trim();
 
     // DRAFTS — commit + abort.
     expect(label("providers-save")).toBe("Save");
@@ -59,7 +70,19 @@ describe("renderViewHtml", () => {
   it("renders the brand mark at SPLASH size, as a design token (not a favicon)", () => {
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     // The rem base is the editor font (13px by default), so the old 2.4rem was
     // ~31px — a speck in a 500px+ panel. The size now comes from the size
@@ -71,7 +94,19 @@ describe("renderViewHtml", () => {
   it("lets a pending message be read WHOLE, with its actions pinned top-right", () => {
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     // Wrapping replaces the old one-line ellipsis: the user's own line breaks are
     // kept, long tokens break instead of overflowing…
@@ -117,7 +152,19 @@ describe("renderViewHtml", () => {
   it("makes the queue/steer block a COLLAPSIBLE section, like the sessions list", () => {
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     // The header is a row like the sessions one: arrow + label, whole row clickable.
     expect(html).toContain('id="pending-section"');
@@ -137,7 +184,19 @@ describe("renderViewHtml", () => {
   it("makes the sub-agent GOAL the only element that gives way in its header", () => {
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     // No lower bound: it may shrink to nothing, and the ellipsis travels left with
     // it (a fixed character cut in JS could not know the panel width).
@@ -158,7 +217,19 @@ describe("renderViewHtml", () => {
   it("gives the queue/steer badge a box exactly one TEXT LINE tall", () => {
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     // Measured in Chromium: with the inherited default line-height the pill came out
     // 14px against a 16.38px text line, and because the row aligns its children
@@ -175,7 +246,19 @@ describe("renderViewHtml", () => {
   it("styles the Tasks block as a scannable list, not a wall of text", () => {
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     // The block hangs off the tool header with a rule on the left: it reads as a
     // continuation of the tool, not as another tool.
@@ -202,7 +285,19 @@ describe("renderViewHtml", () => {
   it("renders sessions, tabs, messages and input containers", () => {
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     expect(html).toContain('id="sessions"');
     expect(html).toContain('id="tabs"');
@@ -221,7 +316,9 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/id="mode-select"[\s\S]*?<button type="button" id="parallel-btn"/);
     // The indicator lives in the control-stack strip now: LEFT side, same height as
     // "Collapse all" (right side). "Insert prompt in " + the word in a pill.
-    expect(html).toMatch(/<div id="ctl-toggle"[^>]*>[\s\S]*?<span id="insert-hint"[^>]*>Insert prompt in <span id="insert-hint-word">Queue<\/span><\/span>/);
+    expect(html).toMatch(
+      /<div id="ctl-toggle"[^>]*>[\s\S]*?<span id="insert-hint"[^>]*>Insert prompt in <span id="insert-hint-word">Queue<\/span><\/span>/,
+    );
     expect(html).toMatch(/id="insert-hint"[\s\S]*?id="ctl-toggle-btn"[\s\S]*?id="collapse-all"/);
     expect(html).toMatch(/<button id="attach-btn"[\s\S]*?id="user-input"/);
     // It shows a PAPERCLIP glyph (attachment), not a bare "+".
@@ -251,7 +348,9 @@ describe("renderViewHtml", () => {
     // Its gear (compaction settings) sits right after Compact; the threshold
     // label (compact form: "Auto: <n>% ctx") sits between them; the modal form
     // exists and starts hidden.
-    expect(html).toMatch(/<button id="compact-btn"[\s\S]*?<span id="compact-threshold-label"[\s\S]*?>Auto 80% ctx · keep 10%<\/span>[\s\S]*?<button id="compact-settings-btn"/);
+    expect(html).toMatch(
+      /<button id="compact-btn"[\s\S]*?<span id="compact-threshold-label"[\s\S]*?>Auto 80% ctx · keep 10%<\/span>[\s\S]*?<button id="compact-settings-btn"/,
+    );
     // The policy card carries BOTH knobs and the plan the host will compute.
     expect(html).toMatch(/id="compact-target-input"/);
     expect(html).toMatch(/id="compact-target-auto"/);
@@ -264,7 +363,19 @@ describe("renderViewHtml", () => {
   it("renders the filterable model modal + selector button (no native <select>)", () => {
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     expect(html).toContain('id="model-btn"');
     expect(html).toContain('id="model-btn-label"');
@@ -294,7 +405,19 @@ describe("renderViewHtml", () => {
   it("masks the API key field and provides a hold-to-reveal eye", () => {
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     // Masked by default (password), with the eye button beside it.
     expect(html).toMatch(/id="pe-apikey" type="password"/);
@@ -308,7 +431,19 @@ describe("renderViewHtml", () => {
   it("labels the providers-editor export/import clearly", () => {
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     expect(html).toContain(">Export models configuration</button>");
     expect(html).toContain(">Import models configuration</button>");
@@ -317,7 +452,19 @@ describe("renderViewHtml", () => {
   it("styles the insert-in hint: left slot of the strip, pill word, red on Steer", () => {
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     // Same slot geometry as #transcript-actions, but on the LEFT: the two pills rows sit at
     // the same height and the strip's centre stays the chevron's.
@@ -346,7 +493,19 @@ describe("renderViewHtml", () => {
   it("styles the per-turn metrics badge under assistant bubbles", () => {
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     expect(html).toContain(".msg-meta {");
     expect(html).toMatch(/\.msg-meta \{[^}]*flex-shrink: 0/);
@@ -365,18 +524,41 @@ describe("renderViewHtml", () => {
   it("ships every id the webview looks up in the metrics row (a missing one is a null crash)", () => {
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     // view.ts resolves these ONCE at load with `as HTMLSpanElement` and writes to
     // them unconditionally, so the markup and the lookup are a contract.
-    for (const id of ["met-tokens", "met-ctx", "met-pct", "met-window", "met-cache", "ctx-bar", "compact-btn", "compact-threshold-label"]) {
+    for (const id of [
+      "met-tokens",
+      "met-ctx",
+      "met-pct",
+      "met-window",
+      "met-cache",
+      "ctx-bar",
+      "compact-btn",
+      "compact-threshold-label",
+    ]) {
       expect(html).toContain(`id="${id}"`);
     }
     // The derivation note ("616k/1M") is nested INSIDE the same flex item as the
     // usable value: a wrapping row must never split them ("/1M" alone on a line
     // would be meaningless). Dim and hidden while empty — it explains the number,
     // it must not compete with it.
-    expect(html).toMatch(/<span class="met"><span id="met-ctx"[^>]*>[^<]*<\/span><span class="met-note" id="met-window"/);
+    expect(html).toMatch(
+      /<span class="met"><span id="met-ctx"[^>]*>[^<]*<\/span><span class="met-note" id="met-window"/,
+    );
     expect(html).toMatch(/\.met-note \{[^}]*white-space: nowrap/);
     expect(html).toMatch(/#met-window:empty \{\s*display: none/);
   });
@@ -384,7 +566,19 @@ describe("renderViewHtml", () => {
   it("the tab strip does not shrink tabs and hides any vertical scrollbar", () => {
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     // Horizontal scroll only (no vertical bar on a single-row strip).
     expect(html).toMatch(/#tabs \{[\s\S]*?overflow-x: auto; overflow-y: hidden/);
@@ -409,14 +603,38 @@ describe("renderViewHtml", () => {
   it("has NO steer-target affordance (the sub-agent target was removed)", () => {
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     expect(html).not.toContain('id="steer-target"');
     expect(html).not.toContain("subagent-steer");
   });
 
   it("does NOT show the version in the sessions header (kept only in the empty hero)", () => {
-    const state = { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } };
+    const state = {
+      sessions: [],
+      openIds: [],
+      messages: [],
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
+    };
     const withV = renderViewHtml({ ...base, state: { ...state, version: "0.1.0" } });
     expect(withV).not.toContain("harny-version");
     // The version still reaches the webview via the init payload (empty hero).
@@ -426,7 +644,19 @@ describe("renderViewHtml", () => {
   it("uses ONE gear graphic + size across the cards (sessions, model, compaction, MCP)", () => {
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     // All four gear keys share the class and the SAME 14×14 icon.
     expect((html.match(/class="gear-btn"/g) ?? []).length).toBe(4);
@@ -443,7 +673,19 @@ describe("renderViewHtml", () => {
   it("keeps the per-sub-agent abort button SQUARE and as tall as the status chip", () => {
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     const block = html.match(/\.subagent-abort\s*\{([^}]*)\}/s);
     expect(block).toBeTruthy();
@@ -465,7 +707,14 @@ describe("renderViewHtml", () => {
         openIds: ["a"],
         activeId: "a",
         messages: [{ role: "user", content: "hello", timestamp: 1 }],
-        config: { provider: "openai-compatible", model: "deepseek", hasKey: true, models: [], providerModels: [], contextWindow: 128000 },
+        config: {
+          provider: "openai-compatible",
+          model: "deepseek",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
       },
     });
     expect(html).toContain('"activeId":"a"');
@@ -477,14 +726,38 @@ describe("renderViewHtml", () => {
     const html = renderViewHtml({
       ...base,
       editorFontSizePx: 16,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     expect(html).toMatch(/--font-size: 16px;/);
     // Without a host value it falls back to the UI-font var chain (webviews
     // expose --vscode-font-size but NOT --vscode-editor-font-size).
     const fallback = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     expect(fallback).toMatch(/--font-size: var\(--vscode-font-size, 13px\);/);
     expect(fallback).not.toMatch(/vscode-editor-font-size/);
@@ -493,7 +766,19 @@ describe("renderViewHtml", () => {
   it("defines the streaming pulse and graceful settle animations", () => {
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     // Active areas (answer bubble + live thinking block) pulse with accent
     // edges on the SAME 1.2s ease-in-out cadence as the play button.
@@ -502,10 +787,18 @@ describe("renderViewHtml", () => {
     // pulse must peak (full accent) at 0%/100% and dim at 50% — not inverted.
     // The two stops are ROLES, so the halo follows the palette instead of being
     // stuck on the dark theme's #d95f27 (a fixed glow reads wrong on paper).
-    expect(html).toMatch(/@keyframes stream-border-pulse[\s\S]*0%, 100% \{\s*border-color: var\(--accent\); box-shadow: 0 0 14px 1px var\(--accent-glow\)/);
-    expect(html).toMatch(/@keyframes stream-border-pulse[\s\S]*50% \{\s*border-color: var\(--accent-line\); box-shadow: 0 0 4px 0 var\(--accent-glow-soft\)/);
-    expect(html).toMatch(/\.msg\.assistant\.streaming\s*\{[^}]*animation\s*:\s*stream-border-pulse 1\.2s ease-in-out infinite/s);
-    expect(html).toMatch(/\.thinking-block\.streaming\s*\{[^}]*animation\s*:\s*stream-border-pulse 1\.2s ease-in-out infinite/s);
+    expect(html).toMatch(
+      /@keyframes stream-border-pulse[\s\S]*0%, 100% \{\s*border-color: var\(--accent\); box-shadow: 0 0 14px 1px var\(--accent-glow\)/,
+    );
+    expect(html).toMatch(
+      /@keyframes stream-border-pulse[\s\S]*50% \{\s*border-color: var\(--accent-line\); box-shadow: 0 0 4px 0 var\(--accent-glow-soft\)/,
+    );
+    expect(html).toMatch(
+      /\.msg\.assistant\.streaming\s*\{[^}]*animation\s*:\s*stream-border-pulse 1\.2s ease-in-out infinite/s,
+    );
+    expect(html).toMatch(
+      /\.thinking-block\.streaming\s*\{[^}]*animation\s*:\s*stream-border-pulse 1\.2s ease-in-out infinite/s,
+    );
     // …and they SETTLE OUT (fade the border back) when the stream ends,
     // instead of snapping off.
     expect(html).toMatch(/\.msg\.assistant\.settling\s*\{[^}]*transition\s*:\s*border-color 0\.7s ease/s);
@@ -522,7 +815,19 @@ describe("renderViewHtml", () => {
   it("keeps Analyze colourless, paints Build orange, at ONE width for both modes", () => {
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     // ANALYZE (the quiet default): both icons in the row's muted gray, hover brightens
     // them like the pills next to it.
@@ -533,7 +838,12 @@ describe("renderViewHtml", () => {
     const build = cssRule(html, "#mode-btn.is-agent");
     expect(build).toContain("linear-gradient(135deg, var(--accent), var(--accent-strong))");
     expect(build).toContain("color: #ffffff");
-    expect(cssRule(html, "#mode-btn.is-agent #mode-btn-icon-analyze,\n    #mode-btn.is-agent #mode-btn-icon-agent,\n    #mode-btn.is-agent .mode-btn-chevron")).toContain("color: #ffffff");
+    expect(
+      cssRule(
+        html,
+        "#mode-btn.is-agent #mode-btn-icon-analyze,\n    #mode-btn.is-agent #mode-btn-icon-agent,\n    #mode-btn.is-agent .mode-btn-chevron",
+      ),
+    ).toContain("color: #ffffff");
     // A dashed pending edge must survive the transparent border.
     expect(cssRule(html, "#mode-btn.is-agent.is-pending")).toContain("border-style: dashed");
     // The menu follows: neutral icons, and the accent marks only WHAT IS SELECTED.
@@ -557,7 +867,19 @@ describe("renderViewHtml", () => {
   it("styles the sub-agent bubble with its status states", () => {
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     expect(html).toMatch(/\.msg\.tool\.subagent\s*\{/);
     // The status chip is STATIC; the BUBBLE carries the synchronized pulse.
@@ -589,7 +911,19 @@ describe("renderViewHtml", () => {
   it("renders the Parallel + Loop Guard cards side by side in the control stack", () => {
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     // TWO equal cards, side by side (each one grid column, NOT full width).
     expect(html).toContain('<span class="card-title">Parallel</span>');
@@ -658,7 +992,9 @@ describe("renderViewHtml", () => {
     // .ctl-controls mirror grid is gone.
     expect(html).not.toContain('class="ctl-controls"');
     // The sensitivity row NEVER wraps: Include response stays on the radios' line.
-    expect(html).toMatch(/#lg-toggle\s*\{[^}]*flex-wrap:\s*nowrap[^}]*min-height:\s*var\(--ctl-row[^)]*\)[^}]*align-items:\s*center/);
+    expect(html).toMatch(
+      /#lg-toggle\s*\{[^}]*flex-wrap:\s*nowrap[^}]*min-height:\s*var\(--ctl-row[^)]*\)[^}]*align-items:\s*center/,
+    );
     expect(html).toMatch(/#lg-toggle \.sampler-opt\s*\{\s*white-space:\s*nowrap/);
     // The head row is measured WHOLE (radios + chevron) and the radios may only
     // clip, so the expand chevron can never be pushed out of the card.
@@ -670,13 +1006,19 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/\.ctl-cards\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
     // The stack scrolls only past 75% of the panel height, and never so tall
     // that it squeezes the prompt/model/metrics out (the bottom goes last).
-    expect(html).toMatch(/\.ctl-cards\s*\{[^}]*max-height:\s*clamp\(6rem, calc\(100vh - 20rem\), 75vh\)[^}]*overflow-y:\s*auto/);
+    expect(html).toMatch(
+      /\.ctl-cards\s*\{[^}]*max-height:\s*clamp\(6rem, calc\(100vh - 20rem\), 75vh\)[^}]*overflow-y:\s*auto/,
+    );
     expect(html).toMatch(/#status\s*\{[^}]*min-height:\s*0/);
     // Narrow panel: ONE column, in DOM order (Window, Sampling, Parallel, Loop Guard).
     // Static CSS fallback; the webview then MEASURES the nowrap sensitivity row
     // and sets the exact column count (1 / 2 / 4) so the text never overflows.
-    expect(html).toMatch(/@media \(max-width: 30rem\)\s*\{\s*\.ctl-cards\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\)/);
-    expect(html).toMatch(/@media \(min-width: 59rem\)\s*\{\s*\.ctl-cards\s*\{\s*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/);
+    expect(html).toMatch(
+      /@media \(max-width: 30rem\)\s*\{\s*\.ctl-cards\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\)/,
+    );
+    expect(html).toMatch(
+      /@media \(min-width: 59rem\)\s*\{\s*\.ctl-cards\s*\{\s*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/,
+    );
     // A minimum layout width: past it the panel scrolls horizontally instead of
     // squeezing the controls (the PANEL's minimum is VS Code's, not ours).
     // 450px is the MEASURED minimum, read off a live width readout in a real VS
@@ -700,7 +1042,19 @@ describe("renderViewHtml", () => {
   it("collapsing the control stack hides only the Window/Sampling cards", () => {
     const html = renderViewHtml({
       ...base,
-      state: { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } },
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
     });
     // The collapsible container exists and is the only thing hidden on collapse.
     expect(html).toContain('id="ctl-cards"');
@@ -750,7 +1104,19 @@ describe("renderViewHtml", () => {
   });
 
   it("picks its palette from the editor's theme class, dark as the base, harny.theme able to pin one", () => {
-    const state = { sessions: [], openIds: [], messages: [], config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 128000 } };
+    const state = {
+      sessions: [],
+      openIds: [],
+      messages: [],
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
+    };
     const html = renderViewHtml({ ...base, state });
 
     // Both palettes live in :root, side by side and PREFIXED, so no colour value

@@ -14,17 +14,8 @@ export interface HttpResponse {
 }
 
 export interface HttpClient {
-  post(
-    url: string,
-    body: string,
-    headers: Record<string, string>,
-    signal?: AbortSignal,
-  ): Promise<HttpResponse>;
-  get(
-    url: string,
-    headers?: Record<string, string>,
-    signal?: AbortSignal,
-  ): Promise<HttpResponse>;
+  post(url: string, body: string, headers: Record<string, string>, signal?: AbortSignal): Promise<HttpResponse>;
+  get(url: string, headers?: Record<string, string>, signal?: AbortSignal): Promise<HttpResponse>;
 }
 
 /**

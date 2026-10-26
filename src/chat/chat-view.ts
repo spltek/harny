@@ -1,7 +1,13 @@
 import type { ExtensionContext, WebviewView, WebviewViewProvider, WebviewViewResolveContext } from "vscode";
 import { Uri, window, workspace } from "vscode";
 import * as fs from "fs";
-import type { ConfigProvider, HarnyConfig, ProviderCatalog, ProviderEditorData, ThinkingLevel } from "../core/config/types";
+import type {
+  ConfigProvider,
+  HarnyConfig,
+  ProviderCatalog,
+  ProviderEditorData,
+  ThinkingLevel,
+} from "../core/config/types";
 import { isThinkingLevel } from "../core/config/types";
 import type { MemoryOverrideConfigProvider } from "../core/config/memory-override-config-provider";
 import { requiresApiKey } from "../core/config/requires-api-key";
@@ -21,15 +27,60 @@ import { debugLog, infoLog } from "../logger";
 import { preprocessJsonc } from "../core/config/jsonc";
 import { renderViewHtml } from "./view-html";
 import { toTemperature, toTopP } from "./temperature";
-import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, MAX_CONTEXT_WINDOW, MAX_OUTPUT_TOKENS, MIN_OUTPUT_TOKENS, REQUEST_SAFETY_MARGIN, REQUEST_SAFETY_MARGIN_SHARE, clampAdoptedContextWindow, clampAdoptedOutputTokens, clampContextWindow, clampOutputTokens, toContextWindow, toOutputTokens, usableContext } from "./context-window";
+import {
+  DEFAULT_CONTEXT_WINDOW,
+  DEFAULT_OUTPUT_TOKENS,
+  MAX_CONTEXT_WINDOW,
+  MAX_OUTPUT_TOKENS,
+  MIN_OUTPUT_TOKENS,
+  REQUEST_SAFETY_MARGIN,
+  REQUEST_SAFETY_MARGIN_SHARE,
+  clampAdoptedContextWindow,
+  clampAdoptedOutputTokens,
+  clampContextWindow,
+  clampOutputTokens,
+  toContextWindow,
+  toOutputTokens,
+  usableContext,
+} from "./context-window";
 import { PanelModalQueue } from "./panel-modal-queue";
-import { Compactor, DEFAULT_COMPACTION, CompactionSettings, autoTargetPercent, carriedState, clampTargetPercent, compactHistory, compactionSpanTokens, estimateContextTokens, estimateTokens, maxSummaryInputTokens, minExplicitTargetPercent, newestWithin, planForTarget, realWindowTokens, serializeConversation, shouldCompact, targetTokensFor, toCompactionThresholdPercent, toTargetPercent, trimHistory, type CompactedHistory, type TrimResult } from "../core/sessions/compactor";
+import {
+  Compactor,
+  DEFAULT_COMPACTION,
+  CompactionSettings,
+  autoTargetPercent,
+  carriedState,
+  clampTargetPercent,
+  compactHistory,
+  compactionSpanTokens,
+  estimateContextTokens,
+  estimateTokens,
+  maxSummaryInputTokens,
+  minExplicitTargetPercent,
+  newestWithin,
+  planForTarget,
+  realWindowTokens,
+  serializeConversation,
+  shouldCompact,
+  targetTokensFor,
+  toCompactionThresholdPercent,
+  toTargetPercent,
+  trimHistory,
+  type CompactedHistory,
+  type TrimResult,
+} from "../core/sessions/compactor";
 import { CompactionTally } from "../core/sessions/compaction-tally";
 import type { SkillRegistry } from "../core/skills/skill-registry";
 import type { McpManager } from "../core/mcp";
 import { McpStdioClient, McpHttpClient, type McpClient } from "../core/mcp";
 import type { McpServerConfig, McpStdioServerConfig, McpHttpServerConfig } from "../core/config/types";
-import { LOOP_GUARD_FIELD_RANGES, clampLoopGuardOverrides, loopGuardPresets, normalizeLoopGuardSensitivity, resolveLoopGuardOptions } from "../core/agent/loop-guard";
+import {
+  LOOP_GUARD_FIELD_RANGES,
+  clampLoopGuardOverrides,
+  loopGuardPresets,
+  normalizeLoopGuardSensitivity,
+  resolveLoopGuardOptions,
+} from "../core/agent/loop-guard";
 import type { LoopGuardOptions } from "../core/agent/loop-guard";
 import { DEFAULT_MAX_PARALLEL_SUB_AGENTS } from "../core/agent/agent";
 import type { ContextOverflowEvidence } from "../core/agent/agent";
@@ -154,7 +205,10 @@ export class ChatViewProvider implements WebviewViewProvider {
       /** Optional models.dev catalog: fallback context window for hosts that
        * do not report it in `/models` (e.g. OpenCode Go). */
       modelsDev?: {
-        getLimits(modelId: string, providerCandidates: readonly string[]): Promise<{ context?: number; output?: number }>;
+        getLimits(
+          modelId: string,
+          providerCandidates: readonly string[],
+        ): Promise<{ context?: number; output?: number }>;
         /** False when the catalog is currently UNREACHABLE (for the UI warning). */
         isReachable?(): boolean;
       };
@@ -270,7 +324,11 @@ export class ChatViewProvider implements WebviewViewProvider {
       workingIds: this.workingIds(),
       show,
       // DB compaction controls (threshold + free-page stats) for the footer.
-      vacuum: { stats: this.sessions.dbVacuumStats(), threshold: this.vacuumThresholdPercent(), minFreeMB: this.vacuumMinFreeMB() },
+      vacuum: {
+        stats: this.sessions.dbVacuumStats(),
+        threshold: this.vacuumThresholdPercent(),
+        minFreeMB: this.vacuumMinFreeMB(),
+      },
     };
   }
 
@@ -355,8 +413,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     const n = name.trim().toLowerCase();
     // Uniqueness is scoped to the CURRENT workspace folder (the list the user
     // sees and renames in); sessions of other folders may share names.
-    return this.currentFolderSessions()
-      .some((s) => s.id !== excludeId && (s.name || "").trim().toLowerCase() === n);
+    return this.currentFolderSessions().some((s) => s.id !== excludeId && (s.name || "").trim().toLowerCase() === n);
   }
 
   private async warnNameTaken(name: string): Promise<void> {
@@ -574,7 +631,8 @@ export class ChatViewProvider implements WebviewViewProvider {
     if (!this.view) {
       const { window } = await import("vscode");
       return window.showInputBox({
-        prompt: mode === "rename" ? "Rename session" : mode === "branch" ? "Branch session" : "Name for the new session",
+        prompt:
+          mode === "rename" ? "Rename session" : mode === "branch" ? "Branch session" : "Name for the new session",
         value: current ?? "New Session",
         placeHolder: "Session name",
         validateInput: (v) => {
@@ -825,11 +883,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     }
   }
 
-  resolveWebviewView(
-    webviewView: WebviewView,
-    _context: WebviewViewResolveContext,
-    _token: unknown,
-  ): void {
+  resolveWebviewView(webviewView: WebviewView, _context: WebviewViewResolveContext, _token: unknown): void {
     this.view = webviewView;
     webviewView.webview.options = {
       enableScripts: true,
@@ -1057,7 +1111,11 @@ export class ChatViewProvider implements WebviewViewProvider {
             tools: infos.map((t) => t.name),
           });
         } catch (e) {
-          this.view?.webview.postMessage({ type: "mcpTested", ok: false, error: e instanceof Error ? e.message : String(e) });
+          this.view?.webview.postMessage({
+            type: "mcpTested",
+            ok: false,
+            error: e instanceof Error ? e.message : String(e),
+          });
         } finally {
           client.close();
         }
@@ -1164,8 +1222,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         const rt = this.activeRuntime();
         if (!rt || typeof msg.model !== "string" || !msg.model.trim()) break;
         const model = msg.model.trim();
-        const provider =
-          typeof msg.provider === "string" && msg.provider.trim() ? msg.provider.trim() : undefined;
+        const provider = typeof msg.provider === "string" && msg.provider.trim() ? msg.provider.trim() : undefined;
         rt.model = model;
         rt.modelProvider = provider;
         // Reasoning provider: default to Medium only when the session has no
@@ -1190,8 +1247,10 @@ export class ChatViewProvider implements WebviewViewProvider {
           try {
             const infos = await this.fetchHostModels(provider);
             const info = infos.find((m) => m.id === model);
-            if (info?.contextLength && info.contextLength > 0) adoptedCtx = clampAdoptedContextWindow(info.contextLength);
-            if (info?.maxOutputTokens && info.maxOutputTokens > 0) adoptedOut = clampAdoptedOutputTokens(info.maxOutputTokens);
+            if (info?.contextLength && info.contextLength > 0)
+              adoptedCtx = clampAdoptedContextWindow(info.contextLength);
+            if (info?.maxOutputTokens && info.maxOutputTokens > 0)
+              adoptedOut = clampAdoptedOutputTokens(info.maxOutputTokens);
           } catch {
             /* host unreachable: leave the limits unknown (default below) */
           }
@@ -1293,7 +1352,11 @@ export class ChatViewProvider implements WebviewViewProvider {
         // the new baseline (the UI repopulates its fields from it).
         rt.loopGuardOverrides = undefined;
         this.applyLoopGuard(rt);
-        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { loopGuard: level, loopGuardParams: undefined }), false);
+        this.commitSetting(
+          rt,
+          () => this.sessions.saveSettings(rt.sessionId, { loopGuard: level, loopGuardParams: undefined }),
+          false,
+        );
         break;
       }
 
@@ -1304,7 +1367,11 @@ export class ChatViewProvider implements WebviewViewProvider {
         // applied to the agent AND SAVED on the session (persisted per session).
         rt.loopGuardOverrides = clampLoopGuardOverrides(msg.overrides);
         this.applyLoopGuard(rt);
-        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { loopGuardParams: rt.loopGuardOverrides }), false);
+        this.commitSetting(
+          rt,
+          () => this.sessions.saveSettings(rt.sessionId, { loopGuardParams: rt.loopGuardOverrides }),
+          false,
+        );
         break;
       }
 
@@ -1592,7 +1659,8 @@ export class ChatViewProvider implements WebviewViewProvider {
    */
   private compactionSettings(rt: SessionRuntime): CompactionSettings {
     const base = this.options.compaction ?? DEFAULT_COMPACTION;
-    const thresholdPercent = rt.compactionThresholdPercent ?? base.thresholdPercent ?? DEFAULT_COMPACTION.thresholdPercent;
+    const thresholdPercent =
+      rt.compactionThresholdPercent ?? base.thresholdPercent ?? DEFAULT_COMPACTION.thresholdPercent;
     // AUTO (no session value) lands at a QUARTER of the trigger — a share of the window,
     // derived from the other knob. An explicit value is clamped below the trigger and above
     // the derived floor (see targetFloorFor).
@@ -1622,11 +1690,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     // Target 0 = the STRUCTURAL minimum (the last complete turn): its checkpoint + tail is
     // the smallest fill this session can land at.
     const { plan, summaryBudgetTokens } = planForTarget(messages, 0, this.configuredOutputTokens(rt));
-    return minExplicitTargetPercent(
-      usable,
-      summaryBudgetTokens,
-      estimateTokens(serializeConversation(plan.kept)),
-    );
+    return minExplicitTargetPercent(usable, summaryBudgetTokens, estimateTokens(serializeConversation(plan.kept)));
   }
 
   /**
@@ -1694,7 +1758,10 @@ export class ChatViewProvider implements WebviewViewProvider {
    * keeping the math sane — the real protection is the request clamp below.
    */
   private budgetReserve(rt?: SessionRuntime): number {
-    return Math.max(MIN_OUTPUT_TOKENS, Math.min(this.configuredOutputTokens(rt), Math.floor(this.budgetWindow(rt) / 2)));
+    return Math.max(
+      MIN_OUTPUT_TOKENS,
+      Math.min(this.configuredOutputTokens(rt), Math.floor(this.budgetWindow(rt) / 2)),
+    );
   }
 
   /**
@@ -1914,7 +1981,10 @@ export class ChatViewProvider implements WebviewViewProvider {
       const cfg = this.config.get();
       const modalities = (cfg.modelModalities ?? {})[cfg.model];
       if (modalities && !modalities.includes("image")) {
-        this.view?.webview.postMessage({ type: "error", error: `Model \"${cfg.model}\" is text-only and does not support images.` });
+        this.view?.webview.postMessage({
+          type: "error",
+          error: `Model \"${cfg.model}\" is text-only and does not support images.`,
+        });
         return;
       }
     }
@@ -1943,8 +2013,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         return;
       }
       const task = skillCmd[2].trim().slice(name.length).trim() || "Apply this skill to the current task.";
-      const injected =
-        `Use the following skill instructions.\n\n<skill name="${skill.name}" dir="${skill.dir}">\n${skill.body}\n</skill>\n\n${task}`;
+      const injected = `Use the following skill instructions.\n\n<skill name="${skill.name}" dir="${skill.dir}">\n${skill.body}\n</skill>\n\n${task}`;
       // Keep any inlined attachment context, but make the skill the leading task.
       text = text && text !== rawText ? `${injected}\n\n${text}` : injected;
       displayText = rawText.trim();
@@ -2014,7 +2083,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       const thinkMode = entry?.thinkingMode;
       const reasoningProvider =
         thinkMode === "bool" || thinkMode === "effort" || thinkMode === "type" || thinkMode === "reasoning";
-      overrides.thinkingLevel = reasoningProvider ? rt?.thinkingLevel ?? entry?.thinkingLevel : undefined;
+      overrides.thinkingLevel = reasoningProvider ? (rt?.thinkingLevel ?? entry?.thinkingLevel) : undefined;
     } else if (rt?.thinkingLevel) {
       overrides.thinkingLevel = rt.thinkingLevel;
     }
@@ -2027,7 +2096,8 @@ export class ChatViewProvider implements WebviewViewProvider {
     // Sampler pick: ONLY the ACTIVE sampler keeps a value; the other is
     // explicitly cleared (undefined) so the request never carries both.
     const sampler = rt?.sampler ?? "temperature";
-    overrides.temperature = sampler === "temperature" && typeof rt?.temperature === "number" ? rt.temperature : undefined;
+    overrides.temperature =
+      sampler === "temperature" && typeof rt?.temperature === "number" ? rt.temperature : undefined;
     overrides.topP = sampler === "topP" && typeof rt?.topP === "number" ? rt.topP : undefined;
     // The window travels WITH the turn's config: the agent records it in the
     // message meta (so every turn stays self-describing) and the request clamp
@@ -2205,9 +2275,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     // whole history would no longer match the provider's numbers.
     const keptFrom = result.kept.length > 0 ? messages.indexOf(result.kept[0]) : -1;
     const keptTokens =
-      keptFrom >= 0
-        ? realWindowTokens(messages, keptFrom) ?? estimateTokens(serializeConversation(result.kept))
-        : 0;
+      keptFrom >= 0 ? (realWindowTokens(messages, keptFrom) ?? estimateTokens(serializeConversation(result.kept))) : 0;
     // The checkpoint is the TAIL of the rebuilt history: the preserved past sits
     // before it, so the pair is no longer at index 0.
     const pairStart = newHistory.length - result.history.length;
@@ -2234,7 +2302,11 @@ export class ChatViewProvider implements WebviewViewProvider {
    * working with a narrower window instead of dying. The state document is carried
    * verbatim, and everything that leaves the window stays in the session.
    */
-  private trimWindow(rt: SessionRuntime, targetTokens: number, oversized: { spanTokens: number; ceilingTokens: number }): boolean {
+  private trimWindow(
+    rt: SessionRuntime,
+    targetTokens: number,
+    oversized: { spanTokens: number; ceilingTokens: number },
+  ): boolean {
     const trim = this.trimInto(rt.history.all(), targetTokens);
     if (!trim) return false;
     rt.history.replace(trim.history);
@@ -2268,7 +2340,11 @@ export class ChatViewProvider implements WebviewViewProvider {
    * It returns the NUMBERS, always — the caller needs them to decide (`span > ceiling`)
    * AND to explain the trim it falls back to: `span 41.2k > ceiling 8.9k` is the only
    * reason a reader needs to know why a model call was skipped. */
-  private summarySpan(messages: ChatMessage[], targetTokens: number, rt: SessionRuntime): { spanTokens: number; ceilingTokens: number } {
+  private summarySpan(
+    messages: ChatMessage[],
+    targetTokens: number,
+    rt: SessionRuntime,
+  ): { spanTokens: number; ceilingTokens: number } {
     const spanTokens = compactionSpanTokens(messages, targetTokens, this.configuredOutputTokens(rt));
     return {
       spanTokens,
@@ -2378,7 +2454,9 @@ export class ChatViewProvider implements WebviewViewProvider {
   private adoptContextWindow(rt: SessionRuntime, limitTokens: number): void {
     const adopted = clampAdoptedContextWindow(limitTokens);
     if (adopted === rt.contextWindow) return;
-    infoLog(`context window adopted from the provider: ${rt.contextWindow} -> ${adopted} tokens (session ${rt.sessionId})`);
+    infoLog(
+      `context window adopted from the provider: ${rt.contextWindow} -> ${adopted} tokens (session ${rt.sessionId})`,
+    );
     rt.contextWindow = adopted;
     this.sessions.saveSettings(rt.sessionId, { contextWindow: adopted });
     if (this.activeId === rt.sessionId) this.pushConfigSoon();
@@ -2402,7 +2480,11 @@ export class ChatViewProvider implements WebviewViewProvider {
    * The trim for a sub-agent's EPHEMERAL history: same rule as the session, different
    * storage — nothing is persisted, only the in-memory history is swapped.
    */
-  private trimSubAgent(history: ChatHistory, targetTokens: number, span: { spanTokens: number; ceilingTokens: number }): boolean {
+  private trimSubAgent(
+    history: ChatHistory,
+    targetTokens: number,
+    span: { spanTokens: number; ceilingTokens: number },
+  ): boolean {
     const trim = this.trimInto(history.conversation(), targetTokens);
     if (!trim) return false;
     history.replace(trim.history);
@@ -2537,7 +2619,10 @@ export class ChatViewProvider implements WebviewViewProvider {
   }
 
   /** MCP servers (config) + their live status, for the MCP card/editor. */
-  private mcpEditorData(): { servers: Record<string, McpServerConfig>; statuses: { name: string; ok: boolean; error?: string; toolCount: number }[] } {
+  private mcpEditorData(): {
+    servers: Record<string, McpServerConfig>;
+    statuses: { name: string; ok: boolean; error?: string; toolCount: number }[];
+  } {
     return { servers: this.providers.readMcpServers?.() ?? {}, statuses: this.options.mcp?.getStatuses() ?? [] };
   }
 
@@ -2579,7 +2664,10 @@ export class ChatViewProvider implements WebviewViewProvider {
     /** Installed Agent Skills (catalog for the Skills card). */
     skills: { name: string; description: string }[];
     /** MCP servers + their connection status (MCP card). */
-    mcp?: { servers: Record<string, McpServerConfig>; statuses: { name: string; ok: boolean; error?: string; toolCount: number }[] };
+    mcp?: {
+      servers: Record<string, McpServerConfig>;
+      statuses: { name: string; ok: boolean; error?: string; toolCount: number }[];
+    };
     contextWindow: number;
     /** Upper bound of the context slider: the model's DETECTED window, else the global max. */
     maxContextWindow: number;
@@ -3034,9 +3122,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     // is deliberately NOT a fallback, because the repo may be private and the
     // link would hand every user a 404. Without `homepage` the credit is plain
     // text. Set package.json `homepage` to a public URL to turn the link on.
-    const pkg = (
-      this.context?.extension as { packageJSON?: { homepage?: string } } | undefined
-    )?.packageJSON;
+    const pkg = (this.context?.extension as { packageJSON?: { homepage?: string } } | undefined)?.packageJSON;
     const homepage = pkg?.homepage?.trim();
     const brand = { name: "SPLTek", url: homepage ? homepage : undefined };
     return renderViewHtml({

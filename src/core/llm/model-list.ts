@@ -162,11 +162,7 @@ export class HttpModelListProvider implements ModelListProvider {
     if (Array.isArray(body)) raw = body;
     else if (body && typeof body === "object") {
       const rec = body as { data?: unknown; models?: unknown };
-      raw = Array.isArray(rec.data)
-        ? rec.data
-        : Array.isArray(rec.models)
-          ? rec.models
-          : [];
+      raw = Array.isArray(rec.data) ? rec.data : Array.isArray(rec.models) ? rec.models : [];
     } else {
       raw = [];
     }

@@ -52,7 +52,9 @@ describe("McpTool — the Analyze policy (the trust rule)", () => {
   });
 });
 
-function stubClient(callTool: (name: string, args: Record<string, unknown>) => Promise<{ text: string; isError: boolean }>): McpStdioClient {
+function stubClient(
+  callTool: (name: string, args: Record<string, unknown>) => Promise<{ text: string; isError: boolean }>,
+): McpStdioClient {
   return { callTool } as unknown as McpStdioClient;
 }
 
@@ -67,7 +69,11 @@ describe("McpTool", () => {
   it("exposes the server's input schema as the tool parameters", () => {
     const tool = new McpTool(
       "test",
-      { name: "echo", description: "Echo", inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } },
+      {
+        name: "echo",
+        description: "Echo",
+        inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+      },
       stubClient(async () => ({ text: "", isError: false })),
     );
     expect(tool.name).toBe("mcp__test__echo");
@@ -95,14 +101,22 @@ describe("McpTool", () => {
   });
 
   it("turns a client failure into an error result", async () => {
-    const tool = new McpTool("test", { name: "x" }, stubClient(async () => Promise.reject(new Error("boom"))));
+    const tool = new McpTool(
+      "test",
+      { name: "x" },
+      stubClient(async () => Promise.reject(new Error("boom"))),
+    );
     const r = await tool.execute({});
     expect(r.isError).toBe(true);
     expect(r.content).toContain("boom");
   });
 
   it("works with no inputSchema (empty object parameters)", () => {
-    const tool = new McpTool("test", { name: "x" }, stubClient(async () => ({ text: "", isError: false })));
+    const tool = new McpTool(
+      "test",
+      { name: "x" },
+      stubClient(async () => ({ text: "", isError: false })),
+    );
     expect(tool.definition.parameters).toEqual({ type: "object", properties: {} });
   });
 });

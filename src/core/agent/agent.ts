@@ -6,7 +6,12 @@ import type { ChatHistory } from "../history/chat-history";
 import type { ChatMessage, MessageMeta } from "../history/types";
 import { conversationFaults, describeFaults } from "../history/conversation-validity";
 import { maskKeepTokens, maskOldToolResults } from "../history/observation-masking";
-import { isContextOverflowError, isRequestRejection, matchedOverflowSignature, overflowLimitFromError } from "../llm/context-overflow";
+import {
+  isContextOverflowError,
+  isRequestRejection,
+  matchedOverflowSignature,
+  overflowLimitFromError,
+} from "../llm/context-overflow";
 import { estimateTokens } from "../sessions/compactor";
 import type { LLMProviderFactory, LLMMessage, Usage } from "../llm/types";
 import type { Tool, ToolCall, ToolRegistry, ToolResult } from "../tools";
@@ -287,7 +292,7 @@ export class Agent implements ChatController {
    * after which the orchestrator re-plans from the correction.
    */
   steer(id: string, content: string, options: SendOptions = {}): void {
-    if (!content.trim() && !(options.images?.length) && !(options.attachments?.length)) return;
+    if (!content.trim() && !options.images?.length && !options.attachments?.length) return;
     this.pendingSteers.push({ id, content, options });
   }
 
@@ -623,8 +628,7 @@ export class Agent implements ChatController {
       this.parallelCap !== undefined
         ? this.parallelCap
         : (this.deps.config.get().maxParallelSubAgents ?? DEFAULT_MAX_PARALLEL_SUB_AGENTS);
-    const parallelCap =
-      typeof capRaw === "number" && Number.isInteger(capRaw) && capRaw > 0 ? capRaw : Infinity;
+    const parallelCap = typeof capRaw === "number" && Number.isInteger(capRaw) && capRaw > 0 ? capRaw : Infinity;
     // Diagnostics: the ACTUAL execution plan for this turn (how many calls run
     // together), plus each delegate's declaration. Makes a low-parallelism turn
     // explainable instead of looking random (Output > Harny).
@@ -918,7 +922,9 @@ export class Agent implements ChatController {
    * Only reachable BEFORE a token is streamed: an overflow is a 4xx on the POST,
    * so nothing was emitted and the retry cannot duplicate output.
    */
-  private async runLlmTurnWithOverflowRecovery(toolDefinitionsOverride?: ToolDefinition[]): Promise<Awaited<ReturnType<Agent["runLlmTurn"]>>> {
+  private async runLlmTurnWithOverflowRecovery(
+    toolDefinitionsOverride?: ToolDefinition[],
+  ): Promise<Awaited<ReturnType<Agent["runLlmTurn"]>>> {
     const maxRecoveries = 2;
     for (let attempt = 0; ; attempt++) {
       try {
@@ -1036,7 +1042,10 @@ export class Agent implements ChatController {
     const toolDefinitions: ToolDefinition[] = toolDefinitionsOverride ?? modeDefs;
 
     const messages: LLMMessage[] = [
-      { role: "system", content: `${this.stateLine()}\n\n${this.deps.systemPrompt.build(this.runMode, toolDefinitions)}` },
+      {
+        role: "system",
+        content: `${this.stateLine()}\n\n${this.deps.systemPrompt.build(this.runMode, toolDefinitions)}`,
+      },
       ...this.llmConversation().map((m) => ({
         role: m.role,
         // Never send the synthetic tool label to the model (it gets imitated).
@@ -1168,13 +1177,21 @@ export class Agent implements ChatController {
         } else {
           // Emit raw chunk for tool events
           if (chunk.type === "tool_call_start") {
-            this.deps.events.emit({ type: "raw_chunk", chunk: JSON.stringify({ id: chunk.id, name: chunk.name }), kind: "tool_start" });
+            this.deps.events.emit({
+              type: "raw_chunk",
+              chunk: JSON.stringify({ id: chunk.id, name: chunk.name }),
+              kind: "tool_start",
+            });
           } else if (chunk.type === "tool_call_delta") {
             // Show exactly what the model emitted for the arguments — critical
             // when tool calls come back empty.
             this.deps.events.emit({ type: "raw_chunk", chunk: chunk.delta, kind: "tool_args" });
           } else if (chunk.type === "tool_call_end") {
-            this.deps.events.emit({ type: "raw_chunk", chunk: JSON.stringify({ index: chunk.index }), kind: "tool_end" });
+            this.deps.events.emit({
+              type: "raw_chunk",
+              chunk: JSON.stringify({ index: chunk.index }),
+              kind: "tool_end",
+            });
           }
           const completed = accumulator.handle(chunk);
           if (completed) {
@@ -1282,7 +1299,8 @@ export class Agent implements ChatController {
     // the corrective nudge can fire on the next turn.
     if (tc.malformed) {
       return {
-        content: `Tool ${tc.name}: malformed tool arguments (no valid JSON was emitted). ` +
+        content:
+          `Tool ${tc.name}: malformed tool arguments (no valid JSON was emitted). ` +
           "Re-emit this tool call with complete, valid JSON arguments.",
         isError: true,
       };
@@ -1435,9 +1453,7 @@ export class Agent implements ChatController {
     const parts = this.currentAttachmentParts;
     if (parts.length === 0) return { images: [], text: "" };
     const chosen =
-      indices && indices.length > 0
-        ? indices.map((n) => parts[n - 1]).filter((p): p is AttachmentPart => !!p)
-        : parts;
+      indices && indices.length > 0 ? indices.map((n) => parts[n - 1]).filter((p): p is AttachmentPart => !!p) : parts;
     const effective = chosen.length > 0 ? chosen : parts;
     const images = effective.filter((p) => p.isImage && p.dataUri).map((p) => p.dataUri as string);
     const text = effective

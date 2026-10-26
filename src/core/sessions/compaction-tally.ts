@@ -127,7 +127,8 @@ export class CompactionTally {
       `compaction ${c} (${this.compaction.session} session/${this.compaction.subAgent} sub)`,
       `trim ${t} (${this.trim.session}/${this.trim.subAgent})`,
     ];
-    if (this.maxSpanTokens > 0) parts.push(`widest span ${fmtTok(this.maxSpanTokens)} of ${fmtTok(this.ceilingAtMaxSpan)} ceiling`);
+    if (this.maxSpanTokens > 0)
+      parts.push(`widest span ${fmtTok(this.maxSpanTokens)} of ${fmtTok(this.ceilingAtMaxSpan)} ceiling`);
     if (this.nearCeiling > 0) parts.push(`${this.nearCeiling} within 10% of the ceiling`);
     if (t > 0) parts.push("trim is the FALLBACK — a high ratio here means the summary budget is wrong");
     return `tally: ${parts.join(" · ")}`;

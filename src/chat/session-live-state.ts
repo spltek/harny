@@ -130,12 +130,11 @@ export class SessionLiveState {
         }
         const sa = this.subAgents.get(id);
         if (sa) {
-          sa.status =
-            !event.toolResult.isError
-              ? "done"
-              : /aborted|interrupted/i.test(event.toolResult.output)
-                ? "aborted"
-                : "failed";
+          sa.status = !event.toolResult.isError
+            ? "done"
+            : /aborted|interrupted/i.test(event.toolResult.output)
+              ? "aborted"
+              : "failed";
         }
         break;
       }

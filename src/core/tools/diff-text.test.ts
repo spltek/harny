@@ -64,9 +64,7 @@ describe("diffStat", () => {
 describe("fencedDiffBlock", () => {
   it("wraps a diff in the canonical fence with a stat label", () => {
     const diff = "@@ -1 +1 @@\n-old\n+new";
-    expect(fencedDiffBlock(diff)).toBe(
-      "\n\nDiff (+1/-1):\n```diff\n@@ -1 +1 @@\n-old\n+new\n```",
-    );
+    expect(fencedDiffBlock(diff)).toBe("\n\nDiff (+1/-1):\n```diff\n@@ -1 +1 @@\n-old\n+new\n```");
   });
 
   it("returns an empty string for an empty/absent diff (no phantom fence)", () => {

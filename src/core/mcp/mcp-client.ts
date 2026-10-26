@@ -102,8 +102,7 @@ export class McpStdioClient implements McpClient {
   /** Invoke a tool and flatten its content blocks into text. */
   async callTool(name: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }> {
     const res = (await this.request("tools/call", { name, arguments: args })) as
-      | { content?: unknown; isError?: boolean }
-      | undefined;
+      { content?: unknown; isError?: boolean } | undefined;
     return { text: formatMcpContent(res?.content), isError: res?.isError === true };
   }
 

@@ -38,9 +38,14 @@ describe("McpHttpClient (streamable HTTP)", () => {
 
   it("initializes, lists and calls over JSON (stateless)", async () => {
     const s = await serve((m, _req, res) => {
-      if (m.method === "initialize") json(res, m.id, { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "h", version: "1" } });
-      else if (m.method === "tools/list") json(res, m.id, { tools: [{ name: "echo", description: "Echo", inputSchema: { type: "object", properties: {} } }] });
-      else if (m.method === "tools/call") json(res, m.id, { content: [{ type: "text", text: "ok:" + m.params.arguments.x }] });
+      if (m.method === "initialize")
+        json(res, m.id, { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "h", version: "1" } });
+      else if (m.method === "tools/list")
+        json(res, m.id, {
+          tools: [{ name: "echo", description: "Echo", inputSchema: { type: "object", properties: {} } }],
+        });
+      else if (m.method === "tools/call")
+        json(res, m.id, { content: [{ type: "text", text: "ok:" + m.params.arguments.x }] });
       else res.writeHead(202).end();
     });
     closers.push(s.close);
@@ -54,10 +59,13 @@ describe("McpHttpClient (streamable HTTP)", () => {
 
   it("reads a text/event-stream (SSE) response", async () => {
     const s = await serve((m, _req, res) => {
-      if (m.method === "initialize") json(res, m.id, { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "h", version: "1" } });
+      if (m.method === "initialize")
+        json(res, m.id, { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "h", version: "1" } });
       else if (m.method === "tools/list") {
         res.writeHead(200, { "content-type": "text/event-stream" });
-        res.write(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { tools: [{ name: "sse" }] } })}\n\n`);
+        res.write(
+          `event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { tools: [{ name: "sse" }] } })}\n\n`,
+        );
         res.end();
       } else res.writeHead(202).end();
     });
@@ -100,7 +108,9 @@ describe("McpHttpClient (streamable HTTP)", () => {
 
   it("throws on a JSON-RPC error", async () => {
     const s = await serve((m, _req, res) => {
-      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ jsonrpc: "2.0", id: m.id, error: { code: -1, message: "nope" } }));
+      res
+        .writeHead(200, { "content-type": "application/json" })
+        .end(JSON.stringify({ jsonrpc: "2.0", id: m.id, error: { code: -1, message: "nope" } }));
     });
     closers.push(s.close);
     const c = new McpHttpClient({ url: s.url });

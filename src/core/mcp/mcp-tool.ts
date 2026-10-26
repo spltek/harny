@@ -51,7 +51,8 @@ export class McpTool implements Tool {
    * ways out are (Build, or a per-server statement in the settings). */
   get analyzeRefusal(): string {
     const declared = this.declaredPolicy();
-    const base = `"${this.name}" (MCP server "${this.server}") does not run in Analyze: it may modify ` +
+    const base =
+      `"${this.name}" (MCP server "${this.server}") does not run in Analyze: it may modify ` +
       `resources, and an external call cannot be previewed the way a file write can.`;
     if (declared === "trusted") {
       return (

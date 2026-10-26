@@ -28,7 +28,12 @@ function client(): McpStdioClient {
 
 describe("formatMcpContent", () => {
   it("flattens text/image/resource blocks", () => {
-    expect(formatMcpContent([{ type: "text", text: "a" }, { type: "text", text: "b" }])).toBe("a\nb");
+    expect(
+      formatMcpContent([
+        { type: "text", text: "a" },
+        { type: "text", text: "b" },
+      ]),
+    ).toBe("a\nb");
     expect(formatMcpContent([{ type: "image", mimeType: "image/png" }])).toContain("image/png");
     expect(formatMcpContent([{ type: "resource", resource: { uri: "file://x" } }])).toContain("file://x");
     expect(formatMcpContent(undefined)).toBe("(no output)");
@@ -42,7 +47,11 @@ describe("McpStdioClient (real stdio)", () => {
     const tools = await c.listTools();
     expect(tools.map((t) => t.name)).toEqual(["echo"]);
     expect(tools[0].description).toBe("Echo text");
-    expect(tools[0].inputSchema).toEqual({ type: "object", properties: { text: { type: "string" } }, required: ["text"] });
+    expect(tools[0].inputSchema).toEqual({
+      type: "object",
+      properties: { text: { type: "string" } },
+      required: ["text"],
+    });
     // The server's behavior hints must SURVIVE ingestion: they are what a trusted server
     // is believed on (and what the user is shown when deciding).
     expect(tools[0].annotations).toEqual({ readOnlyHint: true });

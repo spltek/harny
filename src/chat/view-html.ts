@@ -2,7 +2,14 @@ import { FONTS, FAMILIES, PALETTES, ROOT_FONT_SIZE, type ThemeMode } from "./vie
 import { panelMinWidthCss } from "./panel-width";
 import type { ChatMessage } from "../core/history/types";
 import type { SessionSummary } from "../core/sessions/types";
-import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, MAX_CONTEXT_WINDOW, MAX_OUTPUT_TOKENS, MIN_CONTEXT_WINDOW, MIN_OUTPUT_TOKENS } from "./context-window";
+import {
+  DEFAULT_CONTEXT_WINDOW,
+  DEFAULT_OUTPUT_TOKENS,
+  MAX_CONTEXT_WINDOW,
+  MAX_OUTPUT_TOKENS,
+  MIN_CONTEXT_WINDOW,
+  MIN_OUTPUT_TOKENS,
+} from "./context-window";
 import type { SessionLiveProjection } from "./session-live-state";
 // Icon artwork is FILES under media/icons/ (see media/icons/README.md and
 // src/chat/icons.ts): the panel markup only names an icon and its size.
@@ -165,8 +172,7 @@ function jsonInit(state: ViewState): string {
 export function renderViewHtml(deps: ViewHtmlDeps): string {
   const { cspSource, scriptUri } = deps;
   // `auto` (or no value at all) pins nothing: the editor's own class decides.
-  const themeClass =
-    deps.theme === "dark" ? " theme-dark" : deps.theme === "light" ? " theme-light" : "";
+  const themeClass = deps.theme === "dark" ? " theme-dark" : deps.theme === "light" ? " theme-light" : "";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>

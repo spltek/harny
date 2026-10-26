@@ -18,7 +18,10 @@ function tools(): Tool[] {
 
 describe("DefaultSystemPromptBuilder mode awareness", () => {
   it("analyze mode: lists ALL tools and enforces the read-only PREVIEW rules", () => {
-    const builder = new DefaultSystemPromptBuilder((mode) => toolDefinitionsForMode(tools(), mode), () => "/w");
+    const builder = new DefaultSystemPromptBuilder(
+      (mode) => toolDefinitionsForMode(tools(), mode),
+      () => "/w",
+    );
     const prompt = builder.build("analyze");
     const listSection = prompt.slice(
       prompt.indexOf("You have access to these tools:"),
@@ -37,7 +40,10 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
   });
 
   it("agent mode: lists every tool and has NO read-only rules", () => {
-    const builder = new DefaultSystemPromptBuilder((mode) => toolDefinitionsForMode(tools(), mode), () => "/w");
+    const builder = new DefaultSystemPromptBuilder(
+      (mode) => toolDefinitionsForMode(tools(), mode),
+      () => "/w",
+    );
     const prompt = builder.build("agent");
     const listSection = prompt.slice(
       prompt.indexOf("You have access to these tools:"),
@@ -52,17 +58,26 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
   });
 
   it("defaults to the analyze (read-only) prompt when no mode is given", () => {
-    const builder = new DefaultSystemPromptBuilder((mode) => toolDefinitionsForMode(tools(), mode), () => "/w");
+    const builder = new DefaultSystemPromptBuilder(
+      (mode) => toolDefinitionsForMode(tools(), mode),
+      () => "/w",
+    );
     expect(builder.build()).toContain("READ-ONLY MODE (Analyze)");
   });
 
   it("warns against repeating the same tool call", () => {
-    const builder = new DefaultSystemPromptBuilder((mode) => toolDefinitionsForMode(tools(), mode), () => "/w");
+    const builder = new DefaultSystemPromptBuilder(
+      (mode) => toolDefinitionsForMode(tools(), mode),
+      () => "/w",
+    );
     expect(builder.build("agent")).toContain("Never repeat the same tool call");
   });
 
   it("states the platform + native shell so the model uses the right commands", () => {
-    const builder = new DefaultSystemPromptBuilder((mode) => toolDefinitionsForMode(tools(), mode), () => "/w");
+    const builder = new DefaultSystemPromptBuilder(
+      (mode) => toolDefinitionsForMode(tools(), mode),
+      () => "/w",
+    );
     const prompt = builder.build("agent");
     expect(prompt).toMatch(/Platform: (Windows|macOS|Linux)/);
     expect(prompt).toMatch(/Shell tool runs commands with the native shell/);
@@ -73,9 +88,25 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
       (mode) => toolDefinitionsForMode(tools(), mode),
       () => "/w",
       () => [
-        { name: "pdf", description: "Extract PDF text", dir: "/w/.agents/skills/pdf", path: "/w/.agents/skills/pdf/SKILL.md" },
-        { name: "code-review", description: "Review a diff", dir: "/w/.agents/skills/code-review", path: "/w/.agents/skills/code-review/SKILL.md" },
-        { name: "grill-me", description: "Interview", dir: "/w/.agents/skills/grill-me", path: "/w/.agents/skills/grill-me/SKILL.md", disableModelInvocation: true },
+        {
+          name: "pdf",
+          description: "Extract PDF text",
+          dir: "/w/.agents/skills/pdf",
+          path: "/w/.agents/skills/pdf/SKILL.md",
+        },
+        {
+          name: "code-review",
+          description: "Review a diff",
+          dir: "/w/.agents/skills/code-review",
+          path: "/w/.agents/skills/code-review/SKILL.md",
+        },
+        {
+          name: "grill-me",
+          description: "Interview",
+          dir: "/w/.agents/skills/grill-me",
+          path: "/w/.agents/skills/grill-me/SKILL.md",
+          disableModelInvocation: true,
+        },
       ],
     );
     const prompt = withSkills.build("agent");
@@ -86,7 +117,10 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     // disable-model-invocation skills are NOT offered to the model.
     expect(prompt).not.toContain("- grill-me:");
 
-    const without = new DefaultSystemPromptBuilder((mode) => toolDefinitionsForMode(tools(), mode), () => "/w");
+    const without = new DefaultSystemPromptBuilder(
+      (mode) => toolDefinitionsForMode(tools(), mode),
+      () => "/w",
+    );
     expect(without.build("agent")).not.toContain("## Skills");
   });
 
@@ -102,7 +136,10 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     expect(prompt).toContain("you MUST call Delegate");
     expect(prompt).toContain("sub-agent");
     // Read-only preview: writers are advertised (they run as previews).
-    const listSection = prompt.slice(prompt.indexOf("You have access to these tools:"), prompt.indexOf("\nGuidelines:"));
+    const listSection = prompt.slice(
+      prompt.indexOf("You have access to these tools:"),
+      prompt.indexOf("\nGuidelines:"),
+    );
     expect(listSection).toContain("- Write:");
   });
 
@@ -115,7 +152,10 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     expect(prompt).toContain("STEER the sub-agent");
     expect(prompt).toContain("SAME skills catalog");
     // Parallel OFF: the concept stays hidden entirely (no mention of steering either).
-    const without = new DefaultSystemPromptBuilder((mode) => toolDefinitionsForMode(tools(), mode), () => "/w");
+    const without = new DefaultSystemPromptBuilder(
+      (mode) => toolDefinitionsForMode(tools(), mode),
+      () => "/w",
+    );
     expect(without.build("agent")).not.toContain("STEER the sub-agent");
   });
 
@@ -130,7 +170,10 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     expect(prompt).toContain("unless you forward them");
     expect(prompt).toContain("give each sub-task ONLY the ones it needs");
     // Parallel OFF: the whole concept stays hidden.
-    const without = new DefaultSystemPromptBuilder((mode) => toolDefinitionsForMode(tools(), mode), () => "/w");
+    const without = new DefaultSystemPromptBuilder(
+      (mode) => toolDefinitionsForMode(tools(), mode),
+      () => "/w",
+    );
     expect(without.build("agent")).not.toContain("unless you forward them");
   });
 
@@ -170,7 +213,10 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
   });
 
   it("Parallel OFF never mentions sub-agents / Delegate / Parallel (both modes)", () => {
-    const builder = new DefaultSystemPromptBuilder((mode) => toolDefinitionsForMode(tools(), mode), () => "/w");
+    const builder = new DefaultSystemPromptBuilder(
+      (mode) => toolDefinitionsForMode(tools(), mode),
+      () => "/w",
+    );
     for (const mode of ["analyze", "agent"] as const) {
       const p = builder.build(mode);
       expect(p).not.toContain("PARALLELISM");
@@ -197,8 +243,15 @@ function toolsWithDelegate(): Tool[] {
 }
 
 describe("SubAgentSystemPromptBuilder", () => {
-  const build = (opts: { role?: string; access: "read" | "write" | "create"; resources: string[] }, mode: "analyze" | "agent") =>
-    new SubAgentSystemPromptBuilder((m) => toolDefinitionsForMode(tools(), m), () => "/w", opts).build(mode);
+  const build = (
+    opts: { role?: string; access: "read" | "write" | "create"; resources: string[] },
+    mode: "analyze" | "agent",
+  ) =>
+    new SubAgentSystemPromptBuilder(
+      (m) => toolDefinitionsForMode(tools(), m),
+      () => "/w",
+      opts,
+    ).build(mode);
 
   it("frames the sub-agent with its role and report contract", () => {
     const prompt = build({ role: "analyst", access: "read", resources: ["src/a.ts"] }, "analyze");
@@ -245,8 +298,19 @@ describe("SubAgentSystemPromptBuilder", () => {
       () => "/w",
       { access: "read", resources: [] },
       () => [
-        { name: "pdf", description: "Extract PDF text", dir: "/w/.agents/skills/pdf", path: "/w/.agents/skills/pdf/SKILL.md" },
-        { name: "grill-me", description: "Interview", dir: "/w/.agents/skills/grill-me", path: "/w/.agents/skills/grill-me/SKILL.md", disableModelInvocation: true },
+        {
+          name: "pdf",
+          description: "Extract PDF text",
+          dir: "/w/.agents/skills/pdf",
+          path: "/w/.agents/skills/pdf/SKILL.md",
+        },
+        {
+          name: "grill-me",
+          description: "Interview",
+          dir: "/w/.agents/skills/grill-me",
+          path: "/w/.agents/skills/grill-me/SKILL.md",
+          disableModelInvocation: true,
+        },
       ],
     ).build("analyze");
     expect(prompt).toContain("## Skills");

@@ -70,4 +70,3 @@ export function toOpenAIMessages(
 export function toChatToolDefinitions(defs: ToolDefinition[]): unknown[] {
   return defs.map((d) => ({ type: "function", function: d }));
 }
-

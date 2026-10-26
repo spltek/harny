@@ -54,8 +54,7 @@ export class ModelsDevCatalog {
   private data: Record<string, ModelsDevProvider> | null = null;
   /** Exact model id → every catalog entry that declares it. Built lazily for
    * the GENERIC cross-provider fallback (see {@link getLimits}). */
-  private byModelId: Map<string, { provider: string; limit: { context?: number; output?: number } }[]> | null =
-    null;
+  private byModelId: Map<string, { provider: string; limit: { context?: number; output?: number } }[]> | null = null;
   private loadedAt = 0;
   private loading: Promise<void> | null = null;
   /** Message from the LAST failed load (undefined = the catalog is reachable). */
@@ -88,7 +87,10 @@ export class ModelsDevCatalog {
    *     models.dev calls `opencode-go`). Among matches it prefers the provider
    *     whose NAME appears in the id (`deepseek-flash` → `deepseek`).
    */
-  async getLimits(modelId: string, providerCandidates: readonly string[]): Promise<{ context?: number; output?: number }> {
+  async getLimits(
+    modelId: string,
+    providerCandidates: readonly string[],
+  ): Promise<{ context?: number; output?: number }> {
     await this.ensureLoaded();
     if (!this.data) return {};
     // 1) the configured/derived providers first (authoritative).

@@ -18,10 +18,7 @@ export function parseSkillMd(text: string): { frontmatter: Record<string, string
     if (!m) continue;
     let value = m[2].trim();
     // Strip surrounding single/double quotes (common in frontmatter).
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
       value = value.slice(1, -1);
     }
     frontmatter[m[1].toLowerCase()] = value;

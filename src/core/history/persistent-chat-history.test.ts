@@ -12,7 +12,13 @@ function makeStore(): SessionStore {
     list: vi.fn(() => []),
     create: vi.fn(),
     load: vi.fn(),
-    saveMessages: vi.fn((id: string, messages: ChatMessage[]) => ({ id, name: "S", createdAt: 1, updatedAt: 2, messageCount: messages.length })),
+    saveMessages: vi.fn((id: string, messages: ChatMessage[]) => ({
+      id,
+      name: "S",
+      createdAt: 1,
+      updatedAt: 2,
+      messageCount: messages.length,
+    })),
     rename: vi.fn(),
     remove: vi.fn(),
   } as unknown as SessionStore;

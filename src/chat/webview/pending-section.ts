@@ -132,8 +132,7 @@ export function createPendingSection(deps: PendingSectionDeps): PendingSection {
     const row = document.createElement("div");
     // BORN COLLAPSED — every row, the one just typed included: the queue stays one
     // line per message, whatever was pasted into it.
-    row.className =
-      "pending-msg text-collapsed " + (it.mode === "steer" ? "pending-steer" : "pending-queue");
+    row.className = "pending-msg text-collapsed " + (it.mode === "steer" ? "pending-steer" : "pending-queue");
 
     const badge = document.createElement("span");
     badge.className = "pending-badge";
@@ -169,9 +168,7 @@ export function createPendingSection(deps: PendingSectionDeps): PendingSection {
     const toggle = document.createElement("button");
     toggle.type = "button";
     toggle.className = "pending-toggle hidden";
-    toggle.addEventListener("click", () =>
-      setRowCollapsed(row, !row.classList.contains("text-collapsed")),
-    );
+    toggle.addEventListener("click", () => setRowCollapsed(row, !row.classList.contains("text-collapsed")));
 
     // Convert between the two delivery modes. The label states the EFFECT, not the
     // mode: they are not two views of the same message, they are delivered at
@@ -230,9 +227,7 @@ export function createPendingSection(deps: PendingSectionDeps): PendingSection {
     render(items: PendingViewItem[]): void {
       // Steers ALWAYS above queued ones (they are applied ASAP at the next turn
       // boundary); within each group, arrival order is preserved.
-      const ordered = [...(items || [])].sort((a, b) =>
-        a.mode === b.mode ? 0 : a.mode === "steer" ? -1 : 1,
-      );
+      const ordered = [...(items || [])].sort((a, b) => (a.mode === b.mode ? 0 : a.mode === "steer" ? -1 : 1));
       // The section appears only when there is something to show (and disappears
       // when the last item is delivered or cancelled).
       section.classList.toggle("hidden", ordered.length === 0);

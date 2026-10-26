@@ -79,7 +79,9 @@ describe("checkStructuralBalance — hard cases", () => {
     expect(checkStructuralBalance("{\n  a: [1, (2)],\n  b() { return { c: /x/ }; },\n}\n").balanced).toBe(true);
   });
   it("ignores braces inside strings (quotes, escaped, templates)", () => {
-    expect(checkStructuralBalance("const a = \"} {\";\nconst b = 'x} {';\nconst c = `tpl { } ${foo}`;\n").balanced).toBe(true);
+    expect(
+      checkStructuralBalance("const a = \"} {\";\nconst b = 'x} {';\nconst c = `tpl { } ${foo}`;\n").balanced,
+    ).toBe(true);
   });
   it("ignores braces inside comments", () => {
     expect(checkStructuralBalance("// }\n/* { */\nconst a = 1;\n").balanced).toBe(true);
@@ -87,7 +89,7 @@ describe("checkStructuralBalance — hard cases", () => {
   it("catches extra paren, unclosed array, unterminated string, empty ok", () => {
     expect(checkStructuralBalance("f());\n").balanced).toBe(false);
     expect(checkStructuralBalance("const a = [1, 2;\n").balanced).toBe(false);
-    expect(checkStructuralBalance("const a = \"nope;\n").balanced).toBe(false);
+    expect(checkStructuralBalance('const a = "nope;\n').balanced).toBe(false);
     expect(checkStructuralBalance("").balanced).toBe(true);
   });
 });
@@ -108,13 +110,29 @@ describe("closestContext", () => {
 describe("EditTool — end-to-end robustness", () => {
   let dir: string;
   const cwd = () => dir;
-  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "harny-edit-stress-")); });
-  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "harny-edit-stress-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
   const tool = () => new EditTool(nodeFileSystem, cwd);
 
   it("applies the real single-edit scenario and reports the diff preview", () => {
     const f = join(dir, "sound.js");
-    writeFileSync(f, ["class SoundEngine {", "    constructor() {", "        this.ctx = null;", "        this.notes = {", "            'A4': 440.00,", "        };", "    }", "}"].join("\n"));
+    writeFileSync(
+      f,
+      [
+        "class SoundEngine {",
+        "    constructor() {",
+        "        this.ctx = null;",
+        "        this.notes = {",
+        "            'A4': 440.00,",
+        "        };",
+        "    }",
+        "}",
+      ].join("\n"),
+    );
     const r = tool().execute({
       path: f,
       edits: [{ oldText: "            'A4': 440.00,", newText: "            'A4': 440.00, 'B4': 493.88," }],

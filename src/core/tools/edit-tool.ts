@@ -38,7 +38,10 @@ export class EditTool implements Tool {
             properties: {
               oldText: { type: "string", description: "Exact text to replace (must be unique in the file)" },
               newText: { type: "string", description: "Replacement text (empty deletes oldText)" },
-              beforeText: { type: "string", description: "Anchor line to insert BEFORE (or to disambiguate duplicates)" },
+              beforeText: {
+                type: "string",
+                description: "Anchor line to insert BEFORE (or to disambiguate duplicates)",
+              },
               afterText: { type: "string", description: "Anchor line to insert before, when beforeText is absent" },
             },
           },
@@ -59,7 +62,7 @@ export class EditTool implements Tool {
     if (!pathArg || !Array.isArray(edits) || edits.length === 0) {
       return {
         content:
-          "Tool Edit requires:\n- \"path\": file path (string)\n- \"edits\": non-empty array of {oldText,newText} or {beforeText,newText}",
+          'Tool Edit requires:\n- "path": file path (string)\n- "edits": non-empty array of {oldText,newText} or {beforeText,newText}',
         isError: true,
       };
     }
@@ -76,7 +79,11 @@ export class EditTool implements Tool {
         const anyNotFound = result.failed.some((f) => f.reason.includes("not found"));
         const head = anyNotFound
           ? "\nFile starts with:\n```\n" +
-            original.split("\n").slice(0, 6).map((l, i) => `  ${i + 1}| ${l}`).join("\n") +
+            original
+              .split("\n")
+              .slice(0, 6)
+              .map((l, i) => `  ${i + 1}| ${l}`)
+              .join("\n") +
             (original.split("\n").length > 6 ? "\n  …" : "") +
             "\n```"
           : "";
@@ -87,7 +94,9 @@ export class EditTool implements Tool {
                 ? "\nNearby lines in the file:\n```\n" + closestContext(original, f.anchor).join("\n") + "\n```"
                 : "";
             const headLine = `- edit #${f.index}: ${f.reason}`;
-            const anchor = f.anchor ? `\n  \`\`\`\n${f.anchor.slice(0, 200)}${f.anchor.length > 200 ? "..." : ""}\n  \`\`\`` : "";
+            const anchor = f.anchor
+              ? `\n  \`\`\`\n${f.anchor.slice(0, 200)}${f.anchor.length > 200 ? "..." : ""}\n  \`\`\``
+              : "";
             const detail = f.detail ? `\n  ${f.detail}` : "";
             return headLine + anchor + detail + ctx;
           })

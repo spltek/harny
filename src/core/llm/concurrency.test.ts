@@ -127,9 +127,7 @@ describe("limitLlmFactory", () => {
     const sem = new Semaphore(2);
     const limited = limitLlmFactory(factory, sem);
 
-    const results = await Promise.all(
-      Array.from({ length: 5 }, () => drain(limited.create({} as never))),
-    );
+    const results = await Promise.all(Array.from({ length: 5 }, () => drain(limited.create({} as never))));
 
     expect(results).toEqual(["ok", "ok", "ok", "ok", "ok"]);
     expect(state.started).toBe(5);

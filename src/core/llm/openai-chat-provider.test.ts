@@ -1,5 +1,12 @@
 import { beforeEach, describe, it, expect } from "vitest";
-import { OpenAIChatProvider, describeApiError, needsMaxCompletionTokens, needsReasoningEcho, requiresReasoningPassBack, resetMaxCompletionTokensCache } from "./openai-chat-provider";
+import {
+  OpenAIChatProvider,
+  describeApiError,
+  needsMaxCompletionTokens,
+  needsReasoningEcho,
+  requiresReasoningPassBack,
+  resetMaxCompletionTokensCache,
+} from "./openai-chat-provider";
 import { FakeHttpClient, sseResponse } from "./http-client.test-utils";
 import type { HttpResponse } from "./http-client";
 import type { HarnyConfig } from "../config/types";
@@ -17,7 +24,11 @@ const config: HarnyConfig = {
 };
 
 const tools: ToolDefinition[] = [
-  { name: "Read", description: "Read a file", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
+  {
+    name: "Read",
+    description: "Read a file",
+    parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+  },
 ];
 
 async function collect(gen: AsyncGenerator<StreamChunk>): Promise<StreamChunk[]> {
@@ -89,7 +100,11 @@ describe("OpenAIChatProvider", () => {
 
     const other = new FakeHttpClient();
     other.respondWith(sseResponse('data: {"choices":[{"delta":{"content":"hi"}}]}', "data: [DONE]"));
-    await collect(new OpenAIChatProvider({ ...config, model: "gpt-4o-mini" }, other, tools).stream([{ role: "user", content: "hi" }]));
+    await collect(
+      new OpenAIChatProvider({ ...config, model: "gpt-4o-mini" }, other, tools).stream([
+        { role: "user", content: "hi" },
+      ]),
+    );
 
     // A DIFFERENT model still starts from the standard field: the cache is keyed.
     expect(JSON.parse(other.requests[0].body).max_tokens).toBe(4096);
@@ -331,9 +346,7 @@ describe("OpenAIChatProvider", () => {
     // id present but no header declared.
     const b = new OpenAIChatProvider({ ...config, sessionId: "s1" }, http, tools);
     await collect(b.stream([{ role: "user", content: "x" }]));
-    expect(Object.keys(http.requests[1].headers).some((k) => k.toLowerCase().includes("session"))).toBe(
-      false,
-    );
+    expect(Object.keys(http.requests[1].headers).some((k) => k.toLowerCase().includes("session"))).toBe(false);
   });
 
   it("throws a descriptive error on non-OK responses", async () => {
@@ -348,9 +361,7 @@ describe("OpenAIChatProvider", () => {
     });
 
     const provider = new OpenAIChatProvider(config, http, tools);
-    await expect(collect(provider.stream([{ role: "user", content: "x" }]))).rejects.toThrow(
-      "OpenAI API error 401",
-    );
+    await expect(collect(provider.stream([{ role: "user", content: "x" }]))).rejects.toThrow("OpenAI API error 401");
   });
 });
 
@@ -382,11 +393,7 @@ describe("OpenAIChatProvider reasoning support", () => {
     const http = new FakeHttpClient();
     http.respondWith(sseResponse("data: [DONE]"));
 
-    const provider = new OpenAIChatProvider(
-      { ...config, thinkingMode: "bool", thinkingLevel: "high" },
-      http,
-      tools,
-    );
+    const provider = new OpenAIChatProvider({ ...config, thinkingMode: "bool", thinkingLevel: "high" }, http, tools);
     await collect(provider.stream([{ role: "user", content: "x" }]));
 
     const body = JSON.parse(http.requests[0].body);
@@ -397,11 +404,7 @@ describe("OpenAIChatProvider reasoning support", () => {
     const http = new FakeHttpClient();
     http.respondWith(sseResponse("data: [DONE]"));
 
-    const provider = new OpenAIChatProvider(
-      { ...config, thinkingMode: "bool", thinkingLevel: "off" },
-      http,
-      tools,
-    );
+    const provider = new OpenAIChatProvider({ ...config, thinkingMode: "bool", thinkingLevel: "off" }, http, tools);
     await collect(provider.stream([{ role: "user", content: "x" }]));
 
     const body = JSON.parse(http.requests[0].body);
@@ -414,11 +417,7 @@ describe("OpenAIChatProvider reasoning support", () => {
     http.respondWith(sseResponse("data: [DONE]"));
     http.respondWith(sseResponse("data: [DONE]"));
 
-    const on = new OpenAIChatProvider(
-      { ...config, thinkingMode: "effort", thinkingLevel: "medium" },
-      http,
-      tools,
-    );
+    const on = new OpenAIChatProvider({ ...config, thinkingMode: "effort", thinkingLevel: "medium" }, http, tools);
     await collect(on.stream([{ role: "user", content: "x" }]));
     let body = JSON.parse(http.requests[0].body);
     expect(body.reasoning_effort).toBe("medium");
@@ -426,11 +425,7 @@ describe("OpenAIChatProvider reasoning support", () => {
 
     // "off" OMITS the field: any effort (even "minimal") turns reasoning ON
     // for models whose default is off (DeepSeek v4 on OpenRouter).
-    const off = new OpenAIChatProvider(
-      { ...config, thinkingMode: "effort", thinkingLevel: "off" },
-      http,
-      tools,
-    );
+    const off = new OpenAIChatProvider({ ...config, thinkingMode: "effort", thinkingLevel: "off" }, http, tools);
     await collect(off.stream([{ role: "user", content: "x" }]));
     body = JSON.parse(http.requests[1].body);
     expect(body.reasoning_effort).toBeUndefined();
@@ -442,21 +437,13 @@ describe("OpenAIChatProvider reasoning support", () => {
     http.respondWith(sseResponse("data: [DONE]"));
     http.respondWith(sseResponse("data: [DONE]"));
 
-    const high = new OpenAIChatProvider(
-      { ...config, thinkingMode: "type", thinkingLevel: "high" },
-      http,
-      tools,
-    );
+    const high = new OpenAIChatProvider({ ...config, thinkingMode: "type", thinkingLevel: "high" }, http, tools);
     await collect(high.stream([{ role: "user", content: "x" }]));
     let body = JSON.parse(http.requests[0].body);
     expect(body.thinking).toEqual({ type: "enabled" });
     expect(body.reasoning_effort).toBeUndefined();
 
-    const off = new OpenAIChatProvider(
-      { ...config, thinkingMode: "type", thinkingLevel: "off" },
-      http,
-      tools,
-    );
+    const off = new OpenAIChatProvider({ ...config, thinkingMode: "type", thinkingLevel: "off" }, http, tools);
     await collect(off.stream([{ role: "user", content: "x" }]));
     body = JSON.parse(http.requests[1].body);
     expect(body.thinking).toEqual({ type: "disabled" });
@@ -474,22 +461,14 @@ describe("OpenAIChatProvider reasoning support", () => {
     http.respondWith(sseResponse("data: [DONE]"));
     http.respondWith(sseResponse("data: [DONE]"));
 
-    const high = new OpenAIChatProvider(
-      { ...config, thinkingMode: "reasoning", thinkingLevel: "high" },
-      http,
-      tools,
-    );
+    const high = new OpenAIChatProvider({ ...config, thinkingMode: "reasoning", thinkingLevel: "high" }, http, tools);
     await collect(high.stream([{ role: "user", content: "x" }]));
     let body = JSON.parse(http.requests[0].body);
     expect(body.reasoning).toEqual({ effort: "high" });
     expect(body.reasoning_effort).toBeUndefined();
 
     // off -> enabled:false (the reliable disable for DeepSeek-on-OpenRouter).
-    const off = new OpenAIChatProvider(
-      { ...config, thinkingMode: "reasoning", thinkingLevel: "off" },
-      http,
-      tools,
-    );
+    const off = new OpenAIChatProvider({ ...config, thinkingMode: "reasoning", thinkingLevel: "off" }, http, tools);
     await collect(off.stream([{ role: "user", content: "x" }]));
     body = JSON.parse(http.requests[1].body);
     expect(body.reasoning).toEqual({ enabled: false });
@@ -550,11 +529,7 @@ describe("OpenAIChatProvider reasoning support", () => {
     // the turn AFTER one without it (synthetic state document, a turn from another model).
     const http = new FakeHttpClient();
     http.respondWith(sseResponse("data: [DONE]"));
-    const provider = new OpenAIChatProvider(
-      { ...config, thinkingMode: "type", thinkingLevel: "high" },
-      http,
-      tools,
-    );
+    const provider = new OpenAIChatProvider({ ...config, thinkingMode: "type", thinkingLevel: "high" }, http, tools);
     await collect(
       provider.stream([
         { role: "assistant", content: "state document" },
@@ -573,11 +548,7 @@ describe("OpenAIChatProvider reasoning support", () => {
     // the field.
     const http = new FakeHttpClient();
     http.respondWith(sseResponse("data: [DONE]"));
-    const provider = new OpenAIChatProvider(
-      { ...config, thinkingMode: "bool", thinkingLevel: "high" },
-      http,
-      tools,
-    );
+    const provider = new OpenAIChatProvider({ ...config, thinkingMode: "bool", thinkingLevel: "high" }, http, tools);
     await collect(
       provider.stream([
         { role: "assistant", content: "old", thinking: "reasoned once" },
@@ -594,11 +565,7 @@ describe("OpenAIChatProvider reasoning support", () => {
     // and must NOT be turned into a plaintext field: that would be the opposite 400.
     const http = new FakeHttpClient();
     http.respondWith(sseResponse("data: [DONE]"));
-    const provider = new OpenAIChatProvider(
-      { ...config, thinkingMode: "unspecified" },
-      http,
-      tools,
-    );
+    const provider = new OpenAIChatProvider({ ...config, thinkingMode: "unspecified" }, http, tools);
     await collect(
       provider.stream([
         { role: "assistant", content: "old", reasoningDetails: [{ type: "reasoning.encrypted", data: "xx" }] },
@@ -668,10 +635,7 @@ describe("OpenAIChatProvider reasoning support", () => {
   it("keeps thinking when a single delta carries both content and reasoning", async () => {
     const http = new FakeHttpClient();
     http.respondWith(
-      sseResponse(
-        'data: {"choices":[{"delta":{"content":"answer","reasoning":"why"}}]}',
-        "data: [DONE]",
-      ),
+      sseResponse('data: {"choices":[{"delta":{"content":"answer","reasoning":"why"}}]}', "data: [DONE]"),
     );
 
     const provider = new OpenAIChatProvider(config, http, tools);
@@ -705,9 +669,7 @@ describe("OpenAIChatProvider reasoning support", () => {
     // ...and the merged block is emitted for verbatim pass-back.
     expect(chunks.at(-1)).toEqual({
       type: "thinking_details",
-      details: [
-        { type: "reasoning.summary", summary: "step one", format: "openai-responses-v1", index: 0 },
-      ],
+      details: [{ type: "reasoning.summary", summary: "step one", format: "openai-responses-v1", index: 0 }],
     });
   });
 });
@@ -755,7 +717,10 @@ describe("OpenAIChatProvider usage", () => {
     const chunks: StreamChunk[] = [];
     for await (const c of provider.stream([{ role: "user", content: "x" }])) chunks.push(c);
     const usage = chunks.find((c) => c.type === "usage");
-    expect(usage).toEqual({ type: "usage", usage: { input: 100, output: 20, total: 120, cached: 10, cachedWrite: 55 } });
+    expect(usage).toEqual({
+      type: "usage",
+      usage: { input: 100, output: 20, total: 120, cached: 10, cachedWrite: 55 },
+    });
   });
 
   it("re-bases the input when the cache is reported OUTSIDE prompt_tokens (mixed convention)", async () => {
@@ -827,7 +792,6 @@ describe("OpenAIChatProvider tools guard", () => {
     expect(body.tool_choice).toBe("auto");
   });
 });
-
 
 describe("OpenAIChatProvider temperature guard", () => {
   it("omits temperature when not configured", async () => {
@@ -955,11 +919,7 @@ describe("reasoning pass-back: which requests need the field", () => {
     // made the call left no reasoning behind. The EMPTY field is what makes it pass.
     const http = new FakeHttpClient();
     http.respondWith(sseResponse("data: [DONE]"));
-    const provider = new OpenAIChatProvider(
-      { ...config, thinkingMode: "type", thinkingLevel: "high" },
-      http,
-      tools,
-    );
+    const provider = new OpenAIChatProvider({ ...config, thinkingMode: "type", thinkingLevel: "high" }, http, tools);
     await collect(
       provider.stream([
         { role: "user", content: "read a.ts" },

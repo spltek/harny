@@ -12,7 +12,10 @@ import type { SessionStore } from "../sessions/types";
 export class PersistentChatHistory implements ChatHistory {
   private inner = new InMemoryChatHistory();
 
-  constructor(private store: SessionStore, private sessionId: string) {}
+  constructor(
+    private store: SessionStore,
+    private sessionId: string,
+  ) {}
 
   all(): ChatMessage[] {
     return this.inner.all();

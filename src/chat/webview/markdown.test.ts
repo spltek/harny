@@ -21,7 +21,7 @@ describe("renderMarkdown (markdown-it + DOMPurify)", () => {
 
     const html = renderMarkdown(md);
 
-    expect(html).toContain("<div class=\"table-scroll\"><table>");
+    expect(html).toContain('<div class="table-scroll"><table>');
     expect(html).toContain("<th>File Name</th>");
     expect(html).toContain("<th>Modified</th>");
     expect(html).toContain("<td>hello.txt</td>");
@@ -64,7 +64,7 @@ describe("renderMarkdown (markdown-it + DOMPurify)", () => {
 
   it("never creates a link for javascript: URLs", () => {
     const html = renderMarkdown("[click](javascript:alert(1))");
-    expect(html).not.toContain('<a');
+    expect(html).not.toContain("<a");
     expect(html).not.toMatch(/href=.["']?javascript:/i);
   });
 

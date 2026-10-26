@@ -55,9 +55,8 @@ export class DefaultSystemPromptBuilder implements SystemPromptBuilder {
     const delegateReadOnlyRule = hasDelegate
       ? `\n- If you delegate sub-agents, they MUST be read-only too (access: "read") — a write/create delegate is refused in this mode.`
       : "";
-    const analyzeRules =
-      isAnalyzeMode(mode)
-        ? `
+    const analyzeRules = isAnalyzeMode(mode)
+      ? `
 
 READ-ONLY MODE (Analyze) — PREVIEW RULES:
 - You are in Analyze (read-only PREVIEW): you inspect, explain and PREPARE changes — you NEVER apply them.
@@ -67,7 +66,7 @@ READ-ONLY MODE (Analyze) — PREVIEW RULES:
   "${BUILD_SWITCH_HINT}"
 - If the request needs no code change (a pure question, research or explanation), just answer: do NOT prepare edits and do NOT mention Build or applying changes — there is nothing to apply.${delegateReadOnlyRule}
 - The Shell tool runs read-only: any command that would write, delete, move, rename, create, install or build files is refused before it runs. Do not try to work around it (no redirection, no scripts that write). Prefer the Read/Grep/Glob tools for inspection.`
-        : "";
+      : "";
 
     const orchestratorIntro = hasDelegate
       ? `\nPARALLEL IS ON. PARALLELISM MEANS SUB-TASKS: to run work in parallel you MUST call Delegate — one ` +
@@ -126,7 +125,7 @@ AFTER DELEGATING:
 
     return `You are Harny, an expert AI coding agent embedded in VS Code.
 Working directory: ${cwd}
-Platform: ${isWindows ? "Windows" : process.platform === "darwin" ? "macOS" : "Linux"}. The Shell tool runs commands with the native shell (${isWindows ? "cmd.exe/PowerShell" : defaultShell()}); use THIS OS's commands and syntax (e.g. ${isWindows ? "dir/type/where instead of ls/cat/which; \" and drive letters in paths" : "ls/cat/which; / in paths"}).${orchestratorIntro}
+Platform: ${isWindows ? "Windows" : process.platform === "darwin" ? "macOS" : "Linux"}. The Shell tool runs commands with the native shell (${isWindows ? "cmd.exe/PowerShell" : defaultShell()}); use THIS OS's commands and syntax (e.g. ${isWindows ? 'dir/type/where instead of ls/cat/which; " and drive letters in paths' : "ls/cat/which; / in paths"}).${orchestratorIntro}
 
 File paths:
 - All file tools (Read, Write, StrReplace, Delete, Glob, Grep) accept paths that are absolute OR relative to the working directory. Prefer relative paths (e.g. "index.html").
@@ -187,9 +186,7 @@ export class SubAgentSystemPromptBuilder implements SystemPromptBuilder {
   build(mode: ChatMode = "analyze", effective?: readonly ToolDefinition[]): string {
     const cwd = this.cwd();
     const definitions = effective ? [...effective] : this.toolDefinitions(mode);
-    const toolList = definitions
-      .map((d) => `- ${d.name}: ${this.summarize(d.description)}`)
-      .join("\n");
+    const toolList = definitions.map((d) => `- ${d.name}: ${this.summarize(d.description)}`).join("\n");
     const role = this.options.role ? `Your role: ${this.options.role}.` : "Your role: a focused generalist worker.";
     const readOnly = this.options.access === "read";
     const resourceRule = readOnly

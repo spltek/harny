@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { isContextOverflowError, isRequestRejection, matchedOverflowSignature, overflowLimitFromError, MIN_PLAUSIBLE_LIMIT_TOKENS, providerErrorStatus } from "./context-overflow";
+import {
+  isContextOverflowError,
+  isRequestRejection,
+  matchedOverflowSignature,
+  overflowLimitFromError,
+  MIN_PLAUSIBLE_LIMIT_TOKENS,
+  providerErrorStatus,
+} from "./context-overflow";
 
 /**
  * The REAL rejection texts of the backends Harny talks to, pasted as they arrive
@@ -49,7 +56,8 @@ const OVERFLOWS: Array<{ from: string; message: string }> = [
   },
   {
     from: "Anthropic behind a gateway",
-    message: 'OpenAI API error 400: {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 250123 tokens > 200000 maximum"}}',
+    message:
+      'OpenAI API error 400: {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 250123 tokens > 200000 maximum"}}',
   },
   {
     from: "Gemini behind a gateway",
@@ -63,7 +71,8 @@ const OVERFLOWS: Array<{ from: string; message: string }> = [
   },
   {
     from: "LM Studio",
-    message: 'OpenAI API error 400: {"error":"Context length exceeded. Try increasing the context length in the model settings."}',
+    message:
+      'OpenAI API error 400: {"error":"Context length exceeded. Try increasing the context length in the model settings."}',
   },
   {
     from: "payload size (413, some gateways)",
@@ -75,14 +84,18 @@ const OVERFLOWS: Array<{ from: string; message: string }> = [
   },
   {
     from: "DeepSeek",
-    message: 'OpenAI API error 400: {"error":{"message":"This model\'s maximum context length is 65536 tokens. However, you requested 68000 tokens","type":"invalid_request_error","code":"context_length_exceeded"}}',
+    message:
+      'OpenAI API error 400: {"error":{"message":"This model\'s maximum context length is 65536 tokens. However, you requested 68000 tokens","type":"invalid_request_error","code":"context_length_exceeded"}}',
   },
 ];
 
 describe("overflowLimitFromError — learn the real window from the rejection", () => {
   it("reads the limit from each family's wording", () => {
     const cases: Array<[string, number]> = [
-      ["This model's maximum context length is 128000 tokens. However, your messages resulted in 132184 tokens.", 128000],
+      [
+        "This model's maximum context length is 128000 tokens. However, your messages resulted in 132184 tokens.",
+        128000,
+      ],
       ["this model's maximum context length is 16384 tokens", 16384],
       ["This endpoint's maximum context length is 200000 tokens.", 200000],
       ["the request exceeds the available context size. n_ctx=4096", 4096],
@@ -108,7 +121,11 @@ describe("overflowLimitFromError — learn the real window from the rejection", 
 
   it("says nothing when the message states no limit", () => {
     expect(overflowLimitFromError(new Error("Please reduce the length of the messages."))).toBeUndefined();
-    expect(overflowLimitFromError(new Error('OpenAI API error 400: {"error":{"message":"Invalid schema for function Shell"}}'))).toBeUndefined();
+    expect(
+      overflowLimitFromError(
+        new Error('OpenAI API error 400: {"error":{"message":"Invalid schema for function Shell"}}'),
+      ),
+    ).toBeUndefined();
     expect(overflowLimitFromError(new Error("fetch failed"))).toBeUndefined();
     expect(overflowLimitFromError(undefined)).toBeUndefined();
   });
@@ -123,11 +140,13 @@ describe("overflowLimitFromError — learn the real window from the rejection", 
 const NOT_OVERFLOWS: Array<{ why: string; message: string }> = [
   {
     why: "output limit (shrinking the input does not help; the clamp handles it)",
-    message: 'OpenAI API error 400: {"error":{"message":"max_tokens is too large: 400000. This model supports at most 16384 completion tokens."}}',
+    message:
+      'OpenAI API error 400: {"error":{"message":"max_tokens is too large: 400000. This model supports at most 16384 completion tokens."}}',
   },
   {
     why: "invalid tool schema",
-    message: 'OpenAI API error 400: {"error":{"message":"Invalid schema for function \'Shell\': required is not of type array"}}',
+    message:
+      'OpenAI API error 400: {"error":{"message":"Invalid schema for function \'Shell\': required is not of type array"}}',
   },
   {
     why: "rate limit with the word tokens in it",

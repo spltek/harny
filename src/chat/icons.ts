@@ -156,9 +156,12 @@ export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
  */
 export function todoStatusIcon(status: TodoStatus, size = 12): string {
   const artwork: IconName =
-    status === "completed" ? "todoDone"
-      : status === "in_progress" ? "todoActive"
-        : status === "cancelled" ? "todoCancelled"
+    status === "completed"
+      ? "todoDone"
+      : status === "in_progress"
+        ? "todoActive"
+        : status === "cancelled"
+          ? "todoCancelled"
           : "todoPending";
   return icon(artwork, size);
 }

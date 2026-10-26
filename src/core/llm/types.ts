@@ -49,11 +49,7 @@ export interface LLMProvider {
    * fixture-level definitions per call (mode-filtered tool set); undefined
    * falls back to the definitions the provider was constructed with.
    */
-  stream(
-    messages: LLMMessage[],
-    signal?: AbortSignal,
-    toolDefinitions?: ToolDefinition[],
-  ): AsyncGenerator<StreamChunk>;
+  stream(messages: LLMMessage[], signal?: AbortSignal, toolDefinitions?: ToolDefinition[]): AsyncGenerator<StreamChunk>;
 }
 
 export interface LLMProviderFactory {

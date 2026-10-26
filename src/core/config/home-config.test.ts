@@ -50,10 +50,7 @@ describe("home config resolution (~/.harny/config.json)", () => {
     // A stray workspace file must have no effect: config lives only in ~/.harny.
     const workspace = mkdtempSync(join(tmpdir(), "harny-ws-"));
     try {
-      writeFileSync(
-        join(workspace, ".harny.json"),
-        JSON.stringify({ baseUrl: "http://workspace-should-be-ignored" }),
-      );
+      writeFileSync(join(workspace, ".harny.json"), JSON.stringify({ baseUrl: "http://workspace-should-be-ignored" }));
       const config = new CompositeConfigProvider(new StaticConfigProvider(BASE), [
         new HarnyFileConfigProvider(() => workspace, nodeFileSystem),
       ]).get();

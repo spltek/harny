@@ -44,7 +44,7 @@ function memFs(files: Record<string, string>): FileSystem {
 describe("parseSkillMd", () => {
   it("extracts name/description and strips the frontmatter from the body", () => {
     const { frontmatter, body } = parseSkillMd(
-      "---\nname: pdf-processing\ndescription: \"Extract PDF text\"\n---\n# Heading\nDo the thing.\n",
+      '---\nname: pdf-processing\ndescription: "Extract PDF text"\n---\n# Heading\nDo the thing.\n',
     );
     expect(frontmatter.name).toBe("pdf-processing");
     expect(frontmatter.description).toBe("Extract PDF text");
@@ -105,7 +105,9 @@ describe("loadSkill / discoverSkills", () => {
       "/w/.agents/skills/b/SKILL.md": "---\nname: b\ndescription: B\n---\ny",
       "/w/.agents/skills/loose.txt": "ignored",
     });
-    const names = discoverSkills(fs, ["/w/.agents/skills"]).map((s) => s.name).sort();
+    const names = discoverSkills(fs, ["/w/.agents/skills"])
+      .map((s) => s.name)
+      .sort();
     expect(names).toEqual(["a", "b"]);
   });
 

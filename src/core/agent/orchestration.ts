@@ -55,7 +55,7 @@ export function parseDelegateSpec(args: Record<string, unknown>): { spec?: Deleg
     return {
       error:
         'Delegate with access "write"/"create" requires a non-empty "resources" array listing the files/dirs ' +
-        'the sub-agent will touch (it drives the safe-parallelism decision). Read-only tasks that do not touch ' +
+        "the sub-agent will touch (it drives the safe-parallelism decision). Read-only tasks that do not touch " +
         'files (e.g. web research) may leave "resources" empty.',
     };
   }
@@ -63,8 +63,7 @@ export function parseDelegateSpec(args: Record<string, unknown>): { spec?: Deleg
   const id = typeof args.id === "string" && args.id.trim() ? args.id.trim() : "";
   const role = typeof args.role === "string" && args.role.trim() ? args.role.trim() : undefined;
   const context = typeof args.context === "string" && args.context.trim() ? args.context.trim() : undefined;
-  const parallel =
-    args.parallel === "yes" ? true : args.parallel === "no" ? false : undefined;
+  const parallel = args.parallel === "yes" ? true : args.parallel === "no" ? false : undefined;
   const after = Array.isArray(args.after)
     ? args.after.filter((a): a is string => typeof a === "string" && a.trim().length > 0).map((a) => a.trim())
     : [];
@@ -139,9 +138,7 @@ export interface PlannedCall {
 }
 
 /** One execution step: a single call, or a batch that may run concurrently. */
-export type ExecutionStep =
-  | { kind: "single"; index: number }
-  | { kind: "parallel"; indices: number[] };
+export type ExecutionStep = { kind: "single"; index: number } | { kind: "parallel"; indices: number[] };
 
 /**
  * Plan how to execute a turn's tool calls.
@@ -196,7 +193,7 @@ export function planToolExecution(calls: readonly PlannedCall[], cwd?: string): 
   let progress = true;
   while (deferred.length > 0 && progress) {
     progress = false;
-    for (let k = 0; k < deferred.length; ) {
+    for (let k = 0; k < deferred.length;) {
       const i = deferred[k];
       const spec = calls[i].spec!;
       if (depsReady(spec)) {

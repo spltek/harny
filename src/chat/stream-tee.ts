@@ -66,7 +66,13 @@ export class StreamTee {
         case "tool_call":
           // NOTE: this event fires BEFORE the assistant turn is committed; the
           // recorder keeps the call until the batch commits (dedupe by id).
-          if (active) post({ type: "toolCall", id: event.toolCall.id, name: event.toolCall.name, arguments: event.toolCall.arguments });
+          if (active)
+            post({
+              type: "toolCall",
+              id: event.toolCall.id,
+              name: event.toolCall.name,
+              arguments: event.toolCall.arguments,
+            });
           break;
         case "subagent_start":
           // The delegate actually left the queue and started running.
@@ -77,7 +83,13 @@ export class StreamTee {
           if (active) post({ type: "subagentEvent", toolCallId: event.toolCallId, event: event.event });
           break;
         case "tool_result":
-          if (active) post({ type: "toolResult", toolCallId: event.toolResult.toolCallId, output: event.toolResult.output, isError: event.toolResult.isError });
+          if (active)
+            post({
+              type: "toolResult",
+              toolCallId: event.toolResult.toolCallId,
+              output: event.toolResult.output,
+              isError: event.toolResult.isError,
+            });
           break;
         case "preview_ready":
           // Analyze prepared changes that are NOT applied: a static note in the

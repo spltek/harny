@@ -268,9 +268,7 @@ export function walkFiles(fs: FileSystem, root: string, opts: WalkOptions = {}):
   const seen = new Set<string>();
 
   const base = respect ? ancestorMatchers(fs, root, opts) : [];
-  const stack: Array<{ dir: string; depth: number; matchers: Matcher[] }> = [
-    { dir: root, depth: 0, matchers: base },
-  ];
+  const stack: Array<{ dir: string; depth: number; matchers: Matcher[] }> = [{ dir: root, depth: 0, matchers: base }];
   while (stack.length > 0 && out.length < maxFiles) {
     const { dir, depth, matchers } = stack.pop()!;
     const real = fs.realpath(dir);

@@ -421,7 +421,9 @@ describe("GrepTool (pure Node, cross-platform)", () => {
     const fs = memFs({ "/w/a.ts": "bar\n" });
     const tool = new GrepTool(fs, cwd);
 
-    expect((await tool.execute({ pattern: "zzz", path: "/w", output_mode: "files_with_matches" })).content).toBe("No matches found");
+    expect((await tool.execute({ pattern: "zzz", path: "/w", output_mode: "files_with_matches" })).content).toBe(
+      "No matches found",
+    );
     expect((await tool.execute({ pattern: "zzz", path: "/w", output_mode: "count" })).content).toBe("No matches found");
   });
 
@@ -568,7 +570,12 @@ describe("GlobTool (pure Node, cross-platform)", () => {
     // /r/loop resolves (realpath) back to /r — a classic infinite loop.
     const dirs = new Set(["/r", "/r/loop"]);
     const fs: FileSystem = {
-      readText: (p) => (p === "/r/a.ts" ? "" : (() => { throw new Error("ENOENT"); })()),
+      readText: (p) =>
+        p === "/r/a.ts"
+          ? ""
+          : (() => {
+              throw new Error("ENOENT");
+            })(),
       readBytes: () => Buffer.alloc(0),
       writeText: () => {},
       exists: (p) => p === "/r/a.ts" || dirs.has(p),

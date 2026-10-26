@@ -87,16 +87,10 @@ export function requiresReasoningPassBack(mode: ThinkingMode | undefined): boole
  * inventing a plaintext field there is the OPPOSITE 400. That is also why a provider that never
  * reasoned is left alone.
  */
-export function needsReasoningEcho(
-  mode: ThinkingMode | undefined,
-  messages: readonly LLMMessage[],
-): boolean {
+export function needsReasoningEcho(mode: ThinkingMode | undefined, messages: readonly LLMMessage[]): boolean {
   if (requiresReasoningPassBack(mode)) return true;
   return messages.some(
-    (m) =>
-      m.role === "assistant" &&
-      Boolean(m.thinking) &&
-      !(m.reasoningDetails && m.reasoningDetails.length > 0),
+    (m) => m.role === "assistant" && Boolean(m.thinking) && !(m.reasoningDetails && m.reasoningDetails.length > 0),
   );
 }
 
@@ -119,7 +113,9 @@ export function resetMaxCompletionTokensCache(): void {
 export function needsMaxCompletionTokens(status: number, text: string): boolean {
   if (status !== 400 && status !== 422) return false;
   if (!/max_completion_tokens/i.test(text)) return false;
-  return /Unsupported parameter|not supported|use .*max_completion_tokens|unknown (parameter|field)|unrecognized/i.test(text);
+  return /Unsupported parameter|not supported|use .*max_completion_tokens|unknown (parameter|field)|unrecognized/i.test(
+    text,
+  );
 }
 
 /** Sleep that rejects with an AbortError when the signal fires (Stop during backoff). */
@@ -377,12 +373,8 @@ export class OpenAIChatProvider implements LLMProvider {
         // already includes them (there cache_read is absent, and the cached SUBSET comes
         // in prompt_tokens_details).
         const cacheRead = Number(u.cache_read_input_tokens ?? 0);
-        const cached = Number(
-          u.prompt_tokens_details?.cached_tokens ?? u.prompt_cache_hit_tokens ?? cacheRead ?? 0,
-        );
-        const cachedWrite = Number(
-          u.prompt_tokens_details?.cache_write_tokens ?? u.cache_creation_input_tokens ?? 0,
-        );
+        const cached = Number(u.prompt_tokens_details?.cached_tokens ?? u.prompt_cache_hit_tokens ?? cacheRead ?? 0);
+        const cachedWrite = Number(u.prompt_tokens_details?.cache_write_tokens ?? u.cache_creation_input_tokens ?? 0);
         // LAST MIXED CASE: a gateway that reports `prompt_tokens` WITHOUT the cache but
         // the cached count as a subset field. There the two numbers sit on different
         // bases, `cached` can exceed the prompt we counted, and every ratio built from
@@ -391,7 +383,8 @@ export class OpenAIChatProvider implements LLMProvider {
         // so the base is corrected without knowing which provider is talking. The number
         // fixed here is not cosmetic: it is what the context bar shows and what triggers
         // the automatic compaction, and an understated context compacts too late.
-        const promptTotal = cached > prompt + cacheRead ? prompt + cacheRead + cached + cachedWrite : prompt + cacheRead;
+        const promptTotal =
+          cached > prompt + cacheRead ? prompt + cacheRead + cached + cachedWrite : prompt + cacheRead;
         const output = Number(u.completion_tokens ?? 0);
         yield {
           type: "usage",
@@ -494,10 +487,7 @@ export class OpenAIChatProvider implements LLMProvider {
  */
 const REASONING_TEXT_FIELDS = new Set(["summary", "text", "data"]);
 
-function accumulateReasoningDetails(
-  blocks: Map<number, Record<string, unknown>>,
-  deltas: unknown[],
-): void {
+function accumulateReasoningDetails(blocks: Map<number, Record<string, unknown>>, deltas: unknown[]): void {
   for (const raw of deltas) {
     if (!raw || typeof raw !== "object") continue;
     const delta = raw as Record<string, unknown>;

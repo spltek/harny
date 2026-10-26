@@ -38,7 +38,9 @@ describe("toolCallDetail", () => {
   });
 
   it("names the sub-agent and flattens its goal", () => {
-    expect(toolCallDetail("Delegate", { id: "auth", goal: "Split  the\n  auth module" })).toBe('"auth" → Split the auth module');
+    expect(toolCallDetail("Delegate", { id: "auth", goal: "Split  the\n  auth module" })).toBe(
+      '"auth" → Split the auth module',
+    );
     expect(toolCallDetail("Delegate", { goal: "no id" })).toBe("→ no id");
   });
 

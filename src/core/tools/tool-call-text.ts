@@ -64,14 +64,18 @@ export function toolCallDetail(name: string, args: unknown): string | undefined 
     return `(${lines} line${lines === 1 ? "" : "s"})`;
   }
   // Edit uses oldText/newText, StrReplace uses old_string/new_string: same idea.
-  const oldText = typeof rec.oldText === "string" ? rec.oldText : typeof rec.old_string === "string" ? rec.old_string : undefined;
-  const newText = typeof rec.newText === "string" ? rec.newText : typeof rec.new_string === "string" ? rec.new_string : undefined;
+  const oldText =
+    typeof rec.oldText === "string" ? rec.oldText : typeof rec.old_string === "string" ? rec.old_string : undefined;
+  const newText =
+    typeof rec.newText === "string" ? rec.newText : typeof rec.new_string === "string" ? rec.new_string : undefined;
   if (oldText !== undefined && newText !== undefined) {
     return `(+${countLines(newText)}/-${countLines(oldText)})`;
   }
   if (name === "Delegate") {
     const id = typeof rec.id === "string" && rec.id ? `"${rec.id}" ` : "";
-    return `${id}→ ${String(rec.goal ?? "").replace(/\s+/g, " ").trim()}`.trim();
+    return `${id}→ ${String(rec.goal ?? "")
+      .replace(/\s+/g, " ")
+      .trim()}`.trim();
   }
   return undefined;
 }

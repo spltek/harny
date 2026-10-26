@@ -48,9 +48,7 @@ describe("protocol-level message conversion (generalized rules)", () => {
   });
 
   it("chat: prefers reasoning_details over reasoning_content when both exist", () => {
-    const details = [
-      { type: "reasoning.summary", summary: "full", format: "openai-responses-v1", index: 0 },
-    ];
+    const details = [{ type: "reasoning.summary", summary: "full", format: "openai-responses-v1", index: 0 }];
     const out = toOpenAIMessages([
       { role: "assistant", content: "answer", thinking: "plain", reasoningDetails: details },
     ]);
@@ -59,9 +57,7 @@ describe("protocol-level message conversion (generalized rules)", () => {
   });
 
   it("chat: ignores an empty reasoning_details array and falls back to reasoning_content", () => {
-    const out = toOpenAIMessages([
-      { role: "assistant", content: "answer", thinking: "plain", reasoningDetails: [] },
-    ]);
+    const out = toOpenAIMessages([{ role: "assistant", content: "answer", thinking: "plain", reasoningDetails: [] }]);
     expect(out[0].reasoning_content).toBe("plain");
     expect(out[0].reasoning_details).toBeUndefined();
   });
@@ -110,13 +106,7 @@ describe("protocol-level message conversion (generalized rules)", () => {
     expect(out[0].reasoning_content).toBeUndefined();
     expect(out[1].reasoning_content).toBeUndefined();
   });
-
-
 });
-
-
-
-
 
 describe("toOpenAIMessages tool_calls guard", () => {
   it("omits tool_calls when the array is empty (no Empty tool_calls error)", () => {
@@ -125,7 +115,9 @@ describe("toOpenAIMessages tool_calls guard", () => {
   });
 
   it("includes tool_calls only when there is at least one", () => {
-    const out = toOpenAIMessages([{ role: "assistant", content: "ok", toolCalls: [{ id: "c1", name: "Read", arguments: { path: "/x" } }] }]);
+    const out = toOpenAIMessages([
+      { role: "assistant", content: "ok", toolCalls: [{ id: "c1", name: "Read", arguments: { path: "/x" } }] },
+    ]);
     expect((out[0] as any).tool_calls).toHaveLength(1);
   });
 });

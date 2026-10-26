@@ -75,7 +75,7 @@ export class TodoTool implements Tool {
     if (!Array.isArray(todos)) {
       return {
         content:
-          "Tool TodoWrite requires the argument \"todos\": an array of {id, content, status} objects\n" +
+          'Tool TodoWrite requires the argument "todos": an array of {id, content, status} objects\n' +
           'with status one of "pending" | "in_progress" | "completed" | "cancelled", and a "merge" boolean.\n' +
           'Call again with: {"todos": [{"id": "1", "content": "...", "status": "pending"}], "merge": false}',
         isError: true,

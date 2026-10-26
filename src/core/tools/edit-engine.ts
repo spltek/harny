@@ -45,7 +45,12 @@ export function applyEdits(content: string, edits: EditOp[]): EditResult {
       applied++;
       modes.push(r.mode);
     } else {
-      failed.push({ index: i, reason: r.reason, detail: r.detail, anchor: op.oldText ?? op.beforeText ?? op.afterText });
+      failed.push({
+        index: i,
+        reason: r.reason,
+        detail: r.detail,
+        anchor: op.oldText ?? op.beforeText ?? op.afterText,
+      });
     }
   });
   // Preserve the file's line endings: replacements/insertions are authored with
@@ -100,7 +105,12 @@ function applyOne(content: string, op: EditOp): OneResult {
     }
     const pos = content.indexOf(anchor);
     if (pos === -1) {
-      return { ok: false, mode: "invalid", reason: `anchor not found: "${anchor}".`, detail: `Re-check the file; the anchor "${anchor}" is not present.` };
+      return {
+        ok: false,
+        mode: "invalid",
+        reason: `anchor not found: "${anchor}".`,
+        detail: `Re-check the file; the anchor "${anchor}" is not present.`,
+      };
     }
     const before = content.slice(0, pos);
     const after = content.slice(pos);
@@ -114,7 +124,7 @@ function applyOne(content: string, op: EditOp): OneResult {
     mode: "invalid",
     reason: "invalid edit: need oldText+newText or before/afterText.",
     detail:
-      'Each edit needs either oldText+newText (replacement) or beforeText/afterText + newText (insertion). ' +
+      "Each edit needs either oldText+newText (replacement) or beforeText/afterText + newText (insertion). " +
       'Example: {"edits": [{"oldText": "old line", "newText": "new line"}]}.',
   };
 }
@@ -127,17 +137,32 @@ function applyOne(content: string, op: EditOp): OneResult {
  */
 function replaceText(content: string, oldText: string, newText: string): OneResult {
   if (!oldText) {
-    return { ok: false, mode: "invalid", reason: "oldText is empty.", detail: "Quote the actual text to replace — empty oldText cannot match." };
+    return {
+      ok: false,
+      mode: "invalid",
+      reason: "oldText is empty.",
+      detail: "Quote the actual text to replace — empty oldText cannot match.",
+    };
   }
   if (oldText === newText) {
-    return { ok: false, mode: "invalid", reason: "no change: oldText equals newText.", detail: "Pick the actual text to change." };
+    return {
+      ok: false,
+      mode: "invalid",
+      reason: "no change: oldText equals newText.",
+      detail: "Pick the actual text to change.",
+    };
   }
 
   // 1) exact occurrence count
   const exactCount = countOccurrences(content, oldText);
   if (exactCount === 1) {
     const idx = content.indexOf(oldText);
-    return { ok: true, content: content.slice(0, idx) + newText + content.slice(idx + oldText.length), mode: "exact", reason: "ok" };
+    return {
+      ok: true,
+      content: content.slice(0, idx) + newText + content.slice(idx + oldText.length),
+      mode: "exact",
+      reason: "ok",
+    };
   }
   if (exactCount > 1) {
     return {
@@ -150,7 +175,8 @@ function replaceText(content: string, oldText: string, newText: string): OneResu
 
   // 2) fuzzy: line-run match in normalized space (trailing whitespace, unicode noise)
   const fuzzy = fuzzyUniqueReplace(content, oldText, newText);
-  if (fuzzy !== undefined && fuzzy !== "duplicate") return { ok: true, content: fuzzy.content, mode: "fuzzy", reason: "ok" };
+  if (fuzzy !== undefined && fuzzy !== "duplicate")
+    return { ok: true, content: fuzzy.content, mode: "fuzzy", reason: "ok" };
   if (fuzzy === "duplicate") {
     return {
       ok: false,
@@ -164,7 +190,8 @@ function replaceText(content: string, oldText: string, newText: string): OneResu
     ok: false,
     mode: "invalid",
     reason: "oldText not found.",
-    detail: "The file does not contain this text (even tolerating trailing whitespace/Unicode). Re-Read the file and quote the ACTUAL content — it may have moved to another line or file.",
+    detail:
+      "The file does not contain this text (even tolerating trailing whitespace/Unicode). Re-Read the file and quote the ACTUAL content — it may have moved to another line or file.",
   };
 }
 
@@ -209,7 +236,10 @@ export function fuzzyUniqueReplace(
   for (let i = 0; i + needle.length <= lines.length; i++) {
     let ok = true;
     for (let j = 0; j < needle.length; j++) {
-      if (normalizeLine(lines[i + j]) !== needle[j]) { ok = false; break; }
+      if (normalizeLine(lines[i + j]) !== needle[j]) {
+        ok = false;
+        break;
+      }
     }
     if (ok) matches.push(i);
   }
@@ -243,18 +273,41 @@ export function checkStructuralBalance(content: string): { balanced: boolean; me
   let blockComment = false;
   for (let i = 0; i < content.length; i++) {
     const c = content[i];
-    if (lineComment) { if (c === "\n") lineComment = false; continue; }
-    if (blockComment) { if (c === "*" && content[i + 1] === "/") { blockComment = false; i++; } continue; }
+    if (lineComment) {
+      if (c === "\n") lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (c === "*" && content[i + 1] === "/") {
+        blockComment = false;
+        i++;
+      }
+      continue;
+    }
     if (inStr) {
       if (esc) esc = false;
       else if (c === "\\") esc = true;
       else if (c === inStr) inStr = null;
       continue;
     }
-    if (c === "/" && content[i + 1] === "/") { lineComment = true; i++; continue; }
-    if (c === "/" && content[i + 1] === "*") { blockComment = true; i++; continue; }
-    if (c === '"' || c === "'" || c === "`") { inStr = c; continue; }
-    if (opens.has(c)) { stack.push(c); continue; }
+    if (c === "/" && content[i + 1] === "/") {
+      lineComment = true;
+      i++;
+      continue;
+    }
+    if (c === "/" && content[i + 1] === "*") {
+      blockComment = true;
+      i++;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      inStr = c;
+      continue;
+    }
+    if (opens.has(c)) {
+      stack.push(c);
+      continue;
+    }
     const expected = pairs[c];
     if (expected) {
       if (stack.length === 0 || stack[stack.length - 1] !== expected) {
@@ -275,7 +328,10 @@ export function checkStructuralBalance(content: string): { balanced: boolean; me
  */
 export function closestContext(content: string, oldText: string, around = 3): string[] {
   const lines = content.split("\n");
-  const needle = oldText.split("\n").map((s) => s.trim()).filter((s) => s.length > 0);
+  const needle = oldText
+    .split("\n")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
   if (needle.length === 0) return [];
   const first = needle[0];
   const firstWords = first.split(/\s+/);

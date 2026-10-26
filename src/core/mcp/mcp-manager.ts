@@ -45,7 +45,13 @@ export class McpManager {
       } else if (cfg && typeof cfg === "object" && "url" in cfg && cfg.url) {
         client = new McpHttpClient({ url: cfg.url, headers: cfg.headers, log: this.deps.log });
       } else {
-        this.statuses.push({ name, ok: false, enabled: true, error: "a server needs 'command' (stdio) or 'url' (http)", toolCount: 0 });
+        this.statuses.push({
+          name,
+          ok: false,
+          enabled: true,
+          error: "a server needs 'command' (stdio) or 'url' (http)",
+          toolCount: 0,
+        });
         continue;
       }
       try {
@@ -54,8 +60,7 @@ export class McpManager {
         this.clients.set(name, client);
         // The Analyze gate needs the USER's declaration for this server, read live so a
         // settings change lands on the next turn (see ServerAnalyzePolicy).
-        const declared = (): ServerAnalyzePolicy | undefined =>
-          this.deps.servers()?.[name]?.analyze;
+        const declared = (): ServerAnalyzePolicy | undefined => this.deps.servers()?.[name]?.analyze;
         for (const info of infos) this.tools.push(new McpTool(name, info, client, declared));
         this.statuses.push({
           name,

@@ -242,7 +242,11 @@ export class SessionEngine {
    *  · the live turn is reset after the budget, so a replayed projection can never
    *    describe the PREVIOUS run.
    */
-  private async dispatch(intent: SendIntent, run: { started: boolean; hadError: boolean }, port: SessionSendPort): Promise<void> {
+  private async dispatch(
+    intent: SendIntent,
+    run: { started: boolean; hadError: boolean },
+    port: SessionSendPort,
+  ): Promise<void> {
     port.prepareAgent();
     const rawText = typeof intent.text === "string" ? intent.text : "";
     const attached = intent.attachments ?? [];

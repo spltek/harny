@@ -4,13 +4,7 @@ import type { ToolCall } from "../tools/tool";
  * The kinds of degenerate behaviour the guard knows how to break. Each has its
  * own escalation level, so a recurring loop escalates independently of others.
  */
-export type LoopType =
-  | "reasoning"
-  | "empty"
-  | "tool-failure"
-  | "error-streak"
-  | "tool-repeat"
-  | "response";
+export type LoopType = "reasoning" | "empty" | "tool-failure" | "error-streak" | "tool-repeat" | "response";
 
 export const LOOP_TYPES: readonly LoopType[] = [
   "reasoning",
@@ -631,7 +625,10 @@ export class LoopGuard {
       };
     } else {
       const similarity = thinkingSimilarity(this.prevThinking, obs.thinking);
-      if (obs.thinking.trim().length > this.options.crossTurnMinLength && similarity >= this.options.crossTurnSimilarity) {
+      if (
+        obs.thinking.trim().length > this.options.crossTurnMinLength &&
+        similarity >= this.options.crossTurnSimilarity
+      ) {
         active = "reasoning";
         messages = {
           nudge:

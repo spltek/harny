@@ -14,7 +14,9 @@ import type { ChatMessage } from "../core/history/types";
  * unlocked, the prompt before the compaction sends `/skills` through a compaction
  * it never needed, the refresh after a background run clobbers the tab you are on.
  */
-function makeHarness(options: { hasModel?: boolean; prompt?: PreparedPrompt | null; emitError?: boolean; active?: boolean } = {}) {
+function makeHarness(
+  options: { hasModel?: boolean; prompt?: PreparedPrompt | null; emitError?: boolean; active?: boolean } = {},
+) {
   const calls: string[] = [];
   const sent: { text: string; options?: SendOptions }[] = [];
   const added: ChatMessage[] = [];

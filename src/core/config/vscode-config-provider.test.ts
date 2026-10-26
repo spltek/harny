@@ -3,9 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const configValues: Record<string, unknown> = {};
 const workspaceMock = {
   getConfiguration: vi.fn(() => ({
-    get: vi.fn((key: string, fallback: unknown) =>
-      key in configValues ? configValues[key] : fallback,
-    ),
+    get: vi.fn((key: string, fallback: unknown) => (key in configValues ? configValues[key] : fallback)),
   })),
 };
 

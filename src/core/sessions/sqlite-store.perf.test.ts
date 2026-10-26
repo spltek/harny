@@ -58,10 +58,14 @@ let store: SqliteSessionStore;
 
 beforeEach(() => {
   db = new DatabaseSync(":memory:");
-  store = new SqliteSessionStore({ db, fs: fakeFs(), idGen: (() => {
-    let n = 0;
-    return () => `s${++n}`;
-  })() });
+  store = new SqliteSessionStore({
+    db,
+    fs: fakeFs(),
+    idGen: (() => {
+      let n = 0;
+      return () => `s${++n}`;
+    })(),
+  });
   resetDbMetrics();
 });
 
@@ -167,7 +171,10 @@ describe("SqliteSessionStore — does the writer have to leave the host thread?"
 
   it("a 200-message session is a fraction of a millisecond to search", () => {
     const id = store.create("search").id;
-    store.saveMessages(id, Array.from({ length: 200 }, (_, i) => heavyMessage(i)));
+    store.saveMessages(
+      id,
+      Array.from({ length: 200 }, (_, i) => heavyMessage(i)),
+    );
 
     const t0 = performance.now();
     const hits = store.search("step 42");

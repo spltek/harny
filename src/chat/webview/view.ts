@@ -4,7 +4,16 @@ import type { PendingViewItem } from "./pending-section";
 import { splitDiffFence, countDiff } from "./diff-fence";
 import Prism from "./prism";
 import { langIdForPath } from "./lang-map";
-import { clampContextWindow, clampOutputTokens, DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, MAX_CONTEXT_WINDOW, MAX_OUTPUT_TOKENS, MIN_CONTEXT_WINDOW, MIN_OUTPUT_TOKENS } from "../context-window";
+import {
+  clampContextWindow,
+  clampOutputTokens,
+  DEFAULT_CONTEXT_WINDOW,
+  DEFAULT_OUTPUT_TOKENS,
+  MAX_CONTEXT_WINDOW,
+  MAX_OUTPUT_TOKENS,
+  MIN_CONTEXT_WINDOW,
+  MIN_OUTPUT_TOKENS,
+} from "../context-window";
 import { clampTemperature, clampTopP, TEMPERATURE_MAX, TEMPERATURE_MIN, TEMPERATURE_STEP } from "../temperature";
 // Icon/glyph artwork is FILES under media/icons/, never markup in here (see
 // src/chat/icons.ts): this module only names the icon and its size.
@@ -144,8 +153,24 @@ interface ConfigState {
   skills?: { name: string; description: string }[];
   /** MCP servers + status (MCP card). */
   mcp?: {
-    servers: Record<string, { command?: string; args?: string[]; env?: Record<string, string>; url?: string; headers?: Record<string, string> }>;
-    statuses: { name: string; ok: boolean; enabled: boolean; error?: string; toolCount: number; tools?: { name: string; description?: string }[] }[];
+    servers: Record<
+      string,
+      {
+        command?: string;
+        args?: string[];
+        env?: Record<string, string>;
+        url?: string;
+        headers?: Record<string, string>;
+      }
+    >;
+    statuses: {
+      name: string;
+      ok: boolean;
+      enabled: boolean;
+      error?: string;
+      toolCount: number;
+      tools?: { name: string; description?: string }[];
+    }[];
   };
   contextTokens?: number;
   cachedTokens?: number;
@@ -279,7 +304,9 @@ const compactPreview = document.getElementById("compact-preview") as HTMLPreElem
 const compactThresholdValue = document.getElementById("compact-threshold-value") as HTMLSpanElement;
 const compactTargetValue = document.getElementById("compact-target-value") as HTMLSpanElement;
 
-const init = JSON.parse((document.getElementById("harny-view-init") as HTMLScriptElement).textContent ?? "{}") as InitState;
+const init = JSON.parse(
+  (document.getElementById("harny-view-init") as HTMLScriptElement).textContent ?? "{}",
+) as InitState;
 
 let activeId: string | undefined = init.activeId;
 let openIds: string[] = init.openIds || [];
@@ -319,7 +346,15 @@ const pendingToolCalls = new Map<string, HTMLDivElement>();
 // ── Pending attachments: files picked via the "+" button and queued for the
 // next send. Per session (they belong to that session's draft) and PERSISTED across a
 // webview reload since this change — see persistCompositions for the size budget. ──
-interface AttachedFile { name: string; path: string; size: number; isImage: boolean; dataUri?: string; content?: string; needsReattach?: boolean; }
+interface AttachedFile {
+  name: string;
+  path: string;
+  size: number;
+  isImage: boolean;
+  dataUri?: string;
+  content?: string;
+  needsReattach?: boolean;
+}
 let attachedFiles: AttachedFile[] = [];
 
 // ── Per-session COMPOSITION: the prompt AND its attachments ──
@@ -582,10 +617,13 @@ function makeThrottledMd(minIntervalMs = 16) {
   function schedule(): void {
     if (raf === undefined) raf = window.requestAnimationFrame(tick);
     if (timer === undefined) {
-      timer = window.setTimeout(() => {
-        timer = undefined;
-        tick();
-      }, Math.max(32, Math.round(minGap())));
+      timer = window.setTimeout(
+        () => {
+          timer = undefined;
+          tick();
+        },
+        Math.max(32, Math.round(minGap())),
+      );
     }
   }
 
@@ -707,7 +745,9 @@ function renderSessions(sessions: SessionInfo[]): void {
   if (visible.length === 0) {
     const p = document.createElement("div");
     p.className = "empty" + (sessionSearchIds ? " no-match" : "");
-    p.textContent = sessionSearchIds ? "No session matches the search." : "No sessions in this folder. Create a new session.";
+    p.textContent = sessionSearchIds
+      ? "No session matches the search."
+      : "No sessions in this folder. Create a new session.";
     sessionsEl.appendChild(p);
     return;
   }
@@ -727,8 +767,7 @@ function renderSessions(sessions: SessionInfo[]): void {
     meta.className = "smeta";
     meta.textContent = "created " + fmtDate(s.createdAt) + " · updated " + fmtDate(s.updatedAt);
     meta.title =
-      "Created: " + new Date(s.createdAt).toLocaleString() +
-      " · Updated: " + new Date(s.updatedAt).toLocaleString();
+      "Created: " + new Date(s.createdAt).toLocaleString() + " · Updated: " + new Date(s.updatedAt).toLocaleString();
     const name = document.createElement("span");
     name.className = "name";
     name.textContent = s.name || "Session";
@@ -748,9 +787,15 @@ function renderSessions(sessions: SessionInfo[]): void {
     const actions = document.createElement("span");
     actions.className = "srow-actions";
     actions.innerHTML =
-      '<button class="branch" title="Branch (copy) this session">' + icon("branch", 13) + "</button>" +
-      '<button class="rename" title="Rename">' + icon("pencil", 13) + "</button>" +
-      '<button class="del" title="Delete">' + icon("trash", 13, 'stroke-width="2"') + "</button>";
+      '<button class="branch" title="Branch (copy) this session">' +
+      icon("branch", 13) +
+      "</button>" +
+      '<button class="rename" title="Rename">' +
+      icon("pencil", 13) +
+      "</button>" +
+      '<button class="del" title="Delete">' +
+      icon("trash", 13, 'stroke-width="2"') +
+      "</button>";
     const branchBtn = actions.querySelector(".branch") as HTMLButtonElement;
     (actions.querySelector(".rename") as HTMLButtonElement).addEventListener("click", (e) => {
       e.stopPropagation();
@@ -1072,8 +1117,7 @@ function scrollDown(): void {
 }
 
 messagesEl.addEventListener("scroll", () => {
-  const nearBottom =
-    messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < SCROLL_BOTTOM_TOLERANCE;
+  const nearBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < SCROLL_BOTTOM_TOLERANCE;
   autoScroll = nearBottom;
   // Scrolling is what makes the "Autoscroll" pill applicable or not.
   updateTranscriptActions();
@@ -1164,8 +1208,12 @@ function addHarnessMessage(content: string): HTMLDivElement {
   div.className = "msg user harness";
   div.title = "Inserted by Harny (system) — not typed by you";
   div.innerHTML =
-    '<div class="harness-label">' + HARNESS_LABEL + "</div>" +
-    '<div class="harness-md">' + renderMarkdown(content || "") + "</div>";
+    '<div class="harness-label">' +
+    HARNESS_LABEL +
+    "</div>" +
+    '<div class="harness-md">' +
+    renderMarkdown(content || "") +
+    "</div>";
   messagesEl.appendChild(div);
   scrollDown();
   return div;
@@ -1316,19 +1364,49 @@ function addSwitchToBuildBanner(): void {
  * in media/icons/file-badge.svg. */
 function attachmentIcon(name: string, size = 44): string {
   const ext = (name.split(".").pop() ?? "").toLowerCase();
-  const code = ["js","jsx","ts","tsx","py","rb","go","rs","java","c","cc","cpp","h","hpp","cs","php","swift","kt","sh","bash","zsh","sql","html","css","scss","vue","svelte"];
-  const sheet = ["csv","tsv","xls","xlsx","ods"];
-  const archive = ["zip","tar","gz","tgz","rar","7z","bz2"];
-  const data = ["json","jsonc","yaml","yml","toml","xml"];
+  const code = [
+    "js",
+    "jsx",
+    "ts",
+    "tsx",
+    "py",
+    "rb",
+    "go",
+    "rs",
+    "java",
+    "c",
+    "cc",
+    "cpp",
+    "h",
+    "hpp",
+    "cs",
+    "php",
+    "swift",
+    "kt",
+    "sh",
+    "bash",
+    "zsh",
+    "sql",
+    "html",
+    "css",
+    "scss",
+    "vue",
+    "svelte",
+  ];
+  const sheet = ["csv", "tsv", "xls", "xlsx", "ods"];
+  const archive = ["zip", "tar", "gz", "tgz", "rar", "7z", "bz2"];
+  const data = ["json", "jsonc", "yaml", "yml", "toml", "xml"];
   let color = "#9a9a9a";
   let label = ext ? ext.toUpperCase().slice(0, 3) : "FILE";
   if (ext === "pdf") color = "#e06c75";
-  else if (ext === "md") { color = "#a98dff"; label = "MD"; }
-  else if (code.includes(ext)) color = "#61afef";
+  else if (ext === "md") {
+    color = "#a98dff";
+    label = "MD";
+  } else if (code.includes(ext)) color = "#61afef";
   else if (sheet.includes(ext)) color = "#98c379";
   else if (archive.includes(ext)) color = "#e5c07b";
   else if (data.includes(ext)) color = "#e5c07b";
-  else if (["png","jpg","jpeg","gif","webp","bmp","svg"].includes(ext)) color = "#56b6c2";
+  else if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"].includes(ext)) color = "#56b6c2";
   return fileBadgeIcon(label, color, size);
 }
 
@@ -1424,7 +1502,11 @@ function closeImageLightbox(): void {
   lightboxEl?.classList.add("hidden");
 }
 
-function addThinkingBlock(text: string, beforeEl?: HTMLElement | null, opts?: { pulse?: boolean; label?: string }): HTMLDivElement {
+function addThinkingBlock(
+  text: string,
+  beforeEl?: HTMLElement | null,
+  opts?: { pulse?: boolean; label?: string },
+): HTMLDivElement {
   const block = makeThinkingBlock(opts?.label ?? icon("thinking", 13) + "Thinking...", text, undefined, beforeEl);
   // Live reasoning in progress: the block pulses (accent edges) until done.
   // Historical blocks re-rendered from the transcript pass pulse:false —
@@ -1448,7 +1530,9 @@ function makeThinkingBlock(
   // Thinking areas start COLLAPSED (▶): expand on click. The streaming body
   // keeps accumulating text while hidden, so it is never lost.
   block.innerHTML =
-    '<div class="thinking-header"><span class="toggle">▶</span>' + label + "</div>" +
+    '<div class="thinking-header"><span class="toggle">▶</span>' +
+    label +
+    "</div>" +
     '<div class="thinking-body collapsed"></div>';
   const body = block.querySelector(".thinking-body");
   if (body) body.innerHTML = renderMarkdown(bodyText);
@@ -1487,11 +1571,16 @@ function addToolCall(name: string, args: unknown, beforeEl?: HTMLElement | null)
   div.innerHTML =
     '<div class="tool-header">' +
     '<span class="tool-toggle">▶</span>' +
-    '<span class="tool-name">' + toolIcon(name) + escapeHtml(name) + "</span>" +
+    '<span class="tool-name">' +
+    toolIcon(name) +
+    escapeHtml(name) +
+    "</span>" +
     (target ? '<span class="tool-path" title="' + escapeHtml(target) + '">' + escapeHtml(target) + "</span>" : "") +
     "</div>" +
     '<div class="tool-details collapsed">' +
-    '<div class="tool-input"><span class="tool-label">Input</span><pre class="tool-args">' + escapeHtml(formatArgs(args)) + "</pre></div>" +
+    '<div class="tool-input"><span class="tool-label">Input</span><pre class="tool-args">' +
+    escapeHtml(formatArgs(args)) +
+    "</pre></div>" +
     '<div class="tool-output"><span class="tool-label">Output</span><pre class="tool-result">⏳ running…</pre></div>' +
     "</div>";
   wireCollapsible(div);
@@ -1559,15 +1648,11 @@ function collapseAllSections(): number {
 }
 
 /** Update a sub-agent bubble's status chip. */
-function setSubAgentStatus(
-  el: HTMLElement,
-  status: "queued" | "running" | "done" | "failed" | "aborted",
-): void {
+function setSubAgentStatus(el: HTMLElement, status: "queued" | "running" | "done" | "failed" | "aborted"): void {
   const chip = el.querySelector(".subagent-status");
   if (!chip) return;
   chip.className = "subagent-status " + status;
-  chip.textContent =
-    status === "running" ? "running…" : status === "queued" ? "queued…" : status;
+  chip.textContent = status === "running" ? "running…" : status === "queued" ? "queued…" : status;
   const terminal = status === "done" || status === "failed" || status === "aborted";
   // Pulse the BUBBLE (not the chip) while this sub-agent works, phase-locked to
   // the shared clock so it beats in sync with the thinking/answer bubbles; on a
@@ -1651,7 +1736,9 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
     " Sub-agent" +
     (label ? ' "' + escapeHtml(label) + '"' : "") +
     "</span>" +
-    (goal ? '<span class="subagent-name" title="' + escapeHtml(goal) + '">' + escapeHtml(goalPreview) + "</span>" : "") +
+    (goal
+      ? '<span class="subagent-name" title="' + escapeHtml(goal) + '">' + escapeHtml(goalPreview) + "</span>"
+      : "") +
     (role ? '<span class="subagent-role">' + escapeHtml(role) + "</span>" : "") +
     '<span class="subagent-status queued">queued…</span>' +
     '<button class="subagent-abort" type="button" title="Abort this sub-agent" aria-label="Abort this sub-agent">' +
@@ -1662,11 +1749,19 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
     (goal ? '<div class="subagent-goal">' + escapeHtml(goal) + "</div>" : "") +
     '<div class="subagent-meta">' +
     (access ? '<span class="subagent-chip access-' + escapeHtml(access) + '">' + escapeHtml(access) + "</span>" : "") +
-    (parallel ? '<span class="subagent-chip parallel" title="may run in parallel with other read-only sub-agents">⫽ parallel</span>' : "") +
-    (after.length > 0 ? '<span class="subagent-chip" title="waits for">after: ' + escapeHtml(after.join(", ")) + "</span>" : "") +
-    resources.map((r) => '<span class="subagent-chip res" title="' + escapeHtml(r) + '">' + escapeHtml(r) + "</span>").join("") +
+    (parallel
+      ? '<span class="subagent-chip parallel" title="may run in parallel with other read-only sub-agents">⫽ parallel</span>'
+      : "") +
+    (after.length > 0
+      ? '<span class="subagent-chip" title="waits for">after: ' + escapeHtml(after.join(", ")) + "</span>"
+      : "") +
+    resources
+      .map((r) => '<span class="subagent-chip res" title="' + escapeHtml(r) + '">' + escapeHtml(r) + "</span>")
+      .join("") +
     "</div>" +
-    '<div class="tool-input"><span class="tool-label">Task</span><pre class="tool-args">' + escapeHtml(formatArgs(args)) + "</pre></div>" +
+    '<div class="tool-input"><span class="tool-label">Task</span><pre class="tool-args">' +
+    escapeHtml(formatArgs(args)) +
+    "</pre></div>" +
     '<div class="tool-output"><span class="tool-label">Report</span><div class="tool-result subagent-report">⏳ working…</div></div>' +
     "</div>";
   // Header toggles the WHOLE body (goal + nested stream + report).
@@ -1761,8 +1856,8 @@ function handleSubAgentEvent(parentId: string, event: SubAgentStreamEvent): void
     const id = event.toolCall.id ?? event.toolCall.name;
     line.dataset.id = id;
     const target = toolTargetArg(event.toolCall.arguments);
-    line.innerHTML = toolIcon(event.toolCall.name) + escapeHtml(event.toolCall.name) +
-      (target ? " " + escapeHtml(target) : "");
+    line.innerHTML =
+      toolIcon(event.toolCall.name) + escapeHtml(event.toolCall.name) + (target ? " " + escapeHtml(target) : "");
     log.appendChild(line);
     subAgentToolEls.set(parentId + ":" + id, line);
     scrollDown();
@@ -1924,9 +2019,7 @@ function renderEmptyShell(): void {
   hero.className = "empty-hero";
   hero.innerHTML =
     '<div class="empty-icon empty-logo">' +
-    (init.logoUri
-      ? '<img src="' + escapeHtml(init.logoUri) + '" alt="Harny" draggable="false">'
-      : "") +
+    (init.logoUri ? '<img src="' + escapeHtml(init.logoUri) + '" alt="Harny" draggable="false">' : "") +
     "</div>" +
     "<h2>Harny</h2>" +
     heroMetaLine() +
@@ -2360,7 +2453,10 @@ function formatBytes(n: number): string {
   const units = ["B", "KB", "MB", "GB"];
   let value = n;
   let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
   return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
 }
 
@@ -2646,8 +2742,7 @@ async function attachPastedFile(file: File, source: "clipboard" | "drop" = "clip
   if (file.type.startsWith("image/")) {
     // Clipboard images have no meaningful file name: call them
     // "Image from clipboard". Dropped images keep their real name.
-    const name =
-      source === "clipboard" ? uniqueClipboardImageName() : file.name || `image.${extFromMime(file.type)}`;
+    const name = source === "clipboard" ? uniqueClipboardImageName() : file.name || `image.${extFromMime(file.type)}`;
     try {
       attachedFiles.push({ name, path: "", size: file.size, isImage: true, dataUri: await readAsDataUrl(file) });
     } catch {
@@ -2823,10 +2918,26 @@ document.addEventListener("visibilitychange", () => {
 inputEl.addEventListener("keydown", (e) => {
   // The slash menu captures navigation/selection keys while it is open.
   if (!slashMenu.classList.contains("hidden")) {
-    if (e.key === "ArrowDown") { e.preventDefault(); slashMove(1); return; }
-    if (e.key === "ArrowUp") { e.preventDefault(); slashMove(-1); return; }
-    if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); selectSlashItem(); return; }
-    if (e.key === "Escape") { e.preventDefault(); hideSlashMenu(); return; }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      slashMove(1);
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      slashMove(-1);
+      return;
+    }
+    if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      selectSlashItem();
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      hideSlashMenu();
+      return;
+    }
   }
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
@@ -2850,7 +2961,8 @@ window.addEventListener("keydown", (e) => {
   // Ignore stale handlers (a re-imported module in tests leaves its listener on
   // the shared window) and any detached button: only the live view acts.
   // The slash menu owns Esc while it is open (it closes the menu).
-  if (e.key !== "Escape" || !abortBtn.isConnected || abortBtn.disabled || !slashMenu.classList.contains("hidden")) return;
+  if (e.key !== "Escape" || !abortBtn.isConnected || abortBtn.disabled || !slashMenu.classList.contains("hidden"))
+    return;
   // Do NOT hijack an Escape that is closing a native control (an open <select>,
   // a focused input/button): that is the user dismissing something, not Stop.
   const target = e.target as HTMLElement | null;
@@ -2930,12 +3042,8 @@ function nameConflict(excludedId?: string): string | undefined {
   const raw = nameInput.value.trim();
   if (!raw) return "Name cannot be empty";
   const lower = raw.toLowerCase();
-  const taken = currentSessions.some(
-    (s) => s.id !== excludedId && (s.name || "").trim().toLowerCase() === lower,
-  );
-  return taken
-    ? "A session with this name already exists in this workspace — pick another name."
-    : undefined;
+  const taken = currentSessions.some((s) => s.id !== excludedId && (s.name || "").trim().toLowerCase() === lower);
+  return taken ? "A session with this name already exists in this workspace — pick another name." : undefined;
 }
 
 function validateNameInput(): void {
@@ -2949,11 +3057,7 @@ function openNameModal(p: { mode: string; id?: string; current?: string; modalId
   namePrompt = { mode: p.mode, id: p.id };
   nameModalId = typeof p.modalId === "number" ? p.modalId : -1;
   const branch = p.mode === "branch";
-  nameTitle.textContent = branch
-    ? "Branch session"
-    : p.mode === "rename"
-      ? "Rename session"
-      : "Name the new session";
+  nameTitle.textContent = branch ? "Branch session" : p.mode === "rename" ? "Rename session" : "Name the new session";
   nameOk.textContent = branch ? "Branch" : p.mode === "rename" ? "Rename" : "Create";
   nameInput.value = p.current ?? "New Session";
   nameModal.classList.remove("hidden");
@@ -2975,7 +3079,16 @@ const alertOk = document.getElementById("alert-ok") as HTMLButtonElement;
 const alertCancel = document.getElementById("alert-cancel") as HTMLButtonElement;
 let alertId = -1;
 
-function openAlert(a: { modalId?: number; id?: number; kind: string; alertKind?: string; title: string; message: string; confirmText?: string; danger?: boolean }): void {
+function openAlert(a: {
+  modalId?: number;
+  id?: number;
+  kind: string;
+  alertKind?: string;
+  title: string;
+  message: string;
+  confirmText?: string;
+  danger?: boolean;
+}): void {
   alertId = typeof a.modalId === "number" ? a.modalId : typeof a.id === "number" ? a.id : -1;
   alertTitle.textContent = a.title;
   alertMessage.textContent = a.message;
@@ -3027,7 +3140,11 @@ let smSearchIds: Set<string> | null = null;
 let smSnippets = new Map<string, string>();
 
 /** Renders the manage-form rows (keeps the modal's current shown/hidden state). */
-function renderSessionsManagerData(data: { sessions: SessionInfo[]; currentFolder?: string; vacuum?: { stats: VacuumStats; threshold: number; minFreeMB: number } }): void {
+function renderSessionsManagerData(data: {
+  sessions: SessionInfo[];
+  currentFolder?: string;
+  vacuum?: { stats: VacuumStats; threshold: number; minFreeMB: number };
+}): void {
   smSessions = data.sessions || [];
   smCurrentFolder = data.currentFolder;
   if (data.vacuum) renderSmVacuum(data.vacuum.stats, data.vacuum.threshold, data.vacuum.minFreeMB);
@@ -3076,7 +3193,12 @@ function renderSmVacuum(stats: VacuumStats | undefined, threshold: number, minFr
 }
 
 let dbVacuumModalId = -1;
-function openDbVacuumModal(msg: { modalId?: number; stats?: VacuumStats; threshold?: number; minFreeMB?: number }): void {
+function openDbVacuumModal(msg: {
+  modalId?: number;
+  stats?: VacuumStats;
+  threshold?: number;
+  minFreeMB?: number;
+}): void {
   dbVacuumModalId = typeof msg.modalId === "number" ? msg.modalId : -1;
   dbVacuumMsg.textContent =
     "The VACUUM rewrites the database to reclaim the free pages left by deleted sessions and cut conversations, and OPTIMIZES the indexes (query-planner stats + full-text segments). It runs when the chat is idle.";
@@ -3116,7 +3238,9 @@ smVacuumThreshold.addEventListener("change", () =>
 smVacuumMin.addEventListener("input", () => {
   smVacuumMinVal.textContent = smVacuumMin.value + " MB";
 });
-smVacuumMin.addEventListener("change", () => vscode.postMessage({ type: "setVacuumMinFreeMB", mb: Number(smVacuumMin.value) }));
+smVacuumMin.addEventListener("change", () =>
+  vscode.postMessage({ type: "setVacuumMinFreeMB", mb: Number(smVacuumMin.value) }),
+);
 
 function closeSessionsManager(): void {
   sessionsModal.classList.add("hidden");
@@ -3185,11 +3309,8 @@ function renderSessionsManager(): void {
       "created " + fmtDate(s.createdAt) + " · updated " + fmtDate(s.updatedAt) + " · " + s.messageCount + " msg";
     const folder = document.createElement("div");
     const folderKnown = !!s.folder;
-    folder.className =
-      "sm-folder" + (folderKnown && s.folderMissing ? " missing" : folderKnown ? "" : " unset");
-    folder.textContent = folderKnown
-      ? s.folder + (s.folderMissing ? " — missing" : "")
-      : "(folder not set)";
+    folder.className = "sm-folder" + (folderKnown && s.folderMissing ? " missing" : folderKnown ? "" : " unset");
+    folder.textContent = folderKnown ? s.folder + (s.folderMissing ? " — missing" : "") : "(folder not set)";
     folder.title = s.folderMissing && s.folder ? s.folder + " is no longer available" : s.folder || "";
     main.appendChild(nameLine);
     main.appendChild(meta);
@@ -3222,15 +3343,11 @@ function renderSessionsManager(): void {
     if (canOpen) {
       folderBtn.textContent = "Open folder";
       folderBtn.title = "Open this folder in VS Code (changes the working directory)";
-      folderBtn.addEventListener("click", () =>
-        vscode.postMessage({ type: "sessionsManagerOpenFolder", id: s.id }),
-      );
+      folderBtn.addEventListener("click", () => vscode.postMessage({ type: "sessionsManagerOpenFolder", id: s.id }));
     } else {
       folderBtn.textContent = "Change folder…";
       folderBtn.title = "Pick the workspace folder this session points to";
-      folderBtn.addEventListener("click", () =>
-        vscode.postMessage({ type: "sessionsManagerChangeFolder", id: s.id }),
-      );
+      folderBtn.addEventListener("click", () => vscode.postMessage({ type: "sessionsManagerChangeFolder", id: s.id }));
     }
     const del = document.createElement("button");
     del.className = "secondary-ghost del-btn";
@@ -3262,7 +3379,10 @@ sessionsSearchInput.addEventListener("input", () => {
     renderSessionsManager();
     return;
   }
-  smSearchTimer = window.setTimeout(() => vscode.postMessage({ type: "searchSessions", query: q, scope: "modal" }), 180);
+  smSearchTimer = window.setTimeout(
+    () => vscode.postMessage({ type: "searchSessions", query: q, scope: "modal" }),
+    180,
+  );
 });
 
 let sessionSearchTimer: number | undefined;
@@ -3346,7 +3466,21 @@ const providersImportBtn = document.getElementById("providers-import") as HTMLBu
 const providersIoResult = document.getElementById("providers-io-result") as HTMLDivElement;
 const gearBtn = document.getElementById("gear-btn") as HTMLButtonElement;
 
-let providerEditorData: { providers: Record<string, { baseUrl?: string; apiKey?: string; thinking?: string; thinkingLevel?: string; sessionHeader?: string; headers?: Record<string, string>; maxTokens?: number; extra?: Record<string, unknown> }> } = {
+let providerEditorData: {
+  providers: Record<
+    string,
+    {
+      baseUrl?: string;
+      apiKey?: string;
+      thinking?: string;
+      thinkingLevel?: string;
+      sessionHeader?: string;
+      headers?: Record<string, string>;
+      maxTokens?: number;
+      extra?: Record<string, unknown>;
+    }
+  >;
+} = {
   providers: {},
 };
 let providerEditorSelected = "";
@@ -3398,7 +3532,10 @@ function loadProviderIntoForm(name: string): void {
 }
 
 function openProvidersEditor(data: {
-  providers: Record<string, { baseUrl?: string; apiKey?: string; thinking?: string; thinkingLevel?: string; extra?: Record<string, unknown> }>;
+  providers: Record<
+    string,
+    { baseUrl?: string; apiKey?: string; thinking?: string; thinkingLevel?: string; extra?: Record<string, unknown> }
+  >;
 }): void {
   providerEditorData = { providers: JSON.parse(JSON.stringify(data.providers ?? {})) };
   const names = Object.keys(providerEditorData.providers);
@@ -3596,10 +3733,24 @@ const mcpSave = document.getElementById("mcp-save") as HTMLButtonElement;
 const mcpCancel = document.getElementById("mcp-cancel") as HTMLButtonElement;
 const tipEl = document.getElementById("tip") as HTMLDivElement;
 
-type McpEditorServer = { command?: string; args?: string[]; env?: Record<string, string>; url?: string; headers?: Record<string, string>; enabled?: boolean };
+type McpEditorServer = {
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  enabled?: boolean;
+};
 let mcpEditorServers: Record<string, McpEditorServer> = {};
 let mcpEditorSelected = "";
-let mcpStatuses: { name: string; ok: boolean; enabled: boolean; error?: string; toolCount: number; tools?: { name: string; description?: string }[] }[] = [];
+let mcpStatuses: {
+  name: string;
+  ok: boolean;
+  enabled: boolean;
+  error?: string;
+  toolCount: number;
+  tools?: { name: string; description?: string }[];
+}[] = [];
 
 const DEFAULT_PARALLEL = 4;
 
@@ -3711,16 +3862,21 @@ window.addEventListener("scroll", hideTip, true);
 /** One-line explanation for each Loop Guard parameter (the labels stay short). */
 const LG_TIPS: Record<string, string> = {
   maxNudges: "How many corrective nudges a loop type gets before the guard stops the run. Higher = more patient.",
-  reasoningThreshold: "Within a turn: how repetitive the reasoning must be to be cut (trigram duplication). Lower = flags sooner.",
+  reasoningThreshold:
+    "Within a turn: how repetitive the reasoning must be to be cut (trigram duplication). Lower = flags sooner.",
   reasoningMinTokens: "Minimum reasoning tokens before the within-turn repetition check runs.",
-  crossTurnSimilarity: "Across turns: how similar two turns' reasoning must be to inject a corrective nudge. Lower = flags sooner.",
+  crossTurnSimilarity:
+    "Across turns: how similar two turns' reasoning must be to inject a corrective nudge. Lower = flags sooner.",
   crossTurnMinLength: "Minimum reasoning characters before the across-turn similarity check runs.",
-  toolFailureRepeats: "How many identical FAILING tool calls are re-run before the recorded failure is returned instead.",
+  toolFailureRepeats:
+    "How many identical FAILING tool calls are re-run before the recorded failure is returned instead.",
   errorStreakTurns: "Consecutive turns with tool errors before the host injects a 'change strategy' summary.",
-  toolRepeatConsecutive: "Consecutive identical successful calls that count as a loop (the call is then served from cache).",
+  toolRepeatConsecutive:
+    "Consecutive identical successful calls that count as a loop (the call is then served from cache).",
   toolRepeatWindow: "Sliding window (in calls) used to count repeated call signatures.",
   toolRepeatWindowThreshold: "Repeats of the SAME call inside the window that count as a loop.",
-  answerThreshold: "How repetitive the final answer must be to be flagged (needs 'Include response'). Lower = flags sooner.",
+  answerThreshold:
+    "How repetitive the final answer must be to be flagged (needs 'Include response'). Lower = flags sooner.",
   answerMinTokens: "Minimum answer tokens before the final-answer repetition check runs.",
 };
 
@@ -3986,7 +4142,11 @@ function hideMcpToolsPopover(): void {
   mcpToolsPopover.dataset.server = "";
 }
 
-function showMcpToolsPopover(anchor: HTMLElement, server: string, tools: { name: string; description?: string }[]): void {
+function showMcpToolsPopover(
+  anchor: HTMLElement,
+  server: string,
+  tools: { name: string; description?: string }[],
+): void {
   mcpToolsPopover.innerHTML = "";
   const title = document.createElement("div");
   title.className = "mcp-pop-title";
@@ -4131,7 +4291,9 @@ function loadMcpIntoForm(name: string): void {
   mcpName.value = name;
   mcpCommand.value = s.command ?? "";
   mcpArgs.value = (s.args ?? []).join("\n");
-  mcpEnv.value = Object.entries(s.env ?? {}).map(([k, v]) => `${k}=${v}`).join("\n");
+  mcpEnv.value = Object.entries(s.env ?? {})
+    .map(([k, v]) => `${k}=${v}`)
+    .join("\n");
   mcpEnabled.checked = s.enabled !== false;
   mcpTestResult.textContent = "";
   mcpTestResult.className = "mcp-io";
@@ -4158,7 +4320,10 @@ function mcpFormServer(): McpEditorServer {
   }
   return {
     command: mcpCommand.value.trim(),
-    args: mcpArgs.value.split("\n").map((l) => l.trim()).filter(Boolean),
+    args: mcpArgs.value
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean),
     enabled: mcpEnabled.checked,
     ...(Object.keys(env).length > 0 ? { env } : {}),
   };
@@ -4273,7 +4438,6 @@ lgResponse.addEventListener("change", sendLoopGuardResponse);
 
 providersCancelBtn.addEventListener("click", closeProvidersEditor);
 providersModal.querySelector(".providers-backdrop")?.addEventListener("click", closeProvidersEditor);
-
 
 // ── View lock (per active session) ──
 // While the active session's LLM works (streaming OR compaction) everything
@@ -4442,7 +4606,7 @@ function applyMode(mode: ChatMode, opts?: { notify?: boolean }): void {
     const on = item.dataset.mode === mode;
     item.classList.toggle("is-active", on);
     item.setAttribute("aria-selected", String(on));
-  }  
+  }
   if (opts?.notify) vscode.postMessage({ type: "setMode", mode });
   refreshPolicyHints();
 }
@@ -4569,8 +4733,16 @@ function formatContext(n: number): string {
 let modelConfig: ConfigState | null = null;
 let modelFilter = "";
 
-interface ModelEntry { model: string; contextLength?: number; maxOutputTokens?: number; }
-interface ModelGroup { provider: string; models: ModelEntry[]; error?: string; }
+interface ModelEntry {
+  model: string;
+  contextLength?: number;
+  maxOutputTokens?: number;
+}
+interface ModelGroup {
+  provider: string;
+  models: ModelEntry[];
+  error?: string;
+}
 
 /** " · 128k · out 16k" — a limit the host/catalog did not report shows as "-". */
 function modelLimitsLabel(m?: { contextLength?: number; maxOutputTokens?: number }): string {
@@ -4589,7 +4761,9 @@ function buildModelGroups(c: ConfigState): ModelGroup[] {
     const map = new Map<string, ModelEntry[]>();
     for (const pm of providerModels) {
       if (!map.has(pm.provider)) map.set(pm.provider, []);
-      map.get(pm.provider)!.push({ model: pm.model, contextLength: pm.contextLength, maxOutputTokens: pm.maxOutputTokens });
+      map
+        .get(pm.provider)!
+        .push({ model: pm.model, contextLength: pm.contextLength, maxOutputTokens: pm.maxOutputTokens });
     }
     const groups: ModelGroup[] = [...map.entries()].map(([provider, models]) => ({
       provider,
@@ -4612,9 +4786,7 @@ function buildModelGroups(c: ConfigState): ModelGroup[] {
  * A saved model that is NO LONGER served falls back to the placeholder. */
 function updateModelButton(c: ConfigState): void {
   const providerModels = c.providerModels && c.providerModels.length > 0 ? c.providerModels : null;
-  const known = providerModels
-    ? providerModels.some((p) => p.model === c.model)
-    : new Set(c.models || []).has(c.model);
+  const known = providerModels ? providerModels.some((p) => p.model === c.model) : new Set(c.models || []).has(c.model);
   const usable = !!c.model && known;
   const current =
     providerModels?.find((p) => p.model === c.model && (p.provider === c.activeProvider || !c.activeProvider)) ??
@@ -4776,10 +4948,7 @@ function renderThinkingSelect(c: ConfigState): void {
   const title = enabled
     ? "Thinking level / reasoning effort (per session)"
     : 'This provider/model does not declare thinking control (add "thinking": "bool", "effort" or "type" to its config entry)';
-  const level =
-    c.thinkingLevel && ["off", "low", "medium", "high"].includes(c.thinkingLevel)
-      ? c.thinkingLevel
-      : "off";
+  const level = c.thinkingLevel && ["off", "low", "medium", "high"].includes(c.thinkingLevel) ? c.thinkingLevel : "off";
   for (const r of thinkingRadios) {
     r.disabled = streamingActive || !enabled;
     r.checked = r.value === level;
@@ -4963,8 +5132,18 @@ samplerTopp.addEventListener("change", () => {
   vscode.postMessage({ type: "setSamplerMode", mode: "topP" });
 });
 
-const presenceControl = createFloatControl({ range: "presence-range", value: "presence-value", auto: "presence-auto" }, "setPresencePenalty", clampTemperature, 0);
-const freqControl = createFloatControl({ range: "freq-range", value: "freq-value", auto: "freq-auto" }, "setFrequencyPenalty", clampTemperature, 0);
+const presenceControl = createFloatControl(
+  { range: "presence-range", value: "presence-value", auto: "presence-auto" },
+  "setPresencePenalty",
+  clampTemperature,
+  0,
+);
+const freqControl = createFloatControl(
+  { range: "freq-range", value: "freq-value", auto: "freq-auto" },
+  "setFrequencyPenalty",
+  clampTemperature,
+  0,
+);
 
 /** Compact token counts: 12345 -> "12.3k", 2000000 -> "2M". */
 function fmtTokens(n: number): string {
@@ -4996,9 +5175,8 @@ function renderMetrics(c: ConfigState): void {
   // of the 1M the model card promises. The full breakdown (and the 384k reserve
   // that explains the gap) stays in the tooltip.
   metWindow.textContent = reserve > 0 ? `/${fmtTokens(window)}` : "";
-  metWindow.title = reserve > 0
-    ? `${window} context window − ${reserve} reserved for the response = ${ctx} usable tokens`
-    : "";
+  metWindow.title =
+    reserve > 0 ? `${window} context window − ${reserve} reserved for the response = ${ctx} usable tokens` : "";
   const pct = ctx > 0 ? Math.max(0, Math.min(100, Math.round((used / ctx) * 100))) : 0;
   metPct.textContent = "(" + pct + "%)";
   metPct.classList.toggle("warn", pct >= 90);
@@ -5015,7 +5193,11 @@ function renderMetrics(c: ConfigState): void {
     const writeTxt = write && write > 0 ? " · write " + fmtTokens(write) : "";
     metCache.textContent = "⚡ cache " + fmtTokens(cached) + " (" + saved + "%)" + writeTxt;
     metCache.title =
-      "Input tokens served from prompt cache: " + cached + " / " + saved + "%" +
+      "Input tokens served from prompt cache: " +
+      cached +
+      " / " +
+      saved +
+      "%" +
       (write && write > 0 ? " · written to cache: " + write : "");
     metCache.classList.remove("idle");
   } else if (write && write > 0) {
@@ -5035,8 +5217,7 @@ compactBtn.addEventListener("click", () => vscode.postMessage({ type: "compact" 
 /** Keep the label between Compact and the gear in sync. "Auto" is the TRIGGER (the automatic
  * compaction), never the landing point: that one is just how much survives the cut. */
 function renderCompactionThreshold(): void {
-  compactThresholdLabel.textContent =
-    "Auto " + compactionThresholdPct + "% ctx · keep " + compactionTargetPct + "%";
+  compactThresholdLabel.textContent = "Auto " + compactionThresholdPct + "% ctx · keep " + compactionTargetPct + "%";
 }
 
 // ── Compaction policy (gear next to Compact): trigger % + landing point ──
@@ -5073,11 +5254,7 @@ const sendCompactionPreview = rafThrottle(() => {
   vscode.postMessage({
     type: "previewCompaction",
     thresholdPercent: threshold,
-    targetPercent: clampCompactionTarget(
-      Number(compactTargetInput.value),
-      threshold,
-      compactionTargetFloorPct,
-    ),
+    targetPercent: clampCompactionTarget(Number(compactTargetInput.value), threshold, compactionTargetFloorPct),
   });
 });
 
@@ -5153,9 +5330,7 @@ function syncTargetBounds(): void {
   compactTargetInput.min = "0";
   compactTargetInput.max = String(Math.max(0, threshold - 1));
   // The knob shows the EFFECTIVE landing point: Auto is a MODE (the button), not a position.
-  compactTargetInput.value = String(
-    draftTargetIsAuto ? clampAutoTarget(threshold) : draftTargetPct,
-  );
+  compactTargetInput.value = String(draftTargetIsAuto ? clampAutoTarget(threshold) : draftTargetPct);
 }
 
 /** Keep both value labels in sync (a slider carries no text of its own). */
@@ -5207,11 +5382,7 @@ compactThresholdInput.addEventListener("input", () => {
 compactTargetInput.addEventListener("input", () => {
   const threshold = clampCompactionThreshold(compactThresholdInput.value);
   draftTargetIsAuto = false;
-  draftTargetPct = clampCompactionTarget(
-    Number(compactTargetInput.value),
-    threshold,
-    compactionTargetFloorPct,
-  );
+  draftTargetPct = clampCompactionTarget(Number(compactTargetInput.value), threshold, compactionTargetFloorPct);
   compactTargetAuto.classList.remove("is-on");
   syncTargetBounds();
   renderCompactionValues();
@@ -5318,7 +5489,9 @@ window.addEventListener("message", (e) => {
         const duringAnswer = Boolean(currentResultEl && currentRawText.trim());
         flushStreamingMd();
         if (duringAnswer) {
-          currentThinkingBlock = addThinkingBlock("", currentResultEl, { label: icon("thinking", 13) + "Thought during this answer" });
+          currentThinkingBlock = addThinkingBlock("", currentResultEl, {
+            label: icon("thinking", 13) + "Thought during this answer",
+          });
           currentThinkingText = "";
           // NOTE: the bubble is NOT closed and `currentRawText` is NOT reset: the
           // next deltas repaint the SAME bubble with the whole answer.
@@ -5606,9 +5779,11 @@ window.addEventListener("message", (e) => {
       smVacuumMinVal.textContent = msg.minFreeMB + " MB";
       break;
     case "dbVacuumResult": {
-      const r = msg.result as { vacuumed: boolean; before: VacuumStats; after: VacuumStats; durationMs: number } | undefined;
+      const r = msg.result as
+        { vacuumed: boolean; before: VacuumStats; after: VacuumStats; durationMs: number } | undefined;
       if (r) {
-        dbVacuumStatsEl.innerHTML = vacuumStatsHtml(r.before) + "<div>↓ after the VACUUM</div>" + vacuumStatsHtml(r.after);
+        dbVacuumStatsEl.innerHTML =
+          vacuumStatsHtml(r.before) + "<div>↓ after the VACUUM</div>" + vacuumStatsHtml(r.after);
         dbVacuumMsg.textContent = r.vacuumed
           ? `Vacuumed & optimized in ${(r.durationMs / 1000).toFixed(1)}s.`
           : "Nothing to reclaim: the database was already compact and the indexes optimal.";
@@ -5749,8 +5924,7 @@ window.addEventListener("message", (e) => {
       freqControl.render(msg.config && msg.config.frequencyPenalty);
       compactionThresholdPct = (msg.config && msg.config.compactionThresholdPercent) ?? 80;
       compactionTargetIsAuto = (msg.config && msg.config.compactionTargetAuto) !== false;
-      compactionTargetPct =
-        (msg.config && msg.config.compactionTargetPercent) ?? autoTargetFor(compactionThresholdPct);
+      compactionTargetPct = (msg.config && msg.config.compactionTargetPercent) ?? autoTargetFor(compactionThresholdPct);
       renderCompactionThreshold();
       renderCompactionValues();
       renderMetrics(msg.config || {});
@@ -5762,12 +5936,14 @@ window.addEventListener("message", (e) => {
       providerTestResult.classList.remove("hidden");
       if (msg.ok) {
         const models = Array.isArray(msg.models) ? (msg.models as string[]) : [];
-        providerTestResult.textContent = models.length > 0
-          ? `✅ Connection OK — ${models.length} model${models.length === 1 ? "" : "s"} found: ${models.slice(0, 6).join(", ")}${models.length > 6 ? "…" : ""}`
-          : "✅ Connection OK — the host returned no models (is the model loaded?)";
+        providerTestResult.textContent =
+          models.length > 0
+            ? `✅ Connection OK — ${models.length} model${models.length === 1 ? "" : "s"} found: ${models.slice(0, 6).join(", ")}${models.length > 6 ? "…" : ""}`
+            : "✅ Connection OK — the host returned no models (is the model loaded?)";
         providerTestResult.className = "ok";
       } else {
-        providerTestResult.textContent = "❌ Connection failed: " + (typeof msg.error === "string" ? msg.error : "GET /v1/models failed");
+        providerTestResult.textContent =
+          "❌ Connection failed: " + (typeof msg.error === "string" ? msg.error : "GET /v1/models failed");
         providerTestResult.className = "err";
       }
       break;
@@ -5923,8 +6099,7 @@ function restoreLiveStream(state: {
   const thinking = String(state.liveThinking || "");
   const answer = String(state.liveAnswer || "");
   const lt = state.liveTurn;
-  const hasBubbles =
-    (lt?.toolCalls?.length ?? 0) > 0 || Object.keys(lt?.subAgents ?? {}).length > 0;
+  const hasBubbles = (lt?.toolCalls?.length ?? 0) > 0 || Object.keys(lt?.subAgents ?? {}).length > 0;
   // Text written BEFORE the tool calls belongs ABOVE their bubbles (the live DOM
   // never removes it: clearStreamingBubble only drops the reference). Text
   // written after a tool result belongs below.
@@ -6050,9 +6225,7 @@ if (savedDrafts) {
 const savedDraftFiles = (vscode.getState() as { draftFiles?: Record<string, unknown> } | undefined)?.draftFiles;
 if (savedDraftFiles) {
   for (const [key, rawList] of Object.entries(savedDraftFiles)) {
-    const files = (Array.isArray(rawList) ? rawList : [])
-      .map(fromPersisted)
-      .filter((f): f is AttachedFile => !!f);
+    const files = (Array.isArray(rawList) ? rawList : []).map(fromPersisted).filter((f): f is AttachedFile => !!f);
     if (files.length === 0) continue;
     const existing = compositions.get(key) ?? { text: "", files: [] };
     compositions.set(key, { text: existing.text, files });

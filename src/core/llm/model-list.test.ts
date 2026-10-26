@@ -126,10 +126,11 @@ describe("HttpModelListProvider", () => {
     vi.useFakeTimers();
     try {
       // get() never resolves on its own; it only rejects when the signal aborts.
-      const get = vi.fn((_url: string, _h: Record<string, string>, signal?: AbortSignal) =>
-        new Promise((_res, rej) => {
-          signal?.addEventListener("abort", () => rej(new Error("aborted")));
-        }),
+      const get = vi.fn(
+        (_url: string, _h: Record<string, string>, signal?: AbortSignal) =>
+          new Promise((_res, rej) => {
+            signal?.addEventListener("abort", () => rej(new Error("aborted")));
+          }),
       );
       const provider = new HttpModelListProvider({ post: vi.fn(), get });
       const p = provider.fetchModels({ baseUrl: "http://dead-host", apiKey: "k" });

@@ -84,7 +84,8 @@ export class ShellTool implements Tool {
     const command = args.command as string | undefined;
     if (!command) {
       return {
-        content: 'Tool Shell requires the argument "command" (shell command string). Call again with {"command": "ls -la"}.',
+        content:
+          'Tool Shell requires the argument "command" (shell command string). Call again with {"command": "ls -la"}.',
         isError: true,
       };
     }

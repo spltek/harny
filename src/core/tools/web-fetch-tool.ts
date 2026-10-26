@@ -13,7 +13,10 @@ export class WebFetchTool implements Tool {
     parameters: {
       type: "object",
       properties: {
-        url: { type: "string", description: "The URL to fetch. The content will be converted to a readable markdown format." },
+        url: {
+          type: "string",
+          description: "The URL to fetch. The content will be converted to a readable markdown format.",
+        },
       },
       required: ["url"],
     },
@@ -45,10 +48,7 @@ export class WebFetchTool implements Tool {
       // fetch follows redirects transparently: surface WHERE the content came
       // from so a 302 hop is not mistaken for the requested URL.
       const finalUrl = resp.url || url;
-      const head =
-        finalUrl !== url
-          ? `## Fetched: ${finalUrl} (redirected from ${url})`
-          : `## Fetched: ${finalUrl}`;
+      const head = finalUrl !== url ? `## Fetched: ${finalUrl} (redirected from ${url})` : `## Fetched: ${finalUrl}`;
       let content: string;
 
       if (contentType.includes("application/json")) {

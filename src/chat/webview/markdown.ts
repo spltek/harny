@@ -20,7 +20,10 @@ md.use(taskLists, { label: true, enabled: true });
  */
 function wrapCodeBlocks(html: string): string {
   return html
-    .replace(/<pre><code class="language-(\w+)">/g, '<div class="code-block"><div class="code-lang">$1</div><pre><code>')
+    .replace(
+      /<pre><code class="language-(\w+)">/g,
+      '<div class="code-block"><div class="code-lang">$1</div><pre><code>',
+    )
     .replace(/<pre><code>/g, '<div class="code-block"><pre><code>')
     .replace(/<\/code><\/pre>/g, "<\/code><\/pre><\/div>");
 }
@@ -30,9 +33,7 @@ function wrapCodeBlocks(html: string): string {
  * tables get a horizontal scrollbar instead of overflowing the bubble.
  */
 function wrapTables(html: string): string {
-  return html
-    .replace(/<table>/g, '<div class="table-scroll"><table>')
-    .replace(/<\/table>/g, "</table></div>");
+  return html.replace(/<table>/g, '<div class="table-scroll"><table>').replace(/<\/table>/g, "</table></div>");
 }
 
 /**

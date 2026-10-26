@@ -34,7 +34,7 @@ describe("ToolCallAccumulator", () => {
     const acc = new ToolCallAccumulator();
     const call = feed(
       acc,
-      "Here are the arguments:\n```json\n{\"path\": \"index.html\", \"contents\": \"<h1>Gatti</h1>\"}\n```",
+      'Here are the arguments:\n```json\n{"path": "index.html", "contents": "<h1>Gatti</h1>"}\n```',
     ) as { arguments: Record<string, unknown> };
     expect(call.arguments).toEqual({ path: "index.html", contents: "<h1>Gatti</h1>" });
   });

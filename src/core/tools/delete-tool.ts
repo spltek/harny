@@ -31,7 +31,8 @@ export class DeleteTool implements Tool {
     const pathArg = args.path as string | undefined;
     if (!pathArg) {
       return {
-        content: 'Tool Delete requires the argument "path" (absolute file path, string). Call again with {"path": "/abs/path/file"}.',
+        content:
+          'Tool Delete requires the argument "path" (absolute file path, string). Call again with {"path": "/abs/path/file"}.',
         isError: true,
       };
     }

@@ -40,9 +40,7 @@ describe("AttachmentService", () => {
     writeFileSync(txt, "line 1\nline 2");
 
     const service = makeService(async () => []);
-    const ctx = await service.buildContext([
-      { name: "a.txt", path: txt, size: 12, isImage: false },
-    ]);
+    const ctx = await service.buildContext([{ name: "a.txt", path: txt, size: 12, isImage: false }]);
 
     expect(ctx.text).toContain('Attached file "a.txt":');
     expect(ctx.text).toContain("line 1\nline 2");
@@ -53,9 +51,7 @@ describe("AttachmentService", () => {
 
   it("builds context with an image note for images", async () => {
     const service = makeService(async () => []);
-    const ctx = await service.buildContext([
-      { name: "image.png", path: "/x/image.png", size: 2048, isImage: true },
-    ]);
+    const ctx = await service.buildContext([{ name: "image.png", path: "/x/image.png", size: 2048, isImage: true }]);
 
     expect(ctx.text).toContain("[Image attached: image.png (2.0KB)");
   });
@@ -63,9 +59,7 @@ describe("AttachmentService", () => {
   it("uses a clipboard image's data URI directly (no file on disk)", async () => {
     const service = makeService(async () => []);
     const dataUri = "data:image/png;base64,AAAA";
-    const ctx = await service.buildContext([
-      { name: "pasted-image.png", path: "", size: 4, isImage: true, dataUri },
-    ]);
+    const ctx = await service.buildContext([{ name: "pasted-image.png", path: "", size: 4, isImage: true, dataUri }]);
 
     expect(ctx.images).toEqual([dataUri]);
     expect(ctx.text).toContain("pasted from clipboard");

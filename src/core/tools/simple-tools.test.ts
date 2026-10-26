@@ -40,16 +40,28 @@ describe("TodoTool", () => {
 
   it("keeps PER-owner lists: concurrent sub-agents never clobber each other", () => {
     const tool = new TodoTool();
-    const a = tool.execute({ todos: [{ id: "1", content: "alpha", status: "pending" }], merge: false }, { ownerId: "sub-a" });
+    const a = tool.execute(
+      { todos: [{ id: "1", content: "alpha", status: "pending" }], merge: false },
+      { ownerId: "sub-a" },
+    );
     expect(a.content).toContain("alpha");
     // A different owner (another sub-agent / session) has its OWN list.
-    const b = tool.execute({ todos: [{ id: "1", content: "beta", status: "pending" }], merge: false }, { ownerId: "sub-b" });
+    const b = tool.execute(
+      { todos: [{ id: "1", content: "beta", status: "pending" }], merge: false },
+      { ownerId: "sub-b" },
+    );
     expect(b.content).toContain("beta");
     // Updating A's list leaves B's untouched.
-    const a2 = tool.execute({ todos: [{ id: "1", content: "alpha", status: "completed" }], merge: true }, { ownerId: "sub-a" });
+    const a2 = tool.execute(
+      { todos: [{ id: "1", content: "alpha", status: "completed" }], merge: true },
+      { ownerId: "sub-a" },
+    );
     expect(a2.content).toContain("✅ [completed] alpha");
     expect(a2.content).not.toContain("beta");
-    const b2 = tool.execute({ todos: [{ id: "1", content: "beta", status: "pending" }], merge: true }, { ownerId: "sub-b" });
+    const b2 = tool.execute(
+      { todos: [{ id: "1", content: "beta", status: "pending" }], merge: true },
+      { ownerId: "sub-b" },
+    );
     expect(b2.content).toContain("beta");
     expect(b2.content).not.toContain("alpha");
   });
@@ -57,12 +69,18 @@ describe("TodoTool", () => {
   it("bounds the per-owner state map (LRU) so long sessions do not leak", () => {
     const tool = new TodoTool();
     // Seed the FIRST owner's list, then touch many later owners to evict it.
-    tool.execute({ todos: [{ id: "1", content: "first-item", status: "pending" }], merge: false }, { ownerId: "first" });
+    tool.execute(
+      { todos: [{ id: "1", content: "first-item", status: "pending" }], merge: false },
+      { ownerId: "first" },
+    );
     for (let i = 0; i < 250; i++) {
       tool.execute({ todos: [{ id: "x", content: "x", status: "pending" }], merge: false }, { ownerId: `o${i}` });
     }
     // "first" was evicted: a merge starts from an EMPTY list (no stale "first-item").
-    const res = tool.execute({ todos: [{ id: "2", content: "second-item", status: "pending" }], merge: true }, { ownerId: "first" });
+    const res = tool.execute(
+      { todos: [{ id: "2", content: "second-item", status: "pending" }], merge: true },
+      { ownerId: "first" },
+    );
     expect(res.content).not.toContain("first-item");
     expect(res.content).toContain("second-item");
   });
@@ -114,7 +132,10 @@ describe("WebSearchTool", () => {
 describe("WebFetchTool", () => {
   it("strips HTML tags from fetched content", async () => {
     const http: HttpClient = {
-      get: async () => httpResponse("<html><body><h1>Title</h1><p>Hello <b>world</b></p></body></html>", { "content-type": "text/html" }),
+      get: async () =>
+        httpResponse("<html><body><h1>Title</h1><p>Hello <b>world</b></p></body></html>", {
+          "content-type": "text/html",
+        }),
       post: async () => {
         throw new Error("no post");
       },
@@ -165,7 +186,10 @@ describe("WebFetchTool", () => {
 
   it("reports redirects: final URL when it differs from the requested one", async () => {
     const http: HttpClient = {
-      get: async () => ({ ...httpResponse("<html><body>landed</body></html>", { "content-type": "text/html" }), url: "https://final.example/page2" }),
+      get: async () => ({
+        ...httpResponse("<html><body>landed</body></html>", { "content-type": "text/html" }),
+        url: "https://final.example/page2",
+      }),
       post: async () => {
         throw new Error("no post");
       },
@@ -175,7 +199,9 @@ describe("WebFetchTool", () => {
     const result = await tool.execute({ url: "https://api.example.com/page1" });
 
     expect(result.isError).toBe(false);
-    expect(result.content).toContain("## Fetched: https://final.example/page2 (redirected from https://api.example.com/page1)");
+    expect(result.content).toContain(
+      "## Fetched: https://final.example/page2 (redirected from https://api.example.com/page1)",
+    );
   });
 });
 

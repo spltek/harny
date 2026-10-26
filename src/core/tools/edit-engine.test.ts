@@ -50,7 +50,9 @@ describe("edit-engine.applyEdits", () => {
   });
 
   it("tolerates trailing whitespace and unicode quotes via fuzzy line matching", () => {
-    const r = applyEdits("if (a) {\n    run();   \n}\n", [{ oldText: "if (a) {\n    run();\n}", newText: "if (a) {\n    runNow();\n}" }]);
+    const r = applyEdits("if (a) {\n    run();   \n}\n", [
+      { oldText: "if (a) {\n    run();\n}", newText: "if (a) {\n    runNow();\n}" },
+    ]);
     expect(r.failed).toEqual([]);
     expect(r.content).toBe("if (a) {\n    runNow();\n}\n");
     expect((r.modes as string[])[0]).toBe("fuzzy");
@@ -117,14 +119,16 @@ describe("checkStructuralBalance", () => {
     expect(checkStructuralBalance("{\n  a: [1, (2)],\n  b() { return { c: /x/ }; },\n}\n").balanced).toBe(true);
   });
   it("ignores braces inside strings and comments", () => {
-    expect(checkStructuralBalance("const a = \"} {\";\n// }\n/* { */\nconst b = `tpl { } ${foo}`;\n").balanced).toBe(true);
+    expect(checkStructuralBalance('const a = "} {";\n// }\n/* { */\nconst b = `tpl { } ${foo}`;\n').balanced).toBe(
+      true,
+    );
   });
   it("catches an extra closing paren / unclosed array", () => {
     expect(checkStructuralBalance("f());\n").balanced).toBe(false);
     expect(checkStructuralBalance("const a = [1, 2;\n").balanced).toBe(false);
   });
   it("catches an unterminated string", () => {
-    expect(checkStructuralBalance("const a = \"nope;\n").balanced).toBe(false);
+    expect(checkStructuralBalance('const a = "nope;\n').balanced).toBe(false);
   });
 });
 

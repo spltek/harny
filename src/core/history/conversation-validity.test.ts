@@ -10,7 +10,12 @@ const call = (content: string, ...ids: string[]): ChatMessage => ({
   toolCalls: ids.map((id) => ({ id, name: "Shell", arguments: {} })),
   timestamp: 2,
 });
-const result = (toolCallId: string, content = "out"): ChatMessage => ({ role: "tool", content, toolCallId, timestamp: 3 });
+const result = (toolCallId: string, content = "out"): ChatMessage => ({
+  role: "tool",
+  content,
+  toolCallId,
+  timestamp: 3,
+});
 
 describe("conversationFaults", () => {
   it("accepts a call answered by the tool messages right after it", () => {
@@ -18,9 +23,7 @@ describe("conversationFaults", () => {
   });
 
   it("accepts a batch answered by several results, in any order", () => {
-    expect(
-      conversationFaults([user(), call("", "c1", "c2"), result("c2"), result("c1"), answer()]),
-    ).toEqual([]);
+    expect(conversationFaults([user(), call("", "c1", "c2"), result("c2"), result("c1"), answer()])).toEqual([]);
   });
 
   it("flags a call whose results never arrive", () => {
@@ -39,14 +42,17 @@ describe("conversationFaults", () => {
   });
 
   it("IGNORES a uiOnly message sitting in the middle (it is never sent)", () => {
-    const notice: ChatMessage = { role: "assistant", content: "❌ ⏹ Processing interrupted.", timestamp: 3, uiOnly: true };
+    const notice: ChatMessage = {
+      role: "assistant",
+      content: "❌ ⏹ Processing interrupted.",
+      timestamp: 3,
+      uiOnly: true,
+    };
     expect(conversationFaults([user(), call("", "c1"), notice, result("c1"), answer()])).toEqual([]);
   });
 
   it("flags an orphan result with no call above it", () => {
-    expect(conversationFaults([user(), result("c1")])).toEqual([
-      { index: 1, kind: "orphan_tool_result", ids: ["c1"] },
-    ]);
+    expect(conversationFaults([user(), result("c1")])).toEqual([{ index: 1, kind: "orphan_tool_result", ids: ["c1"] }]);
   });
 
   it("flags a result that does not belong to the call above it", () => {
@@ -84,9 +90,7 @@ describe("conversationFaults", () => {
   });
 
   it("rule 6: an assistant message with neither text nor tool calls", () => {
-    expect(conversationFaults([user(), answer("")])).toEqual([
-      { index: 1, kind: "empty_assistant", ids: [] },
-    ]);
+    expect(conversationFaults([user(), answer("")])).toEqual([{ index: 1, kind: "empty_assistant", ids: [] }]);
     expect(describeFaults(conversationFaults([user(), answer(" ")]))).toContain("no text and no tool calls");
     // A turn with tool calls and NO text is perfectly normal.
     expect(conversationFaults([user(), call("", "c1"), result("c1")])).toEqual([]);
@@ -102,7 +106,12 @@ describe("conversationFaults", () => {
   });
 
   it("rule 8: attachments only on user messages", () => {
-    const withImage: ChatMessage = { role: "assistant", content: "look", images: ["data:image/png;base64,x"], timestamp: 2 };
+    const withImage: ChatMessage = {
+      role: "assistant",
+      content: "look",
+      images: ["data:image/png;base64,x"],
+      timestamp: 2,
+    };
     expect(conversationFaults([user(), withImage])).toEqual([
       { index: 1, kind: "attachment_outside_user", ids: ["assistant"] },
     ]);
@@ -185,7 +194,12 @@ describe("checkpointStart — the ONE point the context window starts from", () 
     timestamp: 1,
     synthetic: true,
   });
-  const state = (content = "## Goal\nx"): ChatMessage => ({ role: "assistant", content, timestamp: 2, synthetic: true });
+  const state = (content = "## Goal\nx"): ChatMessage => ({
+    role: "assistant",
+    content,
+    timestamp: 2,
+    synthetic: true,
+  });
 
   it("is 0 while no checkpoint exists (a session that never compacted)", () => {
     expect(checkpointStart([])).toBe(0);

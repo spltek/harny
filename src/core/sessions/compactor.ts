@@ -78,7 +78,9 @@ export function estimateTokens(text: string): number {
 
 /** True when the current context fill reaches the compaction threshold. */
 export function shouldCompact(contextTokens: number, contextWindow: number, settings: CompactionSettings): boolean {
-  const pct = Number.isFinite(settings.thresholdPercent) ? settings.thresholdPercent : DEFAULT_COMPACTION.thresholdPercent;
+  const pct = Number.isFinite(settings.thresholdPercent)
+    ? settings.thresholdPercent
+    : DEFAULT_COMPACTION.thresholdPercent;
   return contextTokens > (contextWindow * pct) / 100;
 }
 
@@ -99,7 +101,10 @@ export function serializeConversation(messages: ChatMessage[], toolResultLimit =
         return lines;
       }
       if (m.role === "tool") {
-        const out = m.content.length > toolResultLimit ? `${m.content.slice(0, toolResultLimit)}… (+${m.content.length - toolResultLimit} chars)` : m.content;
+        const out =
+          m.content.length > toolResultLimit
+            ? `${m.content.slice(0, toolResultLimit)}… (+${m.content.length - toolResultLimit} chars)`
+            : m.content;
         return [`[Tool result]: ${out}`];
       }
       return [`[User]: ${m.content}`];
@@ -129,7 +134,7 @@ export function realWindowTokens(messages: ChatMessage[], from = 0): number | un
   if (lastIdx < 0) return undefined;
   const lastInput = messages[lastIdx].meta?.inputTokens ?? 0;
   const beforeIdx = lastAssistantWithUsage(messages, 0, from);
-  const base = beforeIdx >= 0 ? messages[beforeIdx].meta?.inputTokens ?? 0 : 0;
+  const base = beforeIdx >= 0 ? (messages[beforeIdx].meta?.inputTokens ?? 0) : 0;
   const window = Math.max(0, lastInput - base);
   return window + estimateTokens(serializeConversation(messages.slice(lastIdx)));
 }
@@ -239,11 +244,7 @@ export function minExplicitTargetPercent(
  * Invalid input resolves to the DERIVED default ({@link autoTargetPercent}), not to 0: a
  * missing value means "nobody chose", while 0 is a deliberate "free everything".
  */
-export function clampTargetPercent(
-  value: number,
-  thresholdPercent: number,
-  floorPercent = PERCENT_UNIT,
-): number {
+export function clampTargetPercent(value: number, thresholdPercent: number, floorPercent = PERCENT_UNIT): number {
   const t = Number.isFinite(thresholdPercent) ? Math.round(thresholdPercent) : DEFAULT_COMPACTION.thresholdPercent;
   const v = Number.isFinite(value) ? Math.round(value) : autoTargetPercent(t);
   const floor = Math.max(PERCENT_UNIT, Math.round(floorPercent));
@@ -474,9 +475,7 @@ export async function compactHistory(
   // takes the most RECENT part that fits, and `deferred` stays in the transcript above the
   // new checkpoint — preserved, out of the window, eligible for a later summary.
   const toSummarize =
-    typeof opts.maxInputTokens === "number"
-      ? newestWithin(plan.toSummarize, opts.maxInputTokens)
-      : plan.toSummarize;
+    typeof opts.maxInputTokens === "number" ? newestWithin(plan.toSummarize, opts.maxInputTokens) : plan.toSummarize;
   const deferred = plan.toSummarize.slice(0, plan.toSummarize.length - toSummarize.length);
   // HOW MUCH the summary may take: a share of the span it REPLACES (a compression
   // ratio), capped by what the model is declared able to write.
@@ -685,10 +684,7 @@ export function carriedState(messages: ChatMessage[]): string | undefined {
  * boundary would land on the checkpoint pair, or a single message is bigger than
  * the whole window — which no trim can fix.
  */
-export function trimHistory(
-  all: ChatMessage[],
-  opts: { budgetTokens: number; summary?: string },
-): TrimResult | null {
+export function trimHistory(all: ChatMessage[], opts: { budgetTokens: number; summary?: string }): TrimResult | null {
   const activeStart = checkpointStart(all);
   const visible = all.slice(activeStart).filter((m) => m.role !== "system" && !m.uiOnly);
   if (visible.length <= 1) return null;
@@ -754,11 +750,7 @@ export function summarizerPromptReserve(): number {
  * itself: the summary is sized by the compression ratio (see summaryBudgetTokens), so the
  * reserve is that ratio, and the cap only matters when it is SMALLER than the ratio asks.
  */
-export function maxSummaryInputTokens(
-  windowTokens: number,
-  outputCap: number,
-  stateTokens = 0,
-): number {
+export function maxSummaryInputTokens(windowTokens: number, outputCap: number, stateTokens = 0): number {
   const room = Math.max(0, windowTokens) - summarizerPromptReserve() - Math.max(0, stateTokens);
   // The provider counts `input + output` against the window, and the summary asks for a
   // SHARE of what it reads — so a bigger input asks for a bigger output, which leaves LESS
@@ -867,7 +859,10 @@ Keep every fact needed to continue the work: Goal, Progress (Done / In Progress 
 Budget: the result must stay under roughly `;
 
 /** The second pass: rewrite an oversized summary under an explicit token cap. */
-function compressSummaryMessages(summary: string, maxSummaryTokens: number): { role: "system" | "user"; content: string }[] {
+function compressSummaryMessages(
+  summary: string,
+  maxSummaryTokens: number,
+): { role: "system" | "user"; content: string }[] {
   // Same shape as the summary request itself: data first, instruction last.
   return [
     {
@@ -916,11 +911,7 @@ export class Compactor {
     // single extra call on purpose — a loop over a summary would spend more
     // context than it frees.
     if (budget && budget > 0 && out && estimateTokens(out) > Math.ceil(budget * SUMMARY_OVERSHOOT)) {
-      const squeezed = await this.requestSummary(
-        compressSummaryMessages(out, budget),
-        signal,
-        options.maxReplyTokens,
-      );
+      const squeezed = await this.requestSummary(compressSummaryMessages(out, budget), signal, options.maxReplyTokens);
       if (squeezed && estimateTokens(squeezed) < estimateTokens(out)) out = squeezed;
     }
     const trimmed = out.trim();

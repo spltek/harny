@@ -18,7 +18,7 @@ const REGEX_SPECIALS = ".*+?^${}()|[]\\";
 
 export function globstarToRegex(glob: string): string {
   let out = "";
-  for (let i = 0; i < glob.length; ) {
+  for (let i = 0; i < glob.length;) {
     const c = glob[i];
     if (c === "*" && glob[i + 1] === "*") {
       if (glob[i + 2] === "/") {
@@ -74,7 +74,8 @@ export class GlobTool implements Tool {
         },
         target_directory: {
           type: "string",
-          description: "Directory to search in, absolute or relative to the working directory (defaults to workspace root).",
+          description:
+            "Directory to search in, absolute or relative to the working directory (defaults to workspace root).",
         },
       },
       required: ["glob_pattern"],
@@ -90,7 +91,8 @@ export class GlobTool implements Tool {
     const globPattern = args.glob_pattern as string | undefined;
     if (!globPattern) {
       return {
-        content: 'Tool Glob requires the argument "glob_pattern" (e.g. "*.ts", "**/test/**"). Call again with {"glob_pattern": "*.ts"}.',
+        content:
+          'Tool Glob requires the argument "glob_pattern" (e.g. "*.ts", "**/test/**"). Call again with {"glob_pattern": "*.ts"}.',
         isError: true,
       };
     }

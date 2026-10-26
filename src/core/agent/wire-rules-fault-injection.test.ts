@@ -70,7 +70,10 @@ function buildAgents(factory: LLMProviderFactory): { agent: Agent; history: InMe
     tools,
     history,
     events: new InMemoryEventBus(),
-    systemPrompt: new DefaultSystemPromptBuilder(() => tools.definitions(), () => "/workspace"),
+    systemPrompt: new DefaultSystemPromptBuilder(
+      () => tools.definitions(),
+      () => "/workspace",
+    ),
   });
   return { agent, history };
 }
@@ -172,7 +175,10 @@ describe("fault injection — every wire rule is caught before the provider sees
       //    so would every request after it (the same history is re-sent each turn).
       expect(spy.requests).toBe(0);
       // 2. The user is told WHAT is wrong, in the guard's own words…
-      const shown = history.all().map((m) => m.content ?? "").join(" | ");
+      const shown = history
+        .all()
+        .map((m) => m.content ?? "")
+        .join(" | ");
       expect(shown).toContain("not replayable");
       expect(shown).toMatch(c.phrase);
       // 3. …and it is called an INTERNAL error, so nobody looks at the provider.

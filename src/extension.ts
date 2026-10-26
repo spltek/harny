@@ -160,7 +160,11 @@ export async function activate(context: ExtensionContext) {
   const sessions = new SessionManager(store);
 
   const attachments = new AttachmentService(nodeFileSystem, async () => {
-    const uris = await window.showOpenDialog({ canSelectMany: true, canSelectFiles: true, title: "Attach files to the chat" });
+    const uris = await window.showOpenDialog({
+      canSelectMany: true,
+      canSelectFiles: true,
+      title: "Attach files to the chat",
+    });
     return uris?.map((u) => u.fsPath);
   });
 
@@ -170,17 +174,24 @@ export async function activate(context: ExtensionContext) {
   let midRunCompact: ((sessionId: string, signal?: AbortSignal) => Promise<void>) | undefined;
   // Context-overflow recovery (agent -> host) and the session's usable budget
   // (host -> agent). Same single assignment point, once the view provider exists.
-  let overflowCompact: ((sessionId: string, signal?: AbortSignal, evidence?: ContextOverflowEvidence) => Promise<boolean>) | undefined;
+  let overflowCompact:
+    ((sessionId: string, signal?: AbortSignal, evidence?: ContextOverflowEvidence) => Promise<boolean>) | undefined;
   let sessionBudget: ((sessionId: string) => number) | undefined;
   // Overflow recovery for a SUB-AGENT: same routine as the session, applied to the
   // sub-agent's ephemeral history (see ChatViewProvider.compactSubAgentHistory).
   let subAgentOverflow:
-    | ((history: ChatHistory, sessionId: string, signal?: AbortSignal, evidence?: ContextOverflowEvidence) => Promise<boolean>)
+    | ((
+        history: ChatHistory,
+        sessionId: string,
+        signal?: AbortSignal,
+        evidence?: ContextOverflowEvidence,
+      ) => Promise<boolean>)
     | undefined;
   // The session's resolved Loop Guard, for the sub-agents (same source as the agent's).
   let subAgentGuard: ((sessionId: string) => LoopGuardOptions) | undefined;
   // Proactive compaction of a sub-agent's own history at a turn boundary.
-  let subAgentTurnBoundary: ((history: ChatHistory, sessionId: string, signal?: AbortSignal) => Promise<boolean>) | undefined;
+  let subAgentTurnBoundary:
+    ((history: ChatHistory, sessionId: string, signal?: AbortSignal) => Promise<boolean>) | undefined;
 
   const createAgent = (history: ChatHistory, sessionId: string): ChatController => {
     // One sub-agent runner per session: it owns the ephemeral sub-agent
@@ -262,7 +273,8 @@ export async function activate(context: ExtensionContext) {
   midRunCompact = (id) => viewProvider.maybeCompactDuringRun(id);
   overflowCompact = (id, signal, evidence) => viewProvider.compactForOverflow(id, signal, evidence);
   sessionBudget = (id) => viewProvider.usableBudgetFor(id);
-  subAgentOverflow = (history, id, signal, evidence) => viewProvider.compactSubAgentHistory(history, id, signal, evidence);
+  subAgentOverflow = (history, id, signal, evidence) =>
+    viewProvider.compactSubAgentHistory(history, id, signal, evidence);
   subAgentGuard = (id) => viewProvider.loopGuardOptionsFor(id);
   subAgentTurnBoundary = (history, id, signal) => viewProvider.maybeCompactSubAgentHistory(history, id, signal);
 
@@ -282,7 +294,9 @@ export async function activate(context: ExtensionContext) {
   );
 
   context.subscriptions.push(
-    window.registerWebviewViewProvider("harny.chatView", viewProvider, { webviewOptions: { retainContextWhenHidden: true } }),
+    window.registerWebviewViewProvider("harny.chatView", viewProvider, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
     // The provider outlives the panel: its telemetry probe and coalescing timers must
     // stop with the extension (see ChatViewProvider.dispose).
     { dispose: () => viewProvider.dispose() },

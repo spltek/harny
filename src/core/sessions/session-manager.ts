@@ -1,5 +1,12 @@
 import type { ChatMessage } from "../history/types";
-import type { DbVacuumResult, DbVacuumStats, LoadedSession, SessionSettingsPatch, SessionStore, SessionSummary } from "./types";
+import type {
+  DbVacuumResult,
+  DbVacuumStats,
+  LoadedSession,
+  SessionSettingsPatch,
+  SessionStore,
+  SessionSummary,
+} from "./types";
 import { EMPTY_DB_VACUUM_STATS } from "./types";
 
 /**

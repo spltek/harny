@@ -1,5 +1,39 @@
 import { describe, it, expect, vi } from "vitest";
-import { Compactor, DEFAULT_COMPACTION, PERCENT_UNIT, SUMMARY_QUALITY_FLOOR, TRIM_LABEL, TRIM_NOTE, autoTargetPercent, buildSummaryMessages, carriedState, clampTargetPercent, compactHistory, compactionSpanTokens, estimateContextTokens, estimateTokens, isUsableSummary, maxSummaryInputTokens, minExplicitTargetPercent, planCompactionToBudget, planForTarget, planManualCompaction, realWindowTokens, recentStartFor, serializeConversation, shouldCompact, splitSummary, clampCompactionThresholdPercent, toCompactionThresholdPercent, toTargetPercent, targetTokensFor, summarizerPromptReserve, summaryBudgetTokens, trimHistory, type CompactedHistory } from "./compactor";
+import {
+  Compactor,
+  DEFAULT_COMPACTION,
+  PERCENT_UNIT,
+  SUMMARY_QUALITY_FLOOR,
+  TRIM_LABEL,
+  TRIM_NOTE,
+  autoTargetPercent,
+  buildSummaryMessages,
+  carriedState,
+  clampTargetPercent,
+  compactHistory,
+  compactionSpanTokens,
+  estimateContextTokens,
+  estimateTokens,
+  isUsableSummary,
+  maxSummaryInputTokens,
+  minExplicitTargetPercent,
+  planCompactionToBudget,
+  planForTarget,
+  planManualCompaction,
+  realWindowTokens,
+  recentStartFor,
+  serializeConversation,
+  shouldCompact,
+  splitSummary,
+  clampCompactionThresholdPercent,
+  toCompactionThresholdPercent,
+  toTargetPercent,
+  targetTokensFor,
+  summarizerPromptReserve,
+  summaryBudgetTokens,
+  trimHistory,
+  type CompactedHistory,
+} from "./compactor";
 import type { LLMProviderFactory } from "../llm/types";
 import type { HarnyConfig } from "../config/types";
 import type { ChatMessage } from "../history/types";
@@ -87,10 +121,7 @@ describe("window boundaries never split a tool-call pair", () => {
   it("…and a session that came back from an OLDER build is caught, not sent", () => {
     // The invariant is enforced on the PAYLOAD too (agent.ts refuses to send and names the fault):
     // a stored sequence that starts with a tool result must not reach the provider as an opaque 400.
-    const broken: ChatMessage[] = [
-      { role: "tool", content: "orphan", toolCallId: "c9", timestamp: 1 },
-      u("continue"),
-    ];
+    const broken: ChatMessage[] = [{ role: "tool", content: "orphan", toolCallId: "c9", timestamp: 1 }, u("continue")];
     expect(conversationFaults(broken).map((f) => f.kind)).toContain("orphan_tool_result");
   });
 });
@@ -433,7 +464,10 @@ describe("estimateTokens", () => {
 
 describe("serializeConversation", () => {
   it("labels roles and truncates tool results", () => {
-    const out = serializeConversation([u("hello"), a("ok"), { role: "tool", content: "x".repeat(5000), toolCallId: "c", timestamp: 3 }], 2000);
+    const out = serializeConversation(
+      [u("hello"), a("ok"), { role: "tool", content: "x".repeat(5000), toolCallId: "c", timestamp: 3 }],
+      2000,
+    );
     expect(out).toContain("[User]: hello");
     expect(out).toContain("[Assistant]: ok");
     expect(out).toContain("[Tool result]: " + "x".repeat(2000));
@@ -559,7 +593,10 @@ describe("Compactor — squeezing an oversized summary", () => {
   it("keeps a summary that fits in ONE call (no wasted request)", async () => {
     const factory = scriptedFactory(["Summary of past interactions\n---\n## Goal\nshort"]);
     const c = new Compactor(factory, () => CONFIG);
-    const out = await c.summarize([u("work")], undefined, undefined, { maxSummaryTokens: 10_000, maxReplyTokens: 8_192 });
+    const out = await c.summarize([u("work")], undefined, undefined, {
+      maxSummaryTokens: 10_000,
+      maxReplyTokens: 8_192,
+    });
     expect(factory.sent).toHaveLength(1);
     expect(out).toContain("short");
   });
@@ -586,7 +623,9 @@ describe("Compactor — squeezing an oversized summary", () => {
     const factory = scriptedFactory([first, worse]);
     const c = new Compactor(factory, () => CONFIG);
     // (the returned summary is trimmed; the point is WHICH text won)
-    expect(await c.summarize([u("work")], undefined, undefined, { maxSummaryTokens: 1000, maxReplyTokens: 8_192 })).toBe(first.trim());
+    expect(
+      await c.summarize([u("work")], undefined, undefined, { maxSummaryTokens: 1000, maxReplyTokens: 8_192 }),
+    ).toBe(first.trim());
   });
 
   it("does not squeeze at all when no budget is given (backward compatible)", async () => {
@@ -757,7 +796,7 @@ describe("the summary prompt (schematic, minimal, no duplication)", () => {
     // prompt must not stay silent about it, or the model reads those lines as noise
     // and keeps writing "changed a file" — which is the whole defect it fixes.
     const system = buildSummaryMessages([u("work")])[0].content;
-    expect(system).toContain('[Tool call]');
+    expect(system).toContain("[Tool call]");
     expect(system).toContain("Wrote src/x.ts");
   });
 
@@ -774,7 +813,12 @@ describe("the summary prompt (schematic, minimal, no duplication)", () => {
 
 describe("planManualCompaction", () => {
   function call(content: string, ...ids: string[]): ChatMessage {
-    return { role: "assistant", content, toolCalls: ids.map((id) => ({ id, name: "Shell", arguments: {} })), timestamp: 2 };
+    return {
+      role: "assistant",
+      content,
+      toolCalls: ids.map((id) => ({ id, name: "Shell", arguments: {} })),
+      timestamp: 2,
+    };
   }
   function res(toolCallId: string, content = "out"): ChatMessage {
     return { role: "tool", content, toolCallId, timestamp: 3 };
@@ -818,11 +862,7 @@ describe("planManualCompaction", () => {
   it("keeps the turn that owns the results instead of orphaning them", () => {
     // Boundary chosen so the naive cut would fall right after the call, i.e. on
     // its result: the snap must pull the call back into the kept tail.
-    const msgs: ChatMessage[] = [
-      u("start"),
-      call("", "c1"),
-      res("c1", "x".repeat(4000)),
-    ];
+    const msgs: ChatMessage[] = [u("start"), call("", "c1"), res("c1", "x".repeat(4000))];
     const plan = planManualCompaction(msgs, 0.001);
     expect(conversationFaults(plan.kept)).toEqual([]);
     if (plan.kept.some((m) => m.role === "tool")) {

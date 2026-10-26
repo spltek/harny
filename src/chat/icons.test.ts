@@ -15,7 +15,10 @@ function tsSources(dir: string, out: string[] = []): string[] {
 
 /** src-relative, forward slashes: the same in the assertion message on every OS. */
 function relative(file: string): string {
-  return file.slice(process.cwd().length + 1).split(sep).join("/");
+  return file
+    .slice(process.cwd().length + 1)
+    .split(sep)
+    .join("/");
 }
 
 describe("icon registry", () => {
@@ -139,8 +142,9 @@ describe("icon registry", () => {
   it("gives each todo status its own mark, differing only in the baffo", () => {
     // One box, four baffi: the box is what makes them read as four states of the
     // SAME thing, so it must be identical in all four files.
-    const marks = (["pending", "in_progress", "completed", "cancelled"] as const)
-      .map((status) => todoStatusIcon(status, 12));
+    const marks = (["pending", "in_progress", "completed", "cancelled"] as const).map((status) =>
+      todoStatusIcon(status, 12),
+    );
     expect(new Set(marks).size).toBe(4);
     for (const mark of marks) {
       expect(mark).toContain('width="12"');

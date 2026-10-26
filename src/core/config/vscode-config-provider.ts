@@ -1,11 +1,5 @@
 import { workspace, type WorkspaceConfiguration } from "vscode";
-import {
-  DEFAULT_CONFIG,
-  isThinkingLevel,
-  isThinkingMode,
-  type ConfigProvider,
-  type HarnyConfig,
-} from "./types";
+import { DEFAULT_CONFIG, isThinkingLevel, isThinkingMode, type ConfigProvider, type HarnyConfig } from "./types";
 
 /**
  * Reads configuration from VS Code settings (harny.*) with env-var fallback.

@@ -228,40 +228,155 @@ function tokenize(segment: string): string[] {
  * Windows/PowerShell names (`DIR`, `Get-Content`) work too. */
 const SAFE_COMMANDS = new Set([
   // POSIX
-  "cat", "head", "tail", "less", "more", "grep", "ls", "pwd", "echo", "printf",
-  "wc", "uniq", "diff", "file", "stat", "du", "df", "which", "whereis", "type",
-  "printenv", "uname", "whoami", "id", "date", "cal", "uptime", "ps", "top",
-  "htop", "free", "jq", "bat", "eza",
+  "cat",
+  "head",
+  "tail",
+  "less",
+  "more",
+  "grep",
+  "ls",
+  "pwd",
+  "echo",
+  "printf",
+  "wc",
+  "uniq",
+  "diff",
+  "file",
+  "stat",
+  "du",
+  "df",
+  "which",
+  "whereis",
+  "type",
+  "printenv",
+  "uname",
+  "whoami",
+  "id",
+  "date",
+  "cal",
+  "uptime",
+  "ps",
+  "top",
+  "htop",
+  "free",
+  "jq",
+  "bat",
+  "eza",
   // Windows cmd.exe
-  "dir", "where", "findstr", "systeminfo", "tasklist", "ipconfig", "netstat", "ver", "hostname",
+  "dir",
+  "where",
+  "findstr",
+  "systeminfo",
+  "tasklist",
+  "ipconfig",
+  "netstat",
+  "ver",
+  "hostname",
   // PowerShell read cmdlets
-  "get-childitem", "get-content", "get-item", "get-command", "select-string", "test-path",
-  "get-location", "get-process", "get-help", "get-date", "get-member", "get-itemproperty",
-  "get-service", "measure-object", "select-object", "sort-object", "convertto-json",
-  "convertfrom-json", "out-string",
+  "get-childitem",
+  "get-content",
+  "get-item",
+  "get-command",
+  "select-string",
+  "test-path",
+  "get-location",
+  "get-process",
+  "get-help",
+  "get-date",
+  "get-member",
+  "get-itemproperty",
+  "get-service",
+  "measure-object",
+  "select-object",
+  "sort-object",
+  "convertto-json",
+  "convertfrom-json",
+  "out-string",
 ]);
 
 /** `find` actions that execute or write. */
 const FIND_WRITE_ACTIONS = new Set([
-  "-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls",
+  "-exec",
+  "-execdir",
+  "-ok",
+  "-okdir",
+  "-delete",
+  "-fprint",
+  "-fprint0",
+  "-fprintf",
+  "-fls",
 ]);
 /** `fd` actions that execute. */
 const FD_EXEC_FLAGS = new Set(["-x", "-X", "--exec", "--exec-batch"]);
 /** Package-manager subcommands that only READ. */
-const PACKAGE_READ_SUBCOMMANDS = new Set(["list", "ls", "view", "info", "search", "outdated", "audit", "why", "explain"]);
+const PACKAGE_READ_SUBCOMMANDS = new Set([
+  "list",
+  "ls",
+  "view",
+  "info",
+  "search",
+  "outdated",
+  "audit",
+  "why",
+  "explain",
+]);
 /** Git subcommands that only READ (no write variant). */
 const GIT_READ_SUBCOMMANDS = new Set([
-  "status", "log", "diff", "show", "blame", "reflog", "shortlog", "describe",
-  "rev-parse", "rev-list", "show-ref", "for-each-ref", "cat-file", "ls-files",
-  "ls-tree", "merge-base", "diff-tree", "diff-index", "name-rev",
-  "check-ignore", "check-attr", "count-objects", "version", "help", "grep",
+  "status",
+  "log",
+  "diff",
+  "show",
+  "blame",
+  "reflog",
+  "shortlog",
+  "describe",
+  "rev-parse",
+  "rev-list",
+  "show-ref",
+  "for-each-ref",
+  "cat-file",
+  "ls-files",
+  "ls-tree",
+  "merge-base",
+  "diff-tree",
+  "diff-index",
+  "name-rev",
+  "check-ignore",
+  "check-attr",
+  "count-objects",
+  "version",
+  "help",
+  "grep",
   "whatchanged",
 ]);
 /** Git flags that can WRITE a file or EXECUTE a helper (blocked everywhere). */
-const GIT_DANGEROUS_FLAGS = /^(--output(=|$)|--ext-diff$|--textconv$|--open-files-in-pager(=|$)|-O$|--filters$|--filter=)/;
-const GIT_BRANCH_READ_FLAGS = new Set(["-l", "--list", "-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose", "--show-current"]);
+const GIT_DANGEROUS_FLAGS =
+  /^(--output(=|$)|--ext-diff$|--textconv$|--open-files-in-pager(=|$)|-O$|--filters$|--filter=)/;
+const GIT_BRANCH_READ_FLAGS = new Set([
+  "-l",
+  "--list",
+  "-a",
+  "--all",
+  "-r",
+  "--remotes",
+  "-v",
+  "-vv",
+  "--verbose",
+  "--show-current",
+]);
 const GIT_BRANCH_VALUE_FLAGS = new Set(["--contains", "--merged", "--no-merged", "--points-at", "--sort"]);
-const GIT_TAG_READ_FLAGS = new Set(["-l", "--list", "-n", "-v", "--verify", "--contains", "--merged", "--no-merged", "--points-at", "--sort"]);
+const GIT_TAG_READ_FLAGS = new Set([
+  "-l",
+  "--list",
+  "-n",
+  "-v",
+  "--verify",
+  "--contains",
+  "--merged",
+  "--no-merged",
+  "--points-at",
+  "--sort",
+]);
 const GIT_REMOTE_READ = new Set(["-v", "--verbose", "show", "get-url"]);
 const GIT_FLAG_WITH_VALUE = /^--(sort|contains|merged|no-merged|points-at)=/;
 
@@ -295,7 +410,9 @@ function isSafeGit(args: string[]): boolean {
     case "submodule":
       return rest[0] === "status" || rest[0] === "summary";
     case "config":
-      return rest.some((a) => a === "--get" || a === "--get-all" || a === "--get-regexp" || a === "--list" || a === "-l");
+      return rest.some(
+        (a) => a === "--get" || a === "--get-all" || a === "--get-regexp" || a === "--list" || a === "-l",
+      );
     case "branch":
       return rest.length === 0 || gitReadFlags(rest, GIT_BRANCH_READ_FLAGS, GIT_BRANCH_VALUE_FLAGS);
     case "tag":
@@ -342,7 +459,9 @@ function isSafeReadSegment(segment: string): boolean {
       return args.length > 0 && args.every((a) => a === "--version" || a === "-V" || a === "-v");
     case "curl":
       // Flags that write a local file / upload.
-      return !args.some((a) => /^(-o|--output|-O|--remote-name|-T|--upload-file)$/.test(a) || /^--(output|upload-file)=/.test(a));
+      return !args.some(
+        (a) => /^(-o|--output|-O|--remote-name|-T|--upload-file)$/.test(a) || /^--(output|upload-file)=/.test(a),
+      );
     case "npm":
     case "yarn":
     case "pnpm":

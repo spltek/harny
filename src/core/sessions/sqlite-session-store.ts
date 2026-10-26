@@ -6,7 +6,14 @@ import { isThinkingLevel } from "../config/types";
 import { clampLoopGuardOverrides, normalizeLoopGuardSensitivity, type LoopGuardOptions } from "../agent/loop-guard";
 import { runMigrations } from "./migrations";
 import { noteDbOp } from "./store-metrics";
-import type { DbVacuumResult, DbVacuumStats, LoadedSession, SessionSettingsPatch, SessionStore, SessionSummary } from "./types";
+import type {
+  DbVacuumResult,
+  DbVacuumStats,
+  LoadedSession,
+  SessionSettingsPatch,
+  SessionStore,
+  SessionSummary,
+} from "./types";
 
 /** One full-text search hit: which message matched, its snippet and BM25 rank. */
 export interface SessionSearchHit {
@@ -88,9 +95,7 @@ export class SqliteSessionStore implements SessionStore {
   load(id: string): LoadedSession {
     const row = this.deps.db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as Row | undefined;
     const summary = row ? this.rowToSummary(row) : this.emptySummary(id);
-    const rows = this.deps.db
-      .prepare("SELECT data FROM messages WHERE session_id = ? ORDER BY seq")
-      .all(id) as Row[];
+    const rows = this.deps.db.prepare("SELECT data FROM messages WHERE session_id = ? ORDER BY seq").all(id) as Row[];
     const messages = rows.map((r) => JSON.parse(String(r.data)) as ChatMessage);
     summary.messageCount = messages.length;
     return { summary, messages };
@@ -330,9 +335,7 @@ export class SqliteSessionStore implements SessionStore {
     // (the app never edits a middle message in place).
     if (messages.length > storedCount) return true;
     // Equal length: verify the whole prefix (the compaction-rebuild shape).
-    const rows = this.deps.db
-      .prepare("SELECT data FROM messages WHERE session_id = ? ORDER BY seq")
-      .all(id) as Row[];
+    const rows = this.deps.db.prepare("SELECT data FROM messages WHERE session_id = ? ORDER BY seq").all(id) as Row[];
     if (rows.length !== storedCount) return false;
     for (let i = 0; i < storedCount; i++) {
       if (String(rows[i].data) !== JSON.stringify(messages[i])) return false;
@@ -377,8 +380,12 @@ export class SqliteSessionStore implements SessionStore {
       ...(existing?.modelProvider ? { modelProvider: existing.modelProvider } : {}),
       ...(existing?.thinkingLevel ? { thinkingLevel: existing.thinkingLevel } : {}),
       ...(existing?.contextWindow ? { contextWindow: existing.contextWindow } : {}),
-      ...(existing?.compactionThresholdPercent ? { compactionThresholdPercent: existing.compactionThresholdPercent } : {}),
-      ...(existing?.compactionTargetPercent !== undefined ? { compactionTargetPercent: existing.compactionTargetPercent } : {}),
+      ...(existing?.compactionThresholdPercent
+        ? { compactionThresholdPercent: existing.compactionThresholdPercent }
+        : {}),
+      ...(existing?.compactionTargetPercent !== undefined
+        ? { compactionTargetPercent: existing.compactionTargetPercent }
+        : {}),
       ...(existing?.contextTokens ? { contextTokens: existing.contextTokens } : {}),
       ...(existing?.outputTokens ? { outputTokens: existing.outputTokens } : {}),
       // 0 is a VALID value for these: `!== undefined`, not truthiness.

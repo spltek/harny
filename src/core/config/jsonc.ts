@@ -105,7 +105,7 @@ function scanJsonc(text: string): ScanResult {
 
   while (i < text.length) {
     const c = text[i];
-    if (c === "\"") {
+    if (c === '"') {
       const start = i;
       i++;
       while (i < text.length) {
@@ -113,7 +113,7 @@ function scanJsonc(text: string): ScanResult {
           i += 2;
           continue;
         }
-        if (text[i] === "\"") {
+        if (text[i] === '"') {
           i++;
           break;
         }
@@ -213,9 +213,7 @@ export function setTopLevelString(text: string, key: string, value: string): str
     const after = text.slice(openBrace + 1);
     const nextMeaningful = after.search(/\S/);
     const startsEmpty = nextMeaningful === -1 || after[nextMeaningful] === "}";
-    const insert = startsEmpty
-      ? `"${key}": ${quoted}`
-      : `"${key}": ${quoted}, `;
+    const insert = startsEmpty ? `"${key}": ${quoted}` : `"${key}": ${quoted}, `;
     return text.slice(0, openBrace + 1) + insert + after;
   }
 
@@ -229,4 +227,3 @@ export function setTopLevelString(text: string, key: string, value: string): str
   if (valueToken.type === "symbol" && (valueToken.raw === "{" || valueToken.raw === "[")) return text;
   return text.slice(0, valueToken.start) + quoted + text.slice(valueToken.end);
 }
-

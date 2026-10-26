@@ -61,7 +61,10 @@ describe("createDefaultTools", () => {
       WebFetch: "read-only",
     });
     // The two facts are independent: read-only says nothing about being CACHEABLE.
-    const cacheable = tools.filter((t) => t.cacheable).map((t) => t.name).sort();
+    const cacheable = tools
+      .filter((t) => t.cacheable)
+      .map((t) => t.name)
+      .sort();
     expect(cacheable).toEqual(["Glob", "Grep", "Read", "ReadLints", "Skill"]);
     // And the two tools whose behavior in Analyze needs explaining DO explain it.
     expect(tools.find((t) => t.name === "Write")!.analyzeNote).toContain("PREVIEW MODE (Analyze)");

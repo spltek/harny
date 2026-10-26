@@ -143,7 +143,12 @@ describe("LoopGuard turn classification + escalation", () => {
   it("escalates a repeated successful tool call", () => {
     const g = new LoopGuard();
     const tc = toolCall("Shell", { command: "ls" });
-    const obs = { content: "", thinking: "", toolCalls: [tc], toolResults: [outcome("Shell", { command: "ls" }, false)] };
+    const obs = {
+      content: "",
+      thinking: "",
+      toolCalls: [tc],
+      toolResults: [outcome("Shell", { command: "ls" }, false)],
+    };
     expect(g.observeTurn(obs).kind).toBe("continue"); // 1st
     expect(g.observeTurn(obs).kind).toBe("continue"); // 2nd
     const third = g.observeTurn(obs);
@@ -217,7 +222,12 @@ describe("LoopGuard turn classification + escalation", () => {
   it("classifies a repeated FAILING call as tool-failure", () => {
     const g = new LoopGuard();
     const tc = toolCall("Read", { path: "a" });
-    const obs = { content: "", thinking: "", toolCalls: [tc], toolResults: [outcome("Read", { path: "a" }, true, "err")] };
+    const obs = {
+      content: "",
+      thinking: "",
+      toolCalls: [tc],
+      toolResults: [outcome("Read", { path: "a" }, true, "err")],
+    };
     expect(g.observeTurn(obs).kind).toBe("continue"); // 1st failure
     const second = g.observeTurn(obs);
     expect(second.kind).toBe("react");
@@ -409,7 +419,12 @@ describe("Loop Guard sensitivity presets", () => {
 
   it("high flags a tool loop sooner than low", () => {
     const tc = toolCall("Shell", { command: "ls" });
-    const obs = { content: "", thinking: "", toolCalls: [tc], toolResults: [outcome("Shell", { command: "ls" }, false)] };
+    const obs = {
+      content: "",
+      thinking: "",
+      toolCalls: [tc],
+      toolResults: [outcome("Shell", { command: "ls" }, false)],
+    };
     const high = new LoopGuard(resolveLoopGuardOptions("high"));
     expect(high.observeTurn(obs).kind).toBe("continue"); // 1st
     const highSecond = high.observeTurn(obs);

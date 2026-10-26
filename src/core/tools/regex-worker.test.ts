@@ -3,10 +3,16 @@ import { matchAll, RegexTimeoutError } from "./regex-worker";
 
 describe("regex worker (anti-ReDoS)", () => {
   it("returns per-item hits for a normal pattern", async () => {
-    const res = await matchAll("foo", "i", false, [
-      { path: "a", text: "x\nFOO\n" },
-      { path: "b", text: "nothing\n" },
-    ], 1000);
+    const res = await matchAll(
+      "foo",
+      "i",
+      false,
+      [
+        { path: "a", text: "x\nFOO\n" },
+        { path: "b", text: "nothing\n" },
+      ],
+      1000,
+    );
     expect(res.error).toBeUndefined();
     expect(res.results?.[0]?.hit).toEqual([1]);
     expect(res.results?.[1]?.hit).toEqual([]);

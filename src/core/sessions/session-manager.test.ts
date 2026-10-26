@@ -11,10 +11,34 @@ function makeStore(): SessionStore {
       idc++;
       return { id: `s${idc}`, name: name?.trim() || "New Session", createdAt: 1, updatedAt: 1, messageCount: 0 };
     }),
-    load: vi.fn((id: string): LoadedSession => ({ summary: { id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 1 }, messages: [{ role: "user", content: "x", timestamp: 1 }] })),
-    saveMessages: vi.fn((id: string, messages: { role: string; content: string; timestamp: number }[]): SessionSummary => ({ id, name: "S", createdAt: 1, updatedAt: 2, messageCount: messages.length })),
-    saveSettings: vi.fn((id: string, patch: SessionSettingsPatch): SessionSummary => ({ id, name: "S", createdAt: 1, updatedAt: 2, messageCount: 0, ...patch })),
-    rename: vi.fn((id: string, name: string): SessionSummary => ({ id, name, createdAt: 1, updatedAt: 2, messageCount: 0 })),
+    load: vi.fn((id: string): LoadedSession => ({
+      summary: { id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 1 },
+      messages: [{ role: "user", content: "x", timestamp: 1 }],
+    })),
+    saveMessages: vi.fn(
+      (id: string, messages: { role: string; content: string; timestamp: number }[]): SessionSummary => ({
+        id,
+        name: "S",
+        createdAt: 1,
+        updatedAt: 2,
+        messageCount: messages.length,
+      }),
+    ),
+    saveSettings: vi.fn((id: string, patch: SessionSettingsPatch): SessionSummary => ({
+      id,
+      name: "S",
+      createdAt: 1,
+      updatedAt: 2,
+      messageCount: 0,
+      ...patch,
+    })),
+    rename: vi.fn((id: string, name: string): SessionSummary => ({
+      id,
+      name,
+      createdAt: 1,
+      updatedAt: 2,
+      messageCount: 0,
+    })),
     remove: vi.fn((): boolean => true),
   };
 }

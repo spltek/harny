@@ -65,11 +65,15 @@ describe("SqliteSessionStore — sessions & messages", () => {
     const all = [msg("user", "one"), msg("assistant", "two")];
     store.saveMessages("s1", all);
     // rowid stays stable for the appended tail => the prefix was NOT rewritten
-    const before = db.prepare("SELECT rowid FROM messages WHERE session_id=? ORDER BY seq").all("s1") as { rowid: number }[];
+    const before = db.prepare("SELECT rowid FROM messages WHERE session_id=? ORDER BY seq").all("s1") as {
+      rowid: number;
+    }[];
 
     store.saveMessages("s1", [...all, msg("user", "three")]);
 
-    const after = db.prepare("SELECT rowid FROM messages WHERE session_id=? ORDER BY seq").all("s1") as { rowid: number }[];
+    const after = db.prepare("SELECT rowid FROM messages WHERE session_id=? ORDER BY seq").all("s1") as {
+      rowid: number;
+    }[];
     expect(after.length).toBe(3);
     // The first two rows kept their identity (append, not delete+reinsert).
     expect(after[0].rowid).toBe(before[0].rowid);
@@ -93,14 +97,14 @@ describe("SqliteSessionStore — sessions & messages", () => {
     // A 1-message span summarized into 2 synthetic messages, keeping 2: the new
     // history has MORE messages than the stored one, so a length-only check
     // would append instead of rewriting.
-    const compacted = [msg("user", "SUMMARY"), msg("assistant", "SUMMARY-BODY"), msg("assistant", "old-B"), msg("user", "old-C")];
+    const compacted = [
+      msg("user", "SUMMARY"),
+      msg("assistant", "SUMMARY-BODY"),
+      msg("assistant", "old-B"),
+      msg("user", "old-C"),
+    ];
     store.saveMessages("s1", compacted);
-    expect(store.load("s1").messages.map((m) => m.content)).toEqual([
-      "SUMMARY",
-      "SUMMARY-BODY",
-      "old-B",
-      "old-C",
-    ]);
+    expect(store.load("s1").messages.map((m) => m.content)).toEqual(["SUMMARY", "SUMMARY-BODY", "old-B", "old-C"]);
   });
 
   it("REWRITES when a rebuild keeps the same length and the last message coincides", () => {
@@ -118,9 +122,13 @@ describe("SqliteSessionStore — sessions & messages", () => {
     store.create();
     const all = [msg("user", "one"), msg("assistant", "two")];
     store.saveMessages("s1", all);
-    const before = db.prepare("SELECT rowid FROM messages WHERE session_id=? ORDER BY seq").all("s1") as { rowid: number }[];
+    const before = db.prepare("SELECT rowid FROM messages WHERE session_id=? ORDER BY seq").all("s1") as {
+      rowid: number;
+    }[];
     store.saveMessages("s1", all);
-    const after = db.prepare("SELECT rowid FROM messages WHERE session_id=? ORDER BY seq").all("s1") as { rowid: number }[];
+    const after = db.prepare("SELECT rowid FROM messages WHERE session_id=? ORDER BY seq").all("s1") as {
+      rowid: number;
+    }[];
     expect(after.map((r) => r.rowid)).toEqual(before.map((r) => r.rowid));
     expect(store.load("s1").messages.map((m) => m.content)).toEqual(["one", "two"]);
   });

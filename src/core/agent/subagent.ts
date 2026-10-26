@@ -55,7 +55,11 @@ export interface SubAgentRunnerDeps {
    * (the runner owns it), so the session's compaction routine cannot act on it — the
    * host compacts THIS history with the same strategy a session uses and answers
    * whether it changed anything. Absent = an overflow ends the sub-agent. */
-  onContextOverflow?: (history: ChatHistory, signal: AbortSignal, evidence: ContextOverflowEvidence) => Promise<boolean>;
+  onContextOverflow?: (
+    history: ChatHistory,
+    signal: AbortSignal,
+    evidence: ContextOverflowEvidence,
+  ) => Promise<boolean>;
   /** Called at every turn boundary of a sub-agent, with ITS history: the session frees
    * room there too (`maybeCompactDuringRun`), and a sub-agent — unbounded, and full of
    * heavy reads — is the one that needs it most. The host decides whether the threshold
@@ -125,7 +129,8 @@ export class SubAgentRunner {
     onPreviewPrepared?: (change: PreparedChange) => void,
   ): Promise<ToolResult> {
     // Stop arrived BEFORE this sub-agent started: never start it (queued -> aborted).
-    if (signal?.aborted) return { content: formatSubAgentAborted(spec) + structuredFooter("aborted", [], []), isError: true };
+    if (signal?.aborted)
+      return { content: formatSubAgentAborted(spec) + structuredFooter("aborted", [], []), isError: true };
     const key = toolCallId ?? `sub-${this.nextKey++}`;
     // Analyze-style read-only sub-agent, or a full agent for writers.
     const mode: ChatMode = spec.access === "read" ? "analyze" : "agent";
@@ -229,8 +234,7 @@ export class SubAgentRunner {
     );
     try {
       // Forward the attachments the orchestrator selected for this sub-task.
-      const task =
-        buildSubAgentTask(spec) + (spec.attachmentText ? `\n\n${spec.attachmentText}` : "");
+      const task = buildSubAgentTask(spec) + (spec.attachmentText ? `\n\n${spec.attachmentText}` : "");
       await agent.send(task, { images: spec.images });
       // Any user stop (whole-run Stop or a per-sub-task abort) is reported as
       // ABORTED — sub-agents have a single terminal stop state.
@@ -243,7 +247,10 @@ export class SubAgentRunner {
       // text as a finished report).
       const report = lastAssistantReport(agent.getMessages());
       if (hadError) {
-        return { content: formatSubAgentError(spec, report) + structuredFooter("error", touched, prepared), isError: true };
+        return {
+          content: formatSubAgentError(spec, report) + structuredFooter("error", touched, prepared),
+          isError: true,
+        };
       }
       const base = formatSubAgentReport(spec, report);
       // A READ-ONLY sub-agent that prepared previews could not write: make that
@@ -254,9 +261,13 @@ export class SubAgentRunner {
         structuredFooter(needsWrite ? "needs-write" : "done", touched, prepared);
       return { content, isError: false };
     } catch (e) {
-      this.deps.log?.(`subagent "${spec.id}" error in ${Date.now() - startedAt}ms: ${e instanceof Error ? e.message : String(e)}`);
+      this.deps.log?.(
+        `subagent "${spec.id}" error in ${Date.now() - startedAt}ms: ${e instanceof Error ? e.message : String(e)}`,
+      );
       return {
-        content: formatSubAgentError(spec, e instanceof Error ? e.message : String(e)) + structuredFooter("error", touched, prepared),
+        content:
+          formatSubAgentError(spec, e instanceof Error ? e.message : String(e)) +
+          structuredFooter("error", touched, prepared),
         isError: true,
       };
     } finally {

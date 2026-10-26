@@ -31,7 +31,9 @@ describe("McpManager", () => {
     // The gate reads the USER's declaration for the server, live: without it every tool
     // of that server is refused in Analyze (the strictest default), with it they follow
     // the declaration (see ServerAnalyzePolicy).
-    const undeclared = new McpManager({ servers: () => ({ test: { command: process.execPath, args: ["-e", SERVER] } }) });
+    const undeclared = new McpManager({
+      servers: () => ({ test: { command: process.execPath, args: ["-e", SERVER] } }),
+    });
     await undeclared.connect();
     expect(undeclared.getTools()[0].analyzePolicy).toBe("refuse");
 
@@ -51,9 +53,20 @@ describe("McpManager", () => {
     await manager.connect();
 
     expect(manager.getStatuses()).toEqual([
-      { name: "test", ok: true, enabled: true, toolCount: 2, tools: [{ name: "echo", description: "Echo" }, { name: "ping" }] },
+      {
+        name: "test",
+        ok: true,
+        enabled: true,
+        toolCount: 2,
+        tools: [{ name: "echo", description: "Echo" }, { name: "ping" }],
+      },
     ]);
-    expect(manager.getTools().map((t) => t.name).sort()).toEqual(["mcp__test__echo", "mcp__test__ping"]);
+    expect(
+      manager
+        .getTools()
+        .map((t) => t.name)
+        .sort(),
+    ).toEqual(["mcp__test__echo", "mcp__test__ping"]);
     expect(changed).toBe(1);
     manager.dispose();
     expect(manager.getTools()).toEqual([]);
@@ -77,8 +90,12 @@ describe("McpManager", () => {
       req.on("data", (d) => (body += d));
       req.on("end", () => {
         const m = JSON.parse(body);
-        const send = (result: unknown) => res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ jsonrpc: "2.0", id: m.id, result }));
-        if (m.method === "initialize") send({ protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "h", version: "1" } });
+        const send = (result: unknown) =>
+          res
+            .writeHead(200, { "content-type": "application/json" })
+            .end(JSON.stringify({ jsonrpc: "2.0", id: m.id, result }));
+        if (m.method === "initialize")
+          send({ protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "h", version: "1" } });
         else if (m.method === "tools/list") send({ tools: [{ name: "ping" }] });
         else res.writeHead(202).end();
       });
@@ -88,7 +105,9 @@ describe("McpManager", () => {
     try {
       const manager = new McpManager({ servers: () => ({ remote: { url: `http://127.0.0.1:${port}/mcp` } }) });
       await manager.connect();
-      expect(manager.getStatuses()).toEqual([{ name: "remote", ok: true, enabled: true, toolCount: 1, tools: [{ name: "ping" }] }]);
+      expect(manager.getStatuses()).toEqual([
+        { name: "remote", ok: true, enabled: true, toolCount: 1, tools: [{ name: "ping" }] },
+      ]);
       expect(manager.getTools().map((t) => t.name)).toEqual(["mcp__remote__ping"]);
       manager.dispose();
     } finally {

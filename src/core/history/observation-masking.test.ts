@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { MASK_KEEP_MAX_TOKENS, MASK_MIN_TOKENS, maskKeepTokens, maskOldToolResults, maskedResultStub } from "./observation-masking";
+import {
+  MASK_KEEP_MAX_TOKENS,
+  MASK_MIN_TOKENS,
+  maskKeepTokens,
+  maskOldToolResults,
+  maskedResultStub,
+} from "./observation-masking";
 import type { PairingMessage } from "./conversation-validity";
 import { conversationFaults } from "./conversation-validity";
 
@@ -8,7 +14,11 @@ import { conversationFaults } from "./conversation-validity";
 const estimate = (t: string): number => Math.ceil(t.length / 4);
 
 const user = (content: string): PairingMessage => ({ role: "user", content });
-const call = (id: string, name: string): PairingMessage => ({ role: "assistant", content: "", toolCalls: [{ id, name }] });
+const call = (id: string, name: string): PairingMessage => ({
+  role: "assistant",
+  content: "",
+  toolCalls: [{ id, name }],
+});
 const result = (id: string, content: string): PairingMessage => ({ role: "tool", content, toolCallId: id });
 
 /** A tool result of about `tokens` tokens. */
