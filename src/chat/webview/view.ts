@@ -1973,6 +1973,7 @@ function renderWorkspaceShell(): void {
   document.body.classList.add("no-workspace");
   document.body.classList.remove("no-session");
   messagesEl.innerHTML = "";
+  clearPinnedTodos();
   const hero = document.createElement("div");
   hero.className = "empty-hero";
   hero.innerHTML =
@@ -2014,6 +2015,7 @@ function heroMetaLine(): string {
 function renderEmptyShell(): void {
   document.body.classList.add("no-session");
   messagesEl.innerHTML = "";
+  clearPinnedTodos();
   updateTranscriptActions();
   const hero = document.createElement("div");
   hero.className = "empty-hero";
@@ -2403,19 +2405,33 @@ function renderTodoBlock(bubble: HTMLElement, text: string): void {
   // The newest list WINS: five copies of the same thing, each behind a click, is
   // exactly what made the list invisible in the first place.
   document.querySelectorAll(".todo-block").forEach((old) => old.remove());
-  const done = items.filter((item) => item.status === "completed").length;
-
   const block = document.createElement("div");
   block.className = "todo-block";
+  block.append(todoHead(items), todoList(items));
+
+  const header = bubble.querySelector(".tool-header");
+  if (header) header.insertAdjacentElement("afterend", block);
+  else bubble.prepend(block);
+  // The pinned footer mirrors it: same data, same rows, and it stays on screen
+  // while the transcript scrolls.
+  renderPinnedTodos(items);
+}
+
+/** `<count>/<total> Tasks` — the header both views share. */
+function todoHead(items: Array<{ status: TodoStatusKey; content: string }>): HTMLElement {
   const head = document.createElement("div");
   head.className = "todo-head";
   const count = document.createElement("span");
   count.className = "todo-count";
-  count.textContent = done + "/" + items.length;
+  count.textContent = items.filter((item) => item.status === "completed").length + "/" + items.length;
   const title = document.createElement("span");
   title.textContent = "Tasks";
   head.append(count, title);
+  return head;
+}
 
+/** The rows: one mark + one text per task, in the order the tool listed them. */
+function todoList(items: Array<{ status: TodoStatusKey; content: string }>): HTMLElement {
   const list = document.createElement("ul");
   list.className = "todo-list";
   for (const item of items) {
@@ -2431,11 +2447,38 @@ function renderTodoBlock(bubble: HTMLElement, text: string): void {
     row.append(mark, label);
     list.appendChild(row);
   }
-  block.append(head, list);
+  return list;
+}
 
-  const header = bubble.querySelector(".tool-header");
-  if (header) header.insertAdjacentElement("afterend", block);
-  else bubble.prepend(block);
+/**
+ * The pinned mirror above the input. Same data as the block in the transcript, but
+ * it does NOT scroll away with the conversation — which is the whole point of having
+ * it twice.
+ */
+function renderPinnedTodos(items: Array<{ status: TodoStatusKey; content: string }>): void {
+  const section = document.getElementById("todo-section");
+  const list = document.getElementById("todo-section-list");
+  const count = document.getElementById("todo-section-count");
+  if (!section || !list || !count) return;
+  list.innerHTML = "";
+  if (!items.length) {
+    section.classList.add("hidden");
+    count.textContent = "";
+    return;
+  }
+  count.textContent = items.filter((item) => item.status === "completed").length + "/" + items.length;
+  list.append(...Array.from(todoList(items).childNodes));
+  section.classList.remove("hidden");
+}
+
+/** A session switch (or an empty shell) must not keep showing the PREVIOUS list. */
+function clearPinnedTodos(): void {
+  const section = document.getElementById("todo-section");
+  const list = document.getElementById("todo-section-list");
+  const count = document.getElementById("todo-section-count");
+  section?.classList.add("hidden");
+  if (list) list.innerHTML = "";
+  if (count) count.textContent = "";
 }
 
 // ── Actions ──
@@ -5705,6 +5748,9 @@ window.addEventListener("message", (e) => {
       // everything back on every run-end refresh is the same loss as on a switch.
       stashViewMemory(activeId);
       messagesEl.innerHTML = "";
+      // The task list is per SESSION: a rebuild must not carry the previous one.
+      // The replay below re-fills it from the last TodoWrite in the transcript.
+      clearPinnedTodos();
       resetStreamState();
       // A refresh rebuilds the transcript from host messages; drop the stale
       // reference to any previously appended compaction bubble (already wiped

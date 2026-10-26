@@ -282,6 +282,39 @@ describe("renderViewHtml", () => {
     expect(cssRule(html, ".todo-item.status-in_progress .todo-mark")).toContain("var(--accent)");
   });
 
+  it("pins the task list above the input, and lets IT scroll, not the panel", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
+    });
+    // The footer needs its three hooks: the section, its count and the list.
+    expect(html).toContain('id="todo-section"');
+    expect(html).toContain('id="todo-section-count"');
+    expect(html).toContain('id="todo-section-list"');
+    // Hidden until there is a list — and the same `.hidden` rule every footer uses.
+    expect(html).toContain('id="todo-section" class="hidden"');
+    expect(cssRule(html, "#todo-section.hidden")).toContain("display: none");
+    // A long list scrolls INSIDE the section: it must never push the input away.
+    const section = cssRule(html, "#todo-section");
+    expect(section).toContain("flex-shrink: 0");
+    expect(section).toContain("border-top: 1px dashed var(--border)");
+    const list = cssRule(html, "#todo-section-list");
+    expect(list).toContain("max-height: 22vh");
+    expect(list).toContain("overflow-y: auto");
+  });
+
   it("renders sessions, tabs, messages and input containers", () => {
     const html = renderViewHtml({
       ...base,

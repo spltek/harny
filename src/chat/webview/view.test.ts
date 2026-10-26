@@ -63,6 +63,12 @@ function setupDom(initOverrides: Record<string, unknown> = {}, savedState: Recor
         </div>
       </div>
     </div>
+    <div id="todo-section" class="hidden">
+      <div class="todo-head">
+        <span id="todo-section-count" class="todo-count"></span><span>Tasks</span>
+      </div>
+      <ul id="todo-section-list" class="todo-list"></ul>
+    </div>
     <div id="pending-section" class="hidden">
       <div id="pending-head" role="button" tabindex="0" aria-expanded="true"><span class="toggle">▼</span><span id="pending-head-text"></span></div>
       <div id="pending-area" class="hidden"></div>
@@ -3338,6 +3344,85 @@ describe("view webview client", () => {
     // The task text is MODEL data: it lands as text, never as markup.
     expect(second.querySelectorAll(".todo-text")[0].textContent).toBe("fix parser");
     expect(second.querySelectorAll(".todo-mark svg")).toHaveLength(2);
+  });
+
+  it("pins the same list above the input, so it does not scroll away", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+
+    const section = document.getElementById("todo-section") as HTMLElement;
+    // Hidden until the model actually writes a list: no empty frame in the panel.
+    expect(section.classList.contains("hidden")).toBe(true);
+
+    hostMessage({ type: "toolCall", id: "tp1", name: "TodoWrite", arguments: { todos: [] } });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "tp1",
+      output: "## Task List\n\n✅ [completed] fix parser\n🔄 [in_progress] ship it",
+      isError: false,
+    });
+
+    expect(section.classList.contains("hidden")).toBe(false);
+    expect(document.getElementById("todo-section-count")?.textContent).toBe("1/2");
+    const rows = section.querySelectorAll(".todo-item");
+    expect(rows).toHaveLength(2);
+    expect(rows[0].classList.contains("status-completed")).toBe(true);
+    expect(rows[0].querySelector("svg")).toBeTruthy();
+    expect(rows[0].querySelector(".todo-text")?.textContent).toBe("fix parser");
+
+    // …and it mirrors the update instead of appending: same list, newer truth.
+    hostMessage({ type: "toolCall", id: "tp2", name: "TodoWrite", arguments: { todos: [] } });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "tp2",
+      output: "## Task List\n\n✅ [completed] fix parser\n✅ [completed] ship it\n⏳ [pending] docs",
+      isError: false,
+    });
+    expect(document.getElementById("todo-section-count")?.textContent).toBe("2/3");
+    expect(section.querySelectorAll(".todo-item")).toHaveLength(3);
+  });
+
+  it("clears the pinned list when the session changes (a refresh with no TodoWrite)", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    hostMessage({ type: "toolCall", id: "tp3", name: "TodoWrite", arguments: { todos: [] } });
+    hostMessage({ type: "toolResult", toolCallId: "tp3", output: "## Task List\n\n⏳ [pending] a", isError: false });
+    expect((document.getElementById("todo-section") as HTMLElement).classList.contains("hidden")).toBe(false);
+
+    // Another session, with no tasks in it: the previous list must NOT survive.
+    hostMessage({ type: "refresh", messages: [{ role: "user", content: "hello", timestamp: 1 }] });
+    expect((document.getElementById("todo-section") as HTMLElement).classList.contains("hidden")).toBe(true);
+    expect(document.getElementById("todo-section-list")?.children.length).toBe(0);
+  });
+
+  it("rebuilds the pinned list from a replayed transcript", async () => {
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [
+        {
+          role: "assistant",
+          content: "🔧 Tools: TodoWrite",
+          timestamp: 1,
+          toolCalls: [{ id: "tr1", name: "TodoWrite", arguments: { todos: [] } }],
+        },
+        {
+          role: "tool",
+          toolCallId: "tr1",
+          content: "## Task List\n\n✅ [completed] fix parser\n⏳ [pending] docs",
+          timestamp: 2,
+        },
+      ],
+    });
+    // A reload shows the list again, from the transcript: the footer is not session state.
+    const section = document.getElementById("todo-section") as HTMLElement;
+    expect(section.classList.contains("hidden")).toBe(false);
+    expect(document.getElementById("todo-section-count")?.textContent).toBe("1/2");
+    expect(section.querySelectorAll(".todo-item")).toHaveLength(2);
   });
 
   it("does not turn another tool's output into a task list", async () => {

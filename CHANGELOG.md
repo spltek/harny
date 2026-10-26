@@ -74,6 +74,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `todo-done`, `todo-cancelled`) — so the states read as four faces of the same thing; a completed row is struck
   through with its tick tinted. Parsing keys on the `[status]` bracket, not on the emoji, so the list keeps
   working if those emoji markers ever go away.
+- **…and it is pinned above the input too.** The block stops the list being invisible, but it still scrolls away with
+  the conversation. The same list now also lives in a footer above the input (`2/5 Tasks` + the rows), fed by the same
+  parser and the same rows — one builder, two views, so they can never disagree about a task. It is hidden until the
+  model writes a list, mirrors every update instead of appending, clears on a session switch (a refresh re-fills it
+  from the transcript, so a reload shows it again), and the list scrolls inside its own box so a long one can never
+  push the input off screen.
 
 ### Changed
 

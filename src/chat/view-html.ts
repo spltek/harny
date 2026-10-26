@@ -878,6 +878,14 @@ ${renderViewConfig(deps)}
     .todo-item.status-cancelled { color: var(--muted); }
     .todo-item.status-cancelled .todo-text { text-decoration: line-through; }
     .todo-item.status-in_progress .todo-mark { color: var(--accent); }
+    /* The SAME list, pinned above the input: the block in the transcript scrolls away
+       with the conversation, this one does not. One shared parser, one shared row
+       builder — the two views can never disagree about a task. */
+    #todo-section { flex-shrink: 0; background: var(--bg); border-top: 1px dashed var(--border); padding: 5px 10px 6px; }
+    #todo-section.hidden { display: none; }
+    #todo-section .todo-head { margin-bottom: 4px; }
+    /* A long list must not eat the input: the section scrolls on its own. */
+    #todo-section-list { max-height: 22vh; overflow-y: auto; }
     .tool-label { display: block; color: var(--muted); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.4px; margin: 6px 0 2px; }
     .tool-details pre { background: var(--sink-1); border: 1px solid var(--border); border-radius: 4px; padding: 5px 7px; white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow-y: auto; font-size: var(--fs-md); line-height: 1.4; }
     /* The Task/Input arguments block is a <pre>: WRAP it at the bubble width
@@ -2304,6 +2312,16 @@ ${renderViewConfig(deps)}
         <span class="switch-label">Opening session…</span>
       </div>
     </div>
+  </div>
+  <!-- The session's task list: a FOOTER, outside #messages, so it stays on screen
+       while the transcript scrolls (the block under the TodoWrite tool scrolls away
+       with the conversation). Fed by the SAME parser and the same rows as that block,
+       and hidden until the model actually writes a list. -->
+  <div id="todo-section" class="hidden">
+    <div class="todo-head">
+      <span id="todo-section-count" class="todo-count"></span><span>Tasks</span>
+    </div>
+    <ul id="todo-section-list" class="todo-list"></ul>
   </div>
   <!-- Messages typed while the session works (queue/steer): a real footer,
        outside #messages, so they survive streaming re-renders. A COLLAPSIBLE
