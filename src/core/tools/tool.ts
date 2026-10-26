@@ -24,10 +24,15 @@ export interface ToolParameter {
 export interface ToolDefinition {
   name: string;
   description: string;
+  /** JSON Schema of the arguments. `type` and `properties` are the shape every caller
+   * relies on; the REST is passed through untouched, because a tool that brings its own
+   * schema (an MCP server) may use `oneOf`, `additionalProperties`, `$defs`/`$ref` and
+   * defaults — rebuilding the object from two keys silently dropped all of them. */
   parameters: {
     type: "object";
     properties: Record<string, unknown>;
     required?: string[];
+    [keyword: string]: unknown;
   };
 }
 

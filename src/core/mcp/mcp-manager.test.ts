@@ -1,8 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { McpManager } from "./mcp-manager";
+import type { McpServerConfig } from "../config/types";
 import { HarnyFileConfigProvider } from "../config/harny-file-config-provider";
 import { nodeFileSystem } from "../tools/file-system";
 import { ToolRegistry } from "../tools/tool-registry";
@@ -42,6 +43,145 @@ describe("McpManager", () => {
     });
     await readOnly.connect();
     expect(readOnly.getTools()[0].analyzePolicy).toBe("read-only");
+  });
+
+  it("exposes only the tools the config keeps, and reports the hidden ones", async () => {
+    // `excludeTools` is the user's exclude list (default: nothing excluded). It decides
+    // at CONNECT time whether the tool is registered at all, because the model's tool
+    // list is built from the registry — so the UI saves and reconnects.
+    const manager = new McpManager({
+      servers: () => ({
+        test: { command: process.execPath, args: ["-e", SERVER], excludeTools: ["ping"] },
+      }),
+    });
+    await manager.connect();
+    expect(manager.getTools().map((t) => t.name)).toEqual(["mcp__test__echo"]);
+    const [status] = manager.getStatuses();
+    expect(status.toolCount).toBe(1); // EXPOSED, not discovered
+    // The advertised list is still complete, with the hidden ones flagged: the panel
+    // builds its checkboxes from this, so a tool cannot disappear from the editor.
+    expect(status.tools).toEqual([
+      { name: "echo", description: "Echo" },
+      { name: "ping", excluded: true },
+    ]);
+  });
+
+  it("an exclusion naming a tool the server does not have is harmless", async () => {
+    const manager = new McpManager({
+      servers: () => ({
+        test: { command: process.execPath, args: ["-e", SERVER], excludeTools: ["gone-tomorrow"] },
+      }),
+    });
+    await manager.connect();
+    expect(manager.getTools().map((t) => t.name)).toEqual(["mcp__test__echo", "mcp__test__ping"]);
+    expect(manager.getStatuses()[0].toolCount).toBe(2);
+  });
+
+  it("a NEW exclusion list applies on the next connect (which is what Save does)", async () => {
+    // The UI never edits a live server: it writes the config and reconnects. If the list
+    // were read once at construction, unchecking a tool would do nothing until reload.
+    let servers: Record<string, McpServerConfig> = {
+      test: { command: process.execPath, args: ["-e", SERVER] },
+    };
+    const manager = new McpManager({ servers: () => servers });
+    await manager.connect();
+    expect(manager.getTools().map((t) => t.name)).toEqual(["mcp__test__echo", "mcp__test__ping"]);
+
+    servers = { test: { ...servers.test, excludeTools: ["echo"] } };
+    await manager.connect();
+    expect(manager.getTools().map((t) => t.name)).toEqual(["mcp__test__ping"]);
+    expect(manager.getStatuses()[0].tools?.find((t) => t.name === "echo")?.excluded).toBe(true);
+    expect(manager.getStatuses()[0].toolCount).toBe(1);
+  });
+
+  it("overlapping connects are SERIALIZED (no two installs in the same npx cache entry)", async () => {
+    // Activation fires `void mcp.connect()`; a save or a toggle fires another one. Overlapped,
+    // each pass calls dispose() and kills the previous handshake mid-flight — and two
+    // concurrent spawns of the same npx package race on the same cache directory.
+    const manager = new McpManager({
+      servers: () => ({ test: { command: process.execPath, args: ["-e", SERVER] } }),
+    });
+    await Promise.all([manager.connect(), manager.connect(), manager.connect()]);
+    // Serialized, the last pass wins and the state is coherent: ONE status, both tools.
+    expect(manager.getStatuses()).toHaveLength(1);
+    expect(manager.getStatuses()[0].ok).toBe(true);
+    expect(manager.getTools().map((t) => t.name)).toEqual(["mcp__test__echo", "mcp__test__ping"]);
+  });
+
+  it("a server that dies AFTER connecting is marked down and its tools withdrawn", async () => {
+    // onExit existed but nobody subscribed: a crashed server stayed GREEN and its tools
+    // stayed registered, so every call failed with "MCP server is not running" and the model
+    // kept retrying them until someone reconnected by hand.
+    const DYING = `
+let buf = "";
+process.stdin.on("data", (d) => {
+  buf += d;
+  let i;
+  while ((i = buf.indexOf("\\n")) >= 0) {
+    const line = buf.slice(0, i); buf = buf.slice(i + 1);
+    if (!line.trim()) continue;
+    const m = JSON.parse(line);
+    if (m.method === "initialize") process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "d", version: "1" } } }) + "\\n");
+    if (m.method === "tools/list") process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { tools: [{ name: "echo" }] } }) + "\\n");
+  }
+});
+setTimeout(() => process.exit(1), 80);
+`;
+    let changed = 0;
+    const logs: string[] = [];
+    const manager = new McpManager({
+      servers: () => ({ test: { command: process.execPath, args: ["-e", DYING] } }),
+      onToolsChanged: () => changed++,
+      log: (m) => logs.push(m),
+    });
+    await manager.connect();
+    expect(manager.getStatuses()[0].ok).toBe(true);
+    expect(manager.getTools()).toHaveLength(1);
+
+    await vi.waitFor(() => expect(manager.getStatuses()[0].ok).toBe(false), { timeout: 5000 });
+    expect(manager.getStatuses()[0].error).toContain("code=1");
+    expect(manager.getTools()).toEqual([]);
+    // The registry follows the withdrawal (that is what onToolsChanged is for).
+    expect(logs.join("\n")).toContain("withdrawing 1 tool");
+    expect(changed).toBeGreaterThanOrEqual(2);
+    manager.dispose();
+  });
+
+  it("a deliberate reconnect leaves the server UP and its tools registered", async () => {
+    // The end state a save/toggle must leave behind. (The precise guard — a deliberate
+    // close() must not report an exit — is pinned at the client level, in
+    // mcp-client.test.ts: killTree sends SIGKILL, so the child dies at once and the race
+    // window cannot be reproduced deterministically from here.)
+    const manager = new McpManager({
+      servers: () => ({ test: { command: process.execPath, args: ["-e", SERVER] } }),
+    });
+    await manager.connect();
+    await manager.connect(); // what a save or a toggle does
+    await new Promise((r) => setTimeout(r, 200));
+    expect(manager.getStatuses()).toHaveLength(1);
+    expect(manager.getStatuses()[0].ok).toBe(true);
+    expect(manager.getTools()).toHaveLength(2);
+    manager.dispose();
+  });
+
+  it("reports a tool-name collision instead of silently dropping a tool", async () => {
+    // `a-b` and `a_b` sanitize to the SAME Harny name: the registry keeps the first, so the
+    // second vanished without a word and nobody knew a tool was missing.
+    const COLLIDING = SERVER.replace(
+      '[{ name: "echo", description: "Echo" }, { name: "ping" }]',
+      '[{ name: "a-b" }, { name: "a_b" }]',
+    );
+    const logs: string[] = [];
+    const manager = new McpManager({
+      servers: () => ({ test: { command: process.execPath, args: ["-e", COLLIDING] } }),
+      log: (m) => logs.push(m),
+    });
+    await manager.connect();
+    expect(manager.getTools().map((t) => t.name)).toEqual(["mcp__test__a_b"]);
+    expect(logs.join("\n")).toContain("tool-name collision");
+    // The status still counts what the MODEL gets, so the card cannot over-promise.
+    expect(manager.getStatuses()[0].toolCount).toBe(1);
+    manager.dispose();
   });
 
   it("connects stdio servers, wraps their tools and reports status", async () => {

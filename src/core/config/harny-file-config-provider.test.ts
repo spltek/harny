@@ -913,6 +913,38 @@ describe("HarnyFileConfigProvider MCP servers", () => {
     expect(provider.readMcpServers()).toEqual({});
   });
 
+  it("carries the per-server DECLARATIONS through read AND save (analyze + excludeTools)", () => {
+    // Both used to be dropped by the normalizer — on READ and on SAVE — so a policy set
+    // in the file never reached the manager, and any save from the panel deleted it.
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        mcpServers: {
+          stdio: { command: "node", analyze: "read-only", excludeTools: ["drop_table", " delete_row ", "drop_table"] },
+          http: { url: "https://x/mcp", analyze: "trusted", excludeTools: ["admin"] },
+          junk: { command: "node", analyze: "whatever", excludeTools: "nope" },
+          empty: { command: "node", excludeTools: [] },
+        },
+      }),
+    );
+    const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+    expect(provider.readMcpServers()).toEqual({
+      stdio: { command: "node", analyze: "read-only", excludeTools: ["drop_table", "delete_row"] },
+      http: { url: "https://x/mcp", analyze: "trusted", excludeTools: ["admin"] },
+      junk: { command: "node" }, // unknown values are dropped, never passed through
+      empty: { command: "node" }, // an empty list is not written back as []
+    });
+
+    // …and a SAVE (the editor, the tools panel) must not lose them either: every
+    // write goes through this same normalizer.
+    const servers = provider.readMcpServers();
+    expect(provider.saveMcpServers(servers)).toBe(true);
+    const raw = JSON.parse(readFileSync(join(dir, "config.json"), "utf8"));
+    expect(raw.mcpServers.stdio.analyze).toBe("read-only");
+    expect(raw.mcpServers.http).toEqual({ url: "https://x/mcp", analyze: "trusted", excludeTools: ["admin"] });
+    expect(provider.readMcpServers()).toEqual(servers);
+  });
+
   it("saves mcpServers losslessly (preserving other keys) and removes the key when empty", () => {
     writeFileSync(
       join(dir, "config.json"),

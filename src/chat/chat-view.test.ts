@@ -1418,6 +1418,84 @@ describe("ChatViewProvider", () => {
     expect(saveMcpServers).toHaveBeenCalledWith({ test: { command: "node", enabled: false } });
   });
 
+  it("setMcpToolExclusions writes the exclude list on THAT server and reconnects", async () => {
+    const saveMcpServers = vi.fn(() => true);
+    const connect = vi.fn(async () => {});
+    const mcp = { connect, getStatuses: () => [], getTools: () => [] } as any;
+    const { provider } = buildHarness({
+      mcp,
+      providers: {
+        getProvider: vi.fn(),
+        saveModelSelection: vi.fn(),
+        // Two servers, one with a declaration the panel does not manage: it must survive.
+        readMcpServers: vi.fn(() => ({
+          test: { command: "node", analyze: "read-only" },
+          other: { command: "node", args: ["x"] },
+        })),
+        saveMcpServers,
+      } as unknown as ProviderCatalog,
+    });
+    const { handler, view } = resolveWith(provider);
+
+    await handler({ type: "setMcpToolExclusions", server: "test", exclude: ["drop_table", "drop_table", "wipe"] });
+
+    expect(saveMcpServers).toHaveBeenCalledWith({
+      test: { command: "node", analyze: "read-only", excludeTools: ["drop_table", "wipe"] },
+      other: { command: "node", args: ["x"] },
+    });
+    expect(connect).toHaveBeenCalled(); // the tool list is rebuilt at connect
+    // The card/modal must see the NEW statuses: the host re-pushes them, and a config
+    // push re-renders the card (`(1/2 tools)`).
+    expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "mcpServers" }));
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "mcpToolExclusionsSaved", server: "test", ok: true }),
+    );
+  });
+
+  it("an EMPTY exclude list is deleted from the config, not written as []", async () => {
+    const saveMcpServers = vi.fn(() => true);
+    const { provider } = buildHarness({
+      providers: {
+        getProvider: vi.fn(),
+        saveModelSelection: vi.fn(),
+        readMcpServers: vi.fn(() => ({ test: { command: "node", excludeTools: ["ping"] } })),
+        saveMcpServers,
+      } as unknown as ProviderCatalog,
+    });
+    const { handler } = resolveWith(provider);
+    await handler({ type: "setMcpToolExclusions", server: "test", exclude: [] });
+    // A server with nothing excluded must look untouched in the file.
+    expect(saveMcpServers).toHaveBeenCalledWith({ test: { command: "node" } });
+  });
+
+  it("setMcpToolExclusions ignores an unknown server and a failed save", async () => {
+    const saveMcpServers = vi.fn(() => false);
+    const connect = vi.fn(async () => {});
+    const { provider } = buildHarness({
+      mcp: { connect, getStatuses: () => [], getTools: () => [] } as any,
+      providers: {
+        getProvider: vi.fn(),
+        saveModelSelection: vi.fn(),
+        readMcpServers: vi.fn(() => ({ test: { command: "node" } })),
+        saveMcpServers,
+      } as unknown as ProviderCatalog,
+    });
+    const { handler, view } = resolveWith(provider);
+
+    await handler({ type: "setMcpToolExclusions", server: "nope", exclude: ["a"] });
+    expect(saveMcpServers).not.toHaveBeenCalled();
+
+    // Junk in the payload is dropped, not written into the file: names are strings or
+    // nothing (an `excludeTools: [null]` would make every tool look excluded to nobody).
+    await handler({ type: "setMcpToolExclusions", server: "test", exclude: ["a", 42, "  ", null, undefined] });
+    expect(saveMcpServers).toHaveBeenCalledWith({ test: { command: "node", excludeTools: ["a"] } });
+    // A failed save must NOT reconnect (the config did not change) and must say so.
+    expect(connect).not.toHaveBeenCalled();
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "mcpToolExclusionsSaved", server: "test", ok: false }),
+    );
+  });
+
   it("testMcpServer rejects a server with neither command nor url", async () => {
     const { provider } = buildHarness();
     const { handler, view } = resolveWith(provider);

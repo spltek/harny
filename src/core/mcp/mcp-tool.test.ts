@@ -119,4 +119,39 @@ describe("McpTool", () => {
     );
     expect(tool.definition.parameters).toEqual({ type: "object", properties: {} });
   });
+
+  it("passes a RICH schema THROUGH instead of rebuilding it", () => {
+    // The server's inputSchema IS the contract: rebuilding it from {type, properties,
+    // required} dropped oneOf, additionalProperties, $defs/$ref and defaults — a schema
+    // using a $ref arrived pointing at nothing, and the model lost every constraint.
+    const rich = {
+      type: "object",
+      properties: { user: { $ref: "#/$defs/User" }, mode: { enum: ["a", "b"], default: "a" } },
+      required: ["user"],
+      additionalProperties: false,
+      oneOf: [{ required: ["user"] }, { required: ["mode"] }],
+      $defs: { User: { type: "object", properties: { name: { type: "string" } } } },
+    };
+    const tool = new McpTool(
+      "test",
+      { name: "complex", inputSchema: rich },
+      stubClient(async () => ({ text: "", isError: false })),
+    );
+    expect(tool.definition.parameters).toEqual(rich);
+  });
+
+  it("still yields an object schema when the server sends type/properties badly", () => {
+    const at = (inputSchema: unknown) =>
+      new McpTool(
+        "test",
+        { name: "x", ...(inputSchema === undefined ? {} : { inputSchema }) },
+        stubClient(async () => ({ text: "", isError: false })),
+      ).definition.parameters;
+    expect(at([1, 2])).toEqual({ type: "object", properties: {} });
+    // A server that sends `properties` but forgets `type` gets one from us.
+    expect(at({ properties: { q: { type: "string" } } })).toEqual({
+      type: "object",
+      properties: { q: { type: "string" } },
+    });
+  });
 });

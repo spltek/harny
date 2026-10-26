@@ -154,9 +154,11 @@ function setupDom(initOverrides: Record<string, unknown> = {}, savedState: Recor
       <div class="mcp-backdrop"></div>
       <select id="mcp-select"></select>
       <input id="mcp-name" type="text" />
+      <input id="mcp-url" type="text" />
       <input id="mcp-command" type="text" />
       <textarea id="mcp-args"></textarea>
       <textarea id="mcp-env"></textarea>
+      <textarea id="mcp-headers"></textarea>
       <input type="checkbox" id="mcp-enabled" />
       <button id="mcp-test"></button><span id="mcp-test-result"></span>
       <button id="mcp-add"></button><button id="mcp-delete"></button>
@@ -5285,6 +5287,305 @@ describe("view webview client", () => {
 
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(pop.classList.contains("hidden")).toBe(true);
+  });
+
+  /** The panel's Save button (the footer has All / None / Cancel / Save). */
+  const mcpPanelSave = () =>
+    [...document.querySelectorAll<HTMLButtonElement>("#mcp-tools-popover button")].find(
+      (b) => b.textContent === "Save",
+    )!;
+
+  /** Config push with one MCP server advertising `tools`. */
+  function pushMcpTools(
+    tools: { name: string; description?: string; excluded?: boolean }[],
+    toolCount = tools.filter((t) => !t.excluded).length,
+  ): void {
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        contextWindow: 128000,
+        mcp: {
+          servers: { test: { command: "node" } },
+          statuses: [{ name: "test", ok: true, enabled: true, toolCount, tools }],
+        },
+      },
+    });
+  }
+
+  it("the tools panel edits what the model sees, and Save posts the excluded list", async () => {
+    await loadView();
+    pushMcpTools([
+      { name: "echo", description: "Echo text" },
+      { name: "ping", excluded: true },
+    ]);
+    // The card says something is hidden BEFORE the panel is open.
+    const btn = document.querySelector(".mcp-tools-btn") as HTMLButtonElement;
+    expect(btn.textContent).toBe("(1/2 tools)");
+    btn.click();
+
+    const rows = [...document.querySelectorAll<HTMLElement>("#mcp-tools-popover .mcp-pop-row")];
+    const boxes = rows.map((r) => r.querySelector("input") as HTMLInputElement);
+    // Checked = exposed; the excluded one starts UNchecked and dimmed.
+    expect(boxes.map((b) => b.checked)).toEqual([true, false]);
+    expect(rows[1].classList.contains("off")).toBe(true);
+    expect(document.querySelector(".mcp-pop-count")!.textContent).toBe("1 of 2 enabled");
+    expect(mcpPanelSave().disabled).toBe(true); // nothing edited yet
+    // A short list does not get a search box: the filter only appears past 8 tools.
+    expect(document.querySelector(".mcp-pop-filter")).toBeNull();
+
+    boxes[0].click(); // hide echo
+    boxes[1].click(); // expose ping
+    expect(document.querySelector(".mcp-pop-count")!.textContent).toBe("1 of 2 enabled");
+    expect(rows[0].classList.contains("off")).toBe(true);
+    expect(mcpPanelSave().disabled).toBe(false);
+
+    posted.length = 0;
+    mcpPanelSave().click();
+    expect(posted).toContainEqual({ type: "setMcpToolExclusions", server: "test", exclude: ["echo"] });
+
+    // The host's answer closes the panel (it has already re-pushed the fresh state).
+    hostMessage({ type: "mcpToolExclusionsSaved", server: "test", ok: true });
+    expect((document.getElementById("mcp-tools-popover") as HTMLElement).classList.contains("hidden")).toBe(true);
+  });
+
+  it("All / None flip the whole list, and All on a clean server disables Save again", async () => {
+    await loadView();
+    pushMcpTools([{ name: "echo" }, { name: "ping" }]); // nothing excluded: the default
+    (document.querySelector(".mcp-tools-btn") as HTMLButtonElement).click();
+    const pseudo = (label: string) =>
+      [...document.querySelectorAll<HTMLButtonElement>("#mcp-tools-popover button")].find(
+        (b) => b.textContent === label,
+      )!;
+
+    pseudo("None").click();
+    expect(document.querySelector(".mcp-pop-count")!.textContent).toBe("0 of 2 enabled");
+    expect(mcpPanelSave().disabled).toBe(false);
+
+    pseudo("All").click();
+    expect(document.querySelector(".mcp-pop-count")!.textContent).toBe("2 of 2 enabled");
+    // Back to what is saved: nothing to write.
+    expect(mcpPanelSave().disabled).toBe(true);
+
+    pseudo("Cancel").click();
+    expect((document.getElementById("mcp-tools-popover") as HTMLElement).classList.contains("hidden")).toBe(true);
+  });
+
+  it("a refused save keeps the panel open with the draft intact", async () => {
+    await loadView();
+    pushMcpTools([{ name: "echo" }, { name: "ping" }]);
+    (document.querySelector(".mcp-tools-btn") as HTMLButtonElement).click();
+    (document.querySelector("#mcp-tools-popover .mcp-pop-row input") as HTMLInputElement).click();
+    mcpPanelSave().click();
+    hostMessage({ type: "mcpToolExclusionsSaved", server: "test", ok: false });
+    const pop = document.getElementById("mcp-tools-popover") as HTMLElement;
+    expect(pop.classList.contains("hidden")).toBe(false);
+    expect(document.querySelector(".mcp-pop-status")!.textContent).toContain("Save failed");
+    // The choice is still there: losing the draft on a write error would be cruel.
+    const box = document.querySelector("#mcp-tools-popover .mcp-pop-row input") as HTMLInputElement;
+    expect(box.checked).toBe(false);
+  });
+
+  it("Save is refused while a run is working (a reconnect would swap the live tool list)", async () => {
+    await loadView();
+    pushMcpTools([{ name: "echo" }, { name: "ping" }]);
+    (document.querySelector(".mcp-tools-btn") as HTMLButtonElement).click();
+    (document.querySelector("#mcp-tools-popover .mcp-pop-row input") as HTMLInputElement).click();
+    hostMessage({ type: "status", active: true });
+    posted.length = 0;
+    mcpPanelSave().click();
+    expect(posted.some((m) => (m as { type?: string }).type === "setMcpToolExclusions")).toBe(false);
+    expect(document.querySelector(".mcp-pop-status")!.textContent).toContain("Stop the run first");
+  });
+
+  it("a long tool list gets a filter, and typing narrows the rows", async () => {
+    await loadView();
+    const many = Array.from({ length: 10 }, (_, i) => ({
+      name: `tool_${i}`,
+      description: i === 3 ? "special needle" : "plain",
+    }));
+    pushMcpTools(many);
+    (document.querySelector(".mcp-tools-btn") as HTMLButtonElement).click();
+    const filter = document.querySelector("#mcp-tools-popover .mcp-pop-filter") as HTMLInputElement;
+    expect(filter).toBeTruthy();
+    expect(document.querySelectorAll("#mcp-tools-popover .mcp-pop-row")).toHaveLength(10);
+
+    const shownNames = () =>
+      [...document.querySelectorAll("#mcp-tools-popover .mcp-pop-name")].map((n) => n.textContent);
+    filter.value = "tool_1";
+    filter.dispatchEvent(new Event("input"));
+    expect(shownNames()).toEqual(["tool_1"]);
+
+    // The description is searched too, not just the name.
+    filter.value = "needle";
+    filter.dispatchEvent(new Event("input"));
+    expect(shownNames()).toEqual(["tool_3"]);
+
+    filter.value = "zzz";
+    filter.dispatchEvent(new Event("input"));
+    expect(document.querySelector(".mcp-pop-empty")!.textContent).toContain("No tool matches");
+
+    // The draft lives OUTSIDE the DOM, so a toggle survives the rows being rebuilt.
+    filter.value = "";
+    filter.dispatchEvent(new Event("input"));
+    (document.querySelector("#mcp-tools-popover .mcp-pop-row input") as HTMLInputElement).click();
+    filter.value = "tool_4";
+    filter.dispatchEvent(new Event("input"));
+    expect(document.querySelector(".mcp-pop-count")!.textContent).toBe("9 of 10 enabled");
+    expect(mcpPanelSave().disabled).toBe(false);
+  });
+
+  it("a server with no tools shows the empty state instead of a broken list", async () => {
+    await loadView();
+    pushMcpTools([], 0);
+    const btn = document.querySelector(".mcp-tools-btn") as HTMLButtonElement;
+    expect(btn.textContent).toBe("(0 tools)");
+    btn.click();
+    expect(document.querySelector("#mcp-tools-popover .mcp-pop-empty")!.textContent).toBe("(no tools)");
+    expect(document.querySelector(".mcp-pop-count")!.textContent).toBe("0 of 0 enabled");
+    expect(mcpPanelSave().disabled).toBe(true);
+  });
+
+  it("a save from the MCP editor keeps the keys the form does not edit", async () => {
+    await loadView();
+    hostMessage({
+      type: "mcpServers",
+      data: {
+        servers: {
+          stdio: { command: "node", args: ["s.js"], analyze: "read-only", excludeTools: ["drop"] },
+          remote: { url: "https://x/mcp", headers: { A: "1" } },
+        },
+        statuses: [],
+      },
+      open: true,
+    });
+    posted.length = 0;
+    (document.getElementById("mcp-save") as HTMLButtonElement).click();
+    const first = posted.find((m) => (m as { type?: string }).type === "saveMcpServers") as any;
+    // `analyze` and `excludeTools` have no control in this form: they must survive it.
+    expect(first.servers.stdio).toEqual({
+      command: "node",
+      args: ["s.js"],
+      analyze: "read-only",
+      excludeTools: ["drop"],
+      enabled: true,
+    });
+
+    // The HTTP server has no command: saving must not turn it into a broken stdio one,
+    // and its URL/headers now have controls — they come back from their own fields.
+    const sel = document.getElementById("mcp-select") as HTMLSelectElement;
+    sel.value = "remote";
+    sel.dispatchEvent(new Event("change"));
+    posted.length = 0;
+    (document.getElementById("mcp-save") as HTMLButtonElement).click();
+    const second = posted.find((m) => (m as { type?: string }).type === "saveMcpServers") as any;
+    expect(second.servers.remote).toEqual({ url: "https://x/mcp", headers: { A: "1" }, enabled: true });
+    expect(second.servers.remote.command).toBeUndefined();
+    expect(second.servers.remote.args).toBeUndefined();
+  });
+
+  it("an HTTP server is created from the URL field, and the stdio keys are dropped", async () => {
+    await loadView();
+    hostMessage({
+      type: "mcpServers",
+      data: { servers: { local: { command: "node", args: ["s.js"] } }, statuses: [] },
+      open: true,
+    });
+    const url = document.getElementById("mcp-url") as HTMLInputElement;
+    const command = document.getElementById("mcp-command") as HTMLInputElement;
+    // A stdio server loads with its URL box empty…
+    expect(url.value).toBe("");
+    expect(command.value).toBe("node");
+
+    // …and typing a URL turns it into an HTTP one: the leftover command MUST go, or the
+    // normalizer (which prefers `command`) would keep reading it as stdio.
+    url.value = "https://mcp.deepwiki.com/mcp";
+    posted.length = 0;
+    (document.getElementById("mcp-save") as HTMLButtonElement).click();
+    const saved = posted.find((m) => (m as { type?: string }).type === "saveMcpServers") as any;
+    expect(saved.servers.local).toEqual({ url: "https://mcp.deepwiki.com/mcp", enabled: true });
+  });
+
+  it("headers are edited as KEY=VALUE (or KEY: VALUE) and an emptied box clears them", async () => {
+    await loadView();
+    hostMessage({
+      type: "mcpServers",
+      data: { servers: { remote: { url: "https://x/mcp", headers: { A: "1" } } }, statuses: [] },
+      open: true,
+    });
+    const headers = document.getElementById("mcp-headers") as HTMLTextAreaElement;
+    expect(headers.value).toBe("A=1"); // what was saved is what you edit
+
+    headers.value = "Authorization: Bearer abc\nX-Trace=on";
+    posted.length = 0;
+    (document.getElementById("mcp-save") as HTMLButtonElement).click();
+    const saved = posted.find((m) => (m as { type?: string }).type === "saveMcpServers") as any;
+    expect(saved.servers.remote.headers).toEqual({ Authorization: "Bearer abc", "X-Trace": "on" });
+
+    // Empty box = no headers at all (not an empty object in the file).
+    headers.value = "";
+    posted.length = 0;
+    (document.getElementById("mcp-save") as HTMLButtonElement).click();
+    const cleared = posted.find((m) => (m as { type?: string }).type === "saveMcpServers") as any;
+    expect(cleared.servers.remote.headers).toBeUndefined();
+  });
+
+  it("a new server with NEITHER a URL nor a command is kept as it was (no transport to write)", async () => {
+    await loadView();
+    hostMessage({
+      type: "mcpServers",
+      data: { servers: { only: { url: "https://x/mcp" } }, statuses: [] },
+      open: true,
+    });
+    // Clear the URL without typing a command: writing `{}` would delete the server.
+    (document.getElementById("mcp-url") as HTMLInputElement).value = "";
+    posted.length = 0;
+    (document.getElementById("mcp-save") as HTMLButtonElement).click();
+    const saved = posted.find((m) => (m as { type?: string }).type === "saveMcpServers") as any;
+    expect(saved.servers.only).toEqual({ url: "https://x/mcp", enabled: true });
+  });
+
+  it("the MCP editor's Save is refused while a run is working (it reconnects the servers)", async () => {
+    await loadView();
+    hostMessage({ type: "mcpServers", data: { servers: { one: { command: "node" } }, statuses: [] }, open: true });
+    hostMessage({ type: "status", active: true });
+    posted.length = 0;
+    (document.getElementById("mcp-save") as HTMLButtonElement).click();
+    // No save went out, and the reason is on screen (the Test line is the modal's status).
+    expect(posted.some((m) => (m as { type?: string }).type === "saveMcpServers")).toBe(false);
+    expect((document.getElementById("mcp-test-result") as HTMLElement).textContent).toContain(
+      "Stop the run before saving",
+    );
+  });
+
+  it("Test works for an HTTP server: a URL needs no command", async () => {
+    // The bug this pins down: Test required a `command`, so every remote server — the form
+    // filled in correctly, command legitimately empty — was told "Enter a command first".
+    await loadView();
+    hostMessage({ type: "mcpServers", data: { servers: {}, statuses: [] }, open: true });
+    (document.getElementById("mcp-name") as HTMLInputElement).value = "complex";
+    (document.getElementById("mcp-url") as HTMLInputElement).value =
+      "https://mcpplaygroundonline.com/mcp-complex-server";
+    posted.length = 0;
+    (document.getElementById("mcp-test") as HTMLButtonElement).click();
+    const msg = posted.find((m) => (m as { type?: string }).type === "testMcpServer") as any;
+    expect(msg).toBeTruthy();
+    expect(msg.server.url).toBe("https://mcpplaygroundonline.com/mcp-complex-server");
+    expect(msg.server.command).toBeUndefined();
+    expect((document.getElementById("mcp-test-result") as HTMLElement).textContent).toBe("Testing…");
+  });
+
+  it("Test refuses a server with NEITHER a command nor a URL", async () => {
+    await loadView();
+    hostMessage({ type: "mcpServers", data: { servers: {}, statuses: [] }, open: true });
+    posted.length = 0;
+    (document.getElementById("mcp-test") as HTMLButtonElement).click();
+    expect(posted.some((m) => (m as { type?: string }).type === "testMcpServer")).toBe(false);
+    const text = (document.getElementById("mcp-test-result") as HTMLElement).textContent ?? "";
+    expect(text).toContain("command");
+    expect(text).toContain("URL");
   });
 
   it("typing '/' at the start of the prompt shows the skill list", async () => {

@@ -161,6 +161,11 @@ interface ConfigState {
         env?: Record<string, string>;
         url?: string;
         headers?: Record<string, string>;
+        enabled?: boolean;
+        /** The user's Analyze declaration (config-file only, see the README). */
+        analyze?: "trusted" | "read-only";
+        /** Tools the MODEL must not see (default: none). */
+        excludeTools?: string[];
       }
     >;
     statuses: {
@@ -168,8 +173,10 @@ interface ConfigState {
       ok: boolean;
       enabled: boolean;
       error?: string;
+      /** Exposed to the model (what the card shows). */
       toolCount: number;
-      tools?: { name: string; description?: string }[];
+      /** Everything the server advertises, with the exclusions flagged. */
+      tools?: { name: string; description?: string; excluded?: boolean }[];
     }[];
   };
   contextTokens?: number;
@@ -3785,9 +3792,11 @@ const mcpConfigure = document.getElementById("mcp-configure") as HTMLButtonEleme
 const mcpModal = document.getElementById("mcp-modal") as HTMLDivElement;
 const mcpSelect = document.getElementById("mcp-select") as HTMLSelectElement;
 const mcpName = document.getElementById("mcp-name") as HTMLInputElement;
+const mcpUrl = document.getElementById("mcp-url") as HTMLInputElement;
 const mcpCommand = document.getElementById("mcp-command") as HTMLInputElement;
 const mcpArgs = document.getElementById("mcp-args") as HTMLTextAreaElement;
 const mcpEnv = document.getElementById("mcp-env") as HTMLTextAreaElement;
+const mcpHeaders = document.getElementById("mcp-headers") as HTMLTextAreaElement;
 const mcpEnabled = document.getElementById("mcp-enabled") as HTMLInputElement;
 const mcpTest = document.getElementById("mcp-test") as HTMLButtonElement;
 const mcpTestResult = document.getElementById("mcp-test-result") as HTMLSpanElement;
@@ -3804,6 +3813,8 @@ type McpEditorServer = {
   url?: string;
   headers?: Record<string, string>;
   enabled?: boolean;
+  analyze?: "trusted" | "read-only";
+  excludeTools?: string[];
 };
 let mcpEditorServers: Record<string, McpEditorServer> = {};
 let mcpEditorSelected = "";
@@ -3813,7 +3824,7 @@ let mcpStatuses: {
   enabled: boolean;
   error?: string;
   toolCount: number;
-  tools?: { name: string; description?: string }[];
+  tools?: { name: string; description?: string; excluded?: boolean }[];
 }[] = [];
 
 const DEFAULT_PARALLEL = 4;
@@ -4181,11 +4192,18 @@ function renderMcp(mcp: ConfigState["mcp"]): void {
       detail.textContent = "off";
       row.appendChild(detail);
     } else if (st?.ok) {
+      const total = st.tools?.length ?? st.toolCount;
+      const hidden = st.tools?.filter((t) => t.excluded).length ?? 0;
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "mcp-tools-btn";
-      btn.textContent = `(${st.toolCount} tools)`;
-      btn.title = "Show the tools this server exposes";
+      // `(5/8 tools)` says at a glance that something is hidden; `(8 tools)` when
+      // nothing is, so the common case stays quiet.
+      btn.textContent = hidden > 0 ? `(${st.toolCount}/${total} tools)` : `(${st.toolCount} tools)`;
+      btn.title =
+        hidden > 0
+          ? `${hidden} of ${total} tool(s) hidden from the model — click to choose`
+          : "Choose which of this server's tools the model sees";
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
         showMcpToolsPopover(btn, name, st.tools ?? []);
@@ -4201,42 +4219,220 @@ function renderMcp(mcp: ConfigState["mcp"]): void {
   }
 }
 
+/** The tools panel: EVERY tool a server advertises, each with the checkbox that
+ * decides whether the MODEL sees it (checked = exposed, the DEFAULT).
+ *
+ * The change is a DRAFT until Save — same rule as every other editor in the panel:
+ * the host persists it on that server's config entry (`excludeTools`) and
+ * RECONNECTS, which is what actually rebuilds the tool list. A checkbox that saved
+ * on click would respawn an MCP process per click.
+ */
+type McpToolsPanel = {
+  server: string;
+  tools: { name: string; description?: string; excluded?: boolean }[];
+  /** The excluded names being EDITED; what is SAVED lives on `tools[].excluded`. */
+  draft: Set<string>;
+};
+let mcpToolsPanel: McpToolsPanel | null = null;
+let mcpToolsFilter = "";
+let mcpToolsListEl: HTMLDivElement | null = null;
+let mcpToolsCountEl: HTMLSpanElement | null = null;
+let mcpToolsSaveEl: HTMLButtonElement | null = null;
+let mcpToolsStatusEl: HTMLSpanElement | null = null;
+
 function hideMcpToolsPopover(): void {
   mcpToolsPopover.classList.add("hidden");
   mcpToolsPopover.dataset.server = "";
+  mcpToolsPanel = null;
+  mcpToolsFilter = "";
+  mcpToolsListEl = null;
+  mcpToolsCountEl = null;
+  mcpToolsSaveEl = null;
+  mcpToolsStatusEl = null;
+}
+
+/** What the server currently hides (the state every draft is compared to). */
+function mcpSavedExclusions(tools: { name: string; excluded?: boolean }[]): Set<string> {
+  return new Set(tools.filter((t) => t.excluded).map((t) => t.name));
+}
+
+function mcpToolsDirty(): boolean {
+  const panel = mcpToolsPanel;
+  if (!panel) return false;
+  const saved = mcpSavedExclusions(panel.tools);
+  if (saved.size !== panel.draft.size) return true;
+  for (const name of panel.draft) if (!saved.has(name)) return true;
+  return false;
+}
+
+/** The counts and the Save button — the only things a toggle changes besides its row. */
+function updateMcpToolsHead(): void {
+  const panel = mcpToolsPanel;
+  if (!panel) return;
+  if (mcpToolsCountEl) {
+    const total = panel.tools.length;
+    mcpToolsCountEl.textContent = `${total - panel.draft.size} of ${total} enabled`;
+  }
+  if (mcpToolsSaveEl) mcpToolsSaveEl.disabled = !mcpToolsDirty();
+}
+
+/** Rows only: rebuilt when the FILTER changes, so typing never loses the caret (a
+ * full re-render would replace the input the user is typing into). */
+function renderMcpToolRows(): void {
+  const panel = mcpToolsPanel;
+  const list = mcpToolsListEl;
+  if (!panel || !list) return;
+  list.innerHTML = "";
+  const filter = mcpToolsFilter.trim().toLowerCase();
+  const shown = filter
+    ? panel.tools.filter(
+        (t) => t.name.toLowerCase().includes(filter) || (t.description ?? "").toLowerCase().includes(filter),
+      )
+    : panel.tools;
+  if (shown.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "mcp-pop-empty";
+    empty.textContent = panel.tools.length === 0 ? "(no tools)" : "No tool matches the filter.";
+    list.appendChild(empty);
+    return;
+  }
+  for (const t of shown) {
+    const row = document.createElement("label");
+    row.className = "mcp-pop-row" + (panel.draft.has(t.name) ? " off" : "");
+    row.title = panel.draft.has(t.name)
+      ? "Excluded: the model does not see this tool"
+      : "Included: the model can call this tool";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = !panel.draft.has(t.name);
+    box.setAttribute("aria-label", t.name);
+    box.addEventListener("change", () => {
+      if (box.checked) panel.draft.delete(t.name);
+      else panel.draft.add(t.name);
+      row.classList.toggle("off", !box.checked);
+      row.title = box.checked ? "Included: the model can call this tool" : "Excluded: the model does not see this tool";
+      updateMcpToolsHead();
+    });
+    row.appendChild(box);
+    const text = document.createElement("span");
+    text.className = "mcp-pop-text";
+    const name = document.createElement("span");
+    name.className = "mcp-pop-name";
+    name.textContent = t.name;
+    text.appendChild(name);
+    if (t.description) {
+      const desc = document.createElement("span");
+      desc.className = "mcp-pop-desc";
+      desc.textContent = t.description;
+      text.appendChild(desc);
+    }
+    row.appendChild(text);
+    list.appendChild(row);
+  }
 }
 
 function showMcpToolsPopover(
   anchor: HTMLElement,
   server: string,
-  tools: { name: string; description?: string }[],
+  tools: { name: string; description?: string; excluded?: boolean }[],
 ): void {
+  mcpToolsPanel = { server, tools, draft: mcpSavedExclusions(tools) };
+  mcpToolsFilter = "";
   mcpToolsPopover.innerHTML = "";
-  const title = document.createElement("div");
+
+  const head = document.createElement("div");
+  head.className = "mcp-pop-head";
+  const title = document.createElement("span");
   title.className = "mcp-pop-title";
   title.textContent = `🧩 ${server}`;
-  mcpToolsPopover.appendChild(title);
-  if (tools.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "mcp-pop-empty";
-    empty.textContent = "(no tools)";
-    mcpToolsPopover.appendChild(empty);
+  head.appendChild(title);
+  mcpToolsCountEl = document.createElement("span");
+  mcpToolsCountEl.className = "mcp-pop-count";
+  head.appendChild(mcpToolsCountEl);
+  mcpToolsPopover.appendChild(head);
+
+  // Only worth a filter when the list is long enough to scroll: a two-tool server
+  // does not need a search box.
+  if (tools.length > 8) {
+    const filter = document.createElement("input");
+    filter.type = "search";
+    filter.className = "mcp-pop-filter";
+    filter.placeholder = "Filter tools";
+    filter.spellcheck = false;
+    filter.setAttribute("aria-label", "Filter tools");
+    filter.addEventListener("input", () => {
+      mcpToolsFilter = filter.value;
+      renderMcpToolRows();
+    });
+    mcpToolsPopover.appendChild(filter);
   }
-  for (const t of tools) {
-    const item = document.createElement("div");
-    item.className = "mcp-pop-item";
-    const name = document.createElement("div");
-    name.className = "mcp-pop-name";
-    name.textContent = t.name;
-    item.appendChild(name);
-    if (t.description) {
-      const desc = document.createElement("div");
-      desc.className = "mcp-pop-desc";
-      desc.textContent = t.description;
-      item.appendChild(desc);
+
+  mcpToolsListEl = document.createElement("div");
+  mcpToolsListEl.className = "mcp-pop-list";
+  mcpToolsPopover.appendChild(mcpToolsListEl);
+  renderMcpToolRows();
+
+  const actions = document.createElement("div");
+  actions.className = "mcp-pop-actions";
+  mcpToolsStatusEl = document.createElement("span");
+  mcpToolsStatusEl.className = "mcp-pop-status";
+  actions.appendChild(mcpToolsStatusEl);
+  const all = document.createElement("button");
+  all.type = "button";
+  all.className = "secondary mcp-pop-mini";
+  all.textContent = "All";
+  all.title = "Include every tool of this server";
+  all.addEventListener("click", () => {
+    if (!mcpToolsPanel) return;
+    mcpToolsPanel.draft.clear();
+    renderMcpToolRows();
+    updateMcpToolsHead();
+  });
+  const none = document.createElement("button");
+  none.type = "button";
+  none.className = "secondary mcp-pop-mini";
+  none.textContent = "None";
+  none.title = "Expose no tool of this server";
+  none.addEventListener("click", () => {
+    if (!mcpToolsPanel) return;
+    mcpToolsPanel.draft = new Set(mcpToolsPanel.tools.map((t) => t.name));
+    renderMcpToolRows();
+    updateMcpToolsHead();
+  });
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "secondary mcp-pop-mini";
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", () => hideMcpToolsPopover());
+  mcpToolsSaveEl = document.createElement("button");
+  mcpToolsSaveEl.type = "button";
+  mcpToolsSaveEl.className = "mcp-pop-mini";
+  mcpToolsSaveEl.textContent = "Save";
+  mcpToolsSaveEl.addEventListener("click", () => {
+    const panel = mcpToolsPanel;
+    if (!panel) return;
+    // Reconnecting mid-run would swap the tool list under a live turn (and kill any
+    // in-flight MCP call): the same reason the server's name toggle is locked.
+    if (streamingActive) {
+      if (mcpToolsStatusEl) {
+        mcpToolsStatusEl.textContent = "Stop the run first";
+        mcpToolsStatusEl.className = "mcp-pop-status err";
+      }
+      return;
     }
-    mcpToolsPopover.appendChild(item);
-  }
+    if (mcpToolsStatusEl) {
+      mcpToolsStatusEl.textContent = "Saving…";
+      mcpToolsStatusEl.className = "mcp-pop-status";
+    }
+    vscode.postMessage({ type: "setMcpToolExclusions", server: panel.server, exclude: [...panel.draft] });
+  });
+  actions.appendChild(all);
+  actions.appendChild(none);
+  actions.appendChild(cancel);
+  actions.appendChild(mcpToolsSaveEl);
+  mcpToolsPopover.appendChild(actions);
+  updateMcpToolsHead();
+
   mcpToolsPopover.dataset.server = server;
   mcpToolsPopover.classList.remove("hidden");
   // Anchor below-left of the key, clamped to the viewport.
@@ -4353,9 +4549,13 @@ function loadMcpIntoForm(name: string): void {
   mcpEditorSelected = name;
   const s = mcpEditorServers[name] ?? {};
   mcpName.value = name;
+  mcpUrl.value = s.url ?? "";
   mcpCommand.value = s.command ?? "";
   mcpArgs.value = (s.args ?? []).join("\n");
   mcpEnv.value = Object.entries(s.env ?? {})
+    .map(([k, v]) => `${k}=${v}`)
+    .join("\n");
+  mcpHeaders.value = Object.entries(s.headers ?? {})
     .map(([k, v]) => `${k}=${v}`)
     .join("\n");
   mcpEnabled.checked = s.enabled !== false;
@@ -4366,31 +4566,69 @@ function loadMcpIntoForm(name: string): void {
 function clearMcpForm(): void {
   mcpEditorSelected = "";
   mcpName.value = "";
+  mcpUrl.value = "";
   mcpCommand.value = "";
   mcpArgs.value = "";
   mcpEnv.value = "";
+  mcpHeaders.value = "";
   mcpEnabled.checked = true;
 }
 
-/** Read the form into a stdio server config (args one per line, env KEY=VALUE). */
-function mcpFormServer(): McpEditorServer {
-  const env: Record<string, string> = {};
-  for (const line of mcpEnv.value.split("\n")) {
+/** `KEY=VALUE` (or `KEY: VALUE`, the HTTP convention) lines → a map. */
+function parseMcpPairs(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of text.split("\n")) {
     const t = line.trim();
     if (!t) continue;
-    const i = t.indexOf("=");
-    if (i <= 0) continue;
-    env[t.slice(0, i).trim()] = t.slice(i + 1).trim();
+    // Whichever separator comes FIRST wins, so `SOME_URL=http://x:1234` keeps its colon
+    // inside the value and `Authorization: Bearer a=b` keeps its `=`.
+    const eq = t.indexOf("=");
+    const colon = t.indexOf(":");
+    const sep = eq > 0 && (colon < 0 || eq < colon) ? eq : colon;
+    if (sep <= 0) continue;
+    out[t.slice(0, sep).trim()] = t.slice(sep + 1).trim();
   }
-  return {
-    command: mcpCommand.value.trim(),
-    args: mcpArgs.value
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean),
-    enabled: mcpEnabled.checked,
-    ...(Object.keys(env).length > 0 ? { env } : {}),
-  };
+  return out;
+}
+
+/** Read the form into a server config (args one per line, env/headers KEY=VALUE). */
+function mcpFormServer(): McpEditorServer {
+  // The keys this form does NOT edit SURVIVE the save: the config file is the user's
+  // too. It used to rebuild the entry from its own fields, so editing a server here
+  // silently stripped `analyze` and `excludeTools`, and an HTTP server came back as a
+  // stdio one with no `command` — i.e. deleted by the normalizer.
+  const prev = mcpEditorServers[mcpEditorSelected] ?? {};
+  const url = mcpUrl.value.trim();
+  const next: McpEditorServer = { ...prev, enabled: mcpEnabled.checked };
+  if (url) {
+    // A server is EITHER stdio OR HTTP, and the normalizer prefers `command`: writing a
+    // leftover command here would make "switch it to HTTP" silently do nothing.
+    delete next.command;
+    delete next.args;
+    delete next.env;
+    next.url = url;
+    const headers = parseMcpPairs(mcpHeaders.value);
+    if (Object.keys(headers).length > 0) next.headers = headers;
+    else delete next.headers;
+    return next;
+  }
+  const command = mcpCommand.value.trim();
+  // No command typed = keep the one it has. Neither a URL nor a command means there is
+  // no server to write (the normalizer would drop it): keep the entry as it was.
+  if (!command && !prev.command) return next;
+  if (command) next.command = command;
+  delete next.url;
+  delete next.headers;
+  next.args = mcpArgs.value
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  // `env` IS edited here, so an emptied box clears it (spreading `prev` alone would
+  // make "remove every variable" impossible).
+  const env = parseMcpPairs(mcpEnv.value);
+  if (Object.keys(env).length > 0) next.env = env;
+  else delete next.env;
+  return next;
 }
 
 function openMcpEditor(): void {
@@ -4458,8 +4696,10 @@ mcpDelete.addEventListener("click", () => {
 });
 mcpTest.addEventListener("click", () => {
   const s = mcpFormServer();
-  if (!s.command) {
-    mcpTestResult.textContent = "Enter a command first";
+  // A server is EITHER a command (stdio) OR a URL (HTTP): requiring a command here made
+  // Test unusable for every remote server, with the form filled in correctly.
+  if (!s.command && !s.url) {
+    mcpTestResult.textContent = "Enter a command (stdio) or a URL (HTTP)";
     mcpTestResult.className = "mcp-io err";
     return;
   }
@@ -4483,6 +4723,14 @@ function commitMcpForm(): string {
 }
 
 mcpSave.addEventListener("click", () => {
+  // Saving RECONNECTS every server (that is how the tool list is rebuilt), which kills any
+  // in-flight MCP call and swaps the tools under a live turn: the same guard the server's
+  // name toggle and the tools panel already had. It was missing here.
+  if (streamingActive) {
+    mcpTestResult.textContent = "Stop the run before saving — it reconnects the servers";
+    mcpTestResult.className = "mcp-io err";
+    return;
+  }
   const old = mcpEditorSelected;
   const name = mcpName.value.trim() || old;
   if (old && name !== old) delete mcpEditorServers[old];
@@ -5961,6 +6209,16 @@ window.addEventListener("message", (e) => {
       break;
     case "mcpSaved":
       if (msg.ok) closeMcpEditor();
+      break;
+    case "mcpToolExclusionsSaved":
+      // The tools panel's Save. On success the host has already re-pushed the statuses
+      // and the config (the card re-renders with the new counts), so the panel can
+      // close; on failure it must STAY OPEN with the draft intact, or the choice is lost.
+      if (msg.ok) hideMcpToolsPopover();
+      else if (mcpToolsStatusEl) {
+        mcpToolsStatusEl.textContent = "Save failed — see Output > Harny";
+        mcpToolsStatusEl.className = "mcp-pop-status err";
+      }
       break;
     case "mcpTested":
       mcpTestResult.className = "mcp-io " + (msg.ok ? "ok" : "err");

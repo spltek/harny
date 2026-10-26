@@ -67,19 +67,18 @@ export class McpTool implements Tool {
   }
 
   get definition(): ToolDefinition {
-    const schema =
-      this.info.inputSchema && typeof this.info.inputSchema === "object"
-        ? (this.info.inputSchema as Record<string, unknown>)
-        : undefined;
-    const properties =
-      schema && schema.properties && typeof schema.properties === "object"
-        ? (schema.properties as Record<string, unknown>)
-        : {};
-    const required = schema && Array.isArray(schema.required) ? (schema.required as string[]) : undefined;
+    // The server's `inputSchema` IS the contract — the MCP spec has clients pass it through.
+    // Rebuilding it from `{type, properties, required}` dropped `additionalProperties`,
+    // `oneOf`/`anyOf`, `$defs`/`$ref` and defaults, so a schema using a `$ref` came out
+    // pointing at nothing (and the model lost every constraint but the property list).
+    const schema = isSchema(this.info.inputSchema) ? this.info.inputSchema : {};
+    const properties = isSchema(schema.properties) ? schema.properties : {};
     return {
       name: this.name,
       description: `[MCP:${this.server}] ${this.info.description ?? this.info.name}`,
-      parameters: { type: "object", properties, ...(required ? { required } : {}) },
+      // `type: "object"` is OURS (every provider needs one, and a bare `{properties}`
+      // schema omits it); everything else is the server's own words.
+      parameters: { ...schema, type: "object", properties },
     };
   }
 
@@ -94,4 +93,9 @@ export class McpTool implements Tool {
       };
     }
   }
+}
+
+/** A JSON object (not an array, not null): the shape of a JSON Schema fragment. */
+function isSchema(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }

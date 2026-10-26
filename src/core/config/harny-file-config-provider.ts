@@ -5,6 +5,7 @@ import type { PartialConfigProvider } from "./partial-config-provider";
 import { isThinkingLevel, isThinkingMode } from "./types";
 import type {
   HarnyConfig,
+  McpServerCommon,
   McpServerConfig,
   ProviderCatalog,
   ProviderEditorData,
@@ -21,6 +22,21 @@ function normalizeMcpServers(raw: unknown): Record<string, McpServerConfig> {
     if (!v || typeof v !== "object") continue;
     const rec = v as Record<string, unknown>;
     const enabled = typeof rec.enabled === "boolean" ? { enabled: rec.enabled } : {};
+    // The DECLARATIONS travel with the server, not with its transport. They used to be
+    // dropped here — `analyze` was documented and then lost on every read AND every
+    // save — so an Analyze policy set in the file could never take effect.
+    const analyzeRaw = rec.analyze;
+    // Written out as literals (not a cast): this is the only place the file is trusted
+    // with an enum, so the value must be one of the two WHOLE strings or nothing.
+    const analyzeValue = analyzeRaw === "read-only" ? "read-only" : analyzeRaw === "trusted" ? "trusted" : undefined;
+    const excludeTools = normalizeStringList(rec.excludeTools);
+    // Annotated, not inferred: an object literal widens its string properties, so the
+    // declaration would arrive as `string` and not as the two allowed values.
+    const common: Pick<McpServerCommon, "enabled" | "analyze" | "excludeTools"> = {
+      ...enabled,
+      ...(analyzeValue ? { analyze: analyzeValue } : {}),
+      ...(excludeTools ? { excludeTools } : {}),
+    };
     if (typeof rec.command === "string" && rec.command.trim()) {
       const args = Array.isArray(rec.args) ? rec.args.filter((a): a is string => typeof a === "string") : undefined;
       const env = normalizeStringMap(rec.env);
@@ -28,14 +44,27 @@ function normalizeMcpServers(raw: unknown): Record<string, McpServerConfig> {
         command: rec.command.trim(),
         ...(args && args.length > 0 ? { args } : {}),
         ...(env ? { env } : {}),
-        ...enabled,
+        ...common,
       };
     } else if (typeof rec.url === "string" && rec.url.trim()) {
       const headers = normalizeStringMap(rec.headers);
-      out[name] = { url: rec.url.trim(), ...(headers ? { headers } : {}), ...enabled };
+      out[name] = { url: rec.url.trim(), ...(headers ? { headers } : {}), ...common };
     }
   }
   return out;
+}
+
+/** A list of non-empty, de-duplicated strings (tool names). Undefined when empty, so
+ * "nothing excluded" stays absent in the file instead of `[]` on every server. */
+function normalizeStringList(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const seen = new Set<string>();
+  for (const item of v) {
+    if (typeof item !== "string") continue;
+    const t = item.trim();
+    if (t) seen.add(t);
+  }
+  return seen.size > 0 ? [...seen] : undefined;
 }
 
 function normalizeStringMap(v: unknown): Record<string, string> | undefined {

@@ -179,23 +179,30 @@ export interface ProviderCatalog extends NamedProvidersSource, ModelSelectionSav
 /** One MCP server: stdio (command) — HTTP (url) is accepted but not yet run. */
 import type { ServerAnalyzePolicy } from "../mcp/types";
 
-export interface McpStdioServerConfig {
-  command: string;
-  args?: string[];
-  env?: Record<string, string>;
+/** What BOTH transports carry: the switches that are about the server, not about
+ * how to reach it. Split out so a new one lands in both shapes at once (and so
+ * `analyze` cannot be silently dropped by a normalizer that forgot it — it was). */
+export interface McpServerCommon {
   /** false = disabled (kept in config, NOT connected, tools not exposed). */
   enabled?: boolean;
   /** YOUR statement about what this server's tools are allowed to do in Analyze (see
    * ServerAnalyzePolicy). Absent = the strictest: none of its tools runs in Analyze. */
   analyze?: ServerAnalyzePolicy;
+  /** Tools of this server the MODEL must not see, by the name the server reports
+   * (`tools/list`), e.g. ["drop_table", "delete_row"]. Absent/empty = ALL of them
+   * are exposed, which is the default: this is an EXCLUDE list on purpose, so a
+   * server that adds a tool tomorrow exposes it without anyone editing the file. */
+  excludeTools?: string[];
 }
-export interface McpHttpServerConfig {
+
+export interface McpStdioServerConfig extends McpServerCommon {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+export interface McpHttpServerConfig extends McpServerCommon {
   url: string;
   headers?: Record<string, string>;
-  /** false = disabled (kept in config, NOT connected, tools not exposed). */
-  enabled?: boolean;
-  /** See McpStdioServerConfig.analyze. */
-  analyze?: ServerAnalyzePolicy;
 }
 export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig;
 

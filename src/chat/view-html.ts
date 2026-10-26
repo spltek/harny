@@ -1367,19 +1367,44 @@ ${renderViewConfig(deps)}
       color: var(--accent); font-size: var(--fs-sm); text-decoration: underline;
     }
     .mcp-tools-btn:hover { color: var(--accent-strong, var(--accent)); }
-    /* Tool-list popover: a small floating card anchored to the (N tools) key. */
+    /* Tools panel: a floating card anchored to the (N tools) key, listing EVERY tool
+       of one server with the checkbox that decides what the MODEL sees. It is a
+       draft-until-Save editor (All / None / Cancel / Save), because saving reconnects
+       the server and a per-click reconnect would respawn a process each time. */
     #mcp-tools-popover {
-      position: fixed; z-index: 60; max-width: min(30rem, 90vw); max-height: 60vh; overflow: auto;
+      position: fixed; z-index: 60; width: min(34rem, 92vw); max-height: 60vh;
+      display: flex; flex-direction: column; gap: 6px;
       background: var(--bg, #1e1e1e); border: 1px solid var(--border); border-radius: 8px;
       padding: 8px 10px; box-shadow: 0 6px 24px var(--modal-shadow);
     }
     #mcp-tools-popover.hidden { display: none; }
-    .mcp-pop-title { font-weight: 600; margin-bottom: 6px; }
-    .mcp-pop-empty { color: var(--muted-2); font-size: var(--fs-sm); }
-    .mcp-pop-item { padding: 4px 0; border-top: 1px solid var(--border); }
-    .mcp-pop-item:first-of-type { border-top: none; }
+    .mcp-pop-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .mcp-pop-title { font-weight: 600; }
+    .mcp-pop-count { font-size: var(--fs-sm); color: var(--muted-2); }
+    .mcp-pop-filter {
+      background: var(--input-bg); color: var(--fg); border: 1px solid var(--border);
+      border-radius: 6px; padding: 3px 6px; font-size: var(--fs-sm);
+    }
+    .mcp-pop-list { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+    .mcp-pop-row {
+      display: flex; align-items: flex-start; gap: 8px; padding: 5px 0;
+      border-top: 1px solid var(--border); cursor: pointer;
+    }
+    .mcp-pop-row:first-of-type { border-top: none; }
+    .mcp-pop-row input { margin: 2px 0 0; flex: none; accent-color: var(--accent); }
+    .mcp-pop-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
     .mcp-pop-name { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--fg); }
-    .mcp-pop-desc { font-size: var(--fs-sm); color: var(--muted-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .mcp-pop-desc {
+      font-size: var(--fs-sm); color: var(--muted-2); overflow-wrap: anywhere;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    /* Excluded: dimmed, so the list reads as "these are not there" at a glance. */
+    .mcp-pop-row.off .mcp-pop-name, .mcp-pop-row.off .mcp-pop-desc { color: var(--muted-3); }
+    .mcp-pop-empty { color: var(--muted-2); font-size: var(--fs-sm); }
+    .mcp-pop-actions { display: flex; align-items: center; gap: 6px; }
+    .mcp-pop-status { flex: 1 1 auto; min-width: 0; font-size: var(--fs-sm); color: var(--muted-2); }
+    .mcp-pop-status.err { color: var(--error, #f05555); }
+    .mcp-pop-mini { padding: 2px 8px; font-size: var(--fs-sm); }
     /* Slash menu: skill autocomplete above the prompt. Only shown when the
        prompt STARTS with "/" and has no whitespace yet. */
     #slash-menu {
@@ -2714,7 +2739,7 @@ ${renderViewConfig(deps)}
     <div class="mcp-card">
       <div class="mcp-head">
         <h3>MCP servers</h3>
-        <span class="mcp-hint">Model Context Protocol (stdio or HTTP). Their tools appear as mcp__&lt;server&gt;__&lt;tool&gt;.</span>
+        <span class="mcp-hint">Model Context Protocol: a server is EITHER a command (stdio) OR a URL (HTTP) — fill one. Their tools appear as mcp__&lt;server&gt;__&lt;tool&gt;.</span>
       </div>
       <div class="mcp-body">
         <div class="mcp-list-col">
@@ -2726,9 +2751,11 @@ ${renderViewConfig(deps)}
         </div>
         <div class="mcp-form-col">
           <div class="field"><label class="field-label" for="mcp-name">Name</label><input id="mcp-name" type="text" spellcheck="false" /></div>
-          <div class="field"><label class="field-label" for="mcp-command">Command</label><input id="mcp-command" type="text" spellcheck="false" placeholder="e.g. npx" /></div>
+          <div class="field"><label class="field-label" for="mcp-url">URL (HTTP) — leave empty for a local command</label><input id="mcp-url" type="text" spellcheck="false" placeholder="https://mcp.deepwiki.com/mcp" /></div>
+          <div class="field"><label class="field-label" for="mcp-command">Command (stdio)</label><input id="mcp-command" type="text" spellcheck="false" placeholder="e.g. npx" /></div>
           <div class="field"><label class="field-label" for="mcp-args">Args (one per line)</label><textarea id="mcp-args" rows="3" spellcheck="false"></textarea></div>
           <div class="field"><label class="field-label" for="mcp-env">Env (KEY=VALUE, one per line)</label><textarea id="mcp-env" rows="3" spellcheck="false"></textarea></div>
+          <div class="field"><label class="field-label" for="mcp-headers">Headers (KEY=VALUE, one per line — HTTP only)</label><textarea id="mcp-headers" rows="2" spellcheck="false"></textarea></div>
           <label class="mcp-enabled-row"><input type="checkbox" id="mcp-enabled" /> Enabled (disabled servers are kept but not connected)</label>
           <div class="mcp-form-actions">
             <button id="mcp-test" class="secondary" type="button">Test</button>

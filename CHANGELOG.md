@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The MCP editor can configure an HTTP server — URL and headers are fields now.** It had only Command / Args / Env,
+  so a `url` server existed only if you hand-edited `config.json` — while the README promised "a command (stdio) **or**
+  a URL (HTTP)". The form now has a **URL (HTTP)** field and a **Headers** box (`KEY=VALUE` or `KEY: VALUE`, the HTTP
+  convention), and the two transports are kept honestly exclusive: typing a URL DROPS the leftover `command`/`args`/
+  `env`, because the normalizer prefers `command` and a stale one would make "switch it to HTTP" silently do nothing;
+  clearing the URL keeps the command it had, and a save with neither is refused rather than written as a server with
+  no transport (which the normalizer deletes). Headers round-trip like env: loaded into the box, re-parsed on save, an
+  emptied box clears them instead of writing `{}`.
+- **A zero-install MCP server ships in the repo: `examples/mcp-hello/server.js`.** Plain Node, no dependencies, four
+  read-only tools (`hello`, `add`, `now`, `search`) — it is the answer to the case that started this: when `npx` cannot
+  install anything (a half-written `~/.npm/_npx` cache, an npm in a bad state), every MCP server "fails" and there is
+  no way to tell the panel from the install. Point Harny at `node` + that path and the panel, the tool list and the
+  gate are exercised with no network at all. `search` exists on purpose: a remote doc server only ever shows string
+  parameters, so this one carries a **rich schema** — `required`, an enum, an array with `items`, a two-level nested
+  object, numeric `minimum`/`maximum` and defaults — and echoes the arguments it received, normalized, so a call
+  SHOWS how the model's JSON arrived (`limit: 999` → `50`, `sort: "nope"` → `relevance`, `tags: ["a", 7, "b"]` →
+  `["a","b"]`). `mcp-client.test.ts` spawns the server, asserts the schema survives ingestion untouched and runs a
+  tool, so the example cannot rot.
+- **An MCP server's tools are now a list you can prune, one checkbox at a time.** `(N tools)` used to open a
+  read-only popover: it answered "what does this server expose?" and nothing else, so a server with forty tools
+  — half of them writes you never want the model to reach for — was all-or-nothing: keep it, or turn the whole
+  server off. That popover is now the **tools panel**: every tool the server advertises, each with the checkbox
+  that decides whether the MODEL sees it (**checked = exposed, and that is the default**, so nothing changes for
+  anyone who never opens it), the name in mono, the description clamped to two lines, and a count in the header
+  (`18 of 24 enabled`). Excluded rows dim, the card's key reads `(18/24 tools)` instead of `(24 tools)`, and a
+  **filter box** appears once a server has more than eight tools. The choice is a DRAFT — **All / None / Cancel /
+  Save** — because saving RECONNECTS the server (that is what rebuilds the tool list the model is offered), and a
+  reconnect per checkbox click would respawn an MCP process each time; Save is disabled until something actually
+  changes, refused while a session is working (swapping the tool list under a live turn would break it) and, on a
+  failed write, keeps the panel OPEN with the draft intact. The names live in `config.json` as **`excludeTools`**
+  on the server's own entry: an exclude list on purpose, so a server that adds a tool tomorrow exposes it without
+  anyone editing the file.
+- **Two config-round-trip bugs, found while wiring that panel — both fixed.** `normalizeMcpServers` did not carry
+  the per-server declarations, so `analyze` (`read-only` / `trusted`, documented in the README and the only thing
+  standing between Analyze and an external call) was **dropped on every read AND every write**: a policy set in the
+  file never reached the manager, and any save from the panel deleted it. And the editor rebuilt a server from its
+  OWN fields, so saving one stripped `analyze` and turned an **HTTP** server (no `command`) into a broken stdio
+  entry — a save documented as "lossless" was in fact lossy in two directions. Both now go through
+  `McpServerCommon` (`enabled`, `analyze`, `excludeTools`) and the editor spreads the entry it was given, so what
+  it does not manage survives it. `excludeTools` is sanitized on the way in (trimmed, de-duplicated, unknown values
+  dropped) and an empty list is **deleted** rather than written as `[]`.
 - **The session trash asks ONE question with THREE answers: delete / rewind / empty.** It used to ask a plain
   yes/no ("Delete session X? This removes its transcript and settings"), which is the wrong question for the case
   that actually comes up: a session that grew too big, where throwing away the *state of the work* is a last

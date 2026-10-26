@@ -43,6 +43,10 @@ export interface McpClient {
   listTools(): Promise<McpToolInfo[]>;
   callTool(name: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }>;
   close(): void;
+  /** OPTIONAL: called when the server dies ON ITS OWN (a crash, an idle exit) — never for
+   * a `close()` we asked for. The manager uses it to mark the server down and withdraw its
+   * tools instead of advertising tools that can only fail. */
+  onExit?(cb: (error?: string) => void): void;
 }
 
 /** Runtime status of one configured MCP server (for the UI). */
@@ -52,7 +56,11 @@ export interface McpServerStatus {
   /** false = disabled in the config (not connected, tools not exposed). */
   enabled: boolean;
   error?: string;
+  /** How many tools are EXPOSED to the model — the count the panel shows, and what
+   * `excludeTools` in the config reduces (see McpServerConfig). */
   toolCount: number;
-  /** Tool names + descriptions (for the UI popover). */
-  tools?: { name: string; description?: string }[];
+  /** Every tool the server ADVERTISED, in `tools/list` order, each flagged with the
+   * ones the config excludes: the panel's checkbox list is built from this, so the
+   * user sees what a toggle would hide and what is hidden already. */
+  tools?: { name: string; description?: string; excluded?: boolean }[];
 }

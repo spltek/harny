@@ -34,8 +34,15 @@ export class McpStdioClient implements McpClient {
   private child?: ChildProcessWithoutNullStreams;
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
+  /** The FIRST stderr text: npm puts the real cause there (`code ENOTEMPTY`, the path,
+   * the package). Kept apart from the tail because a `slice(-N)` of the tail alone is
+   * what turned a clear npm failure into "y not empty, rename …". */
+  private stderrHead = "";
   private stderrTail = "";
   private closed = false;
+  /** `close()` was called by US: the exit that follows is ours, not the server's, and must
+   * not be reported as a crash (a reconnect would otherwise look like one). */
+  private disposed = false;
   private onExitCb?: (error?: string) => void;
 
   constructor(private readonly opts: McpStdioOptions) {}
@@ -60,18 +67,33 @@ export class McpStdioClient implements McpClient {
     const rl = createInterface({ input: child.stdout });
     rl.on("line", (line) => this.handleLine(line));
     child.stderr.on("data", (d) => {
-      this.stderrTail = (this.stderrTail + String(d)).slice(-2000);
-      const text = String(d).trim();
-      if (text) this.opts.log?.(`[mcp:${this.opts.command}] ${text.slice(0, 500)}`);
+      const text = String(d);
+      // Keep BOTH ends: the cause is at the top, the echo at the bottom. Bounded so a
+      // chatty server cannot grow the buffer without limit.
+      if (this.stderrHead.length < 4000) this.stderrHead = (this.stderrHead + text).slice(0, 4000);
+      this.stderrTail = (this.stderrTail + text).slice(-2000);
+      const logged = text.trim();
+      if (logged) this.opts.log?.(`[mcp:${this.opts.command}] ${logged.slice(0, 500)}`);
     });
     child.on("error", (err) => this.failAll(err instanceof Error ? err : new Error(String(err))));
-    child.on("exit", (code, signal) => {
+    // Reported ONCE, from 'close' when it comes first: at 'exit' the last stderr chunk
+    // may still be in flight, and those are exactly the lines that name the problem. The
+    // setImmediate is the floor — a server that keeps its pipes open still gets a report.
+    let reported = false;
+    const report = (code: number | null, signal: NodeJS.Signals | null): void => {
+      if (reported) return;
+      reported = true;
       this.closed = true;
-      const detail = this.stderrTail.trim() ? `: ${this.stderrTail.trim().slice(-300)}` : "";
-      const err = new Error(`MCP server exited (code=${code ?? "-"} signal=${signal ?? "-"})${detail}`);
+      const err = new Error(`MCP server exited (code=${code ?? "-"} signal=${signal ?? "-"})${this.exitDetail()}`);
       this.failAll(err);
-      this.onExitCb?.(err.message);
+      // A deliberate close() (reconnect, failed start) is not a crash: the caller already
+      // knows, and reporting it would mark a freshly reconnected server as dead.
+      if (!this.disposed) this.onExitCb?.(err.message);
+    };
+    child.on("exit", (code, signal) => {
+      setImmediate(() => report(code, signal));
     });
+    child.on("close", (code, signal) => report(code, signal));
 
     await this.request("initialize", {
       protocolVersion: PROTOCOL_VERSION,
@@ -110,11 +132,34 @@ export class McpStdioClient implements McpClient {
     this.onExitCb = cb;
   }
 
+  /**
+   * What the server said before dying, as a SHORT message a human can act on: the first
+   * lines (the cause) and the last (where it gave up), never a mid-word slice.
+   *
+   * This used to be `stderr.slice(-300)`, which on a failing `npx` install produced
+   * `(code=190 signal=-): y not empty, rename '…/content-disposition' -> …` — the tail of
+   * "directory not empty", with the line that NAMES the problem cut off.
+   */
+  private exitDetail(): string {
+    const all = `${this.stderrHead}${this.stderrTail}`.trim();
+    if (!all) return "";
+    const lines = all
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l !== "");
+    const head = lines.slice(0, 3).join(" ").slice(0, 300);
+    const last = lines.length > 3 ? lines[lines.length - 1].slice(0, 160) : "";
+    const body = last && !head.endsWith(last) ? `${head} … ${last}` : head;
+    const hint = mcpFailureHint(all);
+    return `: ${body}${hint ? ` — ${hint}` : ""}`;
+  }
+
   get running(): boolean {
     return !!this.child && !this.closed;
   }
 
   close(): void {
+    this.disposed = true;
     this.closed = true;
     this.failAll(new Error("MCP client closed"));
     // Kill the server AND any children it spawned (a bare kill() would leave the
@@ -181,6 +226,25 @@ export class McpStdioClient implements McpClient {
     }
     this.pending.clear();
   }
+}
+
+/**
+ * A one-line REMEDY for the failures we can name, appended to the error itself.
+ *
+ * `code=190` and a wall of npm output tell nobody what to do; "clear the npx cache"
+ * does. Kept narrow on purpose: a wrong hint is worse than none.
+ */
+export function mcpFailureHint(stderr: string): string {
+  if (/ENOTEMPTY|_npx/i.test(stderr)) {
+    return "npm's npx cache looks incomplete — run `rm -rf ~/.npm/_npx` and Test again (the first run re-downloads the package)";
+  }
+  if (/EACCES|permission denied/i.test(stderr)) {
+    return "the command is not executable here — check its path and permissions";
+  }
+  if (/ENOENT|command not found|not recognized/i.test(stderr)) {
+    return "the command was not found on PATH";
+  }
+  return "";
 }
 
 /** Flatten MCP content blocks (text/image/resource) into a single string. */

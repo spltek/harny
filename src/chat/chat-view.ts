@@ -1070,6 +1070,37 @@ export class ChatViewProvider implements WebviewViewProvider {
         }
         break;
       }
+      case "setMcpToolExclusions": {
+        // The tools panel's Save: which tools of ONE server the model must not see.
+        // Written on that server's own entry — every other key survives, because the
+        // config file is the user's too (analyze, url, headers…) — then RECONNECT,
+        // which is what actually rebuilds the tool list the model is offered.
+        const name = typeof msg.server === "string" ? msg.server : "";
+        const servers = this.providers.readMcpServers?.() ?? {};
+        if (!name || !servers[name]) break;
+        // `msg` is untyped JSON from the webview: read it as `unknown[]` FIRST, so the
+        // type predicate below is what produces the string[] (filtering `any[]` does not
+        // narrow, and would hand `unknown[]` to the config writer).
+        const rawExclude: unknown = msg.exclude;
+        const excludeList: unknown[] = Array.isArray(rawExclude) ? rawExclude : [];
+        const exclude = excludeList.filter((t: unknown): t is string => typeof t === "string" && t.trim() !== "");
+        const current = servers[name];
+        // An EMPTY list is deleted, not written as []: a server with nothing excluded
+        // must look untouched in the file (see McpServerCommon.excludeTools).
+        const excludeTools = exclude.length > 0 ? [...new Set(exclude)] : undefined;
+        if (excludeTools) current.excludeTools = excludeTools;
+        else delete current.excludeTools;
+        infoLog(`[mcp] "${name}": ${excludeTools?.length ?? 0} tool(s) excluded, reconnecting`);
+        servers[name] = current;
+        const ok = this.providers.saveMcpServers?.(servers) ?? false;
+        if (ok) {
+          await this.options.mcp?.connect();
+          this.view?.webview.postMessage({ type: "mcpServers", data: this.mcpEditorData() });
+          void this.pushConfig();
+        }
+        this.view?.webview.postMessage({ type: "mcpToolExclusionsSaved", server: name, ok });
+        break;
+      }
       case "saveMcpServers": {
         const servers =
           msg.servers && typeof msg.servers === "object" ? (msg.servers as Record<string, McpServerConfig>) : {};
@@ -2735,10 +2766,20 @@ export class ChatViewProvider implements WebviewViewProvider {
     return (this.options.skills?.list() ?? []).map((s) => ({ name: s.name, description: s.description }));
   }
 
-  /** MCP servers (config) + their live status, for the MCP card/editor. */
+  /** MCP servers (config) + their live status, for the MCP card/editor.
+   * `toolCount` is what the MODEL sees; `tools[]` is everything the server
+   * advertises, each flagged with the ones `excludeTools` hides.
+   */
   private mcpEditorData(): {
     servers: Record<string, McpServerConfig>;
-    statuses: { name: string; ok: boolean; error?: string; toolCount: number }[];
+    statuses: {
+      name: string;
+      ok: boolean;
+      enabled: boolean;
+      error?: string;
+      toolCount: number;
+      tools?: { name: string; description?: string; excluded?: boolean }[];
+    }[];
   } {
     return { servers: this.providers.readMcpServers?.() ?? {}, statuses: this.options.mcp?.getStatuses() ?? [] };
   }
