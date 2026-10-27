@@ -149,6 +149,9 @@ describe("MCP tools panel, host ⇄ webview ⇄ server", () => {
     });
     expect(defs.map((d) => d.name)).toEqual(["mcp__test__echo"]);
 
+    // The CARD reflects the session (it comes from the same payload the panel reads): waiting for it
+    // is what makes the reopen below deterministic instead of a race with the config push.
+    await vi.waitFor(() => expect(toolsKey().textContent).toBe("(1/2 tools)"), { timeout: 5000 });
     // Reopening shows the SAVED state.
     toolsKey().click();
     const reopened = [...document.querySelectorAll<HTMLElement>("#mcp-tools-popover .mcp-pop-row")];

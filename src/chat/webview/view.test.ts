@@ -5342,6 +5342,9 @@ describe("view webview client", () => {
     toolCount?: number,
   ): void {
     const off = tools.filter((t) => t.excluded).map((t) => `mcp__test__${t.name}`);
+    // The panel reads the HOST's flag (it owns the name spelling); `excluded` stays the test's word
+    // for "this session has it off", and becomes both the flag and the scope entry.
+    const flagged = tools.map((t) => ({ ...t, ...(t.excluded ? { off: true } : {}) }));
     hostMessage({
       type: "config",
       config: {
@@ -5354,7 +5357,13 @@ describe("view webview client", () => {
         mcp: {
           servers: { test: { command: "node" } },
           statuses: [
-            { name: "test", ok: true, enabled: true, toolCount: toolCount ?? tools.length - off.length, tools },
+            {
+              name: "test",
+              ok: true,
+              enabled: true,
+              toolCount: toolCount ?? tools.length - off.length,
+              tools: flagged,
+            },
           ],
         },
       },
@@ -5390,8 +5399,8 @@ describe("view webview client", () => {
     ]);
     expect((document.querySelector(".mcp-tools-btn") as HTMLButtonElement).textContent).toBe("(1/2 tools)");
 
-    // All on again: the quiet form comes back.
-    hostMessage({ type: "toolScope", scope: { mcp: ["test"], off: [] } });
+    // All on again (the host re-sends the tools with no flag): the quiet form comes back.
+    pushMcpTools([{ name: "echo", description: "Echo text" }, { name: "ping" }]);
     expect((document.querySelector(".mcp-tools-btn") as HTMLButtonElement).textContent).toBe("(2 tools)");
   });
 
@@ -5424,12 +5433,10 @@ describe("view webview client", () => {
 
     posted.length = 0;
     mcpPanelSave().click();
-    expect(posted).toContainEqual({
-      type: "setMcpToolExclusions",
-      server: "test",
-      exclude: ["echo"],
-      analyze: [],
-    });
+    // TWO messages, two axes: the MACHINE's (this server's tool list, global, reconnect) and the
+    // SESSION's, sent as INTENT (the names it wants enabled) — the host owns the spelling.
+    expect(posted).toContainEqual({ type: "setMcpToolExclusions", server: "test", exclude: ["echo"], analyze: [] });
+    expect(posted).toContainEqual({ type: "setMcpToolSelection", server: "test", enabled: ["ping"] });
 
     // The host's answer closes the panel (it has already re-pushed the fresh state).
     hostMessage({ type: "mcpToolExclusionsSaved", server: "test", ok: true });

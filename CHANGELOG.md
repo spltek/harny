@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The tool scope has ONE spelling, and it lives on the host.** The panel used to rebuild `mcp__server__tool`
+  prefixes to compare them with the session's list — two spellings of the same truth, which is how a server named
+  `files-extra` (registered as `files_extra`) could never be switched on. Now the host decorates each tool with
+  `off: true` when this session has it switched off, and the panel sends back **intent** (the names it wants enabled):
+  turning that into scope names, sanitizing them and merging them with every other decision is the host's job. The
+  webview no longer imports the naming rule at all.
+
 - **One owner for "what is inert while a run works".** The policy lived in seven functions across three call paths, which
   is how the same bug was reported four times in two days (each fix right, each landing on one path). It is now a
   declarative table (`LOCK_TABLE` in `view.ts`): one row per control, a predicate for when it locks, an optional tooltip.

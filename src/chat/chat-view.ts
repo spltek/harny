@@ -1,5 +1,12 @@
 import type { ExtensionContext, WebviewView, WebviewViewProvider, WebviewViewResolveContext } from "vscode";
-import { normalizeToolScope, reconcileToolScope, type ToolScope } from "../core/tools/tool-scope";
+import {
+  mcpPrefix,
+  normalizeToolScope,
+  reconcileToolScope,
+  sanitizeToolNamePart,
+  type ToolScope,
+} from "../core/tools/tool-scope";
+import type { McpServerStatus } from "../core/mcp/types";
 import { Uri, window, workspace } from "vscode";
 import * as fs from "fs";
 import type {
@@ -1034,6 +1041,31 @@ export class ChatViewProvider implements WebviewViewProvider {
     return changed;
   }
 
+  /**
+   * The MCP statuses as the panel needs them: each tool flagged with whether THIS session has it
+   * off.
+   *
+   * The naming rule (sanitized `mcp__server__tool`) stays HERE, on the side that owns it. The panel
+   * used to rebuild those prefixes to compare them, which is how a server named `files-extra` ended
+   * up unswitchable: two spellings of the same truth, one of them wrong.
+   */
+  private mcpStatusesForView(): McpServerStatus[] {
+    const statuses = this.options.mcp?.getStatuses() ?? [];
+    const scope = this.activeRuntime()?.toolScope;
+    if (!scope || scope.off.length === 0) return statuses;
+    return statuses.map((status) => ({
+      ...status,
+      ...(status.tools
+        ? {
+            tools: status.tools.map((tool) => ({
+              ...tool,
+              ...(scope.off.includes(mcpPrefix(status.name) + sanitizeToolNamePart(tool.name)) ? { off: true } : {}),
+            })),
+          }
+        : {}),
+    }));
+  }
+
   private async onMessage(msg: any): Promise<void> {
     debugLog("view message:", JSON.stringify(msg)?.slice(0, 120));
     const rt = this.activeRuntime();
@@ -1498,6 +1530,36 @@ export class ChatViewProvider implements WebviewViewProvider {
         const scope = normalizeToolScope(msg.scope) ?? { mcp: [], off: [] };
         rt.toolScope = scope;
         this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { toolScope: scope }), false);
+        void this.pushConfig();
+        break;
+      }
+
+      case "setMcpToolSelection": {
+        // The tools panel's Save, as INTENT: which of one server's tools this session may use. The
+        // host turns that into scope names (sanitized prefix, merge with the other decisions) —
+        // the webview no longer knows how a tool is spelled on the wire.
+        const server = typeof msg.server === "string" ? msg.server : "";
+        const rt = this.activeRuntime();
+        if (!server || !rt) break;
+        const all =
+          (this.options.mcp?.getStatuses() ?? []).find((s) => s.name === server)?.tools?.map((t) => t.name) ?? [];
+        const wanted = new Set(
+          (Array.isArray(msg.enabled) ? (msg.enabled as unknown[]) : []).filter(
+            (n): n is string => typeof n === "string" && n.trim() !== "",
+          ),
+        );
+        const prefix = mcpPrefix(server);
+        const previous = rt.toolScope ?? { mcp: [], off: [] };
+        const off = [
+          ...previous.off.filter((name) => !name.startsWith(prefix)),
+          ...all.filter((name) => !wanted.has(name)).map((name) => prefix + sanitizeToolNamePart(name)),
+        ];
+        const mcp = previous.mcp.filter((name) => name !== server);
+        // A server counts as ON as soon as one of its tools is: an empty selection means the
+        // session is not using it at all.
+        if (all.some((name) => wanted.has(name))) mcp.push(server);
+        rt.toolScope = { mcp, off };
+        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { toolScope: rt.toolScope }), false);
         void this.pushConfig();
         break;
       }
@@ -2931,7 +2993,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       tools?: { name: string; description?: string; excluded?: boolean }[];
     }[];
   } {
-    return { servers: this.providers.readMcpServers?.() ?? {}, statuses: this.options.mcp?.getStatuses() ?? [] };
+    return { servers: this.providers.readMcpServers?.() ?? {}, statuses: this.mcpStatusesForView() };
   }
 
   /** The concurrent sub-agent cap actually used for the active session: the
@@ -3124,7 +3186,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       loopGuardPresets: loopGuardPresets(),
       loopGuardRanges: LOOP_GUARD_FIELD_RANGES,
       skills: this.skillCatalog(),
-      mcp: { servers: this.providers.readMcpServers?.() ?? {}, statuses: this.options.mcp?.getStatuses() ?? [] },
+      mcp: { servers: this.providers.readMcpServers?.() ?? {}, statuses: this.mcpStatusesForView() },
       contextWindow: clampContextWindow(rt?.contextWindow ?? DEFAULT_CONTEXT_WINDOW, ctxMax),
       // Same window + reserve the auto-compaction threshold uses, so the bar and
       // the trigger are one number by construction.

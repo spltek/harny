@@ -1470,6 +1470,41 @@ describe("ChatViewProvider", () => {
     expect(connect).not.toHaveBeenCalled();
   });
 
+  it("a server name that needs SANITIZING round-trips: one spelling, on the host's side", async () => {
+    // The bug this prevents, found in the wild: the registry registers `my-server` as
+    // `mcp__my_server__…`, and a raw-name comparison left that server unswitchable. The panel no
+    // longer spells anything — it sends intent — so this pins the seam BOTH ways.
+    const mcp = {
+      connect: vi.fn(async () => {}),
+      getTools: () => [],
+      getStatuses: () => [
+        { name: "my-server", ok: true, enabled: true, toolCount: 2, tools: [{ name: "read-file" }, { name: "write" }] },
+      ],
+    } as any;
+    const { provider, registry } = buildHarness({
+      mcp,
+      providers: {
+        getProvider: vi.fn(),
+        saveModelSelection: vi.fn(),
+        readMcpServers: vi.fn(() => ({ "my-server": { command: "node" } })),
+        saveMcpServers: vi.fn(() => true),
+      } as unknown as ProviderCatalog,
+    });
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+
+    // The panel wants `write` only.
+    await handler({ type: "setMcpToolSelection", server: "my-server", enabled: ["write"] });
+
+    // 1. The SCOPE holds the registered spelling.
+    expect(registry.get("s1")!.toolScope).toEqual({ mcp: ["my-server"], off: ["mcp__my_server__read_file"] });
+    // 2. …and the payload tells the panel about it with that same spelling, so the checkbox shows
+    //    the truth instead of comparing two different names.
+    const configs = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
+    const tools = configs[configs.length - 1].config.mcp.statuses[0].tools;
+    expect(tools).toEqual([{ name: "read-file", off: true }, { name: "write" }]);
+  });
+
   it('a MALFORMED setToolScope changes nothing (it must never mean "everything allowed")', async () => {
     // `undefined` is the one value that restricts nothing — the legacy meaning. A garbled message
     // must not be able to grant a session every server.

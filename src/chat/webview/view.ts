@@ -24,7 +24,7 @@ import { setFold, toggleMarkup } from "./fold";
 // request from ever disagreeing about where the window starts.
 import { checkpointStart } from "../../core/history/conversation-validity";
 import { toolArgTarget } from "../../core/tools/tool-call-text";
-import { mcpPrefix, normalizeToolScope, sanitizeToolNamePart } from "../../core/tools/tool-scope";
+import { normalizeToolScope } from "../../core/tools/tool-scope";
 import type { SessionLiveProjection } from "../session-live-state";
 
 declare function acquireVsCodeApi(): {
@@ -180,7 +180,7 @@ interface ConfigState {
       /** Exposed to the model (what the card shows). */
       toolCount: number;
       /** Everything the server advertises, with the exclusions flagged. */
-      tools?: { name: string; description?: string }[];
+      tools?: { name: string; description?: string; off?: boolean }[];
     }[];
   };
   contextTokens?: number;
@@ -4324,7 +4324,7 @@ let mcpStatuses: {
   enabled: boolean;
   error?: string;
   toolCount: number;
-  tools?: { name: string; description?: string }[];
+  tools?: { name: string; description?: string; off?: boolean }[];
 }[] = [];
 
 const DEFAULT_PARALLEL = 4;
@@ -4755,7 +4755,7 @@ function renderMcp(mcp: ConfigState["mcp"]): void {
       // The count is THIS SESSION's, not the registry's: the tools are all registered (a server is
       // installed once), so what tells the user something is switched off is the scope. Reading
       // `st.toolCount` here said "(2 tools)" while the model could only see one.
-      const hidden = st.tools ? mcpSavedExclusions(name, st.tools).size : 0;
+      const hidden = st.tools ? mcpSavedExclusions(st.tools).size : 0;
       const shown = total - hidden;
       const btn = document.createElement("button");
       btn.type = "button";
@@ -4851,11 +4851,11 @@ function hideMcpToolsPopover(): void {
  * checkboxes are a per-conversation decision now, and a global list would make the panel show a
  * state the model does not have.
  */
-function mcpSavedExclusions(server: string, tools: { name: string }[]): Set<string> {
-  // The SAME rule the registry uses (a server or tool name with `-` is registered as `_`): a raw
-  // prefix here would never match, and the panel would show the wrong state for such a server.
-  const prefix = mcpPrefix(server);
-  return new Set(tools.filter((t) => sessionToolScope.off.includes(prefix + t.name)).map((t) => t.name));
+function mcpSavedExclusions(tools: { name: string; off?: boolean }[]): Set<string> {
+  // The HOST says which tools this session has off (it owns how a name is spelled on the wire). The
+  // panel used to rebuild `mcp__server__tool` prefixes to compare them — two spellings of the same
+  // truth, and the reason a server named `files-extra` could never be switched on.
+  return new Set(tools.filter((t) => t.off).map((t) => t.name));
 }
 
 /** What the server currently declares read-only ONE BY ONE (not the inherited declaration). */
@@ -4874,7 +4874,7 @@ function mcpToolsDirty(): boolean {
   const panel = mcpToolsPanel;
   if (!panel) return false;
   return (
-    setsDiffer(panel.draft, mcpSavedExclusions(panel.server, panel.tools)) ||
+    setsDiffer(panel.draft, mcpSavedExclusions(panel.tools)) ||
     setsDiffer(panel.analyzeDraft, mcpSavedAnalyzeFlags(panel.tools))
   );
 }
@@ -4989,12 +4989,19 @@ function renderMcpToolRows(): void {
 function showMcpToolsPopover(
   anchor: HTMLElement,
   server: string,
-  tools: { name: string; description?: string; excluded?: boolean; readOnly?: boolean; analyzeFlag?: boolean }[],
+  tools: {
+    name: string;
+    description?: string;
+    off?: boolean;
+    excluded?: boolean;
+    readOnly?: boolean;
+    analyzeFlag?: boolean;
+  }[],
 ): void {
   mcpToolsPanel = {
     server,
     tools,
-    draft: mcpSavedExclusions(server, tools),
+    draft: mcpSavedExclusions(tools),
     analyzeDraft: mcpSavedAnalyzeFlags(tools),
   };
   mcpToolsFilter = "";
@@ -5091,22 +5098,14 @@ function showMcpToolsPopover(
       // The opposite polarity rides along: the tools declared read-only in Analyze.
       analyze: [...panel.analyzeDraft],
     });
-    // …and the SESSION's own view of the same server. Two axes, deliberately:
-    //  · the message above is the MACHINE's (this server's tool list, global, reconnect);
-    //  · this one is THIS conversation's: the server counts as ON as soon as one of its tools is,
-    //    and each unchecked tool is named off FOR THIS SERVER only — the rest of the scope
-    //    (another server, a built-in) is preserved instead of being overwritten by a merge.
-    const prefix = mcpPrefix(panel.server);
-    const disabled = panel.tools
-      .filter((t) => panel.draft.has(t.name))
-      .map((t) => prefix + sanitizeToolNamePart(t.name));
-    const mcp = sessionToolScope.mcp.filter((name) => name !== panel.server);
-    if (panel.tools.some((t) => !panel.draft.has(t.name))) mcp.push(panel.server);
-    sessionToolScope = {
-      mcp,
-      off: [...sessionToolScope.off.filter((name) => !name.startsWith(prefix)), ...disabled],
-    };
-    vscode.postMessage({ type: "setToolScope", scope: sessionToolScope });
+    // …and this SESSION's selection for the same server, sent as INTENT: the names it wants
+    // ENABLED. Turning that into scope names (sanitized prefix, merge with every other decision)
+    // is the host's job — one spelling of the rule, on the side that owns it.
+    vscode.postMessage({
+      type: "setMcpToolSelection",
+      server: panel.server,
+      enabled: panel.tools.filter((t) => !panel.draft.has(t.name)).map((t) => t.name),
+    });
   });
   actions.appendChild(all);
   actions.appendChild(none);
