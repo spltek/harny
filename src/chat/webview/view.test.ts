@@ -294,9 +294,35 @@ async function reloadView(initOverrides: Record<string, unknown> = {}): Promise<
   await loadView();
 }
 
+/**
+ * The prerequisites EVERY test in this file shares, in ONE place.
+ *
+ * They used to be repeated as `posted.length = 0; setupDom();` inside thirty-one `describe`s —
+ * and the tests outside any `describe` got neither, so they only passed because another block had
+ * run first (a shuffled order turned that into `acquireVsCodeApi is not defined`). A prerequisite
+ * is a fixture, not a copy per block: one top-level `beforeEach` installs it for all of them, and
+ * a test that needs more calls this with its own overrides.
+ */
+function setupFixture(initOverrides: Record<string, unknown> = {}, savedState: Record<string, unknown> = {}): void {
+  posted.length = 0;
+  detachGlobalListeners();
+  setupDom(initOverrides, savedState);
+}
+
 async function loadView(): Promise<void> {
   detachGlobalListeners();
   vi.resetModules();
+  // The module calls `acquireVsCodeApi()` at import time: `setupDom` installs it, and this guard
+  // keeps a direct `loadView()` honest even before the fixture has run.
+  if (typeof (globalThis as Record<string, unknown>).acquireVsCodeApi !== "function") {
+    (globalThis as Record<string, unknown>).acquireVsCodeApi = () => ({
+      postMessage: (m: unknown) => posted.push(m),
+      getState: () => persistedState,
+      setState: (state: unknown) => {
+        persistedState = state as Record<string, unknown>;
+      },
+    });
+  }
   const targets: (Window | Document)[] = [window, document];
   const realAdd = targets.map((t) => t.addEventListener);
   try {
@@ -320,12 +346,13 @@ async function loadView(): Promise<void> {
   }
 }
 
-describe("view webview client", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
+// ONE fixture for the whole file: every test starts from the same clean DOM, empty outbox and
+// fresh module (see setupFixture). Nesting or ordering can no longer change the prerequisites.
+beforeEach(() => {
+  setupFixture();
+});
 
+describe("view webview client", () => {
   it("keeps failed providers visible in the model modal, and falls back to 'pick one' when the saved model is gone", async () => {
     await loadView();
     const btn = document.getElementById("model-btn") as HTMLButtonElement;
@@ -6842,11 +6869,6 @@ describe("view webview client", () => {
 });
 
 describe("branch from assistant bubble", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   it("adds a ⎇ key to every visible assistant bubble and posts branchAt with its index", async () => {
     await loadView();
     hostMessage({
@@ -6890,11 +6912,6 @@ describe("branch from assistant bubble", () => {
 });
 
 describe("cut from user prompt bubble", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   it("adds a ✂ key to every USER prompt bubble and posts truncateAt with its index", async () => {
     await loadView();
     hostMessage({
@@ -6950,11 +6967,6 @@ describe("cut from user prompt bubble", () => {
 });
 
 describe("harness-injected prompts", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   it("renders ONLY the non-typed (harness) messages as light-blue 'Nudge' bubbles", async () => {
     await loadView();
     hostMessage({
@@ -6990,11 +7002,6 @@ describe("harness-injected prompts", () => {
 });
 
 describe("the context-window checkpoint in the transcript", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   // Everything before the pair is out of the window; everything after it is in.
   const PAST = [
     { role: "user", content: "prima domanda", timestamp: 1 },
@@ -7109,11 +7116,6 @@ describe("the context-window checkpoint in the transcript", () => {
 });
 
 describe("version in the main screen", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   it("shows the version in the empty hero", async () => {
     setupDom({ openIds: [], activeId: undefined, messages: [], version: "0.1.0" });
     await loadView();
@@ -7128,11 +7130,6 @@ describe("version in the main screen", () => {
 });
 
 describe("in-panel alert modal", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   it("shows the alert and OK responds true", async () => {
     await loadView();
     hostMessage({
@@ -7292,11 +7289,6 @@ function hostMessage(data: unknown): void {
 }
 
 describe("context metrics line", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   it("shows tokens, percent and bar, and posts compact", async () => {
     await loadView();
     hostMessage({
@@ -7709,11 +7701,6 @@ describe("context metrics line", () => {
 });
 
 describe("context window slider", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   it("renders the context value from config and posts on drag", async () => {
     await loadView();
     hostMessage({
@@ -7748,11 +7735,6 @@ describe("context window slider", () => {
 });
 
 describe("output tokens slider", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   it("renders the value from config (default 16384) and posts on drag", async () => {
     await loadView();
     const range = document.getElementById("out-range") as HTMLInputElement;
@@ -7789,11 +7771,6 @@ describe("output tokens slider", () => {
 });
 
 describe("sampler (radio + slider)", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   it("renders the ACTIVE sampler value and posts on drag", async () => {
     await loadView();
     const range = document.getElementById("samp-range") as HTMLInputElement;
@@ -7858,10 +7835,6 @@ describe("sampler (radio + slider)", () => {
   });
 });
 describe("empty shell (no open session)", () => {
-  beforeEach(() => {
-    posted.length = 0;
-  });
-
   it("hides the control stack and shows the hero when no session is active", async () => {
     setupDom({ sessions: [], openIds: [], activeId: undefined, messages: [] });
     await loadView();
@@ -7987,10 +7960,6 @@ describe("empty shell (no open session)", () => {
 });
 
 describe("welcome greeting (open session, no messages)", () => {
-  beforeEach(() => {
-    posted.length = 0;
-  });
-
   it("shows the real brand mark instead of the 👋 emoji", async () => {
     setupDom({ messages: [], logoUri: "vscode-webview://x/media/icon.svg?v=7" });
     await loadView();
@@ -8011,11 +7980,6 @@ describe("welcome greeting (open session, no messages)", () => {
 });
 
 describe("session name modal (unique names)", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   it("blocks duplicate names for create and lets unique ones pass", async () => {
     await loadView();
     hostMessage({ type: "modal", modalId: 10, kind: "name", mode: "create", current: undefined });
@@ -8061,11 +8025,6 @@ describe("session name modal (unique names)", () => {
 });
 
 describe("main sessions list search", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   it("filters the MAIN list by full-text search and clears it", async () => {
     await loadView(); // init sessions: a (Refactor), b (Debug)
     expect(document.querySelectorAll("#sessions .srow").length).toBe(2);
@@ -8149,11 +8108,6 @@ describe("main sessions list search", () => {
 });
 
 describe("all-sessions manager (gear)", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   it("filters sessions by a full-text search (host FTS) and clears it", async () => {
     await loadView();
     hostMessage({
@@ -8439,11 +8393,6 @@ describe("all-sessions manager (gear)", () => {
 });
 
 describe("soft steering + pending bubbles (webview)", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   function startWorking(): void {
     hostMessage({ type: "status", active: true });
   }
@@ -9112,11 +9061,6 @@ describe("soft steering + pending bubbles (webview)", () => {
 });
 
 describe("Insert-in hint — Queue/Steer (webview)", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   const hint = () => document.getElementById("insert-hint") as HTMLElement;
   const word = () => document.getElementById("insert-hint-word") as HTMLElement;
   const input = () => document.getElementById("user-input") as HTMLTextAreaElement;
@@ -9238,11 +9182,6 @@ describe("Insert-in hint — Queue/Steer (webview)", () => {
 });
 
 describe("steer target removed (webview)", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   it("a Delegate bubble has the abort key but NO steer-target key", async () => {
     await loadView();
     hostMessage({
@@ -9259,11 +9198,6 @@ describe("steer target removed (webview)", () => {
 });
 
 describe("per-turn metrics badge (webview)", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   it("renders a compact badge under an assistant bubble (real usage + timings)", async () => {
     await loadView();
     hostMessage({
@@ -9360,11 +9294,6 @@ describe("per-turn metrics badge (webview)", () => {
 });
 
 describe("per-turn metrics badge — tool-only turns", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   it("shows a badge for a TOOL-ONLY assistant turn (no text bubble)", async () => {
     await loadView();
     hostMessage({
@@ -9389,11 +9318,6 @@ describe("per-turn metrics badge — tool-only turns", () => {
 });
 
 describe("per-turn metrics badge — live turnMeta", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   it("appends a badge IMMEDIATELY on turnMeta, with no re-render", async () => {
     await loadView();
     hostMessage({ type: "refresh", messages: [{ role: "user", content: "q", timestamp: 1 }] });
@@ -9460,11 +9384,6 @@ describe("per-turn metrics badge — live turnMeta", () => {
 });
 
 describe("DB vacuum modal (webview)", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   const stats = { pageCount: 100, freePages: 50, pageSize: 4096, bytesFree: 204800, bytesTotal: 409600, ratio: 0.5 };
 
   it("opens on the dbVacuum modal kind, rendering the stats and the threshold", async () => {
@@ -9519,10 +9438,6 @@ describe("DB vacuum modal (webview)", () => {
 });
 
 describe("DB vacuum — sliders, info-only modal, live settings", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
   const stats = { pageCount: 100, freePages: 50, pageSize: 4096, bytesFree: 204800, bytesTotal: 409600, ratio: 0.5 };
 
   it("sliders update their value labels live and persist on change", async () => {
@@ -9572,11 +9487,6 @@ describe("DB vacuum — sliders, info-only modal, live settings", () => {
 });
 
 describe("slider maxima follow the model's detected limits", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   it("sets the slider MAX (and value) to the detected limits (so you can only decrease)", async () => {
     await loadView();
     hostMessage({
@@ -9623,10 +9533,6 @@ describe("slider maxima follow the model's detected limits", () => {
 });
 
 describe("slider step makes the exact model maximum reachable", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
   const cfg = (o: Record<string, unknown>) => ({
     type: "config",
     config: { provider: "openai", model: "m", hasKey: true, models: [], providerModels: [], ...o },
@@ -9654,10 +9560,6 @@ describe("slider step makes the exact model maximum reachable", () => {
 });
 
 describe("control range labels + sampler scale", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
   const cfg = (o: Record<string, unknown>) => ({
     type: "config",
     config: { provider: "openai", model: "m", hasKey: true, models: [], providerModels: [], ...o },
@@ -9705,10 +9607,6 @@ describe("control range labels + sampler scale", () => {
 });
 
 describe("model selector button shows the limits", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
   const cfg = (pm: Record<string, unknown>) => ({
     type: "config",
     config: { provider: "openai", activeProvider: "p", model: "m1", hasKey: true, models: [], providerModels: [pm] },
@@ -9728,10 +9626,6 @@ describe("model selector button shows the limits", () => {
 });
 
 describe("models.dev unreachable warning", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
   const cfg = (extra: Record<string, unknown>) => ({
     type: "config",
     config: {
@@ -9762,10 +9656,6 @@ describe("models.dev unreachable warning", () => {
 });
 
 describe("Esc closes the TOP-MOST overlay (LIFO)", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
   const stats = { pageCount: 100, freePages: 50, pageSize: 4096, bytesFree: 204800, bytesTotal: 409600, ratio: 0.5 };
 
   it("closes the Compact modal, NOT the All-sessions modal underneath it", async () => {
@@ -9790,11 +9680,6 @@ describe("Esc closes the TOP-MOST overlay (LIFO)", () => {
 });
 
 describe("the reading position survives a transcript rebuild", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   const MSGS = [
     { role: "user", content: "prima domanda", timestamp: 1 },
     { role: "assistant", content: "prima risposta", timestamp: 2 },
@@ -9932,11 +9817,6 @@ describe("the reading position survives a transcript rebuild", () => {
 });
 
 describe("transcript action pills (collapse all + autoscroll)", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   /** One section of each kind: a thinking block, a tool bubble, a sub-agent. */
   async function withAllSections(): Promise<void> {
     await loadView();
@@ -10167,11 +10047,6 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
 // all inside ONE synchronous block) or eventual (the text does land, within a
 // generous bound), so the only thing that can fail them is the behaviour itself.
 describe("streaming paint coalescing (resize / parallel sub-agents)", () => {
-  beforeEach(() => {
-    posted.length = 0;
-    setupDom();
-  });
-
   /** Long enough to leave the "cheap render" fast path (> FAST_PAINT_CHARS). */
   const LONG = "x".repeat(4200);
 

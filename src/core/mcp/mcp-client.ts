@@ -213,7 +213,7 @@ export class McpStdioClient implements McpClient {
       // (the protocol's own cancellation notification), the pending entry is dropped and the
       // late reply is ignored — the process stays alive for the next turn.
       const onAbort = (): void => {
-        if (!this.pending.delete(id)) return;
+        this.pending.delete(id);
         clearTimeout(timer);
         this.notify("notifications/cancelled", { requestId: id, reason: "the user pressed Stop" });
         reject(new Error("cancelled by Stop"));

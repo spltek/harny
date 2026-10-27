@@ -153,6 +153,31 @@ process.exit(190);
     c.close();
   });
 
+  it("names the OTHER two failures we can diagnose, and stays quiet when it cannot", async () => {
+    // A wrong hint is worse than none — so each cell of the table is worth a test: the user sees
+    // this line and acts on it.
+    const runWith = async (lines: string[]): Promise<string> => {
+      const script = `
+for (const l of ${JSON.stringify(lines)}) console.error(l);
+process.exit(1);
+`;
+      const c = new McpStdioClient({ command: process.execPath, args: ["-e", script], timeoutMs: 5000 });
+      const err = await c.start().catch((e) => e as Error);
+      c.close();
+      return err.message;
+    };
+
+    expect(await runWith(["Error: EACCES: permission denied, spawn /usr/local/bin/tool"])).toContain(
+      "check its path and permissions",
+    );
+    expect(await runWith(["Error: spawn npx ENOENT"])).toContain("not found on PATH");
+    // A failure we cannot name gets NO invented advice.
+    const unknown = await runWith(["Segmentation fault"]);
+    expect(unknown).toContain("Segmentation fault");
+    expect(unknown).not.toContain("PATH");
+    expect(unknown).not.toContain("permissions");
+  });
+
   it("a clean exit keeps the message clean (no empty detail, no stray hint)", async () => {
     const c = new McpStdioClient({ command: process.execPath, args: ["-e", "process.exit(0)"], timeoutMs: 2000 });
     const err = await c.start().catch((e) => e as Error);

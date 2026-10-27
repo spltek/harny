@@ -271,13 +271,22 @@ function resolveWith(provider: ChatViewProvider): { view: any; handler: (msg: an
   return { view, handler: view.webview.onDidReceiveMessage.mock.calls[0][0] as (m: any) => Promise<void> };
 }
 
-describe("ChatViewProvider", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    state.noAutoName = false;
-    state.autoName = "New Session";
-  });
+/**
+ * The prerequisites EVERY test in this file shares, in ONE place: the vscode mocks cleared and the
+ * state they read reset to its defaults.
+ *
+ * It used to be repeated in eleven `beforeEach` blocks, in two shapes — one of them also resetting
+ * `dbVacuumThreshold`, so a test in a block that forgot that line started from another test's
+ * value. A prerequisite is a fixture: one top-level hook, the SUPERSET, and no copies to drift.
+ */
+beforeEach(() => {
+  vi.clearAllMocks();
+  state.noAutoName = false;
+  state.autoName = "New Session";
+  state.dbVacuumThreshold = undefined;
+});
 
+describe("ChatViewProvider", () => {
   it("resolveWebviewView renders the unified layout", async () => {
     const { provider } = buildHarness();
     const { view } = resolveWith(provider);
@@ -2631,8 +2640,6 @@ describe("ChatViewProvider", () => {
 });
 
 describe("ChatViewProvider per-session model", () => {
-  beforeEach(() => vi.clearAllMocks());
-
   it("setModel stores and persists the selection on the active session", async () => {
     const { store, registry, provider } = buildHarness();
     const { handler } = resolveWith(provider);
@@ -2744,10 +2751,6 @@ describe("ChatViewProvider temperature reload", () => {
 });
 
 describe("ChatViewProvider all-sessions manager", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
   it("cannot open a session whose folder is missing (nothing runs, no runtime)", async () => {
     const { store, registry, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
     (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
@@ -5026,13 +5029,6 @@ describe("ChatViewProvider soft steering + queue", () => {
 });
 
 describe("ChatViewProvider DB vacuum suggestion", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    state.noAutoName = false;
-    state.autoName = "New Session";
-    state.dbVacuumThreshold = undefined;
-  });
-
   const stats = (freeMB: number, totalMB = 1000) => ({
     pageCount: Math.round((totalMB * 1024 * 1024) / 4096),
     freePages: Math.round((freeMB * 1024 * 1024) / 4096),
@@ -5123,12 +5119,6 @@ describe("ChatViewProvider DB vacuum suggestion", () => {
 });
 
 describe("ChatViewProvider DB vacuum — re-ask + clamping", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    state.noAutoName = false;
-    state.autoName = "New Session";
-    state.dbVacuumThreshold = undefined;
-  });
   const stats = (freeMB: number, totalMB = 1000) => ({
     pageCount: Math.round((totalMB * 1024 * 1024) / 4096),
     freePages: Math.round((freeMB * 1024 * 1024) / 4096),
@@ -5170,13 +5160,6 @@ describe("ChatViewProvider DB vacuum — re-ask + clamping", () => {
 });
 
 describe("ChatViewProvider DB vacuum — a bocce ferme", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    state.noAutoName = false;
-    state.autoName = "New Session";
-    state.dbVacuumThreshold = undefined;
-  });
-
   it("runVacuum WAITS while a session streams, then compacts once idle", async () => {
     const { store, registry, provider } = buildHarness();
     const { handler, view } = resolveWith(provider);
@@ -5204,12 +5187,6 @@ describe("ChatViewProvider DB vacuum — a bocce ferme", () => {
 });
 
 describe("ChatViewProvider model limits (context + output)", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    state.noAutoName = false;
-    state.autoName = "New Session";
-  });
-
   it("adopts BOTH the context window and the max output tokens the host reports", async () => {
     const { registry, provider } = buildHarness({
       providerEntry: { name: "openrouter", baseUrl: "https://x/v1", models: [] },
@@ -5350,12 +5327,6 @@ describe("ChatViewProvider model limits (context + output)", () => {
 });
 
 describe("ChatViewProvider slider maxima", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    state.noAutoName = false;
-    state.autoName = "New Session";
-  });
-
   it("pushes the model's DETECTED limits as the slider MAXIMA", async () => {
     const { provider } = buildHarness({
       providerEntry: { name: "openrouter", baseUrl: "https://x/v1", models: [] },
@@ -5378,12 +5349,6 @@ describe("ChatViewProvider slider maxima", () => {
 });
 
 describe("ChatViewProvider models.dev unreachable warning", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    state.noAutoName = false;
-    state.autoName = "New Session";
-  });
-
   const harness = (reachable: boolean, limits: { context?: number; output?: number }) =>
     buildHarness({
       config: { ...CONFIG, hostModelProviders: ["opencode-go"] },
@@ -5416,12 +5381,6 @@ describe("ChatViewProvider models.dev unreachable warning", () => {
 });
 
 describe("ChatViewProvider adopts limits on session open", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    state.noAutoName = false;
-    state.autoName = "New Session";
-  });
-
   it("adopts the model's DETECTED context/output when switching to a session that has none", async () => {
     const { registry, provider } = buildHarness({
       config: { ...CONFIG, hostModelProviders: ["opencode-go"] },
@@ -5447,12 +5406,6 @@ describe("ChatViewProvider adopts limits on session open", () => {
 });
 
 describe("ChatViewProvider model/config switch hygiene", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    state.noAutoName = false;
-    state.autoName = "New Session";
-  });
-
   it("refresh() re-applies the per-model overrides so a CONFIG edit takes effect", async () => {
     const { provider, modelSelector } = buildHarness({
       providerEntry: { name: "p", baseUrl: "https://x/v1", models: [{ id: "m1" }] },
@@ -5496,12 +5449,6 @@ describe("ChatViewProvider model/config switch hygiene", () => {
 });
 
 describe("ChatViewProvider limits on switching to an UNKNOWN model", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    state.noAutoName = false;
-    state.autoName = "New Session";
-  });
-
   it("resets context + output to the DEFAULTS (128k / 16384), not the previous model's", async () => {
     const { registry, provider } = buildHarness({
       providerEntry: { name: "opencode-go", baseUrl: "https://opencode.ai/zen/go/v1", models: [] },
@@ -5524,12 +5471,6 @@ describe("ChatViewProvider limits on switching to an UNKNOWN model", () => {
 });
 
 describe("ChatViewProvider config-change + enrichment robustness", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    state.noAutoName = false;
-    state.autoName = "New Session";
-  });
-
   it("re-applies the model overrides when a harny.* setting changes", async () => {
     const { provider, modelSelector } = buildHarness({
       providerEntry: { name: "p", baseUrl: "https://x/v1", models: [{ id: "m1" }] },
