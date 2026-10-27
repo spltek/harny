@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The MCP editor is its own module too** (`webview/mcp-editor.ts`, 277 lines, 98.7% covered): the local draft of the
+  server map, the form, Test and the save as the WHOLE map. Two rules are pinned because an extraction is exactly where
+  they get lost: the keys the form does NOT edit (`analyze`, `excludeTools`, anything else) SURVIVE a save, and switching
+  a server to HTTP DELETES the leftover `command` (the normalizer prefers it, so the switch would silently do nothing).
+  Coverage 98.7%; the two uncovered lines are null guards over a list that cannot hold them.
+- The extraction arc, in total: `view.ts` **7.512 → 6.675 lines** (−837), with five modules that each own a concern and
+  carry their own tests — `find` (97%), `mcp-card` (100%), `mcp-tools-popover` (96.5%), `mcp-editor` (98.7%).
+  The router-contract test now scans every module, so a route cannot move out of `view.ts` unnoticed.
+
 - **The MCP tools popover is its own module** (`webview/mcp-tools-popover.ts`, 336 lines, 96.5% covered): the draft, the
   filter, the counts, the two controls per tool (the session's checkbox and the Analyze shield with its inherited/inert
   states) and the Save as INTENT. `busy` is a **getter**, not a boolean: the popover outlives the moment it was built, and

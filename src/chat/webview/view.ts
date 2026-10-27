@@ -22,6 +22,7 @@ import { setFold, toggleMarkup } from "./fold";
 import { createFind } from "./find";
 import { createMcpCard } from "./mcp-card";
 import { createMcpToolsPopover } from "./mcp-tools-popover";
+import { createMcpEditor } from "./mcp-editor";
 // The SAME boundary the core uses to decide what the model receives: importing it
 // (it is pure and dependency-free) is what keeps the transcript's marker and the
 // request from ever disagreeing about where the window starts.
@@ -4088,22 +4089,9 @@ const mcpSave = document.getElementById("mcp-save") as HTMLButtonElement;
 const mcpCancel = document.getElementById("mcp-cancel") as HTMLButtonElement;
 const tipEl = document.getElementById("tip") as HTMLDivElement;
 
-type McpEditorServer = {
-  command?: string;
-  args?: string[];
-  env?: Record<string, string>;
-  url?: string;
-  headers?: Record<string, string>;
-  enabled?: boolean;
-  analyze?: "trusted" | "read-only";
-  excludeTools?: string[];
-};
 /** What the ACTIVE session may use, as the host last reported it. The card reads it (the switches
  *  are this session's), and `applyToolScope` is the only writer. */
 let sessionToolScope: { mcp: string[]; off: string[] } = { mcp: [], off: [] };
-
-let mcpEditorServers: Record<string, McpEditorServer> = {};
-let mcpEditorSelected = "";
 
 const DEFAULT_PARALLEL = 4;
 
@@ -4574,218 +4562,36 @@ function selectSlashItem(): void {
   inputEl.focus();
 }
 
-function refreshMcpSelect(): void {
-  mcpSelect.innerHTML = "";
-  for (const name of Object.keys(mcpEditorServers)) {
-    const opt = document.createElement("option");
-    opt.value = name;
-    opt.textContent = name;
-    mcpSelect.appendChild(opt);
-  }
-  mcpSelect.value = mcpEditorSelected;
-}
-
-function loadMcpIntoForm(name: string): void {
-  mcpEditorSelected = name;
-  const s = mcpEditorServers[name] ?? {};
-  mcpName.value = name;
-  mcpUrl.value = s.url ?? "";
-  mcpCommand.value = s.command ?? "";
-  mcpArgs.value = (s.args ?? []).join("\n");
-  mcpEnv.value = Object.entries(s.env ?? {})
-    .map(([k, v]) => `${k}=${v}`)
-    .join("\n");
-  mcpHeaders.value = Object.entries(s.headers ?? {})
-    .map(([k, v]) => `${k}=${v}`)
-    .join("\n");
-  mcpEnabled.checked = s.enabled !== false;
-  mcpTestResult.textContent = "";
-  mcpTestResult.className = "mcp-io";
-}
-
-function clearMcpForm(): void {
-  mcpEditorSelected = "";
-  mcpName.value = "";
-  mcpUrl.value = "";
-  mcpCommand.value = "";
-  mcpArgs.value = "";
-  mcpEnv.value = "";
-  mcpHeaders.value = "";
-  mcpEnabled.checked = true;
-}
-
-/** `KEY=VALUE` (or `KEY: VALUE`, the HTTP convention) lines → a map. */
-function parseMcpPairs(text: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const line of text.split("\n")) {
-    const t = line.trim();
-    if (!t) continue;
-    // Whichever separator comes FIRST wins, so `SOME_URL=http://x:1234` keeps its colon
-    // inside the value and `Authorization: Bearer a=b` keeps its `=`.
-    const eq = t.indexOf("=");
-    const colon = t.indexOf(":");
-    const sep = eq > 0 && (colon < 0 || eq < colon) ? eq : colon;
-    if (sep <= 0) continue;
-    out[t.slice(0, sep).trim()] = t.slice(sep + 1).trim();
-  }
-  return out;
-}
-
-/** Read the form into a server config (args one per line, env/headers KEY=VALUE). */
-function mcpFormServer(): McpEditorServer {
-  // The keys this form does NOT edit SURVIVE the save: the config file is the user's
-  // too. It used to rebuild the entry from its own fields, so editing a server here
-  // silently stripped `analyze` and `excludeTools`, and an HTTP server came back as a
-  // stdio one with no `command` — i.e. deleted by the normalizer.
-  const prev = mcpEditorServers[mcpEditorSelected] ?? {};
-  const url = mcpUrl.value.trim();
-  const next: McpEditorServer = { ...prev, enabled: mcpEnabled.checked };
-  if (url) {
-    // A server is EITHER stdio OR HTTP, and the normalizer prefers `command`: writing a
-    // leftover command here would make "switch it to HTTP" silently do nothing.
-    delete next.command;
-    delete next.args;
-    delete next.env;
-    next.url = url;
-    const headers = parseMcpPairs(mcpHeaders.value);
-    if (Object.keys(headers).length > 0) next.headers = headers;
-    else delete next.headers;
-    return next;
-  }
-  const command = mcpCommand.value.trim();
-  // No command typed = keep the one it has. Neither a URL nor a command means there is
-  // no server to write (the normalizer would drop it): keep the entry as it was.
-  if (!command && !prev.command) return next;
-  if (command) next.command = command;
-  delete next.url;
-  delete next.headers;
-  next.args = mcpArgs.value
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
-  // `env` IS edited here, so an emptied box clears it (spreading `prev` alone would
-  // make "remove every variable" impossible).
-  const env = parseMcpPairs(mcpEnv.value);
-  if (Object.keys(env).length > 0) next.env = env;
-  else delete next.env;
-  return next;
-}
-
-function openMcpEditor(): void {
-  // The button is already disabled mid-run; this is the same rule one level down, for any future
-  // caller (a menu, a shortcut, a host route).
-  if (sessionBusy()) return;
-  mcpTestResult.textContent = "";
-  mcpTestResult.className = "mcp-io";
-  vscode.postMessage({ type: "getMcpServers" });
-}
-
-function renderMcpEditor(data: ConfigState["mcp"], open: boolean): void {
-  mcpEditorServers = data?.servers ?? {};
-  if (open) {
-    const names = Object.keys(mcpEditorServers);
-    mcpEditorSelected = names[0] ?? "";
-    refreshMcpSelect();
-    if (mcpEditorSelected) loadMcpIntoForm(mcpEditorSelected);
-    else clearMcpForm();
-    mcpModal.classList.remove("hidden");
-  } else if (!mcpModal.classList.contains("hidden")) {
-    // A background change (e.g. the card toggle): refresh the open editor list.
-    refreshMcpSelect();
-  }
-}
-
-/** Say WHY a save was refused, on the editor's own result line (the same one Test uses). */
-function setMcpEditorError(reason: string): void {
-  mcpTestResult.className = "mcp-io err";
-  mcpTestResult.textContent = `❌ ${reason}`;
-}
-
-function closeMcpEditor(): void {
-  mcpModal.classList.add("hidden");
-}
-
-mcpConfigure.addEventListener("click", openMcpEditor);
-mcpCancel.addEventListener("click", closeMcpEditor);
-mcpModal.querySelector(".mcp-backdrop")?.addEventListener("click", closeMcpEditor);
-mcpSelect.addEventListener("change", () => {
-  const target = mcpSelect.value;
-  if (!mcpEditorServers[target]) return;
-  // Commit what is on screen FIRST: switching server must not throw away an edit that was typed
-  // but not saved (it stays a draft — Cancel still discards the whole thing). The refresh REBUILDS
-  // the options, so the target has to be selected again before it is loaded.
-  commitMcpForm();
-  refreshMcpSelect();
-  mcpSelect.value = target;
-  loadMcpIntoForm(target);
-});
-mcpAdd.addEventListener("click", () => {
-  // Same rule as a selection change: the form in front of you is kept before a new entry opens.
-  commitMcpForm();
-  let name = "server";
-  let i = 1;
-  while (mcpEditorServers[name]) name = `server-${++i}`;
-  mcpEditorServers[name] = { command: "npx", args: [] };
-  mcpEditorSelected = name;
-  refreshMcpSelect();
-  loadMcpIntoForm(name);
-  mcpName.focus();
-  mcpName.select();
-});
-mcpDelete.addEventListener("click", () => {
-  // The form may have RENAMED this server: commit it so Delete hits the entry you see.
-  const name = commitMcpForm() || mcpEditorSelected;
-  if (!name) return;
-  delete mcpEditorServers[name];
-  mcpEditorSelected = Object.keys(mcpEditorServers)[0] ?? "";
-  refreshMcpSelect();
-  if (mcpEditorSelected) loadMcpIntoForm(mcpEditorSelected);
-  else clearMcpForm();
-});
-mcpTest.addEventListener("click", () => {
-  const s = mcpFormServer();
-  // A server is EITHER a command (stdio) OR a URL (HTTP): requiring a command here made
-  // Test unusable for every remote server, with the form filled in correctly.
-  if (!s.command && !s.url) {
-    mcpTestResult.textContent = "Enter a command (stdio) or a URL (HTTP)";
-    mcpTestResult.className = "mcp-io err";
-    return;
-  }
-  mcpTestResult.textContent = "Testing…";
-  mcpTestResult.className = "mcp-io";
-  vscode.postMessage({ type: "testMcpServer", server: s });
-});
 /**
- * Commit the FORM into the local DRAFT (no message): the same rule as the providers editor — a
- * selection change, + New or Delete must not silently drop what was just typed. Returns the name
- * the entry has after the commit, because the form can RENAME it.
+ * The MCP editor lives in `./mcp-editor` now: the local draft of the server map, the form, the Test
+ * line, and the save as the WHOLE map (with the keys the form does not edit preserved).
+ *
+ * `busy` is a GETTER: the modal can be open when a run starts, and saving reconnects every server.
  */
-function commitMcpForm(): string {
-  const old = mcpEditorSelected;
-  const name = mcpName.value.trim() || old;
-  if (!name) return "";
-  if (old && name !== old) delete mcpEditorServers[old];
-  mcpEditorServers[name] = mcpFormServer();
-  mcpEditorSelected = name;
-  return name;
-}
-
-mcpSave.addEventListener("click", () => {
-  // Saving RECONNECTS every server (that is how the tool list is rebuilt), which kills any
-  // in-flight MCP call and swaps the tools under a live turn: the same guard the server's
-  // name toggle and the tools panel already had. It was missing here.
-  if (streamingActive) {
-    mcpTestResult.textContent = "Stop the run before saving — it reconnects the servers";
-    mcpTestResult.className = "mcp-io err";
-    return;
-  }
-  const old = mcpEditorSelected;
-  const name = mcpName.value.trim() || old;
-  if (old && name !== old) delete mcpEditorServers[old];
-  if (name) mcpEditorServers[name] = mcpFormServer();
-  mcpEditorSelected = name;
-  vscode.postMessage({ type: "saveMcpServers", servers: mcpEditorServers });
+const mcpEditor = createMcpEditor({
+  modal: mcpModal,
+  backdrop: mcpModal.querySelector(".mcp-backdrop"),
+  select: mcpSelect,
+  name: mcpName,
+  url: mcpUrl,
+  command: mcpCommand,
+  args: mcpArgs,
+  env: mcpEnv,
+  headers: mcpHeaders,
+  enabled: mcpEnabled,
+  add: mcpAdd,
+  del: mcpDelete,
+  save: mcpSave,
+  cancel: mcpCancel,
+  test: mcpTest,
+  testResult: mcpTestResult,
+  post: (message) => vscode.postMessage(message as never),
+  busy: () => sessionBusy(),
 });
+
+// The gear that opens the editor. `open()` repeats the mid-run guard: the button is already
+// disabled by the lock table, and this is the same rule one level down.
+mcpConfigure.addEventListener("click", () => mcpEditor.open());
 
 const sendParallelThrottled = rafThrottle(sendParallel);
 parRange.addEventListener("input", () => {
@@ -6300,13 +6106,13 @@ window.addEventListener("message", (e) => {
       renderSkills((msg.skills as { name: string; description: string }[]) || []);
       break;
     case "mcpServers":
-      renderMcpEditor((msg.data || {}) as ConfigState["mcp"], msg.open === true);
+      mcpEditor.render((msg.data || {}) as ConfigState["mcp"], msg.open === true);
       break;
     case "mcpSaved":
-      if (msg.ok) closeMcpEditor();
-      // A refused save says WHY: the removal was blocked because a running session is using that
-      // server, and the editor stays exactly as the user left it.
-      else if (typeof msg.reason === "string" && msg.reason) setMcpEditorError(msg.reason);
+      // A refused save says WHY (a running session is using the server being removed), and the
+      // editor stays exactly as the user left it.
+      if (msg.ok) mcpEditor.close();
+      else if (typeof msg.reason === "string" && msg.reason) mcpEditor.error(msg.reason);
       break;
     case "mcpToolExclusionsSaved":
       // The tools panel's Save: success closes it, failure keeps the draft and says why.
@@ -6845,7 +6651,7 @@ const ESC_OVERLAYS: { visible: () => boolean; close: () => void }[] = [
   { visible: () => !dbVacuumModal.classList.contains("hidden"), close: () => closeDbVacuumModal() },
   { visible: () => !compactSettingsModal.classList.contains("hidden"), close: () => closeCompactionSettings() },
   { visible: () => !providersModal.classList.contains("hidden"), close: () => closeProvidersEditor() },
-  { visible: () => !mcpModal.classList.contains("hidden"), close: () => closeMcpEditor() },
+  { visible: () => !mcpModal.classList.contains("hidden"), close: () => mcpEditor.close() },
   {
     visible: () => !modelModal.classList.contains("hidden"),
     close: () => {
