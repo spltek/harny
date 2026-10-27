@@ -61,6 +61,12 @@ track with a WHITE dot), and
   says so instead of pretending a per-tool rule did it. The refusal the model receives names this third way out, the
   README stops calling `analyze` file-only, and `config.example.jsonc` finally documents the MCP block (the server-wide
   `analyze` is the one field with no control in the form).
+- **The icons at the head of a bubble are a quarter larger — and no bubble grew.** The tool card, thinking, sub-agent
+  and synthetic-summary marks are painted through `transform: scale(1.25)`, not a larger `width`/`height`: a transform
+  does not enter the layout, so a 16px mark inside a 13px box keeps every row, gap and bubble exactly the height it had.
+  1.5× was tried first and read as too big; the value is one number in one rule. The emoji fallback for a tool nobody has
+  drawn (`🔧`) is wrapped in `span.tool-emoji` so it is scaled with them: a bare glyph could not be targeted, and an
+  unscaled emoji beside the larger marks looks like a bug.
 - **Find in the chat (⌘F / Ctrl+F), which did not exist at all.** A webview has no native find — the browser's ⌘F
   belongs to the host window and never reaches the panel — so the shortcut was dead. A small bar over the transcript's
   top-right searches every bubble case-insensitively, `Enter`/`Shift+Enter` step through the matches (wrapping), the

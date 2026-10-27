@@ -14,6 +14,29 @@ function cssRule(html: string, selector: string): string {
 }
 
 describe("renderViewHtml", () => {
+  it("the icons IN TESTA to a bubble are a quarter larger — through a transform, so nothing grows", () => {
+    // The marks at the head of a bubble: tool card, thinking, sub-agent, synthetic summary. The size
+    // is a TRANSFORM on purpose: `width`/`height` would enter the layout and make the bubble taller,
+    // which is exactly what was asked not to happen. 1.5× was too big; 1.25 is the chosen step.
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], activeId: undefined, config: {} } as never,
+    });
+    const start = html.indexOf(".tool-name > svg,");
+    expect(start).toBeGreaterThan(-1);
+    const rule = html.slice(start, html.indexOf("}", start));
+    expect(rule).toContain("transform: scale(1.25)");
+    // All the heads are in the same rule — including the EMOJI fallback, which is not an SVG and
+    // would otherwise stay small next to the others (the reason this is a class, not a glyph).
+    expect(rule).toContain(".tool-name > .tool-emoji");
+    expect(rule).toContain(".thinking-header > svg");
+    expect(rule).toContain(".subagent-header .subagent-icon");
+    expect(rule).toContain(".synthetic-icon");
+    // …and the LAYOUT is untouched: no width/height in that block.
+    expect(rule).not.toMatch(/\bwidth:/);
+    expect(rule).not.toMatch(/\bheight:/);
+  });
+
   it("every modal footer follows ONE rule: drafts commit, overlays dismiss, prompts name the verb", () => {
     // The rule the modals are held to:
     //  - a modal that edits a DRAFT has a commit (Save) and an abort (Cancel);

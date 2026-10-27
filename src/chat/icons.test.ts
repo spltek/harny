@@ -159,7 +159,8 @@ describe("icon registry", () => {
 
   it("falls back to the wrench for a tool nobody has drawn", () => {
     // Not a hole in the header: an unknown tool must still read as "some tool".
-    // The wrench keeps a trailing space: it is text, the svg gets its gap in CSS.
-    expect(toolIcon("read_file")).toBe("🔧 ");
+    // It is wrapped in a class so the stylesheet can size it like the SVG marks beside it — a bare
+    // glyph cannot be targeted, and an unscaled emoji next to 1.5× icons looks like a bug.
+    expect(toolIcon("read_file")).toBe('<span class="tool-emoji">🔧</span> ');
   });
 });

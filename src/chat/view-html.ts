@@ -903,6 +903,20 @@ ${renderViewConfig(deps)}
        icon on the text's baseline whatever the font-size does. */
     .tool-name { white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
     .tool-name > svg { flex: 0 0 auto; }
+    .tool-name > .tool-emoji { display: inline-block; flex: 0 0 auto; }
+    /* "In testa" marks of a bubble — the tool, thinking, sub-agent and synthetic-summary icons —
+       are painted a QUARTER larger (1.25×). A TRANSFORM, never a bigger width/height: a transform
+       does not enter the layout, so no bubble, row or gap changes size (the icon's box stays 13px;
+       only its ink grows). Centred origin keeps the growth inside the header's own 5px gap.
+       1.5× was tried and read as too big; this is the middle ground — ONE number, tune it here. */
+    .tool-name > svg,
+    .tool-name > .tool-emoji,
+    .thinking-header > svg,
+    .subagent-header .subagent-icon,
+    .msg.user.synthetic-summary .synthetic-icon {
+      transform: scale(1.25);
+      transform-origin: center;
+    }
     /* Target file path shown after the tool name (light azure, ellipsized,
        truncated softly when the bubble is narrow — full path on hover). */
     .tool-path { color: var(--info); font-weight: 400; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.95; }

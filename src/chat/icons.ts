@@ -143,7 +143,10 @@ export function toolIcon(name: string, size = 13): string {
   if (name.startsWith("mcp__")) return icon("mcp", size);
   const key = name.toLowerCase().replace(/[^a-z]/g, "");
   const artwork = TOOL_ARTWORK[key];
-  return artwork ? icon(artwork, size) : "🔧 ";
+  // The fallback is TEXT (an emoji), not an SVG: it needs its own hook so the head icons can all
+  // be painted at the same size by the stylesheet (a bare glyph could not be targeted).
+  if (!artwork) return '<span class="tool-emoji">🔧</span> ';
+  return icon(artwork, size);
 }
 
 /** A todo's status, as the TodoWrite tool spells it. */
