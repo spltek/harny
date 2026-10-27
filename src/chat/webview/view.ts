@@ -18,7 +18,7 @@ import { clampTemperature, clampTopP, TEMPERATURE_MAX, TEMPERATURE_MIN, TEMPERAT
 // Icon/glyph artwork is FILES under media/icons/, never markup in here (see
 // src/chat/icons.ts): this module only names the icon and its size.
 import { icon, toolIcon, todoStatusIcon, fileBadgeIcon } from "../icons";
-import { setToggle, toggleMarkup } from "./fold";
+import { setFold, toggleMarkup } from "./fold";
 // The SAME boundary the core uses to decide what the model receives: importing it
 // (it is pure and dependency-free) is what keeps the transcript's marker and the
 // request from ever disagreeing about where the window starts.
@@ -231,7 +231,7 @@ function setSessionsVisible(visible: boolean): void {
  */
 function setSessionsExpanded(expanded: boolean): void {
   setSessionsVisible(expanded);
-  setToggle(sessionHead.querySelector(".toggle"), expanded);
+  setFold(sessionHead, expanded);
 }
 /** Matching ids for the MAIN-list search (null = no filter). Scoped to the
  * sessions already shown (the current workspace folder). */
@@ -540,8 +540,7 @@ function restoreViewMemory(id: string | undefined, withScroll = true): void {
     const wantOpen = open.has(i);
     if (!body.classList.contains("collapsed") === wantOpen) return;
     body.classList.toggle("collapsed", !wantOpen);
-    const tog = sectionToggle(body);
-    setToggle(tog, wantOpen);
+    setFold(body.previousElementSibling, wantOpen);
   });
   if (withScroll && !mem.pinned) {
     messagesEl.scrollTop = mem.scrollTop;
@@ -1603,12 +1602,13 @@ function makeThinkingBlock(
   const body = block.querySelector(".thinking-body");
   if (body) body.innerHTML = renderMarkdown(bodyText);
   const header = block.querySelector(".thinking-header");
+  asDisclosureButton(header);
   header?.addEventListener("click", () => {
     const b = block.querySelector(".thinking-body");
-    const tog = block.querySelector(".toggle");
-    if (!b || !tog) return;
+    const header = block.querySelector(".thinking-header");
+    if (!b || !header) return;
     const collapsed = b.classList.toggle("collapsed");
-    setToggle(tog, !collapsed);
+    setFold(header, !collapsed);
   });
   if (!host) {
     if (beforeEl && beforeEl.parentNode) beforeEl.parentNode.insertBefore(block, beforeEl);
@@ -1658,12 +1658,14 @@ function addToolCall(name: string, args: unknown, beforeEl?: HTMLElement | null)
 
 /** Wire the collapsible details header (shared by tool + sub-agent bubbles). */
 function wireCollapsible(div: HTMLElement): void {
-  div.querySelector(".tool-header")?.addEventListener("click", () => {
+  const header = div.querySelector(".tool-header");
+  asDisclosureButton(header);
+  header?.addEventListener("click", () => {
     const details = div.querySelector(".tool-details");
     const tog = div.querySelector(".tool-toggle");
     if (!details || !tog) return;
     const collapsed = details.classList.toggle("collapsed");
-    setToggle(tog, !collapsed);
+    setFold(div.querySelector(".tool-header"), !collapsed);
   });
 }
 
@@ -1674,10 +1676,36 @@ function wireCollapsible(div: HTMLElement): void {
  * what makes ONE action able to close all of them. */
 const TRANSCRIPT_SECTIONS = ".thinking-body, .tool-details, .subagent-body";
 
-/** The header arrow that owns a section body. Thinking blocks name it
- * `.toggle`, tool and sub-agent headers `.tool-toggle`. */
-function sectionToggle(body: Element): HTMLElement | null {
-  return body.parentElement?.querySelector<HTMLElement>(".tool-toggle, .toggle") ?? null;
+/**
+ * A fold header behaves like a BUTTON, so it IS one for the keyboard and the screen reader too.
+ * Without this, `aria-expanded` would sit on a plain `div`: announced to nobody, unreachable by Tab.
+ */
+function asDisclosureButton(header: Element | null): void {
+  if (!(header instanceof HTMLElement)) return;
+  header.setAttribute("role", "button");
+  header.setAttribute("tabindex", "0");
+  if (!header.hasAttribute("aria-expanded")) header.setAttribute("aria-expanded", "false");
+  header.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    header.click();
+  });
+}
+
+/**
+ * Open every FOLDED ancestor of `node`, so a match inside one is actually visible.
+ *
+ * A folded body is `display: none`: `find` counted the hit and then scrolled to a node nobody
+ * could see (the jump did nothing at all). Opening the ancestors is what every editor does when
+ * the match is behind a fold, and the header's chevron and announced state go with it.
+ */
+function revealForMatch(node: Node): void {
+  const start = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+  for (let p: Element | null = start; p && p !== messagesEl; p = p.parentElement) {
+    if (!p.classList.contains("collapsed")) continue;
+    p.classList.remove("collapsed");
+    setFold(p.previousElementSibling, true);
+  }
 }
 
 /** Keeps the two transcript action pills in sync. They are NEVER hidden — only
@@ -1703,8 +1731,7 @@ function collapseAllSections(): number {
   document.querySelectorAll<HTMLElement>(TRANSCRIPT_SECTIONS).forEach((body) => {
     if (body.classList.contains("collapsed")) return;
     body.classList.add("collapsed");
-    const tog = sectionToggle(body);
-    setToggle(tog, false);
+    setFold(body.previousElementSibling, false);
     collapsed += 1;
   });
   // The pending bubbles fold with them: they are the same gesture ("close what is
@@ -1831,12 +1858,13 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
     '<div class="tool-output"><span class="tool-label">Report</span><div class="tool-result subagent-report">⏳ working…</div></div>' +
     "</div>";
   // Header toggles the WHOLE body (goal + nested stream + report).
-  div.querySelector(".subagent-header")?.addEventListener("click", () => {
+  const subHeader = div.querySelector(".subagent-header");
+  asDisclosureButton(subHeader);
+  subHeader?.addEventListener("click", () => {
     const body = div.querySelector(".subagent-body");
-    const tog = div.querySelector(".tool-toggle");
-    if (!body || !tog) return;
+    if (!body) return;
     const collapsed = body.classList.toggle("collapsed");
-    setToggle(tog, !collapsed);
+    setFold(subHeader, !collapsed);
   });
   // Per-sub-agent abort: stop ONLY this sub-agent. The host forwards it to the
   // runner; the orchestrator still receives this Delegate's tool result
@@ -3166,7 +3194,9 @@ function collectMatches(query: string): Range[] {
 
 function updateFindCount(): void {
   const total = findMatches.length;
-  if (!findInput.value) {
+  // TRIM: a query of spaces matches nothing, but it is not a query at all — showing "no match"
+  // for it (and, worse, keeping a stale count) reads like the search is broken.
+  if (!findInput.value.trim()) {
     findCount.textContent = "";
     findCount.classList.remove("none");
     return;
@@ -3207,6 +3237,9 @@ function clearFindHighlights(): void {
 function showMatch(scroll: boolean): void {
   const m = findMatches[findIndex];
   if (!m) return;
+  // A match inside a FOLDED section is invisible: open it first (the count was right, the jump
+  // went nowhere). Before scrolling, so the scroll lands on something the user can actually see.
+  revealForMatch(m.startContainer);
   // Was the user typing in one of our fields? Then the selection must NOT be moved: it would blur
   // the field and the next keystroke would go to the transcript.
   const wasTyping = findBar.contains(document.activeElement);
@@ -3274,6 +3307,11 @@ function stepMatch(delta: number): void {
 function closeFind(): void {
   clearFindHighlights();
   unwatchTranscriptForFind();
+  // A debounced search still armed is a LEAK: a keystroke followed by Esc within 120ms left the
+  // timer running, and it fired after the bar was gone — re-scanning the transcript and clearing a
+  // selection the user had made in the meantime.
+  if (findTimer !== undefined) window.clearTimeout(findTimer);
+  findTimer = undefined;
   findBar.classList.add("hidden");
   findMatches = [];
   findIndex = -1;
@@ -3397,15 +3435,20 @@ function showCtxMenu(x: number, y: number): void {
 async function copySelection(): Promise<boolean> {
   const text = window.getSelection?.()?.toString() ?? "";
   if (!text.trim()) return false;
-  try {
-    await navigator.clipboard?.writeText(text);
-    return true;
-  } catch {
+  // `?.` alone would be a lie: with no clipboard API the awaited `undefined` resolves happily and
+  // we would report success without copying anything — and never try the legacy path.
+  if (navigator.clipboard?.writeText) {
     try {
-      return document.execCommand("copy");
+      await navigator.clipboard.writeText(text);
+      return true;
     } catch {
-      return false;
+      // Permission denied, or a document that is not focused: fall through to the legacy path.
     }
+  }
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
   }
 }
 

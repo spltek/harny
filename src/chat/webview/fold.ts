@@ -27,3 +27,15 @@ export function setButtonToggle(button: HTMLButtonElement, open: boolean): void 
   button.classList.toggle("is-open", open);
   button.setAttribute("aria-expanded", String(open));
 }
+
+/**
+ * Sync a FOLD from its header: the chevron and the announced state together.
+ *
+ * The chevron alone told sighted users only: `aria-expanded` was on the control strip, the mode
+ * button and the pending list, but not on a tool card, a thinking block or a sub-agent — the three
+ * folds a reader meets most often.
+ */
+export function setFold(header: Element | null | undefined, open: boolean): void {
+  setToggle(header?.querySelector(".toggle, .tool-toggle"), open);
+  header?.setAttribute("aria-expanded", String(open));
+}

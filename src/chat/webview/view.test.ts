@@ -1481,7 +1481,7 @@ describe("view webview client", () => {
     });
     const blocks = document.querySelectorAll(".thinking-block");
     expect(blocks.length).toBe(1);
-    // Thinking starts COLLAPSED (▶) and expands on click.
+    // Thinking starts COLLAPSED (the chevron pointing right) and expands on click.
     expect(blocks[0].querySelector(".thinking-body")?.classList.contains("collapsed")).toBe(true);
     expect(blocks[0].querySelector(".toggle")?.classList.contains("is-open") ?? false).toBe(false);
     // Historical blocks re-rendered from the transcript are NOT live: no
@@ -3614,7 +3614,7 @@ describe("view webview client", () => {
     hostMessage({ type: "textDelta", content: "Answers" });
     hostMessage({ type: "done" });
 
-    // Thinking stays as a collapsed block (▶) even while/after streaming,
+    // Thinking stays as a collapsed block even while/after streaming,
     // tool details collapsed, result last.
     const thinking = document.querySelector(".thinking-block .thinking-body") as HTMLElement;
     expect(thinking.classList.contains("collapsed")).toBe(true);
@@ -8462,6 +8462,140 @@ describe("soft steering + pending bubbles (webview)", () => {
     expect(document.getElementById("insert-hint")!.classList.contains("is-steer")).toBe(false);
     // …and the selection survives the keystroke, which is the point.
     expect(window.getSelection()!.toString()).toBe(sel.toString());
+  });
+
+  it("Copy reports the truth when the clipboard API is missing (no silent 'done')", async () => {
+    // `navigator.clipboard?.writeText(...)` awaited resolves to undefined: reporting success there
+    // meant claiming a copy that never happened, and skipping the legacy path.
+    await loadView();
+    const bubble = document.querySelector("#messages .msg")!;
+    const sel = window.getSelection()!;
+    const range = document.createRange();
+    range.selectNodeContents(bubble);
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    const legacy: boolean[] = [];
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    const realExec = document.execCommand;
+    (document as unknown as { execCommand: (c: string) => boolean }).execCommand = (c: string) => {
+      legacy.push(c === "copy");
+      return true;
+    };
+    try {
+      bubble.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      const [copy] = [...document.querySelectorAll("#ctx-menu button")] as HTMLButtonElement[];
+      copy.click();
+      await new Promise((r) => setTimeout(r, 10));
+      expect(legacy).toEqual([true]); // the fallback ran…
+      // …and with NO way to copy at all, the menu still closes without pretending anything.
+      (document as unknown as { execCommand: () => boolean }).execCommand = () => false;
+      bubble.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      const [copy2] = [...document.querySelectorAll("#ctx-menu button")] as HTMLButtonElement[];
+      copy2.click();
+      await new Promise((r) => setTimeout(r, 10));
+      expect(document.getElementById("ctx-menu")!.classList.contains("hidden")).toBe(true);
+    } finally {
+      (document as unknown as { execCommand: unknown }).execCommand = realExec;
+      Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    }
+  });
+
+  it("a fold header is a disclosure BUTTON: role, tab stop, keyboard and announced state", async () => {
+    // `aria-expanded` on a bare div is announced to nobody, and a click-only div is unreachable
+    // from the keyboard: the three transcript folds were both.
+    await loadView();
+    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "", thinking: "penso", timestamp: 1 }] });
+    const header = document.querySelector(".thinking-header") as HTMLElement;
+    const toggle = header.querySelector(".toggle") as HTMLElement;
+    const body = document.querySelector(".thinking-body") as HTMLElement;
+    expect(header.getAttribute("role")).toBe("button");
+    expect(header.getAttribute("tabindex")).toBe("0");
+    expect(header.getAttribute("aria-expanded")).toBe("false");
+
+    // Enter opens it (space too), and the state follows both the click and the key.
+    header.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(body.classList.contains("collapsed")).toBe(false);
+    expect(header.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle.classList.contains("is-open")).toBe(true);
+    header.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+    expect(body.classList.contains("collapsed")).toBe(true);
+    expect(header.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("closing find disarms the debounce: nothing runs after the bar is gone", async () => {
+    // Type, then Esc within the 120ms debounce: the timer stayed armed and fired after the close,
+    // re-scanning the transcript and clearing a selection made in the meantime.
+    await loadView();
+    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "alpha beta", timestamp: 1 }] });
+    const input = document.getElementById("find-input") as HTMLInputElement;
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true, ctrlKey: true }));
+    input.value = "alpha";
+    input.dispatchEvent(new Event("input")); // the debounce starts…
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); // …and we close
+
+    // A selection made right after closing must survive the (cancelled) timer.
+    const bubble = document.querySelector("#messages .msg")!;
+    const sel = window.getSelection()!;
+    const range = document.createRange();
+    range.selectNodeContents(bubble);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    await new Promise((r) => setTimeout(r, 250)); // well past the debounce
+
+    expect(window.getSelection()!.toString()).toContain("alpha beta");
+    expect(document.getElementById("find-bar")!.classList.contains("hidden")).toBe(true);
+  });
+
+  it("finding text inside a FOLDED section opens it — the jump must land on something visible", async () => {
+    // A folded body is display:none: the count was right and the scroll went nowhere.
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    // The payload is FLAT (id / name / arguments), as the host sends it.
+    hostMessage({ type: "toolCall", id: "t1", name: "Read", arguments: { file_path: "a.ts" } });
+    hostMessage({ type: "toolResult", toolCallId: "t1", output: "contenuto SEGRETO del file", isError: false });
+    await new Promise((r) => setTimeout(r, 30));
+    const card = document.querySelector(".msg.tool") as HTMLElement;
+    const details = card.querySelector(".tool-details") as HTMLElement;
+    const toggle = card.querySelector(".tool-toggle") as HTMLElement;
+    const header = card.querySelector(".tool-header") as HTMLElement;
+    expect(details.classList.contains("collapsed")).toBe(true); // born folded
+    // The state lives on the CONTROL (the header), which is a disclosure button for AT.
+    expect(header.getAttribute("role")).toBe("button");
+    expect(header.getAttribute("aria-expanded")).toBe("false");
+
+    const find = document.getElementById("find-input") as HTMLInputElement;
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true, ctrlKey: true }));
+    find.value = "SEGRETO";
+    find.dispatchEvent(new Event("input"));
+    await new Promise((r) => setTimeout(r, 150));
+
+    // Opening it is what makes the match visible at all…
+    expect(details.classList.contains("collapsed")).toBe(false);
+    // …and the header follows: chevron turned, state announced.
+    expect(toggle.classList.contains("is-open")).toBe(true);
+    expect(header.getAttribute("aria-expanded")).toBe("true");
+    expect(document.getElementById("find-count")!.textContent).toBe("1/1");
+  });
+
+  it("a query of only spaces is not a search: no 'no match', no stale count", async () => {
+    await loadView();
+    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "alpha", timestamp: 1 }] });
+    const input = document.getElementById("find-input") as HTMLInputElement;
+    const count = document.getElementById("find-count") as HTMLElement;
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true, ctrlKey: true }));
+    input.value = "alpha";
+    input.dispatchEvent(new Event("input"));
+    await new Promise((r) => setTimeout(r, 150));
+    expect(count.textContent).toBe("1/1");
+
+    input.value = "   ";
+    input.dispatchEvent(new Event("input"));
+    await new Promise((r) => setTimeout(r, 150));
+    expect(count.textContent).toBe(""); // a blank query says nothing at all
+    expect(count.classList.contains("none")).toBe(false);
   });
 
   it("a right-click on a selection shows OUR menu with Copy enabled", async () => {

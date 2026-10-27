@@ -68,6 +68,13 @@ track with a WHITE dot), and
   `stopPropagation`s the original key for hosts that deliver it to the page. The command is registered at runtime and
   deliberately absent from `contributes.commands`, so the palette stays clean — a manifest test now enforces that every
   Harny keybinding is view-scoped instead of banning them all.
+- **Three gaps found in the final review, each fixed with the test that locks it.** *Copy* claimed success when the
+  clipboard API was missing (`await navigator.clipboard?.writeText` resolves to `undefined`) and never tried the legacy
+  path — it now reports the truth. *Find* counted a hit inside a FOLDED section and then scrolled to a `display: none`
+  node, so the jump did nothing: the match now opens its ancestors (chevron and state included). And a fold header is a
+  **disclosure button** for the keyboard and the screen reader (role, tab stop, Enter/Space, `aria-expanded`), not just a
+  clickable `div`; the debounced search is also disarmed on close, where it used to fire after the bar was gone and clear
+  whatever the user had selected in the meantime.
 - **The queue/steer header puts each count in parentheses**: `Steer (1) · Queued (2)` instead of `Steer 1 · Queued 2`,
   so the label reads as a name with a count beside it rather than as a number that belongs to the word.
 - **The fold arrow is one chevron that turns, not a triangle swapped for another triangle.** Every collapsible header
