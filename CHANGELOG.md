@@ -15,7 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offered a model switch for a request already sent — the trap the model dropdown and the mode pills already refuse. The
   lock follows the session you are looking at, not the machine: another session's run no longer freezes your gear, while
   the sessions manager stays reachable either way (a blanket lock would have made it unreachable on a busy day). It is
-  derived from the streaming flag AND the working set, because at bootstrap only the latter is known.
+  derived from the streaming flag AND the working set, because at bootstrap only the latter is known — and the lock is
+  applied from `setStreaming` itself, the one point every way of starting a run passes through (the optimistic Play path
+  never sends a `status` message, which is why the first version of this fix left the gear clickable for a run started
+  from the panel).
 
 - **A reasoning-only model can no longer brick a session.** A turn that ends with neither text nor a tool call (only
   thinking — common with `…reasoning:free` models) left an empty assistant message in the conversation, and the

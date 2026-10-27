@@ -5481,6 +5481,10 @@ function followAndFocus(): void {
 function setStreaming(active: boolean): void {
   const rising = active && !streamingActive;
   streamingActive = active;
+  // ONE choke point for the locks that follow "this session streams": the optimistic send path
+  // (clicking Play) never passes through a `status` message, so calling the lock at that message
+  // only left the models gear clickable for a run started from this panel.
+  applyWorkingLock();
   // The MCP switches dim the moment a run starts (a mid-run toggle only lands on the next
   // turn) and come back when it stops: the guard is now VISIBLE, not just enforced.
   refreshMcpSwitches();

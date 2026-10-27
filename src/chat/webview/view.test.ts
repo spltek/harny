@@ -8384,6 +8384,21 @@ describe("all-sessions manager (gear)", () => {
     expect(rows[1].textContent).not.toContain("this folder");
   });
 
+  it("starting a run FROM this panel locks the models gear immediately (no status message needed)", async () => {
+    // The reported bug, reproduced: the optimistic send path (typing + Play) never goes through a
+    // `status` message, so the lock that lived only there never ran and the gear stayed clickable.
+    await loadView();
+    const gear = document.getElementById("gear-btn") as HTMLButtonElement;
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    expect(gear.disabled).toBe(true);
+
+    // The run ends (the host reports it): the gear comes back.
+    hostMessage({ type: "status", active: false });
+    expect(gear.disabled).toBe(false);
+  });
+
   it("the session manager stays reachable while sessions work; the per-session gear follows ITS run", async () => {
     // Two axes. A blanket lock meant that with several concurrent runs you could never open the
     // managers again — so the MANAGERS stay usable. The models gear acts on the session you are
