@@ -979,6 +979,12 @@ ${renderViewConfig(deps)}
     #todo-section { flex-shrink: 0; background: var(--bg); border-top: 1px dashed var(--border); padding: 5px 10px 6px; }
     #todo-section.hidden { display: none; }
     #todo-section .todo-head { margin-bottom: 4px; }
+    /* The stop key: a quiet ghost in the header, pushed to the right, that only lights on hover.
+       It must not compete with the count (the information) but it must be findable without hunting:
+       the header is where the list declares itself. */
+    #todo-section .todo-head { align-items: center; }
+    .todo-stop { margin-left: auto; flex: none; min-height: 0; padding: 0 4px; border: 0; background: none; box-shadow: none; color: var(--muted-2); font-size: var(--fs-md); line-height: 1; cursor: pointer; }
+    .todo-stop:hover, .todo-stop:focus-visible { color: var(--fg-strong); background: none; }
     /* A long list must not eat the input: the section scrolls on its own. */
     /* SIX ROWS is the budget: the list is a reminder above the input, and a 20-task plan used to
        take the whole panel. Two caps, because one alone is wrong: min() keeps it at ~6 rows on a
@@ -2545,6 +2551,11 @@ ${renderViewConfig(deps)}
   <div id="todo-section" class="hidden">
     <div class="todo-head">
       <span id="todo-section-count" class="todo-count"></span><span>Tasks</span>
+      <!-- Stops the FLOW, not just the pixels: it hides the footer at once and, while a run is in
+           flight, steers the model to abandon the list. Without the second half the plan keeps
+           living in its context and TodoWrite comes back with the same subjects. It does NOT stop a
+           sub-agent already running: that is Stop/Esc (the whole run). -->
+      <button id="todo-stop" class="todo-stop" type="button" aria-label="Stop the task list" title="Stop the task list — hide it, and tell the model not to continue it (a sub-agent in flight keeps working: Stop ends the run)">×</button>
     </div>
     <ul id="todo-section-list" class="todo-list"></ul>
   </div>

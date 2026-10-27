@@ -2593,7 +2593,24 @@ function todoList(items: Array<{ status: TodoStatusKey; content: string }>): HTM
  * it does NOT scroll away with the conversation — which is the whole point of having
  * it twice.
  */
+let pinnedTodoItems: Array<{ status: TodoStatusKey; content: string }> = [];
+/**
+ * Lists the user has STOPPED, by session, keyed by a signature of their rows.
+ *
+ * A signature and not a boolean: the same list must stay hidden, while a DIFFERENT one (the model
+ * started new work) must reappear — a flag would silence the footer for the rest of the session,
+ * which is the opposite of what "stop this list" means. In memory on purpose: after a reload the
+ * transcript is the truth again, and the steer already told the model to drop it.
+ */
+const stoppedTodoLists = new Map<string, string>();
+
+/** The identity of a list: same rows, same signature. */
+function todoSignature(items: Array<{ status: TodoStatusKey; content: string }>): string {
+  return items.map((i) => i.status + "\u0000" + i.content).join("\u0001");
+}
+
 function renderPinnedTodos(items: Array<{ status: TodoStatusKey; content: string }>): void {
+  pinnedTodoItems = items;
   const section = document.getElementById("todo-section");
   const list = document.getElementById("todo-section-list");
   const count = document.getElementById("todo-section-count");
@@ -2606,6 +2623,12 @@ function renderPinnedTodos(items: Array<{ status: TodoStatusKey; content: string
   }
   count.textContent = items.filter((item) => item.status === "completed").length + "/" + items.length;
   list.append(...Array.from(todoList(items).childNodes));
+  // A list the user STOPPED stays stopped — but only that one: a signature mismatch means the model
+  // started something new, and that deserves to be seen.
+  if (activeId && stoppedTodoLists.get(activeId) === todoSignature(items)) {
+    section.classList.add("hidden");
+    return;
+  }
   section.classList.remove("hidden");
   scrollPinnedTodosToActive(list);
 }
@@ -2634,12 +2657,43 @@ function scrollPinnedTodosToActive(list: HTMLElement): void {
 
 /** A session switch (or an empty shell) must not keep showing the PREVIOUS list. */
 function clearPinnedTodos(): void {
+  pinnedTodoItems = [];
   const section = document.getElementById("todo-section");
   const list = document.getElementById("todo-section-list");
   const count = document.getElementById("todo-section-count");
   section?.classList.add("hidden");
   if (list) list.innerHTML = "";
   if (count) count.textContent = "";
+}
+
+/**
+ * What the model is told when the user stops a task list. Short on purpose: it names the decision,
+ * the ban and the next step, and it is the whole contract (a longer paragraph invites negotiation).
+ */
+const TODO_CANCEL_TEXT =
+  "The task list is CANCELLED by the user: stop working on those tasks and do not continue or re-create " +
+  "that list. Report what is currently true, then wait. Start a new list only if you begin new work.";
+
+/**
+ * STOP the task list: hide it now, and tell the model to drop the plan.
+ *
+ * Two halves, and both matter. Hiding alone leaves the plan alive in the model's context, so the
+ * next turn writes TodoWrite again with the same subjects — the user sees the list come back and
+ * concludes the button lies. Steering alone leaves a list on screen that the user has just rejected.
+ *
+ * The steer goes to the ORCHESTRATOR's queue (it lands at its next turn boundary). A sub-agent
+ * already running keeps working: its own list is its business, and stopping WORK is Stop/Esc.
+ */
+function stopPinnedTodos(): void {
+  const items = pinnedTodoItems;
+  if (items.length === 0) return;
+  // Remembered so the SAME list cannot reappear from a re-render (a rebuild replays the transcript);
+  // a different list is not silenced, because its signature differs.
+  if (activeId) stoppedTodoLists.set(activeId, todoSignature(items));
+  clearPinnedTodos();
+  // Nothing to tell when nobody is listening: an idle session's list is stale, not pending, and a
+  // message here would start a run just to cancel something already over.
+  if (streamingActive) vscode.postMessage({ type: "send", text: TODO_CANCEL_TEXT, mode: "steer" });
 }
 
 // ── Actions ──
@@ -3305,6 +3359,9 @@ async function copySelection(): Promise<boolean> {
 
 // Any click outside closes the menu; so does Esc (its own listener, below) and a scroll (the
 // position it was anchored to no longer means anything).
+// The footer's stop key: the only control the task list has, and the one that ends the FLOW.
+document.getElementById("todo-stop")?.addEventListener("click", () => stopPinnedTodos());
+
 document.addEventListener("mousedown", (e) => {
   if (!ctxMenu.classList.contains("hidden") && !ctxMenu.contains(e.target as Node)) hideCtxMenu();
 });
@@ -5946,6 +6003,14 @@ window.addEventListener("message", (e) => {
       flushStreamingMd();
       finishStream();
       setStreaming(false);
+      // A run that ended with EVERYTHING completed has nothing left to pin: the transcript keeps the
+      // record, while the footer above the input is a "what is left" widget — and it used to stay
+      // there for ever, showing a finished list of an old subject next to a new run. A run that
+      // ended with work PENDING keeps its list: those rows are exactly what the user needs to see
+      // (an interrupted run, a stop, a loop guard that gave up).
+      if (pinnedTodoItems.length > 0 && pinnedTodoItems.every((item) => item.status === "completed")) {
+        clearPinnedTodos();
+      }
       focusPrompt();
       break;
     case "error": {
@@ -6465,6 +6530,11 @@ function renderViewState(state: {
   renderCompactionValues();
   renderMetrics(state.config || {});
   messagesEl.innerHTML = "";
+  // The task list belongs to the SESSION being shown, and `renderMessages` re-fills it from the last
+  // TodoWrite of that transcript — so the clear must happen BEFORE the replay, and nowhere else.
+  // (It used to sit in `resetStreamState`, which also runs at the END of every run: the footer
+  // vanished at `done` even with work still pending, which is the one case it must survive.)
+  clearPinnedTodos();
   resetStreamState();
   if (workspaceLocked(state.config || {})) {
     renderWorkspaceShell();

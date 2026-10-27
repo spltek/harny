@@ -66,6 +66,7 @@ function setupDom(initOverrides: Record<string, unknown> = {}, savedState: Recor
     <div id="todo-section" class="hidden">
       <div class="todo-head">
         <span id="todo-section-count" class="todo-count"></span><span>Tasks</span>
+        <button id="todo-stop" class="todo-stop" type="button" aria-label="Stop the task list">×</button>
       </div>
       <ul id="todo-section-list" class="todo-list"></ul>
     </div>
@@ -3396,6 +3397,142 @@ describe("view webview client", () => {
     } finally {
       (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView = original;
     }
+  });
+
+  it("the pinned list DISAPPEARS when the run ends with everything completed", async () => {
+    // The footer is a "what is left" widget, not a log (the transcript keeps every TodoWrite block).
+    // It used to stay for ever: a new prompt, on another subject, ran next to a finished list of the
+    // previous one — exactly what the user photographed.
+    await loadView();
+    hostMessage({ type: "status", active: true });
+    hostMessage({ type: "toolCall", id: "t1", name: "TodoWrite", arguments: { todos: [], merge: false } });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "t1",
+      output: "## Task List\n\n✅ [completed] one\n✅ [completed] two",
+      isError: false,
+    });
+    const section = document.getElementById("todo-section") as HTMLElement;
+    expect(section.classList.contains("hidden")).toBe(false);
+
+    hostMessage({ type: "done" });
+    expect(section.classList.contains("hidden")).toBe(true);
+    expect(document.querySelectorAll("#todo-section-list .todo-item")).toHaveLength(0);
+    // The record stays in the transcript.
+    expect(document.querySelector(".todo-block")).toBeTruthy();
+  });
+
+  it("…and STAYS when the run ends with work pending (an interrupted run is the point)", async () => {
+    await loadView();
+    hostMessage({ type: "status", active: true });
+    hostMessage({ type: "toolCall", id: "t1", name: "TodoWrite", arguments: { todos: [], merge: false } });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "t1",
+      output: "## Task List\n\n✅ [completed] one\n⏳ [pending] two",
+      isError: false,
+    });
+    hostMessage({ type: "done" });
+    const section = document.getElementById("todo-section") as HTMLElement;
+    expect(section.classList.contains("hidden")).toBe(false);
+    expect(document.querySelectorAll("#todo-section-list .todo-item")).toHaveLength(2);
+  });
+
+  it("STOP hides the list, tells the model — and only that list stays silenced", async () => {
+    // Two halves: hiding alone leaves the plan alive in the model's context, so TodoWrite comes back
+    // with the same subjects and the button looks like a lie.
+    await loadView();
+    hostMessage({ type: "status", active: true });
+    hostMessage({ type: "toolCall", id: "t1", name: "TodoWrite", arguments: { todos: [], merge: false } });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "t1",
+      output: "## Task List\n\n⏳ [pending] one\n⏳ [pending] two",
+      isError: false,
+    });
+    const section = document.getElementById("todo-section") as HTMLElement;
+    expect(section.classList.contains("hidden")).toBe(false);
+
+    posted.length = 0;
+    (document.getElementById("todo-stop") as HTMLButtonElement).click();
+    expect(section.classList.contains("hidden")).toBe(true);
+    const steer = posted.find((m: any) => m.type === "send");
+    expect(steer).toMatchObject({ mode: "steer" });
+    expect(String((steer as any).text)).toMatch(/CANCELLED by the user/);
+
+    // The SAME list must not come back from a rebuild (the transcript replay re-renders it)…
+    hostMessage({
+      type: "refresh",
+      workspaceReady: true,
+      messages: [
+        { role: "user", content: "go", timestamp: 1 },
+        { role: "assistant", content: "", timestamp: 2, toolCalls: [{ id: "t1", name: "TodoWrite", arguments: {} }] },
+        {
+          role: "tool",
+          content: "## Task List\n\n⏳ [pending] one\n⏳ [pending] two",
+          toolCallId: "t1",
+          timestamp: 3,
+        },
+      ],
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 1 },
+      workingIds: [],
+    });
+    expect(section.classList.contains("hidden")).toBe(true);
+
+    // …while a DIFFERENT list (new work) is shown: the silence is about those rows, not the session.
+    hostMessage({ type: "toolCall", id: "t2", name: "TodoWrite", arguments: { todos: [], merge: false } });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "t2",
+      output: "## Task List\n\n⏳ [pending] something else entirely",
+      isError: false,
+    });
+    expect(section.classList.contains("hidden")).toBe(false);
+  });
+
+  it("STOP on an IDLE session is local only: nothing is sent to the model", async () => {
+    await loadView();
+    hostMessage({ type: "status", active: true });
+    hostMessage({ type: "toolCall", id: "t1", name: "TodoWrite", arguments: { todos: [], merge: false } });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "t1",
+      output: "## Task List\n\n⏳ [pending] stale",
+      isError: false,
+    });
+    hostMessage({ type: "status", active: false }); // the run is over: a stale list, not a pending one
+    posted.length = 0;
+    (document.getElementById("todo-stop") as HTMLButtonElement).click();
+    expect(posted.some((m: any) => m.type === "send")).toBe(false);
+    expect((document.getElementById("todo-section") as HTMLElement).classList.contains("hidden")).toBe(true);
+  });
+
+  it("a SUB-AGENT's TodoWrite never touches the pinned footer (the plan pinned is the orchestrator's)", async () => {
+    // Sub-agents get TodoWrite (their tool list is everything but Delegate), and their events arrive
+    // as `subagent_event` — a nested log line, not a tool result. That is the right ownership, but it
+    // was ACCIDENTAL: this test makes it a rule, so a future refactor that funnels sub-agent results
+    // through the common path cannot silently hand the footer to a sub-agent's plan.
+    await loadView();
+    hostMessage({ type: "status", active: true });
+    hostMessage({ type: "toolCall", id: "d1", name: "Delegate", arguments: { goal: "do things" } });
+    hostMessage({
+      type: "subagentEvent",
+      toolCallId: "d1",
+      event: { type: "tool_call", toolCall: { id: "s1", name: "TodoWrite", arguments: {} } },
+    });
+    hostMessage({
+      type: "subagentEvent",
+      toolCallId: "d1",
+      event: {
+        type: "tool_result",
+        toolResult: { toolCallId: "s1", output: "## Task List\n\n⏳ [pending] sub task", isError: false },
+      },
+    });
+    const section = document.getElementById("todo-section") as HTMLElement;
+    expect(section.classList.contains("hidden")).toBe(true);
+    expect(document.querySelectorAll("#todo-section-list .todo-item")).toHaveLength(0);
+    // …and it is not lost either: the call is visible as a nested line in the sub-agent log.
+    expect(document.querySelector(".sa-tool")).toBeTruthy();
   });
 
   it("shows chips for TodoWrite / WebSearch / WebFetch / ReadLints", async () => {
