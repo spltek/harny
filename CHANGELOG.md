@@ -9,10 +9,322 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.9.0] - 2026-10-27
 
+### Added
+
+- **The ON/OFF of an MCP server and the tools left out are PER SESSION.** Installing a server is a machine fact
+  (`config.json`); using it is a conversation's decision. A new session starts with **every server off** and every
+  built-in available, then switches on what it needs — and can switch off a single built-in, or a single tool inside a
+  server it uses. One JSON column on the session (migration v3), read live at every turn: a change lands on the next
+  one, with nothing to reconnect. Sub-agents inherit it, so a tool that is off cannot be used through a delegate. The
+  tools the config leaves out are the SEED a new session starts from; a save no longer writes `excludeTools` (that key
+  is not the panel's to own) and no longer respawns the server — the Analyze shields are read live, so saving one stops
+  costing a reconnect.
+
+- **Removing an MCP server is refused while a RUNNING session is using it.** The turn already has that server's tools in
+  the list it was given, so deleting it mid-flight could only surface as `Unknown tool` on the very next call. The brake is
+  as narrow as the danger: it looks at the OPEN sessions, and only at the ones that are working AND have that server on —
+  a server nobody uses, or used by an idle session, is removed without friction (the next run simply will not see it). The
+  editor stays open and says why; editing the config file by hand still bypasses it, where the graceful path (a tool that
+  vanished returns an error result and the turn continues) remains tested.
+
+- **Each MCP server has a real SWITCH now — a pill whose knob slides right when the server is on.** The control
+  existed but was INVISIBLE: the server's name was the toggle and nothing on screen said so, so the only way to find
+  out was to click something and see what happened. The row now leads with a `role="switch"` button whose
+  `aria-checked` drives the look (off: white veil with a gray dot at the left — the "disabled" reading; on: ACCENT
+track with a WHITE dot), and
+  the name still works as a shortcut — the leading `●` is gone, since the switch now carries the state. The track is
+  exactly as tall as the knob (26×12 with a 12×12 knob, no border, knob flush) so the switch reads as one object; that
+  took resetting `min-height`, `padding` and `box-shadow`, because the global `button` rule's `min-height: 1.54rem`
+  BEATS `height` and left a ~25px track with the knob stuck at the top and empty space below it. The guard while a run
+  is working became visible too: the switches dim with a tooltip ("Stop the run first — a mid-run toggle only lands on
+  the next turn") instead of silently swallowing the click. Because a run can start or stop between two config pushes —
+  and the card is deliberately NOT redrawn when the mcp section is unchanged — the switches are refreshed on every
+  streaming change, so what is on screen cannot lag behind what is being enforced.
+
+- **Every knob in the panel wears the SAME shadow, and every slider is orange.** `--knob-shadow` in `:root` is one
+  value (0 1px 2px at 60%), used by the MCP switch's dot and by **every slider thumb** — those are a plain orange
+  circle (`var(--accent)`, 14px) with that shadow, which is all they needed: an earlier attempt composed a
+  gradient-on-gradient custom property for the thumb, the browser dropped the whole `background` as invalid at
+  computed-value time, and the ball vanished leaving only its rim on screen. `accent-color` can colour the native thumb but cannot shade it,
+  so the range inputs draw their own parts in both engines (`::-webkit-slider-thumb` / `::-moz-range-thumb`). The
+  filled part of the track stays **orange**: a thin rounded 4px bar, orange left of the knob, neutral to the right.
+  WebKit has no `::-slider-progress`, so the view writes `--fill` (a percentage) into that gradient; Firefox draws the
+  same fill with its native progress pseudo-element. `--fill` is DERIVED state, and
+  one rule owns it for **every** slider: `syncRangeFills()` reconciles them all (writing only what drifted) and
+  runs on `input`/`change`/`click` in the BUBBLE phase — i.e. after the panel's own handlers, so a handler that
+  re-bounds another knob (the compaction trigger driving the landing slider) is already done when it looks — after
+  **every host message** (a partial `config` push, which is what changing the model sends, writes the context
+  slider's `.value` from its own handler and never through `renderViewState`: the knob went to 100% while the orange
+  fill stayed at 6%) and once per render. No call site has to remember.
+
+- **The two compaction knobs are independent now, and the one rule between them is stated instead of applied behind your
+  back.** The landing slider used to have a maximum DERIVED from the trigger (`threshold − 1`), re-written on every movement
+  of the other knob and on every preview message. That was the bug: shrinking `max` makes the browser clamp the WIDGET
+  while the draft keeps its number, so the label and the knob disagreed — and each later write put the knob where the
+  stale draft pointed, clamped again. Both knobs now have their own fixed range (1..100 and 0..100), moving one never
+  moves the other (AUTO excepted, which follows the trigger by definition), and the physical rule that remains — landing
+  at or above the trigger frees nothing — is applied ONCE when you save, with the label saying the number it will
+  actually store (`62% → saved as 36%`). The Save handler also reads the DRAFT instead of the widget, which is how an
+  auto value could be stored as an explicit choice. A **note under the knobs follows the EFFECTS** of the pair you
+  picked, live: it names the limit it hit ("landing at 90% with the trigger at 60% would free nothing: it is saved as
+  59%") or the other one ("below 8% there is nothing left to free — the summary and the last turn already occupy that
+  much"), and disappears when the pair makes sense.
+
+- **A single MCP tool can be declared read-only for Analyze — the shield in the tools panel.** `analyze` was a per-SERVER
+  declaration, so allowing one safe tool meant vouching for every tool of that server (or hand-editing `config.json`,
+  since nothing in the panel touched the key). Each tool row now carries a **shield** next to the exposure checkbox:
+  two questions, two controls — the checkbox decides what the MODEL sees, the shield decides what may run in **Analyze**.
+  It writes `analyzeTools` on the server, an **INCLUDE** list on purpose: exposure is allowed by default (a server that
+  adds a tool tomorrow should be usable), while Analyze is **denied** by default (a new tool must prove itself), so the
+  narrowest statement is the one that is explicitly written down. The per-tool statement wins over the server's, it is
+  read **live** (no reconnect needed to take effect, though the panel's Save reconnects anyway for the exclusion list
+  it shares), and where the server-level declaration already allows everything the shield shows as **inherited** and
+  says so instead of pretending a per-tool rule did it. The refusal the model receives names this third way out, the
+  README stops calling `analyze` file-only, and `config.example.jsonc` finally documents the MCP block (the server-wide
+  `analyze` is the one field with no control in the form).
+
+- **⌘F now opens Harny's find, not VS Code's.** Inside a webview the chord also reached the host, which opened
+  its own find widget and took the focus out of the panel — the webview's `preventDefault` cannot stop the host from
+  acting on the same key. The extension now contributes that keybinding, **scoped to `focusedView == harny.chatView`**
+  (nowhere else does it take the key), and runs a command that tells the panel to open its bar; the message path also
+  `stopPropagation`s the original key for hosts that deliver it to the page. The command is registered at runtime and
+  deliberately absent from `contributes.commands`, so the palette stays clean — a manifest test now enforces that every
+  Harny keybinding is view-scoped instead of banning them all.
+
+- **Three gaps found in the final review, each fixed with the test that locks it.** *Copy* claimed success when the
+  clipboard API was missing (`await navigator.clipboard?.writeText` resolves to `undefined`) and never tried the legacy
+  path — it now reports the truth. *Find* counted a hit inside a FOLDED section and then scrolled to a `display: none`
+  node, so the jump did nothing: the match now opens its ancestors (chevron and state included). And a fold header is a
+  **disclosure button** for the keyboard and the screen reader (role, tab stop, Enter/Space, `aria-expanded`), not just a
+  clickable `div`; the debounced search is also disarmed on close, where it used to fire after the bar was gone and clear
+  whatever the user had selected in the meantime.
+
+- **The queue/steer header puts each count in parentheses**: `Steer (1) · Queued (2)` instead of `Steer 1 · Queued 2`,
+  so the label reads as a name with a count beside it rather than as a number that belongs to the word.
+
+- **The fold arrow is one chevron that turns, not a triangle swapped for another triangle.** Every collapsible header
+  wrote `"▶"` closed and `"▼"` open, in eight places across two modules: a filled triangle changes shape and weight as it
+  opens, and reads heavier than the chevrons the rest of the panel already uses (`#ctl-toggle-btn`, `.mode-btn-chevron`,
+  `.lg-collapse`). Now ONE svg points right when closed and turns down when open, in the same 0.15s as the other folds —
+  the state is a class (`is-open`), the box stays 12px, nothing shifts, and the hover takes the accent colour. The
+  drawing and the state live in `webview/fold.ts` (one `toggleMarkup` / `setToggle` / `setButtonToggle`), so the six
+  copies of the string literals are gone; the per-bubble fold button gains `aria-expanded` with it.
+
+- **The icons at the head of a bubble are a quarter larger — and no bubble grew.** The tool card, thinking, sub-agent
+  and synthetic-summary marks are painted through `transform: scale(1.25)`, not a larger `width`/`height`: a transform
+  does not enter the layout, so a 16px mark inside a 13px box keeps every row, gap and bubble exactly the height it had.
+  1.5× was tried first and read as too big; the value is one number in one rule. The emoji fallback for a tool nobody has
+  drawn (`🔧`) is wrapped in `span.tool-emoji` so it is scaled with them: a bare glyph could not be targeted, and an
+  unscaled emoji beside the larger marks looks like a bug.
+
+- **Find in the chat (⌘F / Ctrl+F), which did not exist at all.** A webview has no native find — the browser's ⌘F
+  belongs to the host window and never reaches the panel — so the shortcut was dead. A small bar over the transcript's
+  top-right searches every bubble case-insensitively, `Enter`/`Shift+Enter` step through the matches (wrapping), the
+  counter says `3/17` or *no match*, and `Esc` closes find instead of stopping the run. Matches are capped at 500, and a
+  list built before more text arrived is rebuilt rather than pointing at ranges that no longer exist.
+
+- **Typing in the find field no longer stops after one character.** The first cut used the document SELECTION as the
+  highlight, and setting one blurs the field you are typing in (Chromium drops the focus on the body): the chat scrolled
+  to the match and the next keystroke went nowhere. Highlights are now painted with the **CSS Custom Highlight API**,
+  which needs no selection at all — the caret never leaves the field, the current match stands out from the others, and
+  nothing is injected into a transcript that streaming repaints. A host without the API falls back to the selection, and
+  then only while nothing of ours is focused: keeping the caret wins over painting.
+
+- **Every change to the query recomputes ALL the highlights, and the scan follows the transcript.** The paint used to live
+  inside the "show the current match" step, which returns early when there is no match: emptying the field (the ✕, or
+  backspace to nothing) or typing something that matches nothing left the PREVIOUS highlights on screen, marking text that
+  no longer matched. The paint is now unconditional — an empty result is a paint of nothing — and while the bar is open a
+  `MutationObserver` re-scans the transcript (debounced 300 ms, and **without scrolling**): a list of ranges pointing into
+  nodes that streaming replaced paints nothing, or paints the wrong span.
+
+- **A context menu we own, on the transcript.** Whether a webview gets a native menu with Copy is not a contract —
+  Windows, Linux and each VS Code build disagree — so right-clicking the prose now opens ours: **Copy** (enabled only
+  with a selection, as in any editor) and **Select all**, anchored at the pointer, closing on Esc, an outside click or a
+  scroll. Chrome inside the transcript keeps the host's own behaviour, and Ctrl+click on macOS keeps working.
+
+- **Text that is still streaming can be selected and copied.** The live bubble is repainted per delta
+  (`innerHTML = renderMarkdown(...)`), which dropped any selection under the cursor — so a passage could not be copied
+  until the answer had finished. The repaint is now **deferred** while a selection intersects that node (the raw text
+  keeps accumulating, nothing is lost) and lands as soon as the selection goes away: while you hold it the text simply
+  waits for you, then catches up in one go.
+
+- **Copying during a run works, and holding ⌘ no longer scrolls you away from what you are reading.** Two bugs shared
+  one cause. The Queue/Steer **indicator** called the same helper a real decision did, so merely holding Ctrl/Cmd
+  switched the mode AND ran `followAndFocus()`: the transcript jumped to the last message, following re-armed itself,
+  and the focus went to the prompt — which discarded the selection the keystroke was about to copy. The indicator now
+  only paints; the view and the caret move on a real decision (a send, a pending change). And the `contextmenu` handler
+  suppressed the native menu everywhere outside inputs, so **Copy existed only as a shortcut**: it is now suppressed
+  only on macOS over the chrome (where Ctrl+click *is* a click), and **never** on a text selection anywhere.
+
+- **The keyboard now follows the host OS, where it must.** The Steer modifier is the OS's own — **⌘** on macOS (Ctrl
+  accepted too, as the hint says "Ctrl/Cmd"), **Ctrl** on Windows/Linux, where a bare **Win/Super** key is the OS's and
+  must not hijack the next message; the context-menu rule exists for macOS's Ctrl+click and is now macOS-only.
+  Everything else (Enter, Shift+Enter, Esc, arrows, Tab) is deliberately identical everywhere.
+
+- **Stop cancels an in-flight MCP call, and an MCP result is capped like any other tool's.** Both were the same gap, at
+  the **execution boundary** where a result enters the conversation. The run's `AbortSignal` now travels down
+  (`ToolContext.signal` → `McpClient.callTool(…)`), so a `tools/call` is dropped the moment you press Stop: the server
+  gets the protocol's own `notifications/cancelled`, the pending entry is discarded, the late reply is ignored and the
+  process stays alive for the next turn — before this the call sat until its timeout and the answer arrived when the
+  run was already over. The result is passed through `toolOutputCapChars` (10% of the session's usable window, at most
+  50KB, at least 2KB) with the same truncation note Shell and Grep use: observation masking only touches OLD results,
+  so the newest one — the one the model is waiting for — was the one a fixed ceiling had let eat the window. The HTTP
+  client aborts its `fetch` on the same signal, and a cancel is never reported as a timeout.
+
+- **The MCP editor can configure an HTTP server — URL and headers are fields now.** It had only Command / Args / Env,
+  so a `url` server existed only if you hand-edited `config.json` — while the README promised "a command (stdio) **or**
+  a URL (HTTP)". The form now has a **URL (HTTP)** field and a **Headers** box (`KEY=VALUE` or `KEY: VALUE`, the HTTP
+  convention), and the two transports are kept honestly exclusive: typing a URL DROPS the leftover `command`/`args`/
+  `env`, because the normalizer prefers `command` and a stale one would make "switch it to HTTP" silently do nothing;
+  clearing the URL keeps the command it had, and a save with neither is refused rather than written as a server with
+  no transport (which the normalizer deletes). Headers round-trip like env: loaded into the box, re-parsed on save, an
+  emptied box clears them instead of writing `{}`.
+
+- **A zero-install MCP server ships in the repo: `examples/mcp-hello/server.js`.** Plain Node, no dependencies, four
+  read-only tools (`hello`, `add`, `now`, `search`) — it is the answer to the case that started this: when `npx` cannot
+  install anything (a half-written `~/.npm/_npx` cache, an npm in a bad state), every MCP server "fails" and there is
+  no way to tell the panel from the install. Point Harny at `node` + that path and the panel, the tool list and the
+  gate are exercised with no network at all. `search` exists on purpose: a remote doc server only ever shows string
+  parameters, so this one carries a **rich schema** — `required`, an enum, an array with `items`, a two-level nested
+  object, numeric `minimum`/`maximum` and defaults — and echoes the arguments it received, normalized, so a call
+  SHOWS how the model's JSON arrived (`limit: 999` → `50`, `sort: "nope"` → `relevance`, `tags: ["a", 7, "b"]` →
+  `["a","b"]`). `mcp-client.test.ts` spawns the server, asserts the schema survives ingestion untouched and runs a
+  tool, so the example cannot rot.
+
+- **An MCP server's tools are now a list you can prune, one checkbox at a time.** `(N tools)` used to open a
+  read-only popover: it answered "what does this server expose?" and nothing else, so a server with forty tools
+  — half of them writes you never want the model to reach for — was all-or-nothing: keep it, or turn the whole
+  server off. That popover is now the **tools panel**: every tool the server advertises, each with the checkbox
+  that decides whether the MODEL sees it (**checked = exposed, and that is the default**, so nothing changes for
+  anyone who never opens it), the name in mono, the description clamped to two lines, and a count in the header
+  (`18 of 24 enabled`). Excluded rows dim, the card's key reads `(18/24 tools)` instead of `(24 tools)`, and a
+  **filter box** appears once a server has more than eight tools. The choice is a DRAFT — **All / None / Cancel /
+  Save** — because saving RECONNECTS the server (that is what rebuilds the tool list the model is offered), and a
+  reconnect per checkbox click would respawn an MCP process each time; Save is disabled until something actually
+  changes, refused while a session is working (swapping the tool list under a live turn would break it) and, on a
+  failed write, keeps the panel OPEN with the draft intact. The names live in `config.json` as **`excludeTools`**
+  on the server's own entry: an exclude list on purpose, so a server that adds a tool tomorrow exposes it without
+  anyone editing the file.
+
+- **Two config-round-trip bugs, found while wiring that panel — both fixed.** `normalizeMcpServers` did not carry
+  the per-server declarations, so `analyze` (`read-only` / `trusted`, documented in the README and the only thing
+  standing between Analyze and an external call) was **dropped on every read AND every write**: a policy set in the
+  file never reached the manager, and any save from the panel deleted it. And the editor rebuilt a server from its
+  OWN fields, so saving one stripped `analyze` and turned an **HTTP** server (no `command`) into a broken stdio
+  entry — a save documented as "lossless" was in fact lossy in two directions. Both now go through
+  `McpServerCommon` (`enabled`, `analyze`, `excludeTools`) and the editor spreads the entry it was given, so what
+  it does not manage survives it. `excludeTools` is sanitized on the way in (trimmed, de-duplicated, unknown values
+  dropped) and an empty list is **deleted** rather than written as `[]`.
+
+- **The session trash asks ONE question with THREE answers: delete / rewind / empty.** It used to ask a plain
+  yes/no ("Delete session X? This removes its transcript and settings"), which is the wrong question for the case
+  that actually comes up: a session that grew too big, where throwing away the *state of the work* is a last
+  resort and the usual intent is "start over, but keep what we decided so far". Clicking 🗑 (in the sessions list
+  and in the All-sessions manager alike) now opens one in-panel dialog with the three outcomes spelled out:
+  **Delete** removes the session, transcript and settings included; **Rewind** keeps everything up to the
+  session's **first compaction summary** and drops everything after it — the transcript then ENDS on that state
+  document, which is exactly where the model's window opens, so the session continues from its condensed past
+  with a nearly empty context; **Empty** keeps the session (name, per-session settings, tab and position) and
+  drops only the whole transcript. **Rewind is offered DISABLED when the session never compacted**, because there
+  is no summary to rewind to — shown rather than hidden, so the set of answers does not move around between one
+  session and the next. Both rewrites are the same bookkeeping as a ✂ cut down to zero messages: `saveMessages`
+  with `replace`, the context metric re-estimated from what is left (the summary pair for a rewind, 0 for an
+  empty), the cache counters dropped since they described a prefix that no longer exists, and the vacuum
+  suggestion checked. They also work on a CLOSED session (only the store is touched), and none of them is
+  allowed to touch a session that is still working. Underneath, the modal is no longer a two-button dialog: the
+  host sends `extraActions` (`value`, `text`, tooltip, disabled) and the webview builds those buttons at runtime,
+  answering `modalResponse` with the action's own `value` — so the next question with more than two answers needs
+  no new modal, only new buttons. The footer wraps for the same reason (`flex-wrap` on `.alert-actions`). One new
+  pure function carries the cut: `firstCheckpointEnd(messages)` in `conversation-validity.ts`, the counterpart of
+  `checkpointStart` — it lands AFTER the oldest synthetic pair, never between its halves, and returns 0 when there
+  is no summary at all. The flow is also covered END TO END, host ⇄ webview, in
+  `session-cleanup.integration.test.ts`: the provider runs over a real in-memory store, the page is the one
+  `renderViewHtml` produces, the client is the real bundle module, and the test only CLICKS (the row's 🗑, then an
+  answer in the dialog). That file exists because the two unit suites cannot see the seam: renaming the real page's
+  `#alert-ok` leaves all 33 fixture-based webview/HTML tests green while the integration one goes red on all four
+  cases — the failure mode this dialog could have shipped with.
+
+- **A session switch now says that it is happening.** Neither opening a session nor switching tab is instant:
+  the host rebuilds the config (`buildConfig` awaits) and may be finishing a turn, and the new state only travels
+  once that is done. Until then the OLD transcript sat there looking final, so the click read as lost — which is
+  how a user ends up clicking three more times. Now the transcript is covered by a soft veil (a 2px
+  `backdrop-filter` blur) with a small card in the middle: a terracotta arc turning and the name of what is
+  opening (`Opening “Debug”…`). It comes up the instant you click — the view names the session from the list it
+  already has, so nothing is added to the very click being made feel fast — and the host also announces the
+  switch (`{type:"switching", id}`) as its FIRST message, so switches it starts itself (a row, the manager, a
+  branch) get the same treatment. Two details keep it honest: the veil fades in with a **120ms delay**, so a
+  switch that lands quickly shows nothing at all (a spinner that flashes for 40ms is worse than no spinner), and
+  an 8s safety net takes it down if the state never arrives, so a failure cannot leave a spinner spinning
+  forever. It covers ONLY the transcript and never eats clicks: the strip and the session list stay live, so a
+  wrong click is corrected at once. The markup gains a `#messages-wrap` (the veil's positioned parent); `#messages`
+  stays unpositioned on purpose, because its children are measured with `getBoundingClientRect`.
+
+- **Session tabs can be dragged left or right.** The strip only ever showed the sessions in the order
+  they were opened, so the tab you were working on could sit at the far end of a long row and the only
+  way to bring it closer was to close and reopen everything. Dragging a tab now moves it wherever you
+  drop it, and the move is SHOWN before you release: the tab itself lifts out of the strip and follows
+  the pointer as a tilted, shadowed GHOST (same node, so its name travels with it), while a dashed SLOT
+  of exactly its width hops between the other tabs with an accent bar on its leading edge — the drop
+  position is drawn, not guessed, and the tab lands precisely where the slot was. The new order is
+  committed on release, one message to the host; cancelling (or a `switchView` arriving mid-drag)
+  snaps the strip back. It is deliberately NOT HTML5 drag & drop: that channel is already claimed by
+  the window-level file-drop handlers, which would have read a tab drag as a file drop (empty
+  `dataTransfer`, the "drag-over" glow, a pointless attach attempt). Pointer events also give the two
+  things a tab strip needs — a click/tap still switches session (a 4px threshold tells them apart, and
+  the click a drag leaves behind is swallowed) and the strip auto-scrolls while the pointer is held
+  near one of its edges, so a tab can be carried past the visible row. Host-side the order is the
+  registry's insertion order, so `reorder` rebuilds it: runtimes are untouched (no reload, no
+  re-render of the transcript) and a stale or partial list can never lose a tab — unknown ids are
+  ignored and open sessions missing from the list are appended.
+
+- **A tool call now wears the mark of ITS tool.** The transcript header read `🔧 Read` for every tool in the
+  registry — the same wrench for `StrReplace`, for `Grep`, for `Delegate`, and for anything an MCP server
+  exposed — and the thinking block opened on a 🤔. Both are gone: `media/icons/` now holds one drawing per
+  tool (`read`, `write`, `strreplace`, `edit`, `shell`, `grep`, `glob`, `skill`, `todowrite`, `websearch`,
+  `webfetch`, `readlints`, `thinking`), `src/chat/icons.ts` maps a tool NAME to its artwork (`toolIcon`), and
+  the bubble, the working bar and the sub-agent log all ask that map. Rules worth knowing: **Delete has no file
+  of its own** — it is the same drawing as the session trash, one file, so the two can never drift; **every MCP
+  tool shares one mark** (the plug), because there can be any number of them and a per-server drawing would be
+  noise; and a name nobody has drawn **keeps the wrench**, since a tool must still read as "some tool" rather
+  than leaving a hole in the header. The thinking block's label is the brain, in both places it appears (live
+  reasoning and the "thought during this answer" note). Weight is deliberately not uniform yet: most marks are
+  `stroke-width 1.5`, the ones that arrived as production drawings keep their own (the trash and the swap
+  arrows are 2) and `skill` is the only filled one — `media/icons/icon-sheet.html` shows them all at
+  14 · 16 · 24 · 48 px on both surfaces, which is how that decision gets settled.
+
+- **One weight for the tool marks, and the bot that was missing.** The marks had arrived in two weights — the trash
+  kept the 2 it had as a row button while everything else was 1.5 — so the set is now uniform at 1.5 on the same
+  24×24 grid. The one drawing that genuinely serves two families (the trash: Delete's mark *and* the session
+  row's button, where it sits next to a 13 px pencil at 2) is still ONE file: `icon()` now lets the caller
+  override an artwork attribute, so the row asks for `stroke-width="2"` and the transcript gets 1.5. A second
+  copy of the file was the alternative, and a copy is exactly how two marks drift apart. `skill` remains the only
+  filled mark, because it came in that way — a fill is not a weight. The sub-agent/Delegate mark is now the bot
+  face that came in as an SVG (head, eyes, antenna, ears, geometry verbatim), with its 20% face fill dropped like
+  the replace mark's, so the glyph matches the rest of the set.
+
+- **The TodoWrite list is now a list you can SEE.** It lived only inside the tool output: every update landed in a
+  `.tool-details` that is collapsed by default, and the tool is called once per change, so the transcript filled
+  with closed bubbles and the task list was effectively invisible — never in an answer, never in a thinking
+  block. The result of a TodoWrite call now renders as a **Tasks block** under its tool header (`2/5` plus the
+  rows), readable without expanding anything, and there is **one block per transcript**: a new update replaces
+  the previous one instead of piling up stale copies. The raw output stays inside the details, where it belongs.
+  Each row carries a mark from a new family of four — one box, four "baffi" (`todo-pending`, `todo-active`,
+  `todo-done`, `todo-cancelled`) — so the states read as four faces of the same thing; a completed row is struck
+  through with its tick tinted. Parsing keys on the `[status]` bracket, not on the emoji, so the list keeps
+  working if those emoji markers ever go away.
+
+- **…and it is pinned above the input too.** The block stops the list being invisible, but it still scrolls away with
+  the conversation. The same list now also lives in a footer above the input (`2/5 Tasks` + the rows), fed by the same
+  parser and the same rows — one builder, two views, so they can never disagree about a task. It is hidden until the
+  model writes a list, mirrors every update instead of appending, clears on a session switch (a refresh re-fills it
+  from the transcript, so a reload shows it again), and the list scrolls inside its own box so a long one can never
+  push the input off screen.
+
 ### Changed
 
 - **One reader for the MCP payload's flags** (`webview/mcp-tool-flags.ts`): the card's `(N/M tools)` count and the tools
   popover's starting draft both read `off`/`analyzeFlag`, and each carried a copy of the rule.
+
 - **A DOM contract test between the modules and `view-html`**: splitting `view.ts` moved the code that WRITES classes
   away from the file that DEFINES them, with nothing linking the two at compile time. Every class a module writes must now
   be either STYLED in `view-html.ts` or a HOOK something selects (a `querySelector` in a module or a test); anything else
@@ -25,6 +337,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   they get lost: the keys the form does NOT edit (`analyze`, `excludeTools`, anything else) SURVIVE a save, and switching
   a server to HTTP DELETES the leftover `command` (the normalizer prefers it, so the switch would silently do nothing).
   Coverage 98.7%; the two uncovered lines are null guards over a list that cannot hold them.
+
 - The extraction arc, in total: `view.ts` **7.512 → 6.675 lines** (−837), with five modules that each own a concern and
   carry their own tests — `find` (97%), `mcp-card` (100%), `mcp-tools-popover` (96.5%), `mcp-editor` (98.7%).
   The router-contract test now scans every module, so a route cannot move out of `view.ts` unnoticed.
@@ -73,6 +386,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   today). A control that is never locked says so (`never`) rather than being absent. A twenty-row test table pins the
   behaviour across three scenarios plus a run started from the panel — written FIRST, as the net for the refactor, and
   verified to fail on three different rows.
+
+- **Icons and glyphs are graphic ASSETS now, not markup buried in the code.** Every icon the panel draws used to be an
+  SVG string inlined in the middle of a template literal (twenty of them in `view-html.ts`) or in an `ICON_GLYPHS`
+  record inside the webview bundle — so the only way to redraw one was to edit TypeScript, and the same gear appeared
+  four times, character for character, with no single place to change it. The artwork now lives in `media/icons/` as
+  one file per icon — ONE flat folder, chrome and transcript marks together, because the split between "ui" and
+  "glyphs" was a judgement rather than a fact and the sub-agent mark kept landing on the wrong side of it — and the
+  code only asks for a name and a size: `icon("gear", 14)`. `src/chat/icons.ts` is the single registry in front of them,
+  typed, so a typo in a call site fails `npm run typecheck` instead of rendering nothing. The files are still
+  **inlined at build time** (esbuild `loader: {".svg": "text"}`, and an svg-as-text plugin in vitest so the jsdom
+  tests keep asserting on the real markup): no runtime fetch, no `asWebviewUri`, no CSP entry to add, no async
+  render, and nothing new to ship — `media/icons/` is excluded from the VSIX precisely because it is inlined. The
+  file badge keeps being per-extension data: its colour and label are substituted into the artwork template at
+  render time (and the label is now escaped, which it was not). `media/icons/README.md` states the drawing rules —
+  24x24 viewBox, no `width`/`height` on the root, `currentColor` everywhere, no ids or gradients, comments allowed
+  because they are stripped — so a restyle is a matter of opening that folder, not of searching for `<svg`.
+
 ### Fixed
 
 - **The models gear is locked while THIS session works.** It stayed clickable during a run, so it opened the manager and
@@ -94,310 +424,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it is dropped before sending — while the other wire rules keep refusing, because there the missing half is real
   data and the fault is the only signal that names its producer.
 
-### Added
-
-- **The ON/OFF of an MCP server and the tools left out are PER SESSION.** Installing a server is a machine fact
-  (`config.json`); using it is a conversation's decision. A new session starts with **every server off** and every
-  built-in available, then switches on what it needs — and can switch off a single built-in, or a single tool inside a
-  server it uses. One JSON column on the session (migration v3), read live at every turn: a change lands on the next
-  one, with nothing to reconnect. Sub-agents inherit it, so a tool that is off cannot be used through a delegate. The
-  tools the config leaves out are the SEED a new session starts from; a save no longer writes `excludeTools` (that key
-  is not the panel's to own) and no longer respawns the server — the Analyze shields are read live, so saving one stops
-  costing a reconnect.
-- **Removing an MCP server is refused while a RUNNING session is using it.** The turn already has that server's tools in
-  the list it was given, so deleting it mid-flight could only surface as `Unknown tool` on the very next call. The brake is
-  as narrow as the danger: it looks at the OPEN sessions, and only at the ones that are working AND have that server on —
-  a server nobody uses, or used by an idle session, is removed without friction (the next run simply will not see it). The
-  editor stays open and says why; editing the config file by hand still bypasses it, where the graceful path (a tool that
-  vanished returns an error result and the turn continues) remains tested.
-
-- **Each MCP server has a real SWITCH now — a pill whose knob slides right when the server is on.** The control
-  existed but was INVISIBLE: the server's name was the toggle and nothing on screen said so, so the only way to find
-  out was to click something and see what happened. The row now leads with a `role="switch"` button whose
-  `aria-checked` drives the look (off: white veil with a gray dot at the left — the "disabled" reading; on: ACCENT
-track with a WHITE dot), and
-  the name still works as a shortcut — the leading `●` is gone, since the switch now carries the state. The track is
-  exactly as tall as the knob (26×12 with a 12×12 knob, no border, knob flush) so the switch reads as one object; that
-  took resetting `min-height`, `padding` and `box-shadow`, because the global `button` rule's `min-height: 1.54rem`
-  BEATS `height` and left a ~25px track with the knob stuck at the top and empty space below it. The guard while a run
-  is working became visible too: the switches dim with a tooltip ("Stop the run first — a mid-run toggle only lands on
-  the next turn") instead of silently swallowing the click. Because a run can start or stop between two config pushes —
-  and the card is deliberately NOT redrawn when the mcp section is unchanged — the switches are refreshed on every
-  streaming change, so what is on screen cannot lag behind what is being enforced.
-- **Every knob in the panel wears the SAME shadow, and every slider is orange.** `--knob-shadow` in `:root` is one
-  value (0 1px 2px at 60%), used by the MCP switch's dot and by **every slider thumb** — those are a plain orange
-  circle (`var(--accent)`, 14px) with that shadow, which is all they needed: an earlier attempt composed a
-  gradient-on-gradient custom property for the thumb, the browser dropped the whole `background` as invalid at
-  computed-value time, and the ball vanished leaving only its rim on screen. `accent-color` can colour the native thumb but cannot shade it,
-  so the range inputs draw their own parts in both engines (`::-webkit-slider-thumb` / `::-moz-range-thumb`). The
-  filled part of the track stays **orange**: a thin rounded 4px bar, orange left of the knob, neutral to the right.
-  WebKit has no `::-slider-progress`, so the view writes `--fill` (a percentage) into that gradient; Firefox draws the
-  same fill with its native progress pseudo-element. `--fill` is DERIVED state, and
-  one rule owns it for **every** slider: `syncRangeFills()` reconciles them all (writing only what drifted) and
-  runs on `input`/`change`/`click` in the BUBBLE phase — i.e. after the panel's own handlers, so a handler that
-  re-bounds another knob (the compaction trigger driving the landing slider) is already done when it looks — after
-  **every host message** (a partial `config` push, which is what changing the model sends, writes the context
-  slider's `.value` from its own handler and never through `renderViewState`: the knob went to 100% while the orange
-  fill stayed at 6%) and once per render. No call site has to remember.
-- **The two compaction knobs are independent now, and the one rule between them is stated instead of applied behind your
-  back.** The landing slider used to have a maximum DERIVED from the trigger (`threshold − 1`), re-written on every movement
-  of the other knob and on every preview message. That was the bug: shrinking `max` makes the browser clamp the WIDGET
-  while the draft keeps its number, so the label and the knob disagreed — and each later write put the knob where the
-  stale draft pointed, clamped again. Both knobs now have their own fixed range (1..100 and 0..100), moving one never
-  moves the other (AUTO excepted, which follows the trigger by definition), and the physical rule that remains — landing
-  at or above the trigger frees nothing — is applied ONCE when you save, with the label saying the number it will
-  actually store (`62% → saved as 36%`). The Save handler also reads the DRAFT instead of the widget, which is how an
-  auto value could be stored as an explicit choice. A **note under the knobs follows the EFFECTS** of the pair you
-  picked, live: it names the limit it hit ("landing at 90% with the trigger at 60% would free nothing: it is saved as
-  59%") or the other one ("below 8% there is nothing left to free — the summary and the last turn already occupy that
-  much"), and disappears when the pair makes sense.
-- **A single MCP tool can be declared read-only for Analyze — the shield in the tools panel.** `analyze` was a per-SERVER
-  declaration, so allowing one safe tool meant vouching for every tool of that server (or hand-editing `config.json`,
-  since nothing in the panel touched the key). Each tool row now carries a **shield** next to the exposure checkbox:
-  two questions, two controls — the checkbox decides what the MODEL sees, the shield decides what may run in **Analyze**.
-  It writes `analyzeTools` on the server, an **INCLUDE** list on purpose: exposure is allowed by default (a server that
-  adds a tool tomorrow should be usable), while Analyze is **denied** by default (a new tool must prove itself), so the
-  narrowest statement is the one that is explicitly written down. The per-tool statement wins over the server's, it is
-  read **live** (no reconnect needed to take effect, though the panel's Save reconnects anyway for the exclusion list
-  it shares), and where the server-level declaration already allows everything the shield shows as **inherited** and
-  says so instead of pretending a per-tool rule did it. The refusal the model receives names this third way out, the
-  README stops calling `analyze` file-only, and `config.example.jsonc` finally documents the MCP block (the server-wide
-  `analyze` is the one field with no control in the form).
-- **⌘F now opens Harny's find, not VS Code's.** Inside a webview the chord also reached the host, which opened
-  its own find widget and took the focus out of the panel — the webview's `preventDefault` cannot stop the host from
-  acting on the same key. The extension now contributes that keybinding, **scoped to `focusedView == harny.chatView`**
-  (nowhere else does it take the key), and runs a command that tells the panel to open its bar; the message path also
-  `stopPropagation`s the original key for hosts that deliver it to the page. The command is registered at runtime and
-  deliberately absent from `contributes.commands`, so the palette stays clean — a manifest test now enforces that every
-  Harny keybinding is view-scoped instead of banning them all.
-- **Three gaps found in the final review, each fixed with the test that locks it.** *Copy* claimed success when the
-  clipboard API was missing (`await navigator.clipboard?.writeText` resolves to `undefined`) and never tried the legacy
-  path — it now reports the truth. *Find* counted a hit inside a FOLDED section and then scrolled to a `display: none`
-  node, so the jump did nothing: the match now opens its ancestors (chevron and state included). And a fold header is a
-  **disclosure button** for the keyboard and the screen reader (role, tab stop, Enter/Space, `aria-expanded`), not just a
-  clickable `div`; the debounced search is also disarmed on close, where it used to fire after the bar was gone and clear
-  whatever the user had selected in the meantime.
-- **The queue/steer header puts each count in parentheses**: `Steer (1) · Queued (2)` instead of `Steer 1 · Queued 2`,
-  so the label reads as a name with a count beside it rather than as a number that belongs to the word.
-- **The fold arrow is one chevron that turns, not a triangle swapped for another triangle.** Every collapsible header
-  wrote `"▶"` closed and `"▼"` open, in eight places across two modules: a filled triangle changes shape and weight as it
-  opens, and reads heavier than the chevrons the rest of the panel already uses (`#ctl-toggle-btn`, `.mode-btn-chevron`,
-  `.lg-collapse`). Now ONE svg points right when closed and turns down when open, in the same 0.15s as the other folds —
-  the state is a class (`is-open`), the box stays 12px, nothing shifts, and the hover takes the accent colour. The
-  drawing and the state live in `webview/fold.ts` (one `toggleMarkup` / `setToggle` / `setButtonToggle`), so the six
-  copies of the string literals are gone; the per-bubble fold button gains `aria-expanded` with it.
-- **The icons at the head of a bubble are a quarter larger — and no bubble grew.** The tool card, thinking, sub-agent
-  and synthetic-summary marks are painted through `transform: scale(1.25)`, not a larger `width`/`height`: a transform
-  does not enter the layout, so a 16px mark inside a 13px box keeps every row, gap and bubble exactly the height it had.
-  1.5× was tried first and read as too big; the value is one number in one rule. The emoji fallback for a tool nobody has
-  drawn (`🔧`) is wrapped in `span.tool-emoji` so it is scaled with them: a bare glyph could not be targeted, and an
-  unscaled emoji beside the larger marks looks like a bug.
-- **Find in the chat (⌘F / Ctrl+F), which did not exist at all.** A webview has no native find — the browser's ⌘F
-  belongs to the host window and never reaches the panel — so the shortcut was dead. A small bar over the transcript's
-  top-right searches every bubble case-insensitively, `Enter`/`Shift+Enter` step through the matches (wrapping), the
-  counter says `3/17` or *no match*, and `Esc` closes find instead of stopping the run. Matches are capped at 500, and a
-  list built before more text arrived is rebuilt rather than pointing at ranges that no longer exist.
-- **Typing in the find field no longer stops after one character.** The first cut used the document SELECTION as the
-  highlight, and setting one blurs the field you are typing in (Chromium drops the focus on the body): the chat scrolled
-  to the match and the next keystroke went nowhere. Highlights are now painted with the **CSS Custom Highlight API**,
-  which needs no selection at all — the caret never leaves the field, the current match stands out from the others, and
-  nothing is injected into a transcript that streaming repaints. A host without the API falls back to the selection, and
-  then only while nothing of ours is focused: keeping the caret wins over painting.
-- **Every change to the query recomputes ALL the highlights, and the scan follows the transcript.** The paint used to live
-  inside the "show the current match" step, which returns early when there is no match: emptying the field (the ✕, or
-  backspace to nothing) or typing something that matches nothing left the PREVIOUS highlights on screen, marking text that
-  no longer matched. The paint is now unconditional — an empty result is a paint of nothing — and while the bar is open a
-  `MutationObserver` re-scans the transcript (debounced 300 ms, and **without scrolling**): a list of ranges pointing into
-  nodes that streaming replaced paints nothing, or paints the wrong span.
-- **A context menu we own, on the transcript.** Whether a webview gets a native menu with Copy is not a contract —
-  Windows, Linux and each VS Code build disagree — so right-clicking the prose now opens ours: **Copy** (enabled only
-  with a selection, as in any editor) and **Select all**, anchored at the pointer, closing on Esc, an outside click or a
-  scroll. Chrome inside the transcript keeps the host's own behaviour, and Ctrl+click on macOS keeps working.
-- **Text that is still streaming can be selected and copied.** The live bubble is repainted per delta
-  (`innerHTML = renderMarkdown(...)`), which dropped any selection under the cursor — so a passage could not be copied
-  until the answer had finished. The repaint is now **deferred** while a selection intersects that node (the raw text
-  keeps accumulating, nothing is lost) and lands as soon as the selection goes away: while you hold it the text simply
-  waits for you, then catches up in one go.
-- **Copying during a run works, and holding ⌘ no longer scrolls you away from what you are reading.** Two bugs shared
-  one cause. The Queue/Steer **indicator** called the same helper a real decision did, so merely holding Ctrl/Cmd
-  switched the mode AND ran `followAndFocus()`: the transcript jumped to the last message, following re-armed itself,
-  and the focus went to the prompt — which discarded the selection the keystroke was about to copy. The indicator now
-  only paints; the view and the caret move on a real decision (a send, a pending change). And the `contextmenu` handler
-  suppressed the native menu everywhere outside inputs, so **Copy existed only as a shortcut**: it is now suppressed
-  only on macOS over the chrome (where Ctrl+click *is* a click), and **never** on a text selection anywhere.
-- **The keyboard now follows the host OS, where it must.** The Steer modifier is the OS's own — **⌘** on macOS (Ctrl
-  accepted too, as the hint says "Ctrl/Cmd"), **Ctrl** on Windows/Linux, where a bare **Win/Super** key is the OS's and
-  must not hijack the next message; the context-menu rule exists for macOS's Ctrl+click and is now macOS-only.
-  Everything else (Enter, Shift+Enter, Esc, arrows, Tab) is deliberately identical everywhere.
-- **Stop cancels an in-flight MCP call, and an MCP result is capped like any other tool's.** Both were the same gap, at
-  the **execution boundary** where a result enters the conversation. The run's `AbortSignal` now travels down
-  (`ToolContext.signal` → `McpClient.callTool(…)`), so a `tools/call` is dropped the moment you press Stop: the server
-  gets the protocol's own `notifications/cancelled`, the pending entry is discarded, the late reply is ignored and the
-  process stays alive for the next turn — before this the call sat until its timeout and the answer arrived when the
-  run was already over. The result is passed through `toolOutputCapChars` (10% of the session's usable window, at most
-  50KB, at least 2KB) with the same truncation note Shell and Grep use: observation masking only touches OLD results,
-  so the newest one — the one the model is waiting for — was the one a fixed ceiling had let eat the window. The HTTP
-  client aborts its `fetch` on the same signal, and a cancel is never reported as a timeout.
-- **The MCP editor can configure an HTTP server — URL and headers are fields now.** It had only Command / Args / Env,
-  so a `url` server existed only if you hand-edited `config.json` — while the README promised "a command (stdio) **or**
-  a URL (HTTP)". The form now has a **URL (HTTP)** field and a **Headers** box (`KEY=VALUE` or `KEY: VALUE`, the HTTP
-  convention), and the two transports are kept honestly exclusive: typing a URL DROPS the leftover `command`/`args`/
-  `env`, because the normalizer prefers `command` and a stale one would make "switch it to HTTP" silently do nothing;
-  clearing the URL keeps the command it had, and a save with neither is refused rather than written as a server with
-  no transport (which the normalizer deletes). Headers round-trip like env: loaded into the box, re-parsed on save, an
-  emptied box clears them instead of writing `{}`.
-- **A zero-install MCP server ships in the repo: `examples/mcp-hello/server.js`.** Plain Node, no dependencies, four
-  read-only tools (`hello`, `add`, `now`, `search`) — it is the answer to the case that started this: when `npx` cannot
-  install anything (a half-written `~/.npm/_npx` cache, an npm in a bad state), every MCP server "fails" and there is
-  no way to tell the panel from the install. Point Harny at `node` + that path and the panel, the tool list and the
-  gate are exercised with no network at all. `search` exists on purpose: a remote doc server only ever shows string
-  parameters, so this one carries a **rich schema** — `required`, an enum, an array with `items`, a two-level nested
-  object, numeric `minimum`/`maximum` and defaults — and echoes the arguments it received, normalized, so a call
-  SHOWS how the model's JSON arrived (`limit: 999` → `50`, `sort: "nope"` → `relevance`, `tags: ["a", 7, "b"]` →
-  `["a","b"]`). `mcp-client.test.ts` spawns the server, asserts the schema survives ingestion untouched and runs a
-  tool, so the example cannot rot.
-- **An MCP server's tools are now a list you can prune, one checkbox at a time.** `(N tools)` used to open a
-  read-only popover: it answered "what does this server expose?" and nothing else, so a server with forty tools
-  — half of them writes you never want the model to reach for — was all-or-nothing: keep it, or turn the whole
-  server off. That popover is now the **tools panel**: every tool the server advertises, each with the checkbox
-  that decides whether the MODEL sees it (**checked = exposed, and that is the default**, so nothing changes for
-  anyone who never opens it), the name in mono, the description clamped to two lines, and a count in the header
-  (`18 of 24 enabled`). Excluded rows dim, the card's key reads `(18/24 tools)` instead of `(24 tools)`, and a
-  **filter box** appears once a server has more than eight tools. The choice is a DRAFT — **All / None / Cancel /
-  Save** — because saving RECONNECTS the server (that is what rebuilds the tool list the model is offered), and a
-  reconnect per checkbox click would respawn an MCP process each time; Save is disabled until something actually
-  changes, refused while a session is working (swapping the tool list under a live turn would break it) and, on a
-  failed write, keeps the panel OPEN with the draft intact. The names live in `config.json` as **`excludeTools`**
-  on the server's own entry: an exclude list on purpose, so a server that adds a tool tomorrow exposes it without
-  anyone editing the file.
-- **Two config-round-trip bugs, found while wiring that panel — both fixed.** `normalizeMcpServers` did not carry
-  the per-server declarations, so `analyze` (`read-only` / `trusted`, documented in the README and the only thing
-  standing between Analyze and an external call) was **dropped on every read AND every write**: a policy set in the
-  file never reached the manager, and any save from the panel deleted it. And the editor rebuilt a server from its
-  OWN fields, so saving one stripped `analyze` and turned an **HTTP** server (no `command`) into a broken stdio
-  entry — a save documented as "lossless" was in fact lossy in two directions. Both now go through
-  `McpServerCommon` (`enabled`, `analyze`, `excludeTools`) and the editor spreads the entry it was given, so what
-  it does not manage survives it. `excludeTools` is sanitized on the way in (trimmed, de-duplicated, unknown values
-  dropped) and an empty list is **deleted** rather than written as `[]`.
-- **The session trash asks ONE question with THREE answers: delete / rewind / empty.** It used to ask a plain
-  yes/no ("Delete session X? This removes its transcript and settings"), which is the wrong question for the case
-  that actually comes up: a session that grew too big, where throwing away the *state of the work* is a last
-  resort and the usual intent is "start over, but keep what we decided so far". Clicking 🗑 (in the sessions list
-  and in the All-sessions manager alike) now opens one in-panel dialog with the three outcomes spelled out:
-  **Delete** removes the session, transcript and settings included; **Rewind** keeps everything up to the
-  session's **first compaction summary** and drops everything after it — the transcript then ENDS on that state
-  document, which is exactly where the model's window opens, so the session continues from its condensed past
-  with a nearly empty context; **Empty** keeps the session (name, per-session settings, tab and position) and
-  drops only the whole transcript. **Rewind is offered DISABLED when the session never compacted**, because there
-  is no summary to rewind to — shown rather than hidden, so the set of answers does not move around between one
-  session and the next. Both rewrites are the same bookkeeping as a ✂ cut down to zero messages: `saveMessages`
-  with `replace`, the context metric re-estimated from what is left (the summary pair for a rewind, 0 for an
-  empty), the cache counters dropped since they described a prefix that no longer exists, and the vacuum
-  suggestion checked. They also work on a CLOSED session (only the store is touched), and none of them is
-  allowed to touch a session that is still working. Underneath, the modal is no longer a two-button dialog: the
-  host sends `extraActions` (`value`, `text`, tooltip, disabled) and the webview builds those buttons at runtime,
-  answering `modalResponse` with the action's own `value` — so the next question with more than two answers needs
-  no new modal, only new buttons. The footer wraps for the same reason (`flex-wrap` on `.alert-actions`). One new
-  pure function carries the cut: `firstCheckpointEnd(messages)` in `conversation-validity.ts`, the counterpart of
-  `checkpointStart` — it lands AFTER the oldest synthetic pair, never between its halves, and returns 0 when there
-  is no summary at all. The flow is also covered END TO END, host ⇄ webview, in
-  `session-cleanup.integration.test.ts`: the provider runs over a real in-memory store, the page is the one
-  `renderViewHtml` produces, the client is the real bundle module, and the test only CLICKS (the row's 🗑, then an
-  answer in the dialog). That file exists because the two unit suites cannot see the seam: renaming the real page's
-  `#alert-ok` leaves all 33 fixture-based webview/HTML tests green while the integration one goes red on all four
-  cases — the failure mode this dialog could have shipped with.
-- **A session switch now says that it is happening.** Neither opening a session nor switching tab is instant:
-  the host rebuilds the config (`buildConfig` awaits) and may be finishing a turn, and the new state only travels
-  once that is done. Until then the OLD transcript sat there looking final, so the click read as lost — which is
-  how a user ends up clicking three more times. Now the transcript is covered by a soft veil (a 2px
-  `backdrop-filter` blur) with a small card in the middle: a terracotta arc turning and the name of what is
-  opening (`Opening “Debug”…`). It comes up the instant you click — the view names the session from the list it
-  already has, so nothing is added to the very click being made feel fast — and the host also announces the
-  switch (`{type:"switching", id}`) as its FIRST message, so switches it starts itself (a row, the manager, a
-  branch) get the same treatment. Two details keep it honest: the veil fades in with a **120ms delay**, so a
-  switch that lands quickly shows nothing at all (a spinner that flashes for 40ms is worse than no spinner), and
-  an 8s safety net takes it down if the state never arrives, so a failure cannot leave a spinner spinning
-  forever. It covers ONLY the transcript and never eats clicks: the strip and the session list stay live, so a
-  wrong click is corrected at once. The markup gains a `#messages-wrap` (the veil's positioned parent); `#messages`
-  stays unpositioned on purpose, because its children are measured with `getBoundingClientRect`.
-- **Session tabs can be dragged left or right.** The strip only ever showed the sessions in the order
-  they were opened, so the tab you were working on could sit at the far end of a long row and the only
-  way to bring it closer was to close and reopen everything. Dragging a tab now moves it wherever you
-  drop it, and the move is SHOWN before you release: the tab itself lifts out of the strip and follows
-  the pointer as a tilted, shadowed GHOST (same node, so its name travels with it), while a dashed SLOT
-  of exactly its width hops between the other tabs with an accent bar on its leading edge — the drop
-  position is drawn, not guessed, and the tab lands precisely where the slot was. The new order is
-  committed on release, one message to the host; cancelling (or a `switchView` arriving mid-drag)
-  snaps the strip back. It is deliberately NOT HTML5 drag & drop: that channel is already claimed by
-  the window-level file-drop handlers, which would have read a tab drag as a file drop (empty
-  `dataTransfer`, the "drag-over" glow, a pointless attach attempt). Pointer events also give the two
-  things a tab strip needs — a click/tap still switches session (a 4px threshold tells them apart, and
-  the click a drag leaves behind is swallowed) and the strip auto-scrolls while the pointer is held
-  near one of its edges, so a tab can be carried past the visible row. Host-side the order is the
-  registry's insertion order, so `reorder` rebuilds it: runtimes are untouched (no reload, no
-  re-render of the transcript) and a stale or partial list can never lose a tab — unknown ids are
-  ignored and open sessions missing from the list are appended.
-
-- **A tool call now wears the mark of ITS tool.** The transcript header read `🔧 Read` for every tool in the
-  registry — the same wrench for `StrReplace`, for `Grep`, for `Delegate`, and for anything an MCP server
-  exposed — and the thinking block opened on a 🤔. Both are gone: `media/icons/` now holds one drawing per
-  tool (`read`, `write`, `strreplace`, `edit`, `shell`, `grep`, `glob`, `skill`, `todowrite`, `websearch`,
-  `webfetch`, `readlints`, `thinking`), `src/chat/icons.ts` maps a tool NAME to its artwork (`toolIcon`), and
-  the bubble, the working bar and the sub-agent log all ask that map. Rules worth knowing: **Delete has no file
-  of its own** — it is the same drawing as the session trash, one file, so the two can never drift; **every MCP
-  tool shares one mark** (the plug), because there can be any number of them and a per-server drawing would be
-  noise; and a name nobody has drawn **keeps the wrench**, since a tool must still read as "some tool" rather
-  than leaving a hole in the header. The thinking block's label is the brain, in both places it appears (live
-  reasoning and the "thought during this answer" note). Weight is deliberately not uniform yet: most marks are
-  `stroke-width 1.5`, the ones that arrived as production drawings keep their own (the trash and the swap
-  arrows are 2) and `skill` is the only filled one — `media/icons/icon-sheet.html` shows them all at
-  14 · 16 · 24 · 48 px on both surfaces, which is how that decision gets settled.
-- **One weight for the tool marks, and the bot that was missing.** The marks had arrived in two weights — the trash
-  kept the 2 it had as a row button while everything else was 1.5 — so the set is now uniform at 1.5 on the same
-  24×24 grid. The one drawing that genuinely serves two families (the trash: Delete's mark *and* the session
-  row's button, where it sits next to a 13 px pencil at 2) is still ONE file: `icon()` now lets the caller
-  override an artwork attribute, so the row asks for `stroke-width="2"` and the transcript gets 1.5. A second
-  copy of the file was the alternative, and a copy is exactly how two marks drift apart. `skill` remains the only
-  filled mark, because it came in that way — a fill is not a weight. The sub-agent/Delegate mark is now the bot
-  face that came in as an SVG (head, eyes, antenna, ears, geometry verbatim), with its 20% face fill dropped like
-  the replace mark's, so the glyph matches the rest of the set.
-- **The TodoWrite list is now a list you can SEE.** It lived only inside the tool output: every update landed in a
-  `.tool-details` that is collapsed by default, and the tool is called once per change, so the transcript filled
-  with closed bubbles and the task list was effectively invisible — never in an answer, never in a thinking
-  block. The result of a TodoWrite call now renders as a **Tasks block** under its tool header (`2/5` plus the
-  rows), readable without expanding anything, and there is **one block per transcript**: a new update replaces
-  the previous one instead of piling up stale copies. The raw output stays inside the details, where it belongs.
-  Each row carries a mark from a new family of four — one box, four "baffi" (`todo-pending`, `todo-active`,
-  `todo-done`, `todo-cancelled`) — so the states read as four faces of the same thing; a completed row is struck
-  through with its tick tinted. Parsing keys on the `[status]` bracket, not on the emoji, so the list keeps
-  working if those emoji markers ever go away.
-- **…and it is pinned above the input too.** The block stops the list being invisible, but it still scrolls away with
-  the conversation. The same list now also lives in a footer above the input (`2/5 Tasks` + the rows), fed by the same
-  parser and the same rows — one builder, two views, so they can never disagree about a task. It is hidden until the
-  model writes a list, mirrors every update instead of appending, clears on a session switch (a refresh re-fills it
-  from the transcript, so a reload shows it again), and the list scrolls inside its own box so a long one can never
-  push the input off screen.
-
-### Changed
-
-- **Icons and glyphs are graphic ASSETS now, not markup buried in the code.** Every icon the panel draws used to be an
-  SVG string inlined in the middle of a template literal (twenty of them in `view-html.ts`) or in an `ICON_GLYPHS`
-  record inside the webview bundle — so the only way to redraw one was to edit TypeScript, and the same gear appeared
-  four times, character for character, with no single place to change it. The artwork now lives in `media/icons/` as
-  one file per icon — ONE flat folder, chrome and transcript marks together, because the split between "ui" and
-  "glyphs" was a judgement rather than a fact and the sub-agent mark kept landing on the wrong side of it — and the
-  code only asks for a name and a size: `icon("gear", 14)`. `src/chat/icons.ts` is the single registry in front of them,
-  typed, so a typo in a call site fails `npm run typecheck` instead of rendering nothing. The files are still
-  **inlined at build time** (esbuild `loader: {".svg": "text"}`, and an svg-as-text plugin in vitest so the jsdom
-  tests keep asserting on the real markup): no runtime fetch, no `asWebviewUri`, no CSP entry to add, no async
-  render, and nothing new to ship — `media/icons/` is excluded from the VSIX precisely because it is inlined. The
-  file badge keeps being per-extension data: its colour and label are substituted into the artwork template at
-  render time (and the label is now escaped, which it was not). `media/icons/README.md` states the drawing rules —
-  24x24 viewBox, no `width`/`height` on the root, `currentColor` everywhere, no ids or gradients, comments allowed
-  because they are stripped — so a restyle is a matter of opening that folder, not of searching for `<svg`.
-
-### Fixed
-
 - **Toggling one MCP server no longer stirs the whole card.** Two separate causes, reported as one symptom ("they all
   move around"). **(a)** the toggle saved the flag and called `connect()`, which disposes EVERY client and reconnects
   every server: clicking one row killed and respawned the other `npx` processes, and their status churned with them.
@@ -410,6 +436,7 @@ track with a WHITE dot), and
   `nowrap`, `ellipsis`, `min-width: 0` so it can shrink) with the full text in the tooltip, and the list is no longer
   rebuilt when the mcp section is unchanged: config pushes are frequent (metrics, tokens), and re-creating the rows
   under the cursor also made a click land on a node that had just been removed.
+
 - **An MCP server that dies now says WHY — and, when we recognise it, what to do.** The exit message was a
   `stderr.slice(-300)` of the tail, so a failing `npx` install (npm prints the cause FIRST and the echo LAST) reached
   the panel as `MCP server exited (code=190 signal=-): y not empty, rename '…/content-disposition' -> …` — the middle
@@ -420,22 +447,27 @@ track with a WHITE dot), and
   same for HTTP: a non-2xx answer used to be dumped raw (`HTTP 503: {"jsonrpc":"2.0","error":…,"id":null}`); it is
   now one line — the message EXTRACTED from the JSON-RPC error, a web page named for what it is, plus the cure for
   401/403 ("put the credentials in the Headers box"), 404/405 (wrong path) and 429 (rate limited).
+
 - **A server that died AFTER connecting stayed green with its tools still registered.** `onExit` existed on the stdio
   client and nobody subscribed to it: after a crash the card kept saying ok, the tools stayed in the registry, and
   every call failed with "MCP server is not running" until someone reconnected by hand. The manager now marks that
   server down (with the real exit message), withdraws its tools **by prefix** and lets the registry re-register; a
   deliberate `close()` marks the client `disposed`, so a reconnect is never mistaken for a crash.
+
 - **The MCP `inputSchema` was rebuilt instead of forwarded.** Only `type`, `properties` and `required` survived, so
   `oneOf`/`anyOf`, `additionalProperties`, `$defs`/`$ref` and defaults were dropped — a schema using a `$ref` arrived
   pointing at nothing. It is passed through now (`type: "object"` and a `properties` fallback are still ours), which
   is what the spec asks of a client.
+
 - **Two MCP tools could silently collapse into one.** `a-b` and `a_b` sanitize to the same Harny name
   (`mcp__server__a_b`): the registry kept the first and the second vanished without a word. The collision is logged,
   the first wins, and the count on the card says what the model actually gets.
+
 - **`Test` demanded a command, so every remote server was untestable.** With the URL filled in and the command
   legitimately empty, the panel answered "Enter a command first". It now accepts either transport; the editor's
   **Save** is also refused while a run is working, because saving reconnects the servers — the guard the name toggle
   and the tools panel already had.
+
 - **`McpManager.connect()` is serialized.** Activation fires `void mcp.connect()` and the UI fires its own (a save, a
   toggle, the tools panel): two passes could run at once, each calling `dispose()` and killing the other's handshake
   mid-flight — and two concurrent spawns of the same `npx -y <package>` extract into the SAME `_npx` cache entry,
@@ -1601,6 +1633,7 @@ Completions protocol.
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
 [Unreleased]: https://github.com/spltek/harny/compare/v0.8.2...HEAD
+[0.9.0]: https://github.com/spltek/harny/compare/v0.8.2...v0.9.0
 [0.8.2]: https://github.com/spltek/harny/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/spltek/harny/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/spltek/harny/compare/v0.7.1...v0.8.0

@@ -436,9 +436,12 @@ harny/
 │   │   ├── stream-tee.ts         # Per-session event router + live buffers
 │   │   ├── attachment-service.ts # Attach files/images as context
 │   │   ├── view-html.ts          # Pure HTML generator (sessions + tabs + chat)
-│   │   └── webview/              # Webview client (TS): view.ts + markdown.ts,
-│   │       #                       diff-fence.ts, lang-map.ts, pending-section.ts
-│   │       #                       (the queue/steer footer);
+│   │   └── webview/              # Webview client (TS), one concern per module:
+│   │       #                       view.ts (the panel), find.ts (⌘F engine),
+│   │       #                       mcp-card.ts, mcp-tools-popover.ts, mcp-editor.ts
+│   │       #                       (the three MCP surfaces), fold.ts (chevrons),
+│   │       #                       mcp-tool-flags.ts, pending-section.ts (queue/steer),
+│   │       #                       markdown.ts, diff-fence.ts, lang-map.ts;
 │   │       #                       markdown-it + DOMPurify, bundled with esbuild
 │   └── logger.ts                 # Diagnostics: "Output > Harny" channel + HARNY_DEBUG file
 ├── media/view.js                 # Webview client bundle (generated: node scripts/build-webview.mjs)
@@ -462,7 +465,13 @@ npm test          # run all unit tests (vitest)
 npm run coverage  # with coverage report
 ```
 
-**1600+ unit tests** cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (SQLite store with FTS5 search, **versioned schema migrations** via `PRAGMA user_version`, manager, registry, the cross-folder manager with its open/change-folder actions, the per-session control settings incl. the Loop Guard parameters), **context management** (the absolute keep budget, the schematic-summary prompt and its budget, the carried state, observation masking, the overflow recovery with each provider's real rejection text, the adopted window, the scaled request margin, the window-scaled tool-output cap, the token estimate for non-ASCII), **the wire rules** (every rule at the checker level **and** by fault injection through a real request — a malformed conversation never reaches the provider and is named), the OpenAI-compatible LLM provider (streaming, tool calls, `finish_reason`, the learned `max_completion_tokens`), host-model fetching, all 14 tools (including the Analyze dry-run preview), the mode policy, the agent loop (fake LLM, abort, max turns), the **loop guard** (reasoning/empty/tool-failure/error-streak/tool-repeat detection, tool-call dedup, sensitivity presets, the editable parameter ranges + their clamping), orchestration/sub-agents, **Agent Skills** (SKILL.md parsing + discovery), **MCP** (stdio + Streamable HTTP clients, tool wrapper, manager), markdown/DOM (markdown-it + DOMPurify), the HTML generators, the pending section (its counts, the born-folded bubbles, the fold measured on the rendered row, the attachment previews, the conversions), and the chat view provider (mocked VS Code, incl. the control-stack wiring: sliders, Auto defaults, the collapsible Loop Guard parameters and the responsive layout), the per-turn metrics badge (real usage + timings), the real context accounting (after a ✂ cut / compaction) and the DB compaction + index optimization (VACUUM, `PRAGMA optimize`, FTS5 `optimize`).
+**2100+ unit tests** cover: config (file multi-provider, JSONC, precedence home/workspace), event bus, history, sessions (SQLite store with FTS5 search, **versioned schema migrations** via `PRAGMA user_version`, manager, registry, the cross-folder manager with its open/change-folder actions, the per-session control settings incl. the Loop Guard parameters), **context management** (the absolute keep budget, the schematic-summary prompt and its budget, the carried state, observation masking, the overflow recovery with each provider's real rejection text, the adopted window, the scaled request margin, the window-scaled tool-output cap, the token estimate for non-ASCII), **the wire rules** (every rule at the checker level **and** by fault injection through a real request — a malformed conversation never reaches the provider and is named), the OpenAI-compatible LLM provider (streaming, tool calls, `finish_reason`, the learned `max_completion_tokens`), host-model fetching, all 14 tools (including the Analyze dry-run preview), the mode policy, the agent loop (fake LLM, abort, max turns), the **loop guard** (reasoning/empty/tool-failure/error-streak/tool-repeat detection, tool-call dedup, sensitivity presets, the editable parameter ranges + their clamping), orchestration/sub-agents, **Agent Skills** (SKILL.md parsing + discovery), **MCP** (stdio + Streamable HTTP clients, tool wrapper, manager), markdown/DOM (markdown-it + DOMPurify), the HTML generators, the pending section (its counts, the born-folded bubbles, the fold measured on the rendered row, the attachment previews, the conversions), and the chat view provider (mocked VS Code, incl. the control-stack wiring: sliders, Auto defaults, the collapsible Loop Guard parameters and the responsive layout), the per-turn metrics badge (real usage + timings), the real context accounting (after a ✂ cut / compaction) and the DB compaction + index optimization (VACUUM, `PRAGMA optimize`, FTS5 `optimize`), plus the webview's own
+modules taken one at a time — find's engine (the scan and its cap, the highlight layers, the timers armed/replaced/
+disarmed, the no-Highlight-API fallback, the caret rule), the MCP card, the tools popover (its draft, the Analyze shield
+with the inherited and inert states, the save as intent) and the MCP editor (the keys the form does not edit survive a
+save, stdio vs HTTP) — the **lock table** (every control × idle / this session busy / another busy, plus a run started
+from the panel), and the two contracts that hold the split together: every host route is producible by some webview
+module, and every class a module writes is either styled in the markup or selected by something.
 
 ### Configuration reference
 
