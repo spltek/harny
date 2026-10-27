@@ -1,4 +1,5 @@
 import type { Tool, ToolDefinition } from "./tool";
+import { scopeTools, type ToolScope } from "./tool-scope";
 
 /**
  * Chat mode:
@@ -24,6 +25,9 @@ export function isFullAccessMode(mode: ChatMode | undefined): boolean {
  * sub-agents so orchestration cannot nest: depth is capped at 1). */
 interface ToolFilterOptions {
   exclude?: readonly string[];
+  /** What the SESSION decided it may use (MCP servers on, built-ins off). Read live, so a change
+   *  takes effect on the next turn without reconnecting anything. */
+  scope?: ToolScope;
 }
 
 /** The tools visible in a given mode. Both modes expose the SAME tool set:
@@ -31,7 +35,8 @@ interface ToolFilterOptions {
  * their definitions), so the model can PREPARE changes without applying them. */
 export function toolsForMode(tools: readonly Tool[], _mode: ChatMode, opts?: ToolFilterOptions): Tool[] {
   const excluded = opts?.exclude && opts.exclude.length > 0 ? new Set(opts.exclude) : null;
-  return excluded ? tools.filter((t) => !excluded.has(t.name)) : [...tools];
+  const visible = scopeTools(tools, opts?.scope);
+  return excluded ? visible.filter((t) => !excluded.has(t.name)) : visible;
 }
 
 /** Tool definitions sent to the LLM for a given mode. In Analyze each tool adds its OWN

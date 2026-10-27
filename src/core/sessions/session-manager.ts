@@ -23,6 +23,11 @@ export class SessionManager {
     return [...this.store.list()].sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
+  /** One session's metadata (no messages): what a per-turn reader can afford. */
+  summary(id: string): SessionSummary | undefined {
+    return this.store.summary(id);
+  }
+
   create(name?: string): SessionSummary {
     return this.store.create(name);
   }

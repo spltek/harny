@@ -24,6 +24,7 @@ import { setFold, toggleMarkup } from "./fold";
 // request from ever disagreeing about where the window starts.
 import { checkpointStart } from "../../core/history/conversation-validity";
 import { toolArgTarget } from "../../core/tools/tool-call-text";
+import { normalizeToolScope } from "../../core/tools/tool-scope";
 import type { SessionLiveProjection } from "../session-live-state";
 
 declare function acquireVsCodeApi(): {
@@ -4774,6 +4775,9 @@ type McpToolsPanel = {
   analyzeDraft: Set<string>;
 };
 let mcpToolsPanel: McpToolsPanel | null = null;
+/** What the ACTIVE session may use, as the host last reported it. The panel edits this value, so
+ *  a Save can merge one server's decision without inventing the rest of the scope. */
+let sessionToolScope: { mcp: string[]; off: string[] } = { mcp: [], off: [] };
 let mcpToolsFilter = "";
 let mcpToolsListEl: HTMLDivElement | null = null;
 let mcpToolsCountEl: HTMLSpanElement | null = null;
@@ -5029,6 +5033,20 @@ function showMcpToolsPopover(
       // The opposite polarity rides along: the tools declared read-only in Analyze.
       analyze: [...panel.analyzeDraft],
     });
+    // …and the SESSION's own view of the same server. Two axes, deliberately:
+    //  · the message above is the MACHINE's (this server's tool list, global, reconnect);
+    //  · this one is THIS conversation's: the server counts as ON as soon as one of its tools is,
+    //    and each unchecked tool is named off FOR THIS SERVER only — the rest of the scope
+    //    (another server, a built-in) is preserved instead of being overwritten by a merge.
+    const prefix = `mcp__${panel.server}__`;
+    const disabled = panel.tools.filter((t) => panel.draft.has(t.name)).map((t) => prefix + t.name);
+    const mcp = sessionToolScope.mcp.filter((name) => name !== panel.server);
+    if (panel.tools.some((t) => !panel.draft.has(t.name))) mcp.push(panel.server);
+    sessionToolScope = {
+      mcp,
+      off: [...sessionToolScope.off.filter((name) => !name.startsWith(prefix)), ...disabled],
+    };
+    vscode.postMessage({ type: "setToolScope", scope: sessionToolScope });
   });
   actions.appendChild(all);
   actions.appendChild(none);
@@ -6401,6 +6419,12 @@ window.addEventListener("message", (e) => {
   // loses nothing: the switchView replays that session's whole live turn.
   if (typeof msg?.sessionId === "string" && msg.sessionId !== activeId) return;
   switch (msg.type) {
+    case "toolScope": {
+      // The HOST is the truth (it persisted the value): the panel keeps a copy only to merge.
+      const scope = normalizeToolScope((msg as { scope?: unknown }).scope);
+      sessionToolScope = scope ?? { mcp: [], off: [] };
+      break;
+    }
     case "openFind": {
       // The host's keybinding (⌘F/Ctrl+F while this view has the focus) lands here: VS Code keeps
       // the chord for itself otherwise, opening its own find and taking the focus away from us.

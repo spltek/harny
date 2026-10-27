@@ -1,5 +1,6 @@
 import type { ChatMessage } from "../history/types";
 import type { LoopGuardOptions, LoopGuardSensitivity } from "../agent/loop-guard";
+import type { ToolScope } from "../tools/tool-scope";
 
 /** Lightweight metadata shown in the session picker UI. */
 export interface SessionSummary {
@@ -60,6 +61,13 @@ export interface SessionSummary {
   mode?: "analyze" | "agent";
   /** Per-session Parallel (sub-agents) switch. Persisted; absent = OFF. */
   parallel?: boolean;
+  /**
+   * Which MCP servers this conversation uses, and which built-in tools it turned OFF.
+   *
+   * ABSENT is not the same as empty: absent = a session written before this existed, so nothing is
+   * restricted; empty = the user decided the session uses no MCP server at all.
+   */
+  toolScope?: ToolScope;
 }
 
 /** A session file plus its loaded messages. */
@@ -90,6 +98,7 @@ type SessionSettings = Pick<
   | "loopGuardParams"
   | "mode"
   | "parallel"
+  | "toolScope"
   | "folder"
 >;
 
@@ -141,6 +150,14 @@ export const EMPTY_DB_VACUUM_STATS: DbVacuumStats = {
 export interface SessionStore {
   list(): SessionSummary[];
   create(name?: string): SessionSummary;
+  /**
+   * One session's METADATA, without its messages.
+   *
+   * `load()` returns the whole history, which is the wrong price for a caller that only needs a
+   * setting — the tool scope is read once per TURN (the model must see the decision quickly), and
+   * paying for a full transcript there would make a toggle cost a message scan.
+   */
+  summary(id: string): SessionSummary | undefined;
   load(id: string): LoadedSession;
   /**
    * Persist the session's messages. By default this APPENDS the new tail when

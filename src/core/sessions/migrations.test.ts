@@ -26,9 +26,9 @@ describe("runMigrations — the shipped schema", () => {
 
     const r = runMigrations(db);
 
-    expect(r).toEqual({ from: 0, to: LATEST_VERSION, applied: 2 });
-    expect(LATEST_VERSION).toBe(2);
-    expect(getUserVersion(db)).toBe(2);
+    expect(r).toEqual({ from: 0, to: LATEST_VERSION, applied: 3 });
+    expect(LATEST_VERSION).toBe(3);
+    expect(getUserVersion(db)).toBe(3);
     expect(tableExists(db, "sessions")).toBe(true);
     expect(tableExists(db, "messages")).toBe(true);
     // The FTS index + triggers work.
@@ -52,7 +52,7 @@ describe("runMigrations — the shipped schema", () => {
     const db = makeDb();
     runMigrations(db);
 
-    expect(runMigrations(db)).toEqual({ from: 2, to: 2, applied: 0 });
+    expect(runMigrations(db)).toEqual({ from: 3, to: 3, applied: 0 });
   });
 
   it("STAMPS a pre-versioning database instead of re-running the baseline", () => {
@@ -61,6 +61,7 @@ describe("runMigrations — the shipped schema", () => {
     // Take the database back to the v1 SHAPE: this is what an install from before the
     // versioning system looks like (user_version 0, and no column added by a later
     // migration — SQLite 3.35+ can drop one, a pre-versioning install never had it).
+    db.exec("ALTER TABLE sessions DROP COLUMN tool_scope");
     db.exec("ALTER TABLE sessions DROP COLUMN compaction_target_percent");
     db.prepare("INSERT INTO sessions(id,name,created_at,updated_at,message_count) VALUES('s1','x',1,1,0)").run();
     db.exec("PRAGMA user_version = 0"); // simulate an install from before versioning
@@ -68,10 +69,10 @@ describe("runMigrations — the shipped schema", () => {
     const logs: string[] = [];
     const r = runMigrations(db, { log: (m) => logs.push(m) });
 
-    // Stamped to the BASELINE (v1), then the PENDING v2 migration runs: a legacy install
-    // must still receive the new column instead of skipping it.
-    expect(r).toEqual({ from: 1, to: 2, applied: 1 });
-    expect(getUserVersion(db)).toBe(2);
+    // Stamped to the BASELINE (v1), then the PENDING migrations run: a legacy install must
+    // still receive the new columns instead of skipping them.
+    expect(r).toEqual({ from: 1, to: 3, applied: 2 });
+    expect(getUserVersion(db)).toBe(3);
     // Existing data survived (the baseline was NOT re-run / dropped).
     expect(db.prepare("SELECT name FROM sessions WHERE id='s1'").get()).toEqual({ name: "x" });
     expect(logs.some((l) => /pre-versioning/.test(l))).toBe(true);
@@ -123,6 +124,7 @@ describe("schema contract (drift guard)", () => {
       "loop_guard_params",
       // ALTER TABLE appends: a column added by a later migration sits at the END.
       "compaction_target_percent",
+      "tool_scope",
     ]);
     expect(columns(db, "messages")).toEqual(["session_id", "seq", "role", "content", "timestamp", "data"]);
     // The full-text index + its sync triggers exist.

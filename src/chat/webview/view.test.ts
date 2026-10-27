@@ -306,6 +306,10 @@ async function reloadView(initOverrides: Record<string, unknown> = {}): Promise<
 function setupFixture(initOverrides: Record<string, unknown> = {}, savedState: Record<string, unknown> = {}): void {
   posted.length = 0;
   detachGlobalListeners();
+  // The USER AGENT is a prerequisite too: a test that stubs it ("this is Windows") must not decide
+  // for the next one, which is exactly how a shuffled order made the ⌘/Ctrl matrix read as
+  // "not macOS". Deleting the own property restores jsdom's own getter.
+  delete (window.navigator as unknown as Record<string, unknown>).userAgent;
   setupDom(initOverrides, savedState);
 }
 

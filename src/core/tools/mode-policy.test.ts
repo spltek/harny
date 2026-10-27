@@ -263,3 +263,36 @@ describe("mode policy", () => {
     expect(isAnalyzeMode("agent")).toBe(false);
   });
 });
+
+describe("a session's scope composes with the mode's own exclusion", () => {
+  const tool = (name: string): Tool =>
+    ({
+      name,
+      definition: { name, description: name, parameters: { type: "object", properties: {} } },
+      run: async () => ({ content: "" }),
+    }) as unknown as Tool;
+
+  const all = [tool("Read"), tool("Shell"), tool("Delegate"), tool("mcp__files__read"), tool("mcp__git__log")];
+
+  it("shows exactly what the session allows, and nothing else", () => {
+    const names = toolsForMode(all, "agent", { scope: { mcp: ["files"], off: ["Shell"] } }).map((t) => t.name);
+    expect(names).toEqual(["Read", "Delegate", "mcp__files__read"]);
+  });
+
+  it("an EMPTY scope keeps every built-in and hides every MCP tool", () => {
+    const names = toolsForMode(all, "agent", { scope: { mcp: [], off: [] } }).map((t) => t.name);
+    expect(names).toEqual(["Read", "Shell", "Delegate"]);
+  });
+
+  it("applies the scope BEFORE the mode's own exclude (the two rules do not fight)", () => {
+    // Sub-agents exclude Delegate; a session may also have Shell off. Both must hold.
+    const names = toolsForMode(all, "agent", { exclude: ["Delegate"], scope: { mcp: ["git"], off: ["Shell"] } }).map(
+      (t) => t.name,
+    );
+    expect(names).toEqual(["Read", "mcp__git__log"]);
+  });
+
+  it("no scope at all changes nothing (backwards compatible)", () => {
+    expect(toolsForMode(all, "agent").map((t) => t.name)).toEqual(all.map((t) => t.name));
+  });
+});

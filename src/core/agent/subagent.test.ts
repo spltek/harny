@@ -109,6 +109,48 @@ function makeReadTool(opts: { output?: string } = {}): Tool & { calls: number; b
   return tool;
 }
 
+describe("sub-agents inherit the session's tool scope", () => {
+  it("a tool switched off in the session is off for the delegated work too", async () => {
+    // Without inheritance "this tool is off" is cosmetic: the model delegates and the sub-agent
+    // calls it anyway. This asserts the definitions the sub-agent is actually GIVEN.
+    const seen: string[][] = [];
+    const prompts: string[] = [];
+    const llm: LLMProviderFactory = {
+      create: () => ({
+        protocol: "chat" as const,
+        async *stream(messages: unknown, _s?: AbortSignal, defs?: { name: string }[]) {
+          seen.push((defs ?? []).map((d) => d.name));
+          prompts.push(String((messages as { content?: unknown }[])[0]?.content ?? ""));
+          yield { type: "text", content: "done" } as StreamChunk;
+        },
+      }),
+    };
+    const tools = ["Read", "Shell", "mcp__files__read"].map((name) => ({
+      name,
+      definition: { name, description: name, parameters: { type: "object", properties: {} } },
+    })) as unknown as Tool[];
+    const runner = new SubAgentRunner({
+      config: new StaticConfigProvider(CONFIG),
+      llmFactory: llm,
+      tools: new ToolRegistry(tools),
+      cwd: () => "/workspace",
+      toolScope: () => ({ mcp: [], off: ["Shell"] }),
+    });
+    await runner.run(spec({ access: "read" }));
+
+    // The MCP server is OFF for this session, Shell is OFF, Read stays. Delegate is excluded
+    // anyway (depth is capped at 1), which the scope must not undo.
+    expect(seen[0]).toEqual(["Read"]);
+    // The PROMPT must agree with the list: advertising a tool the turn then hides is how a model
+    // ends up planning around something it cannot call. The catalog is rendered one line per tool
+    // (`- <name>: <description>`), so this is the exact line, not the bare word (the prompt also
+    // TALKS about Shell elsewhere).
+    expect(prompts[0]).toContain("- Read:");
+    expect(prompts[0]).not.toContain("- Shell:");
+    expect(prompts[0]).not.toContain("- mcp__files__read:");
+  });
+});
+
 describe("sub-agents inherit the session's context discipline", () => {
   /** One read of `tokens` tokens, at a DISTINCT path per call: two identical calls
    * would be served from the loop guard's cache and never reach the wire. */

@@ -24,6 +24,7 @@ import {
   type ChatMode,
 } from "../tools/mode-policy";
 import type { ToolDefinition } from "../tools/tool";
+import type { ToolScope } from "../tools/tool-scope";
 import type { ChatController, SendOptions } from "./chat-controller";
 import type { PreparedChange } from "./types";
 import {
@@ -100,6 +101,9 @@ export interface AgentDeps {
   config: ConfigProvider;
   llmFactory: LLMProviderFactory;
   tools: ToolRegistry;
+  /** Which tools THIS session may use (MCP servers on, built-ins off). Read per turn; absent =
+   *  nothing restricted (a session written before per-session scopes existed). */
+  toolScope?: () => ToolScope | undefined;
   history: ChatHistory;
   events: EventBus<AgentEvent>;
   systemPrompt: SystemPromptBuilder;
@@ -1038,6 +1042,9 @@ export class Agent implements ChatController {
     // An explicit [] (forced final report) makes the turn tool-less.
     const modeDefs = toolDefinitionsForMode(this.deps.tools.getAll(), this.runMode, {
       exclude: this.runDelegation ? [] : [DELEGATE_TOOL_NAME],
+      // Read at EVERY turn: switching a server (or a built-in) off takes effect on the next one,
+      // with nothing to reconnect and nothing to invalidate.
+      scope: this.deps.toolScope?.(),
     });
     const toolDefinitions: ToolDefinition[] = toolDefinitionsOverride ?? modeDefs;
 

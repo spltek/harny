@@ -13,6 +13,7 @@ import { Semaphore, limitLlmFactory } from "../llm/concurrency";
 import type { Tool, ToolResult } from "../tools/tool";
 import type { ToolDefinition } from "../tools/tool";
 import { toolDefinitionsForMode } from "../tools/mode-policy";
+import type { ToolScope } from "../tools/tool-scope";
 import type { DelegateSpec } from "./orchestration";
 import { SubAgentRunner } from "./subagent";
 import type { AgentEvent, SubAgentEvent } from "./types";
@@ -1767,6 +1768,111 @@ describe("Analyze (read-only) mode", () => {
       { type: "tool_call_end", index: 0 },
     ];
   }
+
+  it("survives a tool vanishing MID-RUN: the call fails as a result, the turn goes on", async () => {
+    // The real race: the MCP server is removed from the config while a turn is in flight, the
+    // manager reconnects and the tool is gone from the registry — but the model already has it in
+    // the list it was given. The requirement is that nothing throws and the model can recover,
+    // not that the tool call silently "works".
+    const registry = new ToolRegistry([makeTool("Read"), makeTool("mcp__files__read")]);
+    const events: AgentEvent[] = [];
+    const seenDefinitions: string[][] = [];
+    let calls = 0;
+    const factory: LLMProviderFactory = {
+      create: () => ({
+        protocol: "chat" as const,
+        async *stream(_m: LLMMessage[], _s?: AbortSignal, defs?: ToolDefinition[]) {
+          seenDefinitions.push((defs ?? []).map((d) => d.name));
+          calls++;
+          if (calls === 1) {
+            // The config watcher fires HERE: the server is gone before the call executes.
+            registry.removeByPrefix("mcp__");
+            yield { type: "tool_call_start", index: 0, id: "c1", name: "mcp__files__read" } as StreamChunk;
+            yield { type: "tool_call_end", index: 0 } as StreamChunk;
+            return;
+          }
+          yield { type: "text", content: "recovered" } as StreamChunk;
+        },
+      }),
+    };
+    const bus = new InMemoryEventBus<AgentEvent>();
+    bus.subscribe((e) => events.push(e));
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools: registry,
+      history: new InMemoryChatHistory(),
+      events: bus,
+      systemPrompt: new DefaultSystemPromptBuilder(
+        (m) => toolDefinitionsForMode(registry.getAll(), m),
+        () => "/w",
+      ),
+      toolScope: () => ({ mcp: ["files"], off: [] }),
+    });
+    agent.setMode("agent");
+
+    await expect(agent.send("go")).resolves.toBeUndefined();
+
+    const result = events.find((e) => e.type === "tool_result") as {
+      toolResult?: { output?: string; isError?: boolean };
+    };
+    expect(result?.toolResult?.output ?? "").toContain("Unknown tool: mcp__files__read");
+    expect(result?.toolResult?.isError).toBe(true);
+    // The turn CONTINUED: the model was called a SECOND time with the failure in hand (the loop
+    // did not abort on a tool that no longer exists).
+    expect(seenDefinitions.length).toBe(2);
+    // …and the next turn is not offered the tool any more.
+    expect(seenDefinitions[1]).not.toContain("mcp__files__read");
+  });
+
+  it("advertises ONLY what the session allows — and picks up a change on the NEXT turn", async () => {
+    // The per-session scope is read at every turn (this is what makes "switch it off and the
+    // session stops using it" true without reconnecting anything).
+    const tools: Tool[] = [
+      makeTool("Read"),
+      makeTool("Shell"),
+      makeTool("mcp__files__read"),
+      makeTool("mcp__git__log"),
+    ];
+    let scope: ToolScope | undefined = { mcp: ["files"], off: [] };
+    const registry = new ToolRegistry(tools);
+    const seen: string[][] = [];
+    const factory: LLMProviderFactory = {
+      create: () => ({
+        protocol: "chat" as const,
+        async *stream(_m: LLMMessage[], _s?: AbortSignal, defs?: ToolDefinition[]) {
+          seen.push((defs ?? []).map((d) => d.name));
+          yield { type: "text", content: "ok" } as StreamChunk;
+        },
+      }),
+    };
+    const agent = new Agent({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: factory,
+      tools: registry,
+      history: new InMemoryChatHistory(),
+      events: new InMemoryEventBus<AgentEvent>(),
+      systemPrompt: new DefaultSystemPromptBuilder(
+        (m) => toolDefinitionsForMode(registry.getAll(), m),
+        () => "/w",
+      ),
+      toolScope: () => scope,
+    });
+    agent.setMode("agent");
+
+    await agent.send("one");
+    expect(seen[0].sort()).toEqual(["Read", "Shell", "mcp__files__read"]); // git is off
+
+    // The user switches `git` on and `Shell` off: the SAME agent, no restart.
+    scope = { mcp: ["files", "git"], off: ["Shell"] };
+    await agent.send("two");
+    expect(seen[1].sort()).toEqual(["Read", "mcp__files__read", "mcp__git__log"]);
+
+    // …and a session with NO scope declared keeps everything (a conversation from before this).
+    scope = undefined;
+    await agent.send("three");
+    expect(seen[2].sort()).toEqual(["Read", "Shell", "mcp__files__read", "mcp__git__log"]);
+  });
 
   it("advertises the SAME tool set in both modes; Analyze tags Shell read-only and writers as previews", async () => {
     // Built as the REAL tools declare themselves: the notes come from the declarations

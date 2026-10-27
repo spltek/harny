@@ -4,6 +4,7 @@ import type { FileSystem } from "../tools/file-system";
 import type { ChatMessage } from "../history/types";
 import { isThinkingLevel } from "../config/types";
 import { clampLoopGuardOverrides, normalizeLoopGuardSensitivity, type LoopGuardOptions } from "../agent/loop-guard";
+import { normalizeToolScope } from "../tools/tool-scope";
 import { runMigrations } from "./migrations";
 import { noteDbOp } from "./store-metrics";
 import type {
@@ -99,6 +100,12 @@ export class SqliteSessionStore implements SessionStore {
     const messages = rows.map((r) => JSON.parse(String(r.data)) as ChatMessage);
     summary.messageCount = messages.length;
     return { summary, messages };
+  }
+
+  /** The session's metadata alone: no message scan (see the interface note). */
+  summary(id: string): SessionSummary | undefined {
+    const row = this.deps.db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as Row | undefined;
+    return row ? this.rowToSummary(row) : undefined;
   }
 
   /**
@@ -397,6 +404,7 @@ export class SqliteSessionStore implements SessionStore {
       ...(existing?.maxParallelSubAgents !== undefined ? { maxParallelSubAgents: existing.maxParallelSubAgents } : {}),
       ...(existing?.mode ? { mode: existing.mode } : {}),
       ...(existing?.parallel !== undefined ? { parallel: existing.parallel } : {}),
+      ...(existing?.toolScope ? { toolScope: existing.toolScope } : {}),
       ...(existing?.loopGuard ? { loopGuard: existing.loopGuard } : {}),
       ...(existing?.loopGuardResponse ? { loopGuardResponse: existing.loopGuardResponse } : {}),
       ...(existing?.loopGuardParams ? { loopGuardParams: existing.loopGuardParams } : {}),
@@ -437,6 +445,9 @@ export class SqliteSessionStore implements SessionStore {
     if ("maxParallelSubAgents" in patch) out.maxParallelSubAgents = toMaxParallelSubAgents(patch.maxParallelSubAgents);
     if ("mode" in patch) out.mode = patch.mode === "agent" || patch.mode === "analyze" ? patch.mode : undefined;
     if ("parallel" in patch) out.parallel = patch.parallel === true ? true : undefined;
+    // Normalized on the way IN, so junk never reaches the column and an equal scope stays
+    // byte-identical (see normalizeToolScope: trimmed, deduplicated, order-preserving).
+    if ("toolScope" in patch) out.toolScope = normalizeToolScope(patch.toolScope);
     if ("loopGuard" in patch) out.loopGuard = normalizeLoopGuardSensitivity(patch.loopGuard);
     if ("loopGuardResponse" in patch) out.loopGuardResponse = patch.loopGuardResponse === true ? true : undefined;
     if ("loopGuardParams" in patch) out.loopGuardParams = clampLoopGuardOverrides(patch.loopGuardParams);
@@ -452,8 +463,8 @@ export class SqliteSessionStore implements SessionStore {
            model, model_provider, thinking_level, context_window, compaction_threshold_percent,
            compaction_target_percent,
            context_tokens, output_tokens, temperature, presence_penalty, frequency_penalty,
-           top_p, sampler, max_parallel_sub_agents, mode, parallel, loop_guard, loop_guard_response, loop_guard_params
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           top_p, sampler, max_parallel_sub_agents, mode, parallel, tool_scope, loop_guard, loop_guard_response, loop_guard_params
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            name=excluded.name, folder=excluded.folder, created_at=excluded.created_at,
            updated_at=excluded.updated_at, message_count=excluded.message_count,
@@ -465,7 +476,7 @@ export class SqliteSessionStore implements SessionStore {
            temperature=excluded.temperature, presence_penalty=excluded.presence_penalty,
            frequency_penalty=excluded.frequency_penalty, top_p=excluded.top_p,
            sampler=excluded.sampler, max_parallel_sub_agents=excluded.max_parallel_sub_agents,
-           mode=excluded.mode, parallel=excluded.parallel,
+           mode=excluded.mode, parallel=excluded.parallel, tool_scope=excluded.tool_scope,
            loop_guard=excluded.loop_guard, loop_guard_response=excluded.loop_guard_response,
            loop_guard_params=excluded.loop_guard_params`,
       )
@@ -492,6 +503,7 @@ export class SqliteSessionStore implements SessionStore {
         s.maxParallelSubAgents ?? null,
         s.mode ?? null,
         s.parallel === true ? 1 : null,
+        s.toolScope ? JSON.stringify(s.toolScope) : null,
         s.loopGuard ?? null,
         s.loopGuardResponse === true ? 1 : null,
         s.loopGuardParams ? JSON.stringify(s.loopGuardParams) : null,
@@ -541,6 +553,7 @@ export class SqliteSessionStore implements SessionStore {
       ...(cap !== undefined ? { maxParallelSubAgents: cap } : {}),
       ...(r.mode === "analyze" || r.mode === "agent" ? { mode: r.mode } : {}),
       ...(r.parallel === 1 ? { parallel: true } : {}),
+      ...(normalizeToolScope(r.tool_scope) ? { toolScope: normalizeToolScope(r.tool_scope) } : {}),
       ...(loopGuard ? { loopGuard } : {}),
       ...(r.loop_guard_response === 1 ? { loopGuardResponse: true } : {}),
       ...(loopGuardParams ? { loopGuardParams } : {}),

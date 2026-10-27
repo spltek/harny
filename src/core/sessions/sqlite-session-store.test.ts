@@ -197,6 +197,7 @@ describe("SqliteSessionStore — per-session settings", () => {
       loopGuardParams: { maxNudges: 3 },
       mode: "agent",
       parallel: true,
+      toolScope: { mcp: ["files"], off: ["Shell"] },
       folder: "/proj/a",
     });
     store.saveMessages("s1", [msg("user", "hello")]);
@@ -220,8 +221,35 @@ describe("SqliteSessionStore — per-session settings", () => {
       loopGuardParams: { maxNudges: 3 },
       mode: "agent",
       parallel: true,
+      toolScope: { mcp: ["files"], off: ["Shell"] },
       folder: "/proj/a",
     });
+  });
+
+  it("keeps 'no scope' and 'empty scope' apart, across a save and a reload", () => {
+    // The difference is the whole feature: no scope = a session from before it existed (nothing
+    // restricted); empty = the user decided this conversation uses no MCP server at all. Storing
+    // them the same way would silently re-enable tools the user switched off.
+    const { store } = makeStore();
+    const a = store.create("fresh")!;
+    const loadedA = store.load(a.id).summary;
+    expect("toolScope" in loadedA).toBe(false); // never decided: not stored at all
+
+    store.saveSettings(a.id, { toolScope: { mcp: [], off: [] } });
+    const b = store.load(a.id).summary;
+    expect(b.toolScope).toEqual({ mcp: [], off: [] }); // decided "nothing", and it survived
+
+    // …and "decided nothing" survives a later save that does not mention the scope at all
+    // (carrySummary must not drop it).
+    store.saveSettings(a.id, { thinkingLevel: "low" });
+    expect(store.load(a.id).summary.toolScope).toEqual({ mcp: [], off: [] });
+  });
+
+  it("normalizes junk on the way in, so the column never holds it", () => {
+    const { store } = makeStore();
+    const s = store.create("junk")!;
+    store.saveSettings(s.id, { toolScope: { mcp: [" a ", "a", 7], off: [" Shell "] } as never });
+    expect(store.load(s.id).summary.toolScope).toEqual({ mcp: ["a"], off: ["Shell"] });
   });
 
   it("loopGuard: off round-trips, and a legacy 'normal' row loads as 'medium'", () => {

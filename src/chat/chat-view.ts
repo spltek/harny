@@ -1,4 +1,5 @@
 import type { ExtensionContext, WebviewView, WebviewViewProvider, WebviewViewResolveContext } from "vscode";
+import { normalizeToolScope } from "../core/tools/tool-scope";
 import { Uri, window, workspace } from "vscode";
 import * as fs from "fs";
 import type {
@@ -938,6 +939,12 @@ export class ChatViewProvider implements WebviewViewProvider {
     this.view?.webview.postMessage({ type: "openFind" });
   }
 
+  /** Push WHAT THE ACTIVE SESSION may use, so the panel and the model agree. */
+  private pushToolScope(): void {
+    const rt = this.activeRuntime();
+    this.view?.webview.postMessage({ type: "toolScope", sessionId: rt?.sessionId, scope: rt?.toolScope });
+  }
+
   /** Rebuild the whole view (host-side refresh after any change). */
   refresh(): void {
     if (!this.view) return;
@@ -1380,6 +1387,20 @@ export class ChatViewProvider implements WebviewViewProvider {
           break;
         }
         this.setSessionMode(rt, msg.mode);
+        break;
+      }
+
+      case "setToolScope": {
+        // PER-SESSION tool scope: which MCP servers this conversation uses and which built-in tools
+        // it turned off. Written on the session (not the global config: installing a server is a
+        // machine fact, USING it is this conversation's decision) and read live by the agent, so
+        // the next turn already sees it — no reconnect, no restart.
+        const rt = this.activeRuntime();
+        if (!rt) break;
+        const scope = normalizeToolScope(msg.scope);
+        rt.toolScope = scope;
+        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { toolScope: scope }), false);
+        this.pushToolScope();
         break;
       }
 

@@ -33,6 +33,7 @@ import {
   VscodeDiagnosticsProvider,
 } from "./core/tools";
 import { toolDefinitionsForMode } from "./core/tools/mode-policy";
+import type { ToolScope } from "./core/tools/tool-scope";
 import { SkillRegistry, defaultSkillRoots } from "./core/skills";
 import { McpManager } from "./core/mcp";
 import { ChatViewProvider } from "./chat/chat-view";
@@ -193,6 +194,25 @@ export async function activate(context: ExtensionContext) {
   let subAgentTurnBoundary:
     ((history: ChatHistory, sessionId: string, signal?: AbortSignal) => Promise<boolean>) | undefined;
 
+  /**
+   * What ONE session may use, read LIVE at every turn (see AgentDeps.toolScope).
+   *
+   * Two facts meet here: the session's own decision (persisted with it) and the machines's reality
+   * (which servers are installed). Names that no longer exist are dropped on READ, so a stale
+   * decision can never hide a NEW tool and never resurrect a dead one — and nothing is written
+   * here: the reconcile happens when the session is opened, where a write is expected anyway.
+   */
+  const toolScopeFor = (sessionId: string): ToolScope | undefined => {
+    const declared = sessions.summary(sessionId)?.toolScope;
+    if (!declared) return undefined;
+    const installed = Object.keys(fileConfig.readMcpServers() ?? {});
+    return {
+      mcp: declared.mcp.filter((name) => installed.includes(name)),
+      // Built-ins are filtered against the registry: a tool this build dropped must not linger.
+      off: declared.off.filter((name) => tools.getAll().some((t) => t.name === name)),
+    };
+  };
+
   const createAgent = (history: ChatHistory, sessionId: string): ChatController => {
     // One sub-agent runner per session: it owns the ephemeral sub-agent
     // histories and cascades Stop to any in-flight sub-agent.
@@ -204,6 +224,9 @@ export async function activate(context: ExtensionContext) {
       // The SAME skills catalog as the orchestrator: a sub-agent activates a skill on
       // its own when the task matches one (progressive disclosure).
       skills: () => skills.list(),
+      // A sub-agent inherits the session's scope: a tool switched off must be off for the work it
+      // delegates too, or the restriction is cosmetic.
+      toolScope: () => toolScopeFor(sessionId),
       log: (m) => infoLog(`[agent] ${m}`),
       // Sub-agents run on THIS session's model, so they size their own masking and
       // tool-output caps on the same window (see SubAgentRunnerDeps.contextBudget).
@@ -238,6 +261,9 @@ export async function activate(context: ExtensionContext) {
       // own overflow check against it, without knowing which model it serves.
       contextBudget: () => sessionBudget?.(sessionId) ?? 0,
       cwd,
+      // Which tools THIS session may use (MCP servers on, built-ins off): read per turn, so a
+      // toggle takes effect on the next one. Sub-agents inherit it (see SubAgentRunnerDeps).
+      toolScope: () => toolScopeFor(sessionId),
       // Per-session identity: stateful tools (TodoWrite) keep separate state.
       ownerId: sessionId,
     });

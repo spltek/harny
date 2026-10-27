@@ -1463,6 +1463,27 @@ describe("ChatViewProvider", () => {
     );
   });
 
+  it("setToolScope persists the SESSION's scope (not the config) and echoes it back", async () => {
+    // Installing an MCP server is a machine fact (config.json); USING it is this conversation's
+    // decision, so the write lands on the session row and the panel gets the host's truth back.
+    const { provider, registry, store } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+
+    await handler({ type: "setToolScope", scope: { mcp: ["files"], off: ["Shell"] } });
+
+    expect(rt.toolScope).toEqual({ mcp: ["files"], off: ["Shell"] });
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", { toolScope: { mcp: ["files"], off: ["Shell"] } });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "toolScope", scope: { mcp: ["files"], off: ["Shell"] } }),
+    );
+
+    // Junk is normalized on the way in — the agent must never read a malformed scope.
+    await handler({ type: "setToolScope", scope: { mcp: [" files "], off: "nope" } });
+    expect(rt.toolScope).toEqual({ mcp: ["files"], off: [] });
+  });
+
   it("the ⌘F keybinding's command opens find INSIDE the panel (the chord is ours, not VS Code's)", () => {
     // Inside a webview the key also reaches VS Code's own find, which opens its widget and takes
     // the focus out of the panel. The contributed keybinding (scoped to our view) runs this

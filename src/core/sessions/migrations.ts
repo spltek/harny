@@ -92,6 +92,15 @@ const MIGRATIONS: readonly Migration[] = [
     // rule at the top of this file).
     up: (db) => db.exec("ALTER TABLE sessions ADD COLUMN compaction_target_percent INTEGER; "),
   },
+  {
+    version: 3,
+    name: "per-session tool scope",
+    // WHICH MCP servers this conversation uses, and which built-in tools it turned off — as ONE
+    // JSON column rather than a table: it is a small value owned by the session, read whole or not
+    // at all, and one column means one migration instead of one per list. NULL = a session written
+    // before this existed, which must keep behaving exactly as it did (see normalizeToolScope).
+    up: (db) => db.exec("ALTER TABLE sessions ADD COLUMN tool_scope TEXT; "),
+  },
 ];
 
 /** The version this build expects after running every migration. */

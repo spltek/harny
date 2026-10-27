@@ -6,6 +6,7 @@ import { InMemoryEventBus } from "../events/in-memory-event-bus";
 import type { LLMProviderFactory } from "../llm/types";
 import type { ToolRegistry, ToolResult } from "../tools";
 import { toolDefinitionsForMode, type ChatMode } from "../tools/mode-policy";
+import type { ToolScope } from "../tools/tool-scope";
 import type { LoopGuardOptions } from "./loop-guard";
 import { Agent } from "./agent";
 import type { ContextOverflowEvidence } from "./agent";
@@ -29,6 +30,9 @@ export interface SubAgentRunnerDeps {
   config: ConfigProvider;
   llmFactory: LLMProviderFactory;
   tools: ToolRegistry;
+  /** The session's tool scope, INHERITED: a tool switched off in the session must be off for the
+   *  work it delegates too, or the restriction is cosmetic. */
+  toolScope?: () => ToolScope | undefined;
   cwd: () => string;
   /** Installed Agent Skills (catalog only): a sub-agent gets the SAME catalog as the
    * orchestrator, so it can activate a skill on its own when the task matches one. The
@@ -140,7 +144,13 @@ export class SubAgentRunner {
     // orchestrator: the loop guard + Stop are the safeguards, not a turn cap.
     const maxTurns = this.deps.maxTurns;
     const systemPrompt = new SubAgentSystemPromptBuilder(
-      (m) => toolDefinitionsForMode(this.deps.tools.getAll(), m, { exclude: [DELEGATE_TOOL_NAME] }),
+      (m) =>
+        toolDefinitionsForMode(this.deps.tools.getAll(), m, {
+          exclude: [DELEGATE_TOOL_NAME],
+          // A sub-agent inherits the SESSION's scope: without this, "this tool is off" would be a
+          // lie the moment the model delegates the work.
+          scope: this.deps.toolScope?.(),
+        }),
       this.deps.cwd,
       { role: spec.role, access: spec.access, resources: spec.resources, turnBudget: maxTurns },
       this.deps.skills,
@@ -160,6 +170,7 @@ export class SubAgentRunner {
       config: this.deps.config,
       llmFactory: this.deps.llmFactory,
       tools: this.deps.tools,
+      toolScope: this.deps.toolScope,
       history,
       events,
       systemPrompt,

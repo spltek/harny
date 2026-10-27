@@ -1,3 +1,4 @@
+import type { ToolScope } from "../core/tools/tool-scope";
 import type { ChatController } from "../core/agent/chat-controller";
 import type { ChatHistory } from "../core/history/chat-history";
 import { PersistentChatHistory } from "../core/history/persistent-chat-history";
@@ -55,6 +56,9 @@ export interface SessionRuntime {
   mode?: "analyze" | "agent";
   /** Per-session Parallel (sub-agents) switch (persisted; absent = OFF). */
   parallel?: boolean;
+  /** Which MCP servers and built-in tools THIS session may use (persisted; absent = nothing
+   *  restricted, i.e. a conversation from before per-session scopes existed). */
+  toolScope?: ToolScope;
   /** Current context tokens in use (fill metric). */
   contextTokens?: number;
   /** Input tokens served from the provider's prompt cache (informational). */
@@ -141,6 +145,9 @@ export class SessionRegistry {
     rt.contextTokens = loaded.summary.contextTokens;
     rt.mode = loaded.summary.mode;
     rt.parallel = loaded.summary.parallel;
+    rt.toolScope = loaded.summary.toolScope;
+    // Names that no longer exist are filtered on READ too (see the host's toolScopeFor), so a
+    // stale decision can never hide a new tool or resurrect a dead one.
     // Sync the fresh agent immediately (it defaults to analyze / no delegation),
     // so its state matches the restored session even before the first send.
     rt.agent.setMode(rt.mode ?? "analyze");
