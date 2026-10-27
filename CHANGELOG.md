@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The MCP tools popover is its own module** (`webview/mcp-tools-popover.ts`, 336 lines, 96.5% covered): the draft, the
+  filter, the counts, the two controls per tool (the session's checkbox and the Analyze shield with its inherited/inert
+  states) and the Save as INTENT. `busy` is a **getter**, not a boolean: the popover outlives the moment it was built, and
+  the Save is the one button whose job is to refuse while a run is in flight — a captured flag would go stale exactly then.
+  Writing the tests was worth it twice: a transcription slip had left `syncShield()` uncalled (the shields existed with no
+  class, so they were invisible AND unfindable), and a line-based edit had silently deleted the assertion on the session's
+  intent — both found by a mutation that did NOT bite. `view.ts` is now 6.869 lines (−311 in this phase; 7.512 → 6.869
+  across the three extractions).
+
 - **The MCP card is its own module** (`webview/mcp-card.ts`, 204 lines, **100% covered**): one row per installed server, the
   SESSION switch, the `(N/M tools)` button and the status line, with the redraw signature that keeps the rows from being
   rebuilt under the cursor. `view.ts` keeps the tools popover (a draft with its own state), the editor modal and the

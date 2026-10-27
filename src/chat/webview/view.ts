@@ -21,6 +21,7 @@ import { icon, toolIcon, todoStatusIcon, fileBadgeIcon } from "../icons";
 import { setFold, toggleMarkup } from "./fold";
 import { createFind } from "./find";
 import { createMcpCard } from "./mcp-card";
+import { createMcpToolsPopover } from "./mcp-tools-popover";
 // The SAME boundary the core uses to decide what the model receives: importing it
 // (it is pure and dependency-free) is what keeps the transcript's marker and the
 // request from ever disagreeing about where the window starts.
@@ -4097,6 +4098,10 @@ type McpEditorServer = {
   analyze?: "trusted" | "read-only";
   excludeTools?: string[];
 };
+/** What the ACTIVE session may use, as the host last reported it. The card reads it (the switches
+ *  are this session's), and `applyToolScope` is the only writer. */
+let sessionToolScope: { mcp: string[]; off: string[] } = { mcp: [], off: [] };
+
 let mcpEditorServers: Record<string, McpEditorServer> = {};
 let mcpEditorSelected = "";
 
@@ -4459,7 +4464,7 @@ const mcpCardUi = createMcpCard({
   card: mcpCard,
   list: mcpList,
   post: (message) => vscode.postMessage(message as never),
-  openTools: (anchor, server, tools) => showMcpToolsPopover(anchor, server, tools),
+  openTools: (anchor, server, tools) => mcpTools.show(anchor, server, tools),
 });
 
 /** The card's ONE entry point: it remembers the payload, so a SCOPE-only change can redraw the same
@@ -4469,336 +4474,26 @@ function renderMcpCard(mcp: ConfigState["mcp"] | undefined): void {
   mcpCardUi.render(mcp, sessionToolScope, streamingActive);
 }
 
-/** The tools panel: EVERY tool a server advertises, each with the checkbox that
- * decides whether the MODEL sees it (checked = exposed, the DEFAULT).
- *
- * The change is a DRAFT until Save — same rule as every other editor in the panel:
- * the host persists it on that server's config entry (`excludeTools`) and
- * RECONNECTS, which is what actually rebuilds the tool list. A checkbox that saved
- * on click would respawn an MCP process per click.
- */
-type McpToolsPanel = {
-  server: string;
-  tools: { name: string; description?: string; excluded?: boolean; readOnly?: boolean; analyzeFlag?: boolean }[];
-  /** The excluded names being EDITED; what is SAVED lives on `tools[].excluded`. */
-  draft: Set<string>;
-  /** The names being EDITED in the per-TOOL Analyze list (declared read-only). Its polarity is
-   * the opposite of `draft` — an INCLUDE list — because Analyze is denied by default. */
-  analyzeDraft: Set<string>;
-};
-let mcpToolsPanel: McpToolsPanel | null = null;
-/** What the ACTIVE session may use, as the host last reported it. The panel edits this value, so
- *  a Save can merge one server's decision without inventing the rest of the scope. */
-let sessionToolScope: { mcp: string[]; off: string[] } = { mcp: [], off: [] };
-let mcpToolsFilter = "";
-let mcpToolsListEl: HTMLDivElement | null = null;
-let mcpToolsCountEl: HTMLSpanElement | null = null;
-let mcpToolsSaveEl: HTMLButtonElement | null = null;
-let mcpToolsStatusEl: HTMLSpanElement | null = null;
-
-function hideMcpToolsPopover(): void {
-  mcpToolsPopover.classList.add("hidden");
-  mcpToolsPopover.dataset.server = "";
-  mcpToolsPanel = null;
-  mcpToolsFilter = "";
-  mcpToolsListEl = null;
-  mcpToolsCountEl = null;
-  mcpToolsSaveEl = null;
-  mcpToolsStatusEl = null;
-}
-
-/** What the server currently hides (the state every draft is compared to). */
 /**
- * The tools of ONE server this session has switched OFF.
+ * The tools popover lives in `./mcp-tools-popover` now: the draft, the filter, the counts, the two
+ * controls per tool (the session's checkbox and the Analyze shield) and the Save as INTENT.
  *
- * Read from the SESSION's scope (`off` holds `mcp__server__tool` names), not from the config: the
- * checkboxes are a per-conversation decision now, and a global list would make the panel show a
- * state the model does not have.
+ * `busy` is passed as a GETTER: the popover outlives the moment it was built — a run can start
+ * underneath it, and a captured boolean would go stale exactly when it matters.
  */
-function mcpSavedExclusions(tools: { name: string; off?: boolean }[]): Set<string> {
-  // The HOST says which tools this session has off (it owns how a name is spelled on the wire). The
-  // panel used to rebuild `mcp__server__tool` prefixes to compare them — two spellings of the same
-  // truth, and the reason a server named `files-extra` could never be switched on.
-  return new Set(tools.filter((t) => t.off).map((t) => t.name));
-}
-
-/** What the server currently declares read-only ONE BY ONE (not the inherited declaration). */
-function mcpSavedAnalyzeFlags(tools: { name: string; analyzeFlag?: boolean }[]): Set<string> {
-  return new Set(tools.filter((t) => t.analyzeFlag).map((t) => t.name));
-}
-
-/** Two sets differ? Used for both drafts (the Save button listens to this). */
-function setsDiffer(a: Set<string>, b: Set<string>): boolean {
-  if (a.size !== b.size) return true;
-  for (const name of a) if (!b.has(name)) return true;
-  return false;
-}
-
-function mcpToolsDirty(): boolean {
-  const panel = mcpToolsPanel;
-  if (!panel) return false;
-  return (
-    setsDiffer(panel.draft, mcpSavedExclusions(panel.tools)) ||
-    setsDiffer(panel.analyzeDraft, mcpSavedAnalyzeFlags(panel.tools))
-  );
-}
-
-/** The counts and the Save button — the only things a toggle changes besides its row. */
-function updateMcpToolsHead(): void {
-  const panel = mcpToolsPanel;
-  if (!panel) return;
-  if (mcpToolsCountEl) {
-    const total = panel.tools.length;
-    const enabled = total - panel.draft.size;
-    const readOnly = panel.analyzeDraft.size;
-    mcpToolsCountEl.textContent =
-      `${enabled} of ${total} enabled` + (readOnly > 0 ? ` · ${readOnly} read-only in Analyze` : "");
-  }
-  if (mcpToolsSaveEl) mcpToolsSaveEl.disabled = !mcpToolsDirty();
-}
-
-/** Rows only: rebuilt when the FILTER changes, so typing never loses the caret (a
- * full re-render would replace the input the user is typing into). */
-function renderMcpToolRows(): void {
-  const panel = mcpToolsPanel;
-  const list = mcpToolsListEl;
-  if (!panel || !list) return;
-  list.innerHTML = "";
-  const filter = mcpToolsFilter.trim().toLowerCase();
-  const shown = filter
-    ? panel.tools.filter(
-        (t) => t.name.toLowerCase().includes(filter) || (t.description ?? "").toLowerCase().includes(filter),
-      )
-    : panel.tools;
-  if (shown.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "mcp-pop-empty";
-    empty.textContent = panel.tools.length === 0 ? "(no tools)" : "No tool matches the filter.";
-    list.appendChild(empty);
-    return;
-  }
-  for (const t of shown) {
-    const row = document.createElement("label");
-    row.className = "mcp-pop-row" + (panel.draft.has(t.name) ? " off" : "");
-    row.title = panel.draft.has(t.name)
-      ? "Excluded: the model does not see this tool"
-      : "Included: the model can call this tool";
-    const box = document.createElement("input");
-    box.type = "checkbox";
-    box.checked = !panel.draft.has(t.name);
-    box.setAttribute("aria-label", t.name);
-    box.addEventListener("change", () => {
-      if (box.checked) panel.draft.delete(t.name);
-      else panel.draft.add(t.name);
-      row.classList.toggle("off", !box.checked);
-      row.title = box.checked ? "Included: the model can call this tool" : "Excluded: the model does not see this tool";
-      updateMcpToolsHead();
-    });
-    row.appendChild(box);
-    const text = document.createElement("span");
-    text.className = "mcp-pop-text";
-    const name = document.createElement("span");
-    name.className = "mcp-pop-name";
-    name.textContent = t.name;
-    text.appendChild(name);
-    if (t.description) {
-      const desc = document.createElement("span");
-      desc.className = "mcp-pop-desc";
-      desc.textContent = t.description;
-      text.appendChild(desc);
-    }
-    row.appendChild(text);
-    // The second control: this tool runs in ANALYZE (declared read-only by YOU). It is the
-    // narrowest statement available, and the only way to allow one safe tool of a server that is
-    // otherwise refused there. When the server's own declaration already allows it, the shield is
-    // marked as inherited and says so instead of pretending a per-tool rule did it.
-    const shield = document.createElement("button");
-    shield.type = "button";
-    const inherited = t.readOnly === true && t.analyzeFlag !== true;
-    /** Where the shield stands right now. A tool the MODEL cannot see is not registered at all,
-     * so its Analyze flag is inert: saying "read-only in Analyze" there would be a lie. */
-    const syncShield = (): void => {
-      const excluded = panel.draft.has(t.name);
-      const on = !excluded && (panel.analyzeDraft.has(t.name) || inherited);
-      shield.className =
-        "mcp-pop-shield" + (on ? " on" : "") + (inherited ? " inherited" : "") + (excluded ? " inert" : "");
-      shield.textContent = on ? "🛡" : "·";
-      shield.setAttribute("aria-pressed", String(on));
-      shield.setAttribute("aria-label", `${t.name}: ${on ? "read-only" : "not allowed"} in Analyze`);
-      shield.disabled = inherited || excluded;
-      shield.title = excluded
-        ? "The model does not see this tool, so there is nothing to allow in Analyze — include it first"
-        : inherited
-          ? "Allowed by the server's own Analyze declaration — every tool of it runs in Analyze"
-          : panel.analyzeDraft.has(t.name)
-            ? "Read-only in Analyze because YOU said so — click to take it back"
-            : "Does NOT run in Analyze. Click to declare this tool read-only there";
-    };
-    shield.addEventListener("click", (e) => {
-      e.preventDefault(); // the row is a <label>: do not forward the click to the checkbox
-      e.stopPropagation();
-      if (panel.analyzeDraft.has(t.name)) panel.analyzeDraft.delete(t.name);
-      else panel.analyzeDraft.add(t.name);
-      syncShield();
-      updateMcpToolsHead();
-    });
-    // The exposure toggle changes whether the shield means anything at all.
-    box.addEventListener("change", syncShield);
-    syncShield();
-    row.appendChild(shield);
-    list.appendChild(row);
-  }
-}
-
-function showMcpToolsPopover(
-  anchor: HTMLElement,
-  server: string,
-  tools: {
-    name: string;
-    description?: string;
-    off?: boolean;
-    excluded?: boolean;
-    readOnly?: boolean;
-    analyzeFlag?: boolean;
-  }[],
-): void {
-  mcpToolsPanel = {
-    server,
-    tools,
-    draft: mcpSavedExclusions(tools),
-    analyzeDraft: mcpSavedAnalyzeFlags(tools),
-  };
-  mcpToolsFilter = "";
-  mcpToolsPopover.innerHTML = "";
-
-  const head = document.createElement("div");
-  head.className = "mcp-pop-head";
-  const title = document.createElement("span");
-  title.className = "mcp-pop-title";
-  title.textContent = `🧩 ${server}`;
-  head.appendChild(title);
-  mcpToolsCountEl = document.createElement("span");
-  mcpToolsCountEl.className = "mcp-pop-count";
-  head.appendChild(mcpToolsCountEl);
-  mcpToolsPopover.appendChild(head);
-
-  // Only worth a filter when the list is long enough to scroll: a two-tool server
-  // does not need a search box.
-  if (tools.length > 8) {
-    const filter = document.createElement("input");
-    filter.type = "search";
-    filter.className = "mcp-pop-filter";
-    filter.placeholder = "Filter tools";
-    filter.spellcheck = false;
-    filter.setAttribute("aria-label", "Filter tools");
-    filter.addEventListener("input", () => {
-      mcpToolsFilter = filter.value;
-      renderMcpToolRows();
-    });
-    mcpToolsPopover.appendChild(filter);
-  }
-
-  mcpToolsListEl = document.createElement("div");
-  mcpToolsListEl.className = "mcp-pop-list";
-  mcpToolsPopover.appendChild(mcpToolsListEl);
-  renderMcpToolRows();
-
-  const actions = document.createElement("div");
-  actions.className = "mcp-pop-actions";
-  mcpToolsStatusEl = document.createElement("span");
-  mcpToolsStatusEl.className = "mcp-pop-status";
-  actions.appendChild(mcpToolsStatusEl);
-  const all = document.createElement("button");
-  all.type = "button";
-  all.className = "secondary mcp-pop-mini";
-  all.textContent = "All";
-  all.title = "Include every tool of this server";
-  all.addEventListener("click", () => {
-    if (!mcpToolsPanel) return;
-    mcpToolsPanel.draft.clear();
-    renderMcpToolRows();
-    updateMcpToolsHead();
-  });
-  const none = document.createElement("button");
-  none.type = "button";
-  none.className = "secondary mcp-pop-mini";
-  none.textContent = "None";
-  none.title = "Expose no tool of this server";
-  none.addEventListener("click", () => {
-    if (!mcpToolsPanel) return;
-    mcpToolsPanel.draft = new Set(mcpToolsPanel.tools.map((t) => t.name));
-    renderMcpToolRows();
-    updateMcpToolsHead();
-  });
-  const cancel = document.createElement("button");
-  cancel.type = "button";
-  cancel.className = "secondary mcp-pop-mini";
-  cancel.textContent = "Cancel";
-  cancel.addEventListener("click", () => hideMcpToolsPopover());
-  mcpToolsSaveEl = document.createElement("button");
-  mcpToolsSaveEl.type = "button";
-  mcpToolsSaveEl.className = "mcp-pop-mini";
-  mcpToolsSaveEl.textContent = "Save";
-  mcpToolsSaveEl.addEventListener("click", () => {
-    const panel = mcpToolsPanel;
-    if (!panel) return;
-    // Reconnecting mid-run would swap the tool list under a live turn (and kill any
-    // in-flight MCP call): the same reason the server's name toggle is locked.
-    if (streamingActive) {
-      if (mcpToolsStatusEl) {
-        mcpToolsStatusEl.textContent = "Stop the run first";
-        mcpToolsStatusEl.className = "mcp-pop-status err";
-      }
-      return;
-    }
-    if (mcpToolsStatusEl) {
-      mcpToolsStatusEl.textContent = "Saving…";
-      mcpToolsStatusEl.className = "mcp-pop-status";
-    }
-    vscode.postMessage({
-      type: "setMcpToolExclusions",
-      server: panel.server,
-      exclude: [...panel.draft],
-      // The opposite polarity rides along: the tools declared read-only in Analyze.
-      analyze: [...panel.analyzeDraft],
-    });
-    // …and this SESSION's selection for the same server, sent as INTENT: the names it wants
-    // ENABLED. Turning that into scope names (sanitized prefix, merge with every other decision)
-    // is the host's job — one spelling of the rule, on the side that owns it.
-    vscode.postMessage({
-      type: "setMcpToolSelection",
-      server: panel.server,
-      enabled: panel.tools.filter((t) => !panel.draft.has(t.name)).map((t) => t.name),
-    });
-  });
-  actions.appendChild(all);
-  actions.appendChild(none);
-  actions.appendChild(cancel);
-  actions.appendChild(mcpToolsSaveEl);
-  mcpToolsPopover.appendChild(actions);
-  updateMcpToolsHead();
-
-  mcpToolsPopover.dataset.server = server;
-  mcpToolsPopover.classList.remove("hidden");
-  // Anchor below-left of the key, clamped to the viewport.
-  const rect = anchor.getBoundingClientRect();
-  const w = mcpToolsPopover.offsetWidth;
-  const h = mcpToolsPopover.offsetHeight;
-  let left = rect.left;
-  let top = rect.bottom + 4;
-  if (left + w > window.innerWidth - 8) left = window.innerWidth - w - 8;
-  if (top + h > window.innerHeight - 8) top = rect.top - h - 4;
-  mcpToolsPopover.style.left = Math.max(8, left) + "px";
-  mcpToolsPopover.style.top = Math.max(8, top) + "px";
-}
+const mcpTools = createMcpToolsPopover({
+  popover: mcpToolsPopover,
+  post: (message) => vscode.postMessage(message as never),
+  busy: () => streamingActive,
+});
 
 document.addEventListener("click", (e) => {
   if (mcpToolsPopover.classList.contains("hidden")) return;
   if (e.target instanceof Node && mcpToolsPopover.contains(e.target)) return;
-  hideMcpToolsPopover();
+  mcpTools.hide();
 });
 window.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") hideMcpToolsPopover();
+  if (e.key === "Escape") mcpTools.hide();
 });
 
 // ── Slash menu: skill autocomplete (only when the prompt STARTS with "/") ──
@@ -6614,14 +6309,8 @@ window.addEventListener("message", (e) => {
       else if (typeof msg.reason === "string" && msg.reason) setMcpEditorError(msg.reason);
       break;
     case "mcpToolExclusionsSaved":
-      // The tools panel's Save. On success the host has already re-pushed the statuses
-      // and the config (the card re-renders with the new counts), so the panel can
-      // close; on failure it must STAY OPEN with the draft intact, or the choice is lost.
-      if (msg.ok) hideMcpToolsPopover();
-      else if (mcpToolsStatusEl) {
-        mcpToolsStatusEl.textContent = "Save failed — see Output > Harny";
-        mcpToolsStatusEl.className = "mcp-pop-status err";
-      }
+      // The tools panel's Save: success closes it, failure keeps the draft and says why.
+      mcpTools.saved(msg.ok === true);
       break;
     case "mcpTested":
       mcpTestResult.className = "mcp-io " + (msg.ok ? "ok" : "err");

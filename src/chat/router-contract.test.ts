@@ -36,6 +36,7 @@ const WEBVIEW_MODULES = [
   "./webview/view.ts",
   "./webview/pending-section.ts",
   "./webview/mcp-card.ts",
+  "./webview/mcp-tools-popover.ts",
   "./webview/find.ts",
 ];
 
