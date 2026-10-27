@@ -49,7 +49,7 @@ function setupDom(initOverrides: Record<string, unknown> = {}, savedState: Recor
     ...initOverrides,
   };
   document.body.innerHTML = `
-    <div id="session-head"><span class="toggle">▼</span><span>Sessions</span><span class="spacer"></span><button id="new-session">＋</button><button id="sessions-gear-btn">⚙</button></div>
+    <div id="session-head"><span class="toggle is-open"><svg class="toggle-chevron"></svg></span><span>Sessions</span><span class="spacer"></span><button id="new-session">＋</button><button id="sessions-gear-btn">⚙</button></div>
     <div id="session-search-row"><input id="session-search" type="search" placeholder="Search sessions" /></div>
     <div id="sessions"></div>
     <div id="tabs"></div>
@@ -70,7 +70,7 @@ function setupDom(initOverrides: Record<string, unknown> = {}, savedState: Recor
       <ul id="todo-section-list" class="todo-list"></ul>
     </div>
     <div id="pending-section" class="hidden">
-      <div id="pending-head" role="button" tabindex="0" aria-expanded="true"><span class="toggle">▼</span><span id="pending-head-text"></span></div>
+      <div id="pending-head" role="button" tabindex="0" aria-expanded="true"><span class="toggle is-open"><svg class="toggle-chevron"></svg></span><span id="pending-head-text"></span></div>
       <div id="pending-area" class="hidden"></div>
     </div>
     <div id="working-bar" class="hidden">● Working...</div>
@@ -1483,13 +1483,13 @@ describe("view webview client", () => {
     expect(blocks.length).toBe(1);
     // Thinking starts COLLAPSED (▶) and expands on click.
     expect(blocks[0].querySelector(".thinking-body")?.classList.contains("collapsed")).toBe(true);
-    expect(blocks[0].querySelector(".toggle")?.textContent).toBe("▶");
+    expect(blocks[0].querySelector(".toggle")?.classList.contains("is-open") ?? false).toBe(false);
     // Historical blocks re-rendered from the transcript are NOT live: no
     // streaming pulse, so they never keep animating.
     expect(blocks[0].classList.contains("streaming")).toBe(false);
     (blocks[0].querySelector(".thinking-header") as HTMLElement).click();
     expect(blocks[0].querySelector(".thinking-body")?.classList.contains("collapsed")).toBe(false);
-    expect(blocks[0].querySelector(".toggle")?.textContent).toBe("▼");
+    expect(blocks[0].querySelector(".toggle")?.classList.contains("is-open") ?? false).toBe(true);
     // The final textual response is the last message.
     const last = (messagesElLastContent() || "").trim();
     expect(last).toBe("fine");
@@ -2929,7 +2929,7 @@ describe("view webview client", () => {
     const thinkingAfter = document.querySelector(".thinking-body") as HTMLElement;
     const toolAfter = document.querySelector(".tool-details") as HTMLElement;
     expect(thinkingAfter.classList.contains("collapsed")).toBe(false); // still open
-    expect(thinkingAfter.parentElement!.querySelector(".toggle")?.textContent).toBe("▼");
+    expect(thinkingAfter.parentElement!.querySelector(".toggle")?.classList.contains("is-open") ?? false).toBe(true);
     expect(toolAfter.classList.contains("collapsed")).toBe(true); // never opened: stays closed
   });
 
@@ -3618,7 +3618,9 @@ describe("view webview client", () => {
     // tool details collapsed, result last.
     const thinking = document.querySelector(".thinking-block .thinking-body") as HTMLElement;
     expect(thinking.classList.contains("collapsed")).toBe(true);
-    expect((document.querySelector(".thinking-header .toggle") as HTMLElement).textContent).toBe("▶");
+    expect((document.querySelector(".thinking-header .toggle") as HTMLElement).classList.contains("is-open")).toBe(
+      false,
+    );
     const tool = document.querySelector(".msg.tool") as HTMLElement;
     expect(tool.textContent).toContain("read_file");
     expect(tool.querySelector(".tool-details")?.classList.contains("collapsed")).toBe(true);
@@ -3770,11 +3772,11 @@ describe("view webview client", () => {
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
     const body = bubble.querySelector(".subagent-body") as HTMLElement;
     expect(body.classList.contains("collapsed")).toBe(true);
-    expect(bubble.querySelector(".tool-toggle")?.textContent).toBe("▶");
+    expect(bubble.querySelector(".tool-toggle")?.classList.contains("is-open") ?? false).toBe(false);
 
     (bubble.querySelector(".subagent-header") as HTMLElement).click();
     expect(body.classList.contains("collapsed")).toBe(false);
-    expect(bubble.querySelector(".tool-toggle")?.textContent).toBe("▼");
+    expect(bubble.querySelector(".tool-toggle")?.classList.contains("is-open") ?? false).toBe(true);
   });
 
   it("marks a failed nested tool line in red", async () => {
@@ -6413,6 +6415,29 @@ describe("view webview client", () => {
     expect(input.selectionEnd).toBe(5);
   });
 
+  it("a fold shows the SAME chevron open and closed: only its class (and rotation) changes", async () => {
+    // The old triangle was swapped for another triangle: two glyphs, two shapes. A fold now holds
+    // ONE svg; the state is a class, so the drawing (and the box) never changes.
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [{ role: "assistant", content: "", thinking: "un pensiero", toolCalls: [], timestamp: 1 }],
+    });
+    const thinking = document.querySelector(".thinking-header") as HTMLElement;
+    const toggle = thinking.querySelector(".toggle") as HTMLElement;
+    const svgBefore = toggle.innerHTML;
+    expect(toggle.querySelector(".toggle-chevron")).not.toBe(null);
+    expect(toggle.classList.contains("is-open")).toBe(false);
+
+    thinking.click(); // open it
+    expect(toggle.classList.contains("is-open")).toBe(true);
+    // Byte-identical markup: the same chevron, rotated by CSS.
+    expect(toggle.innerHTML).toBe(svgBefore);
+    // …and no triangle glyph is left behind in the transcript.
+    expect(document.getElementById("messages")!.textContent).not.toContain("▶");
+    expect(document.getElementById("messages")!.textContent).not.toContain("▼");
+  });
+
   it("typing '/' at the start of the prompt shows the skill list", async () => {
     await loadView();
     hostMessage({
@@ -8062,15 +8087,15 @@ describe("main sessions list search", () => {
     const head = document.getElementById("session-head") as HTMLElement;
     const arrow = document.querySelector("#session-head .toggle") as HTMLElement;
     expect(row.classList.contains("hidden")).toBe(false);
-    expect(arrow.textContent).toBe("▼");
+    expect(arrow.classList.contains("is-open")).toBe(true);
 
     head.click(); // collapse
     expect(row.classList.contains("hidden")).toBe(true);
-    expect(arrow.textContent).toBe("▶"); // the arrow never contradicts the list
+    expect(arrow.classList.contains("is-open")).toBe(false); // the arrow never contradicts the list
 
     head.click(); // expand again
     expect(row.classList.contains("hidden")).toBe(false);
-    expect(arrow.textContent).toBe("▼");
+    expect(arrow.classList.contains("is-open")).toBe(true);
   });
 
   it("collapses the sessions section when a session is picked, and the header reopens it", async () => {
@@ -8087,12 +8112,12 @@ describe("main sessions list search", () => {
     // …and the list gets out of the way, search field and arrow included.
     expect(list.classList.contains("hidden")).toBe(true);
     expect(searchRow.classList.contains("hidden")).toBe(true);
-    expect(arrow.textContent).toBe("▶");
+    expect(arrow.classList.contains("is-open")).toBe(false);
 
     (document.getElementById("session-head") as HTMLElement).click();
     expect(list.classList.contains("hidden")).toBe(false);
     expect(searchRow.classList.contains("hidden")).toBe(false);
-    expect(arrow.textContent).toBe("▼");
+    expect(arrow.classList.contains("is-open")).toBe(true);
   });
 
   it("leaves the sessions section OPEN for a row action: only PICKING a session collapses", async () => {
@@ -8797,7 +8822,7 @@ describe("soft steering + pending bubbles (webview)", () => {
       // jsdom reports no line height: the fold exists but is NOT offered (hidden with
       // its space reserved — see the CSS contract), and it belongs to the commands.
       expect(folds.every((f) => f.classList.contains("hidden"))).toBe(true);
-      expect(folds.every((f) => f.textContent === "▶")).toBe(true);
+      expect(folds.every((f) => !f.classList.contains("is-open"))).toBe(true);
       for (const fold of folds) {
         expect(fold.parentElement?.classList.contains("pending-actions")).toBe(true);
       }
@@ -8811,7 +8836,7 @@ describe("soft steering + pending bubbles (webview)", () => {
 
       fold.click();
       expect(row.classList.contains("text-collapsed")).toBe(false);
-      expect(fold.textContent).toBe("▼");
+      expect(fold.classList.contains("is-open")).toBe(true);
       expect(fold.title).toMatch(/collapse/i);
       // It is a disclosure control: its state is announced, not just drawn.
       expect(fold.getAttribute("aria-expanded")).toBe("true");
@@ -8819,7 +8844,7 @@ describe("soft steering + pending bubbles (webview)", () => {
 
       fold.click();
       expect(row.classList.contains("text-collapsed")).toBe(true);
-      expect(fold.textContent).toBe("▶");
+      expect(fold.classList.contains("is-open")).toBe(false);
       expect(fold.title).toMatch(/whole/i);
       expect(fold.getAttribute("aria-expanded")).toBe("false");
       expect(fold.getAttribute("aria-label")).toMatch(/whole/i);
@@ -8863,11 +8888,11 @@ describe("soft steering + pending bubbles (webview)", () => {
 
       expect(area.classList.contains("hidden")).toBe(true);
       expect(head.getAttribute("aria-expanded")).toBe("false");
-      expect(head.querySelector(".toggle")?.textContent).toBe("▶");
+      expect(head.querySelector(".toggle")?.classList.contains("is-open") ?? false).toBe(false);
 
       head.click();
       expect(area.classList.contains("hidden")).toBe(false);
-      expect(head.querySelector(".toggle")?.textContent).toBe("▼");
+      expect(head.querySelector(".toggle")?.classList.contains("is-open") ?? false).toBe(true);
     });
 
     it("answers to Enter/Space too (a header that is a control, not a decoration)", async () => {
@@ -9909,7 +9934,7 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
 
     tab().click();
     expect(row.classList.contains("text-collapsed")).toBe(true);
-    expect(fold.textContent).toBe("▶");
+    expect(fold.classList.contains("is-open")).toBe(false);
     expect(tab().disabled).toBe(true);
   });
 
@@ -9934,9 +9959,9 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
     tab().click();
 
     expect(openCount()).toBe(0);
-    expect(document.querySelector(".thinking-header .toggle")?.textContent).toBe("▶");
-    expect(tool.querySelector(".tool-toggle")?.textContent).toBe("▶");
-    expect(sub.querySelector(".tool-toggle")?.textContent).toBe("▶");
+    expect(document.querySelector(".thinking-header .toggle")?.classList.contains("is-open") ?? false).toBe(false);
+    expect(tool.querySelector(".tool-toggle")?.classList.contains("is-open") ?? false).toBe(false);
+    expect(sub.querySelector(".tool-toggle")?.classList.contains("is-open") ?? false).toBe(false);
     expect(tab().disabled).toBe(true);
   });
 

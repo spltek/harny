@@ -18,6 +18,7 @@ import { clampTemperature, clampTopP, TEMPERATURE_MAX, TEMPERATURE_MIN, TEMPERAT
 // Icon/glyph artwork is FILES under media/icons/, never markup in here (see
 // src/chat/icons.ts): this module only names the icon and its size.
 import { icon, toolIcon, todoStatusIcon, fileBadgeIcon } from "../icons";
+import { setToggle, toggleMarkup } from "./fold";
 // The SAME boundary the core uses to decide what the model receives: importing it
 // (it is pure and dependency-free) is what keeps the transcript's marker and the
 // request from ever disagreeing about where the window starts.
@@ -230,8 +231,7 @@ function setSessionsVisible(visible: boolean): void {
  */
 function setSessionsExpanded(expanded: boolean): void {
   setSessionsVisible(expanded);
-  const toggle = sessionHead.querySelector(".toggle");
-  if (toggle) toggle.textContent = expanded ? "▼" : "▶";
+  setToggle(sessionHead.querySelector(".toggle"), expanded);
 }
 /** Matching ids for the MAIN-list search (null = no filter). Scoped to the
  * sessions already shown (the current workspace folder). */
@@ -541,7 +541,7 @@ function restoreViewMemory(id: string | undefined, withScroll = true): void {
     if (!body.classList.contains("collapsed") === wantOpen) return;
     body.classList.toggle("collapsed", !wantOpen);
     const tog = sectionToggle(body);
-    if (tog) tog.textContent = wantOpen ? "▼" : "▶";
+    setToggle(tog, wantOpen);
   });
   if (withScroll && !mem.pinned) {
     messagesEl.scrollTop = mem.scrollTop;
@@ -1592,10 +1592,11 @@ function makeThinkingBlock(
 ): HTMLDivElement {
   const block = (host ?? document.createElement("div")) as HTMLDivElement;
   block.className = "thinking-block";
-  // Thinking areas start COLLAPSED (▶): expand on click. The streaming body
-  // keeps accumulating text while hidden, so it is never lost.
+  // Thinking areas start COLLAPSED (the chevron pointing right): expand on click. The streaming
+  // body keeps accumulating text while hidden, so it is never lost.
   block.innerHTML =
-    '<div class="thinking-header"><span class="toggle">▶</span>' +
+    '<div class="thinking-header">' +
+    toggleMarkup("toggle") +
     label +
     "</div>" +
     '<div class="thinking-body collapsed"></div>';
@@ -1607,7 +1608,7 @@ function makeThinkingBlock(
     const tog = block.querySelector(".toggle");
     if (!b || !tog) return;
     const collapsed = b.classList.toggle("collapsed");
-    tog.textContent = collapsed ? "▶" : "▼";
+    setToggle(tog, !collapsed);
   });
   if (!host) {
     if (beforeEl && beforeEl.parentNode) beforeEl.parentNode.insertBefore(block, beforeEl);
@@ -1635,7 +1636,7 @@ function addToolCall(name: string, args: unknown, beforeEl?: HTMLElement | null)
   const target = toolTargetArg(args);
   div.innerHTML =
     '<div class="tool-header">' +
-    '<span class="tool-toggle">▶</span>' +
+    toggleMarkup("tool-toggle") +
     '<span class="tool-name">' +
     toolIcon(name) +
     escapeHtml(name) +
@@ -1662,7 +1663,7 @@ function wireCollapsible(div: HTMLElement): void {
     const tog = div.querySelector(".tool-toggle");
     if (!details || !tog) return;
     const collapsed = details.classList.toggle("collapsed");
-    tog.textContent = collapsed ? "▶" : "▼";
+    setToggle(tog, !collapsed);
   });
 }
 
@@ -1703,7 +1704,7 @@ function collapseAllSections(): number {
     if (body.classList.contains("collapsed")) return;
     body.classList.add("collapsed");
     const tog = sectionToggle(body);
-    if (tog) tog.textContent = "▶";
+    setToggle(tog, false);
     collapsed += 1;
   });
   // The pending bubbles fold with them: they are the same gesture ("close what is
@@ -1795,7 +1796,7 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
   // nested live stream and the final report.
   div.innerHTML =
     '<div class="tool-header subagent-header">' +
-    '<span class="tool-toggle">▶</span>' +
+    toggleMarkup("tool-toggle") +
     '<span class="tool-name">' +
     SUBAGENT_ICON +
     " Sub-agent" +
@@ -1835,7 +1836,7 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
     const tog = div.querySelector(".tool-toggle");
     if (!body || !tog) return;
     const collapsed = body.classList.toggle("collapsed");
-    tog.textContent = collapsed ? "▶" : "▼";
+    setToggle(tog, !collapsed);
   });
   // Per-sub-agent abort: stop ONLY this sub-agent. The host forwards it to the
   // runner; the orchestrator still receives this Delegate's tool result

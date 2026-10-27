@@ -68,6 +68,13 @@ track with a WHITE dot), and
   `stopPropagation`s the original key for hosts that deliver it to the page. The command is registered at runtime and
   deliberately absent from `contributes.commands`, so the palette stays clean — a manifest test now enforces that every
   Harny keybinding is view-scoped instead of banning them all.
+- **The fold arrow is one chevron that turns, not a triangle swapped for another triangle.** Every collapsible header
+  wrote `"▶"` closed and `"▼"` open, in eight places across two modules: a filled triangle changes shape and weight as it
+  opens, and reads heavier than the chevrons the rest of the panel already uses (`#ctl-toggle-btn`, `.mode-btn-chevron`,
+  `.lg-collapse`). Now ONE svg points right when closed and turns down when open, in the same 0.15s as the other folds —
+  the state is a class (`is-open`), the box stays 12px, nothing shifts, and the hover takes the accent colour. The
+  drawing and the state live in `webview/fold.ts` (one `toggleMarkup` / `setToggle` / `setButtonToggle`), so the six
+  copies of the string literals are gone; the per-bubble fold button gains `aria-expanded` with it.
 - **The icons at the head of a bubble are a quarter larger — and no bubble grew.** The tool card, thinking, sub-agent
   and synthetic-summary marks are painted through `transform: scale(1.25)`, not a larger `width`/`height`: a transform
   does not enter the layout, so a 16px mark inside a 13px box keeps every row, gap and bubble exactly the height it had.

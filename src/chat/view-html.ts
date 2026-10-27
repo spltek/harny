@@ -309,7 +309,25 @@ ${renderViewConfig(deps)}
       border-bottom: 1px solid var(--border);
       cursor: pointer; user-select: none;
     }
-    #session-head .toggle { font-size: var(--fs-xs); width: 12px; color: var(--muted); }
+    /* ── ONE fold chevron, ROTATED ──
+       Every fold used to swap the TEXT glyph "▶" (closed) for "▼" (open): a filled triangle changes
+       shape and weight as it opens, and it reads heavier than the chevrons the rest of the panel
+       already uses (#ctl-toggle-btn, .mode-btn-chevron, .lg-collapse). Here the state is a class on
+       ONE svg and the CSS turns it: right when closed, down when open. The box never changes, so
+       nothing shifts, and the turn is the same 0.15s the other folds use. */
+    .toggle, .tool-toggle {
+      width: 12px; flex-shrink: 0; color: var(--muted);
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .toggle > .toggle-chevron, .tool-toggle > .toggle-chevron {
+      display: block; transform: rotate(-90deg); transform-origin: center;
+      transition: transform 0.15s ease, color 0.15s ease;
+    }
+    .toggle.is-open > .toggle-chevron, .tool-toggle.is-open > .toggle-chevron { transform: rotate(0deg); }
+    /* A fold you can click says so: the chevron takes the header's hover colour. */
+    .tool-header:hover .toggle-chevron, .thinking-header:hover .toggle-chevron,
+    #session-head:hover .toggle-chevron, #pending-head:hover .toggle-chevron { color: var(--accent); }
+    #session-head .toggle { font-size: var(--fs-xs); }
     #session-head .spacer { flex: 1; }
     #session-head button {
       background: transparent; border: none; color: var(--accent);
@@ -776,7 +794,7 @@ ${renderViewConfig(deps)}
       cursor: pointer; user-select: none;
     }
     #pending-head:hover { color: var(--accent); }
-    #pending-head .toggle { font-size: var(--fs-xs); width: 12px; color: var(--muted); }
+    #pending-head .toggle { font-size: var(--fs-xs); }
     /* Expanded, the WHOLE list is readable and the SECTION does the scrolling: one
        scrollbar for the group (bounded so the transcript keeps its space) instead
        of a cap per bubble. */
@@ -835,8 +853,15 @@ ${renderViewConfig(deps)}
     .pending-toggle {
       flex: 0 0 auto; width: 12px; padding: 0; background: transparent; border: none;
       box-shadow: none; color: var(--muted); font-size: var(--fs-sm); line-height: 1.2;
-      cursor: pointer;
+      cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
     }
+    /* The same rotated chevron as every other fold (see the shared rule): pointing right when the
+       message is folded, down when it is whole. */
+    .pending-toggle > .toggle-chevron {
+      display: block; transform: rotate(-90deg); transform-origin: center;
+      transition: transform 0.15s ease, color 0.15s ease;
+    }
+    .pending-toggle.is-open > .toggle-chevron { transform: rotate(0deg); }
     .pending-toggle:hover { filter: none; color: var(--accent); }
     .pending-toggle.hidden { visibility: hidden; }
     /* The buttons sit TOP-RIGHT, before the badge/text in DOM terms they follow,
@@ -898,7 +923,7 @@ ${renderViewConfig(deps)}
 
     .tool-header { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; font-weight: 600; color: var(--accent); min-width: 0; }
     .tool-header:hover { color: var(--fg); }
-    .tool-toggle { font-size: var(--fs-sm); width: 12px; color: var(--muted); flex-shrink: 0; }
+    .tool-toggle { font-size: var(--fs-sm); }
     /* Tool call header: the tool's own mark, then its name. inline-flex keeps the
        icon on the text's baseline whatever the font-size does. */
     .tool-name { white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
@@ -1112,7 +1137,7 @@ ${renderViewConfig(deps)}
     .thinking-header { display: flex; align-items: center; gap: 5px; padding: 5px 8px; cursor: pointer; user-select: none; color: var(--muted-2); font-style: italic; }
     .thinking-header:hover { color: var(--accent); }
     .thinking-header > svg { flex: 0 0 auto; }
-    .thinking-header .toggle { font-size: var(--fs-sm); width: 12px; }
+    .thinking-header .toggle { font-size: var(--fs-sm); }
     /* Thinking is now rendered as Markdown (md on the reasoning text), so the
        body uses normal whitespace + breaks:true like the assistant bubbles. */
     .thinking-body { padding: 0 8px 6px; color: var(--muted-2); line-height: 1.45; }
@@ -2475,7 +2500,7 @@ ${renderViewConfig(deps)}
 <body class="controls-collapsed${themeClass}">
   <div id="sessions-card" class="sessions-card">
     <div id="session-head">
-      <span class="toggle">▼</span><span>Sessions</span>
+      <span class="toggle is-open">${icon("chevronDown", 11, 'class="toggle-chevron"')}</span><span>Sessions</span>
       <span class="spacer"></span>
       <button id="new-session" title="New session">${icon("plus", 15)}</button>
       <button id="sessions-gear-btn" class="gear-btn" title="Manage all sessions (every folder)">${icon("gear", 14)}</button>
@@ -2516,7 +2541,7 @@ ${renderViewConfig(deps)}
        collapsed section still says what is waiting. -->
   <div id="pending-section" class="hidden">
     <div id="pending-head" role="button" tabindex="0" aria-expanded="true" title="Messages typed while the session works">
-      <span class="toggle">▼</span><span id="pending-head-text"></span>
+      <span class="toggle is-open">${icon("chevronDown", 11, 'class="toggle-chevron"')}</span><span id="pending-head-text"></span>
     </div>
     <div id="pending-area" class="hidden"></div>
   </div>

@@ -113,7 +113,7 @@ The order things come up in — and, more useful, **where each one lives**. Some
 5. **Housekeeping**: the **Compaction** gear (after **Compact**) sets the whole compaction policy **per session** — the **auto-compaction trigger** (when it starts, default 80% of the usable context) and **how much survives the cut** (*Land at*: a share of the usable context, default **10%** = an eighth of the trigger, i.e. two or three exchanges kept verbatim; `0` means only the summary remains), plus a live preview of the plan the next compaction would run; the label next to it reads `Auto 80% ctx · keep 10%`. The **⚙ All sessions** manager holds the database stats and the **VACUUM** thresholds (**global**).
 6. **Tuning** (optional, **per session**): the sampling/context/output sliders, the thinking level, and **Guardrails** (sub-agent cap + Loop Guard parameters).
 7. **Analyze or Build**, and **Parallel** — **per session**, and **locked while a run is going** (they are decided once per run, and the pill's tooltip says so).
-8. **While it works**: **Enter** queues a message (it runs when this one ends), **Ctrl/Cmd+Enter** **steers** it into the run now, **Esc** stops. A message already queued can be flipped to a steer with its **→ Steer** button.
+8. **While it works**: **Enter** queues a message (it runs when this one ends), **Ctrl/Cmd+Enter** **steers** it into the run now, **Esc** stops. A message already queued can be flipped to a steer with its **→ Steer** button. Every fold in the panel (thinking, tool cards, sub-agents, the pending list, a long bubble) is **one chevron that turns**: pointing right when closed, down when open — the same shape the rest of the UI uses, and the box never changes size.
 
 | | where it lives | mid-run? |
 |---|---|---|

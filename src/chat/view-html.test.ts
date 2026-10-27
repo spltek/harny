@@ -14,6 +14,34 @@ function cssRule(html: string, selector: string): string {
 }
 
 describe("renderViewHtml", () => {
+  it("a fold is ONE chevron that ROTATES — no triangle glyphs anywhere", () => {
+    // The folds used to swap "▶" for "▼": a filled triangle changes shape and weight as it opens.
+    // Now one svg turns, carried by a class — so this pins the mechanism, not just the state.
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], activeId: undefined, config: {} } as never,
+    });
+    // No swapped glyph anywhere in the page (the Play/Stop keys are CSS-drawn shapes, see their rule).
+    expect(html).not.toMatch(/<span[^>]*class="[^"]*toggle[^"]*"[^>]*>\s*[▶▼]/);
+    expect(html).not.toMatch(/<button[^>]*pending-toggle[^>]*>\s*[▶▼]/);
+    // The toggle carries the same svg, and the OPEN state is a class on it.
+    expect(html).toContain('<span class="toggle is-open"><svg');
+    expect(html).toContain('class="toggle-chevron"');
+    // Closed by default is the RESTING rotation: pointing right — one rule, one svg.
+    // (the rules share a selector list, so the slice starts at the selector and ends at the brace)
+    const ruleOf = (sel: string): string => {
+      const at = html.indexOf(sel);
+      return at < 0 ? "" : html.slice(at, html.indexOf("}", at));
+    };
+    const chevron = ruleOf(".toggle > .toggle-chevron");
+    expect(chevron).toContain("rotate(-90deg)");
+    expect(chevron).toContain("transition: transform");
+    expect(ruleOf(".toggle.is-open > .toggle-chevron")).toContain("rotate(0deg)");
+    // …and the box does not change size: one width, no per-state dimensions.
+    const box = cssRule(html, ".toggle, .tool-toggle");
+    expect(box).toContain("width: 12px");
+    expect(box).not.toMatch(/height:/);
+  });
   it("the icons IN TESTA to a bubble are a quarter larger — through a transform, so nothing grows", () => {
     // The marks at the head of a bubble: tool card, thinking, sub-agent, synthetic summary. The size
     // is a TRANSFORM on purpose: `width`/`height` would enter the layout and make the bubble taller,
@@ -192,7 +220,9 @@ describe("renderViewHtml", () => {
     // The header is a row like the sessions one: arrow + label, whole row clickable.
     expect(html).toContain('id="pending-section"');
     expect(html).toContain('id="pending-head" role="button" tabindex="0"');
-    expect(html).toContain('<span class="toggle">▼</span><span id="pending-head-text">');
+    // ONE chevron, rotated by a class — no swapped glyphs anywhere (see the fold CSS).
+    expect(html).toContain('<span class="toggle is-open">');
+    expect(html).toContain('class="toggle-chevron"');
     expect(cssRule(html, "#pending-head")).toContain("cursor: pointer");
     expect(html).toContain(".pending-text");
     // The section appears/disappears as a unit (nothing pending = no empty header).

@@ -1,4 +1,5 @@
 import { needsCollapseControl } from "./pending-fold";
+import { setButtonToggle, setToggle } from "./fold";
 
 /**
  * The queue/steer footer: the messages the user typed WHILE the session works.
@@ -67,8 +68,7 @@ export function createPendingSection(deps: PendingSectionDeps): PendingSection {
     expanded = next;
     area.classList.toggle("hidden", !next);
     head.setAttribute("aria-expanded", String(next));
-    const toggle = head.querySelector(".toggle");
-    if (toggle) toggle.textContent = next ? "▼" : "▶";
+    setToggle(head.querySelector(".toggle"), next);
     // Nothing can be measured inside a hidden container (it reports no line height),
     // so the fold decisions are re-taken once the list is on screen again.
     if (next) remeasureSoon();
@@ -120,7 +120,7 @@ export function createPendingSection(deps: PendingSectionDeps): PendingSection {
     const toggle = row.querySelector<HTMLButtonElement>(".pending-toggle");
     if (!toggle) return;
     const label = collapsed ? "Show the whole message" : "Collapse this message";
-    toggle.textContent = collapsed ? "▶" : "▼";
+    setButtonToggle(toggle, !collapsed);
     toggle.title = label;
     toggle.setAttribute("aria-expanded", String(!collapsed));
     toggle.setAttribute("aria-label", label);
