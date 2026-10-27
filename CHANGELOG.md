@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The MCP card is its own module** (`webview/mcp-card.ts`, 204 lines, **100% covered**): one row per installed server, the
+  SESSION switch, the `(N/M tools)` button and the status line, with the redraw signature that keeps the rows from being
+  rebuilt under the cursor. `view.ts` keeps the tools popover (a draft with its own state), the editor modal and the
+  messages; the card takes a `post` callback and an `openTools` hook.
+  The busy flag is read **at click time**, not when the row was built: rows survive a run starting, so a captured flag
+  stayed live for ever — the NAME is a plain span that cannot be `disabled`, which made it the real hole (a stale closure
+  posted `toggleMcpServer` mid-run). Both are pinned, and the switch's own guard is proven with a dispatched click.
+  The router-contract test now scans **every** webview module (it caught `setToolScope`/`toggleMcpServer` moving out of
+  `view.ts` the moment they did).
+
 - **Find is its own module** (`webview/find.ts`, ~300 lines): the bar's state machine, the scan and its 500-match cap, the
   two highlight layers, the navigation, the debounce and the rescan that follows the transcript. It takes its elements as
   parameters and one injected callback (`reveal`, opening a folded section so a match is visible), so it is testable on its

@@ -27,6 +27,17 @@ const source = (path: string): string => readFileSync(new URL(path, import.meta.
 const VIEW = "./webview/view.ts";
 const PENDING = "./webview/pending-section.ts";
 const ROUTER = "./chat-view.ts";
+/**
+ * The webview is more than one module now: find and the MCP card were extracted, and THEY post
+ * messages too. Scanning only `view.ts` made this test fail the moment a route moved — which is
+ * exactly what it should do, and exactly why the list must be complete rather than convenient.
+ */
+const WEBVIEW_MODULES = [
+  "./webview/view.ts",
+  "./webview/pending-section.ts",
+  "./webview/mcp-card.ts",
+  "./webview/find.ts",
+];
 
 /** Every `type: "X"` inside an object passed to a posting call (`postMessage(...)`/`post(...)`). */
 function postedTypes(src: string): Set<string> {
@@ -71,10 +82,10 @@ function handledTypes(src: string): Set<string> {
   return out;
 }
 
-const senders = [...postedTypes(source(VIEW)), ...postedTypes(source(PENDING))];
+const senders = WEBVIEW_MODULES.flatMap((m) => [...postedTypes(source(m))]);
 const handled = handledTypes(source(ROUTER));
 /** Where a dynamically built type can still appear as a plain literal. */
-const webviewSource = [source(VIEW), source(PENDING)].join("\n");
+const webviewSource = WEBVIEW_MODULES.map(source).join("\n");
 
 describe("webview → host message contract", () => {
   it("the parsers BITE: a typo and a dead route are both caught (synthetic sources)", () => {

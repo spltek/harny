@@ -20,6 +20,7 @@ import { clampTemperature, clampTopP, TEMPERATURE_MAX, TEMPERATURE_MIN, TEMPERAT
 import { icon, toolIcon, todoStatusIcon, fileBadgeIcon } from "../icons";
 import { setFold, toggleMarkup } from "./fold";
 import { createFind } from "./find";
+import { createMcpCard } from "./mcp-card";
 // The SAME boundary the core uses to decide what the model receives: importing it
 // (it is pure and dependency-free) is what keeps the transcript's marker and the
 // request from ever disagreeing about where the window starts.
@@ -4098,14 +4099,6 @@ type McpEditorServer = {
 };
 let mcpEditorServers: Record<string, McpEditorServer> = {};
 let mcpEditorSelected = "";
-let mcpStatuses: {
-  name: string;
-  ok: boolean;
-  enabled: boolean;
-  error?: string;
-  toolCount: number;
-  tools?: { name: string; description?: string; off?: boolean }[];
-}[] = [];
 
 const DEFAULT_PARALLEL = 4;
 
@@ -4421,7 +4414,7 @@ function renderControl(config: ConfigState): void {
   // already be the one this config describes (adopting it also redraws, which is why the render
   // below is what the user actually sees).
   sessionToolScope = normalizeToolScope(config.toolScope) ?? { mcp: [], off: [] };
-  renderMcp(config.mcp);
+  renderMcpCard(config.mcp);
 }
 
 /** One chip per installed skill; clicking fills the prompt with `/skill <name> `
@@ -4448,7 +4441,6 @@ function renderSkills(skills: { name: string; description: string }[]): void {
 /** What `renderMcp` last drew. A config push arrives often (metrics, tokens, every
  * session switch) and rebuilding the list each time made the rows flicker and re-create
  * themselves while the user was clicking in the card. Same data → same DOM. */
-let mcpDrawn = "";
 /** The last MCP payload, so a SCOPE change can redraw the same list without a config push. */
 let lastMcpConfig: ConfigState["mcp"] | undefined;
 
@@ -4457,132 +4449,24 @@ function applyToolScope(raw: unknown): void {
   sessionToolScope = normalizeToolScope(raw) ?? { mcp: [], off: [] };
   // The switches and the tool checkboxes are derived from it: redraw them from the last payload,
   // without waiting for another config push.
-  if (lastMcpConfig) renderMcp(lastMcpConfig);
+  if (lastMcpConfig) renderMcpCard(lastMcpConfig);
 }
 
-function renderMcp(mcp: ConfigState["mcp"]): void {
+/** The MCP card lives in `./mcp-card` now: rows, the session switch, the `(N/M tools)` button and
+ *  the status line. This module keeps what the card cannot own — the tools popover (a draft), the
+ *  editor modal, and the messages. */
+const mcpCardUi = createMcpCard({
+  card: mcpCard,
+  list: mcpList,
+  post: (message) => vscode.postMessage(message as never),
+  openTools: (anchor, server, tools) => showMcpToolsPopover(anchor, server, tools),
+});
+
+/** The card's ONE entry point: it remembers the payload, so a SCOPE-only change can redraw the same
+ *  list without waiting for another config push (see applyToolScope). */
+function renderMcpCard(mcp: ConfigState["mcp"] | undefined): void {
   lastMcpConfig = mcp;
-  // The SESSION's scope is part of what the rows show (the switch is on/off for THIS conversation),
-  // so it belongs in the signature: without it, flipping a switch would not redraw anything.
-  const signature = JSON.stringify({
-    servers: mcp?.servers ?? {},
-    statuses: mcp?.statuses ?? [],
-    scope: sessionToolScope,
-  });
-  if (signature === mcpDrawn) return;
-  mcpDrawn = signature;
-  mcpStatuses = mcp?.statuses ?? [];
-  const names = Object.keys(mcp?.servers ?? {});
-  mcpCard.classList.toggle("hidden", names.length === 0);
-  mcpList.innerHTML = "";
-  for (const name of names) {
-    const st = mcpStatuses.find((s) => s.name === name);
-    const enabled = st?.enabled !== false;
-    // TWO facts, two controls' worth of meaning: `enabled: false` in the config is the MACHINE's
-    // (the server is uninstalled/unavailable here); the SWITCH is THIS conversation's, and a new
-    // session starts with every server off.
-    const onInSession = sessionToolScope.mcp.includes(name);
-    const row = document.createElement("div");
-    row.className = "mcp-status " + (!enabled ? "off" : onInSession && st?.ok ? "ok" : onInSession ? "err" : "off");
-
-    // The SWITCH is the control: a pill with a knob that slides right when the server is ON.
-    // It exists because the affordance was invisible — the name was the toggle and nothing
-    // said so. The name stays clickable as a shortcut (its tooltip still says it).
-    const sw = document.createElement("button");
-    sw.type = "button";
-    sw.className = "mcp-switch";
-    sw.setAttribute("role", "switch");
-    sw.setAttribute("aria-checked", String(onInSession));
-    sw.setAttribute("aria-label", `${onInSession ? "Stop using" : "Use"} ${name} in this session`);
-    sw.title = enabled
-      ? "Use this server in THIS session (installing it is global, using it is per conversation)"
-      : "Not installed/enabled in the config: turn it on there first";
-    sw.dataset.name = name;
-    sw.dataset.installed = enabled ? "1" : "0";
-    sw.disabled = !enabled;
-    sw.addEventListener("click", () => {
-      if (streamingActive || !enabled) return;
-      // The session's scope is the ONE thing written here: adding or dropping this server while
-      // leaving every other decision (another server, a built-in) exactly as it was.
-      const mcp = sessionToolScope.mcp.filter((s) => s !== name);
-      if (!onInSession) mcp.push(name);
-      sessionToolScope = { ...sessionToolScope, mcp };
-      vscode.postMessage({ type: "setToolScope", scope: sessionToolScope });
-    });
-    row.appendChild(sw);
-
-    // The name is just the name now: the switch carries the state, so the leading ● is gone.
-    const nameEl = document.createElement("span");
-    nameEl.className = "mcp-name";
-    nameEl.textContent = name;
-    nameEl.title = enabled ? "Click to disable this server" : "Click to enable this server";
-    nameEl.addEventListener("click", () => {
-      // Not while the session is working: the current run's tool list is already
-      // fixed, so a mid-run disable would only take effect on the NEXT turn.
-      if (streamingActive) return;
-      vscode.postMessage({ type: "toggleMcpServer", name, enabled: !enabled });
-    });
-    row.appendChild(nameEl);
-    row.appendChild(document.createTextNode(" "));
-
-    if (!enabled) {
-      const detail = document.createElement("span");
-      detail.className = "mcp-detail";
-      detail.textContent = "off";
-      row.appendChild(detail);
-    } else if (st?.ok) {
-      const total = st.tools?.length ?? st.toolCount;
-      // The count is THIS SESSION's, not the registry's: the tools are all registered (a server is
-      // installed once), so what tells the user something is switched off is the scope. Reading
-      // `st.toolCount` here said "(2 tools)" while the model could only see one.
-      const hidden = st.tools ? mcpSavedExclusions(st.tools).size : 0;
-      const shown = total - hidden;
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "mcp-tools-btn";
-      // `(5/8 tools)` says at a glance that something is off; `(8 tools)` when nothing is, so the
-      // common case stays quiet.
-      btn.textContent = hidden > 0 ? `(${shown}/${total} tools)` : `(${total} tools)`;
-      btn.title =
-        hidden > 0
-          ? `${hidden} of ${total} tool(s) switched off in this session — click to choose`
-          : "Choose which of this server's tools the model sees";
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        showMcpToolsPopover(btn, name, st.tools ?? []);
-      });
-      row.appendChild(btn);
-    } else {
-      const detail = document.createElement("span");
-      detail.className = "mcp-detail";
-      detail.textContent = st?.error ?? "not connected";
-      // The row is ONE line, always: the full error (npm's log path, an HTTP body) stays in
-      // the tooltip, so the card's height never changes under the cursor.
-      detail.title = detail.textContent;
-      row.appendChild(detail);
-    }
-    mcpList.appendChild(row);
-  }
-  // The switches must LOOK unavailable while a run is working (a mid-run toggle only lands
-  // on the next turn), and a run can start or stop between two config pushes.
-  refreshMcpSwitches();
-}
-
-/** Keep the switches in sync with `streamingActive` without rebuilding the rows. */
-function refreshMcpSwitches(): void {
-  for (const sw of document.querySelectorAll<HTMLButtonElement>("#mcp-list .mcp-switch")) {
-    // Three reasons a switch cannot be flipped, in order of fatality: the server is not installed
-    // here (a machine fact), a run is in flight (a mid-run toggle would only land on the next
-    // turn), or it is simply available.
-    const installed = sw.dataset.installed !== "0";
-    sw.disabled = !installed || streamingActive;
-    const name = sw.dataset.name ?? "this server";
-    sw.title = !installed
-      ? "Not installed/enabled in the config: turn it on there first"
-      : streamingActive
-        ? "Stop the run first — a mid-run toggle only lands on the next turn"
-        : `Use ${name} in this session (installing it is global, using it is per conversation)`;
-  }
+  mcpCardUi.render(mcp, sessionToolScope, streamingActive);
 }
 
 /** The tools panel: EVERY tool a server advertises, each with the checkbox that
@@ -5103,7 +4987,6 @@ function openMcpEditor(): void {
 
 function renderMcpEditor(data: ConfigState["mcp"], open: boolean): void {
   mcpEditorServers = data?.servers ?? {};
-  mcpStatuses = data?.statuses ?? [];
   if (open) {
     const names = Object.keys(mcpEditorServers);
     mcpEditorSelected = names[0] ?? "";
@@ -5270,7 +5153,7 @@ function setStreaming(active: boolean): void {
   applyWorkingLock();
   // The MCP switches dim the moment a run starts (a mid-run toggle only lands on the next
   // turn) and come back when it stops: the guard is now VISIBLE, not just enforced.
-  refreshMcpSwitches();
+  mcpCardUi.refreshSwitches(active);
   if (rising) {
     // The policies of THIS run are the ones on screen at this instant (see Agent.runMode).
     // This snapshot is the safety net: the two pills are disabled below, so a change can only
