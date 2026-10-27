@@ -6893,10 +6893,11 @@ window.addEventListener("message", (e) => {
       }
       // Same lock for the tab × (a working session cannot be closed).
       applyTabLocks();
-      // While ANY session works, the two setup gears go inert (manage
-      // sessions / configure providers): no modal mid-stream.
-      applyWorkingLock();
+      // The streaming flag FIRST: the gears below read it, and the models gear is locked with
+      // it. Called in the other order, the gear kept the previous state for one status message.
       setStreaming(!!msg.active);
+      // While ANY session works, the managers stay reachable, the per-session gear goes inert.
+      applyWorkingLock();
       break;
     case "switching":
       // The host is loading/activating a session right now. The name is resolved from
@@ -7054,18 +7055,20 @@ window.addEventListener("message", (e) => {
  * moment the last working session finishes). Mirrors the per-row locks. */
 function applyWorkingLock(): void {
   const busy = workingIds.size > 0;
-  // The gears stay USABLE while a session works: with several concurrent runs a
-  // blanket lock would mean you can never open the managers again. What is
-  // destructive is already locked where it lives — the rows of a working session
-  // (branch/rename/delete) and the providers SAVE, which the host refuses while a
-  // run is in flight.
+  // TWO axes, and they used to be one. The MANAGERS stay reachable while a run works (with
+  // several concurrent runs a blanket lock would mean you can never open them again), but the
+  // models gear acts on the session you are LOOKING AT: opening it while that session streams
+  // offers a model switch for a request already sent — the same trap the model dropdown and the
+  // mode pills already refuse. Derived from BOTH signals, because at bootstrap only `workingIds`
+  // is known and a status message may not have arrived yet.
+  const activeBusy = streamingActive || (!!activeId && workingIds.has(activeId));
   sessionsGearBtn.disabled = false;
-  gearBtn.disabled = false;
+  gearBtn.disabled = activeBusy;
   sessionsGearBtn.title = busy
     ? "Manage all sessions (the working ones are locked)"
     : "Manage all sessions (every folder)";
-  gearBtn.title = busy
-    ? "Configure providers & models (saving is blocked while a session works)"
+  gearBtn.title = activeBusy
+    ? "Saving is blocked while this session works — the run keeps the model it started with"
     : "Configure providers & models";
 }
 

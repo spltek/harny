@@ -8384,30 +8384,32 @@ describe("all-sessions manager (gear)", () => {
     expect(rows[1].textContent).not.toContain("this folder");
   });
 
-  it("keeps the two setup gears USABLE while sessions work (rows stay locked)", async () => {
-    // A blanket lock meant that with several concurrent runs you could never open
-    // the managers again. What is destructive stays locked where it lives: the rows
-    // of a working session, and the providers SAVE (refused by the host while a run
-    // is in flight).
-    setupDom({ workingIds: ["a"] });
+  it("the session manager stays reachable while sessions work; the per-session gear follows ITS run", async () => {
+    // Two axes. A blanket lock meant that with several concurrent runs you could never open the
+    // managers again — so the MANAGERS stay usable. The models gear acts on the session you are
+    // LOOKING AT, so it follows that session's run: opening it mid-stream offers a model switch
+    // for a request already sent, which the model dropdown and the mode pills already refuse.
+    setupDom({ workingIds: ["a"] }); // "a" is the ACTIVE session, and it is working
     await loadView();
     const sessGear = document.getElementById("sessions-gear-btn") as HTMLButtonElement;
     const provGear = document.getElementById("gear-btn") as HTMLButtonElement;
     expect(sessGear.disabled).toBe(false);
-    expect(provGear.disabled).toBe(false);
+    expect(provGear.disabled).toBe(true); // this session streams
     expect(sessGear.title).toContain("the working ones are locked");
-    expect(provGear.title).toContain("saving is blocked");
+    expect(provGear.title).toContain("keeps the model it started with");
 
     // Nothing working: the titles go back to neutral.
     hostMessage({ type: "status", active: false, workingIds: [] });
     expect(sessGear.title).toBe("Manage all sessions (every folder)");
     expect(provGear.title).toBe("Configure providers & models");
 
-    // A session starts working again: still usable, title explains the limits.
-    hostMessage({ type: "status", active: true, workingIds: ["b"] });
+    // ANOTHER session works while this one is idle: the manager stays usable and the models gear
+    // comes back — the case a global lock punished.
+    hostMessage({ type: "status", active: false, workingIds: ["b"] });
     expect(sessGear.disabled).toBe(false);
+    expect(sessGear.title).toContain("the working ones are locked");
     expect(provGear.disabled).toBe(false);
-    expect(provGear.title).toContain("saving is blocked");
+    expect(provGear.title).toBe("Configure providers & models");
 
     // Row buttons in the manage form stay ENABLED regardless (only the gear locks
     // were ever about the gears — the rows are the host's business).

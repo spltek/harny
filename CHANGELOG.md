@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The models gear is locked while THIS session works.** It stayed clickable during a run, so it opened the manager and
+  offered a model switch for a request already sent — the trap the model dropdown and the mode pills already refuse. The
+  lock follows the session you are looking at, not the machine: another session's run no longer freezes your gear, while
+  the sessions manager stays reachable either way (a blanket lock would have made it unreachable on a busy day). It is
+  derived from the streaming flag AND the working set, because at bootstrap only the latter is known.
+
 - **A reasoning-only model can no longer brick a session.** A turn that ends with neither text nor a tool call (only
   thinking — common with `…reasoning:free` models) left an empty assistant message in the conversation, and the
   replayability check then refused to send ANY further request: the session was dead for good, with an error that said
