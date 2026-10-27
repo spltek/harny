@@ -5332,10 +5332,16 @@ describe("view webview client", () => {
     )!;
 
   /** Config push with one MCP server advertising `tools`. */
+  /**
+   * Push one server's tools. `excluded` is a TEST affordance that now becomes what it really is:
+   * the SESSION's scope (`off` in `mcp__server__tool` form) — the panel reads the off list from
+   * there, because that is where the decision lives.
+   */
   function pushMcpTools(
     tools: { name: string; description?: string; excluded?: boolean; readOnly?: boolean; analyzeFlag?: boolean }[],
-    toolCount = tools.filter((t) => !t.excluded).length,
+    toolCount?: number,
   ): void {
+    const off = tools.filter((t) => t.excluded).map((t) => `mcp__test__${t.name}`);
     hostMessage({
       type: "config",
       config: {
@@ -5343,9 +5349,13 @@ describe("view webview client", () => {
         model: "gpt-4o",
         hasKey: true,
         contextWindow: 128000,
+        // The scope rides on the config, like the host sends it.
+        toolScope: { mcp: ["test"], off },
         mcp: {
           servers: { test: { command: "node" } },
-          statuses: [{ name: "test", ok: true, enabled: true, toolCount, tools }],
+          statuses: [
+            { name: "test", ok: true, enabled: true, toolCount: toolCount ?? tools.length - off.length, tools },
+          ],
         },
       },
     });
@@ -5637,7 +5647,10 @@ describe("view webview client", () => {
     expect(text).toContain("URL");
   });
 
-  it("each MCP row has a SWITCH whose knob slides, and clicking it toggles that server", async () => {
+  it("each MCP row has a SWITCH for THIS SESSION, and clicking it edits that session's scope", async () => {
+    // Two different facts: `enabled: false` in the config is the MACHINE's (not installed here),
+    // the switch is the CONVERSATION's. It must not write the config, and it must not depend on it
+    // for the ON state — that is what the scope adds.
     await loadView();
     hostMessage({
       type: "config",
@@ -5655,20 +5668,22 @@ describe("view webview client", () => {
         },
       },
     });
+    // The host says: this session uses `a` and not `b`.
+    hostMessage({ type: "toolScope", scope: { mcp: ["a"], off: [] } });
     const sw = [...document.querySelectorAll<HTMLButtonElement>("#mcp-list .mcp-switch")];
     expect(sw.map((s) => s.getAttribute("role"))).toEqual(["switch", "switch"]);
     // The knob position IS the state (the CSS reads aria-checked), so the switch cannot lie.
     expect(sw.map((s) => s.getAttribute("aria-checked"))).toEqual(["true", "false"]);
-    expect(sw.map((s) => s.disabled)).toEqual([false, false]);
+    // A server the CONFIG disables cannot be switched on here: it is not installed.
+    expect(sw.map((s) => s.disabled)).toEqual([false, true]);
     // …and the name carries no state of its own any more: the leading ● is gone.
     expect(document.querySelector("#mcp-list .mcp-name")!.textContent).toBe("a");
 
     posted.length = 0;
     sw[0].click();
-    expect(posted).toContainEqual({ type: "toggleMcpServer", name: "a", enabled: false });
-    posted.length = 0;
-    sw[1].click(); // the disabled one enables
-    expect(posted).toContainEqual({ type: "toggleMcpServer", name: "b", enabled: true });
+    expect(posted).toContainEqual({ type: "setToolScope", scope: { mcp: [], off: [] } });
+    // Nothing global is written by the switch.
+    expect(posted.some((m) => (m as { type?: string }).type === "toggleMcpServer")).toBe(false);
   });
 
   it("the MCP switches dim while a run is working and come back when it stops", async () => {
@@ -5698,7 +5713,7 @@ describe("view webview client", () => {
 
     hostMessage({ type: "status", active: false });
     expect(sw().disabled).toBe(false);
-    expect(sw().title).toContain("Enable or disable a");
+    expect(sw().title).toContain("Use a in this session");
   });
 
   it("the MCP card keeps its rows when nothing changed (they used to be rebuilt under the cursor)", async () => {

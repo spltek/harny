@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The ON/OFF of an MCP server and the tools left out are PER SESSION.** Installing a server is a machine fact
+  (`config.json`); using it is a conversation's decision. A new session starts with **every server off** and every
+  built-in available, then switches on what it needs — and can switch off a single built-in, or a single tool inside a
+  server it uses. One JSON column on the session (migration v3), read live at every turn: a change lands on the next
+  one, with nothing to reconnect. Sub-agents inherit it, so a tool that is off cannot be used through a delegate. The
+  tools the config leaves out are the SEED a new session starts from; a save no longer writes `excludeTools` (that key
+  is not the panel's to own) and no longer respawns the server — the Analyze shields are read live, so saving one stops
+  costing a reconnect.
+
 - **Each MCP server has a real SWITCH now — a pill whose knob slides right when the server is on.** The control
   existed but was INVISIBLE: the server's name was the toggle and nothing on screen said so, so the only way to find
   out was to click something and see what happened. The row now leads with a `role="switch"` button whose

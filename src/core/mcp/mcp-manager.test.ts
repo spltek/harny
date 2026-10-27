@@ -45,25 +45,22 @@ describe("McpManager", () => {
     expect(readOnly.getTools()[0].analyzePolicy).toBe("read-only");
   });
 
-  it("exposes only the tools the config keeps, and reports the hidden ones", async () => {
-    // `excludeTools` is the user's exclude list (default: nothing excluded). It decides
-    // at CONNECT time whether the tool is registered at all, because the model's tool
-    // list is built from the registry — so the UI saves and reconnects.
+  it("registers EVERY tool: which of them a conversation may use is the SESSION's call", async () => {
+    // `excludeTools` used to be a connect-time veto, which made the panel's checkboxes global and
+    // forced a reconnect on every save. It is now a SEED for new sessions (see createNew): the
+    // registry holds them all, and the per-turn tool list is filtered by the session's scope.
     const manager = new McpManager({
       servers: () => ({
         test: { command: process.execPath, args: ["-e", SERVER], excludeTools: ["ping"] },
       }),
     });
     await manager.connect();
-    expect(manager.getTools().map((t) => t.name)).toEqual(["mcp__test__echo"]);
+    expect(manager.getTools().map((t) => t.name)).toEqual(["mcp__test__echo", "mcp__test__ping"]);
     const [status] = manager.getStatuses();
-    expect(status.toolCount).toBe(1); // EXPOSED, not discovered
-    // The advertised list is still complete, with the hidden ones flagged: the panel
-    // builds its checkboxes from this, so a tool cannot disappear from the editor.
-    expect(status.tools).toEqual([
-      { name: "echo", description: "Echo" },
-      { name: "ping", excluded: true },
-    ]);
+    expect(status.toolCount).toBe(2);
+    // The advertised list is complete and unflagged: the panel builds its checkboxes from this,
+    // and the `excluded` flag no longer exists (the session's scope says it).
+    expect(status.tools).toEqual([{ name: "echo", description: "Echo" }, { name: "ping" }]);
   });
 
   it("an exclusion naming a tool the server does not have is harmless", async () => {
@@ -77,21 +74,19 @@ describe("McpManager", () => {
     expect(manager.getStatuses()[0].toolCount).toBe(2);
   });
 
-  it("a NEW exclusion list applies on the next connect (which is what Save does)", async () => {
-    // The UI never edits a live server: it writes the config and reconnects. If the list
-    // were read once at construction, unchecking a tool would do nothing until reload.
+  it("a re-connect does NOT change the tool list when the config stops excluding: the session does", async () => {
+    // The counterpart of the test above: saving a config that adds an exclusion no longer hides
+    // anything by itself. What hides a tool is the SESSION's scope, which is why this is a
+    // registry-level assertion and the scope has its own tests.
     let servers: Record<string, McpServerConfig> = {
       test: { command: process.execPath, args: ["-e", SERVER] },
     };
     const manager = new McpManager({ servers: () => servers });
     await manager.connect();
-    expect(manager.getTools().map((t) => t.name)).toEqual(["mcp__test__echo", "mcp__test__ping"]);
-
     servers = { test: { ...servers.test, excludeTools: ["echo"] } };
     await manager.connect();
-    expect(manager.getTools().map((t) => t.name)).toEqual(["mcp__test__ping"]);
-    expect(manager.getStatuses()[0].tools?.find((t) => t.name === "echo")?.excluded).toBe(true);
-    expect(manager.getStatuses()[0].toolCount).toBe(1);
+    expect(manager.getTools().map((t) => t.name)).toEqual(["mcp__test__echo", "mcp__test__ping"]);
+    expect(manager.getStatuses()[0].toolCount).toBe(2);
   });
 
   it("overlapping connects are SERIALIZED (no two installs in the same npx cache entry)", async () => {

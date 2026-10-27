@@ -109,7 +109,10 @@ The order things come up in — and, more useful, **where each one lives**. Some
 1. **Create a session** (**+ New**). It is written to the database immediately and starts in **Analyze**.
 2. **Pick the model** in the AI Model row — or, with no provider yet, open the gear at the **right end of that row** (**Providers & Models** → **+ New** → **Test connection**). That setup is **global**: once is enough, for every future session.
 3. **Skills** (optional) are **not a dialog**: they are folders. A `skills`-CLI install and a plain `SKILL.md` both work — project first (`.agents/skills`, `.claude/skills`, `.pi/skills`), then user (`~/.agents/skills`, `~/.pi/agent/skills`, `~/.claude/skills`, `~/.cursor/skills`, …). The **Skills** card lists what it found; a click fills `/skill <name>` in the prompt.
-4. **MCP servers** (optional, **global**): the **MCP** card's gear (add/edit/delete + **Test**), or `config.json`. Careful, in Analyze a server's tools only run if you declare what that server is — see [Analyze & Build](#analyze--build).
+4. **MCP servers** (optional; **installed globally, used per session**): the **MCP** card's gear (add/edit/delete +
+   **Test**), or `config.json`. Installing is one decision for the machine; the card's **switch** and the tools
+   panel's checkboxes decide what **this conversation** may use — a new session starts with every server off, and the
+   config's `excludeTools` is the seed it starts from. Careful, in Analyze a server's tools only run if you declare what that server is — see [Analyze & Build](#analyze--build).
 5. **Housekeeping**: the **Compaction** gear (after **Compact**) sets the whole compaction policy **per session** — the **auto-compaction trigger** (when it starts, default 80% of the usable context) and **how much survives the cut** (*Land at*: a share of the usable context, default **10%** = an eighth of the trigger, i.e. two or three exchanges kept verbatim; `0` means only the summary remains), plus a live preview of the plan the next compaction would run; the label next to it reads `Auto 80% ctx · keep 10%`. The **⚙ All sessions** manager holds the database stats and the **VACUUM** thresholds (**global**).
 6. **Tuning** (optional, **per session**): the sampling/context/output sliders, the thinking level, and **Guardrails** (sub-agent cap + Loop Guard parameters).
 7. **Analyze or Build**, and **Parallel** — **per session**, and **locked while a run is going** (they are decided once per run, and the pill's tooltip says so).
@@ -117,7 +120,8 @@ The order things come up in — and, more useful, **where each one lives**. Some
 
 | | where it lives | mid-run? |
 |---|---|---|
-| providers, keys, MCP servers, VACUUM thresholds | **global** (`config.json` / VS Code settings) | no |
+| providers, keys, MCP **installation**, VACUUM thresholds | **global** (`config.json` / VS Code settings) | no |
+| which MCP servers/tools a conversation **uses**, built-ins switched off | **per session** (the session row) | yes |
 | model, thinking, sliders, context window, output tokens, Guardrails, compaction policy (trigger + landing point) | **per session** | no |
 | **Analyze/Build**, **Parallel** | **per session** | **no** — locked while it works: decided once per run, and the pill says why instead of swallowing the click (**Stop** is the way to interrupt) |
 | Enter / Ctrl-Cmd+Enter / Esc | per message | always |

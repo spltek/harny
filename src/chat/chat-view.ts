@@ -1,5 +1,5 @@
 import type { ExtensionContext, WebviewView, WebviewViewProvider, WebviewViewResolveContext } from "vscode";
-import { normalizeToolScope } from "../core/tools/tool-scope";
+import { normalizeToolScope, type ToolScope } from "../core/tools/tool-scope";
 import { Uri, window, workspace } from "vscode";
 import * as fs from "fs";
 import type {
@@ -407,7 +407,40 @@ export class ChatViewProvider implements WebviewViewProvider {
     const rt = this.registry.create(name);
     // A NEW session always starts with Parallel OFF (orchestration is opt-in).
     rt.agent.setDelegation(false);
+    // …and with every MCP server OFF, WRITTEN explicitly (see ensureToolScope, called on every
+    // open: a session without a scope is a session from before the feature, and it gets one there).
     await this.setActive(rt.sessionId, true);
+  }
+
+  /**
+   * Give the session a scope the first time it is opened.
+   *
+   * `undefined` means "nothing declared" — which is how a session written before per-session scopes
+   * keeps behaving as it did, and NOT what a session created today should mean (all MCP servers
+   * off). Doing it here covers every creation path (the panel, a branch, a session from an older
+   * build) instead of one call site, and it happens ONCE: the row is written only when the value
+   * was missing.
+   *
+   * The tools the CONFIG excludes are the seed: they used to be a global veto at connect time, so
+   * dropping them would silently re-expose tools the user had switched off.
+   */
+  private ensureToolScope(rt: { sessionId: string; toolScope?: ToolScope }): void {
+    if (rt.toolScope) return;
+    rt.toolScope = { mcp: [], off: this.seededToolOffList() };
+    this.sessions.saveSettings(rt.sessionId, { toolScope: rt.toolScope });
+  }
+
+  /** The `excludeTools` of every configured server, as the `mcp__server__tool` names a scope holds. */
+  private seededToolOffList(): string[] {
+    const servers = this.providers.readMcpServers?.() ?? {};
+    const off: string[] = [];
+    for (const [server, cfg] of Object.entries(servers)) {
+      for (const tool of cfg.excludeTools ?? []) {
+        const name = typeof tool === "string" ? tool.trim() : "";
+        if (name) off.push(`mcp__${server}__${name}`);
+      }
+    }
+    return off;
   }
 
   /**
@@ -672,6 +705,8 @@ export class ChatViewProvider implements WebviewViewProvider {
     // costs no extra query on the click path.
     this.view?.webview.postMessage({ type: "switching", id });
     this.activeId = id;
+    const active = this.activeRuntime();
+    if (active) this.ensureToolScope(active);
     this.resubscribe();
     this.applyActiveModel();
     // A session may predate the model-limits feature: adopt the model's
@@ -939,10 +974,9 @@ export class ChatViewProvider implements WebviewViewProvider {
     this.view?.webview.postMessage({ type: "openFind" });
   }
 
-  /** Push WHAT THE ACTIVE SESSION may use, so the panel and the model agree. */
-  private pushToolScope(): void {
-    const rt = this.activeRuntime();
-    this.view?.webview.postMessage({ type: "toolScope", sessionId: rt?.sessionId, scope: rt?.toolScope });
+  /** The ACTIVE session's scope, as the host holds it (tests assert the persisted decision). */
+  scopeOfActiveSessionForTest(): ToolScope | undefined {
+    return this.activeRuntime()?.toolScope;
   }
 
   /** Rebuild the whole view (host-side refresh after any change). */
@@ -1105,24 +1139,29 @@ export class ChatViewProvider implements WebviewViewProvider {
         const rawExclude: unknown = msg.exclude;
         const excludeList: unknown[] = Array.isArray(rawExclude) ? rawExclude : [];
         const exclude = excludeList.filter((t: unknown): t is string => typeof t === "string" && t.trim() !== "");
+        // `exclude` is ACCEPTED and IGNORED: which tools a conversation may use is the SESSION's
+        // scope now (see setToolScope), so writing it globally here would make one panel decide
+        // for every session — the exact bug this change removes. The key stays in the file only as
+        // the SEED a new session starts from (see seededToolOffList).
         // The per-TOOL Analyze list travels with it, and with the OPPOSITE polarity: an include
         // list of tools the user declares read-only (default-deny — a tool the server adds
         // tomorrow is not silently allowed in Analyze).
         const rawAnalyze: unknown = msg.analyze;
         const analyzeList: unknown[] = Array.isArray(rawAnalyze) ? rawAnalyze : [];
-        const analyze = analyzeList.filter((t: unknown): t is string => typeof t === "string" && t.trim() !== "");
+        // Trimmed: a name with a stray space would never match the tool it names.
+        const analyze = analyzeList
+          .filter((t: unknown): t is string => typeof t === "string" && t.trim() !== "")
+          .map((t) => t.trim());
         const current = servers[name];
-        // An EMPTY list is deleted, not written as []: a server with nothing excluded
-        // must look untouched in the file (see McpServerCommon.excludeTools).
-        const excludeTools = exclude.length > 0 ? [...new Set(exclude)] : undefined;
-        if (excludeTools) current.excludeTools = excludeTools;
-        else delete current.excludeTools;
+        void exclude;
+        // An EMPTY list is deleted, not written as []: a server with nothing declared must look
+        // untouched in the file (see McpServerCommon.analyzeTools).
         const analyzeTools = analyze.length > 0 ? [...new Set(analyze)] : undefined;
         if (analyzeTools) current.analyzeTools = analyzeTools;
         else delete current.analyzeTools;
         infoLog(
-          `[mcp] "${name}": ${excludeTools?.length ?? 0} tool(s) excluded, ` +
-            `${analyzeTools?.length ?? 0} declared read-only in Analyze, reconnecting`,
+          `[mcp] "${name}": ${analyzeTools?.length ?? 0} tool(s) declared read-only in Analyze ` +
+            "(the session's scope decides which ones the model sees)",
         );
         servers[name] = current;
         // The EXCLUDE list is a connect-time decision (it changes what is REGISTERED), so it needs
@@ -1130,9 +1169,11 @@ export class ChatViewProvider implements WebviewViewProvider {
         // together, and one reconnect for both is cheaper than two paths that can disagree.
         const ok = this.providers.saveMcpServers?.(servers) ?? false;
         if (ok) {
-          // The exclusion list belongs to ONE server: reconnecting all of them would respawn
-          // every other npx process for nothing.
-          await this.options.mcp?.connect(name);
+          // NO RECONNECT. What changed is the per-tool ANALYZE declaration, which is read live at
+          // every call (see McpManager's `declaredTools`), and the tools themselves stay
+          // registered because which of them a session may use is the session's scope. Saving the
+          // shields used to respawn the server for nothing — and emptied the registry while it
+          // did, which is how a save could make the tool count flicker to zero.
           this.view?.webview.postMessage({ type: "mcpServers", data: this.mcpEditorData() });
           void this.pushConfig();
         }
@@ -1400,7 +1441,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         const scope = normalizeToolScope(msg.scope);
         rt.toolScope = scope;
         this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { toolScope: scope }), false);
-        this.pushToolScope();
+        void this.pushConfig();
         break;
       }
 
@@ -2863,6 +2904,8 @@ export class ChatViewProvider implements WebviewViewProvider {
     thinkingLevel?: "off" | "low" | "medium" | "high";
     mode?: "analyze" | "agent";
     parallel?: boolean;
+    /** Which MCP servers and tools THIS session may use (see ToolScope). */
+    toolScope?: ToolScope;
     maxParallelSubAgents: number;
     loopGuard?: "off" | "low" | "medium" | "high";
     loopGuardResponse?: boolean;
@@ -3010,6 +3053,9 @@ export class ChatViewProvider implements WebviewViewProvider {
       // always mirrors what the agent actually enforces (no stale read-only).
       mode: this.activeRuntime()?.mode ?? "analyze",
       parallel: this.activeRuntime()?.parallel === true,
+      // The SESSION's tool scope travels with the config it already receives: a separate message
+      // would have to race the switch view (the webview drops one for a session it is not showing).
+      toolScope: this.activeRuntime()?.toolScope,
       // The EFFECTIVE cap the agent will use (session override > config > 4).
       maxParallelSubAgents: this.effectiveParallelCap(),
       loopGuard: this.activeRuntime()?.loopGuard,

@@ -119,6 +119,8 @@ interface ConfigState {
   mode?: "analyze" | "agent";
   /** Per-session "Parallel" switch: orchestration/sub-agents enabled. */
   parallel?: boolean;
+  /** Which MCP servers and tools THIS session may use (the host is the truth). */
+  toolScope?: { mcp: string[]; off: string[] };
   /** True when the models.dev fallback is unreachable and a limit is missing. */
   modelsDevError?: boolean;
   contextWindow?: number;
@@ -4634,6 +4636,10 @@ function renderControl(config: ConfigState): void {
   // run once they have been built (and again on every push, since a lock can be released).
   applyLgEnabledState(level, streamingActive);
   renderSkills(config.skills ?? []);
+  // BEFORE the MCP list: the switches and the tool checkboxes are read from the scope, so it must
+  // already be the one this config describes (adopting it also redraws, which is why the render
+  // below is what the user actually sees).
+  sessionToolScope = normalizeToolScope(config.toolScope) ?? { mcp: [], off: [] };
   renderMcp(config.mcp);
 }
 
@@ -4662,9 +4668,26 @@ function renderSkills(skills: { name: string; description: string }[]): void {
  * session switch) and rebuilding the list each time made the rows flicker and re-create
  * themselves while the user was clicking in the card. Same data → same DOM. */
 let mcpDrawn = "";
+/** The last MCP payload, so a SCOPE change can redraw the same list without a config push. */
+let lastMcpConfig: ConfigState["mcp"] | undefined;
+
+/** Adopt the scope the host reports (from a `config` push or a scope-only message). */
+function applyToolScope(raw: unknown): void {
+  sessionToolScope = normalizeToolScope(raw) ?? { mcp: [], off: [] };
+  // The switches and the tool checkboxes are derived from it: redraw them from the last payload,
+  // without waiting for another config push.
+  if (lastMcpConfig) renderMcp(lastMcpConfig);
+}
 
 function renderMcp(mcp: ConfigState["mcp"]): void {
-  const signature = JSON.stringify({ servers: mcp?.servers ?? {}, statuses: mcp?.statuses ?? [] });
+  lastMcpConfig = mcp;
+  // The SESSION's scope is part of what the rows show (the switch is on/off for THIS conversation),
+  // so it belongs in the signature: without it, flipping a switch would not redraw anything.
+  const signature = JSON.stringify({
+    servers: mcp?.servers ?? {},
+    statuses: mcp?.statuses ?? [],
+    scope: sessionToolScope,
+  });
   if (signature === mcpDrawn) return;
   mcpDrawn = signature;
   mcpStatuses = mcp?.statuses ?? [];
@@ -4674,8 +4697,12 @@ function renderMcp(mcp: ConfigState["mcp"]): void {
   for (const name of names) {
     const st = mcpStatuses.find((s) => s.name === name);
     const enabled = st?.enabled !== false;
+    // TWO facts, two controls' worth of meaning: `enabled: false` in the config is the MACHINE's
+    // (the server is uninstalled/unavailable here); the SWITCH is THIS conversation's, and a new
+    // session starts with every server off.
+    const onInSession = sessionToolScope.mcp.includes(name);
     const row = document.createElement("div");
-    row.className = "mcp-status " + (!enabled ? "off" : st?.ok ? "ok" : "err");
+    row.className = "mcp-status " + (!enabled ? "off" : onInSession && st?.ok ? "ok" : onInSession ? "err" : "off");
 
     // The SWITCH is the control: a pill with a knob that slides right when the server is ON.
     // It exists because the affordance was invisible — the name was the toggle and nothing
@@ -4684,12 +4711,22 @@ function renderMcp(mcp: ConfigState["mcp"]): void {
     sw.type = "button";
     sw.className = "mcp-switch";
     sw.setAttribute("role", "switch");
-    sw.setAttribute("aria-checked", String(enabled));
-    sw.setAttribute("aria-label", `${enabled ? "Disable" : "Enable"} ${name}`);
+    sw.setAttribute("aria-checked", String(onInSession));
+    sw.setAttribute("aria-label", `${onInSession ? "Stop using" : "Use"} ${name} in this session`);
+    sw.title = enabled
+      ? "Use this server in THIS session (installing it is global, using it is per conversation)"
+      : "Not installed/enabled in the config: turn it on there first";
     sw.dataset.name = name;
+    sw.dataset.installed = enabled ? "1" : "0";
+    sw.disabled = !enabled;
     sw.addEventListener("click", () => {
-      if (streamingActive) return;
-      vscode.postMessage({ type: "toggleMcpServer", name, enabled: !enabled });
+      if (streamingActive || !enabled) return;
+      // The session's scope is the ONE thing written here: adding or dropping this server while
+      // leaving every other decision (another server, a built-in) exactly as it was.
+      const mcp = sessionToolScope.mcp.filter((s) => s !== name);
+      if (!onInSession) mcp.push(name);
+      sessionToolScope = { ...sessionToolScope, mcp };
+      vscode.postMessage({ type: "setToolScope", scope: sessionToolScope });
     });
     row.appendChild(sw);
 
@@ -4749,11 +4786,17 @@ function renderMcp(mcp: ConfigState["mcp"]): void {
 /** Keep the switches in sync with `streamingActive` without rebuilding the rows. */
 function refreshMcpSwitches(): void {
   for (const sw of document.querySelectorAll<HTMLButtonElement>("#mcp-list .mcp-switch")) {
-    sw.disabled = streamingActive;
+    // Three reasons a switch cannot be flipped, in order of fatality: the server is not installed
+    // here (a machine fact), a run is in flight (a mid-run toggle would only land on the next
+    // turn), or it is simply available.
+    const installed = sw.dataset.installed !== "0";
+    sw.disabled = !installed || streamingActive;
     const name = sw.dataset.name ?? "this server";
-    sw.title = streamingActive
-      ? "Stop the run first — a mid-run toggle only lands on the next turn"
-      : `Enable or disable ${name}`;
+    sw.title = !installed
+      ? "Not installed/enabled in the config: turn it on there first"
+      : streamingActive
+        ? "Stop the run first — a mid-run toggle only lands on the next turn"
+        : `Use ${name} in this session (installing it is global, using it is per conversation)`;
   }
 }
 
@@ -4796,8 +4839,16 @@ function hideMcpToolsPopover(): void {
 }
 
 /** What the server currently hides (the state every draft is compared to). */
-function mcpSavedExclusions(tools: { name: string; excluded?: boolean }[]): Set<string> {
-  return new Set(tools.filter((t) => t.excluded).map((t) => t.name));
+/**
+ * The tools of ONE server this session has switched OFF.
+ *
+ * Read from the SESSION's scope (`off` holds `mcp__server__tool` names), not from the config: the
+ * checkboxes are a per-conversation decision now, and a global list would make the panel show a
+ * state the model does not have.
+ */
+function mcpSavedExclusions(server: string, tools: { name: string }[]): Set<string> {
+  const prefix = `mcp__${server}__`;
+  return new Set(tools.filter((t) => sessionToolScope.off.includes(prefix + t.name)).map((t) => t.name));
 }
 
 /** What the server currently declares read-only ONE BY ONE (not the inherited declaration). */
@@ -4816,7 +4867,7 @@ function mcpToolsDirty(): boolean {
   const panel = mcpToolsPanel;
   if (!panel) return false;
   return (
-    setsDiffer(panel.draft, mcpSavedExclusions(panel.tools)) ||
+    setsDiffer(panel.draft, mcpSavedExclusions(panel.server, panel.tools)) ||
     setsDiffer(panel.analyzeDraft, mcpSavedAnalyzeFlags(panel.tools))
   );
 }
@@ -4936,7 +4987,7 @@ function showMcpToolsPopover(
   mcpToolsPanel = {
     server,
     tools,
-    draft: mcpSavedExclusions(tools),
+    draft: mcpSavedExclusions(server, tools),
     analyzeDraft: mcpSavedAnalyzeFlags(tools),
   };
   mcpToolsFilter = "";
@@ -6420,9 +6471,9 @@ window.addEventListener("message", (e) => {
   if (typeof msg?.sessionId === "string" && msg.sessionId !== activeId) return;
   switch (msg.type) {
     case "toolScope": {
-      // The HOST is the truth (it persisted the value): the panel keeps a copy only to merge.
-      const scope = normalizeToolScope((msg as { scope?: unknown }).scope);
-      sessionToolScope = scope ?? { mcp: [], off: [] };
+      // The HOST is the truth (it persisted the value). The scope normally rides on every `config`
+      // push (see applyToolScope); this route exists for a host that sends it on its own.
+      applyToolScope((msg as { scope?: unknown }).scope);
       break;
     }
     case "openFind": {

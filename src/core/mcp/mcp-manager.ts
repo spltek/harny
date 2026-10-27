@@ -109,17 +109,14 @@ export class McpManager {
         // server (the policy is consulted per call, not at connect time).
         const declared = (): ServerAnalyzePolicy | undefined => this.deps.servers()?.[name]?.analyze;
         const declaredTools = (): string[] | undefined => this.deps.servers()?.[name]?.analyzeTools;
-        // `excludeTools` is a CONNECT-time decision on purpose, unlike `analyze`: it
-        // decides whether the tool is REGISTERED at all, and the model's tool list is
-        // built from the registry. Saving the panel's checkboxes reconnects (see the
-        // host's setMcpToolExclusions), so the list the model sees is rebuilt there.
-        const excluded = new Set(
-          (this.deps.servers()?.[name]?.excludeTools ?? []).filter((t): t is string => typeof t === "string"),
-        );
+        // `excludeTools` is NOT a connect-time veto any more: which tools a conversation may use is
+        // a PER-SESSION decision (see ToolScope), so registering them all is what lets a session
+        // re-enable a tool the config left out — and it means saving the panel's checkboxes no
+        // longer has to reconnect anything. The key is still read: it SEEDS the default for a new
+        // session (see ChatViewProvider.createNew).
         let exposed = 0;
         const taken = new Set<string>();
         for (const info of infos) {
-          if (excluded.has(info.name)) continue;
           const tool = new McpTool(name, info, client, declared, declaredTools);
           if (taken.has(tool.name)) {
             // Two raw names can sanitize to the SAME Harny name (`a-b` and `a_b`): the
@@ -141,7 +138,6 @@ export class McpManager {
           tools: infos.map((t) => ({
             name: t.name,
             ...(t.description ? { description: t.description } : {}),
-            ...(excluded.has(t.name) ? { excluded: true } : {}),
             // The EFFECTIVE answer for this tool, so the panel's shield shows what Analyze will
             // actually do — including a tool allowed by the server-level declaration…
             ...(new McpTool(name, t, client, declared, declaredTools).analyzePolicy === "read-only"
@@ -153,7 +149,6 @@ export class McpManager {
         });
         this.deps.log?.(
           `[mcp] ${name}: connected, ${exposed}/${infos.length} tool(s) exposed` +
-            (excluded.size > 0 ? ` (${infos.length - exposed} excluded by config)` : "") +
             (declared() ? ` (analyze: ${declared()})` : " (analyze: not declared — none of them runs in Analyze)"),
         );
       } catch (e) {
@@ -208,7 +203,19 @@ export class McpManager {
 
   /** Per-server status for the UI. */
   getStatuses(): McpServerStatus[] {
-    return [...this.statuses];
+    // The DECLARATIONS are read LIVE (they describe the server, not the connection): the panel's
+    // shields and the Analyze gate itself are derived at call time, so a save must show up here
+    // without a reconnect. Recomputing on read is what keeps the two in step.
+    return this.statuses.map((status) => {
+      const cfg = this.deps.servers()?.[status.name];
+      if (!status.tools || status.tools.length === 0) return status;
+      const declaredTools = cfg?.analyzeTools;
+      const tools = status.tools.map((tool) => ({
+        ...tool,
+        ...(declaredTools?.includes(tool.name) ? { analyzeFlag: true } : {}),
+      }));
+      return { ...status, tools };
+    });
   }
 
   dispose(): void {

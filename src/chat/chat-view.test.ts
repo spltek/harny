@@ -1432,7 +1432,10 @@ describe("ChatViewProvider", () => {
     expect(connect).toHaveBeenCalledWith("test");
   });
 
-  it("setMcpToolExclusions writes the exclude list on THAT server and reconnects", async () => {
+  it("setMcpToolExclusions writes ONLY the Analyze declarations: no exclude list, no reconnect", async () => {
+    // The route stopped owning "which tools the model sees": that is the SESSION's scope now, so a
+    // save here must not touch `excludeTools` (one panel would decide for every session) and must
+    // not reconnect (nothing about the registration changed — the declarations are read live).
     const saveMcpServers = vi.fn(() => true);
     const connect = vi.fn(async () => {});
     const mcp = { connect, getStatuses: () => [], getTools: () => [] } as any;
@@ -1449,18 +1452,21 @@ describe("ChatViewProvider", () => {
         saveMcpServers,
       } as unknown as ProviderCatalog,
     });
-    const { handler, view } = resolveWith(provider);
+    const { handler } = resolveWith(provider);
 
-    await handler({ type: "setMcpToolExclusions", server: "test", exclude: ["drop_table", "drop_table", "wipe"] });
+    await handler({
+      type: "setMcpToolExclusions",
+      server: "test",
+      exclude: ["drop_table"],
+      analyze: [" echo ", "echo"],
+    });
 
+    // `exclude` is ignored — and the file stays without one.
     expect(saveMcpServers).toHaveBeenCalledWith({
-      test: { command: "node", analyze: "read-only", excludeTools: ["drop_table", "wipe"] },
+      test: { command: "node", analyze: "read-only", analyzeTools: ["echo"] },
       other: { command: "node", args: ["x"] },
     });
-    expect(connect).toHaveBeenCalledWith("test"); // ONLY this server (a full pass respawns every other npx)
-    expect(view.webview.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "mcpToolExclusionsSaved", server: "test", ok: true }),
-    );
+    expect(connect).not.toHaveBeenCalled();
   });
 
   it("setToolScope persists the SESSION's scope (not the config) and echoes it back", async () => {
@@ -1475,9 +1481,10 @@ describe("ChatViewProvider", () => {
 
     expect(rt.toolScope).toEqual({ mcp: ["files"], off: ["Shell"] });
     expect(store.saveSettings).toHaveBeenCalledWith("s1", { toolScope: { mcp: ["files"], off: ["Shell"] } });
-    expect(view.webview.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "toolScope", scope: { mcp: ["files"], off: ["Shell"] } }),
-    );
+    // The panel learns it from the CONFIG push it already receives (one message, no ordering
+    // hazard with the switch view).
+    const configPosts = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
+    expect(configPosts[configPosts.length - 1].config.toolScope).toEqual({ mcp: ["files"], off: ["Shell"] });
 
     // Junk is normalized on the way in — the agent must never read a malformed scope.
     await handler({ type: "setToolScope", scope: { mcp: [" files "], off: "nope" } });
@@ -1522,14 +1529,9 @@ describe("ChatViewProvider", () => {
       exclude: ["drop_table"],
       analyze: ["read_query", "read_query", ""],
     });
+    // `exclude` is NOT written: it belongs to the session's scope (see setToolScope).
     expect(saveMcpServers).toHaveBeenCalledWith({
-      sqlite: {
-        command: "node",
-        analyze: "trusted",
-        args: ["x"],
-        excludeTools: ["drop_table"],
-        analyzeTools: ["read_query"],
-      },
+      sqlite: { command: "node", analyze: "trusted", args: ["x"], analyzeTools: ["read_query"] },
     });
 
     // Empty lists are DELETED, not written as []: a server with nothing declared must look
@@ -1540,7 +1542,9 @@ describe("ChatViewProvider", () => {
     });
   });
 
-  it("an EMPTY exclude list is deleted from the config, not written as []", async () => {
+  it("an existing exclude list in the file SURVIVES a save: it is the seed, not our property", async () => {
+    // The key means "the default a new session starts from" (see seededToolOffList). Deleting it
+    // from a route that no longer owns it would drop the user's intent without saying so.
     const saveMcpServers = vi.fn(() => true);
     const { provider } = buildHarness({
       providers: {
@@ -1551,9 +1555,10 @@ describe("ChatViewProvider", () => {
       } as unknown as ProviderCatalog,
     });
     const { handler } = resolveWith(provider);
-    await handler({ type: "setMcpToolExclusions", server: "test", exclude: [] });
-    // A server with nothing excluded must look untouched in the file.
-    expect(saveMcpServers).toHaveBeenCalledWith({ test: { command: "node" } });
+    await handler({ type: "setMcpToolExclusions", server: "test", exclude: [], analyze: ["echo"] });
+    expect(saveMcpServers).toHaveBeenCalledWith({
+      test: { command: "node", excludeTools: ["ping"], analyzeTools: ["echo"] },
+    });
   });
 
   it("setMcpToolExclusions ignores an unknown server and a failed save", async () => {
@@ -1573,10 +1578,9 @@ describe("ChatViewProvider", () => {
     await handler({ type: "setMcpToolExclusions", server: "nope", exclude: ["a"] });
     expect(saveMcpServers).not.toHaveBeenCalled();
 
-    // Junk in the payload is dropped, not written into the file: names are strings or
-    // nothing (an `excludeTools: [null]` would make every tool look excluded to nobody).
-    await handler({ type: "setMcpToolExclusions", server: "test", exclude: ["a", 42, "  ", null, undefined] });
-    expect(saveMcpServers).toHaveBeenCalledWith({ test: { command: "node", excludeTools: ["a"] } });
+    // Junk in the payload is dropped, not written into the file: names are strings or nothing.
+    await handler({ type: "setMcpToolExclusions", server: "test", analyze: ["a", 42, "  ", null, undefined] });
+    expect(saveMcpServers).toHaveBeenCalledWith({ test: { command: "node", analyzeTools: ["a"] } });
     // A failed save must NOT reconnect (the config did not change) and must say so.
     expect(connect).not.toHaveBeenCalled();
     expect(view.webview.postMessage).toHaveBeenCalledWith(

@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { McpManager } from "../core/mcp/mcp-manager";
+import { toolDefinitionsForMode } from "../core/tools/mode-policy";
 import { HarnyFileConfigProvider } from "../core/config/harny-file-config-provider";
 import { nodeFileSystem } from "../core/tools/file-system";
 import { bootClient, detachBridge, pageOf, resetBridge, wire } from "./webview-bridge.test-utils";
@@ -98,11 +99,11 @@ afterEach(() => {
 });
 
 describe("MCP tools panel, host ⇄ webview ⇄ server", () => {
-  it("unchecking a tool writes excludeTools, reconnects, and hides it from the model", async () => {
+  it("unchecking a tool writes the SESSION's scope — the config is not touched, nothing reconnects", async () => {
     setup({ command: process.execPath, args: ["-e", SERVER] });
     await manager.connect();
 
-    const { html } = wire({
+    const { provider, store, html } = wire({
       providers: {
         readMcpServers: () => config.readMcpServers(),
         saveMcpServers: (servers) => config.saveMcpServers(servers),
@@ -110,49 +111,58 @@ describe("MCP tools panel, host ⇄ webview ⇄ server", () => {
       mcp: manager,
     });
     await bootClient(await pageOf(html));
+    const sess = store.create("scope-1");
+    provider.openSession(sess.id); // a session to hold the decision
+    await vi.waitFor(() => expect(provider.scopeOfActiveSessionForTest?.()).toEqual({ mcp: [], off: [] }));
 
-    // Nothing is excluded yet: the card says so, and the panel opens fully checked.
+    // Nothing is switched off yet: the panel opens fully checked.
     await vi.waitFor(() => expect(toolsKey().textContent).toBe("(2 tools)"), { timeout: 5000 });
     toolsKey().click();
     const rows = [...document.querySelectorAll<HTMLElement>("#mcp-tools-popover .mcp-pop-row")];
     expect(rows.map((r) => r.querySelector(".mcp-pop-name")!.textContent)).toEqual(["echo", "ping"]);
     expect(rows.map((r) => (r.querySelector("input") as HTMLInputElement).checked)).toEqual([true, true]);
-    expect(document.querySelector(".mcp-pop-count")!.textContent).toBe("2 of 2 enabled");
-    expect(panelSave().disabled).toBe(true);
 
     // Hide `ping` and save.
     (rows[1].querySelector("input") as HTMLInputElement).click();
     panelSave().click();
 
-    // 1. the CONFIG FILE really carries the exclusion (that is the whole point)…
-    await vi.waitFor(() => expect(config.readMcpServers().test.excludeTools).toEqual(["ping"]), { timeout: 5000 });
-    const raw = JSON.parse(readFileSync(join(dir, "config.json"), "utf8"));
-    expect(raw.mcpServers.test.excludeTools).toEqual(["ping"]);
-    expect(raw.mcpServers.test.command).toBe(process.execPath); // …and the server survived the write
-    // 2 …the RECONNECT dropped it from the tools the model is offered…
-    await vi.waitFor(() => expect(manager.getTools().map((t) => t.name)).toEqual(["mcp__test__echo"]), {
-      timeout: 5000,
+    // 1. THE SESSION carries the decision, as the name a scope holds.
+    const scope = await vi.waitFor(() => {
+      const value = provider.scopeOfActiveSessionForTest?.();
+      // The server stays ON for this session (its `echo` is enabled): only `ping` is off, by name.
+      expect(value).toEqual({ mcp: ["test"], off: ["mcp__test__ping"] });
+      return value;
     });
-    // 3 …the card re-rendered with the new count, and the panel closed itself.
-    await vi.waitFor(() => expect(toolsKey().textContent).toBe("(1/2 tools)"), { timeout: 5000 });
-    expect((document.getElementById("mcp-tools-popover") as HTMLElement).classList.contains("hidden")).toBe(true);
+    void scope;
+    // 2. …and the CONFIG FILE is untouched: no `excludeTools` appeared.
+    expect(config.readMcpServers().test.excludeTools).toBeUndefined();
+    const raw = JSON.parse(readFileSync(join(dir, "config.json"), "utf8"));
+    expect(raw.mcpServers.test.excludeTools).toBeUndefined();
+    expect(raw.mcpServers.test.command).toBe(process.execPath);
 
-    // Reopening shows the SAVED state, not the draft that was sent.
+    // 3. Nothing reconnected: the registry still holds BOTH tools (the scope is what filters the
+    //    per-turn list, so a save no longer respawns an npx process).
+    expect(manager.getTools().map((t) => t.name)).toEqual(["mcp__test__echo", "mcp__test__ping"]);
+    // 4. The model's per-turn list is filtered by that scope.
+    const defs = toolDefinitionsForMode(manager.getTools(), "agent", {
+      scope: { mcp: ["test"], off: ["mcp__test__ping"] },
+    });
+    expect(defs.map((d) => d.name)).toEqual(["mcp__test__echo"]);
+
+    // Reopening shows the SAVED state.
     toolsKey().click();
     const reopened = [...document.querySelectorAll<HTMLElement>("#mcp-tools-popover .mcp-pop-row")];
     expect(reopened.map((r) => (r.querySelector("input") as HTMLInputElement).checked)).toEqual([true, false]);
-    expect(document.querySelector(".mcp-pop-count")!.textContent).toBe("1 of 2 enabled");
-    expect(panelSave().disabled).toBe(true); // nothing to save
   });
 
-  it("a tool excluded in the file is hidden from the model at activation and shown unchecked", async () => {
+  it("a tool excluded in the FILE seeds a new session, which then owns the decision", async () => {
     setup({ command: process.execPath, args: ["-e", SERVER], excludeTools: ["ping"] });
     await manager.connect();
 
-    // The model never sees it: exclusion happens at registration, not at call time.
-    expect(manager.getTools().map((t) => t.name)).toEqual(["mcp__test__echo"]);
+    // The registry holds everything: the config is a seed, not a veto.
+    expect(manager.getTools().map((t) => t.name)).toEqual(["mcp__test__echo", "mcp__test__ping"]);
 
-    const { html } = wire({
+    const { provider, store, html } = wire({
       providers: {
         readMcpServers: () => config.readMcpServers(),
         saveMcpServers: (servers) => config.saveMcpServers(servers),
@@ -160,21 +170,28 @@ describe("MCP tools panel, host ⇄ webview ⇄ server", () => {
       mcp: manager,
     });
     await bootClient(await pageOf(html));
+    const sess = store.create("seed-1");
+    provider.openSession(sess.id);
 
-    await vi.waitFor(() => expect(toolsKey().textContent).toBe("(1/2 tools)"), { timeout: 5000 });
+    // The new session starts with every server OFF and the file's exclusions carried over as
+    // `off` names — so unchecking a tool in the file still means "the model must not see it".
+    await vi.waitFor(() =>
+      expect(provider.scopeOfActiveSessionForTest?.()).toEqual({ mcp: [], off: ["mcp__test__ping"] }),
+    );
+
+    // The panel shows exactly that: `ping` unchecked, and the list COMPLETE so it stays editable.
+    await vi.waitFor(() => expect(toolsKey().textContent).toBe("(2 tools)"), { timeout: 5000 });
     toolsKey().click();
     const rows = [...document.querySelectorAll<HTMLElement>("#mcp-tools-popover .mcp-pop-row")];
-    expect(rows.map((r) => (r.querySelector("input") as HTMLInputElement).checked)).toEqual([true, false]);
-    expect(rows[1].classList.contains("off")).toBe(true);
-    // The advertised list is COMPLETE: the hidden tool must still be editable.
     expect(rows).toHaveLength(2);
+    expect(rows.map((r) => (r.querySelector("input") as HTMLInputElement).checked)).toEqual([true, false]);
   });
 
-  it("hiding every tool leaves the server connected with none exposed (no crash, no broken card)", async () => {
+  it("switching every tool off keeps the server connected (zero exposed is a state, not a crash)", async () => {
     setup({ command: process.execPath, args: ["-e", SERVER] });
     await manager.connect();
 
-    const { html } = wire({
+    const { provider, store, html } = wire({
       providers: {
         readMcpServers: () => config.readMcpServers(),
         saveMcpServers: (servers) => config.saveMcpServers(servers),
@@ -182,23 +199,31 @@ describe("MCP tools panel, host ⇄ webview ⇄ server", () => {
       mcp: manager,
     });
     await bootClient(await pageOf(html));
+    const sess = store.create("scope-2");
+    provider.openSession(sess.id);
+    await vi.waitFor(() => expect(provider.scopeOfActiveSessionForTest?.()).toEqual({ mcp: [], off: [] }));
 
     await vi.waitFor(() => expect(toolsKey().textContent).toBe("(2 tools)"), { timeout: 5000 });
     toolsKey().click();
     [...document.querySelectorAll<HTMLButtonElement>("#mcp-tools-popover button")]
       .find((b) => b.textContent === "None")!
       .click();
-    expect(document.querySelector(".mcp-pop-count")!.textContent).toBe("0 of 2 enabled");
     panelSave().click();
 
-    await vi.waitFor(() => expect(config.readMcpServers().test.excludeTools).toEqual(["echo", "ping"]), {
-      timeout: 5000,
-    });
-    await vi.waitFor(() => expect(manager.getTools()).toEqual([]), { timeout: 5000 });
-    // The card still renders (and still opens the panel): zero exposed is a state, not
-    // a broken server.
-    await vi.waitFor(() => expect(toolsKey().textContent).toBe("(0/2 tools)"), { timeout: 5000 });
+    await vi.waitFor(() =>
+      expect(provider.scopeOfActiveSessionForTest?.()).toEqual({
+        mcp: [],
+        off: ["mcp__test__echo", "mcp__test__ping"],
+      }),
+    );
+    // The server is still connected and still offers both tools; only the per-turn list is empty.
     expect(manager.getStatuses()[0].ok).toBe(true);
+    expect(manager.getTools()).toHaveLength(2);
+    expect(
+      toolDefinitionsForMode(manager.getTools(), "agent", {
+        scope: { mcp: [], off: ["mcp__test__echo", "mcp__test__ping"] },
+      }),
+    ).toEqual([]);
   });
 
   it("the shield declares ONE tool read-only in Analyze, end to end (config file → gate)", async () => {

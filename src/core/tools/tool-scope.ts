@@ -81,8 +81,9 @@ export function scopeTools<T extends { name: string }>(tools: readonly T[], scop
 export interface KnownTools {
   /** Server names that exist in the config RIGHT NOW. */
   servers: readonly string[];
-  /** Built-in tool names the registry has RIGHT NOW. */
-  builtins: readonly string[];
+  /** Built-in tool names the registry has RIGHT NOW. OMIT to leave the built-in half untouched
+   *  (a runtime sweep knows the config, not the registry, and shipped tools do not vanish). */
+  builtins?: readonly string[];
 }
 
 /**
@@ -95,7 +96,7 @@ export interface KnownTools {
 export function reconcileToolScope(scope: ToolScope | undefined, known: KnownTools): ToolScope | undefined {
   if (!scope) return undefined;
   const mcp = scope.mcp.filter((server) => known.servers.includes(server));
-  const off = scope.off.filter((tool) => known.builtins.includes(tool));
+  const off = known.builtins ? scope.off.filter((tool) => known.builtins!.includes(tool)) : [...scope.off];
   if (mcp.length === scope.mcp.length && off.length === scope.off.length) return undefined;
   return { mcp, off };
 }
