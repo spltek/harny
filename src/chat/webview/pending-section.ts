@@ -238,10 +238,11 @@ export function createPendingSection(deps: PendingSectionDeps): PendingSection {
       count = ordered.length;
       setExpanded(expanded);
       // The header carries the COUNTS, so a collapsed section still says what is
-      // waiting: "Steer 1 · Queued 2".
+      // waiting: "Steer (1) · Queued (2)". The number sits in PARENTHESES so the label reads as a
+      // name with a count beside it, not as "Steer 1" (which looks like a bahn number).
       const steers = ordered.filter((it) => it.mode === "steer").length;
       const queued = ordered.length - steers;
-      headText.textContent = [steers > 0 ? `Steer ${steers}` : "", queued > 0 ? `Queued ${queued}` : ""]
+      headText.textContent = [steers > 0 ? `Steer (${steers})` : "", queued > 0 ? `Queued (${queued})` : ""]
         .filter(Boolean)
         .join(" · ");
       area.replaceChildren(...ordered.map(renderRow));

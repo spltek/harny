@@ -8918,7 +8918,7 @@ describe("soft steering + pending bubbles (webview)", () => {
         ],
       });
 
-      expect((document.getElementById("pending-head-text") as HTMLElement).textContent).toBe("Steer 1 · Queued 2");
+      expect((document.getElementById("pending-head-text") as HTMLElement).textContent).toBe("Steer (1) · Queued (2)");
     });
 
     it("keeps the counts header VISIBLE while the section is collapsed", async () => {
@@ -8939,8 +8939,8 @@ describe("soft steering + pending bubbles (webview)", () => {
       head.click();
 
       expect(section.classList.contains("hidden")).toBe(false); // still there
-      expect(head.textContent).toContain("Steer 1");
-      expect(head.textContent).toContain("Queued 1");
+      expect(head.textContent).toContain("Steer (1)"); // the count sits in parentheses
+      expect(head.textContent).toContain("Queued (1)");
       expect(area.classList.contains("hidden")).toBe(true); // only the items fold
     });
 

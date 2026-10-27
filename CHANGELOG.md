@@ -68,6 +68,8 @@ track with a WHITE dot), and
   `stopPropagation`s the original key for hosts that deliver it to the page. The command is registered at runtime and
   deliberately absent from `contributes.commands`, so the palette stays clean — a manifest test now enforces that every
   Harny keybinding is view-scoped instead of banning them all.
+- **The queue/steer header puts each count in parentheses**: `Steer (1) · Queued (2)` instead of `Steer 1 · Queued 2`,
+  so the label reads as a name with a count beside it rather than as a number that belongs to the word.
 - **The fold arrow is one chevron that turns, not a triangle swapped for another triangle.** Every collapsible header
   wrote `"▶"` closed and `"▼"` open, in eight places across two modules: a filled triangle changes shape and weight as it
   opens, and reads heavier than the chevrons the rest of the panel already uses (`#ctl-toggle-btn`, `.mode-btn-chevron`,
