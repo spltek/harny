@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createMcpCard, offToolNames, type McpCard, type McpCardDeps } from "./mcp-card";
+import { createMcpCard, type McpCard, type McpCardDeps } from "./mcp-card";
+import { offToolNames } from "./mcp-tool-flags";
 
 /**
  * The MCP card on its own: rows, the SESSION switch, the `(N/M tools)` count and the status line.

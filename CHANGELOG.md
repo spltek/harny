@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **One reader for the MCP payload's flags** (`webview/mcp-tool-flags.ts`): the card's `(N/M tools)` count and the tools
+  popover's starting draft both read `off`/`analyzeFlag`, and each carried a copy of the rule.
+- **A DOM contract test between the modules and `view-html`**: splitting `view.ts` moved the code that WRITES classes
+  away from the file that DEFINES them, with nothing linking the two at compile time. Every class a module writes must now
+  be either STYLED in `view-html.ts` or a HOOK something selects (a `querySelector` in a module or a test); anything else
+  is a name nobody uses. It also fails if a new module writes DOM without being listed, so the check cannot rot.
+  Writing it found four things on the first run — including my own regex bug (`querySelectorAll?` means
+  `querySelectorAl` + optional `l`, so plain `querySelector(` never matched, and the hook side was silently empty).
+
 - **The MCP editor is its own module too** (`webview/mcp-editor.ts`, 277 lines, 98.7% covered): the local draft of the
   server map, the form, Test and the save as the WHOLE map. Two rules are pinned because an extraction is exactly where
   they get lost: the keys the form does NOT edit (`analyze`, `excludeTools`, anything else) SURVIVE a save, and switching

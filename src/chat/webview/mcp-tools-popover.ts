@@ -1,3 +1,5 @@
+import { analyzeToolNames, offToolNames } from "./mcp-tool-flags";
+
 /**
  * THE MCP TOOLS POPOVER — "which of this server's tools may the model see, here?"
  *
@@ -50,16 +52,6 @@ function setsDiffer(a: Set<string>, b: Set<string>): boolean {
   return false;
 }
 
-/** The tools this session has OFF, by name (the host's flag). */
-function savedOff(tools: McpToolLike[]): Set<string> {
-  return new Set(tools.filter((t) => t.off).map((t) => t.name));
-}
-
-/** The tools declared read-only in Analyze. */
-function savedAnalyze(tools: McpToolLike[]): Set<string> {
-  return new Set(tools.filter((t) => t.analyzeFlag).map((t) => t.name));
-}
-
 interface Draft {
   server: string;
   tools: McpToolLike[];
@@ -78,7 +70,8 @@ export function createMcpToolsPopover(deps: McpToolsPopoverDeps): McpToolsPopove
   let statusEl: HTMLSpanElement | null = null;
 
   const dirty = (): boolean =>
-    !!draft && (setsDiffer(draft.off, savedOff(draft.tools)) || setsDiffer(draft.analyze, savedAnalyze(draft.tools)));
+    !!draft &&
+    (setsDiffer(draft.off, offToolNames(draft.tools)) || setsDiffer(draft.analyze, analyzeToolNames(draft.tools)));
 
   /** The counts and the Save button — the only things a toggle changes besides its row. */
   function updateHead(): void {
@@ -198,7 +191,7 @@ export function createMcpToolsPopover(deps: McpToolsPopoverDeps): McpToolsPopove
   }
 
   function show(anchor: HTMLElement, server: string, tools: McpToolLike[]): void {
-    draft = { server, tools, off: savedOff(tools), analyze: savedAnalyze(tools) };
+    draft = { server, tools, off: offToolNames(tools), analyze: analyzeToolNames(tools) };
     filter = "";
     deps.popover.innerHTML = "";
 

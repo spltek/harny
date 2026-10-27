@@ -1,3 +1,5 @@
+import { offToolNames } from "./mcp-tool-flags";
+
 /**
  * THE MCP CARD — one row per installed server, in the control strip.
  *
@@ -51,11 +53,6 @@ export interface McpCard {
   refreshSwitches(busy: boolean): void;
   /** The last statuses drawn — other panels read them for tool lists. */
   statuses(): McpServerStatusLike[];
-}
-
-/** The tools this SESSION has switched off, by name. */
-export function offToolNames(tools: { name: string; off?: boolean }[] | undefined): Set<string> {
-  return new Set((tools ?? []).filter((t) => t.off).map((t) => t.name));
 }
 
 export function createMcpCard(deps: McpCardDeps): McpCard {
