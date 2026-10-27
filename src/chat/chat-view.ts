@@ -974,11 +974,6 @@ export class ChatViewProvider implements WebviewViewProvider {
     this.view?.webview.postMessage({ type: "openFind" });
   }
 
-  /** The ACTIVE session's scope, as the host holds it (tests assert the persisted decision). */
-  scopeOfActiveSessionForTest(): ToolScope | undefined {
-    return this.activeRuntime()?.toolScope;
-  }
-
   /** Rebuild the whole view (host-side refresh after any change). */
   refresh(): void {
     if (!this.view) return;

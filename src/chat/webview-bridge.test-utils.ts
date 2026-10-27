@@ -48,6 +48,12 @@ export function memoryStore(): MemoryStore {
     rows,
     transcripts,
     list: () => [...rows.values()].map((s) => ({ ...s })),
+    // The interface's O(1) metadata read (see SessionStore.summary): the SqliteSessionStore has
+    // it, and a store that does not would break every caller that only needs one setting.
+    summary: (id: string) => {
+      const row = rows.get(id);
+      return row ? { ...row } : undefined;
+    },
     create(name?: string) {
       const now = Date.now();
       const summary: SessionSummary = {

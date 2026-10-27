@@ -5361,6 +5361,21 @@ describe("view webview client", () => {
     });
   }
 
+  it("the card counts what THIS session can use, not what the registry holds", async () => {
+    // Every tool is registered now (a server is installed once, used per session), so `toolCount`
+    // alone said "(2 tools)" while the model could only see one.
+    await loadView();
+    pushMcpTools([
+      { name: "echo", description: "Echo text" },
+      { name: "ping", excluded: true },
+    ]);
+    expect((document.querySelector(".mcp-tools-btn") as HTMLButtonElement).textContent).toBe("(1/2 tools)");
+
+    // All on again: the quiet form comes back.
+    hostMessage({ type: "toolScope", scope: { mcp: ["test"], off: [] } });
+    expect((document.querySelector(".mcp-tools-btn") as HTMLButtonElement).textContent).toBe("(2 tools)");
+  });
+
   it("the tools panel edits what the model sees, and Save posts the excluded list", async () => {
     await loadView();
     pushMcpTools([

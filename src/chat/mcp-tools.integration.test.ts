@@ -113,7 +113,7 @@ describe("MCP tools panel, host ⇄ webview ⇄ server", () => {
     await bootClient(await pageOf(html));
     const sess = store.create("scope-1");
     provider.openSession(sess.id); // a session to hold the decision
-    await vi.waitFor(() => expect(provider.scopeOfActiveSessionForTest?.()).toEqual({ mcp: [], off: [] }));
+    await vi.waitFor(() => expect(store.summary(sess.id)?.toolScope).toEqual({ mcp: [], off: [] }));
 
     // Nothing is switched off yet: the panel opens fully checked.
     await vi.waitFor(() => expect(toolsKey().textContent).toBe("(2 tools)"), { timeout: 5000 });
@@ -128,7 +128,7 @@ describe("MCP tools panel, host ⇄ webview ⇄ server", () => {
 
     // 1. THE SESSION carries the decision, as the name a scope holds.
     const scope = await vi.waitFor(() => {
-      const value = provider.scopeOfActiveSessionForTest?.();
+      const value = store.summary(sess.id)?.toolScope;
       // The server stays ON for this session (its `echo` is enabled): only `ping` is off, by name.
       expect(value).toEqual({ mcp: ["test"], off: ["mcp__test__ping"] });
       return value;
@@ -175,12 +175,11 @@ describe("MCP tools panel, host ⇄ webview ⇄ server", () => {
 
     // The new session starts with every server OFF and the file's exclusions carried over as
     // `off` names — so unchecking a tool in the file still means "the model must not see it".
-    await vi.waitFor(() =>
-      expect(provider.scopeOfActiveSessionForTest?.()).toEqual({ mcp: [], off: ["mcp__test__ping"] }),
-    );
+    await vi.waitFor(() => expect(store.summary(sess.id)?.toolScope).toEqual({ mcp: [], off: ["mcp__test__ping"] }));
 
-    // The panel shows exactly that: `ping` unchecked, and the list COMPLETE so it stays editable.
-    await vi.waitFor(() => expect(toolsKey().textContent).toBe("(2 tools)"), { timeout: 5000 });
+    // The panel shows exactly that: `ping` unchecked, the card counting what the SESSION can use,
+    // and the list COMPLETE so it stays editable.
+    await vi.waitFor(() => expect(toolsKey().textContent).toBe("(1/2 tools)"), { timeout: 5000 });
     toolsKey().click();
     const rows = [...document.querySelectorAll<HTMLElement>("#mcp-tools-popover .mcp-pop-row")];
     expect(rows).toHaveLength(2);
@@ -201,7 +200,7 @@ describe("MCP tools panel, host ⇄ webview ⇄ server", () => {
     await bootClient(await pageOf(html));
     const sess = store.create("scope-2");
     provider.openSession(sess.id);
-    await vi.waitFor(() => expect(provider.scopeOfActiveSessionForTest?.()).toEqual({ mcp: [], off: [] }));
+    await vi.waitFor(() => expect(store.summary(sess.id)?.toolScope).toEqual({ mcp: [], off: [] }));
 
     await vi.waitFor(() => expect(toolsKey().textContent).toBe("(2 tools)"), { timeout: 5000 });
     toolsKey().click();
@@ -211,7 +210,7 @@ describe("MCP tools panel, host ⇄ webview ⇄ server", () => {
     panelSave().click();
 
     await vi.waitFor(() =>
-      expect(provider.scopeOfActiveSessionForTest?.()).toEqual({
+      expect(store.summary(sess.id)?.toolScope).toEqual({
         mcp: [],
         off: ["mcp__test__echo", "mcp__test__ping"],
       }),

@@ -180,7 +180,7 @@ interface ConfigState {
       /** Exposed to the model (what the card shows). */
       toolCount: number;
       /** Everything the server advertises, with the exclusions flagged. */
-      tools?: { name: string; description?: string; excluded?: boolean }[];
+      tools?: { name: string; description?: string }[];
     }[];
   };
   contextTokens?: number;
@@ -4323,7 +4323,7 @@ let mcpStatuses: {
   enabled: boolean;
   error?: string;
   toolCount: number;
-  tools?: { name: string; description?: string; excluded?: boolean }[];
+  tools?: { name: string; description?: string }[];
 }[] = [];
 
 const DEFAULT_PARALLEL = 4;
@@ -4751,16 +4751,20 @@ function renderMcp(mcp: ConfigState["mcp"]): void {
       row.appendChild(detail);
     } else if (st?.ok) {
       const total = st.tools?.length ?? st.toolCount;
-      const hidden = st.tools?.filter((t) => t.excluded).length ?? 0;
+      // The count is THIS SESSION's, not the registry's: the tools are all registered (a server is
+      // installed once), so what tells the user something is switched off is the scope. Reading
+      // `st.toolCount` here said "(2 tools)" while the model could only see one.
+      const hidden = st.tools ? mcpSavedExclusions(name, st.tools).size : 0;
+      const shown = total - hidden;
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "mcp-tools-btn";
-      // `(5/8 tools)` says at a glance that something is hidden; `(8 tools)` when
-      // nothing is, so the common case stays quiet.
-      btn.textContent = hidden > 0 ? `(${st.toolCount}/${total} tools)` : `(${st.toolCount} tools)`;
+      // `(5/8 tools)` says at a glance that something is off; `(8 tools)` when nothing is, so the
+      // common case stays quiet.
+      btn.textContent = hidden > 0 ? `(${shown}/${total} tools)` : `(${total} tools)`;
       btn.title =
         hidden > 0
-          ? `${hidden} of ${total} tool(s) hidden from the model — click to choose`
+          ? `${hidden} of ${total} tool(s) switched off in this session — click to choose`
           : "Choose which of this server's tools the model sees";
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
