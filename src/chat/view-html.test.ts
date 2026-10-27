@@ -318,21 +318,23 @@ describe("renderViewHtml", () => {
     const block = cssRule(html, ".todo-block");
     expect(block).toContain("border-left: 2px solid var(--border)");
     expect(block).toContain("padding-left: 8px");
-    // The two ways a list like this breaks: the mark shrinking under a long task, and
+    // The two ways a list like this breaks: the leading box shrinking under a long task, and
     // the text refusing to wrap. Both are pinned here.
-    expect(cssRule(html, ".todo-mark")).toContain("flex: 0 0 auto");
+    expect(cssRule(html, ".todo-check")).toContain("flex: none");
+    // The number column: tabular figures, so 10) lines up with 9) instead of shifting the row.
+    expect(cssRule(html, ".todo-num")).toContain("font-variant-numeric: tabular-nums");
     const text = cssRule(html, ".todo-text");
     expect(text).toContain("min-width: 0");
     expect(text).toContain("overflow-wrap: anywhere");
-    // Rows align to the TOP: a task that wraps to two lines must not push its mark
+    // Rows align to the TOP: a task that wraps to two lines must not push its box
     // down to the middle (the pending-badge lesson, one year of pixel grief ago).
     expect(cssRule(html, ".todo-item")).toContain("align-items: flex-start");
-    // The states must be readable without reading: struck through + tinted tick for
-    // done, accent for the running one.
+    // The states must be readable without reading: a TICKED box for done, an accent dot for the
+    // running one, nothing inside the box for pending.
     expect(cssRule(html, ".todo-item.status-completed .todo-text")).toContain("line-through");
-    expect(cssRule(html, ".todo-item.status-completed .todo-mark")).toContain("var(--ok)");
+    expect(cssRule(html, ".todo-item.status-completed .todo-check")).toContain("background: var(--ok)");
     expect(cssRule(html, ".todo-item.status-cancelled .todo-text")).toContain("line-through");
-    expect(cssRule(html, ".todo-item.status-in_progress .todo-mark")).toContain("var(--accent)");
+    expect(cssRule(html, ".todo-item.status-in_progress .todo-check")).toContain("border-color: var(--accent)");
   });
 
   it("pins the task list above the input, and lets IT scroll, not the panel", () => {
@@ -364,8 +366,14 @@ describe("renderViewHtml", () => {
     expect(section).toContain("flex-shrink: 0");
     expect(section).toContain("border-top: 1px dashed var(--border)");
     const list = cssRule(html, "#todo-section-list");
-    expect(list).toContain("max-height: 22vh");
+    // SIX ROWS, and the viewport is only the FLOOR: `min(8.4rem, 22vh)` keeps ~6 rows on a tall
+    // panel and 22% of a short one, so a 20-task plan can never take the whole space above the input.
+    expect(list).toContain("max-height: min(8.4rem, 22vh)");
     expect(list).toContain("overflow-y: auto");
+    // No text jump when the scrollbar appears.
+    expect(list).toContain("scrollbar-gutter: stable");
+    // The HEAD is a sibling of the list, so the count stays readable while the rows scroll.
+    expect(html.indexOf('class="todo-head"')).toBeLessThan(html.indexOf('id="todo-section-list"'));
   });
 
   it("renders sessions, tabs, messages and input containers", () => {

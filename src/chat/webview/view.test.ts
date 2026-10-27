@@ -3325,6 +3325,79 @@ describe("view webview client", () => {
     expect(document.querySelector(".msg.tool .tool-path")?.textContent).toBe("**/*.ts");
   });
 
+  it("numbers every task, and keeps numbering STABLE when siblings complete", async () => {
+    // The number is the task's identity in the plan, not its rank among the open ones: "task 3" must
+    // still be 3 after 1 and 2 are done, or the model's report and the screen stop agreeing.
+    await loadView();
+    hostMessage({ type: "status", active: true });
+    const write = (id: string, output: string): void => {
+      hostMessage({ type: "toolCall", id, name: "TodoWrite", arguments: { todos: [], merge: false } });
+      hostMessage({ type: "toolResult", toolCallId: id, output, isError: false });
+    };
+    write("t1", "## Task List\n\n⏳ [pending] one\n🔄 [in_progress] two\n✅ [completed] three");
+    const nums = (): (string | null)[] =>
+      [...document.querySelectorAll("#todo-section-list .todo-num")].map((n) => n.textContent);
+    expect(nums()).toEqual(["1.", "2.", "3."]);
+    // Boom: 1 and 2 complete, 3 is the work. The numbers do not move.
+    write("t2", "## Task List\n\n✅ [completed] one\n✅ [completed] two\n🔄 [in_progress] three");
+    expect(nums()).toEqual(["1.", "2.", "3."]);
+    // The number is a real column BEFORE the state mark, in both views.
+    const row = document.querySelector("#todo-section-list .todo-item")!;
+    expect([...row.children].map((c) => c.className)).toEqual(["todo-check", "todo-num", "todo-text"]);
+  });
+
+  it("auto-scrolls the pinned list to the task being worked on", async () => {
+    // Six rows fit; a 12-task plan does not. Opening it on row 1 while the model works on row 9 is
+    // precisely what the reminder must not do.
+    const scrolled: Element[] = [];
+    const original = (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
+    (Element.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    try {
+      await loadView();
+      hostMessage({ type: "status", active: true });
+      const todos = Array.from({ length: 12 }, (_, i) =>
+        i === 8 ? "🔄 [in_progress] the one being worked on" : i < 8 ? "✅ [completed] done" : "⏳ [pending] later",
+      ).join("\n");
+      hostMessage({ type: "toolCall", id: "t1", name: "TodoWrite", arguments: { todos: [], merge: false } });
+      hostMessage({ type: "toolResult", toolCallId: "t1", output: "## Task List\n\n" + todos, isError: false });
+
+      // `scrollIntoView` is used by other parts too (the active TAB centres itself): count the rows.
+      const rows = scrolled.filter((e) => e.classList.contains("todo-item"));
+      expect(rows).toHaveLength(1);
+      expect(rows[0].classList.contains("status-in_progress")).toBe(true);
+      expect(rows[0].textContent).toContain("the one being worked on");
+    } finally {
+      (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView = original;
+    }
+  });
+
+  it("falls back to the first OPEN task when nothing is in progress (an interrupted plan)", async () => {
+    const scrolled: Element[] = [];
+    const original = (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
+    (Element.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    try {
+      await loadView();
+      hostMessage({ type: "status", active: true });
+      hostMessage({ type: "toolCall", id: "t1", name: "TodoWrite", arguments: { todos: [], merge: false } });
+      hostMessage({
+        type: "toolResult",
+        toolCallId: "t1",
+        output: "## Task List\n\n✅ [completed] one\n✅ [completed] two\n⏳ [pending] three\n⏳ [pending] four",
+        isError: false,
+      });
+      const rows = scrolled.filter((e) => e.classList.contains("todo-item"));
+      expect(rows).toHaveLength(1);
+      expect(rows[0].classList.contains("status-pending")).toBe(true);
+      expect(rows[0].textContent).toContain("three");
+    } finally {
+      (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView = original;
+    }
+  });
+
   it("shows chips for TodoWrite / WebSearch / WebFetch / ReadLints", async () => {
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
@@ -3375,7 +3448,7 @@ describe("view webview client", () => {
     expect(first.querySelector(".todo-count")?.textContent).toBe("0/1");
     expect(first.querySelectorAll(".todo-item")).toHaveLength(1);
     expect(first.querySelector(".todo-item")?.classList.contains("status-pending")).toBe(true);
-    expect(first.querySelector(".todo-mark svg")).toBeTruthy();
+    expect(first.querySelector(".todo-check")).toBeTruthy();
     expect(first.querySelector(".todo-text")?.textContent).toBe("fix parser");
 
     // A second update REPLACES the block: five stale copies is what made the list
@@ -3396,7 +3469,9 @@ describe("view webview client", () => {
     expect(second.querySelectorAll(".todo-item.status-in_progress")).toHaveLength(1);
     // The task text is MODEL data: it lands as text, never as markup.
     expect(second.querySelectorAll(".todo-text")[0].textContent).toBe("fix parser");
-    expect(second.querySelectorAll(".todo-mark svg")).toHaveLength(2);
+    expect(second.querySelectorAll(".todo-check")).toHaveLength(2);
+    // Ticked only where it is completed; the in-progress box stays empty (its dot is CSS).
+    expect(second.querySelectorAll(".todo-check svg")).toHaveLength(1);
   });
 
   it("pins the same list above the input, so it does not scroll away", async () => {

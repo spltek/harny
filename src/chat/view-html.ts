@@ -956,14 +956,23 @@ ${renderViewConfig(deps)}
     .todo-count { color: var(--fg-strong); font-weight: 700; }
     .todo-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
     .todo-item { display: flex; align-items: flex-start; gap: 6px; min-width: 0; font-size: var(--fs-md); color: var(--fg); }
-    .todo-mark { flex: 0 0 auto; display: inline-flex; color: var(--muted-2); }
+    /* The task's number: tabular figures so the column stays aligned when the list reaches 10+, and
+       it never shrinks (the row's text wraps, the index does not). */
+    .todo-num { flex: none; min-width: 1.5em; text-align: right; color: var(--muted-2); font-variant-numeric: tabular-nums; }
+    /* The checkbox: a BOX, not a glyph — 12px, square-ish, with the tick drawn by an icon in the
+       panel's own ink. It is a span (aria-hidden): the tasks belong to the model, so a real input
+       would promise a toggle nobody can make. */
+    .todo-check { flex: none; width: 12px; height: 12px; margin-top: 1px; border: 1px solid var(--muted-2); border-radius: 3px; display: inline-flex; align-items: center; justify-content: center; color: var(--bg); }
+    .todo-item.status-completed .todo-check { background: var(--ok); border-color: var(--ok); }
+    /* In progress: a filled dot inside an accent box — "being done", between empty and ticked. */
+    .todo-item.status-in_progress .todo-check { border-color: var(--accent); }
+    .todo-item.status-in_progress .todo-check::after { content: ""; width: 4px; height: 4px; border-radius: 50%; background: var(--accent); }
+    .todo-item.status-cancelled .todo-check { border-color: var(--muted); color: var(--muted); }
     .todo-text { min-width: 0; overflow-wrap: anywhere; }
     .todo-item.status-completed { color: var(--muted); }
     .todo-item.status-completed .todo-text { text-decoration: line-through; }
-    .todo-item.status-completed .todo-mark { color: var(--ok); }
     .todo-item.status-cancelled { color: var(--muted); }
     .todo-item.status-cancelled .todo-text { text-decoration: line-through; }
-    .todo-item.status-in_progress .todo-mark { color: var(--accent); }
     /* The SAME list, pinned above the input: the block in the transcript scrolls away
        with the conversation, this one does not. One shared parser, one shared row
        builder — the two views can never disagree about a task. */
@@ -971,7 +980,11 @@ ${renderViewConfig(deps)}
     #todo-section.hidden { display: none; }
     #todo-section .todo-head { margin-bottom: 4px; }
     /* A long list must not eat the input: the section scrolls on its own. */
-    #todo-section-list { max-height: 22vh; overflow-y: auto; }
+    /* SIX ROWS is the budget: the list is a reminder above the input, and a 20-task plan used to
+       take the whole panel. Two caps, because one alone is wrong: min() keeps it at ~6 rows on a
+       TALL panel and at 22% of a SHORT one, so neither "everything" nor a 2-row sliver wins. The
+       HEAD stays outside the scroll (it is a sibling), so the count is always readable. */
+    #todo-section-list { max-height: min(8.4rem, 22vh); overflow-y: auto; scrollbar-gutter: stable; }
     .tool-label { display: block; color: var(--muted); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.4px; margin: 6px 0 2px; }
     .tool-details pre { background: var(--sink-1); border: 1px solid var(--border); border-radius: 4px; padding: 5px 7px; white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow-y: auto; font-size: var(--fs-md); line-height: 1.4; }
     /* The Task/Input arguments block is a <pre>: WRAP it at the bubble width

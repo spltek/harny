@@ -17,7 +17,7 @@ import {
 import { clampTemperature, clampTopP, TEMPERATURE_MAX, TEMPERATURE_MIN, TEMPERATURE_STEP } from "../temperature";
 // Icon/glyph artwork is FILES under media/icons/, never markup in here (see
 // src/chat/icons.ts): this module only names the icon and its size.
-import { icon, toolIcon, todoStatusIcon, fileBadgeIcon } from "../icons";
+import { icon, toolIcon, fileBadgeIcon } from "../icons";
 import { setFold, toggleMarkup } from "./fold";
 import { createFind } from "./find";
 import { createMcpCard } from "./mcp-card";
@@ -2557,23 +2557,34 @@ function todoHead(items: Array<{ status: TodoStatusKey; content: string }>): HTM
   return head;
 }
 
-/** The rows: one mark + one text per task, in the order the tool listed them. */
+/** The rows: checkbox + number + text per task, in the order the tool listed them. */
 function todoList(items: Array<{ status: TodoStatusKey; content: string }>): HTMLElement {
   const list = document.createElement("ul");
   list.className = "todo-list";
-  for (const item of items) {
+  items.forEach((item, i) => {
     const row = document.createElement("li");
     row.className = "todo-item status-" + item.status;
-    const mark = document.createElement("span");
-    mark.className = "todo-mark";
-    mark.innerHTML = todoStatusIcon(item.status, 12);
+    // The CHECKBOX carries the state now (a box drawn in CSS, ticked by an icon): it reads faster
+    // than a glyph and matches what a task list looks like everywhere else. It is NOT an input —
+    // the tasks belong to the model, and a click here would promise a toggle that cannot happen.
+    const box = document.createElement("span");
+    box.className = "todo-check";
+    box.setAttribute("aria-hidden", "true");
+    if (item.status === "completed") box.innerHTML = icon("check", 10);
+    else if (item.status === "cancelled") box.innerHTML = icon("close", 10);
+    // The NUMBER is the task's identity in the plan ("task 3"), not its position among the open
+    // ones: it does not change when siblings complete, and the model's own report can be read
+    // against it.
+    const num = document.createElement("span");
+    num.className = "todo-num";
+    num.textContent = `${i + 1}.`;
     const label = document.createElement("span");
     label.className = "todo-text";
     // textContent: the task text is MODEL data, never markup.
     label.textContent = item.content;
-    row.append(mark, label);
+    row.append(box, num, label);
     list.appendChild(row);
-  }
+  });
   return list;
 }
 
@@ -2596,6 +2607,29 @@ function renderPinnedTodos(items: Array<{ status: TodoStatusKey; content: string
   count.textContent = items.filter((item) => item.status === "completed").length + "/" + items.length;
   list.append(...Array.from(todoList(items).childNodes));
   section.classList.remove("hidden");
+  scrollPinnedTodosToActive(list);
+}
+
+/**
+ * Keep the row that MATTERS on screen. The section scrolls (six rows at most, see the CSS), so a
+ * long plan would otherwise open on row 1 while the model is working on row 12 — the one thing the
+ * reminder exists to tell you. The target is the task being worked on; failing that, the first still
+ * open one (a plan whose in-progress row is stuck after an interruption); with nothing left to do
+ * the list goes back to the top, where the count says the rest.
+ */
+function scrollPinnedTodosToActive(list: HTMLElement): void {
+  const target =
+    list.querySelector<HTMLElement>(".status-in_progress") ?? list.querySelector<HTMLElement>(".status-pending");
+  if (!target) {
+    list.scrollTop = 0;
+    return;
+  }
+  // `nearest`: it moves only when the row is NOT already visible, so a list that fits (or a target
+  // already in view) never jumps — the reader's position is theirs.
+  (target as HTMLElement & { scrollIntoView?: (opts?: unknown) => void }).scrollIntoView?.({
+    block: "nearest",
+    inline: "nearest",
+  });
 }
 
 /** A session switch (or an empty shell) must not keep showing the PREVIOUS list. */
