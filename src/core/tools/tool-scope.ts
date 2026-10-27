@@ -24,6 +24,24 @@ export const EMPTY_TOOL_SCOPE: ToolScope = { mcp: [], off: [] };
 /** The prefix MCP tools are registered under: `mcp__<server>__<tool>`. */
 const MCP_PREFIX = "mcp__";
 
+/**
+ * The characters an installed tool name is allowed to keep.
+ *
+ * A tool name comes from the SERVER (`tools/list`) and a server name comes from the config file:
+ * both can carry `-` or `.`, and the registry needs ONE spelling. Defined here, next to the rule
+ * that matches a scope against a name, because the two MUST agree: a scope holding the raw name
+ * would never match the registered one (`files-extra` vs `files_extra`), and the server could
+ * never be switched on — silently.
+ */
+export function sanitizeToolNamePart(part: string): string {
+  return part.replace(/[^A-Za-z0-9_]/g, "_");
+}
+
+/** The registered-name prefix of one server's tools (`mcp__files_extra__`), sanitized like they are. */
+export function mcpPrefix(server: string): string {
+  return `${MCP_PREFIX}${sanitizeToolNamePart(server)}__`;
+}
+
 function cleanList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   const out: string[] = [];
@@ -65,9 +83,11 @@ export function toolScopeAllows(name: string, scope: ToolScope | undefined): boo
   // `mcp__server__tool` names, because a session may want a server without ONE of its tools.
   if (scope.off.includes(name)) return false;
   if (name.startsWith(MCP_PREFIX)) {
-    // Matched against the ON list with the FULL prefix `<server>__`: a server whose name contains
-    // `__` keeps working, and a near-miss (`files` vs `filesystem`) never matches.
-    return scope.mcp.some((server) => name.startsWith(`${MCP_PREFIX}${server}__`));
+    // Matched against the ON list with the full prefix `<server>__`, SANITIZED the same way the
+    // registry sanitizes it: a server named `files-extra` is registered as `files_extra`, and a
+    // raw-name comparison would leave it permanently off. A near-miss (`files` vs `filesystem`)
+    // still never matches.
+    return scope.mcp.some((server) => name.startsWith(mcpPrefix(server)));
   }
   return true;
 }

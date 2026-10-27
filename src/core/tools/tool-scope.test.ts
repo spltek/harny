@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   EMPTY_TOOL_SCOPE,
+  mcpPrefix,
   normalizeToolScope,
   reconcileToolScope,
   scopeTools,
@@ -105,5 +106,19 @@ describe("reconciling a stored scope with what exists now", () => {
     // Losing the empty array would silently re-enable every built-in tool.
     const reconciled = reconcileToolScope(scope(["gone"]), known);
     expect(reconciled).toEqual({ mcp: [], off: [] });
+  });
+});
+
+describe("names are SANITIZED, and the scope must speak the same language", () => {
+  it("a server whose name carries a dash can still be switched ON", () => {
+    // The registry registers `mcp-server-git` as `mcp__mcp_server_git__…`: a scope holding the raw
+    // name would never match, and the server would be permanently off — silently.
+    expect(mcpPrefix("mcp-server-git")).toBe("mcp__mcp_server_git__");
+    expect(toolScopeAllows("mcp__mcp_server_git__status", { mcp: ["mcp-server-git"], off: [] })).toBe(true);
+  });
+
+  it("a TOOL whose name carries a dash is matched by its sanitized name, as the registry spells it", () => {
+    expect(toolScopeAllows("mcp__files__read_file", { mcp: ["files"], off: ["mcp__files__read_file"] })).toBe(false);
+    expect(toolScopeAllows("mcp__files__read_file", { mcp: ["files"], off: [] })).toBe(true);
   });
 });

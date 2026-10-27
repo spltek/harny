@@ -1470,6 +1470,21 @@ describe("ChatViewProvider", () => {
     expect(connect).not.toHaveBeenCalled();
   });
 
+  it('a MALFORMED setToolScope changes nothing (it must never mean "everything allowed")', async () => {
+    // `undefined` is the one value that restricts nothing — the legacy meaning. A garbled message
+    // must not be able to grant a session every server.
+    const { provider, registry } = buildHarness();
+    const { handler } = resolveWith(provider);
+    await provider.createNew();
+    const rt = registry.get("s1")!;
+    rt.toolScope = { mcp: [], off: ["Shell"] };
+
+    for (const payload of [{}, { scope: null }, { scope: "nope" }, { scope: 42 }]) {
+      await handler({ type: "setToolScope", ...payload });
+      expect(rt.toolScope).toEqual({ mcp: [], off: ["Shell"] }); // untouched
+    }
+  });
+
   it("a server removed from the config is dropped from the sessions that named it — and only those", async () => {
     // The read path already filters a vanished server, so behaviour is right without this; what is
     // pinned here is that the ROW stops carrying a decision about something that no longer exists,

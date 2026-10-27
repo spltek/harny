@@ -188,10 +188,13 @@ export interface McpServerCommon {
   /** YOUR statement about what this server's tools are allowed to do in Analyze (see
    * ServerAnalyzePolicy). Absent = the strictest: none of its tools runs in Analyze. */
   analyze?: ServerAnalyzePolicy;
-  /** Tools of this server the MODEL must not see, by the name the server reports
-   * (`tools/list`), e.g. ["drop_table", "delete_row"]. Absent/empty = ALL of them
-   * are exposed, which is the default: this is an EXCLUDE list on purpose, so a
-   * server that adds a tool tomorrow exposes it without anyone editing the file. */
+  /** Tools of this server the MODEL must not see BY DEFAULT, by the name the server reports
+   * (`tools/list`), e.g. ["drop_table", "delete_row"].
+   *
+   * This is a SEED, not a veto: which tools a conversation may use is the SESSION's decision
+   * (Harny's per-session tool scope), and a new session starts from this list. The key is not
+   * written by the panel any more — a switch inside a session must not decide for the others —
+   * but it survives in the file, and an existing session keeps whatever it was given. */
   excludeTools?: string[];
   /** Tools of this server YOU declare read-only for Analyze, by the server's own name.
    *

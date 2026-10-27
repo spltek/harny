@@ -24,7 +24,7 @@ import { setFold, toggleMarkup } from "./fold";
 // request from ever disagreeing about where the window starts.
 import { checkpointStart } from "../../core/history/conversation-validity";
 import { toolArgTarget } from "../../core/tools/tool-call-text";
-import { normalizeToolScope } from "../../core/tools/tool-scope";
+import { mcpPrefix, normalizeToolScope, sanitizeToolNamePart } from "../../core/tools/tool-scope";
 import type { SessionLiveProjection } from "../session-live-state";
 
 declare function acquireVsCodeApi(): {
@@ -4851,7 +4851,9 @@ function hideMcpToolsPopover(): void {
  * state the model does not have.
  */
 function mcpSavedExclusions(server: string, tools: { name: string }[]): Set<string> {
-  const prefix = `mcp__${server}__`;
+  // The SAME rule the registry uses (a server or tool name with `-` is registered as `_`): a raw
+  // prefix here would never match, and the panel would show the wrong state for such a server.
+  const prefix = mcpPrefix(server);
   return new Set(tools.filter((t) => sessionToolScope.off.includes(prefix + t.name)).map((t) => t.name));
 }
 
@@ -5093,8 +5095,10 @@ function showMcpToolsPopover(
     //  · this one is THIS conversation's: the server counts as ON as soon as one of its tools is,
     //    and each unchecked tool is named off FOR THIS SERVER only — the rest of the scope
     //    (another server, a built-in) is preserved instead of being overwritten by a merge.
-    const prefix = `mcp__${panel.server}__`;
-    const disabled = panel.tools.filter((t) => panel.draft.has(t.name)).map((t) => prefix + t.name);
+    const prefix = mcpPrefix(panel.server);
+    const disabled = panel.tools
+      .filter((t) => panel.draft.has(t.name))
+      .map((t) => prefix + sanitizeToolNamePart(t.name));
     const mcp = sessionToolScope.mcp.filter((name) => name !== panel.server);
     if (panel.tools.some((t) => !panel.draft.has(t.name))) mcp.push(panel.server);
     sessionToolScope = {

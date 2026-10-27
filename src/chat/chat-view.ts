@@ -1459,7 +1459,14 @@ export class ChatViewProvider implements WebviewViewProvider {
         // the next turn already sees it — no reconnect, no restart.
         const rt = this.activeRuntime();
         if (!rt) break;
-        const scope = normalizeToolScope(msg.scope);
+        // A MISSING or malformed payload must change NOTHING: `normalizeToolScope(undefined)` is
+        // `undefined`, which means "nothing declared" — the ONE value that allows every server. So
+        // accepting it here would turn a garbled message into "this session may use everything".
+        if (!msg.scope || typeof msg.scope !== "object") {
+          void this.pushConfig(); // re-state the host's truth, so an optimistic UI cannot stick
+          break;
+        }
+        const scope = normalizeToolScope(msg.scope) ?? { mcp: [], off: [] };
         rt.toolScope = scope;
         this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { toolScope: scope }), false);
         void this.pushConfig();

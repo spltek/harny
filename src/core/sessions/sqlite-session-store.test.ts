@@ -226,6 +226,21 @@ describe("SqliteSessionStore — per-session settings", () => {
     });
   });
 
+  it("summary() reads the METADATA without touching the messages", () => {
+    // A per-turn reader (the tool scope) needs one setting, not a transcript scan: `load()` would
+    // price a toggle as a full message read.
+    const { store } = makeStore();
+    const created = store.create("meta");
+    store.saveSettings(created.id, { toolScope: { mcp: ["files"], off: [] } });
+    store.saveMessages(created.id, [msg("user", "one"), msg("assistant", "two")]);
+
+    const summary = store.summary(created.id);
+    expect(summary?.name).toBe("meta");
+    expect(summary?.toolScope).toEqual({ mcp: ["files"], off: [] });
+    // …and an id that is not there is `undefined`, not a fabricated row.
+    expect(store.summary("nope")).toBeUndefined();
+  });
+
   it("keeps 'no scope' and 'empty scope' apart, across a save and a reload", () => {
     // The difference is the whole feature: no scope = a session from before it existed (nothing
     // restricted); empty = the user decided this conversation uses no MCP server at all. Storing

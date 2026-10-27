@@ -1,3 +1,4 @@
+import { mcpPrefix, sanitizeToolNamePart } from "../tools/tool-scope";
 import type { McpClient, McpToolInfo, ServerAnalyzePolicy } from "./types";
 import type { AnalyzePolicy, Tool, ToolContext, ToolDefinition, ToolResult } from "../tools/tool";
 import { toolOutputCapChars, truncationNote } from "../tools/output-budget";
@@ -12,8 +13,9 @@ import { toolOutputCapChars, truncationNote } from "../tools/output-budget";
 const MCP_OUTPUT_CAP_CHARS = 50_000;
 
 export function mcpToolName(server: string, tool: string): string {
-  const clean = (s: string) => s.replace(/[^A-Za-z0-9_]/g, "_");
-  return `mcp__${clean(server)}__${clean(tool)}`;
+  // The prefix rule lives in `tool-scope`, next to the match that has to agree with it — one
+  // definition, so a scope can never hold a spelling the registry does not use.
+  return mcpPrefix(server) + sanitizeToolNamePart(tool);
 }
 
 /**
