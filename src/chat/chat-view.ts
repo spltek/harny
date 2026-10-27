@@ -1214,7 +1214,14 @@ export class ChatViewProvider implements WebviewViewProvider {
         const busyUsing = removed.flatMap((name) =>
           this.registry
             .listOpenIds()
-            .filter((id) => this.isWorking(id) && this.registry.get(id)?.toolScope?.mcp.includes(name))
+            .filter((id) => {
+              if (!this.isWorking(id)) return false;
+              const scope = this.registry.get(id)?.toolScope;
+              // An UNDECLARED scope ALLOWS every server (the legacy meaning, see toolScopeAllows),
+              // so a working session without one may well be using this very server — the brake
+              // must hold for it too, or it would be missing exactly where it matters most.
+              return !scope || scope.mcp.includes(name);
+            })
             .map((id) => ({ id, name })),
         );
         if (busyUsing.length > 0) {

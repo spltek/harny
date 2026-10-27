@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.9.0] - 2026-10-27
 
+### Fixed
+
+- **A reasoning-only model can no longer brick a session.** A turn that ends with neither text nor a tool call (only
+  thinking — common with `…reasoning:free` models) left an empty assistant message in the conversation, and the
+  replayability check then refused to send ANY further request: the session was dead for good, with an error that said
+  "bug in Harny". That one rule is now **repaired instead of refused** — an empty assistant turn carries no information,
+  so it is dropped before sending — while the other wire rules keep refusing, because there the missing half is real
+  data and the fault is the only signal that names its producer.
+
 ### Added
 
 - **The ON/OFF of an MCP server and the tools left out are PER SESSION.** Installing a server is a machine fact

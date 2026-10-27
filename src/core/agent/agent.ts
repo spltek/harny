@@ -1053,16 +1053,25 @@ export class Agent implements ChatController {
         role: "system",
         content: `${this.stateLine()}\n\n${this.deps.systemPrompt.build(this.runMode, toolDefinitions)}`,
       },
-      ...this.llmConversation().map((m) => ({
-        role: m.role,
-        // Never send the synthetic tool label to the model (it gets imitated).
-        content: m.role === "assistant" && isSyntheticToolSummary(m.content) ? "" : m.content,
-        toolCalls: m.toolCalls,
-        toolCallId: m.toolCallId,
-        images: m.images,
-        thinking: m.thinking,
-        reasoningDetails: m.reasoningDetails,
-      })),
+      ...this.llmConversation()
+        // AN EMPTY assistant turn carries NO information, so it is DROPPED here instead of being
+        // refused: a model that answers with reasoning only leaves `content: ""` and no tool call,
+        // and refusing the send bricked the session for good (every later request too). Dropping is
+        // lossless — nothing to say, nothing lost — and it is the one rule that can be repaired
+        // safely. The others (a tool call without its results, an orphan result) are NOT repaired:
+        // there the missing half is real data, and the fault is the only signal that a writer
+        // produced it.
+        .filter((m) => !(m.role === "assistant" && !(m.content ?? "").trim() && !(m.toolCalls?.length ?? 0)))
+        .map((m) => ({
+          role: m.role,
+          // Never send the synthetic tool label to the model (it gets imitated).
+          content: m.role === "assistant" && isSyntheticToolSummary(m.content) ? "" : m.content,
+          toolCalls: m.toolCalls,
+          toolCallId: m.toolCallId,
+          images: m.images,
+          thinking: m.thinking,
+          reasoningDetails: m.reasoningDetails,
+        })),
     ];
 
     // The pairing invariant, at the LAST point before the wire. A violation is

@@ -1526,6 +1526,31 @@ describe("ChatViewProvider", () => {
     expect(saveMcpServers).toHaveBeenCalledWith({ idle: { command: "node" } });
   });
 
+  it("the brake also holds for a session with NO scope declared (that means every server is allowed)", async () => {
+    // `undefined` is the LEGACY meaning: nothing restricted, so that session may be using this very
+    // server right now. Reading `scope?.mcp.includes(…)` skipped it — the brake would have been
+    // missing exactly where the risk is highest.
+    const saveMcpServers = vi.fn(() => true);
+    const { provider, registry } = buildHarness({
+      providers: {
+        getProvider: vi.fn(),
+        saveModelSelection: vi.fn(),
+        readMcpServers: vi.fn(() => ({ any: { command: "node" } })),
+        saveMcpServers,
+      } as unknown as ProviderCatalog,
+    });
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    registry.get("s1")!.toolScope = undefined; // a session from before the feature
+    vi.spyOn(provider as unknown as { isWorking: (id: string) => boolean }, "isWorking").mockReturnValue(true);
+
+    await handler({ type: "saveMcpServers", servers: {} });
+    expect(saveMcpServers).not.toHaveBeenCalled();
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "mcpSaved", ok: false, reason: expect.stringContaining('"any"') }),
+    );
+  });
+
   it("a server removed from the config is dropped from the sessions that named it — and only those", async () => {
     // The read path already filters a vanished server, so behaviour is right without this; what is
     // pinned here is that the ROW stops carrying a decision about something that no longer exists,

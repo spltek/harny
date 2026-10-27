@@ -42,13 +42,14 @@ const stubTool: Tool = {
 };
 
 /** A provider that records whether a request was even attempted. */
-function spyFactory(): { factory: LLMProviderFactory; requests: number } {
-  const box = { requests: 0 };
+function spyFactory(): { factory: LLMProviderFactory; requests: number; lastMessages: { role: string }[] } {
+  const box = { requests: 0, lastMessages: [] as { role: string }[] };
   const factory = {
     create: () => ({
       protocol: "chat" as const,
-      async *stream() {
+      async *stream(messages: { role: string }[]) {
         box.requests += 1;
+        box.lastMessages = messages;
         yield { type: "text", content: "this must never run" };
       },
     }),
@@ -57,6 +58,9 @@ function spyFactory(): { factory: LLMProviderFactory; requests: number } {
     factory,
     get requests() {
       return box.requests;
+    },
+    get lastMessages() {
+      return box.lastMessages;
     },
   };
 }
@@ -137,14 +141,6 @@ const MALFORMED: Array<{ rule: string; phrase: RegExp; history: ChatMessage[] }>
     ],
   },
   {
-    rule: "an assistant message with neither text nor tool calls",
-    phrase: /no text and no tool calls/,
-    history: [
-      { role: "user", content: "go", timestamp: 1 },
-      { role: "assistant", content: "   ", timestamp: 2 },
-    ],
-  },
-  {
     rule: "a conversation that does not open with the user",
     phrase: /starts with a assistant message, not the user/,
     history: [
@@ -185,6 +181,36 @@ describe("fault injection — every wire rule is caught before the provider sees
       expect(shown).toMatch(/bug in Harny/);
     });
   }
+
+  it("REPAIRS an empty assistant turn by dropping it — a reasoning-only model must not brick the session", async () => {
+    // The one rule that can be repaired safely: an assistant message with no text and no tool call
+    // carries NO information. Refusing it left the session unable to send ANYTHING afterwards
+    // (seen with a reasoning model that answers with thinking only) — a hard stop on a harmless
+    // state. Dropping is lossless; the other rules keep refusing, because there the missing half
+    // is real data.
+    const spy = spyFactory();
+    const { agent, history } = buildAgents(spy.factory);
+    history.replace([
+      { role: "user", content: "go", timestamp: 1 },
+      { role: "assistant", content: "   ", thinking: "only reasoning", timestamp: 2 },
+      { role: "user", content: "again", timestamp: 3 },
+    ]);
+
+    await agent.send("and again");
+
+    // 1. The request REACHED the provider…
+    expect(spy.requests).toBeGreaterThan(0);
+    // 2. …with the empty turn gone, and nothing else touched.
+    const sent = spy.lastMessages.filter((m) => m.role !== "system");
+    expect(sent.map((m) => m.role)).toEqual(["user", "user", "user"]);
+    // 3. No scary "not replayable" message: nothing was wrong with the session.
+    expect(
+      history
+        .all()
+        .map((m) => m.content ?? "")
+        .join(" | "),
+    ).not.toContain("not replayable");
+  });
 
   it("does NOT refuse a healthy conversation (a false positive would break every session)", async () => {
     const spy = spyFactory();
