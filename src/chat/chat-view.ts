@@ -1086,14 +1086,29 @@ export class ChatViewProvider implements WebviewViewProvider {
         const rawExclude: unknown = msg.exclude;
         const excludeList: unknown[] = Array.isArray(rawExclude) ? rawExclude : [];
         const exclude = excludeList.filter((t: unknown): t is string => typeof t === "string" && t.trim() !== "");
+        // The per-TOOL Analyze list travels with it, and with the OPPOSITE polarity: an include
+        // list of tools the user declares read-only (default-deny — a tool the server adds
+        // tomorrow is not silently allowed in Analyze).
+        const rawAnalyze: unknown = msg.analyze;
+        const analyzeList: unknown[] = Array.isArray(rawAnalyze) ? rawAnalyze : [];
+        const analyze = analyzeList.filter((t: unknown): t is string => typeof t === "string" && t.trim() !== "");
         const current = servers[name];
         // An EMPTY list is deleted, not written as []: a server with nothing excluded
         // must look untouched in the file (see McpServerCommon.excludeTools).
         const excludeTools = exclude.length > 0 ? [...new Set(exclude)] : undefined;
         if (excludeTools) current.excludeTools = excludeTools;
         else delete current.excludeTools;
-        infoLog(`[mcp] "${name}": ${excludeTools?.length ?? 0} tool(s) excluded, reconnecting`);
+        const analyzeTools = analyze.length > 0 ? [...new Set(analyze)] : undefined;
+        if (analyzeTools) current.analyzeTools = analyzeTools;
+        else delete current.analyzeTools;
+        infoLog(
+          `[mcp] "${name}": ${excludeTools?.length ?? 0} tool(s) excluded, ` +
+            `${analyzeTools?.length ?? 0} declared read-only in Analyze, reconnecting`,
+        );
         servers[name] = current;
+        // The EXCLUDE list is a connect-time decision (it changes what is REGISTERED), so it needs
+        // a reconnect; the per-tool Analyze list is read live and does not — but they are saved
+        // together, and one reconnect for both is cheaper than two paths that can disagree.
         const ok = this.providers.saveMcpServers?.(servers) ?? false;
         if (ok) {
           // The exclusion list belongs to ONE server: reconnecting all of them would respawn

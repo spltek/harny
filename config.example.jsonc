@@ -52,5 +52,29 @@
     //   "api": "openai-completions",
     //   "apiKey": "ollama"
     // }
+  },
+  // MCP servers: a server is EITHER a command (stdio) OR a URL (HTTP). The panel's MCP card
+  // edits everything except `analyze`, which is the only field without a control in the form.
+  "mcpServers": {
+    // A local server, started as a process.
+    // "sqlite": {
+    //   "command": "npx",
+    //   "args": ["-y", "mcp-sqlite", "./data.db"],
+    //   "env": { "LOG_LEVEL": "warn" },
+    //   "enabled": true,
+    //   // Analyze: "read-only" (every tool of it) or "trusted" (believe its own
+    //   // readOnlyHint). OMITTED = none of its tools runs in Analyze — the strictest
+    //   // default, and the reason a tool that modifies things cannot run there by
+    //   // accident. Per-TOOL exceptions are the shield in the tools panel (analyzeTools).
+    //   "analyze": "trusted",
+    //   // The model never sees these, and they are never called.
+    //   "excludeTools": ["drop_table", "delete_row"]
+    // },
+    // A remote server: no command, an URL and optional headers.
+    // "docs": {
+    //   "url": "https://learn.microsoft.com/api/mcp",
+    //   "headers": { "Authorization": "Bearer ..." },
+    //   "analyze": "read-only"
+    // }
   }
 }

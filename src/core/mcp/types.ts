@@ -62,5 +62,16 @@ export interface McpServerStatus {
   /** Every tool the server ADVERTISED, in `tools/list` order, each flagged with the
    * ones the config excludes: the panel's checkbox list is built from this, so the
    * user sees what a toggle would hide and what is hidden already. */
-  tools?: { name: string; description?: string; excluded?: boolean }[];
+  tools?: {
+    name: string;
+    description?: string;
+    excluded?: boolean;
+    /** The EFFECTIVE answer for this tool in Analyze (server declaration and per-tool list
+     * combined), so the panel can show what will actually happen. */
+    readOnly?: boolean;
+    /** True when THIS tool is in the server's `analyzeTools` list — what the panel's toggle
+     * edits. Distinct from `readOnly`: a server declared `read-only` allows every tool without
+     * any per-tool entry, and the panel must not pretend otherwise. */
+    analyzeFlag?: boolean;
+  }[];
 }

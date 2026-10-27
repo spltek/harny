@@ -1483,6 +1483,20 @@ ${renderViewConfig(deps)}
     }
     .mcp-pop-row:first-of-type { border-top: none; }
     .mcp-pop-row input { margin: 2px 0 0; flex: none; accent-color: var(--accent); }
+    /* The per-tool ANALYZE toggle: a shield that is lit when the tool runs in Analyze. It sits at
+       the far right of the row, away from the exposure checkbox on the left, because the two
+       answer different questions ("may the model see it" vs "may it run in Analyze"). */
+    .mcp-pop-shield {
+      flex: none; margin-left: auto; width: 18px; height: 18px; padding: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: transparent; border: 1px solid var(--overlay-3); border-radius: 5px;
+      color: var(--muted-3); font-size: var(--fs-xs); line-height: 1; cursor: pointer;
+      box-shadow: none;
+    }
+    .mcp-pop-shield.on { color: var(--ok); border-color: var(--ok); }
+    .mcp-pop-shield.inherited { opacity: 0.55; cursor: default; }
+    .mcp-pop-shield:not(:disabled):hover { color: var(--fg-strong); border-color: var(--fg-strong); }
+    .mcp-pop-shield.on:not(:disabled):hover { color: var(--ok); border-color: var(--ok); }
     .mcp-pop-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
     .mcp-pop-name { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--fg); }
     .mcp-pop-desc {

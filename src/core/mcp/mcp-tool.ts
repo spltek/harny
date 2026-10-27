@@ -22,6 +22,9 @@ export class McpTool implements Tool {
     /** THE USER's declaration for this server (see ServerAnalyzePolicy). Read on every
      * access, so a settings change applies to the next turn without reconnecting. */
     private readonly declaredPolicy: () => ServerAnalyzePolicy | undefined = () => undefined,
+    /** THE USER's per-TOOL statements for this server (`analyzeTools`), read live like the
+     * server one. Absent = no tool of it was singled out. */
+    private readonly declaredTools: () => string[] | undefined = () => undefined,
   ) {
     this.name = mcpToolName(server, info.name);
   }
@@ -41,6 +44,10 @@ export class McpTool implements Tool {
    * `drop_table` used to run in Analyze) and the promise Analyze actually makes.
    */
   get analyzePolicy(): AnalyzePolicy {
+    // The NARROWEST statement the user can make wins: one named tool is more specific than a
+    // statement about the whole server, and it is the only way to allow a single safe tool of a
+    // server that is otherwise refused (the list defaults to deny — see McpServerCommon).
+    if (this.declaredTools()?.includes(this.info.name)) return "read-only";
     const declared = this.declaredPolicy();
     if (declared === "read-only") return "read-only";
     if (declared === "trusted" && this.info.annotations?.readOnlyHint === true) return "read-only";
@@ -57,12 +64,15 @@ export class McpTool implements Tool {
     if (declared === "trusted") {
       return (
         `${base} The server is marked trusted, but this tool does not declare readOnlyHint: true ` +
-        `(no hint, or destructiveHint, means "assume it modifies"). Switch to Build to run it.`
+        `(no hint, or destructiveHint, means "assume it modifies"). Mark this tool read-only with the ` +
+        `shield in the tools panel, or switch to Build to run it.`
       );
     }
     return (
       `${base} Server "${this.server}" is not declared read-only: in the MCP settings you can mark it ` +
-      `read-only (every tool of it) or trusted (believe its own readOnlyHint), or switch to Build to run this call.`
+      `read-only (every tool of it) or trusted (believe its own readOnlyHint), or mark THIS tool ` +
+      `read-only with the shield in the tools panel — the narrowest statement, and the one that does not ` +
+      `vouch for the rest of the server. Switch to Build to run this call now.`
     );
   }
 

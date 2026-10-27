@@ -1454,6 +1454,44 @@ describe("ChatViewProvider", () => {
     );
   });
 
+  it("setMcpToolExclusions also writes the per-TOOL Analyze list, with the opposite polarity", async () => {
+    // `excludeTools` is what the MODEL must not see; `analyzeTools` is what YOU declare read-only
+    // for Analyze — an INCLUDE list, because Analyze is denied by default.
+    const saveMcpServers = vi.fn(() => true);
+    const { provider } = buildHarness({
+      providers: {
+        getProvider: vi.fn(),
+        saveModelSelection: vi.fn(),
+        readMcpServers: vi.fn(() => ({ sqlite: { command: "node", analyze: "trusted", args: ["x"] } })),
+        saveMcpServers,
+      } as unknown as ProviderCatalog,
+    });
+    const { handler } = resolveWith(provider);
+
+    await handler({
+      type: "setMcpToolExclusions",
+      server: "sqlite",
+      exclude: ["drop_table"],
+      analyze: ["read_query", "read_query", ""],
+    });
+    expect(saveMcpServers).toHaveBeenCalledWith({
+      sqlite: {
+        command: "node",
+        analyze: "trusted",
+        args: ["x"],
+        excludeTools: ["drop_table"],
+        analyzeTools: ["read_query"],
+      },
+    });
+
+    // Empty lists are DELETED, not written as []: a server with nothing declared must look
+    // untouched in the file.
+    await handler({ type: "setMcpToolExclusions", server: "sqlite", exclude: [], analyze: [] });
+    expect(saveMcpServers).toHaveBeenLastCalledWith({
+      sqlite: { command: "node", analyze: "trusted", args: ["x"] },
+    });
+  });
+
   it("an EMPTY exclude list is deleted from the config, not written as []", async () => {
     const saveMcpServers = vi.fn(() => true);
     const { provider } = buildHarness({

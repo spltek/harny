@@ -104,8 +104,11 @@ export class McpManager {
         // failed with "MCP server is not running" while the card still showed it green.
         client.onExit?.((message) => this.markDead(name, message));
         // The Analyze gate needs the USER's declaration for this server, read live so a
-        // settings change lands on the next turn (see ServerAnalyzePolicy).
+        // settings change lands on the next turn (see ServerAnalyzePolicy). The per-TOOL list is
+        // read the same way: it is the narrowest statement, and saving it does NOT reconnect the
+        // server (the policy is consulted per call, not at connect time).
         const declared = (): ServerAnalyzePolicy | undefined => this.deps.servers()?.[name]?.analyze;
+        const declaredTools = (): string[] | undefined => this.deps.servers()?.[name]?.analyzeTools;
         // `excludeTools` is a CONNECT-time decision on purpose, unlike `analyze`: it
         // decides whether the tool is REGISTERED at all, and the model's tool list is
         // built from the registry. Saving the panel's checkboxes reconnects (see the
@@ -117,7 +120,7 @@ export class McpManager {
         const taken = new Set<string>();
         for (const info of infos) {
           if (excluded.has(info.name)) continue;
-          const tool = new McpTool(name, info, client, declared);
+          const tool = new McpTool(name, info, client, declared, declaredTools);
           if (taken.has(tool.name)) {
             // Two raw names can sanitize to the SAME Harny name (`a-b` and `a_b`): the
             // registry keeps the first and the second would vanish without a word.
@@ -139,6 +142,13 @@ export class McpManager {
             name: t.name,
             ...(t.description ? { description: t.description } : {}),
             ...(excluded.has(t.name) ? { excluded: true } : {}),
+            // The EFFECTIVE answer for this tool, so the panel's shield shows what Analyze will
+            // actually do — including a tool allowed by the server-level declaration…
+            ...(new McpTool(name, t, client, declared, declaredTools).analyzePolicy === "read-only"
+              ? { readOnly: true }
+              : {}),
+            // …and whether it is in the per-tool list, which is what the toggle edits.
+            ...(declaredTools()?.includes(t.name) ? { analyzeFlag: true } : {}),
           })),
         });
         this.deps.log?.(

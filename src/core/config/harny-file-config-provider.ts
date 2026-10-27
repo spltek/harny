@@ -30,12 +30,16 @@ function normalizeMcpServers(raw: unknown): Record<string, McpServerConfig> {
     // with an enum, so the value must be one of the two WHOLE strings or nothing.
     const analyzeValue = analyzeRaw === "read-only" ? "read-only" : analyzeRaw === "trusted" ? "trusted" : undefined;
     const excludeTools = normalizeStringList(rec.excludeTools);
+    // Same normalization, opposite meaning: an INCLUDE list of tools the user declares read-only
+    // for Analyze (default-deny, so a tool the server adds tomorrow is not silently allowed).
+    const analyzeTools = normalizeStringList(rec.analyzeTools);
     // Annotated, not inferred: an object literal widens its string properties, so the
     // declaration would arrive as `string` and not as the two allowed values.
-    const common: Pick<McpServerCommon, "enabled" | "analyze" | "excludeTools"> = {
+    const common: Pick<McpServerCommon, "enabled" | "analyze" | "excludeTools" | "analyzeTools"> = {
       ...enabled,
       ...(analyzeValue ? { analyze: analyzeValue } : {}),
       ...(excludeTools ? { excludeTools } : {}),
+      ...(analyzeTools ? { analyzeTools } : {}),
     };
     if (typeof rec.command === "string" && rec.command.trim()) {
       const args = Array.isArray(rec.args) ? rec.args.filter((a): a is string => typeof a === "string") : undefined;

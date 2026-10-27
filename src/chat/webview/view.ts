@@ -4271,9 +4271,12 @@ function refreshMcpSwitches(): void {
  */
 type McpToolsPanel = {
   server: string;
-  tools: { name: string; description?: string; excluded?: boolean }[];
+  tools: { name: string; description?: string; excluded?: boolean; readOnly?: boolean; analyzeFlag?: boolean }[];
   /** The excluded names being EDITED; what is SAVED lives on `tools[].excluded`. */
   draft: Set<string>;
+  /** The names being EDITED in the per-TOOL Analyze list (declared read-only). Its polarity is
+   * the opposite of `draft` — an INCLUDE list — because Analyze is denied by default. */
+  analyzeDraft: Set<string>;
 };
 let mcpToolsPanel: McpToolsPanel | null = null;
 let mcpToolsFilter = "";
@@ -4298,13 +4301,25 @@ function mcpSavedExclusions(tools: { name: string; excluded?: boolean }[]): Set<
   return new Set(tools.filter((t) => t.excluded).map((t) => t.name));
 }
 
+/** What the server currently declares read-only ONE BY ONE (not the inherited declaration). */
+function mcpSavedAnalyzeFlags(tools: { name: string; analyzeFlag?: boolean }[]): Set<string> {
+  return new Set(tools.filter((t) => t.analyzeFlag).map((t) => t.name));
+}
+
+/** Two sets differ? Used for both drafts (the Save button listens to this). */
+function setsDiffer(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return true;
+  for (const name of a) if (!b.has(name)) return true;
+  return false;
+}
+
 function mcpToolsDirty(): boolean {
   const panel = mcpToolsPanel;
   if (!panel) return false;
-  const saved = mcpSavedExclusions(panel.tools);
-  if (saved.size !== panel.draft.size) return true;
-  for (const name of panel.draft) if (!saved.has(name)) return true;
-  return false;
+  return (
+    setsDiffer(panel.draft, mcpSavedExclusions(panel.tools)) ||
+    setsDiffer(panel.analyzeDraft, mcpSavedAnalyzeFlags(panel.tools))
+  );
 }
 
 /** The counts and the Save button — the only things a toggle changes besides its row. */
@@ -4313,7 +4328,10 @@ function updateMcpToolsHead(): void {
   if (!panel) return;
   if (mcpToolsCountEl) {
     const total = panel.tools.length;
-    mcpToolsCountEl.textContent = `${total - panel.draft.size} of ${total} enabled`;
+    const enabled = total - panel.draft.size;
+    const readOnly = panel.analyzeDraft.size;
+    mcpToolsCountEl.textContent =
+      `${enabled} of ${total} enabled` + (readOnly > 0 ? ` · ${readOnly} read-only in Analyze` : "");
   }
   if (mcpToolsSaveEl) mcpToolsSaveEl.disabled = !mcpToolsDirty();
 }
@@ -4369,6 +4387,39 @@ function renderMcpToolRows(): void {
       text.appendChild(desc);
     }
     row.appendChild(text);
+    // The second control: this tool runs in ANALYZE (declared read-only by YOU). It is the
+    // narrowest statement available, and the only way to allow one safe tool of a server that is
+    // otherwise refused there. When the server's own declaration already allows it, the shield is
+    // marked as inherited and says so instead of pretending a per-tool rule did it.
+    const shield = document.createElement("button");
+    shield.type = "button";
+    const inherited = t.readOnly === true && t.analyzeFlag !== true;
+    const on = panel.analyzeDraft.has(t.name) || inherited;
+    shield.className = "mcp-pop-shield" + (on ? " on" : "") + (inherited ? " inherited" : "");
+    shield.textContent = on ? "🛡" : "·";
+    shield.setAttribute("aria-pressed", String(on));
+    shield.setAttribute("aria-label", `${t.name}: read-only in Analyze`);
+    shield.title = inherited
+      ? "Allowed by the server's own Analyze declaration — every tool of it runs in Analyze"
+      : on
+        ? "Read-only in Analyze because YOU said so — click to take it back"
+        : "Does NOT run in Analyze. Click to declare this tool read-only there";
+    shield.disabled = inherited;
+    shield.addEventListener("click", (e) => {
+      e.preventDefault(); // the row is a <label>: do not forward the click to the checkbox
+      e.stopPropagation();
+      if (panel.analyzeDraft.has(t.name)) panel.analyzeDraft.delete(t.name);
+      else panel.analyzeDraft.add(t.name);
+      const now = panel.analyzeDraft.has(t.name);
+      shield.classList.toggle("on", now);
+      shield.textContent = now ? "🛡" : "·";
+      shield.setAttribute("aria-pressed", String(now));
+      shield.title = now
+        ? "Read-only in Analyze because YOU said so — click to take it back"
+        : "Does NOT run in Analyze. Click to declare this tool read-only there";
+      updateMcpToolsHead();
+    });
+    row.appendChild(shield);
     list.appendChild(row);
   }
 }
@@ -4376,9 +4427,14 @@ function renderMcpToolRows(): void {
 function showMcpToolsPopover(
   anchor: HTMLElement,
   server: string,
-  tools: { name: string; description?: string; excluded?: boolean }[],
+  tools: { name: string; description?: string; excluded?: boolean; readOnly?: boolean; analyzeFlag?: boolean }[],
 ): void {
-  mcpToolsPanel = { server, tools, draft: mcpSavedExclusions(tools) };
+  mcpToolsPanel = {
+    server,
+    tools,
+    draft: mcpSavedExclusions(tools),
+    analyzeDraft: mcpSavedAnalyzeFlags(tools),
+  };
   mcpToolsFilter = "";
   mcpToolsPopover.innerHTML = "";
 
@@ -4466,7 +4522,13 @@ function showMcpToolsPopover(
       mcpToolsStatusEl.textContent = "Saving…";
       mcpToolsStatusEl.className = "mcp-pop-status";
     }
-    vscode.postMessage({ type: "setMcpToolExclusions", server: panel.server, exclude: [...panel.draft] });
+    vscode.postMessage({
+      type: "setMcpToolExclusions",
+      server: panel.server,
+      exclude: [...panel.draft],
+      // The opposite polarity rides along: the tools declared read-only in Analyze.
+      analyze: [...panel.analyzeDraft],
+    });
   });
   actions.appendChild(all);
   actions.appendChild(none);

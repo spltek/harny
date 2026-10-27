@@ -193,6 +193,13 @@ export interface McpServerCommon {
    * are exposed, which is the default: this is an EXCLUDE list on purpose, so a
    * server that adds a tool tomorrow exposes it without anyone editing the file. */
   excludeTools?: string[];
+  /** Tools of this server YOU declare read-only for Analyze, by the server's own name.
+   *
+   * The opposite polarity of `excludeTools`, and on purpose: exposure is allowed by default
+   * (a new tool should be usable), while Analyze is DENIED by default (a new tool must prove
+   * itself), so this is an INCLUDE list. It is the narrowest statement available — one tool —
+   * and it lets a single safe tool of an otherwise refused server run in Analyze. */
+  analyzeTools?: string[];
 }
 
 export interface McpStdioServerConfig extends McpServerCommon {

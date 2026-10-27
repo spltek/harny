@@ -913,24 +913,34 @@ describe("HarnyFileConfigProvider MCP servers", () => {
     expect(provider.readMcpServers()).toEqual({});
   });
 
-  it("carries the per-server DECLARATIONS through read AND save (analyze + excludeTools)", () => {
+  it("carries the per-server DECLARATIONS through read AND save (analyze + excludeTools + analyzeTools)", () => {
     // Both used to be dropped by the normalizer — on READ and on SAVE — so a policy set
     // in the file never reached the manager, and any save from the panel deleted it.
     writeFileSync(
       join(dir, "config.json"),
       JSON.stringify({
         mcpServers: {
-          stdio: { command: "node", analyze: "read-only", excludeTools: ["drop_table", " delete_row ", "drop_table"] },
-          http: { url: "https://x/mcp", analyze: "trusted", excludeTools: ["admin"] },
-          junk: { command: "node", analyze: "whatever", excludeTools: "nope" },
-          empty: { command: "node", excludeTools: [] },
+          stdio: {
+            command: "node",
+            analyze: "read-only",
+            excludeTools: ["drop_table", " delete_row ", "drop_table"],
+            analyzeTools: [" read_query ", "read_query", "list_tables"],
+          },
+          http: { url: "https://x/mcp", analyze: "trusted", excludeTools: ["admin"], analyzeTools: ["docs"] },
+          junk: { command: "node", analyze: "whatever", excludeTools: "nope", analyzeTools: "nope" },
+          empty: { command: "node", excludeTools: [], analyzeTools: [] },
         },
       }),
     );
     const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
     expect(provider.readMcpServers()).toEqual({
-      stdio: { command: "node", analyze: "read-only", excludeTools: ["drop_table", "delete_row"] },
-      http: { url: "https://x/mcp", analyze: "trusted", excludeTools: ["admin"] },
+      stdio: {
+        command: "node",
+        analyze: "read-only",
+        excludeTools: ["drop_table", "delete_row"],
+        analyzeTools: ["read_query", "list_tables"],
+      },
+      http: { url: "https://x/mcp", analyze: "trusted", excludeTools: ["admin"], analyzeTools: ["docs"] },
       junk: { command: "node" }, // unknown values are dropped, never passed through
       empty: { command: "node" }, // an empty list is not written back as []
     });
@@ -941,7 +951,13 @@ describe("HarnyFileConfigProvider MCP servers", () => {
     expect(provider.saveMcpServers(servers)).toBe(true);
     const raw = JSON.parse(readFileSync(join(dir, "config.json"), "utf8"));
     expect(raw.mcpServers.stdio.analyze).toBe("read-only");
-    expect(raw.mcpServers.http).toEqual({ url: "https://x/mcp", analyze: "trusted", excludeTools: ["admin"] });
+    expect(raw.mcpServers.stdio.analyzeTools).toEqual(["read_query", "list_tables"]);
+    expect(raw.mcpServers.http).toEqual({
+      url: "https://x/mcp",
+      analyze: "trusted",
+      excludeTools: ["admin"],
+      analyzeTools: ["docs"],
+    });
     expect(provider.readMcpServers()).toEqual(servers);
   });
 

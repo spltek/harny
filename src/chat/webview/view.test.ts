@@ -5298,7 +5298,7 @@ describe("view webview client", () => {
 
   /** Config push with one MCP server advertising `tools`. */
   function pushMcpTools(
-    tools: { name: string; description?: string; excluded?: boolean }[],
+    tools: { name: string; description?: string; excluded?: boolean; readOnly?: boolean; analyzeFlag?: boolean }[],
     toolCount = tools.filter((t) => !t.excluded).length,
   ): void {
     hostMessage({
@@ -5345,7 +5345,12 @@ describe("view webview client", () => {
 
     posted.length = 0;
     mcpPanelSave().click();
-    expect(posted).toContainEqual({ type: "setMcpToolExclusions", server: "test", exclude: ["echo"] });
+    expect(posted).toContainEqual({
+      type: "setMcpToolExclusions",
+      server: "test",
+      exclude: ["echo"],
+      analyze: [],
+    });
 
     // The host's answer closes the panel (it has already re-pushed the fresh state).
     hostMessage({ type: "mcpToolExclusionsSaved", server: "test", ok: true });
@@ -5455,7 +5460,13 @@ describe("view webview client", () => {
       type: "mcpServers",
       data: {
         servers: {
-          stdio: { command: "node", args: ["s.js"], analyze: "read-only", excludeTools: ["drop"] },
+          stdio: {
+            command: "node",
+            args: ["s.js"],
+            analyze: "read-only",
+            excludeTools: ["drop"],
+            analyzeTools: ["read_query"],
+          },
           remote: { url: "https://x/mcp", headers: { A: "1" } },
         },
         statuses: [],
@@ -5465,12 +5476,14 @@ describe("view webview client", () => {
     posted.length = 0;
     (document.getElementById("mcp-save") as HTMLButtonElement).click();
     const first = posted.find((m) => (m as { type?: string }).type === "saveMcpServers") as any;
-    // `analyze` and `excludeTools` have no control in this form: they must survive it.
+    // Neither list has a control in THIS form: they must survive it untouched (a save from here
+    // used to rebuild the server and drop the keys it did not know about).
     expect(first.servers.stdio).toEqual({
       command: "node",
       args: ["s.js"],
       analyze: "read-only",
       excludeTools: ["drop"],
+      analyzeTools: ["read_query"],
       enabled: true,
     });
 
@@ -5907,6 +5920,45 @@ describe("view webview client", () => {
     posted.length = 0;
     (document.getElementById("compact-settings-save") as HTMLButtonElement).click();
     expect(posted).toContainEqual({ type: "setCompactionTarget", value: 30 });
+  });
+
+  it("the tools panel has a SECOND control per tool: declared read-only in Analyze", async () => {
+    // Two questions, two controls: the checkbox decides what the MODEL sees, the shield decides
+    // what may run in ANALYZE. The shield is an include list (default-deny).
+    await loadView();
+    pushMcpTools([{ name: "read_query", readOnly: true, analyzeFlag: true }, { name: "drop_table" }]);
+    (document.querySelector(".mcp-tools-btn") as HTMLButtonElement).click();
+    const shields = [...document.querySelectorAll<HTMLButtonElement>("#mcp-tools-popover .mcp-pop-shield")];
+    expect(shields).toHaveLength(2);
+    // The first is declared by YOU (lit), the second is refused in Analyze (dim).
+    expect(shields.map((s) => s.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
+    expect(shields.map((s) => s.disabled)).toEqual([false, false]);
+
+    posted.length = 0;
+    shields[1].click(); // declare drop_table read-only: legal, it is YOUR word
+    const saveBtn = document.querySelector(
+      "#mcp-tools-popover .mcp-pop-actions button:last-child",
+    ) as HTMLButtonElement;
+    saveBtn.click();
+    expect(posted).toContainEqual({
+      type: "setMcpToolExclusions",
+      server: "test",
+      exclude: [],
+      analyze: ["read_query", "drop_table"],
+    });
+  });
+
+  it("a tool already allowed by the SERVER declaration shows an inherited shield (not a rule of yours)", async () => {
+    await loadView();
+    // The server is declared read-only, so every tool of it runs: `readOnly` is true and there is
+    // NO per-tool entry (`analyzeFlag` absent). The shield must say so, not fake a rule of yours.
+    pushMcpTools([{ name: "read_query", readOnly: true }]);
+    (document.querySelector(".mcp-tools-btn") as HTMLButtonElement).click();
+    const shield = document.querySelector("#mcp-tools-popover .mcp-pop-shield") as HTMLButtonElement;
+    expect(shield.getAttribute("aria-pressed")).toBe("true");
+    // Inherited, so it is locked and says where it comes from.
+    expect(shield.disabled).toBe(true);
+    expect(shield.title).toContain("server's own Analyze declaration");
   });
 
   it("typing '/' at the start of the prompt shows the skill list", async () => {

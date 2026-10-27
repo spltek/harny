@@ -200,4 +200,48 @@ describe("MCP tools panel, host ⇄ webview ⇄ server", () => {
     await vi.waitFor(() => expect(toolsKey().textContent).toBe("(0/2 tools)"), { timeout: 5000 });
     expect(manager.getStatuses()[0].ok).toBe(true);
   });
+
+  it("the shield declares ONE tool read-only in Analyze, end to end (config file → gate)", async () => {
+    // Nothing about the server is declared in the file: in Analyze none of its tools runs.
+    setup({ command: process.execPath, args: ["-e", SERVER] });
+    await manager.connect();
+
+    const { html } = wire({
+      providers: {
+        readMcpServers: () => config.readMcpServers(),
+        saveMcpServers: (servers) => config.saveMcpServers(servers),
+      },
+      mcp: manager,
+    });
+    await bootClient(await pageOf(html));
+
+    await vi.waitFor(() => expect(toolsKey().textContent).toBe("(2 tools)"), { timeout: 5000 });
+    // Before: both tools refuse — the server declares nothing.
+    expect(manager.getTools().map((t) => t.analyzePolicy)).toEqual(["refuse", "refuse"]);
+
+    toolsKey().click();
+    const shields = [...document.querySelectorAll<HTMLButtonElement>("#mcp-tools-popover .mcp-pop-shield")];
+    expect(shields.map((s) => s.getAttribute("aria-pressed"))).toEqual(["false", "false"]);
+    shields[0].click(); // declare `echo` read-only in Analyze
+    panelSave().click();
+
+    // 1. the FILE carries it (an include list, next to the exclude list)…
+    await vi.waitFor(() => expect(config.readMcpServers().test.analyzeTools).toEqual(["echo"]), { timeout: 5000 });
+    const raw = JSON.parse(readFileSync(join(dir, "config.json"), "utf8"));
+    expect(raw.mcpServers.test.analyzeTools).toEqual(["echo"]);
+    expect(raw.mcpServers.test.command).toBe(process.execPath); // the server survived the write
+    expect("excludeTools" in raw.mcpServers.test).toBe(false); // nothing excluded: no empty list
+
+    // 2. the GATE followed: one tool runs in Analyze, the other still refuses.
+    await vi.waitFor(() => expect(manager.getTools().map((t) => t.analyzePolicy)).toEqual(["read-only", "refuse"]), {
+      timeout: 5000,
+    });
+
+    // 3. …and the panel reopens on the SAVED state, with the count saying it.
+    toolsKey().click();
+    const reopened = [...document.querySelectorAll<HTMLButtonElement>("#mcp-tools-popover .mcp-pop-shield")];
+    expect(reopened.map((s) => s.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
+    expect(document.querySelector(".mcp-pop-count")!.textContent).toBe("2 of 2 enabled · 1 read-only in Analyze");
+    expect(panelSave().disabled).toBe(true); // nothing left to save
+  });
 });

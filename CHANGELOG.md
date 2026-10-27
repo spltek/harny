@@ -49,6 +49,18 @@ track with a WHITE dot), and
   picked, live: it names the limit it hit ("landing at 90% with the trigger at 60% would free nothing: it is saved as
   59%") or the other one ("below 8% there is nothing left to free — the summary and the last turn already occupy that
   much"), and disappears when the pair makes sense.
+- **A single MCP tool can be declared read-only for Analyze — the shield in the tools panel.** `analyze` was a per-SERVER
+  declaration, so allowing one safe tool meant vouching for every tool of that server (or hand-editing `config.json`,
+  since nothing in the panel touched the key). Each tool row now carries a **shield** next to the exposure checkbox:
+  two questions, two controls — the checkbox decides what the MODEL sees, the shield decides what may run in **Analyze**.
+  It writes `analyzeTools` on the server, an **INCLUDE** list on purpose: exposure is allowed by default (a server that
+  adds a tool tomorrow should be usable), while Analyze is **denied** by default (a new tool must prove itself), so the
+  narrowest statement is the one that is explicitly written down. The per-tool statement wins over the server's, it is
+  read **live** (no reconnect needed to take effect, though the panel's Save reconnects anyway for the exclusion list
+  it shares), and where the server-level declaration already allows everything the shield shows as **inherited** and
+  says so instead of pretending a per-tool rule did it. The refusal the model receives names this third way out, the
+  README stops calling `analyze` file-only, and `config.example.jsonc` finally documents the MCP block (the server-wide
+  `analyze` is the one field with no control in the form).
 - **The MCP editor can configure an HTTP server — URL and headers are fields now.** It had only Command / Args / Env,
   so a `url` server existed only if you hand-edited `config.json` — while the README promised "a command (stdio) **or**
   a URL (HTTP)". The form now has a **URL (HTTP)** field and a **Headers** box (`KEY=VALUE` or `KEY: VALUE`, the HTTP
