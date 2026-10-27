@@ -1537,6 +1537,10 @@ ${renderViewConfig(deps)}
     #find-bar input:focus { outline: 1px solid var(--accent); outline-offset: 0; }
     #find-bar .find-count { font-size: var(--fs-sm); color: var(--muted-2); min-width: 3.2rem; text-align: center; }
     #find-bar .find-count.none { color: var(--warn-soft, #d9a400); }
+    /* Find highlights: painted by the CSS Custom Highlight API, NOT by the document selection —
+       a selection would blur the find field and you could not type past the first match. */
+    ::highlight(harny-find) { background-color: var(--find-hit, rgba(255, 196, 0, 0.35)); }
+    ::highlight(harny-find-current) { background-color: var(--accent); color: var(--on-accent, #fff); }
     #find-bar button { padding: 0 6px; font-size: var(--fs-sm); min-height: 0; line-height: 18px; }
     /* The transcript context menu (Copy / Select all): ours, so it exists on every OS. */
     #ctx-menu {

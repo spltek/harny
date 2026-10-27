@@ -3174,20 +3174,61 @@ function updateFindCount(): void {
   findCount.classList.toggle("none", total === 0);
 }
 
+/**
+ * Highlight the matches WITHOUT touching the document selection.
+ *
+ * The selection was the cheap highlight, but it is unusable here: setting one blurs the field you
+ * are typing in (Chromium drops the focus on the body), so the find bar died after one character —
+ * take the caret back and the selection is gone, keep the selection and the caret is gone. Browsers
+ * solve this with the CSS Custom Highlight API, which paints WITHOUT a selection: available in the
+ * Chromium VS Code ships.
+ */
+function paintFindHighlights(): void {
+  const api = (window as unknown as { CSS?: { highlights?: Map<string, unknown> } }).CSS?.highlights;
+  const Ctor = (window as unknown as { Highlight?: new (...r: Range[]) => unknown }).Highlight;
+  if (!api || !Ctor) return; // no API: the fallback in showMatch decides, caret first
+  const current = findMatches[findIndex];
+  if (findMatches.length > 0) api.set("harny-find", new Ctor(...findMatches));
+  else api.delete("harny-find");
+  if (current) api.set("harny-find-current", new Ctor(current));
+  else api.delete("harny-find-current");
+}
+
+function clearFindHighlights(): void {
+  const api = (window as unknown as { CSS?: { highlights?: Map<string, unknown> } }).CSS?.highlights;
+  api?.delete("harny-find");
+  api?.delete("harny-find-current");
+}
+
 /** Put the CURRENT match in the selection and scroll it into view: the selection is the highlight,
  *  so nothing is injected into the transcript (which streaming repaints). */
 function showMatch(scroll: boolean): void {
   const m = findMatches[findIndex];
   if (!m) return;
+  paintFindHighlights();
+  // Was the user typing in one of our fields? Then the selection must NOT be moved: it would blur
+  // the field and the next keystroke would go to the transcript.
+  const wasTyping = findBar.contains(document.activeElement);
+  const caret = [findInput.selectionStart, findInput.selectionEnd] as const;
+  const hasHighlightApi = Boolean((window as unknown as { Highlight?: unknown }).Highlight);
   const sel = window.getSelection?.();
-  if (sel) {
+  if (sel && !hasHighlightApi && !wasTyping) {
+    // Fallback for a host without the Highlight API: the selection is the only highlight left,
+    // and it is used ONLY when nothing of ours is focused (so nothing can lose the caret).
     sel.removeAllRanges();
     sel.addRange(m);
   }
-  if (!scroll) return;
-  const node = m.startContainer;
-  const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
-  el?.scrollIntoView?.({ block: "center", inline: "nearest" });
+  if (scroll) {
+    const node = m.startContainer;
+    const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+    el?.scrollIntoView?.({ block: "center", inline: "nearest" });
+  }
+  // Fallback path only: take the caret back where it was.
+  if (wasTyping && document.activeElement !== findInput) {
+    findInput.focus();
+    const [start, end] = caret;
+    if (start !== null && end !== null) findInput.setSelectionRange(start, end);
+  }
 }
 
 function refreshMatches(keepIndex = false): void {
@@ -3219,6 +3260,7 @@ function stepMatch(delta: number): void {
 }
 
 function closeFind(): void {
+  clearFindHighlights();
   findBar.classList.add("hidden");
   findMatches = [];
   findIndex = -1;

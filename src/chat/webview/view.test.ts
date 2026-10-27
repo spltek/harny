@@ -6052,7 +6052,10 @@ describe("view webview client", () => {
     input.dispatchEvent(new Event("input"));
     await new Promise((r) => setTimeout(r, 150)); // the debounce
     expect(count.textContent).toBe("1/3");
-    expect(window.getSelection()!.toString().toLowerCase()).toBe("alpha");
+    // The highlight is NOT a document selection (that would blur the field): see the caret test.
+    // Here, without the Highlight API, the fallback deliberately paints nothing while we type.
+    expect(window.getSelection()!.toString()).toBe("");
+    expect(document.activeElement).toBe(input);
 
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     expect(count.textContent).toBe("2/3");
@@ -6076,6 +6079,102 @@ describe("view webview client", () => {
     expect(input.value).toBe("");
     // …and Esc while find is open never reaches Stop.
     expect(posted.some((m: any) => m.type === "abort")).toBe(false);
+  });
+
+  it("finding a match does NOT steal the caret: you keep typing in the find field", async () => {
+    // The reported bug: type one character, the match scrolls into view and you can no longer type
+    // — setting a document SELECTION blurs the field in Chromium. The highlight is therefore
+    // painted with the CSS Custom Highlight API, which needs no selection at all.
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "user", content: "alpha beta alpha", timestamp: 1 },
+        { role: "assistant", content: "gamma alpha", timestamp: 2 },
+      ],
+    });
+    // jsdom has no Highlight API: give it one, and make `addRange` behave like Chromium (it drops
+    // the focus), so a regression that goes back to the selection cannot pass silently.
+    const registered = new Map<string, { size: number }>();
+    (window as any).Highlight = class {
+      ranges: Range[];
+      constructor(...ranges: Range[]) {
+        this.ranges = ranges;
+      }
+      get size(): number {
+        return this.ranges.length;
+      }
+    };
+    (window as any).CSS = { ...((window as any).CSS ?? {}), highlights: registered };
+    const makeHighlights = (): Map<string, unknown> => new Map();
+    (window as any).CSS.highlights = makeHighlights();
+    const seen = (window as any).CSS.highlights as Map<string, unknown>;
+    const realAddRange = Selection.prototype.addRange;
+    Selection.prototype.addRange = function (this: Selection, r: Range): void {
+      realAddRange.call(this, r);
+      (document.activeElement as HTMLElement | null)?.blur?.(); // what Chromium does
+    };
+    try {
+      const input = document.getElementById("find-input") as HTMLInputElement;
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "f",
+          ctrlKey: !/Macintosh/.test(navigator.userAgent),
+          metaKey: /Macintosh/.test(navigator.userAgent),
+        }),
+      );
+      input.focus();
+      input.value = "alpha";
+      input.selectionStart = input.selectionEnd = input.value.length;
+      input.dispatchEvent(new Event("input"));
+      await new Promise((r) => setTimeout(r, 150)); // the debounce
+
+      // The three matches are highlighted, the current one separately…
+      expect(seen.size).toBe(2);
+      expect((seen.get("harny-find") as { size: number }).size).toBe(3);
+      expect((seen.get("harny-find-current") as { size: number }).size).toBe(1);
+      // …NO selection was made, so the caret never left the field…
+      expect(window.getSelection()!.toString()).toBe("");
+      expect(document.activeElement).toBe(input);
+      expect(input.selectionStart).toBe(5);
+      input.value += "x"; // …and the next keystroke lands where you are typing
+      expect(input.value).toBe("alphax");
+      // Nothing was injected into the transcript: highlights are painted, not DOM.
+      expect(document.getElementById("messages")!.textContent).not.toContain("<mark");
+
+      // Closing removes them (no stale paint left behind).
+      document.getElementById("find-close")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(seen.size).toBe(0);
+    } finally {
+      Selection.prototype.addRange = realAddRange;
+      delete (window as any).Highlight;
+      delete (window as any).CSS;
+    }
+  });
+
+  it("without the Highlight API it falls back to the selection — and never steals the caret", async () => {
+    // An older host: the selection is the only highlight available. It is used ONLY when nothing
+    // of ours has the focus, because moving it is what broke typing.
+    await loadView();
+    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "beta beta", timestamp: 1 }] });
+    const input = document.getElementById("find-input") as HTMLInputElement;
+    expect((window as any).Highlight).toBeUndefined(); // jsdom: no API
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "f",
+        ctrlKey: !/Macintosh/.test(navigator.userAgent),
+        metaKey: /Macintosh/.test(navigator.userAgent),
+      }),
+    );
+    input.focus();
+    input.value = "beta";
+    input.dispatchEvent(new Event("input"));
+    await new Promise((r) => setTimeout(r, 150));
+    // The caret stayed in the field: the fallback refused to move the selection.
+    expect(document.activeElement).toBe(input);
+    expect(window.getSelection()!.toString()).toBe("");
+    // Scrolling still happened through the match itself (no selection involved).
+    expect(document.getElementById("find-count")!.textContent).toBe("1/2");
   });
 
   it("find follows the host OS, and rebuilds a stale list while the run streams", async () => {

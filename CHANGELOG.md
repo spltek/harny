@@ -64,9 +64,14 @@ track with a WHITE dot), and
 - **Find in the chat (⌘F / Ctrl+F), which did not exist at all.** A webview has no native find — the browser's ⌘F
   belongs to the host window and never reaches the panel — so the shortcut was dead. A small bar over the transcript's
   top-right searches every bubble case-insensitively, `Enter`/`Shift+Enter` step through the matches (wrapping), the
-  counter says `3/17` or *no match*, and `Esc` closes find instead of stopping the run. The selection IS the highlight
-  (nothing is injected into a transcript that streaming repaints), matches are capped at 500, and a list built before
-  more text arrived is rebuilt rather than pointing at ranges that no longer exist.
+  counter says `3/17` or *no match*, and `Esc` closes find instead of stopping the run. Matches are capped at 500, and a
+  list built before more text arrived is rebuilt rather than pointing at ranges that no longer exist.
+- **Typing in the find field no longer stops after one character.** The first cut used the document SELECTION as the
+  highlight, and setting one blurs the field you are typing in (Chromium drops the focus on the body): the chat scrolled
+  to the match and the next keystroke went nowhere. Highlights are now painted with the **CSS Custom Highlight API**,
+  which needs no selection at all — the caret never leaves the field, the current match stands out from the others, and
+  nothing is injected into a transcript that streaming repaints. A host without the API falls back to the selection, and
+  then only while nothing of ours is focused: keeping the caret wins over painting.
 - **A context menu we own, on the transcript.** Whether a webview gets a native menu with Copy is not a contract —
   Windows, Linux and each VS Code build disagree — so right-clicking the prose now opens ours: **Copy** (enabled only
   with a selection, as in any editor) and **Select all**, anchored at the pointer, closing on Esc, an outside click or a
