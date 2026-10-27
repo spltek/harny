@@ -9431,6 +9431,56 @@ describe("Insert-in hint — Queue/Steer (webview)", () => {
     expect(word().textContent).toBe("Queue");
   });
 
+  it("the working bar NAMES the tool that is running — and keeps it until the LAST one lands", async () => {
+    // The rule, in one place: the name belongs to a call that has NOT finished. It used to be
+    // cleared by ANY result, so with two calls in flight (Parallel, or a sub-agent's own tools) the
+    // bar dropped the name while work was still happening — which read as random.
+    await loadView();
+    const bar = document.getElementById("working-bar") as HTMLElement;
+    hostMessage({ type: "status", active: true });
+    expect(bar.textContent).toBe("● Working...");
+
+    // A call starts: the name appears.
+    hostMessage({ type: "toolCall", id: "c1", name: "Shell", arguments: {} });
+    expect(bar.textContent).toContain("Shell");
+
+    // A SECOND call starts before the first lands: the newest name wins.
+    hostMessage({ type: "toolCall", id: "c2", name: "Read", arguments: {} });
+    expect(bar.textContent).toContain("Read");
+
+    // The FIRST result lands: `Read` may still be running, so the name does not vanish.
+    hostMessage({ type: "toolResult", toolCallId: "c1", output: "ok", isError: false });
+    expect(bar.textContent).toContain("Read");
+    // The last one lands: back to plain, and no leftover name.
+    hostMessage({ type: "toolResult", toolCallId: "c2", output: "ok", isError: false });
+    expect(bar.textContent).toBe("● Working...");
+  });
+
+  it("a Delegate call says sub-agent, not the tool name", async () => {
+    await loadView();
+    const bar = document.getElementById("working-bar") as HTMLElement;
+    hostMessage({ type: "status", active: true });
+    hostMessage({ type: "toolCall", id: "d1", name: "Delegate", arguments: {} });
+    expect(bar.textContent).toContain("sub-agent");
+    expect(bar.textContent).not.toContain("Delegate");
+  });
+
+  it("a result for an UNKNOWN call does not disturb the name of the real one", async () => {
+    // The host can deliver a result for an id this panel never saw (a rebuild raced it). It must be
+    // inert: the map is the truth for the bar, so the pending call keeps its name and the stray id
+    // does not clear it. (The `delete` outside the `if` is DEFENSIVE — see the comment there: it
+    // cannot be reached through the public events, because `get` and `delete` share the same map.)
+    await loadView();
+    const bar = document.getElementById("working-bar") as HTMLElement;
+    hostMessage({ type: "status", active: true });
+    hostMessage({ type: "toolCall", id: "c1", name: "Shell", arguments: {} });
+    expect(bar.textContent).toContain("Shell");
+    hostMessage({ type: "toolResult", toolCallId: "something-else", output: "ok", isError: false });
+    expect(bar.textContent).toContain("Shell"); // c1 is still pending: the name is still true
+    hostMessage({ type: "toolResult", toolCallId: "c1", output: "ok", isError: false });
+    expect(bar.textContent).toBe("● Working...");
+  });
+
   it("shows the working bar when a run starts without an optimistic send (queued dispatch)", async () => {
     await loadView();
     const bar = document.getElementById("working-bar") as HTMLElement;

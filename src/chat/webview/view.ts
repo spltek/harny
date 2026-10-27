@@ -2003,12 +2003,38 @@ function ensureCompactionBubble(): void {
 function addWorking(): HTMLDivElement {
   workingEl = workingBar;
   workingBar.classList.remove("hidden");
-  workingBar.textContent = "● Working...";
+  setWorkingPhase();
   // The bar can appear MID-turn (a sub-agent, a resumed run): join the cycle where the
   // play button already is instead of restarting it from zero.
   phaseLockPulse(workingBar);
   scrollDown();
   return workingBar;
+}
+
+/**
+ * The bar's phase: `● Working...` alone, or with the tool that is running RIGHT NOW.
+ *
+ * ONE place decides it, because the answer used to be written in four and the fourth ("any result
+ * resets to plain Working…") was wrong: with two calls in flight — Parallel, or a sub-agent's own
+ * tools — the FIRST result wiped the name while the second was still running, so the bar denied
+ * work that was happening. The name now belongs to a call that has not finished.
+ */
+function setWorkingPhase(toolName?: string): void {
+  if (!workingEl) return;
+  if (!toolName) {
+    workingEl.textContent = "● Working...";
+    return;
+  }
+  workingEl.innerHTML =
+    toolName === "Delegate"
+      ? "● Working... " + SUBAGENT_ICON + " sub-agent"
+      : "● Working... " + toolIcon(toolName) + escapeHtml(toolName);
+}
+
+/** The tool of the most recent call that has NOT finished yet, if any. */
+function runningToolName(): string | undefined {
+  const pending = [...pendingToolCalls.values()];
+  return pending[pending.length - 1]?.dataset.tool;
 }
 
 function hideWorking(): void {
@@ -5738,12 +5764,7 @@ window.addEventListener("message", (e) => {
       const toolEl = msg.name === "Delegate" ? addSubAgentCall(msg.arguments) : addToolCall(msg.name, msg.arguments);
       pendingToolCalls.set(msg.id, toolEl);
       toolEl.dataset.toolCallId = msg.id;
-      if (workingEl) {
-        workingEl.innerHTML =
-          msg.name === "Delegate"
-            ? "● Working... " + SUBAGENT_ICON + " sub-agent"
-            : "● Working... " + toolIcon(msg.name) + escapeHtml(msg.name);
-      }
+      setWorkingPhase(msg.name);
       clearThinkingBlock();
       currentThinkingText = "";
       clearStreamingBubble();
@@ -5764,6 +5785,9 @@ window.addEventListener("message", (e) => {
     }
     case "toolResult": {
       const el = pendingToolCalls.get(msg.toolCallId);
+      // The call is over whatever became of its bubble: the map decides which tool the bar names,
+      // so an id with no element (a rebuild raced it) must not stay "pending" for ever.
+      pendingToolCalls.delete(msg.toolCallId);
       if (el) {
         el.classList.remove("tool-call-pending");
         const isSubAgent = el.classList.contains("subagent");
@@ -5788,9 +5812,10 @@ window.addEventListener("message", (e) => {
         // A todo list is a LIST: rendered under the header, so it is readable
         // without opening the (still collapsed) details.
         if (el.dataset.tool === "TodoWrite") renderTodoBlock(el, String(msg.output));
-        pendingToolCalls.delete(msg.toolCallId);
       }
-      if (workingEl) workingEl.textContent = "● Working...";
+      // Another call may still be running (Parallel, or a sub-agent's tools): the bar keeps a name
+      // until the LAST one lands, then goes back to plain "Working…".
+      setWorkingPhase(runningToolName());
       break;
     }
     case "interrupted": {
@@ -6533,12 +6558,9 @@ function replayLiveTurn(lt: SessionLiveProjection | undefined): void {
           out.classList.toggle("tool-result-error", tc.isError);
         }
       }
-    } else if (workingEl) {
+    } else {
       // The in-flight call is the run's current phase: say so on the bar.
-      workingEl.innerHTML =
-        tc.name === "Delegate"
-          ? "● Working... " + SUBAGENT_ICON + " sub-agent"
-          : "● Working... " + toolIcon(tc.name) + escapeHtml(tc.name);
+      setWorkingPhase(tc.name);
     }
   }
   // Then the nested logs, through the SAME handler the live events use
