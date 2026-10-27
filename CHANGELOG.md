@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.9.0] - 2026-10-27
 
+### Changed
+
+- **One owner for "what is inert while a run works".** The policy lived in seven functions across three call paths, which
+  is how the same bug was reported four times in two days (each fix right, each landing on one path). It is now a
+  declarative table (`LOCK_TABLE` in `view.ts`): one row per control, a predicate for when it locks, an optional tooltip.
+  Adding a control is one line of data instead of a search through the file. Two axes, named: `activeBusy` (the session on
+  screen runs — anything that would change the request it already sent) and `anyBusy` (reserved; nothing is machine-wide
+  today). A control that is never locked says so (`never`) rather than being absent. A twenty-row test table pins the
+  behaviour across three scenarios plus a run started from the panel — written FIRST, as the net for the refactor, and
+  verified to fail on three different rows.
 ### Fixed
 
 - **The models gear is locked while THIS session works.** It stayed clickable during a run, so it opened the manager and

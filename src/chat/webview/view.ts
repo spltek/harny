@@ -5530,25 +5530,10 @@ function setStreaming(active: boolean): void {
   // the host dispatched, or switching to a session that is working) must still
   // show the working bar — it is the only progress indicator for those runs.
   if (active && !workingEl) addWorking();
-  compactBtn.disabled = active;
-  compactSettingsBtn.disabled = active;
-  modelBtn.disabled = active;
-  for (const r of thinkingRadios) r.disabled = active || !thinkingCapable;
-  ctxRange.disabled = active;
-  outRange.disabled = active;
-  sampRange.disabled = active;
-  sampAuto.disabled = active;
-  samplerTemp.disabled = active;
-  samplerTopp.disabled = active;
-  presenceRange.disabled = active;
-  presenceAuto.disabled = active;
-  freqRange.disabled = active;
-  freqAuto.disabled = active;
-  // Guardrails card (parallel cap + Loop Guard) follows the same lock.
-  parRange.disabled = active;
-  for (const r of lgRadios) r.disabled = active;
-  // OFF or a live run: the parameters and "Include response" are inert (dimmed by the
-  // global input:disabled rule) — the GLOBAL lock has to re-apply them on release.
+  // Every `disabled` that follows "this session runs" belongs to the LOCK TABLE now (applyLocks,
+  // called at the top of this function): keeping a copy here is how the same bug landed four times.
+  // What stays here is what the table cannot own — the compound Loop Guard state, which also
+  // depends on the LEVEL, not just on the run.
   applyLgEnabledState(normalizeLgLevel(currentLgLevel()), active);
   inputEl.disabled = false;
   // Mode and Parallel are LOCKED while the session works, exactly like the request
@@ -5559,8 +5544,6 @@ function setStreaming(active: boolean): void {
   // change would land (see refreshPolicyHints). The silent lock is what made this row lie
   // before, and the answer to that is to say it, not to hide it. A dropdown left open is
   // closed too, so the label on screen is never the one that was already sent.
-  modeBtn.disabled = active;
-  parallelBtn.disabled = active;
   if (active && !modeMenu.classList.contains("hidden")) closeModeMenu();
   if (!active) {
     // The run is over: what the panel holds is this session's policy again.
@@ -7066,32 +7049,111 @@ function sessionBusy(): boolean {
   return streamingActive || (!!activeId && workingIds.has(activeId));
 }
 
+/** What all the locks below are decided from. Snapshotted ONCE per pass. */
+interface LockSnapshot {
+  /** The session on screen is running. */
+  activeBusy: boolean;
+  /** Any session is running. */
+  anyBusy: boolean;
+}
+
+/** One row of the lock table: a control and the rule that makes it inert. */
+interface LockRule {
+  el: HTMLElement | null;
+  /** Locked when this is true. Written as a predicate so a compound rule (a model that cannot
+   *  think AND a live run) stays on one readable line instead of a special case. */
+  lock: (s: LockSnapshot) => boolean;
+  /** The tooltip, given the snapshot and whether the control is locked right now. A tooltip may
+   *  depend on the OTHER axis (the sessions manager says so when other sessions run). */
+  title?: (s: LockSnapshot, locked: boolean) => string;
+}
+
+const whenActive = (s: LockSnapshot): boolean => s.activeBusy;
+/** Nothing is machine-wide today: the managers are `never`, and every other lock follows the
+ *  session on screen. The axis stays in the snapshot for the day a control needs it. */
+const never = (): boolean => false;
+
+/**
+ * THE LOCK TABLE — the only place that decides what is inert while a run works.
+ *
+ * It was seven functions and three call paths, which is how the same bug got reported four times in
+ * two days: each fix was right and each landed on one path. Two axes, and they are not the same
+ * question:
+ *
+ *   · `activeBusy` — the session you are LOOKING AT is running. Anything that would change the
+ *     REQUEST it already sent (model, mode, parameters, the gear managers that edit it, the MCP
+ *     editor that reconnects and swaps its tool list).
+ *   · `anyBusy` — anything at all is running. Reserved for the few controls that are genuinely
+ *     machine-wide.
+ *
+ * A control that is never locked says so (`never`) instead of being absent: the absence is what
+ * made "is this a decision or a forgotten line?" unanswerable.
+ */
+const LOCKS: readonly LockRule[] = [
+  // ── the model, and the manager that edits it ──
+  { el: modelBtn, lock: whenActive }, // its tooltip names the current model (config push)
+  {
+    el: gearBtn,
+    lock: whenActive,
+    title: (_s, locked) =>
+      locked
+        ? "Saving is blocked while this session works — the run keeps the model it started with"
+        : "Configure providers & models",
+  },
+  // ── the tool list: saving a server reconnects it and swaps the tools mid-turn ──
+  {
+    el: mcpConfigure,
+    lock: whenActive,
+    title: (_s, locked) =>
+      locked
+        ? "Stop the run first — saving a server reconnects it and swaps the tool list mid-turn"
+        : "Configure MCP servers",
+  },
+  // ── a run is born with its mode and its Parallel setting (see Agent.runMode) ──
+  { el: modeBtn, lock: whenActive },
+  { el: parallelBtn, lock: whenActive },
+  // ── compaction ──
+  { el: compactBtn, lock: whenActive },
+  { el: compactSettingsBtn, lock: whenActive },
+  // ── the request envelope, fixed for the run ──
+  { el: ctxRange, lock: whenActive },
+  { el: outRange, lock: whenActive },
+  { el: sampRange, lock: whenActive },
+  { el: sampAuto, lock: whenActive },
+  { el: samplerTemp, lock: whenActive },
+  { el: samplerTopp, lock: whenActive },
+  { el: presenceRange, lock: whenActive },
+  { el: presenceAuto, lock: whenActive },
+  { el: freqRange, lock: whenActive },
+  { el: freqAuto, lock: whenActive },
+  { el: parRange, lock: whenActive },
+  // A model that cannot think AND a live run: the lock is still this table's business.
+  ...thinkingRadios.map((r): LockRule => ({ el: r, lock: (s) => s.activeBusy || !thinkingCapable })),
+  ...lgRadios.map((r): LockRule => ({ el: r, lock: whenActive })),
+  // ── never locked, and therefore listed: the managers survive a busy day ──
+  {
+    el: sessionsGearBtn,
+    lock: never,
+    title: (s) =>
+      s.anyBusy ? "Manage all sessions (the working ones are locked)" : "Manage all sessions (every folder)",
+  },
+];
+
+/** Apply the table. Called from the ONE point every way of starting a run passes through (see
+ *  setStreaming), plus the status handler that brings `workingIds` in. */
+function applyLocks(): void {
+  const snap: LockSnapshot = { activeBusy: sessionBusy(), anyBusy: workingIds.size > 0 };
+  for (const rule of LOCKS) {
+    if (!rule.el) continue;
+    const locked = rule.lock(snap);
+    (rule.el as HTMLButtonElement).disabled = locked;
+    if (rule.title) rule.el.title = rule.title(snap, locked);
+  }
+}
+
+/** Kept as the name the call sites already use: the lock pass, nothing else. */
 function applyWorkingLock(): void {
-  const busy = workingIds.size > 0;
-  // TWO axes, and they used to be one. The MANAGERS stay reachable while a run works (with
-  // several concurrent runs a blanket lock would mean you can never open them again), but the
-  // models gear acts on the session you are LOOKING AT: opening it while that session streams
-  // offers a model switch for a request already sent — the same trap the model dropdown and the
-  // mode pills already refuse. Derived from BOTH signals, because at bootstrap only `workingIds`
-  // is known and a status message may not have arrived yet.
-  const activeBusy = sessionBusy();
-  sessionsGearBtn.disabled = false;
-  gearBtn.disabled = activeBusy;
-  // The MCP gear edits the MACHINE (install/edit/delete, and every save reconnects the servers and
-  // rebuilds the tool registry), so it is the same hazard as the tools panel's Save — which already
-  // refuses mid-run with "Stop the run first". Reachable while OTHER sessions work (it is not a
-  // per-session control), inert while THIS one does: a reconnect mid-stream swaps the tools under a
-  // turn that already received them.
-  mcpConfigure.disabled = activeBusy;
-  sessionsGearBtn.title = busy
-    ? "Manage all sessions (the working ones are locked)"
-    : "Manage all sessions (every folder)";
-  gearBtn.title = activeBusy
-    ? "Saving is blocked while this session works — the run keeps the model it started with"
-    : "Configure providers & models";
-  mcpConfigure.title = activeBusy
-    ? "Stop the run first — saving a server reconnects it and swaps the tool list mid-turn"
-    : "Configure MCP servers";
+  applyLocks();
 }
 
 /**
