@@ -10459,3 +10459,212 @@ describe("streaming paint coalescing (resize / parallel sub-agents)", () => {
     }
   });
 });
+
+/**
+ * THE LOCK TABLE — one row per control, one column per scenario.
+ *
+ * This exists because the same bug was reported four times in two days (the models gear twice, the
+ * MCP gear once, and each time the rule was right but applied on ONE path): the "what is blocked
+ * while a session works" policy lived in seven functions with no single owner. As a TABLE it is
+ * read once, and every future control is three cells — not a search through the file.
+ *
+ * Scenarios, exactly as the panel can meet them:
+ *   · idle     — nothing runs anywhere
+ *   · thisBusy — the session ON SCREEN runs (what the per-session locks follow)
+ *   · otherBusy— another session runs; this one is idle
+ */
+describe("the lock table (what is inert while a session works)", () => {
+  type Cell = "enabled" | "disabled";
+  interface Row {
+    /** A stable name, used in the failure message. */
+    what: string;
+    /** The id of the control (or the selector for the ones rendered per row). */
+    id: string;
+    idle: Cell;
+    thisBusy: Cell;
+    otherBusy: Cell;
+    /** Why the cell is what it is — the part that stops the next regression. */
+    why: string;
+  }
+
+  const ROWS: Row[] = [
+    // ── the three gears: two axes, decided once, and the bug that started this table ──
+    {
+      what: "models gear",
+      id: "gear-btn",
+      idle: "enabled",
+      thisBusy: "disabled",
+      otherBusy: "enabled",
+      why: "offers a model switch for a request already sent",
+    },
+    {
+      what: "MCP gear",
+      id: "mcp-configure",
+      idle: "enabled",
+      thisBusy: "disabled",
+      otherBusy: "enabled",
+      why: "saving a server reconnects and swaps the tool list mid-turn",
+    },
+    {
+      what: "sessions gear",
+      id: "sessions-gear-btn",
+      idle: "enabled",
+      thisBusy: "enabled",
+      otherBusy: "enabled",
+      why: "a blanket lock would make the managers unreachable on a busy day",
+    },
+    // ── per-run policy: a run is born with its mode and Parallel, so switching promises nothing ──
+    {
+      what: "model dropdown",
+      id: "model-btn",
+      idle: "enabled",
+      thisBusy: "disabled",
+      otherBusy: "enabled",
+      why: "the run keeps the model it started with",
+    },
+    {
+      what: "mode pill",
+      id: "mode-btn",
+      idle: "enabled",
+      thisBusy: "disabled",
+      otherBusy: "enabled",
+      why: "decided once per run (see Agent.runMode)",
+    },
+    {
+      what: "parallel pill",
+      id: "parallel-btn",
+      idle: "enabled",
+      thisBusy: "disabled",
+      otherBusy: "enabled",
+      why: "same: the run keeps its setting to the last tool result",
+    },
+    // ── compaction ──
+    {
+      what: "compact button",
+      id: "compact-btn",
+      idle: "enabled",
+      thisBusy: "disabled",
+      otherBusy: "enabled",
+      why: "compacting under a live turn is what mid-run compaction avoids",
+    },
+    {
+      what: "compaction settings",
+      id: "compact-settings-btn",
+      idle: "enabled",
+      thisBusy: "disabled",
+      otherBusy: "enabled",
+      why: "same",
+    },
+    // ── request parameters ──
+    {
+      what: "context window",
+      id: "ctx-range",
+      idle: "enabled",
+      thisBusy: "disabled",
+      otherBusy: "enabled",
+      why: "the request envelope is fixed for the run",
+    },
+    {
+      what: "output tokens",
+      id: "out-range",
+      idle: "enabled",
+      thisBusy: "disabled",
+      otherBusy: "enabled",
+      why: "same",
+    },
+    {
+      what: "sampler range",
+      id: "samp-range",
+      idle: "enabled",
+      thisBusy: "disabled",
+      otherBusy: "enabled",
+      why: "same",
+    },
+    {
+      what: "temperature",
+      id: "sampler-temp",
+      idle: "enabled",
+      thisBusy: "disabled",
+      otherBusy: "enabled",
+      why: "same",
+    },
+    { what: "top-p", id: "sampler-topp", idle: "enabled", thisBusy: "disabled", otherBusy: "enabled", why: "same" },
+    {
+      what: "presence penalty",
+      id: "presence-range",
+      idle: "enabled",
+      thisBusy: "disabled",
+      otherBusy: "enabled",
+      why: "same",
+    },
+    {
+      what: "frequency penalty",
+      id: "freq-range",
+      idle: "enabled",
+      thisBusy: "disabled",
+      otherBusy: "enabled",
+      why: "same",
+    },
+    { what: "parallel cap", id: "par-range", idle: "enabled", thisBusy: "disabled", otherBusy: "enabled", why: "same" },
+    // ── the prompt is NEVER locked per session: Enter queues, Ctrl/Cmd steers ──
+    {
+      what: "prompt",
+      id: "user-input",
+      idle: "enabled",
+      thisBusy: "enabled",
+      otherBusy: "enabled",
+      why: "queueing and steering are the point of a live run",
+    },
+    // ── the controls that only need a session ──
+    {
+      what: "send/play",
+      id: "send-btn",
+      idle: "enabled",
+      thisBusy: "enabled",
+      otherBusy: "enabled",
+      why: "queues or steers",
+    },
+    {
+      what: "stop",
+      id: "abort-btn",
+      idle: "disabled",
+      thisBusy: "enabled",
+      otherBusy: "disabled",
+      why: "only a run can be stopped",
+    },
+  ];
+
+  const cellOf = (id: string): Cell => {
+    const el = document.getElementById(id) as HTMLButtonElement | HTMLInputElement | HTMLTextAreaElement | null;
+    expect(el, `#${id} missing from the fixture`).not.toBeNull();
+    return el!.disabled ? "disabled" : "enabled";
+  };
+
+  for (const [scenario, apply] of [
+    ["idle", (): void => hostMessage({ type: "status", active: false, workingIds: [] })],
+    ["thisBusy", (): void => hostMessage({ type: "status", active: true, workingIds: ["a"] })], // "a" is the fixture's active session
+    ["otherBusy", (): void => hostMessage({ type: "status", active: false, workingIds: ["other"] })],
+  ] as const) {
+    it(`matches the table when ${scenario}`, async () => {
+      await loadView();
+      apply();
+      const wrong = ROWS.filter((r) => cellOf(r.id) !== r[scenario]).map(
+        (r) => `${r.what} (#${r.id}): expected ${r[scenario]}, got ${cellOf(r.id)} — ${r.why}`,
+      );
+      expect(wrong).toEqual([]);
+    });
+  }
+
+  it("ALSO holds for a run started from the panel (no status message at all)", async () => {
+    // The path that produced two of the four reports: typing + Play never sends `status`, so a lock
+    // living only in that handler never ran.
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    const wrong = ROWS.filter((r) => cellOf(r.id) !== r.thisBusy && r.id !== "abort-btn").map(
+      (r) => `${r.what} (#${r.id}): expected ${r.thisBusy} while THIS session runs — ${r.why}`,
+    );
+    expect(wrong).toEqual([]);
+  });
+});
