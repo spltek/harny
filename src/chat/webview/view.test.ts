@@ -166,6 +166,8 @@ function setupDom(initOverrides: Record<string, unknown> = {}, savedState: Recor
       <button id="mcp-save"></button><button id="mcp-cancel"></button>
     </div>
     <div id="mcp-tools-popover" class="hidden"></div>
+    <div id="find-bar" class="hidden" role="search"><input id="find-input" type="search" /><span id="find-count"></span><button id="find-prev"></button><button id="find-next"></button><button id="find-close"></button></div>
+    <div id="ctx-menu" class="hidden" role="menu"></div>
     <div id="tip" class="tip hidden"></div>
     <div id="slash-menu" class="hidden"></div>
     <div id="name-modal" class="hidden">
@@ -6022,6 +6024,153 @@ describe("view webview client", () => {
     expect(document.getElementById("messages")!.textContent).toContain("-DOPO");
   });
 
+  it("⌘F / Ctrl+F opens find in the transcript: count, next/prev with wrap, Esc closes", async () => {
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "user", content: "alpha beta alpha", timestamp: 1 },
+        { role: "assistant", content: "gamma ALPHA delta", timestamp: 2 },
+      ],
+    });
+    const bar = document.getElementById("find-bar") as HTMLElement;
+    const input = document.getElementById("find-input") as HTMLInputElement;
+    const count = document.getElementById("find-count") as HTMLElement;
+    expect(bar.classList.contains("hidden")).toBe(true);
+
+    // macOS: ⌘F. (On Windows/Linux it is Ctrl+F — covered by the OS matrix test.)
+    Object.defineProperty(window.navigator, "userAgent", {
+      value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+      configurable: true,
+    });
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true }));
+    expect(bar.classList.contains("hidden")).toBe(false);
+    expect(document.activeElement).toBe(input);
+
+    // Case-insensitive, across bubbles: 3 occurrences (alpha, alpha, ALPHA).
+    input.value = "alpha";
+    input.dispatchEvent(new Event("input"));
+    await new Promise((r) => setTimeout(r, 150)); // the debounce
+    expect(count.textContent).toBe("1/3");
+    expect(window.getSelection()!.toString().toLowerCase()).toBe("alpha");
+
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(count.textContent).toBe("2/3");
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(count.textContent).toBe("3/3");
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(count.textContent).toBe("1/3"); // wraps
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true }));
+    expect(count.textContent).toBe("3/3"); // …backwards too
+
+    // A query that matches nothing says so, in the warning colour, and selects nothing.
+    input.value = "zzz";
+    input.dispatchEvent(new Event("input"));
+    await new Promise((r) => setTimeout(r, 150));
+    expect(count.textContent).toBe("no match");
+    expect(count.classList.contains("none")).toBe(true);
+
+    // Esc closes it and clears the highlight…
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(bar.classList.contains("hidden")).toBe(true);
+    expect(input.value).toBe("");
+    // …and Esc while find is open never reaches Stop.
+    expect(posted.some((m: any) => m.type === "abort")).toBe(false);
+  });
+
+  it("find follows the host OS, and rebuilds a stale list while the run streams", async () => {
+    await loadView();
+    const bar = document.getElementById("find-bar") as HTMLElement;
+    const input = document.getElementById("find-input") as HTMLInputElement;
+    const count = document.getElementById("find-count") as HTMLElement;
+    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "uno due", timestamp: 1 }] });
+
+    // Windows: ⌘ (Meta) is the OS key, Ctrl+F is find; and Ctrl+F does NOT open it while… it does.
+    Object.defineProperty(window.navigator, "userAgent", {
+      value: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+      configurable: true,
+    });
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true }));
+    expect(bar.classList.contains("hidden")).toBe(true); // Win key: not ours
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", ctrlKey: true }));
+    expect(bar.classList.contains("hidden")).toBe(false);
+
+    input.value = "due";
+    input.dispatchEvent(new Event("input"));
+    await new Promise((r) => setTimeout(r, 150));
+    expect(count.textContent).toBe("1/1");
+
+    // More text arrives: navigated from a stale list, the scan is rebuilt instead of pointing at
+    // ranges that no longer exist.
+    const prompt = document.getElementById("user-input") as HTMLTextAreaElement;
+    prompt.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click(); // a run is now working
+    hostMessage({ type: "textDelta", content: " e ancora due" });
+    await new Promise((r) => setTimeout(r, 40));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(count.textContent).toMatch(/^[12]\/2$/);
+  });
+
+  it("right-click on the transcript offers OUR Copy and Select all, on every OS", async () => {
+    await loadView();
+    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "testo da copiare", timestamp: 1 }] });
+    const menu = document.getElementById("ctx-menu") as HTMLElement;
+    const bubble = document.querySelector("#messages .msg") as HTMLElement;
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+
+    // No selection: the menu exists, Copy is offered but disabled (as in any editor).
+    const ev = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 30 });
+    bubble.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true); // no dependence on the host's menu
+    expect(menu.classList.contains("hidden")).toBe(false);
+    const [copy, all] = [...menu.querySelectorAll("button")] as HTMLButtonElement[];
+    expect(copy.textContent).toBe("Copy");
+    expect(copy.disabled).toBe(true);
+    expect(all.textContent).toBe("Select all");
+
+    // Select all → Copy writes the transcript text to the clipboard.
+    const written: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (t: string) => void written.push(t) },
+      configurable: true,
+    });
+    all.click();
+    expect(sel.toString()).toContain("testo da copiare");
+    expect(menu.classList.contains("hidden")).toBe(true); // a choice closes it
+
+    bubble.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+    const [copy2] = [...menu.querySelectorAll("button")] as HTMLButtonElement[];
+    expect(copy2.disabled).toBe(false); // the selection from "Select all" is still there
+    copy2.click();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(written[0]).toContain("testo da copiare");
+  });
+
+  it("the context menu closes on Esc, on a click elsewhere, and on scroll", async () => {
+    await loadView();
+    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "riga", timestamp: 1 }] });
+    const menu = document.getElementById("ctx-menu") as HTMLElement;
+    const bubble = document.querySelector("#messages .msg") as HTMLElement;
+    const open = (): void => {
+      bubble.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    };
+
+    open();
+    expect(menu.classList.contains("hidden")).toBe(false);
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(menu.classList.contains("hidden")).toBe(true);
+    expect(posted.some((m: any) => m.type === "abort")).toBe(false); // Esc closed the menu, not the run
+
+    open();
+    document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(menu.classList.contains("hidden")).toBe(true);
+
+    open();
+    (document.getElementById("messages") as HTMLElement).dispatchEvent(new Event("scroll"));
+    expect(menu.classList.contains("hidden")).toBe(true);
+  });
+
   it("typing '/' at the start of the prompt shows the skill list", async () => {
     await loadView();
     hostMessage({
@@ -8126,21 +8275,29 @@ describe("soft steering + pending bubbles (webview)", () => {
     expect(window.getSelection()!.toString()).toBe(sel.toString());
   });
 
-  it("a right-click on a text selection is NOT swallowed: Copy must exist in the menu", async () => {
+  it("a right-click on a selection shows OUR menu with Copy enabled", async () => {
+    // The transcript's prose menu is ours (the host's is not a contract): a right-click on a
+    // selection must offer Copy, and it must never be swallowed.
     await loadView();
+    const menu = document.getElementById("ctx-menu") as HTMLElement;
     const bubble = document.querySelector("#messages .msg")!;
+    const sel = window.getSelection()!;
     const range = document.createRange();
     range.selectNodeContents(bubble);
-    const sel = window.getSelection()!;
     sel.removeAllRanges();
     sel.addRange(range);
 
     const onSelection = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
     bubble.dispatchEvent(onSelection);
-    expect(onSelection.defaultPrevented).toBe(false); // the native menu (with Copy) appears
+    expect(onSelection.defaultPrevented).toBe(true); // we own the menu here
+    expect(menu.classList.contains("hidden")).toBe(false);
+    const [copy] = [...menu.querySelectorAll("button")] as HTMLButtonElement[];
+    expect(copy.disabled).toBe(false); // a selection is there: Copy is live
+    expect(sel.toString().length).toBeGreaterThan(0);
 
-    // …and on a CONTROL too, when the selection is over it: this is the everyday case (select a
-    // line in a tool card, right-click to copy) and the one the chrome rule would swallow.
+    // …and the same on a CONTROL inside the transcript when the selection is over it: the
+    // everyday case (select a line in a tool card, right-click to copy).
+    menu.classList.add("hidden");
     const header = document.createElement("div");
     header.className = "tool-header";
     header.textContent = "read_file";
@@ -8151,20 +8308,9 @@ describe("soft steering + pending bubbles (webview)", () => {
     sel.addRange(r2);
     const onControl = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
     header.dispatchEvent(onControl);
+    // A control header keeps the host's menu (it is chrome, not prose).
     expect(onControl.defaultPrevented).toBe(false);
-
-    // Without a selection, the chrome keeps its old behaviour (Ctrl+click is a secondary click
-    // on macOS and must not pop the menu over a CONTROL).
-    sel.removeAllRanges();
-    const control = document.querySelector("button") as HTMLElement;
-    const onChrome = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
-    control.dispatchEvent(onChrome);
-    expect(onChrome.defaultPrevented).toBe(true);
-
-    // …while PROSE keeps it even with nothing selected.
-    const onProse = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
-    bubble.dispatchEvent(onProse);
-    expect(onProse.defaultPrevented).toBe(false);
+    expect(menu.classList.contains("hidden")).toBe(true);
   });
 
   it("while working, Enter queues the message (no optimistic user bubble)", async () => {

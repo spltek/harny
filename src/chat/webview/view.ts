@@ -2823,6 +2823,17 @@ document.addEventListener("contextmenu", (e) => {
   const target = e.target as HTMLElement | null;
   if (!target) return;
   if (target.closest("input, textarea, [contenteditable='true']")) return;
+  // Right-click on the TRANSCRIPT's prose: the menu is OURS. Whether the host webview injects a
+  // native one is not a contract (Windows, Linux and every VS Code build disagree), and Copy is
+  // the only entry prose needs. Chrome inside the transcript keeps its own behaviour below.
+  if (
+    target.closest("#messages") &&
+    !target.closest("button, select, label, summary, a, .tool-header, .thinking-header")
+  ) {
+    e.preventDefault();
+    showCtxMenu(e.clientX, e.clientY);
+    return;
+  }
   if (hasTextSelection()) return;
   if (!isMacPlatform()) return;
   // Chrome only: a card header, a button, a select. Prose (the transcript, a tool output)
@@ -3106,6 +3117,257 @@ inputEl.addEventListener("keydown", (e) => {
     if (!abortBtn.disabled) vscode.postMessage({ type: "abort" });
   }
 });
+// ── Find in the transcript (⌘F / Ctrl+F) ──
+// A webview has NO native find: the browser's ⌘F belongs to the host window and never reaches
+// the panel, so without this the shortcut does nothing at all here.
+const findBar = document.getElementById("find-bar") as HTMLDivElement;
+const findInput = document.getElementById("find-input") as HTMLInputElement;
+const findCount = document.getElementById("find-count") as HTMLSpanElement;
+const findPrevBtn = document.getElementById("find-prev") as HTMLButtonElement;
+const findNextBtn = document.getElementById("find-next") as HTMLButtonElement;
+const findCloseBtn = document.getElementById("find-close") as HTMLButtonElement;
+
+/** Matches of the current query, in document order, as Ranges (the selection IS the highlight). */
+let findMatches: Range[] = [];
+let findIndex = -1;
+/** Transcript length when the list was built: it changes while a run streams, so a stale list is
+ *  rebuilt on the next navigation instead of silently pointing at moved text. */
+let findScanLength = -1;
+/** Above this many matches a transcript search stops being useful (and starts being slow). */
+const FIND_MAX_MATCHES = 500;
+
+function findOpen(): boolean {
+  return !findBar.classList.contains("hidden");
+}
+
+/** Every occurrence of `query` in the transcript, case-insensitively, as Ranges. */
+function collectMatches(query: string): Range[] {
+  const out: Range[] = [];
+  const needle = query.toLowerCase();
+  if (!needle) return out;
+  const walker = document.createTreeWalker(messagesEl, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n && out.length < FIND_MAX_MATCHES; n = walker.nextNode()) {
+    const text = (n.nodeValue ?? "").toLowerCase();
+    let from = 0;
+    for (;;) {
+      const at = text.indexOf(needle, from);
+      if (at < 0) break;
+      const r = document.createRange();
+      r.setStart(n, at);
+      r.setEnd(n, at + needle.length);
+      out.push(r);
+      from = at + needle.length;
+      if (out.length >= FIND_MAX_MATCHES) break;
+    }
+  }
+  return out;
+}
+
+function updateFindCount(): void {
+  const total = findMatches.length;
+  if (!findInput.value) {
+    findCount.textContent = "";
+    findCount.classList.remove("none");
+    return;
+  }
+  findCount.textContent = total === 0 ? "no match" : `${findIndex + 1}/${total}`;
+  findCount.classList.toggle("none", total === 0);
+}
+
+/** Put the CURRENT match in the selection and scroll it into view: the selection is the highlight,
+ *  so nothing is injected into the transcript (which streaming repaints). */
+function showMatch(scroll: boolean): void {
+  const m = findMatches[findIndex];
+  if (!m) return;
+  const sel = window.getSelection?.();
+  if (sel) {
+    sel.removeAllRanges();
+    sel.addRange(m);
+  }
+  if (!scroll) return;
+  const node = m.startContainer;
+  const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+  el?.scrollIntoView?.({ block: "center", inline: "nearest" });
+}
+
+function refreshMatches(keepIndex = false): void {
+  const prev = findIndex;
+  findMatches = collectMatches(findInput.value.trim());
+  findScanLength = messagesEl.textContent?.length ?? 0;
+  if (findMatches.length === 0) {
+    findIndex = -1;
+  } else if (keepIndex && prev >= 0) {
+    findIndex = Math.min(prev, findMatches.length - 1);
+  } else {
+    findIndex = 0;
+  }
+  updateFindCount();
+  showMatch(findMatches.length > 0);
+}
+
+/** Enter/Shift+Enter (or the arrows): move through the matches, wrapping at the ends. */
+function stepMatch(delta: number): void {
+  if (findMatches.length === 0 || (messagesEl.textContent?.length ?? 0) !== findScanLength) {
+    // The transcript changed (a delta arrived): the Ranges may point at replaced nodes.
+    refreshMatches(true);
+    if (findMatches.length === 0) return;
+    if (delta > 0) return; // a fresh scan already landed on the first match
+  }
+  findIndex = (findIndex + delta + findMatches.length) % findMatches.length;
+  updateFindCount();
+  showMatch(true);
+}
+
+function closeFind(): void {
+  findBar.classList.add("hidden");
+  findMatches = [];
+  findIndex = -1;
+  findScanLength = -1;
+  findInput.value = "";
+  findCount.textContent = "";
+  findCount.classList.remove("none");
+  window.getSelection()?.removeAllRanges();
+}
+
+function openFind(): void {
+  findBar.classList.remove("hidden");
+  findInput.focus();
+  findInput.select();
+  if (findInput.value.trim()) refreshMatches();
+}
+
+let findTimer: number | undefined;
+findInput.addEventListener("input", () => {
+  // Debounced: the transcript can be large, and a search per keystroke would stutter.
+  if (findTimer !== undefined) window.clearTimeout(findTimer);
+  findTimer = window.setTimeout(() => {
+    findTimer = undefined;
+    refreshMatches();
+  }, 120);
+});
+findInput.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closeFind();
+    return;
+  }
+  if (e.key === "Enter") {
+    e.preventDefault();
+    stepMatch(e.shiftKey ? -1 : 1);
+    return;
+  }
+  // Keep the other global shortcuts (Esc = Stop, ⌘F = close) from firing from in here.
+  e.stopPropagation();
+});
+findNextBtn.addEventListener("click", () => stepMatch(1));
+findPrevBtn.addEventListener("click", () => stepMatch(-1));
+findCloseBtn.addEventListener("click", () => closeFind());
+
+// ── The transcript's own context menu (Copy / Select all) ──
+// The native menu of a webview is not a contract: VS Code does not inject one on every OS.
+// This one is OURS, so Copy exists everywhere, and it only offers what prose supports.
+const ctxMenu = document.getElementById("ctx-menu") as HTMLDivElement;
+
+function hideCtxMenu(): void {
+  ctxMenu.classList.add("hidden");
+  ctxMenu.innerHTML = "";
+}
+
+function showCtxMenu(x: number, y: number): void {
+  ctxMenu.innerHTML = "";
+  const selected = !window.getSelection?.()?.isCollapsed && Boolean(window.getSelection?.()?.toString().trim());
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.setAttribute("role", "menuitem");
+  copy.textContent = "Copy";
+  copy.disabled = !selected;
+  copy.title = selected ? "Copy the selection" : "Select some text first";
+  copy.addEventListener("click", () => {
+    void copySelection();
+    hideCtxMenu();
+  });
+  const all = document.createElement("button");
+  all.type = "button";
+  all.setAttribute("role", "menuitem");
+  all.textContent = "Select all";
+  all.addEventListener("click", () => {
+    const sel = window.getSelection?.();
+    if (sel) {
+      sel.removeAllRanges();
+      const r = document.createRange();
+      r.selectNodeContents(messagesEl);
+      sel.addRange(r);
+    }
+    hideCtxMenu();
+  });
+  ctxMenu.append(copy, all);
+  ctxMenu.classList.remove("hidden");
+  // Anchor at the pointer, clamped so the menu never spills out of the panel.
+  const w = ctxMenu.offsetWidth;
+  const h = ctxMenu.offsetHeight;
+  ctxMenu.style.left = `${Math.max(2, Math.min(x, window.innerWidth - w - 4))}px`;
+  ctxMenu.style.top = `${Math.max(2, Math.min(y, window.innerHeight - h - 4))}px`;
+}
+
+/** Put the selection on the clipboard. `navigator.clipboard` first (a menu click is a user
+ *  gesture, so it is allowed); the legacy path covers a webview where it is unavailable. */
+async function copySelection(): Promise<boolean> {
+  const text = window.getSelection?.()?.toString() ?? "";
+  if (!text.trim()) return false;
+  try {
+    await navigator.clipboard?.writeText(text);
+    return true;
+  } catch {
+    try {
+      return document.execCommand("copy");
+    } catch {
+      return false;
+    }
+  }
+}
+
+// Any click outside closes the menu; so does Esc (its own listener, below) and a scroll (the
+// position it was anchored to no longer means anything).
+document.addEventListener("mousedown", (e) => {
+  if (!ctxMenu.classList.contains("hidden") && !ctxMenu.contains(e.target as Node)) hideCtxMenu();
+});
+messagesEl.addEventListener("scroll", () => hideCtxMenu());
+
+// ⌘F / Ctrl+F opens find; Esc closes it. The modifier is the host OS's, like every other one.
+window.addEventListener(
+  "keydown",
+  (e) => {
+    const primary = isMacPlatform() ? e.metaKey : e.ctrlKey;
+    if (primary && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
+      e.preventDefault();
+      // Standard behaviour: ⌘F brings you TO the field (selecting what is there), it does not
+      // toggle the bar away — Esc is the way out.
+      if (findOpen()) {
+        findInput.focus();
+        findInput.select();
+      } else {
+        openFind();
+      }
+      return;
+    }
+    if (e.key === "Escape") {
+      if (findOpen()) {
+        // Esc closes find BEFORE it reaches Stop: searching is the more local context.
+        e.preventDefault();
+        e.stopPropagation();
+        closeFind();
+        return;
+      }
+      if (!ctxMenu.classList.contains("hidden")) {
+        e.preventDefault();
+        e.stopPropagation();
+        hideCtxMenu();
+      }
+    }
+  },
+  true,
+);
+
 // GLOBAL Esc = Stop. The textarea is no longer disabled while working, but Esc
 // in a modal/overlay must still take precedence. Modals/overlays take
 // precedence: if one is open, Esc closes it (its own handler) and must NOT

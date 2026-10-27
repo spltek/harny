@@ -61,6 +61,16 @@ track with a WHITE dot), and
   says so instead of pretending a per-tool rule did it. The refusal the model receives names this third way out, the
   README stops calling `analyze` file-only, and `config.example.jsonc` finally documents the MCP block (the server-wide
   `analyze` is the one field with no control in the form).
+- **Find in the chat (⌘F / Ctrl+F), which did not exist at all.** A webview has no native find — the browser's ⌘F
+  belongs to the host window and never reaches the panel — so the shortcut was dead. A small bar over the transcript's
+  top-right searches every bubble case-insensitively, `Enter`/`Shift+Enter` step through the matches (wrapping), the
+  counter says `3/17` or *no match*, and `Esc` closes find instead of stopping the run. The selection IS the highlight
+  (nothing is injected into a transcript that streaming repaints), matches are capped at 500, and a list built before
+  more text arrived is rebuilt rather than pointing at ranges that no longer exist.
+- **A context menu we own, on the transcript.** Whether a webview gets a native menu with Copy is not a contract —
+  Windows, Linux and each VS Code build disagree — so right-clicking the prose now opens ours: **Copy** (enabled only
+  with a selection, as in any editor) and **Select all**, anchored at the pointer, closing on Esc, an outside click or a
+  scroll. Chrome inside the transcript keeps the host's own behaviour, and Ctrl+click on macOS keeps working.
 - **Text that is still streaming can be selected and copied.** The live bubble is repainted per delta
   (`innerHTML = renderMarkdown(...)`), which dropped any selection under the cursor — so a passage could not be copied
   until the answer had finished. The repaint is now **deferred** while a selection intersects that node (the raw text

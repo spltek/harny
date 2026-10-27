@@ -1520,6 +1520,38 @@ ${renderViewConfig(deps)}
       padding: 4px; box-shadow: 0 6px 24px var(--modal-shadow);
     }
     #slash-menu.hidden { display: none; }
+    /* Find bar: floats over the transcript, top-right, so it never pushes the text around
+       (a moving transcript under a selection would defeat the point of searching). */
+    #find-bar {
+      position: fixed; z-index: 45; top: 6px; right: 10px;
+      display: flex; align-items: center; gap: 4px; padding: 4px 6px;
+      background: var(--bg, #1e1e1e); border: 1px solid var(--border); border-radius: 8px;
+      box-shadow: 0 6px 24px var(--modal-shadow);
+    }
+    #find-bar.hidden { display: none; }
+    #find-bar input {
+      width: 12rem; padding: 2px 6px; font-size: var(--fs-sm);
+      background: var(--input-bg); color: var(--fg); border: 1px solid var(--border);
+      border-radius: 6px; min-height: 0;
+    }
+    #find-bar input:focus { outline: 1px solid var(--accent); outline-offset: 0; }
+    #find-bar .find-count { font-size: var(--fs-sm); color: var(--muted-2); min-width: 3.2rem; text-align: center; }
+    #find-bar .find-count.none { color: var(--warn-soft, #d9a400); }
+    #find-bar button { padding: 0 6px; font-size: var(--fs-sm); min-height: 0; line-height: 18px; }
+    /* The transcript context menu (Copy / Select all): ours, so it exists on every OS. */
+    #ctx-menu {
+      position: fixed; z-index: 60; min-width: 9rem; padding: 4px;
+      background: var(--bg, #1e1e1e); border: 1px solid var(--border); border-radius: 8px;
+      box-shadow: 0 6px 24px var(--modal-shadow);
+    }
+    #ctx-menu.hidden { display: none; }
+    #ctx-menu button {
+      display: block; width: 100%; text-align: left; padding: 4px 8px; font-size: var(--fs-sm);
+      background: transparent; border: none; border-radius: 6px; color: var(--fg); min-height: 0;
+      box-shadow: none;
+    }
+    #ctx-menu button:hover:not(:disabled) { background: var(--overlay-1); }
+    #ctx-menu button:disabled { color: var(--muted-3); }
     .slash-item { display: flex; flex-direction: column; gap: 1px; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
     .slash-item.active, .slash-item:hover { background: var(--overlay-1); }
     .slash-cmd { font-family: var(--font-mono); font-size: var(--fs-md); color: var(--fg); }
@@ -2881,6 +2913,18 @@ ${renderViewConfig(deps)}
     </div>
   </div>
   <div id="mcp-tools-popover" class="hidden"></div>
+  <!-- Find in the transcript. A webview has no native find, so ⌘F/Ctrl+F would otherwise do
+       nothing at all. Floating over the top-right of the transcript, closed by Esc. -->
+  <div id="find-bar" class="hidden" role="search">
+    <input id="find-input" type="search" placeholder="Find in chat" spellcheck="false" aria-label="Find in chat" />
+    <span id="find-count" class="find-count" aria-live="polite"></span>
+    <button id="find-prev" type="button" class="secondary" title="Previous match (Shift+Enter)" aria-label="Previous match">↑</button>
+    <button id="find-next" type="button" class="secondary" title="Next match (Enter)" aria-label="Next match">↓</button>
+    <button id="find-close" type="button" class="secondary" title="Close (Esc)" aria-label="Close find">✕</button>
+  </div>
+  <!-- The transcript's own context menu: deterministic Copy on every OS, and it never depends
+       on the host webview injecting one. Right-click on prose only (not on the chrome). -->
+  <div id="ctx-menu" class="hidden" role="menu"></div>
   <!-- Shared hover tooltip: explains a control's parameter on mouse-over. -->
   <div id="tip" class="tip hidden" role="tooltip"></div>
   <div id="slash-menu" class="hidden" role="listbox" aria-label="Commands"></div>

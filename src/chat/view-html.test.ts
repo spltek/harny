@@ -416,9 +416,11 @@ describe("renderViewHtml", () => {
     expect(html).toContain('id="model-search"');
     expect(html).toContain('id="model-list"');
     // No ✕ in the header: the ONLY close affordance is the footer button — and it says Close,
-    // because the picker applies on click, so there is nothing to cancel.
+    // because the picker applies on click, so there is nothing to cancel. Scoped to the MODAL:
+    // the panel has other ✕-shaped controls (the find bar's) further down the page.
     expect(html).toContain('id="model-close" class="secondary">Close</button>');
-    expect(html).not.toMatch(/mm-head[\s\S]*?✕/);
+    const modalHtml = html.slice(html.indexOf('id="model-modal"'), html.indexOf('id="model-file"') + 1);
+    expect(modalHtml).not.toMatch(/mm-head[\s\S]*?✕/);
     // The old native dropdown is gone.
     expect(html).not.toContain('id="model-select"');
     // List rows are plain (no global "key" chrome) and hover is id-scoped.
