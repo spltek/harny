@@ -61,6 +61,11 @@ track with a WHITE dot), and
   says so instead of pretending a per-tool rule did it. The refusal the model receives names this third way out, the
   README stops calling `analyze` file-only, and `config.example.jsonc` finally documents the MCP block (the server-wide
   `analyze` is the one field with no control in the form).
+- **Text that is still streaming can be selected and copied.** The live bubble is repainted per delta
+  (`innerHTML = renderMarkdown(...)`), which dropped any selection under the cursor — so a passage could not be copied
+  until the answer had finished. The repaint is now **deferred** while a selection intersects that node (the raw text
+  keeps accumulating, nothing is lost) and lands as soon as the selection goes away: while you hold it the text simply
+  waits for you, then catches up in one go.
 - **Copying during a run works, and holding ⌘ no longer scrolls you away from what you are reading.** Two bugs shared
   one cause. The Queue/Steer **indicator** called the same helper a real decision did, so merely holding Ctrl/Cmd
   switched the mode AND ran `followAndFocus()`: the transcript jumped to the last message, following re-armed itself,

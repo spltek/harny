@@ -5983,6 +5983,45 @@ describe("view webview client", () => {
     expect(shield.getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("text that is still streaming can be SELECTED: the repaint waits for the selection", async () => {
+    // The bubble is repainted per delta with `innerHTML = renderMarkdown(...)`, which drops a
+    // selection under the cursor: copying a passage while the answer arrived was impossible.
+    await loadView();
+    // A run in progress: the answer bubble is created under the working bar.
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    hostMessage({ type: "textDelta", content: "prima parte " });
+    for (let i = 0; i < 40; i++) hostMessage({ type: "textDelta", content: `parola${i} ` });
+    await new Promise((r) => setTimeout(r, 40)); // let the throttled renderer paint
+    const bubble = document.querySelector(".msg.assistant.streaming") as HTMLElement;
+    expect(bubble.textContent).toContain("parola0");
+
+    // The user drags a selection INSIDE it…
+    const sel = window.getSelection()!;
+    const range = document.createRange();
+    range.selectNodeContents(bubble);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    const before = bubble.textContent;
+
+    // …and the stream keeps arriving: the DOM must NOT be rebuilt under the selection.
+    hostMessage({ type: "textDelta", content: "ULTIMO-CIUFFO" });
+    await new Promise((r) => setTimeout(r, 40));
+    expect(bubble.textContent).toBe(before);
+    expect(sel.toString()).toBe(before); // the selection survived, intact
+
+    // Releasing it lets the deferred paint land, with everything that arrived meanwhile.
+    sel.removeAllRanges();
+    document.dispatchEvent(new Event("selectionchange"));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(document.getElementById("messages")!.textContent).toContain("ULTIMO-CIUFFO");
+    // …and normal streaming is back to being live.
+    hostMessage({ type: "textDelta", content: "-DOPO" });
+    await new Promise((r) => setTimeout(r, 40));
+    expect(document.getElementById("messages")!.textContent).toContain("-DOPO");
+  });
+
   it("typing '/' at the start of the prompt shows the skill list", async () => {
     await loadView();
     hostMessage({

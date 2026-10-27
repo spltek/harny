@@ -593,8 +593,23 @@ function makeThrottledMd(minIntervalMs = 16) {
   let lastCost = 0;
   let el: Element | null = null;
   let getText: (() => string) | null = null;
+  /** A paint skipped because the user was selecting that very text (see `paint`). */
+  let deferred: { el: Element; get: () => string } | null = null;
+  /** This coalescer, once built: the registry holds only the ones with a pending paint. */
+  let self: { flushDeferred(): boolean } | null = null;
 
   function paint(e: Element, g: () => string): void {
+    // A selection INSIDE this node is a copy in progress, and replacing `innerHTML` would drop
+    // it — so streaming text could not be selected at all while it arrived. The raw text keeps
+    // accumulating (`g()` reads it live), so the paint is DEFERRED, not lost: `flushDeferred`
+    // paints it as soon as the selection goes away (see the `selectionchange` listener).
+    if (selectionWithin(e)) {
+      deferred = { el: e, get: g };
+      if (self) mdPainters.add(self);
+      return;
+    }
+    deferred = null;
+    if (self) mdPainters.delete(self);
     const started = performance.now();
     e.innerHTML = renderMarkdown(g());
     lastCost = performance.now() - started;
@@ -653,7 +668,7 @@ function makeThrottledMd(minIntervalMs = 16) {
     paint(e, g);
   }
 
-  return {
+  const api = {
     /** Schedule a render of getText() into el (leading edge + per-frame flush). */
     push(e: Element, g: () => string): void {
       // Cheap render: paint it straight away (the common case for the first
@@ -689,10 +704,47 @@ function makeThrottledMd(minIntervalMs = 16) {
       unschedule();
       el = null;
       getText = null;
+      deferred = null;
+      mdPainters.delete(api);
       last = 0;
       lastCost = 0;
     },
+    /** Paint a skipped one if the text is no longer being selected. Returns true when it did. */
+    flushDeferred(): boolean {
+      const d = deferred;
+      if (!d) return false;
+      if (selectionWithin(d.el)) return false;
+      deferred = null;
+      mdPainters.delete(api);
+      if (!d.el.isConnected) return false; // the bubble is gone (reload, new segment)
+      paint(d.el, d.get);
+      return true;
+    },
   };
+  self = api;
+  return api;
+}
+
+/** Coalescers with a paint DEFERRED by a selection: emptied as soon as each one is released. */
+const mdPainters = new Set<{ flushDeferred(): boolean }>();
+
+/**
+ * Is the user's selection inside `node`? That is a COPY in progress, and the two things that
+ * would break it are replacing `innerHTML` under the cursor and scrolling the panel away.
+ *
+ * A selection that merely passes THROUGH the node counts too: editing either end rewrites the
+ * text node the range points into.
+ */
+function selectionWithin(node: Element): boolean {
+  const sel = window.getSelection?.();
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return false;
+  for (let i = 0; i < sel.rangeCount; i++) {
+    const r = sel.getRangeAt(i);
+    if (node.contains(r.startContainer) || node.contains(r.endContainer)) return true;
+    // A range that WRAPS the node (select-all, or a drag from above) also covers it.
+    if (r.intersectsNode?.(node)) return true;
+  }
+  return false;
 }
 
 /** Above this many characters a markdown render stops being "cheap": the
@@ -701,6 +753,11 @@ const FAST_PAINT_CHARS = 4096;
 
 const thinkingMd = makeThrottledMd();
 const answerMd = makeThrottledMd();
+// The selection ENDS before the next delta arrives, so this is where a deferred paint lands.
+// (`selectionchange` fires on the document; `mouseup`/`click` collapse are covered by it.)
+document.addEventListener("selectionchange", () => {
+  for (const p of [...mdPainters]) p.flushDeferred();
+});
 
 /** A live text node carrying its own RAW markdown (never re-read from the DOM). */
 type RawEl = HTMLElement & { _raw?: string };
