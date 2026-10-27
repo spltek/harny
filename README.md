@@ -374,7 +374,9 @@ just want to use Harny, you can stop reading here.
   Analyze declaration. The panel is a draft — **All** / **None** / **Cancel** / **Save** — and saving is **instant**: it
   writes the session's scope, nothing reconnects (the tools stay registered and the per-turn list is filtered), and the
   card counts what the session can use (`(5/8 tools)` as soon as something is off). A run in flight locks Save and dims
-  the switches: a mid-run change would only land on the next turn. The decision is stored **on the session**, not in the
+  the switches: a mid-run change would only land on the next turn — and **removing a server is refused while a running
+  session has it on**, because that turn already holds its tools and could only fail the next call. A server nobody is
+  using comes out instantly. The decision is stored **on the session**, not in the
   file; the file's `excludeTools` is the **seed** a new session starts from, so an existing install keeps its intent:
   ```jsonc
   "mcpServers": { "sqlite": { "command": "npx", "args": ["-y", "mcp-sqlite"],

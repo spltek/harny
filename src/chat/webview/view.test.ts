@@ -5361,6 +5361,25 @@ describe("view webview client", () => {
     });
   }
 
+  it("a refused MCP save says WHY and leaves the editor open with its draft", async () => {
+    // The removal was blocked because a running session uses that server: closing the editor would
+    // look like success and hide the reason.
+    await loadView();
+    hostMessage({ type: "mcpServers", data: { servers: { used: { command: "node" } }, statuses: [] }, open: true });
+    const editor = document.getElementById("mcp-modal") as HTMLElement;
+    expect(editor.classList.contains("hidden")).toBe(false);
+
+    hostMessage({ type: "mcpSaved", ok: false, reason: 'Stop the run first — a session is using "used" right now' });
+    expect(editor.classList.contains("hidden")).toBe(false);
+    const status = document.getElementById("mcp-test-result") as HTMLElement;
+    expect(status.textContent).toContain("Stop the run first");
+    expect(status.className).toContain("err");
+
+    // A successful save still closes it.
+    hostMessage({ type: "mcpSaved", ok: true });
+    expect(editor.classList.contains("hidden")).toBe(true);
+  });
+
   it("the card counts what THIS session can use, not what the registry holds", async () => {
     // Every tool is registered now (a server is installed once, used per session), so `toolCount`
     // alone said "(2 tools)" while the model could only see one.

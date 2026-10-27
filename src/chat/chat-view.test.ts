@@ -1485,6 +1485,47 @@ describe("ChatViewProvider", () => {
     }
   });
 
+  it("refuses to REMOVE a server a RUNNING session is using — and only then", async () => {
+    // The window this closes: the turn already has the server's tools in its list, the user deletes
+    // the server, and the very next tool call comes back as "Unknown tool". Blocking is precise:
+    // a server nobody is using (or used by an IDLE session) is removed without friction.
+    const saveMcpServers = vi.fn(() => true);
+    const connect = vi.fn(async () => {});
+    const { provider, registry } = buildHarness({
+      mcp: { connect, getStatuses: () => [], getTools: () => [] } as any,
+      providers: {
+        getProvider: vi.fn(),
+        saveModelSelection: vi.fn(),
+        readMcpServers: vi.fn(() => ({ used: { command: "node" }, idle: { command: "node" } })),
+        saveMcpServers,
+      } as unknown as ProviderCatalog,
+    });
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.toolScope = { mcp: ["used"], off: [] };
+    const working = vi.spyOn(provider as unknown as { isWorking: (id: string) => boolean }, "isWorking");
+    working.mockReturnValue(true);
+    (rt.agent as any).streaming = true;
+
+    // 1. A session is RUNNING with `used` ON: the removal is refused, and says why.
+    await handler({ type: "saveMcpServers", servers: { idle: { command: "node" } } });
+    expect(saveMcpServers).not.toHaveBeenCalled();
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "mcpSaved", ok: false, reason: expect.stringContaining('"used"') }),
+    );
+
+    // 2. The same removal passes for a server NOBODY is using.
+    await handler({ type: "saveMcpServers", servers: { used: { command: "node" } } });
+    expect(saveMcpServers).toHaveBeenCalledWith({ used: { command: "node" } });
+
+    // 3. …and for the busy server once its session is IDLE (a change lands next turn, no loss).
+    working.mockReturnValue(false);
+    saveMcpServers.mockClear();
+    await handler({ type: "saveMcpServers", servers: { idle: { command: "node" } } });
+    expect(saveMcpServers).toHaveBeenCalledWith({ idle: { command: "node" } });
+  });
+
   it("a server removed from the config is dropped from the sessions that named it — and only those", async () => {
     // The read path already filters a vanished server, so behaviour is right without this; what is
     // pinned here is that the ROW stops carrying a decision about something that no longer exists,

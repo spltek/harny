@@ -1204,6 +1204,28 @@ export class ChatViewProvider implements WebviewViewProvider {
       case "saveMcpServers": {
         const servers =
           msg.servers && typeof msg.servers === "object" ? (msg.servers as Record<string, McpServerConfig>) : {};
+        // A REMOVAL breaks an in-flight turn that is using that server: its tools leave the
+        // registry immediately, and the model may be about to call one (the call would come back as
+        // "Unknown tool"). So a removal is refused WHILE a RUNNING session has that server on —
+        // and only then: a server nobody is using can be removed in a second, and one used by a
+        // session that is idle can too (it will simply not be there when that session next runs).
+        // Editing the file by hand skips this, which is why the graceful path stays tested.
+        const removed = Object.keys(this.providers.readMcpServers?.() ?? {}).filter((name) => !(name in servers));
+        const busyUsing = removed.flatMap((name) =>
+          this.registry
+            .listOpenIds()
+            .filter((id) => this.isWorking(id) && this.registry.get(id)?.toolScope?.mcp.includes(name))
+            .map((id) => ({ id, name })),
+        );
+        if (busyUsing.length > 0) {
+          const [first] = busyUsing;
+          this.view?.webview.postMessage({
+            type: "mcpSaved",
+            ok: false,
+            reason: `Stop the run first — a session is using "${first.name}" right now`,
+          });
+          break;
+        }
         const ok = this.providers.saveMcpServers?.(servers) ?? false;
         if (ok) {
           // Reconnect + re-register the MCP tools, then refresh the card/modal.

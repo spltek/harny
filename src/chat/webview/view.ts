@@ -5334,6 +5334,12 @@ function renderMcpEditor(data: ConfigState["mcp"], open: boolean): void {
   }
 }
 
+/** Say WHY a save was refused, on the editor's own result line (the same one Test uses). */
+function setMcpEditorError(reason: string): void {
+  mcpTestResult.className = "mcp-io err";
+  mcpTestResult.textContent = `❌ ${reason}`;
+}
+
 function closeMcpEditor(): void {
   mcpModal.classList.add("hidden");
 }
@@ -6949,6 +6955,9 @@ window.addEventListener("message", (e) => {
       break;
     case "mcpSaved":
       if (msg.ok) closeMcpEditor();
+      // A refused save says WHY: the removal was blocked because a running session is using that
+      // server, and the editor stays exactly as the user left it.
+      else if (typeof msg.reason === "string" && msg.reason) setMcpEditorError(msg.reason);
       break;
     case "mcpToolExclusionsSaved":
       // The tools panel's Save. On success the host has already re-pushed the statuses

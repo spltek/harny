@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tools the config leaves out are the SEED a new session starts from; a save no longer writes `excludeTools` (that key
   is not the panel's to own) and no longer respawns the server — the Analyze shields are read live, so saving one stops
   costing a reconnect.
+- **Removing an MCP server is refused while a RUNNING session is using it.** The turn already has that server's tools in
+  the list it was given, so deleting it mid-flight could only surface as `Unknown tool` on the very next call. The brake is
+  as narrow as the danger: it looks at the OPEN sessions, and only at the ones that are working AND have that server on —
+  a server nobody uses, or used by an idle session, is removed without friction (the next run simply will not see it). The
+  editor stays open and says why; editing the config file by hand still bypasses it, where the graceful path (a tool that
+  vanished returns an error result and the turn continues) remains tested.
 
 - **Each MCP server has a real SWITCH now — a pill whose knob slides right when the server is on.** The control
   existed but was INVISIBLE: the server's name was the toggle and nothing on screen said so, so the only way to find
