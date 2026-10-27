@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { memoryStore } from "./webview-bridge.test-utils";
 import type { ConfigProvider, HarnyConfig, ProviderCatalog } from "../core/config/types";
 import { MemoryOverrideConfigProvider } from "../core/config/memory-override-config-provider";
 import { CompositeConfigProvider } from "../core/config/composite-config-provider";
@@ -181,7 +182,7 @@ function buildHarness(opts: Record<string, unknown> = {}) {
   // New sessions are named via a native prompt; default the mock so createNew
   // resolves unless a specific test overrides it.
   state.showInputBox.mockResolvedValue("New Session");
-  const store = makeStore();
+  const store = (opts.store as SessionStore | undefined) ?? makeStore();
   const sessions = new SessionManager(store);
   const createAgent = vi.fn((h: ChatHistory): ChatController => {
     const history = h;
@@ -1467,6 +1468,40 @@ describe("ChatViewProvider", () => {
       other: { command: "node", args: ["x"] },
     });
     expect(connect).not.toHaveBeenCalled();
+  });
+
+  it("a server removed from the config is dropped from the sessions that named it — and only those", async () => {
+    // The read path already filters a vanished server, so behaviour is right without this; what is
+    // pinned here is that the ROW stops carrying a decision about something that no longer exists,
+    // without rewriting the sessions that never named it.
+    let servers: Record<string, { command: string }> = { files: { command: "node" }, git: { command: "node" } };
+    const store = memoryStore();
+    const { provider, registry } = buildHarness({
+      store,
+      providers: {
+        getProvider: vi.fn(),
+        saveModelSelection: vi.fn(),
+        readMcpServers: vi.fn(() => servers),
+        saveMcpServers: vi.fn(() => true),
+      } as unknown as ProviderCatalog,
+    });
+    const a = store.create("a");
+    const b = store.create("b");
+    store.saveSettings(a.id, { toolScope: { mcp: ["files", "git"], off: [] } });
+    store.saveSettings(b.id, { toolScope: { mcp: [], off: ["Shell"] } });
+
+    // Session `a` is OPEN: the in-memory runtime must not keep the stale value either.
+    provider.openSession(a.id);
+    await vi.waitFor(() => expect(registry.get(a.id)).toBeDefined());
+
+    servers = { files: { command: "node" } }; // `git` was uninstalled
+    expect(provider.reconcileToolScopes()).toBe(1); // ONE row changed, not both
+    expect(store.summary(a.id)?.toolScope).toEqual({ mcp: ["files"], off: [] });
+    expect(registry.get(a.id)?.toolScope).toEqual({ mcp: ["files"], off: [] });
+    expect(store.summary(b.id)?.toolScope).toEqual({ mcp: [], off: ["Shell"] });
+
+    // Running it again writes nothing: a config edit must not rewrite every session.
+    expect(provider.reconcileToolScopes()).toBe(0);
   });
 
   it("setToolScope persists the SESSION's scope (not the config) and echoes it back", async () => {

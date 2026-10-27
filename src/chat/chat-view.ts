@@ -1,5 +1,5 @@
 import type { ExtensionContext, WebviewView, WebviewViewProvider, WebviewViewResolveContext } from "vscode";
-import { normalizeToolScope, type ToolScope } from "../core/tools/tool-scope";
+import { normalizeToolScope, reconcileToolScope, type ToolScope } from "../core/tools/tool-scope";
 import { Uri, window, workspace } from "vscode";
 import * as fs from "fs";
 import type {
@@ -1005,7 +1005,33 @@ export class ChatViewProvider implements WebviewViewProvider {
   refreshConfig(): void {
     if (!this.view) return;
     this.applyActiveModel();
+    // A server may have been REMOVED from the file (or added): the sessions that named it must
+    // stop carrying a decision about something that no longer exists. This is the one place that
+    // knows the config just changed, so the write happens here — and only for the rows that
+    // actually differ (see reconcileToolScope).
+    this.reconcileToolScopes();
     void this.pushConfig();
+  }
+
+  /**
+   * Drop the MCP servers that are gone from every session's scope.
+   *
+   * The READ path already filters them (see the host's toolScopeFor), so behaviour is correct
+   * without this; what this adds is not leaving a decision about a deleted server in the row for
+   * ever. No write when nothing changes: a config edit would otherwise rewrite every session.
+   */
+  reconcileToolScopes(): number {
+    const servers = Object.keys(this.providers.readMcpServers?.() ?? {});
+    let changed = 0;
+    for (const summary of this.sessions.list()) {
+      const next = reconcileToolScope(summary.toolScope, { servers });
+      if (!next) continue;
+      this.sessions.saveSettings(summary.id, { toolScope: next });
+      const rt = this.registry.get(summary.id);
+      if (rt) rt.toolScope = next; // an OPEN session must not keep the stale value in memory
+      changed += 1;
+    }
+    return changed;
   }
 
   private async onMessage(msg: any): Promise<void> {
