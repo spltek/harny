@@ -61,13 +61,18 @@
     //   "command": "npx",
     //   "args": ["-y", "mcp-sqlite", "./data.db"],
     //   "env": { "LOG_LEVEL": "warn" },
+    //   // The MACHINE's switch: false = installed here but not connected at all. Which
+    //   // sessions USE it is theirs to decide (the switch in the MCP card).
     //   "enabled": true,
     //   // Analyze: "read-only" (every tool of it) or "trusted" (believe its own
     //   // readOnlyHint). OMITTED = none of its tools runs in Analyze — the strictest
     //   // default, and the reason a tool that modifies things cannot run there by
     //   // accident. Per-TOOL exceptions are the shield in the tools panel (analyzeTools).
     //   "analyze": "trusted",
-    //   // The model never sees these, and they are never called.
+    //   // The SEED for a new session: every NEW conversation starts with these tools off.
+    //   // Which tools a conversation actually uses is a PER-SESSION decision (the checkboxes
+    //   // in the tools panel), so this list does not veto anything globally any more — the
+    //   // panel no longer writes it either, and an existing session keeps its own choice.
     //   "excludeTools": ["drop_table", "delete_row"]
     // },
     // A remote server: no command, an URL and optional headers.
