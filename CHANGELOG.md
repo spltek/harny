@@ -72,6 +72,12 @@ track with a WHITE dot), and
   which needs no selection at all — the caret never leaves the field, the current match stands out from the others, and
   nothing is injected into a transcript that streaming repaints. A host without the API falls back to the selection, and
   then only while nothing of ours is focused: keeping the caret wins over painting.
+- **Every change to the query recomputes ALL the highlights, and the scan follows the transcript.** The paint used to live
+  inside the "show the current match" step, which returns early when there is no match: emptying the field (the ✕, or
+  backspace to nothing) or typing something that matches nothing left the PREVIOUS highlights on screen, marking text that
+  no longer matched. The paint is now unconditional — an empty result is a paint of nothing — and while the bar is open a
+  `MutationObserver` re-scans the transcript (debounced 300 ms, and **without scrolling**): a list of ranges pointing into
+  nodes that streaming replaced paints nothing, or paints the wrong span.
 - **A context menu we own, on the transcript.** Whether a webview gets a native menu with Copy is not a contract —
   Windows, Linux and each VS Code build disagree — so right-clicking the prose now opens ours: **Copy** (enabled only
   with a selection, as in any editor) and **Select all**, anchored at the pointer, closing on Esc, an outside click or a

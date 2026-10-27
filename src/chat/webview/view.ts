@@ -3200,12 +3200,12 @@ function clearFindHighlights(): void {
   api?.delete("harny-find-current");
 }
 
-/** Put the CURRENT match in the selection and scroll it into view: the selection is the highlight,
- *  so nothing is injected into the transcript (which streaming repaints). */
+/** Scroll the CURRENT match into view (and, on a host without the Highlight API, select it so it
+ *  IS the highlight). Painting is NOT done here: that must happen even when there is no match —
+ *  otherwise clearing the field leaves the previous highlights on screen. */
 function showMatch(scroll: boolean): void {
   const m = findMatches[findIndex];
   if (!m) return;
-  paintFindHighlights();
   // Was the user typing in one of our fields? Then the selection must NOT be moved: it would blur
   // the field and the next keystroke would go to the transcript.
   const wasTyping = findBar.contains(document.activeElement);
@@ -3231,7 +3231,15 @@ function showMatch(scroll: boolean): void {
   }
 }
 
-function refreshMatches(keepIndex = false): void {
+/**
+ * Recompute EVERY highlight from the current query.
+ *
+ * Called on every change of the text (and when the transcript grows while the bar is open): the
+ * paint is unconditional, so `no match` and an empty field clear what the previous query drew —
+ * a highlight left over an old query points at text that no longer matches, which is worse than
+ * no highlight at all.
+ */
+function refreshMatches(keepIndex = false, scroll = true): void {
   const prev = findIndex;
   findMatches = collectMatches(findInput.value.trim());
   findScanLength = messagesEl.textContent?.length ?? 0;
@@ -3243,7 +3251,9 @@ function refreshMatches(keepIndex = false): void {
     findIndex = 0;
   }
   updateFindCount();
-  showMatch(findMatches.length > 0);
+  paintFindHighlights(); // always: an empty result is a paint of nothing, not a skipped paint
+  if (findMatches.length > 0) showMatch(scroll);
+  else window.getSelection()?.removeAllRanges(); // the fallback highlight is gone with them
 }
 
 /** Enter/Shift+Enter (or the arrows): move through the matches, wrapping at the ends. */
@@ -3256,11 +3266,13 @@ function stepMatch(delta: number): void {
   }
   findIndex = (findIndex + delta + findMatches.length) % findMatches.length;
   updateFindCount();
+  paintFindHighlights(); // the CURRENT match moved: repaint both layers
   showMatch(true);
 }
 
 function closeFind(): void {
   clearFindHighlights();
+  unwatchTranscriptForFind();
   findBar.classList.add("hidden");
   findMatches = [];
   findIndex = -1;
@@ -3275,7 +3287,35 @@ function openFind(): void {
   findBar.classList.remove("hidden");
   findInput.focus();
   findInput.select();
+  watchTranscriptForFind();
   if (findInput.value.trim()) refreshMatches();
+}
+
+/**
+ * While the bar is open, the transcript keeps changing (a run streams, a section folds, a message
+ * lands) and every Range we hold points into nodes that may have been REPLACED: the highlight then
+ * paints nothing, or paints the wrong span. So the scan follows the DOM — debounced, and WITHOUT
+ * scrolling: recomputing must never pull the reader away from what they are looking at.
+ */
+let findObserver: MutationObserver | null = null;
+let findRescanTimer: number | undefined;
+function watchTranscriptForFind(): void {
+  if (findObserver || typeof MutationObserver === "undefined") return;
+  findObserver = new MutationObserver(() => {
+    if (findRescanTimer !== undefined) window.clearTimeout(findRescanTimer);
+    findRescanTimer = window.setTimeout(() => {
+      findRescanTimer = undefined;
+      if (!findOpen() || !findInput.value.trim()) return;
+      refreshMatches(true, false);
+    }, 300);
+  });
+  findObserver.observe(messagesEl, { childList: true, subtree: true, characterData: true });
+}
+function unwatchTranscriptForFind(): void {
+  findObserver?.disconnect();
+  findObserver = null;
+  if (findRescanTimer !== undefined) window.clearTimeout(findRescanTimer);
+  findRescanTimer = undefined;
 }
 
 let findTimer: number | undefined;

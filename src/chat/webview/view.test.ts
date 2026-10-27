@@ -6116,13 +6116,9 @@ describe("view webview client", () => {
     };
     try {
       const input = document.getElementById("find-input") as HTMLInputElement;
-      window.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "f",
-          ctrlKey: !/Macintosh/.test(navigator.userAgent),
-          metaKey: /Macintosh/.test(navigator.userAgent),
-        }),
-      );
+      // Both modifiers: the test must open the bar on any host (macOS wants ⌘, Windows/Linux
+      // Ctrl) without depending on the UA jsdom happens to report.
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true, ctrlKey: true }));
       input.focus();
       input.value = "alpha";
       input.selectionStart = input.selectionEnd = input.value.length;
@@ -6175,6 +6171,108 @@ describe("view webview client", () => {
     expect(window.getSelection()!.toString()).toBe("");
     // Scrolling still happened through the match itself (no selection involved).
     expect(document.getElementById("find-count")!.textContent).toBe("1/2");
+  });
+
+  it("EVERY change recomputes the highlights: no stale paint on 'no match' or an emptied field", async () => {
+    // The paint used to live inside showMatch, which returns early when there is no match: the
+    // previous query's highlights stayed on screen, marking text that no longer matched.
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "user", content: "alpha beta", timestamp: 1 },
+        { role: "assistant", content: "gamma alpha", timestamp: 2 },
+      ],
+    });
+    const highlights = new Map<string, { size: number }>();
+    (window as any).Highlight = class {
+      size: number;
+      constructor(...ranges: Range[]) {
+        this.size = ranges.length;
+      }
+    };
+    (window as any).CSS = { ...((window as any).CSS ?? {}), highlights };
+    try {
+      const input = document.getElementById("find-input") as HTMLInputElement;
+      const count = document.getElementById("find-count") as HTMLElement;
+      // Both modifiers: the test must open the bar on any host (macOS wants ⌘, Windows/Linux
+      // Ctrl) without depending on the UA jsdom happens to report.
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true, ctrlKey: true }));
+      const type = async (text: string): Promise<void> => {
+        input.value = text;
+        input.dispatchEvent(new Event("input"));
+        await new Promise((r) => setTimeout(r, 150));
+      };
+
+      await type("alpha");
+      expect(highlights.get("harny-find")!.size).toBe(2);
+      expect(highlights.get("harny-find-current")!.size).toBe(1);
+
+      // One character less (a BACKSPACE, or the ✕ in a search field): recomputed, not stale.
+      await type("alph");
+      expect(highlights.get("harny-find")!.size).toBe(2);
+
+      // …and a query that matches nothing CLEARS them instead of leaving the old ones.
+      await type("zzz");
+      expect(count.textContent).toBe("no match");
+      expect(highlights.has("harny-find")).toBe(false);
+      expect(highlights.has("harny-find-current")).toBe(false);
+
+      // Emptying the field clears them too (the counter goes away with them).
+      await type("alpha");
+      expect(highlights.get("harny-find")!.size).toBe(2);
+      await type("");
+      expect(count.textContent).toBe("");
+      expect(highlights.has("harny-find")).toBe(false);
+    } finally {
+      delete (window as any).Highlight;
+      delete (window as any).CSS;
+    }
+  });
+
+  it("the highlights follow the transcript as it grows, without moving the view", async () => {
+    await loadView();
+    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "uno due", timestamp: 1 }] });
+    const highlights = new Map<string, { size: number }>();
+    (window as any).Highlight = class {
+      size: number;
+      constructor(...ranges: Range[]) {
+        this.size = ranges.length;
+      }
+    };
+    (window as any).CSS = { ...((window as any).CSS ?? {}), highlights };
+    const list = document.getElementById("messages") as HTMLElement;
+    Object.defineProperty(list, "scrollHeight", { value: 5000, configurable: true });
+    Object.defineProperty(list, "clientHeight", { value: 800, configurable: true });
+    list.scrollTop = 1000;
+    list.dispatchEvent(new Event("scroll")); // reading above the bottom, not following
+    try {
+      const input = document.getElementById("find-input") as HTMLInputElement;
+      const count = document.getElementById("find-count") as HTMLElement;
+      // Both modifiers: the test must open the bar on any host (macOS wants ⌘, Windows/Linux
+      // Ctrl) without depending on the UA jsdom happens to report.
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true, ctrlKey: true }));
+      input.value = "due";
+      input.dispatchEvent(new Event("input"));
+      await new Promise((r) => setTimeout(r, 150));
+      expect(count.textContent).toBe("1/1");
+
+      // A run streams more text with the same word: the Ranges we hold point at replaced nodes, so
+      // the scan follows the DOM — the count grows, and the reader is NOT dragged to the bottom.
+      const prompt = document.getElementById("user-input") as HTMLTextAreaElement;
+      prompt.value = "go";
+      (document.getElementById("send-btn") as HTMLButtonElement).click(); // a run starts (it may park)
+      list.scrollTop = 1000; // now park the reader above the bottom…
+      list.dispatchEvent(new Event("scroll"));
+      hostMessage({ type: "textDelta", content: " e ancora due" });
+      await new Promise((r) => setTimeout(r, 400)); // the rescan debounce
+      expect(count.textContent).toBe("1/2");
+      expect(highlights.get("harny-find")!.size).toBe(2);
+      expect(list.scrollTop).toBe(1000); // no jump: recomputing is not navigating
+    } finally {
+      delete (window as any).Highlight;
+      delete (window as any).CSS;
+    }
   });
 
   it("find follows the host OS, and rebuilds a stale list while the run streams", async () => {
