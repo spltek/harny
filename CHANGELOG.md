@@ -18,7 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   derived from the streaming flag AND the working set, because at bootstrap only the latter is known — and the lock is
   applied from `setStreaming` itself, the one point every way of starting a run passes through (the optimistic Play path
   never sends a `status` message, which is why the first version of this fix left the gear clickable for a run started
-  from the panel).
+  from the panel). The **MCP gear** follows the same rule for a stronger reason: saving a server reconnects it and swaps
+  the tool list under the turn that already received it, so it is inert while THIS session works (and stays reachable
+  while another one does — it is not a per-session control). Both entry points also guard the handler itself, so a future
+  caller cannot bypass the disabled state.
 
 - **A reasoning-only model can no longer brick a session.** A turn that ends with neither text nor a tool call (only
   thinking — common with `…reasoning:free` models) left an empty assistant message in the conversation, and the

@@ -4137,6 +4137,7 @@ function closeProvidersEditor(): void {
 }
 
 gearBtn.addEventListener("click", () => {
+  if (sessionBusy()) return; // disabled mid-run; see openMcpEditor for why the guard repeats
   providersIoResult.textContent = "";
   providersIoResult.className = "providers-io";
   vscode.postMessage({ type: "getProvidersEditor" });
@@ -5313,6 +5314,9 @@ function mcpFormServer(): McpEditorServer {
 }
 
 function openMcpEditor(): void {
+  // The button is already disabled mid-run; this is the same rule one level down, for any future
+  // caller (a menu, a shortcut, a host route).
+  if (sessionBusy()) return;
   mcpTestResult.textContent = "";
   mcpTestResult.className = "mcp-io";
   vscode.postMessage({ type: "getMcpServers" });
@@ -7057,6 +7061,11 @@ window.addEventListener("message", (e) => {
  * Lock the two setup gears while ANY session works: opening the manage form
  * or the providers editor mid-stream is disabled (they get re-enabled the
  * moment the last working session finishes). Mirrors the per-row locks. */
+/** Is the session ON SCREEN streaming? The one reading the per-session locks use. */
+function sessionBusy(): boolean {
+  return streamingActive || (!!activeId && workingIds.has(activeId));
+}
+
 function applyWorkingLock(): void {
   const busy = workingIds.size > 0;
   // TWO axes, and they used to be one. The MANAGERS stay reachable while a run works (with
@@ -7065,15 +7074,24 @@ function applyWorkingLock(): void {
   // offers a model switch for a request already sent — the same trap the model dropdown and the
   // mode pills already refuse. Derived from BOTH signals, because at bootstrap only `workingIds`
   // is known and a status message may not have arrived yet.
-  const activeBusy = streamingActive || (!!activeId && workingIds.has(activeId));
+  const activeBusy = sessionBusy();
   sessionsGearBtn.disabled = false;
   gearBtn.disabled = activeBusy;
+  // The MCP gear edits the MACHINE (install/edit/delete, and every save reconnects the servers and
+  // rebuilds the tool registry), so it is the same hazard as the tools panel's Save — which already
+  // refuses mid-run with "Stop the run first". Reachable while OTHER sessions work (it is not a
+  // per-session control), inert while THIS one does: a reconnect mid-stream swaps the tools under a
+  // turn that already received them.
+  mcpConfigure.disabled = activeBusy;
   sessionsGearBtn.title = busy
     ? "Manage all sessions (the working ones are locked)"
     : "Manage all sessions (every folder)";
   gearBtn.title = activeBusy
     ? "Saving is blocked while this session works — the run keeps the model it started with"
     : "Configure providers & models";
+  mcpConfigure.title = activeBusy
+    ? "Stop the run first — saving a server reconnects it and swaps the tool list mid-turn"
+    : "Configure MCP servers";
 }
 
 /**

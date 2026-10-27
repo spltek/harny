@@ -8384,6 +8384,30 @@ describe("all-sessions manager (gear)", () => {
     expect(rows[1].textContent).not.toContain("this folder");
   });
 
+  it("the MCP gear is inert while THIS session works: a reconnect would swap the tools mid-turn", async () => {
+    // The MCP editor edits the MACHINE (install/edit/delete, each save reconnecting and rebuilding
+    // the registry). Started from the panel — the path that never sends a `status` message — the
+    // lock must already be on, and another session's run must not freeze it.
+    await loadView();
+    const mcpGear = document.getElementById("mcp-configure") as HTMLButtonElement;
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    expect(mcpGear.disabled).toBe(false);
+
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    expect(mcpGear.disabled).toBe(true);
+    expect(mcpGear.title).toContain("Stop the run first");
+
+    hostMessage({ type: "status", active: false });
+    expect(mcpGear.disabled).toBe(false);
+    expect(mcpGear.title).toBe("Configure MCP servers");
+
+    // ANOTHER session works while this one is idle: the MCP editor stays reachable — it is not a
+    // per-session control, and a blanket lock would make it unreachable on a busy day.
+    hostMessage({ type: "status", active: false, workingIds: ["other"] });
+    expect(mcpGear.disabled).toBe(false);
+  });
+
   it("starting a run FROM this panel locks the models gear immediately (no status message needed)", async () => {
     // The reported bug, reproduced: the optimistic send path (typing + Play) never goes through a
     // `status` message, so the lock that lived only there never ran and the gear stayed clickable.
