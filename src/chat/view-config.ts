@@ -63,7 +63,7 @@ export type ThemeMode = "auto" | "dark" | "light";
  * the two themes swappable, and it is why a colour should be added HERE rather
  * than inline in the stylesheet: PALETTE_LIGHT has to answer the same role.
  */
-export const PALETTE_DARK = {
+const PALETTE_DARK = {
   // ── Surfaces ──
   bg: "#111111", // main background: anthracite, near-black
   fg: "#e0e0e0", // primary text: bright light gray
@@ -160,7 +160,7 @@ export type Palette = Record<keyof typeof PALETTE_DARK, string>;
  * The semantic hues move to their darker 700-ish step for the same reason:
  * #98c379 on white is 2:1, #2f7d32 is 4.9:1.
  */
-export const PALETTE_LIGHT: Palette = {
+const PALETTE_LIGHT: Palette = {
   // ── Surfaces ──
   bg: "#fbfaf9", // warm paper, not pure white: the accent is warm, so is the page
   fg: "#221f1d", // primary text: warm near-black

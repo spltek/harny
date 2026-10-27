@@ -1,4 +1,4 @@
-export type ProviderName = "openai" | "openai-compatible" | "anthropic";
+type ProviderName = "openai" | "openai-compatible" | "anthropic";
 
 /**
  * How the active provider/model exposes the reasoning/thinking phase.
@@ -121,7 +121,7 @@ export interface ResolvedNamedProvider {
 }
 
 /** Source of named providers for the chat UI (runtime provider switching). */
-export interface NamedProvidersSource {
+interface NamedProvidersSource {
   getProvider(name: string): ResolvedNamedProvider | undefined;
 }
 
@@ -156,7 +156,7 @@ export interface ProviderEditorData {
 }
 
 /** Persists the model selection (and optionally the active named provider) into the config file. */
-export interface ModelSelectionSaver {
+interface ModelSelectionSaver {
   saveModelSelection(model: string, provider?: string): boolean;
 }
 

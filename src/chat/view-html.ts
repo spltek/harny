@@ -1495,6 +1495,8 @@ ${renderViewConfig(deps)}
     }
     .mcp-pop-shield.on { color: var(--ok); border-color: var(--ok); }
     .mcp-pop-shield.inherited { opacity: 0.55; cursor: default; }
+    /* Excluded from the model: not registered at all, so there is no Analyze policy to set. */
+    .mcp-pop-shield.inert { opacity: 0.3; cursor: default; }
     .mcp-pop-shield:not(:disabled):hover { color: var(--fg-strong); border-color: var(--fg-strong); }
     .mcp-pop-shield.on:not(:disabled):hover { color: var(--ok); border-color: var(--ok); }
     .mcp-pop-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }

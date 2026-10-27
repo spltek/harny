@@ -69,7 +69,7 @@ export interface LoadedSession {
 }
 
 /** The persistable per-session settings (patched via saveSettings). */
-export type SessionSettings = Pick<
+type SessionSettings = Pick<
   SessionSummary,
   | "model"
   | "modelProvider"

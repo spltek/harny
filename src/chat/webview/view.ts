@@ -4394,31 +4394,36 @@ function renderMcpToolRows(): void {
     const shield = document.createElement("button");
     shield.type = "button";
     const inherited = t.readOnly === true && t.analyzeFlag !== true;
-    const on = panel.analyzeDraft.has(t.name) || inherited;
-    shield.className = "mcp-pop-shield" + (on ? " on" : "") + (inherited ? " inherited" : "");
-    shield.textContent = on ? "🛡" : "·";
-    shield.setAttribute("aria-pressed", String(on));
-    shield.setAttribute("aria-label", `${t.name}: read-only in Analyze`);
-    shield.title = inherited
-      ? "Allowed by the server's own Analyze declaration — every tool of it runs in Analyze"
-      : on
-        ? "Read-only in Analyze because YOU said so — click to take it back"
-        : "Does NOT run in Analyze. Click to declare this tool read-only there";
-    shield.disabled = inherited;
+    /** Where the shield stands right now. A tool the MODEL cannot see is not registered at all,
+     * so its Analyze flag is inert: saying "read-only in Analyze" there would be a lie. */
+    const syncShield = (): void => {
+      const excluded = panel.draft.has(t.name);
+      const on = !excluded && (panel.analyzeDraft.has(t.name) || inherited);
+      shield.className =
+        "mcp-pop-shield" + (on ? " on" : "") + (inherited ? " inherited" : "") + (excluded ? " inert" : "");
+      shield.textContent = on ? "🛡" : "·";
+      shield.setAttribute("aria-pressed", String(on));
+      shield.setAttribute("aria-label", `${t.name}: ${on ? "read-only" : "not allowed"} in Analyze`);
+      shield.disabled = inherited || excluded;
+      shield.title = excluded
+        ? "The model does not see this tool, so there is nothing to allow in Analyze — include it first"
+        : inherited
+          ? "Allowed by the server's own Analyze declaration — every tool of it runs in Analyze"
+          : panel.analyzeDraft.has(t.name)
+            ? "Read-only in Analyze because YOU said so — click to take it back"
+            : "Does NOT run in Analyze. Click to declare this tool read-only there";
+    };
     shield.addEventListener("click", (e) => {
       e.preventDefault(); // the row is a <label>: do not forward the click to the checkbox
       e.stopPropagation();
       if (panel.analyzeDraft.has(t.name)) panel.analyzeDraft.delete(t.name);
       else panel.analyzeDraft.add(t.name);
-      const now = panel.analyzeDraft.has(t.name);
-      shield.classList.toggle("on", now);
-      shield.textContent = now ? "🛡" : "·";
-      shield.setAttribute("aria-pressed", String(now));
-      shield.title = now
-        ? "Read-only in Analyze because YOU said so — click to take it back"
-        : "Does NOT run in Analyze. Click to declare this tool read-only there";
+      syncShield();
       updateMcpToolsHead();
     });
+    // The exposure toggle changes whether the shield means anything at all.
+    box.addEventListener("change", syncShield);
+    syncShield();
     row.appendChild(shield);
     list.appendChild(row);
   }

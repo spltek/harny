@@ -10,7 +10,7 @@ const enabled = !!process.env.HARNY_DEBUG;
 let outputChannel: OutputChannel | undefined;
 
 /** Always-visible output channel (View > Output > Harny). No env var needed. */
-export function getOutputChannel(): OutputChannel {
+function getOutputChannel(): OutputChannel {
   if (!outputChannel) {
     outputChannel = window.createOutputChannel("Harny");
   }

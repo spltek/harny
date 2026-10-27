@@ -234,7 +234,7 @@ export class McpStdioClient implements McpClient {
  * `code=190` and a wall of npm output tell nobody what to do; "clear the npx cache"
  * does. Kept narrow on purpose: a wrong hint is worse than none.
  */
-export function mcpFailureHint(stderr: string): string {
+function mcpFailureHint(stderr: string): string {
   if (/ENOTEMPTY|_npx/i.test(stderr)) {
     return "npm's npx cache looks incomplete — run `rm -rf ~/.npm/_npx` and Test again (the first run re-downloads the package)";
   }

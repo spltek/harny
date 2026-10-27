@@ -87,7 +87,7 @@ function isPositiveInt(v: unknown): v is number {
 
 /** Validate + normalize an exported providers payload (accepts the config
  * shape AND the editor shape — only `providers` is required). */
-export function parseProviderExport(
+function parseProviderExport(
   raw: unknown,
 ): { providers: Record<string, unknown>; provider?: string; maxParallelSubAgents?: number } | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;

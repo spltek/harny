@@ -22,7 +22,7 @@ export function isFullAccessMode(mode: ChatMode | undefined): boolean {
 
 /** Extra filtering for a tool set (e.g. hide the Delegate tool from
  * sub-agents so orchestration cannot nest: depth is capped at 1). */
-export interface ToolFilterOptions {
+interface ToolFilterOptions {
   exclude?: readonly string[];
 }
 

@@ -69,7 +69,7 @@ export interface ParsedToolArgs {
  * (arguments = {} + malformed = true), so the agent can give an explicit error
  * or a corrective hint instead of executing a tool with bogus empty args.
  */
-export function parseToolArgs(raw: string): ParsedToolArgs {
+function parseToolArgs(raw: string): ParsedToolArgs {
   // A truly empty emission is a VALID call with no arguments (tools with no
   // required params), not a malformed one. Only non-empty, unparseable and
   // unrepairable content is flagged malformed.

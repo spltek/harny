@@ -5961,6 +5961,28 @@ describe("view webview client", () => {
     expect(shield.title).toContain("server's own Analyze declaration");
   });
 
+  it("a tool excluded from the model has an INERT shield: nothing to allow in Analyze", async () => {
+    // An excluded tool is not registered at all, so its Analyze flag cannot do anything. Showing
+    // a live shield there would promise a policy that does not exist.
+    await loadView();
+    pushMcpTools([{ name: "read_query", readOnly: true, analyzeFlag: true }]);
+    (document.querySelector(".mcp-tools-btn") as HTMLButtonElement).click();
+    const box = document.querySelector("#mcp-tools-popover .mcp-pop-row input") as HTMLInputElement;
+    const shield = document.querySelector("#mcp-tools-popover .mcp-pop-shield") as HTMLButtonElement;
+    expect(shield.disabled).toBe(false);
+    expect(shield.getAttribute("aria-pressed")).toBe("true");
+
+    box.click(); // exclude it from the model
+    expect(shield.disabled).toBe(true);
+    expect(shield.getAttribute("aria-pressed")).toBe("false"); // nothing runs: not read-only
+    expect(shield.classList.contains("inert")).toBe(true);
+    expect(shield.title).toContain("there is nothing to allow in Analyze");
+
+    box.click(); // include it again: the shield comes back with the SAVED flag
+    expect(shield.disabled).toBe(false);
+    expect(shield.getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("typing '/' at the start of the prompt shows the skill list", async () => {
     await loadView();
     hostMessage({

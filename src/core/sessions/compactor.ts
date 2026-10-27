@@ -21,8 +21,8 @@ export const DEFAULT_COMPACTION: CompactionSettings = {
   thresholdPercent: 80,
 };
 
-export const MIN_COMPACTION_THRESHOLD_PERCENT = 1;
-export const MAX_COMPACTION_THRESHOLD_PERCENT = 100;
+const MIN_COMPACTION_THRESHOLD_PERCENT = 1;
+const MAX_COMPACTION_THRESHOLD_PERCENT = 100;
 
 /**
  * The summary's OUTPUT budget is DERIVED, not configured.
@@ -49,7 +49,7 @@ export function toCompactionThresholdPercent(v: unknown): number {
   return clampCompactionThresholdPercent(typeof v === "number" ? v : Number(v));
 }
 
-export interface CompactionPlan {
+interface CompactionPlan {
   /** Messages to summarize (the older span, inclusive cut). */
   toSummarize: ChatMessage[];
   /** Messages to keep intact (the recent tail). */
@@ -191,7 +191,7 @@ export const PERCENT_UNIT = 1;
 /** How many times the landing point fits into the trigger: AUTO lands at an EIGHTH of it,
  *  i.e. 10% with the default 80%. A ratio, so it scales — it is not a percentage standing
  *  on its own. */
-export const AUTO_TARGET_SHARE = 8;
+const AUTO_TARGET_SHARE = 8;
 
 /**
  * AUTO = land at `AUTO_TARGET_SHARE` of the trigger: the window keeps the last EXCHANGES
@@ -270,7 +270,7 @@ export function targetTokensFor(usableTokens: number, targetPercent: number): nu
 }
 
 /** A plan plus the two budgets behind it, for the caller AND for the UI preview. */
-export interface TargetPlan {
+interface TargetPlan {
   plan: CompactionPlan;
   /** Tokens the verbatim tail may take. */
   keepBudgetTokens: number;
@@ -368,7 +368,7 @@ export function recentStartFor(visible: ChatMessage[], budgetTokens: number): nu
  * the cut but the synthetic checkpoint pair. That is the case `planCompactionToBudget`
  * falls back to this index for: being unable to compact is worse than a mid-turn cut.
  */
-export function budgetedCut(visible: ChatMessage[], budgetTokens: number): number {
+function budgetedCut(visible: ChatMessage[], budgetTokens: number): number {
   const budget = Math.max(1, budgetTokens);
   let start = visible.length;
   let acc = 0;
@@ -833,7 +833,7 @@ export const SUMMARY_QUALITY_FLOOR = 512;
 const SUMMARY_OVERSHOOT = 1.15;
 
 /** A summary is a COMPRESSION of what it replaces: this is the ratio. */
-export const SUMMARY_SPAN_SHARE = 0.1;
+const SUMMARY_SPAN_SHARE = 0.1;
 
 /**
  * How big the summary itself is allowed to be, in tokens.

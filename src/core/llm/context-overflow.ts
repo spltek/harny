@@ -58,7 +58,7 @@ export function isRequestRejection(err: unknown): boolean {
  * One signature per provider/gateway family. The `from` label is used in the dev
  * log, so a new backend that phrases it differently is easy to add.
  */
-export const OVERFLOW_SIGNATURES: Array<{ re: RegExp; from: string }> = [
+const OVERFLOW_SIGNATURES: Array<{ re: RegExp; from: string }> = [
   // OpenAI / Azure OpenAI: {"code":"context_length_exceeded"}
   { re: /context_length_exceeded/i, from: "OpenAI error code" },
   // OpenAI, Azure, vLLM, Together, DeepSeek, Fireworks, OpenRouter passthrough:

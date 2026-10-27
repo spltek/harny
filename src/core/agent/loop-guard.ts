@@ -259,7 +259,7 @@ interface ReactionMessages {
  * command instead of switching tools — so point it at Glob/Grep/Read and tell
  * it to change approach or conclude.
  */
-export function repeatedCallNudge(name?: string): string {
+function repeatedCallNudge(name?: string): string {
   return (
     `You called the SAME tool ("${name ?? "?"}") with identical arguments 3+ times without making progress. ` +
     "STOP repeating it. Change approach NOW: use Glob to locate files, Grep to search and Read to inspect — " +
