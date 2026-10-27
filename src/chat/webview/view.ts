@@ -3422,6 +3422,11 @@ window.addEventListener(
     const primary = isMacPlatform() ? e.metaKey : e.ctrlKey;
     if (primary && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
       e.preventDefault();
+      // Also stop the event: our listener is in the CAPTURE phase on window, so this keeps the
+      // chord away from any listener the host injects into the page. (When the host's keybinding
+      // wins, the key never gets here and the `openFind` message does the job instead.)
+      e.stopPropagation();
+      e.stopImmediatePropagation?.();
       // Standard behaviour: ⌘F brings you TO the field (selecting what is there), it does not
       // toggle the bar away — Esc is the way out.
       if (findOpen()) {
@@ -6352,6 +6357,12 @@ window.addEventListener("message", (e) => {
   // loses nothing: the switchView replays that session's whole live turn.
   if (typeof msg?.sessionId === "string" && msg.sessionId !== activeId) return;
   switch (msg.type) {
+    case "openFind": {
+      // The host's keybinding (⌘F/Ctrl+F while this view has the focus) lands here: VS Code keeps
+      // the chord for itself otherwise, opening its own find and taking the focus away from us.
+      openFind();
+      break;
+    }
     case "attachments": {
       // Host response to "pickFiles": APPEND the picked files (several picks
       // accumulate), de-duplicated by path, shown as chips and sent together.

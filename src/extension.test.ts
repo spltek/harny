@@ -9,6 +9,7 @@ const state = vi.hoisted(() => ({
   onDidChangeWorkspaceFolders: vi.fn(() => ({ dispose: () => {} })),
   onDidChangeConfiguration: vi.fn(() => ({ dispose: () => {} })),
   executeCommand: vi.fn(async () => undefined),
+  registerCommand: vi.fn(() => ({ dispose: () => {} })),
   showErrorMessage: vi.fn(),
   showInformationMessage: vi.fn(),
   showOpenDialog: vi.fn(async () => undefined),
@@ -24,7 +25,7 @@ vi.mock("vscode", () => ({
     showOpenDialog: state.showOpenDialog,
     registerWebviewViewProvider: state.registerWebviewViewProvider,
   },
-  commands: { executeCommand: state.executeCommand },
+  commands: { executeCommand: state.executeCommand, registerCommand: state.registerCommand },
   workspace: {
     get workspaceFolders() {
       return state.workspaceFolders;

@@ -1454,6 +1454,24 @@ describe("ChatViewProvider", () => {
     );
   });
 
+  it("the ⌘F keybinding's command opens find INSIDE the panel (the chord is ours, not VS Code's)", () => {
+    // Inside a webview the key also reaches VS Code's own find, which opens its widget and takes
+    // the focus out of the panel. The contributed keybinding (scoped to our view) runs this
+    // command instead, and the panel puts the caret where you were typing.
+    const { provider } = buildHarness({});
+    const posted: unknown[] = [];
+    (provider as unknown as { view: unknown }).view = {
+      webview: { postMessage: (m: unknown) => (posted.push(m), Promise.resolve(true)) },
+    };
+    provider.openFind();
+    expect(posted).toEqual([{ type: "openFind" }]);
+
+    // …and with no view attached it is a no-op, not a crash (the command can fire before the
+    // panel has ever been revealed).
+    (provider as unknown as { view: unknown }).view = undefined;
+    expect(() => provider.openFind()).not.toThrow();
+  });
+
   it("setMcpToolExclusions also writes the per-TOOL Analyze list, with the opposite polarity", async () => {
     // `excludeTools` is what the MODEL must not see; `analyzeTools` is what YOU declare read-only
     // for Analyze — an INCLUDE list, because Analyze is denied by default.

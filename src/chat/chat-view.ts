@@ -926,6 +926,18 @@ export class ChatViewProvider implements WebviewViewProvider {
     this.flushContextTokens();
   }
 
+  /**
+   * Open find in the transcript.
+   *
+   * The ⌘F/Ctrl+F keybinding is CONTRIBUTED by this extension while the view has the focus (see
+   * package.json): inside a webview the key would otherwise reach VS Code's own find, which opens
+   * its widget and takes the focus away from the panel. A keybinding is the only way to win: the
+   * webview's `preventDefault` cannot stop the HOST from acting on the same chord.
+   */
+  openFind(): void {
+    this.view?.webview.postMessage({ type: "openFind" });
+  }
+
   /** Rebuild the whole view (host-side refresh after any change). */
   refresh(): void {
     if (!this.view) return;

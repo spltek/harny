@@ -61,6 +61,13 @@ track with a WHITE dot), and
   says so instead of pretending a per-tool rule did it. The refusal the model receives names this third way out, the
   README stops calling `analyze` file-only, and `config.example.jsonc` finally documents the MCP block (the server-wide
   `analyze` is the one field with no control in the form).
+- **⌘F now opens Harny's find, not VS Code's.** Inside a webview the chord also reached the host, which opened
+  its own find widget and took the focus out of the panel — the webview's `preventDefault` cannot stop the host from
+  acting on the same key. The extension now contributes that keybinding, **scoped to `focusedView == harny.chatView`**
+  (nowhere else does it take the key), and runs a command that tells the panel to open its bar; the message path also
+  `stopPropagation`s the original key for hosts that deliver it to the page. The command is registered at runtime and
+  deliberately absent from `contributes.commands`, so the palette stays clean — a manifest test now enforces that every
+  Harny keybinding is view-scoped instead of banning them all.
 - **The icons at the head of a bubble are a quarter larger — and no bubble grew.** The tool card, thinking, sub-agent
   and synthetic-summary marks are painted through `transform: scale(1.25)`, not a larger `width`/`height`: a transform
   does not enter the layout, so a 16px mark inside a 13px box keeps every row, gap and bubble exactly the height it had.

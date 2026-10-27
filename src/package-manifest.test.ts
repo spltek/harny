@@ -12,13 +12,24 @@ const contributes = manifest.contributes ?? {};
 
 describe("package.json manifest", () => {
   it("contributes NO custom harny commands (palette stays clean)", () => {
+    // The panel does not pollute the palette. ONE exception is not a command but a KEYBINDING
+    // target: `harny.findInChat` is registered at runtime and referenced by the keybinding below,
+    // and it is deliberately absent from `contributes.commands`.
     const commands = (contributes.commands ?? []) as { command: string }[];
     expect(commands.filter((c) => c.command.startsWith("harny."))).toEqual([]);
   });
 
-  it("contributes NO custom harny keybindings", () => {
-    const keybindings = (contributes.keybindings ?? []) as { command: string }[];
-    expect(keybindings.filter((k) => k.command.startsWith("harny."))).toEqual([]);
+  it("any harny keybinding is SCOPED to our own view, and never steals a key elsewhere", () => {
+    // The only reason to have one at all: inside a webview, ⌘F/Ctrl+F also reaches VS Code's own
+    // find, which opens its widget and takes the focus away from the panel. A contributed
+    // keybinding is the only way to win that chord — so it MUST be scoped to our view having the
+    // focus: anywhere else, the editor's own find is none of our business.
+    const keybindings = (contributes.keybindings ?? []) as { command: string; when?: string }[];
+    const ours = keybindings.filter((k) => k.command.startsWith("harny."));
+    expect(ours.length).toBeGreaterThan(0);
+    for (const k of ours) expect(k.when).toBe("focusedView == harny.chatView");
+    // …and the find chord is the one we claim.
+    expect(ours.map((k) => k.command)).toEqual(["harny.findInChat"]);
   });
 
   it("still contributes the Harny view container and the chat webview", () => {

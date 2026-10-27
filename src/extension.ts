@@ -302,6 +302,11 @@ export async function activate(context: ExtensionContext) {
     { dispose: () => viewProvider.dispose() },
   );
 
+  // Find in the chat, bound to ⌘F/Ctrl+F while THIS view has the focus (package.json). The
+  // webview cannot win that chord on its own: inside a webview the key also reaches VS Code's
+  // own find, which opens its widget and takes the focus away from the panel.
+  context.subscriptions.push(commands.registerCommand("harny.findInChat", () => viewProvider.openFind()));
+
   // Reveals the secondary side bar on the RIGHT and focuses the Harny view.
   async function revealViewInRight(): Promise<void> {
     // Opens the right-side Secondary Side Bar if closed, then focuses the view.

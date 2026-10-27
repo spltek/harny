@@ -6368,6 +6368,24 @@ describe("view webview client", () => {
     expect(menu.classList.contains("hidden")).toBe(true);
   });
 
+  it("the host's openFind message opens the bar and puts the caret in it", async () => {
+    // The path taken when VS Code consumes ⌘F first: its keybinding (scoped to our view) runs a
+    // command that posts this message. The panel must end up focused in the find field — not in
+    // VS Code's own find widget, which is what happened before the chord was claimed.
+    await loadView();
+    const bar = document.getElementById("find-bar") as HTMLElement;
+    const input = document.getElementById("find-input") as HTMLInputElement;
+    expect(bar.classList.contains("hidden")).toBe(true);
+    hostMessage({ type: "openFind" });
+    expect(bar.classList.contains("hidden")).toBe(false);
+    expect(document.activeElement).toBe(input);
+    // With text already there, opening again SELECTS it (typing replaces the query).
+    input.value = "alpha";
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true, ctrlKey: true }));
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(5);
+  });
+
   it("typing '/' at the start of the prompt shows the skill list", async () => {
     await loadView();
     hostMessage({

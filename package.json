@@ -90,7 +90,15 @@
           "description": "Which of Harny's two palettes the chat panel uses. Harny keeps its own look in both: it does not adopt the theme's colors, it only follows its light/dark kind, so the panel re-skins instantly when you change theme."
         }
       }
-    }
+    },
+    "keybindings": [
+      {
+        "command": "harny.findInChat",
+        "key": "ctrl+f",
+        "mac": "cmd+f",
+        "when": "focusedView == harny.chatView"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run build",
