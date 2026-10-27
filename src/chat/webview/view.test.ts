@@ -6244,13 +6244,11 @@ describe("view webview client", () => {
     hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "beta beta", timestamp: 1 }] });
     const input = document.getElementById("find-input") as HTMLInputElement;
     expect((window as any).Highlight).toBeUndefined(); // jsdom: no API
-    window.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        key: "f",
-        ctrlKey: !/Macintosh/.test(navigator.userAgent),
-        metaKey: /Macintosh/.test(navigator.userAgent),
-      }),
-    );
+    // Open through the HOST route, which is a real path (VS Code owns ⌘F and posts this): the chord
+    // itself is covered by the platform tests, and computing its modifier here with a different
+    // regex than the app's `isMacPlatform` (which also knows `darwin`) made this test green while
+    // never opening the bar at all.
+    hostMessage({ type: "openFind" });
     input.focus();
     input.value = "beta";
     input.dispatchEvent(new Event("input"));

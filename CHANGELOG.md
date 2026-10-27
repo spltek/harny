@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Find is its own module** (`webview/find.ts`, ~300 lines): the bar's state machine, the scan and its 500-match cap, the
+  two highlight layers, the navigation, the debounce and the rescan that follows the transcript. It takes its elements as
+  parameters and one injected callback (`reveal`, opening a folded section so a match is visible), so it is testable on its
+  own — `find.test.ts` covers the cap, the timers (armed, replaced, disarmed, fired), the no-Highlight-API fallback and the
+  caret rule. `view.ts` keeps only the wiring that belongs to the panel: the elements and the ⌘F chord.
+  Writing those tests found two real things: the engine painted highlights for a bar that was not on screen (a
+  programmatic write to the field, or a debounce landing after Esc), now guarded; and one view test had been green while
+  NEVER opening the bar (it computed the chord's modifier with a different regex than the app's `isMacPlatform`, which also
+  knows `darwin`) — it now opens through the host route, and the chord stays covered by the platform tests.
+
 - **The tool scope has ONE spelling, and it lives on the host.** The panel used to rebuild `mcp__server__tool`
   prefixes to compare them with the session's list — two spellings of the same truth, which is how a server named
   `files-extra` (registered as `files_extra`) could never be switched on. Now the host decorates each tool with

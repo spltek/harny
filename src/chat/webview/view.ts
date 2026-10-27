@@ -19,6 +19,7 @@ import { clampTemperature, clampTopP, TEMPERATURE_MAX, TEMPERATURE_MIN, TEMPERAT
 // src/chat/icons.ts): this module only names the icon and its size.
 import { icon, toolIcon, todoStatusIcon, fileBadgeIcon } from "../icons";
 import { setFold, toggleMarkup } from "./fold";
+import { createFind } from "./find";
 // The SAME boundary the core uses to decide what the model receives: importing it
 // (it is pure and dependency-free) is what keeps the transcript's marker and the
 // request from ever disagreeing about where the window starts.
@@ -3152,240 +3153,24 @@ inputEl.addEventListener("keydown", (e) => {
 // ── Find in the transcript (⌘F / Ctrl+F) ──
 // A webview has NO native find: the browser's ⌘F belongs to the host window and never reaches
 // the panel, so without this the shortcut does nothing at all here.
-const findBar = document.getElementById("find-bar") as HTMLDivElement;
-const findInput = document.getElementById("find-input") as HTMLInputElement;
-const findCount = document.getElementById("find-count") as HTMLSpanElement;
-const findPrevBtn = document.getElementById("find-prev") as HTMLButtonElement;
-const findNextBtn = document.getElementById("find-next") as HTMLButtonElement;
-const findCloseBtn = document.getElementById("find-close") as HTMLButtonElement;
-
-/** Matches of the current query, in document order, as Ranges (the selection IS the highlight). */
-let findMatches: Range[] = [];
-let findIndex = -1;
-/** Transcript length when the list was built: it changes while a run streams, so a stale list is
- *  rebuilt on the next navigation instead of silently pointing at moved text. */
-let findScanLength = -1;
-/** Above this many matches a transcript search stops being useful (and starts being slow). */
-const FIND_MAX_MATCHES = 500;
-
-function findOpen(): boolean {
-  return !findBar.classList.contains("hidden");
-}
-
-/** Every occurrence of `query` in the transcript, case-insensitively, as Ranges. */
-function collectMatches(query: string): Range[] {
-  const out: Range[] = [];
-  const needle = query.toLowerCase();
-  if (!needle) return out;
-  const walker = document.createTreeWalker(messagesEl, NodeFilter.SHOW_TEXT);
-  for (let n = walker.nextNode(); n && out.length < FIND_MAX_MATCHES; n = walker.nextNode()) {
-    const text = (n.nodeValue ?? "").toLowerCase();
-    let from = 0;
-    for (;;) {
-      const at = text.indexOf(needle, from);
-      if (at < 0) break;
-      const r = document.createRange();
-      r.setStart(n, at);
-      r.setEnd(n, at + needle.length);
-      out.push(r);
-      from = at + needle.length;
-      if (out.length >= FIND_MAX_MATCHES) break;
-    }
-  }
-  return out;
-}
-
-function updateFindCount(): void {
-  const total = findMatches.length;
-  // TRIM: a query of spaces matches nothing, but it is not a query at all — showing "no match"
-  // for it (and, worse, keeping a stale count) reads like the search is broken.
-  if (!findInput.value.trim()) {
-    findCount.textContent = "";
-    findCount.classList.remove("none");
-    return;
-  }
-  findCount.textContent = total === 0 ? "no match" : `${findIndex + 1}/${total}`;
-  findCount.classList.toggle("none", total === 0);
-}
-
 /**
- * Highlight the matches WITHOUT touching the document selection.
- *
- * The selection was the cheap highlight, but it is unusable here: setting one blurs the field you
- * are typing in (Chromium drops the focus on the body), so the find bar died after one character —
- * take the caret back and the selection is gone, keep the selection and the caret is gone. Browsers
- * solve this with the CSS Custom Highlight API, which paints WITHOUT a selection: available in the
- * Chromium VS Code ships.
+ * FIND — the engine lives in `./find` now (bar state, scan, highlights, navigation, timers), with
+ * the bar's elements passed in and ONE injected callback: opening a folded section so the match is
+ * visible. This module keeps only the wiring that belongs to the panel: the elements, and the ⌘F
+ * chord, which is part of the global key matrix.
  */
-function paintFindHighlights(): void {
-  const api = (window as unknown as { CSS?: { highlights?: Map<string, unknown> } }).CSS?.highlights;
-  const Ctor = (window as unknown as { Highlight?: new (...r: Range[]) => unknown }).Highlight;
-  if (!api || !Ctor) return; // no API: the fallback in showMatch decides, caret first
-  const current = findMatches[findIndex];
-  if (findMatches.length > 0) api.set("harny-find", new Ctor(...findMatches));
-  else api.delete("harny-find");
-  if (current) api.set("harny-find-current", new Ctor(current));
-  else api.delete("harny-find-current");
-}
-
-function clearFindHighlights(): void {
-  const api = (window as unknown as { CSS?: { highlights?: Map<string, unknown> } }).CSS?.highlights;
-  api?.delete("harny-find");
-  api?.delete("harny-find-current");
-}
-
-/** Scroll the CURRENT match into view (and, on a host without the Highlight API, select it so it
- *  IS the highlight). Painting is NOT done here: that must happen even when there is no match —
- *  otherwise clearing the field leaves the previous highlights on screen. */
-function showMatch(scroll: boolean): void {
-  const m = findMatches[findIndex];
-  if (!m) return;
-  // A match inside a FOLDED section is invisible: open it first (the count was right, the jump
-  // went nowhere). Before scrolling, so the scroll lands on something the user can actually see.
-  revealForMatch(m.startContainer);
-  // Was the user typing in one of our fields? Then the selection must NOT be moved: it would blur
-  // the field and the next keystroke would go to the transcript.
-  const wasTyping = findBar.contains(document.activeElement);
-  const caret = [findInput.selectionStart, findInput.selectionEnd] as const;
-  const hasHighlightApi = Boolean((window as unknown as { Highlight?: unknown }).Highlight);
-  const sel = window.getSelection?.();
-  if (sel && !hasHighlightApi && !wasTyping) {
-    // Fallback for a host without the Highlight API: the selection is the only highlight left,
-    // and it is used ONLY when nothing of ours is focused (so nothing can lose the caret).
-    sel.removeAllRanges();
-    sel.addRange(m);
-  }
-  if (scroll) {
-    const node = m.startContainer;
-    const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
-    el?.scrollIntoView?.({ block: "center", inline: "nearest" });
-  }
-  // Fallback path only: take the caret back where it was.
-  if (wasTyping && document.activeElement !== findInput) {
-    findInput.focus();
-    const [start, end] = caret;
-    if (start !== null && end !== null) findInput.setSelectionRange(start, end);
-  }
-}
-
-/**
- * Recompute EVERY highlight from the current query.
- *
- * Called on every change of the text (and when the transcript grows while the bar is open): the
- * paint is unconditional, so `no match` and an empty field clear what the previous query drew —
- * a highlight left over an old query points at text that no longer matches, which is worse than
- * no highlight at all.
- */
-function refreshMatches(keepIndex = false, scroll = true): void {
-  const prev = findIndex;
-  findMatches = collectMatches(findInput.value.trim());
-  findScanLength = messagesEl.textContent?.length ?? 0;
-  if (findMatches.length === 0) {
-    findIndex = -1;
-  } else if (keepIndex && prev >= 0) {
-    findIndex = Math.min(prev, findMatches.length - 1);
-  } else {
-    findIndex = 0;
-  }
-  updateFindCount();
-  paintFindHighlights(); // always: an empty result is a paint of nothing, not a skipped paint
-  if (findMatches.length > 0) showMatch(scroll);
-  else window.getSelection()?.removeAllRanges(); // the fallback highlight is gone with them
-}
-
-/** Enter/Shift+Enter (or the arrows): move through the matches, wrapping at the ends. */
-function stepMatch(delta: number): void {
-  if (findMatches.length === 0 || (messagesEl.textContent?.length ?? 0) !== findScanLength) {
-    // The transcript changed (a delta arrived): the Ranges may point at replaced nodes.
-    refreshMatches(true);
-    if (findMatches.length === 0) return;
-    if (delta > 0) return; // a fresh scan already landed on the first match
-  }
-  findIndex = (findIndex + delta + findMatches.length) % findMatches.length;
-  updateFindCount();
-  paintFindHighlights(); // the CURRENT match moved: repaint both layers
-  showMatch(true);
-}
-
-function closeFind(): void {
-  clearFindHighlights();
-  unwatchTranscriptForFind();
-  // A debounced search still armed is a LEAK: a keystroke followed by Esc within 120ms left the
-  // timer running, and it fired after the bar was gone — re-scanning the transcript and clearing a
-  // selection the user had made in the meantime.
-  if (findTimer !== undefined) window.clearTimeout(findTimer);
-  findTimer = undefined;
-  findBar.classList.add("hidden");
-  findMatches = [];
-  findIndex = -1;
-  findScanLength = -1;
-  findInput.value = "";
-  findCount.textContent = "";
-  findCount.classList.remove("none");
-  window.getSelection()?.removeAllRanges();
-}
-
-function openFind(): void {
-  findBar.classList.remove("hidden");
-  findInput.focus();
-  findInput.select();
-  watchTranscriptForFind();
-  if (findInput.value.trim()) refreshMatches();
-}
-
-/**
- * While the bar is open, the transcript keeps changing (a run streams, a section folds, a message
- * lands) and every Range we hold points into nodes that may have been REPLACED: the highlight then
- * paints nothing, or paints the wrong span. So the scan follows the DOM — debounced, and WITHOUT
- * scrolling: recomputing must never pull the reader away from what they are looking at.
- */
-let findObserver: MutationObserver | null = null;
-let findRescanTimer: number | undefined;
-function watchTranscriptForFind(): void {
-  if (findObserver || typeof MutationObserver === "undefined") return;
-  findObserver = new MutationObserver(() => {
-    if (findRescanTimer !== undefined) window.clearTimeout(findRescanTimer);
-    findRescanTimer = window.setTimeout(() => {
-      findRescanTimer = undefined;
-      if (!findOpen() || !findInput.value.trim()) return;
-      refreshMatches(true, false);
-    }, 300);
-  });
-  findObserver.observe(messagesEl, { childList: true, subtree: true, characterData: true });
-}
-function unwatchTranscriptForFind(): void {
-  findObserver?.disconnect();
-  findObserver = null;
-  if (findRescanTimer !== undefined) window.clearTimeout(findRescanTimer);
-  findRescanTimer = undefined;
-}
-
-let findTimer: number | undefined;
-findInput.addEventListener("input", () => {
-  // Debounced: the transcript can be large, and a search per keystroke would stutter.
-  if (findTimer !== undefined) window.clearTimeout(findTimer);
-  findTimer = window.setTimeout(() => {
-    findTimer = undefined;
-    refreshMatches();
-  }, 120);
-});
-findInput.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") {
-    e.preventDefault();
-    closeFind();
-    return;
-  }
-  if (e.key === "Enter") {
-    e.preventDefault();
-    stepMatch(e.shiftKey ? -1 : 1);
-    return;
-  }
-  // Keep the other global shortcuts (Esc = Stop, ⌘F = close) from firing from in here.
-  e.stopPropagation();
-});
-findNextBtn.addEventListener("click", () => stepMatch(1));
-findPrevBtn.addEventListener("click", () => stepMatch(-1));
-findCloseBtn.addEventListener("click", () => closeFind());
+const find = createFind(
+  {
+    bar: document.getElementById("find-bar") as HTMLDivElement,
+    input: document.getElementById("find-input") as HTMLInputElement,
+    count: document.getElementById("find-count") as HTMLSpanElement,
+    prev: document.getElementById("find-prev") as HTMLButtonElement,
+    next: document.getElementById("find-next") as HTMLButtonElement,
+    close: document.getElementById("find-close") as HTMLButtonElement,
+    transcript: messagesEl,
+  },
+  { reveal: revealForMatch },
+);
 
 // ── The transcript's own context menu (Copy / Select all) ──
 // The native menu of a webview is not a contract: VS Code does not inject one on every OS.
@@ -3474,22 +3259,17 @@ window.addEventListener(
       // wins, the key never gets here and the `openFind` message does the job instead.)
       e.stopPropagation();
       e.stopImmediatePropagation?.();
-      // Standard behaviour: ⌘F brings you TO the field (selecting what is there), it does not
-      // toggle the bar away — Esc is the way out.
-      if (findOpen()) {
-        findInput.focus();
-        findInput.select();
-      } else {
-        openFind();
-      }
+      // Standard behaviour, owned by the engine: ⌘F brings you TO the field (selecting what is
+      // there) and never toggles the bar away — Esc is the way out.
+      find.focusOrOpen();
       return;
     }
     if (e.key === "Escape") {
-      if (findOpen()) {
+      if (find.isOpen()) {
         // Esc closes find BEFORE it reaches Stop: searching is the more local context.
         e.preventDefault();
         e.stopPropagation();
-        closeFind();
+        find.close();
         return;
       }
       if (!ctxMenu.classList.contains("hidden")) {
@@ -6483,7 +6263,7 @@ window.addEventListener("message", (e) => {
     case "openFind": {
       // The host's keybinding (⌘F/Ctrl+F while this view has the focus) lands here: VS Code keeps
       // the chord for itself otherwise, opening its own find and taking the focus away from us.
-      openFind();
+      find.open();
       break;
     }
     case "attachments": {
