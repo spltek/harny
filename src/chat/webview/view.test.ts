@@ -303,13 +303,30 @@ async function reloadView(initOverrides: Record<string, unknown> = {}): Promise<
  * is a fixture, not a copy per block: one top-level `beforeEach` installs it for all of them, and
  * a test that needs more calls this with its own overrides.
  */
+/**
+ * The platform every test runs on unless it says otherwise.
+ *
+ * jsdom derives its default UA from the HOST (`darwin` here, `linux`/`win32` on CI), so anything
+ * reading `navigator.userAgent` — the ⌘ vs Ctrl matrix, the Chrome-only context-menu suppression —
+ * used to behave differently on the maintainer's Mac and on the build machines. Pinned, exactly like
+ * the clock would be: the platform is an INPUT of these tests, never an accident of where they run.
+ */
+const MAC_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)";
+
 function setupFixture(initOverrides: Record<string, unknown> = {}, savedState: Record<string, unknown> = {}): void {
   posted.length = 0;
   detachGlobalListeners();
-  // The USER AGENT is a prerequisite too: a test that stubs it ("this is Windows") must not decide
-  // for the next one, which is exactly how a shuffled order made the ⌘/Ctrl matrix read as
-  // "not macOS". Deleting the own property restores jsdom's own getter.
-  delete (window.navigator as unknown as Record<string, unknown>).userAgent;
+  // THE PLATFORM IS PINNED, and for a real reason.
+  //
+  // This used to `delete navigator.userAgent`, which is a NO-OP: `userAgent` is a getter on the
+  // prototype, so the deletion left jsdom's own value in place — and that value mirrors the HOST OS
+  // (`darwin` here, `linux`/`win32` on CI). Every test that depends on the ⌘/Ctrl matrix was
+  // therefore green on a Mac and red on Ubuntu and Windows, silently, while the non-macOS branch of
+  // `isMacPlatform()` was never exercised at all.
+  //
+  // So it is set explicitly: a test that wants another platform stubs it with `setUa(...)` (see the
+  // platform tests), and the rest run on ONE known OS wherever the suite happens to run.
+  Object.defineProperty(window.navigator, "userAgent", { value: MAC_USER_AGENT, configurable: true });
   setupDom(initOverrides, savedState);
 }
 
@@ -9318,6 +9335,23 @@ describe("soft steering + pending bubbles (webview)", () => {
   });
 });
 
+describe("the test platform is PINNED (otherwise the suite mirrors the host OS)", () => {
+  it("jsdom would report the HOST's OS — the fixture overrides it with a known one", async () => {
+    // Why this test exists: the CI runs on Ubuntu and Windows, where jsdom's own UA says `linux` /
+    // `win32`. Anything reading `navigator.userAgent` (the ⌘/Ctrl matrix, the Chrome-only
+    // context-menu suppression) then behaves one way on the maintainer's Mac and another on the
+    // build machines — which is exactly how four tests were green here and red there, while the
+    // non-macOS branches were never executed anywhere.
+    //
+    // `setupFixture` pins it. This asserts the PIN, not the value jsdom would have chosen, so it is
+    // deterministic on every OS: remove the pin and it fails wherever it runs.
+    setupFixture();
+    expect(navigator.userAgent).toContain("Macintosh");
+    // …and the app reads the SAME source it is pinned to.
+    expect(navigator.userAgent).toMatch(/Macintosh|Mac OS X/);
+  });
+});
+
 describe("Insert-in hint — Queue/Steer (webview)", () => {
   const hint = () => document.getElementById("insert-hint") as HTMLElement;
   const word = () => document.getElementById("insert-hint-word") as HTMLElement;
@@ -9427,6 +9461,54 @@ describe("Insert-in hint — Queue/Steer (webview)", () => {
       new MouseEvent("click", { bubbles: true }),
     );
     expect(posted.find((m: any) => m.type === "send")).toMatchObject({ mode: "steer", text: "use Rome" });
+  });
+
+  // ── the OTHER platform, tested on purpose ──
+  //
+  // Everything above runs with the UA pinned to macOS (see `MAC_USER_AGENT`): the fixture used to
+  // `delete navigator.userAgent`, a NO-OP that left jsdom's host-derived value in place, so these
+  // tests were green on a Mac and RED on Ubuntu and Windows — and the non-macOS branches of
+  // `isMacPlatform()` were never executed anywhere. They are executed here.
+  describe("off macOS: Ctrl only, and the native menu is kept", () => {
+    const setUa = (ua: string): void => {
+      Object.defineProperty(window.navigator, "userAgent", { value: ua, configurable: true });
+    };
+    const WINDOWS = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)";
+    const LINUX = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko)";
+
+    for (const [name, ua] of [
+      ["Windows", WINDOWS],
+      ["Linux", LINUX],
+    ] as const) {
+      it(`on ${name} the modifier is Ctrl, and Meta does nothing`, async () => {
+        setupFixture();
+        setUa(ua);
+        await loadView();
+        hostMessage({ type: "status", active: true });
+        // Meta is NOT the modifier there: the hint stays Queue.
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta" }));
+        expect(word().textContent).toBe("Queue");
+        expect(hint().classList.contains("is-steer")).toBe(false);
+        // Ctrl is.
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control", ctrlKey: true }));
+        expect(word().textContent).toBe("Steer");
+        expect(hint().classList.contains("is-steer")).toBe(true);
+      });
+    }
+
+    it("on Windows/Linux the native context menu on a CONTROL is kept (the suppression is Chrome's)", async () => {
+      setupFixture();
+      setUa(WINDOWS);
+      await loadView();
+      const onButton = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+      (document.getElementById("ctl-toggle-btn") as HTMLButtonElement).dispatchEvent(onButton);
+      // Not prevented: there the native menu is the one that knows Cut/Copy/Paste.
+      expect(onButton.defaultPrevented).toBe(false);
+      // The transcript's PROSE still uses our menu: that part is not platform-specific.
+      const onProse = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+      (document.querySelector("#messages .msg") as HTMLElement).dispatchEvent(onProse);
+      expect(onProse.defaultPrevented).toBe(true);
+    });
   });
 
   it("keeps the prompt enabled while working with a mode hint", async () => {

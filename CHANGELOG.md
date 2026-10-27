@@ -405,6 +405,14 @@ track with a WHITE dot), and
 
 ### Fixed
 
+- **The suite no longer mirrors the HOST's OS.** `jsdom` derives `navigator.userAgent` from the machine it runs on
+  (`darwin` on a Mac, `linux`/`win32` on CI), and the fixture "reset" it with `delete navigator.userAgent` — a **no-op**,
+  because `userAgent` is a getter on the prototype. So the ⌘/Ctrl matrix and the Chrome-only context-menu suppression were
+  green on macOS and **red on Ubuntu and Windows**, while the non-macOS branches of `isMacPlatform()` were never executed
+  anywhere. The platform is now PINNED in the fixture (a known macOS UA), a guard test asserts the pin itself — so
+  removing it turns red wherever it runs — and the non-macOS behaviour (Ctrl only, native menu kept on controls) has its
+  own tests instead of happening by accident.
+
 - **The models gear is locked while THIS session works.** It stayed clickable during a run, so it opened the manager and
   offered a model switch for a request already sent — the trap the model dropdown and the mode pills already refuse. The
   lock follows the session you are looking at, not the machine: another session's run no longer freezes your gear, while
