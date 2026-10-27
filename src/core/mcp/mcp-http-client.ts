@@ -56,8 +56,12 @@ export class McpHttpClient implements McpClient {
     });
   }
 
-  async callTool(name: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }> {
-    const res = (await this.request("tools/call", { name, arguments: args })) as
+  async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<{ text: string; isError: boolean }> {
+    const res = (await this.request("tools/call", { name, arguments: args }, signal)) as
       { content?: unknown; isError?: boolean } | undefined;
     return { text: formatMcpContent(res?.content), isError: res?.isError === true };
   }
@@ -66,17 +70,18 @@ export class McpHttpClient implements McpClient {
     this.closed = true;
   }
 
-  private request(method: string, params: unknown): Promise<unknown> {
+  private request(method: string, params: unknown, signal?: AbortSignal): Promise<unknown> {
     const id = this.nextId++;
-    return this.post({ jsonrpc: "2.0", id, method, params }, id);
+    return this.post({ jsonrpc: "2.0", id, method, params }, id, signal);
   }
 
   private async notify(method: string, params: unknown): Promise<void> {
     await this.post({ jsonrpc: "2.0", method, params });
   }
 
-  private async post(message: unknown, expectId?: number): Promise<unknown> {
+  private async post(message: unknown, expectId?: number, signal?: AbortSignal): Promise<unknown> {
     if (this.closed) throw new Error("MCP HTTP client closed");
+    if (signal?.aborted) throw new Error("cancelled by Stop");
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       // Streamable HTTP requires accepting BOTH shapes.
@@ -88,6 +93,9 @@ export class McpHttpClient implements McpClient {
     const controller = new AbortController();
     const timeoutMs = this.opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    // Stop reaches the fetch too: an HTTP call must not keep the run alive until its timeout.
+    const onAbort = (): void => controller.abort();
+    signal?.addEventListener("abort", onAbort, { once: true });
     try {
       const resp = await fetch(this.opts.url, {
         method: "POST",
@@ -120,10 +128,17 @@ export class McpHttpClient implements McpClient {
       }
       return (payload as { result?: unknown } | undefined)?.result;
     } catch (e) {
+      // An abort here is EITHER our timeout or the user's Stop, and the two must not read the
+      // same: one is a slow server, the other is a decision.
+      if (signal?.aborted) {
+        this.log("cancelled by Stop");
+        throw new Error("cancelled by Stop");
+      }
       this.log(`error: ${e instanceof Error ? e.message : String(e)}`);
       throw e;
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
     }
   }
 

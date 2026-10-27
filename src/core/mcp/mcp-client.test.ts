@@ -182,6 +182,50 @@ process.exit(190);
     expect(reported).toBeUndefined();
   });
 
+  it("Stop cancels an IN-FLIGHT call instead of waiting for its timeout", async () => {
+    // Before this, a tools/call sat until timeoutMs even after the user pressed Stop: the answer
+    // arrived when the run was already over. The server is told (notifications/cancelled) and the
+    // pending entry is dropped, so the late reply is ignored — and the transport stays usable.
+    const SLOW = `
+let buf = "";
+process.stdin.on("data", (d) => {
+  buf += d;
+  let i;
+  while ((i = buf.indexOf("\\n")) >= 0) {
+    const line = buf.slice(0, i); buf = buf.slice(i + 1);
+    if (!line.trim()) continue;
+    const m = JSON.parse(line);
+    if (m.method === "initialize") process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "slow", version: "1" } } }) + "\\n");
+    else if (m.method === "tools/list") process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { tools: [{ name: "slow" }] } }) + "\\n");
+    else if (m.method === "tools/call") { const id = m.id; setTimeout(() => { try { process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: "too late" }] } }) + "\\n"); } catch {} }, 3000); }
+  }
+});
+`;
+    const c = new McpStdioClient({ command: process.execPath, args: ["-e", SLOW], timeoutMs: 10_000 });
+    await c.start();
+    const ac = new AbortController();
+    const call = c.callTool("slow", {}, ac.signal);
+    setTimeout(() => ac.abort(), 50);
+    const started = Date.now();
+    await expect(call).rejects.toThrow("cancelled by Stop");
+    // It rejected immediately, NOT after the 3s server delay (or the 10s timeout).
+    expect(Date.now() - started).toBeLessThan(2_000);
+    // The transport survived: the same client still answers.
+    expect((await c.listTools()).map((t) => t.name)).toEqual(["slow"]);
+    c.close();
+  });
+
+  it("an already-aborted signal never sends the request at all", async () => {
+    const c = new McpStdioClient({ command: process.execPath, args: ["-e", SERVER], timeoutMs: 3000 });
+    await c.start();
+    const ac = new AbortController();
+    ac.abort();
+    await expect(c.callTool("echo", {}, ac.signal)).rejects.toThrow("cancelled by Stop");
+    // …and the client is fine.
+    expect((await c.callTool("echo", {})).text).toContain("echo");
+    c.close();
+  });
+
   it("rejects when the server cannot start", async () => {
     const c = new McpStdioClient({ command: process.execPath, args: ["-e", "process.exit(0)"], timeoutMs: 2000 });
     await expect(c.start()).rejects.toThrow();

@@ -61,6 +61,15 @@ track with a WHITE dot), and
   says so instead of pretending a per-tool rule did it. The refusal the model receives names this third way out, the
   README stops calling `analyze` file-only, and `config.example.jsonc` finally documents the MCP block (the server-wide
   `analyze` is the one field with no control in the form).
+- **Stop cancels an in-flight MCP call, and an MCP result is capped like any other tool's.** Both were the same gap, at
+  the **execution boundary** where a result enters the conversation. The run's `AbortSignal` now travels down
+  (`ToolContext.signal` → `McpClient.callTool(…)`), so a `tools/call` is dropped the moment you press Stop: the server
+  gets the protocol's own `notifications/cancelled`, the pending entry is discarded, the late reply is ignored and the
+  process stays alive for the next turn — before this the call sat until its timeout and the answer arrived when the
+  run was already over. The result is passed through `toolOutputCapChars` (10% of the session's usable window, at most
+  50KB, at least 2KB) with the same truncation note Shell and Grep use: observation masking only touches OLD results,
+  so the newest one — the one the model is waiting for — was the one a fixed ceiling had let eat the window. The HTTP
+  client aborts its `fetch` on the same signal, and a cancel is never reported as a timeout.
 - **The MCP editor can configure an HTTP server — URL and headers are fields now.** It had only Command / Args / Env,
   so a `url` server existed only if you hand-edited `config.json` — while the README promised "a command (stdio) **or**
   a URL (HTTP)". The form now has a **URL (HTTP)** field and a **Headers** box (`KEY=VALUE` or `KEY: VALUE`, the HTTP

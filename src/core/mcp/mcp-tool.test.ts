@@ -106,7 +106,11 @@ describe("McpTool — the Analyze policy (the trust rule)", () => {
 });
 
 function stubClient(
-  callTool: (name: string, args: Record<string, unknown>) => Promise<{ text: string; isError: boolean }>,
+  callTool: (
+    name: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ) => Promise<{ text: string; isError: boolean }>,
 ): McpStdioClient {
   return { callTool } as unknown as McpStdioClient;
 }
@@ -162,6 +166,57 @@ describe("McpTool", () => {
     const r = await tool.execute({});
     expect(r.isError).toBe(true);
     expect(r.content).toContain("boom");
+  });
+
+  it("cuts a result longer than the MODEL's budget, with a note saying what to do", async () => {
+    // The newest result is the one the model is waiting for, and masking only touches OLD ones:
+    // the cap belongs here, at the boundary, not inside each server.
+    const huge = "x".repeat(60_000);
+    const tool = new McpTool(
+      "test",
+      { name: "big" },
+      stubClient(async () => ({ text: huge, isError: false })),
+    );
+    const r = await tool.execute({}, { contextBudget: 8000 });
+    // 8000 tokens × 10% × 4 chars = 3200, far under the MCP ceiling.
+    expect(r.content.length).toBeLessThan(4_000);
+    expect(r.content).toContain("Output truncated at");
+    expect(r.isError).toBe(false);
+  });
+
+  it("without a budget the MCP ceiling still applies (a 50KB server answer)", async () => {
+    const tool = new McpTool(
+      "test",
+      { name: "big" },
+      stubClient(async () => ({ text: "y".repeat(60_000), isError: false })),
+    );
+    const r = await tool.execute({});
+    expect(r.content).toContain("Output truncated at 50KB");
+    expect(r.content.length).toBeLessThan(51_000);
+  });
+
+  it("passes a short result through untouched (no note, no slicing)", async () => {
+    const tool = new McpTool(
+      "test",
+      { name: "small" },
+      stubClient(async () => ({ text: "ok", isError: false })),
+    );
+    expect(await tool.execute({}, { contextBudget: 8000 })).toEqual({ content: "ok", isError: false });
+  });
+
+  it("hands the run's abort signal to the transport (Stop is not a timeout)", async () => {
+    let seen: AbortSignal | undefined;
+    const tool = new McpTool(
+      "test",
+      { name: "slow" },
+      stubClient(async (_name, _args, signal) => {
+        seen = signal;
+        return { text: "", isError: false };
+      }),
+    );
+    const ac = new AbortController();
+    await tool.execute({}, { signal: ac.signal });
+    expect(seen).toBe(ac.signal);
   });
 
   it("works with no inputSchema (empty object parameters)", () => {

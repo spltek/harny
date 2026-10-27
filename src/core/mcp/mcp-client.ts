@@ -122,8 +122,12 @@ export class McpStdioClient implements McpClient {
   }
 
   /** Invoke a tool and flatten its content blocks into text. */
-  async callTool(name: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }> {
-    const res = (await this.request("tools/call", { name, arguments: args })) as
+  async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<{ text: string; isError: boolean }> {
+    const res = (await this.request("tools/call", { name, arguments: args }, signal)) as
       { content?: unknown; isError?: boolean } | undefined;
     return { text: formatMcpContent(res?.content), isError: res?.isError === true };
   }
@@ -193,8 +197,10 @@ export class McpStdioClient implements McpClient {
     // Server-initiated requests/notifications are ignored (tools-only client).
   }
 
-  private request(method: string, params: unknown): Promise<unknown> {
+  private request(method: string, params: unknown, signal?: AbortSignal): Promise<unknown> {
     if (this.closed || !this.child) return Promise.reject(new Error("MCP server is not running"));
+    // Already cancelled before we even asked: do not send anything.
+    if (signal?.aborted) return Promise.reject(new Error("cancelled by Stop"));
     const id = this.nextId++;
     const timeoutMs = this.opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     return new Promise((resolve, reject) => {
@@ -202,7 +208,28 @@ export class McpStdioClient implements McpClient {
         this.pending.delete(id);
         reject(new Error(`MCP ${method} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
+      // Stop must reach an IN-FLIGHT call: without this the request sat here until its
+      // timeout, and the answer arrived after the run was already over. The server is told
+      // (the protocol's own cancellation notification), the pending entry is dropped and the
+      // late reply is ignored — the process stays alive for the next turn.
+      const onAbort = (): void => {
+        if (!this.pending.delete(id)) return;
+        clearTimeout(timer);
+        this.notify("notifications/cancelled", { requestId: id, reason: "the user pressed Stop" });
+        reject(new Error("cancelled by Stop"));
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      this.pending.set(id, {
+        resolve: (v) => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve(v);
+        },
+        reject: (e) => {
+          signal?.removeEventListener("abort", onAbort);
+          reject(e);
+        },
+        timer,
+      });
       this.send({ jsonrpc: "2.0", id, method, params });
     });
   }

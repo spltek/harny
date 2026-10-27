@@ -1,7 +1,16 @@
 import type { McpClient, McpToolInfo, ServerAnalyzePolicy } from "./types";
-import type { AnalyzePolicy, Tool, ToolDefinition, ToolResult } from "../tools/tool";
+import type { AnalyzePolicy, Tool, ToolContext, ToolDefinition, ToolResult } from "../tools/tool";
+import { toolOutputCapChars, truncationNote } from "../tools/output-budget";
 
 /** Harny tool-name for an MCP tool (Claude-compatible namespacing). */
+/**
+ * The MCP result's own ceiling, before the model-aware cap: the same order of magnitude as
+ * Shell's, because an MCP server can return a whole table in one answer. The real limit is
+ * `toolOutputCapChars`, which scales it to the session's usable window — a fixed ceiling is
+ * wrong for a small local model (50KB is its ENTIRE context) and pointless for a big one.
+ */
+const MCP_OUTPUT_CAP_CHARS = 50_000;
+
 export function mcpToolName(server: string, tool: string): string {
   const clean = (s: string) => s.replace(/[^A-Za-z0-9_]/g, "_");
   return `mcp__${clean(server)}__${clean(tool)}`;
@@ -92,10 +101,20 @@ export class McpTool implements Tool {
     };
   }
 
-  async execute(args: Record<string, unknown>): Promise<ToolResult> {
+  execute(args: Record<string, unknown> = {}, ctx?: ToolContext): Promise<ToolResult> {
+    return this.run(args, ctx);
+  }
+
+  private async run(args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolResult> {
     try {
-      const { text, isError } = await this.client.callTool(this.info.name, args ?? {});
-      return { content: text, isError };
+      // The run's abort signal goes all the way down: pressing Stop must not leave an MCP call
+      // hanging until its timeout (it did, and the answer came back after the run was over).
+      const { text, isError } = await this.client.callTool(this.info.name, args ?? {}, ctx?.signal);
+      // The result enters the CONVERSATION here, so this is where the cap belongs: old results
+      // get masked later, but THIS is the one the model is waiting for.
+      const cap = toolOutputCapChars(MCP_OUTPUT_CAP_CHARS, ctx?.contextBudget);
+      const content = text.length > cap ? text.slice(0, cap) + truncationNote(cap) : text;
+      return { content, isError };
     } catch (e) {
       return {
         content: `MCP tool "${this.name}" failed: ${e instanceof Error ? e.message : String(e)}`,

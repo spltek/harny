@@ -165,6 +165,30 @@ describe("McpHttpClient (streamable HTTP)", () => {
     expect(err.message).toBe("HTTP 429 — rate limited: wait a moment and Test again");
   });
 
+  it("Stop aborts the fetch: the call does not hang until its timeout", async () => {
+    // A remote server that answers slowly: without the signal the client would sit here for
+    // `timeoutMs`, long after the run was over.
+    const s = await serve((m, _req, res) => {
+      // Answer `initialize` so the handshake completes, then never answer a tools/call: the
+      // abort is the only way out of the second one.
+      if ((m as { method?: string }).method === "tools/call") return;
+      res
+        .writeHead(200, { "content-type": "application/json" })
+        .end(JSON.stringify({ jsonrpc: "2.0", id: (m as { id?: number }).id, result: {} }));
+    });
+    closers.push(s.close);
+    const c = new McpHttpClient({ url: s.url, timeoutMs: 10_000 });
+    const ac = new AbortController();
+    const call = c.start().then(() => {
+      setTimeout(() => ac.abort(), 50);
+      return c.callTool("slow", {}, ac.signal);
+    });
+    const started = Date.now();
+    await expect(call).rejects.toThrow("cancelled by Stop");
+    expect(Date.now() - started).toBeLessThan(3_000);
+    c.close();
+  });
+
   it("logs the critical points (request, status, session, errors)", async () => {
     const logs: string[] = [];
     const s = await serve((m, _req, res) => {

@@ -41,7 +41,11 @@ export interface McpClient {
   /** Connect + complete the `initialize` handshake. */
   start(): Promise<void>;
   listTools(): Promise<McpToolInfo[]>;
-  callTool(name: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }>;
+  callTool(
+    name: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<{ text: string; isError: boolean }>;
   close(): void;
   /** OPTIONAL: called when the server dies ON ITS OWN (a crash, an idle exit) — never for
    * a `close()` we asked for. The manager uses it to mark the server down and withdraw its
