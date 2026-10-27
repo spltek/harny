@@ -228,8 +228,9 @@ The cap is a **0–100 slider per session** — `0` means *Off = no cap*.
 The prompt stays usable **while the agent works**.
 
 - **Enter** → **queues** the message; it runs as a new send when the current run ends.
-- **Ctrl/Cmd+Enter** → **steers**: injected at the next turn boundary, without restarting the run.
-- An **"Insert in Queue / Steer"** hint (left end of the strip above the prompt, opposite **Collapse all**) shows what Enter will do: the word sits in a pill that turns red — *Steer* — only while you hold **Ctrl/Cmd** during a run. It is an indicator, never a button: dimmed when nothing is running.
+- **Ctrl/Cmd+Enter** → **steers**: injected at the next turn boundary, without restarting the run. The modifier is the **host OS's own** — **⌘** on macOS (Ctrl is accepted too, since the hint says "Ctrl/Cmd"), **Ctrl** on Windows/Linux, where a bare **Win/Super** key is left to the OS.
+- An **"Insert in Queue / Steer"** hint (left end of the strip above the prompt, opposite **Collapse all**) shows what Enter will do: the word sits in a pill that turns red — *Steer* — only while you hold the modifier during a run. It is an indicator, never a button: dimmed when nothing is running, and it **never moves the view or takes the focus** — holding ⌘ to copy must not scroll you away from what you are reading.
+- **Copying during a run works like anywhere else**: ⌘C / Ctrl+C and the right-click **Copy** menu. A text selection is a copy gesture, so while one exists the modifier does not light the Steer pill, and the native menu is never swallowed on a selection (on macOS it is suppressed only over the chrome, where Ctrl+click *is* a click).
 - Pending messages appear as **cancellable bubbles** above the prompt, inside a **collapsible section** whose header carries the counts (`Steer 1 · Queued 2`) — so a folded block still tells you what is waiting. A **new** message re-opens it.
 - Each bubble is **one line**, and born folded — it wraps only when you open it. The fold
   appears **only when there is more to see**: it is measured on the rendered bubble (not

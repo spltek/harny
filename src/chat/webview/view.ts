@@ -2610,8 +2610,6 @@ let pendingSnapshot: string | null = null;
  * released). It replaced the Queue/Steer pill that used to sit in the model row.
  */
 let steerModifierHeld = false;
-/** The mode last PAINTED, so a real Queue<->Steer switch can be told from a repaint. */
-let lastSteerMode = false;
 
 /** The mode a new message will use right now. */
 function effectiveSendMode(): "queue" | "steer" {
@@ -2621,8 +2619,6 @@ function effectiveSendMode(): "queue" | "steer" {
 /** Paint the hint: word + red "Steer" pill + dim when idle. */
 function renderSteerMode(): void {
   const isSteer = effectiveSendMode() === "steer";
-  const switched = isSteer !== lastSteerMode;
-  lastSteerMode = isSteer;
   insertHint.classList.toggle("is-steer", isSteer);
   // Idle has no meaningful choice: dim the line exactly like the old disabled pill.
   insertHint.classList.toggle("is-idle", !streamingActive);
@@ -2632,10 +2628,51 @@ function renderSteerMode(): void {
     : streamingActive
       ? "Queue: the next message runs after the current run ends (hold Ctrl/Cmd to Steer)"
       : "Queue: the next message runs after the current run ends";
-  // Switching Queue <-> Steer is a decision about the run in progress — ONCE per real
-  // switch, not on every repaint of the indicator (it repaints on each key press while
-  // the modifier is held).
-  if (switched) followAndFocus();
+  // Switching Queue <-> Steer is a decision about the run in progress, but this function also
+  // runs for the INDICATOR — and holding Ctrl/Cmd (⌘C, a copy!) switches the mode on every key
+  // press. It must never move the viewport nor steal focus: it used to call `followAndFocus()`,
+  // so a reader parked above the bottom was yanked to the last message and lost the selection
+  // they were about to copy, on the very keystroke that was meant to copy it.
+}
+
+/** True when the user has text selected OUTSIDE a form control — a copy gesture in progress. */
+function hasTextSelection(): boolean {
+  const sel = window.getSelection?.();
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return false;
+  if (!sel.toString().trim()) return false;
+  // A selection INSIDE the prompt is the textarea's own (select-all before retyping, say): not a
+  // copy gesture on the transcript, so it must not block the Steer indicator.
+  const anchor = sel.anchorNode;
+  const el = anchor instanceof Element ? anchor : (anchor?.parentElement ?? null);
+  return !el?.closest("input, textarea, [contenteditable='true']");
+}
+
+/**
+ * macOS-only gestures. Two things genuinely differ, and the rest of the UI is deliberately the
+ * same on every OS:
+ *
+ *  · the PRIMARY modifier is ⌘ (Ctrl is accepted as an alias, because the hint says "Ctrl/Cmd");
+ *  · Ctrl+click IS a secondary click, so the context menu would pop from a Ctrl+click over a
+ *    control — that is the only reason that menu was ever suppressed.
+ *
+ * Read lazily (never at module scope), so a test can stub the platform per case.
+ */
+function isMacPlatform(): boolean {
+  const ua = typeof navigator === "undefined" ? "" : (navigator.userAgent ?? "");
+  // `darwin` is what a bare JS runtime (jsdom, a headless harness) reports instead of
+  // `Macintosh`; real Chromium in a webview always says Macintosh.
+  return /Macintosh|Mac OS X|iPhone|iPad|darwin/i.test(ua);
+}
+
+/** Does this KEY EVENT hold the modifier that forces Steer? Meta is the Windows/Super key off macOS,
+ * so a bare tap of it must not light the pill and hijack the next message. */
+function holdsSteerModifier(e: KeyboardEvent | MouseEvent): boolean {
+  return isMacPlatform() ? e.metaKey || e.ctrlKey : e.ctrlKey;
+}
+
+/** The same question for a bare modifier keydown (no other key involved yet). */
+function isSteerModifierKey(e: KeyboardEvent): boolean {
+  return isMacPlatform() ? e.key === "Meta" || e.key === "Control" : e.key === "Control";
 }
 
 function send(): void {
@@ -2696,7 +2733,7 @@ function send(): void {
 
 // The play key uses the SAME mode as Enter (toggle state, Ctrl/Cmd override).
 sendBtn.addEventListener("click", (e) => {
-  steerModifierHeld = steerModifierHeld || e.ctrlKey || e.metaKey;
+  steerModifierHeld = steerModifierHeld || holdsSteerModifier(e);
   send();
 });
 attachBtn.addEventListener("click", () => vscode.postMessage({ type: "pickFiles" }));
@@ -2705,27 +2742,35 @@ attachBtn.addEventListener("click", () => vscode.postMessage({ type: "pickFiles"
 // be missed when the
 // window loses focus with the key down, so blur releases it too.
 window.addEventListener("keydown", (e) => {
-  if (e.key === "Control" || e.key === "Meta") {
-    steerModifierHeld = true;
-    renderSteerMode();
-  }
+  if (!isSteerModifierKey(e)) return;
+  // With a selection in the transcript the modifier belongs to the COPY (⌘C / Ctrl+C), not to
+  // Steer: lighting the pill there reads as "your copy was taken as a command".
+  if (hasTextSelection()) return;
+  steerModifierHeld = true;
+  renderSteerMode();
 });
 window.addEventListener("keyup", (e) => {
-  if (e.key === "Control" || e.key === "Meta") {
-    steerModifierHeld = false;
-    renderSteerMode();
-  }
+  if (!isSteerModifierKey(e)) return;
+  steerModifierHeld = false;
+  renderSteerMode();
 });
 window.addEventListener("blur", () => {
   steerModifierHeld = false;
   renderSteerMode();
 });
-// On macOS Ctrl+click is a SECONDARY click: over a control it would pop the
-// native cut/copy/paste menu and swallow the Ctrl+click. Suppress it on the UI
-// chrome (buttons, cards, selects); keep it inside inputs/textarea for paste.
+// Ctrl+click IS a secondary click on macOS: over a control it would pop the native
+// cut/copy/paste menu and swallow the Ctrl+click. That ambiguity exists ONLY there — on
+// Windows/Linux Ctrl+click is nothing special, so the menu is never suppressed. And a text
+// selection is a copy request everywhere: hiding its menu left Copy to the shortcut alone.
 document.addEventListener("contextmenu", (e) => {
   const target = e.target as HTMLElement | null;
-  if (!target?.closest("input, textarea")) e.preventDefault();
+  if (!target) return;
+  if (target.closest("input, textarea, [contenteditable='true']")) return;
+  if (hasTextSelection()) return;
+  if (!isMacPlatform()) return;
+  // Chrome only: a card header, a button, a select. Prose (the transcript, a tool output)
+  // keeps the native menu, where Copy lives.
+  if (target.closest("button, select, label, summary, a, .tool-header, .thinking-header")) e.preventDefault();
 });
 
 /** Read a dragged/pasted File as a base64 data URL. */
@@ -2992,8 +3037,8 @@ inputEl.addEventListener("keydown", (e) => {
   }
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
-    // Ctrl/Cmd is a momentary override to Steer; otherwise the toggle decides.
-    steerModifierHeld = steerModifierHeld || e.ctrlKey || e.metaKey;
+    // The OS's own modifier is a momentary override to Steer; otherwise the toggle decides.
+    steerModifierHeld = steerModifierHeld || holdsSteerModifier(e);
     send();
   }
   if (e.key === "Escape") {

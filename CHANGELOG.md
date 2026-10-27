@@ -61,6 +61,17 @@ track with a WHITE dot), and
   says so instead of pretending a per-tool rule did it. The refusal the model receives names this third way out, the
   README stops calling `analyze` file-only, and `config.example.jsonc` finally documents the MCP block (the server-wide
   `analyze` is the one field with no control in the form).
+- **Copying during a run works, and holding ⌘ no longer scrolls you away from what you are reading.** Two bugs shared
+  one cause. The Queue/Steer **indicator** called the same helper a real decision did, so merely holding Ctrl/Cmd
+  switched the mode AND ran `followAndFocus()`: the transcript jumped to the last message, following re-armed itself,
+  and the focus went to the prompt — which discarded the selection the keystroke was about to copy. The indicator now
+  only paints; the view and the caret move on a real decision (a send, a pending change). And the `contextmenu` handler
+  suppressed the native menu everywhere outside inputs, so **Copy existed only as a shortcut**: it is now suppressed
+  only on macOS over the chrome (where Ctrl+click *is* a click), and **never** on a text selection anywhere.
+- **The keyboard now follows the host OS, where it must.** The Steer modifier is the OS's own — **⌘** on macOS (Ctrl
+  accepted too, as the hint says "Ctrl/Cmd"), **Ctrl** on Windows/Linux, where a bare **Win/Super** key is the OS's and
+  must not hijack the next message; the context-menu rule exists for macOS's Ctrl+click and is now macOS-only.
+  Everything else (Enter, Shift+Enter, Esc, arrows, Tab) is deliberately identical everywhere.
 - **Stop cancels an in-flight MCP call, and an MCP result is capped like any other tool's.** Both were the same gap, at
   the **execution boundary** where a result enters the conversation. The run's `AbortSignal` now travels down
   (`ToolContext.signal` → `McpClient.callTool(…)`), so a `tools/call` is dropped the moment you press Stop: the server

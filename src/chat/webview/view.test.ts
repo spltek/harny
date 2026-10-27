@@ -8045,6 +8045,89 @@ describe("soft steering + pending bubbles (webview)", () => {
     hostMessage({ type: "status", active: true });
   }
 
+  it("holding Ctrl/Cmd to COPY does not yank the viewport down nor steal the focus", async () => {
+    // The reported bug: reading above the bottom during a run, press ⌘ (half of ⌘C) and the
+    // transcript jumped to the last message and the pill lit up. The modifier is an INDICATOR:
+    // it must never move the view or focus the prompt.
+    await loadView();
+    startWorking();
+    const list = document.getElementById("messages")!;
+    // Park the reader above the bottom.
+    Object.defineProperty(list, "scrollHeight", { value: 5000, configurable: true });
+    Object.defineProperty(list, "clientHeight", { value: 800, configurable: true });
+    list.scrollTop = 1000;
+    list.dispatchEvent(new Event("scroll")); // the listener derives "not following" from it
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.blur();
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control", bubbles: true }));
+
+    expect(list.scrollTop).toBe(1000); // no jump to the bottom
+    expect(document.activeElement).not.toBe(input); // no focus stolen from the selection
+    // The indicator still does its job.
+    expect(document.getElementById("insert-hint")!.classList.contains("is-steer")).toBe(true);
+  });
+
+  it("with text selected, a bare modifier is a COPY, not a steer: the pill stays quiet", async () => {
+    await loadView();
+    startWorking();
+    const first = document.querySelector("#messages .msg")!;
+    // A real selection over the transcript, exactly what a user drags before ⌘C.
+    const range = document.createRange();
+    range.selectNodeContents(first);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    expect(sel.toString().trim().length).toBeGreaterThan(0);
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", bubbles: true }));
+    expect(document.getElementById("insert-hint")!.classList.contains("is-steer")).toBe(false);
+    // …and the selection survives the keystroke, which is the point.
+    expect(window.getSelection()!.toString()).toBe(sel.toString());
+  });
+
+  it("a right-click on a text selection is NOT swallowed: Copy must exist in the menu", async () => {
+    await loadView();
+    const bubble = document.querySelector("#messages .msg")!;
+    const range = document.createRange();
+    range.selectNodeContents(bubble);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    const onSelection = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    bubble.dispatchEvent(onSelection);
+    expect(onSelection.defaultPrevented).toBe(false); // the native menu (with Copy) appears
+
+    // …and on a CONTROL too, when the selection is over it: this is the everyday case (select a
+    // line in a tool card, right-click to copy) and the one the chrome rule would swallow.
+    const header = document.createElement("div");
+    header.className = "tool-header";
+    header.textContent = "read_file";
+    document.getElementById("messages")!.appendChild(header);
+    const r2 = document.createRange();
+    r2.selectNodeContents(header);
+    sel.removeAllRanges();
+    sel.addRange(r2);
+    const onControl = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    header.dispatchEvent(onControl);
+    expect(onControl.defaultPrevented).toBe(false);
+
+    // Without a selection, the chrome keeps its old behaviour (Ctrl+click is a secondary click
+    // on macOS and must not pop the menu over a CONTROL).
+    sel.removeAllRanges();
+    const control = document.querySelector("button") as HTMLElement;
+    const onChrome = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    control.dispatchEvent(onChrome);
+    expect(onChrome.defaultPrevented).toBe(true);
+
+    // …while PROSE keeps it even with nothing selected.
+    const onProse = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    bubble.dispatchEvent(onProse);
+    expect(onProse.defaultPrevented).toBe(false);
+  });
+
   it("while working, Enter queues the message (no optimistic user bubble)", async () => {
     await loadView();
     startWorking();
@@ -8139,16 +8222,113 @@ describe("soft steering + pending bubbles (webview)", () => {
     expect(document.activeElement).toBe(prompt);
   });
 
-  it("switching Queue <-> Steer by holding the modifier brings the caret back too", async () => {
+  it("holding the modifier lights the hint but does NOT bring the caret back", async () => {
+    // It used to focus the prompt here, to "bring the caret where the next keystroke belongs" —
+    // but that same keystroke is ⌘C, and focusing the prompt discarded the selection being
+    // copied. The caret returns when the user actually SENDS (or a pending item changes), not
+    // when a modifier is merely held.
     await loadView();
     hostMessage({ type: "status", active: true }); // a run is in progress
     const prompt = document.getElementById("user-input") as HTMLTextAreaElement;
     prompt.blur();
     // Holding Ctrl really flips the mode: the next message becomes a STEER.
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control", ctrlKey: true }));
-    expect(document.activeElement).toBe(prompt);
+    expect(document.getElementById("insert-hint")!.classList.contains("is-steer")).toBe(true);
+    expect(document.activeElement).not.toBe(prompt);
     // Release it, so the module state does not leak into the next test.
     window.dispatchEvent(new KeyboardEvent("keyup", { key: "Control" }));
+  });
+
+  it("the Steer modifier is the OS's own: ⌘ on macOS, Ctrl on Windows/Linux", async () => {
+    const setUa = (ua: string): void => {
+      Object.defineProperty(window.navigator, "userAgent", { value: ua, configurable: true });
+    };
+    const MAC = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15";
+    const WIN = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+    const LINUX = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36";
+    const isSteer = () => document.getElementById("insert-hint")!.classList.contains("is-steer");
+    /** Hold the key, READ the hint, then release: the state exists only while it is held. */
+    const holdAndRead = (key: string): boolean => {
+      window.getSelection()?.removeAllRanges(); // a leftover selection reads as a copy gesture
+      window.dispatchEvent(new Event("blur")); // start from "nothing held"
+      window.dispatchEvent(new KeyboardEvent("keydown", { key }));
+      const lit = isSteer();
+      window.dispatchEvent(new KeyboardEvent("keyup", { key }));
+      return lit;
+    };
+
+    // macOS: ⌘ works, and Ctrl is an accepted alias (the hint says "Ctrl/Cmd").
+    setUa(MAC);
+    await loadView();
+    hostMessage({ type: "status", active: true });
+    expect(holdAndRead("Meta")).toBe(true);
+    expect(holdAndRead("Control")).toBe(true);
+
+    // Windows/Linux: Ctrl works, but a bare Win/Super key belongs to the OS, not to us.
+    for (const ua of [WIN, LINUX]) {
+      setUa(ua);
+      await loadView();
+      hostMessage({ type: "status", active: true });
+      expect(holdAndRead("Meta")).toBe(false);
+      expect(holdAndRead("Control")).toBe(true);
+    }
+    setUa(MAC);
+  });
+
+  it("Ctrl/Cmd+Enter steers on every OS; Shift+Enter is always a newline", async () => {
+    // ONE loaded view: reloading it per platform would leave the previous instances (which still
+    // own the session's activeId) answering the keystrokes with their own stale state.
+    const setUa = (ua: string): void => {
+      Object.defineProperty(window.navigator, "userAgent", { value: ua, configurable: true });
+    };
+    const MAC = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)";
+    const WIN = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
+    setUa(MAC);
+    await loadView();
+    window.getSelection()?.removeAllRanges();
+    hostMessage({ type: "status", active: true });
+
+    const sendMode = (init: KeyboardEventInit): string | undefined => {
+      window.dispatchEvent(new Event("blur")); // nothing held ("blur" is the app's own reset)
+      posted.length = 0;
+      const input = document.getElementById("user-input") as HTMLTextAreaElement;
+      input.value = "no, use Rome";
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, ...init }));
+      return (posted.find((m: any) => m.type === "send") as any)?.mode;
+    };
+
+    setUa(MAC);
+    expect(sendMode({ metaKey: true })).toBe("steer");
+    setUa(WIN);
+    expect(sendMode({ ctrlKey: true })).toBe("steer");
+    // Shift+Enter never sends, anywhere: the browser inserts the newline.
+    expect(sendMode({ shiftKey: true })).toBeUndefined();
+    expect(sendMode({ metaKey: true, shiftKey: true })).toBeUndefined();
+    // The Windows/Super key is the OS's: ⌘+Enter is not a steer there.
+    expect(sendMode({ metaKey: true })).toBe("queue");
+    setUa(MAC);
+  });
+
+  it("a right-click on a control is suppressed only on macOS (Ctrl+click is a click there)", async () => {
+    const setUa = (ua: string): void => {
+      Object.defineProperty(window.navigator, "userAgent", { value: ua, configurable: true });
+    };
+    const rightClickControl = (): boolean => {
+      const ev = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+      (document.querySelector("button") as HTMLElement).dispatchEvent(ev);
+      return ev.defaultPrevented;
+    };
+
+    setUa("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
+    await loadView();
+    window.getSelection()?.removeAllRanges();
+    expect(rightClickControl()).toBe(true);
+
+    setUa("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+    await loadView();
+    window.getSelection()?.removeAllRanges();
+    expect(rightClickControl()).toBe(false); // native menu, nothing hijacked
+    setUa("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
   });
 
   it("offers a convert button on each bubble, labelled with the EFFECT it will have", async () => {
