@@ -1,3 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
-  <path d="M5 12l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Check: 2.5 was the weight of the two smallest sites this mark has — the
+       todo box (a 12 px box with a 1 px border, so a 10 px glyph) and the
+       cancelled one — which made a 1.04 px line inside a 10 px drawing. At 2 the
+       tick is 0.83 px there and 1.00 px in the mode menu (12 px), i.e. chrome
+       range everywhere, without touching a single layout constraint. -->
+  <path d="M5 12l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

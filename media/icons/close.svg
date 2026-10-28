@@ -1,3 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
-  <path d="M18 6 6 18M6 6l12 12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+  <!-- Close: the × of a dialog (11 px) and of a cancelled task (10 px, inside the
+       12 px box). 2.5 made a 1.15 px line at 11 and 1.04 at 10 — heavier than
+       everything else in the chrome row, for a two-stroke mark. At 2 it reads
+       0.83–0.92 px there and 1.00 px at 12. -->
+  <path d="M18 6 6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
 </svg>

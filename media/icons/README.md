@@ -61,10 +61,24 @@ A name nobody has drawn yet keeps the old wrench (🔧): a tool must still read 
    `stroke-width`, caps, joins). It stays per-element only where the drawing is
    not uniform — the file badge template, and nothing else today.
 
-Weight is deliberately not uniform: most marks are `stroke-width 1.5`, the ones
-that arrived as production drawings keep their own weight (the trash and the
-swap arrows are 2), and `skill` is the only FILLED one. That is a design
-decision to settle, not an accident — see the icon sheet.
+Weight is deliberately not uniform, and this is the real table (counted from the
+folder, not remembered):
+
+| `stroke-width` | how many | which |
+|---|---|---|
+| **1.5** | 17 | every mark the transcript draws, plus `readlints` and `model` |
+| **2** | 10 | `branch` `eye` `history` `paperclip` `pencil` `scissors` `search`, and the small three `plus` `check` `close` |
+| **2.5** | 2 | `chevron-down` `minus` |
+| **1.8** | 1 | `sparkles` — the single in-between value |
+| *none* (solid) | 4 | `gear` `play` `skill` `stop` |
+
+What matters is the OPTICAL weight — `stroke-width × rendered px / 24` — not the
+number in the file: 1.5 at 13 px is **0.8 px**, chrome at 2–2.5 drawn at 10–15 px is
+**1.0–1.25 px**. That is the rule: the transcript marks are drawn small and light,
+the chrome is drawn small and heavy, because a 0.8 px line next to a 10 px button
+disappears. Something that has no stroke at all (`skill`) is a filled silhouette and
+reads heavier still at the same size — that is a design choice to settle, not a
+measurement.
 
 ## How the files reach the bundle
 

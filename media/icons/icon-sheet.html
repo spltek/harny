@@ -38,12 +38,14 @@
     </p>
     <p class="lead">
       Two weights, on purpose. Every mark the TRANSCRIPT draws is <code>stroke-width 1.5</code> on the same
-      24×24 grid — about 0.8 px once drawn at 13 px. The chrome runs heavier (2, and 2.5 for the tiny
-      ones at 10–11 px): a 1.5 line at 11 px is 0.7 px and disappears. <code>sparkles</code> is the one
-      1.8, and four marks are SOLID with no stroke at all (<code>gear</code>, <code>play</code>,
-      <code>skill</code>, <code>stop</code>). Where one drawing has to serve both weights, the call site
-      asks for the one it needs (<code>icon("trash", 13, 'stroke-width="2"')</code>, used twice in the
-      session list) instead of keeping a second copy of the file.
+      24×24 grid — about 0.8 px once drawn at 13 px. The chrome runs at 2: a 1.5 line at 10–11 px is 0.7 px
+      and disappears. <code>sparkles</code> is the one 1.8, only <code>chevron-down</code> and
+      <code>minus</code> keep a 2.5 (a fold and a dash have no joins to hold them together), and four marks
+      are SOLID with no stroke at all (<code>gear</code>, <code>play</code>, <code>skill</code>,
+      <code>stop</code>) — a filled silhouette reads heavier than any line at the same size. Where one
+      drawing has to serve two weights, the call site asks for the one it needs
+      (<code>icon("trash", 13, 'stroke-width="2"')</code>, used twice in the session list) instead of
+      keeping a second copy of the file.
     </p>
 
     <h2>On a light surface</h2>
