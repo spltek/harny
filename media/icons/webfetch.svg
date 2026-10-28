@@ -1,8 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor">
-  <!-- WebFetch: the shape is the reference SVG verbatim ("download from cloud",
-       2 paths, d attributes untouched). Only the PAINT moved to the root — no
-       width/height (the caller owns the size) and no #000000 (currentColor
-       follows the palette). -->
-  <path d="M12 13V22M12 22L15.5 18.5M12 22L8.5 18.5"/>
-  <path d="M20 17.6073C21.4937 17.0221 23 15.6889 23 13C23 9 19.6667 8 18 8C18 6 18 2 12 2C6 2 6 6 6 8C4.33333 8 1 9 1 13C1 15.6889 2.50628 17.0221 4 17.6073"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- WebFetch: the Lucide `cloud-download` — a cloud and an arrow leaving it,
+       which is the tool: a URL goes in, its content comes down.
+       The mark it replaces said the same thing with a cloud that spanned x 1→23,
+       i.e. 22 of the 24 units: at 13 px it filled the box edge to edge and sat
+       wider than every other mark beside it. This one occupies ~4.4→21.9, and the
+       arrow is two strokes instead of a shaft with a wedge.
+       Geometry verbatim (3 paths); renamed by #1906 (2024-03-08) and redrawn by
+       #2355 (2024-08-02, "close gaps") — what lucide-static serves today. Paint
+       on the root, weight 2 → the family's 1.5, no width/height (13 px by caller). -->
+  <path d="M12 13v8l-4-4"/>
+  <path d="m12 21 4-4"/>
+  <path d="M4.393 15.269A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.436 8.284"/>
 </svg>
