@@ -146,3 +146,26 @@ describe("icon registry", () => {
     expect(toolIcon("read_file")).toBe('<span class="tool-emoji">🔧</span> ');
   });
 });
+
+describe("the contact sheet", () => {
+  it("never lists a file that is not there", () => {
+    // The one place a DEAD row can survive: nothing imports the sheet, so when the
+    // four `todo-*` marks went with the old Tasks block, their rows stayed behind
+    // and the sheet kept drawing four broken images. It is opened by hand, which is
+    // exactly why a test has to read it.
+    const dir = join(process.cwd(), "media", "icons");
+    const sheet = readFileSync(join(dir, "icon-sheet.html"), "utf8");
+    const rows = sheet.match(/\["[a-z0-9-]+\.svg"/g) ?? [];
+    const listed = rows.map((row) => row.slice(2, -1));
+    const onDisk = readdirSync(dir).filter((name) => name.endsWith(".svg"));
+
+    expect(listed.length).toBeGreaterThan(10); // the sheet still IS a sheet
+    expect(listed.filter((file) => !onDisk.includes(file))).toEqual([]); // a row, no file
+    // The same mark twice is how a sheet starts disagreeing with itself: the sizes
+    // are rendered per row, so a duplicate stays invisible until one copy is edited.
+    expect([...new Set(listed)]).toEqual(listed);
+    // The other direction is deliberately NOT asserted: the sheet draws what the
+    // TRANSCRIPT draws (tool marks, Sub-agent, Thinking), not the chrome. A button
+    // or a chevron is not in it, and that split is the point.
+  });
+});
