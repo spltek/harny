@@ -1,7 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-  <!-- Write: a whole file put down at once — the page plus the mark that says
-       "new content here". -->
-  <path d="M4 21.4V2.6c0-.331.269-.6.6-.6h11.652a.6.6 0 0 1 .424.176l3.148 3.148a.6.6 0 0 1 .176.424V21.4c0 .331-.269.6-.6.6H4.6a.6.6 0 0 1-.6-.6Z" stroke="currentColor"/>
-  <path d="M16 2v3.4c0 .331.269.6.6.6H20" stroke="currentColor"/>
-  <path d="M12 9.6v5.2M9.4 12.2h5.2" stroke="currentColor"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Write: the Lucide `notebook-pen` — the same notebook as `read`
+       (`notebook-text`: identical body and the same four rings at M2 6/10/14/18),
+       with a pen where Read has ruled lines. The pair is now one book and two
+       verbs, which is the only reliable way to tell them apart at 13 px.
+       It replaces a page with a `+` inside: that plus said "new content" but
+       looked like the fold of an edit box, and the page silhouette was shared
+       with Edit and ReadLints.
+       Geometry verbatim (6 paths); added in #1363 (2024-01-06), pen rounded by
+       #2186 (2024-06-10) — what lucide-static serves today. Paint on the root,
+       weight 2 → the family's 1.5, no width/height: a tool call draws this at
+       13 px. -->
+  <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/>
+  <path d="M2 6h4"/>
+  <path d="M2 10h4"/>
+  <path d="M2 14h4"/>
+  <path d="M2 18h4"/>
+  <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>
 </svg>
