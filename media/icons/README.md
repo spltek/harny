@@ -68,7 +68,7 @@ folder, not remembered):
 |---|---|---|
 | **1.5** | 16 | every mark the transcript draws, plus `readlints` |
 | **2** | 10 | `branch` `eye` `history` `paperclip` `pencil` `scissors` `search`, and the small three `plus` `check` `close` |
-| **2.5** | 2 | `chevron-down` `minus` |
+| **2.5** | 1 | `chevron-down` |
 | **1.8** | 1 | `sparkles` — the single in-between value |
 | *none* (solid) | 5 | `gear` `play` `skill` `stop` `parallel` |
 

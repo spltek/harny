@@ -15,7 +15,6 @@
  * async load, and the jsdom tests see exactly the markup the panel renders.
  */
 import plus from "../../media/icons/plus.svg";
-import minus from "../../media/icons/minus.svg";
 import close from "../../media/icons/close.svg";
 import pencil from "../../media/icons/pencil.svg";
 import trash from "../../media/icons/trash.svg";
@@ -54,7 +53,6 @@ import fileBadge from "../../media/icons/file-badge.svg";
 /** Every icon the UI can ask for, keyed by the name the call sites use. */
 const ARTWORK = {
   plus,
-  minus,
   close,
   pencil,
   trash,

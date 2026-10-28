@@ -163,8 +163,9 @@ describe("the contact sheet", () => {
     expect(listed.filter((file) => !onDisk.includes(file))).toEqual([]); // a row, no file
     // …and the other direction, now that the sheet is the FULL inventory: a file
     // with no row is a mark nobody ever looks at — drawn, imported, unphotographed.
-    // (This is how `minus` survived unsold: registered in the ARTWORK map and
-    // asked for by no call site.)
+    // (`minus` lived that way for months before it was deleted: registered in the
+    // ARTWORK map, asked for by no call site, its six stepper buttons replaced by
+    // sliders back in 63d895e.)
     expect(onDisk.filter((file) => !listed.includes(file))).toEqual([]); // a file, no row
     // The same mark twice is how a sheet starts disagreeing with itself: the sizes
     // are rendered per row, so a duplicate stays invisible until one copy is edited.

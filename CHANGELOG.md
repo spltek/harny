@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **`minus.svg` is gone: the only mark in the folder that nothing drew.** It had no call site, in any commit
+  — `git log -S'icon("minus"'` over the whole history returns nothing. Its six users were the stepper
+  buttons (`ctx`, `out`, `samp`, each with `+` and `−`) that `63d895e` replaced with sliders; the FILE was
+  created later, by the refactor that moved every glyph out of the markup, so it was born orphaned and
+  stayed that way. Cost of keeping it was 167 bytes on disk and 506 in the bundle — nothing: it is removed
+  because `media/icons/` says it holds what the panel DRAWS, and one exception turns that sentence into a
+  preference. The `+` it used to pair with survives (it is "new session"); if a stepper ever comes back,
+  the drawing comes back with it.
+
 ## [0.9.2] - 2026-10-28
 
 ### Changed

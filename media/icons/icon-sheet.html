@@ -39,10 +39,10 @@
     <p class="lead">
       Two weights, on purpose. Every mark the TRANSCRIPT draws is <code>stroke-width 1.5</code> on the same
       24×24 grid — about 0.8 px once drawn at 13 px. The chrome runs at 2: a 1.5 line at 10–11 px is 0.7 px
-      and disappears. <code>sparkles</code> is the one 1.8, only <code>chevron-down</code> and
-      <code>minus</code> keep a 2.5 (a fold and a dash have no joins to hold them together), and five marks
-      are SOLID with no stroke at all (<code>gear</code>, <code>play</code>, <code>skill</code>,
-      <code>stop</code>, <code>model</code>) — a filled silhouette reads heavier than any line at the same
+      and disappears. <code>sparkles</code> is the one 1.8, only <code>chevron-down</code> keeps a 2.5 (a
+      chevron has no joins to hold it together), and five marks are SOLID with no stroke at all
+      (<code>gear</code>, <code>play</code>, <code>skill</code>, <code>stop</code>, <code>parallel</code>) —
+      a filled silhouette reads heavier than any line at the same
       size. Where one drawing has to serve two weights, the call site asks for the one it needs
       (<code>icon("trash", 13, 'stroke-width="2"')</code>, used twice in the session list) instead of
       keeping a second copy of the file.
@@ -88,7 +88,6 @@
         ["sparkles.svg", "Build", "the Build mode (full tool use), and the two sparkles in the mode menu"],
         ["gear.svg", "Settings", "configure providers, sessions, MCP servers, compaction — one gear for all four"],
         ["plus.svg", "New", "a new session"],
-        ["minus.svg", "Minus", "REGISTERED BUT UNUSED — no call site. It was the − of six stepper buttons (ctx/out/samp) until 63d895e swapped them for sliders; this FILE was created later, by the refactor that moved every glyph out of the markup, so it was born orphaned"],
         ["close.svg", "Close", "dismiss a dialog; also the × of a cancelled task"],
         ["check.svg", "Check", "the chosen row in a menu; also a completed task"],
         ["chevron-down.svg", "Fold", "a fold that turns: right when closed, down when open"],
