@@ -97,29 +97,25 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
        range everywhere, without touching a single layout constraint. -->
   <path d="M5 12l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
-`;var iu=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-  <!-- Parallel: the Lucide \`cpu-ai\` (added 2026-10-13, the one lucide-static
-       serves). A chip with AI inside, i.e. "more compute at once" \u2014 which is
-       what the pill does: it lets the agent fan work out to sub-agents.
-       Geometry verbatim (17 elements); only the paint moved to the root and the
-       weight from 2 to 1.5, the family's. No width/height: the caller owns the
-       size, and the pill draws it at 12 px. -->
-  <path d="M12 20v2"/>
-  <path d="M12 2v2"/>
-  <path d="M16 9v6"/>
-  <path d="M17 20v2"/>
-  <path d="M17 2v2"/>
-  <path d="M2 12h2"/>
-  <path d="M2 17h2"/>
-  <path d="M2 7h2"/>
-  <path d="M20 12h2"/>
-  <path d="M20 17h2"/>
-  <path d="M20 7h2"/>
-  <path d="M7 20v2"/>
-  <path d="M7 2v2"/>
-  <path d="M8 13h4"/>
-  <path d="M8 15v-4a2 2 0 014 0v4"/>
-  <rect x="4" y="4" width="16" height="16" rx="2"/>
+`;var iu=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+  <!-- Parallel: ONE node that fans out to three \u2014 the toggle's job (an agent that
+       spawns sub-agents), not a chip and not a model. The drawing arrived on its own
+       39\xD734.5 canvas, so it is scaled onto the family grid (\xD70.512821) and
+       centred (ty 3.1538) by a transform rather than by rewriting a single
+       coordinate: every d attribute is untouched, which is what keeps the geometry, the
+       corner radii and the four holes exactly as they were drawn.
+       Rotated 180\xB0 around the drawing's own centre on request \u2014 so the single node
+       sits at the BOTTOM and the three at the top. Remove the inner transform to get
+       the original orientation back.
+       It is a FILLED mark (five subpaths: one outline, four holes, opposite winding,
+       so plain nonzero fills them as holes \u2014 no fill-rule needed): there is no
+       stroke-width to set here, and like gear / play / skill / stop it reads
+       heavier than a stroked mark at the same size. -->
+  <g transform="translate(2.0000 3.1538) scale(0.512821)">
+    <g transform="rotate(180 19.5 17.25)">
+      <path d="M15.75 0C14.0955 0 12.75 1.3455 12.75 3C12.75 3 12.75 9 12.75 9C12.75 10.6545 14.0955 12 15.75 12C15.75 12 18 12 18 12L18 16.5C18 16.5 7.5 16.5 7.5 16.5C5.84325 16.5 4.5 17.8433 4.5 19.5C4.5 19.5 4.5 24 4.5 24C4.5 24 3 24 3 24C1.3455 24 0 25.3455 0 27C0 27 0 31.5 0 31.5C0 33.1545 1.3455 34.5 3 34.5C3 34.5 9 34.5 9 34.5C10.6545 34.5 12 33.1545 12 31.5C12 31.5 12 27 12 27C12 25.3455 10.6545 24 9 24C9 24 7.5 24 7.5 24C7.5 24 7.5 19.875 7.5 19.875C7.5 19.668 7.668 19.5 7.875 19.5C7.875 19.5 18 19.5 18 19.5L18 24C18 24 16.5 24 16.5 24C14.8455 24 13.5 25.3455 13.5 27C13.5 27 13.5 31.5 13.5 31.5C13.5 33.1545 14.8455 34.5 16.5 34.5C16.5 34.5 22.5 34.5 22.5 34.5C24.1545 34.5 25.5 33.1545 25.5 31.5C25.5 31.5 25.5 27 25.5 27C25.5 25.3455 24.1545 24 22.5 24C22.5 24 21 24 21 24L21 19.5C21 19.5 31.125 19.5 31.125 19.5C31.332 19.5 31.5 19.668 31.5 19.875C31.5 19.875 31.5 24 31.5 24C31.5 24 30 24 30 24C28.3455 24 27 25.3455 27 27C27 27 27 31.5 27 31.5C27 33.1545 28.3455 34.5 30 34.5C30 34.5 36 34.5 36 34.5C37.6545 34.5 39 33.1545 39 31.5C39 31.5 39 27 39 27C39 25.3455 37.6545 24 36 24C36 24 34.5 24 34.5 24C34.5 24 34.5 19.5 34.5 19.5C34.5 17.8433 33.1567 16.5 31.5 16.5C31.5 16.5 21 16.5 21 16.5L21 12C21 12 23.25 12 23.25 12C24.9045 12 26.25 10.6545 26.25 9C26.25 9 26.25 3 26.25 3C26.25 1.3455 24.9045 0 23.25 0C23.25 0 15.75 0 15.75 0C15.75 0 15.75 0 15.75 0ZM16.125 3C16.125 3 22.875 3 22.875 3C23.082 3 23.25 3.168 23.25 3.375C23.25 3.375 23.2529 8.625 23.2529 8.625C23.2529 8.832 23.0849 9 22.8779 9C22.8779 9 16.125 9 16.125 9C15.918 9 15.75 8.832 15.75 8.625C15.75 8.625 15.75 3.375 15.75 3.375C15.75 3.168 15.918 3 16.125 3C16.125 3 16.125 3 16.125 3ZM3.375 27C3.375 27 8.625 27 8.625 27C8.832 27 9 27.168 9 27.375C9 27.375 9.00293 31.125 9.00293 31.125C9.00293 31.332 8.83493 31.5 8.62793 31.5C8.62793 31.5 3.375 31.5 3.375 31.5C3.168 31.5 3 31.332 3 31.125C3 31.125 3 27.375 3 27.375C3 27.168 3.168 27 3.375 27C3.375 27 3.375 27 3.375 27ZM16.875 27C16.875 27 22.125 27 22.125 27C22.332 27 22.5 27.168 22.5 27.375C22.5 27.375 22.5029 31.125 22.5029 31.125C22.5029 31.332 22.3349 31.5 22.1279 31.5C22.1279 31.5 16.875 31.5 16.875 31.5C16.668 31.5 16.5 31.332 16.5 31.125C16.5 31.125 16.5 27.375 16.5 27.375C16.5 27.168 16.668 27 16.875 27C16.875 27 16.875 27 16.875 27ZM30.375 27C30.375 27 35.625 27 35.625 27C35.832 27 36 27.168 36 27.375C36 27.375 36.0029 31.125 36.0029 31.125C36.0029 31.332 35.8349 31.5 35.6279 31.5C35.6279 31.5 30.375 31.5 30.375 31.5C30.168 31.5 30 31.332 30 31.125C30 31.125 30 27.375 30 27.375C30 27.168 30.168 27 30.375 27C30.375 27 30.375 27 30.375 27Z"/>
+    </g>
+  </g>
 </svg>
 `;var au=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
   <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
