@@ -956,9 +956,6 @@ ${renderViewConfig(deps)}
     .todo-count { color: var(--fg-strong); font-weight: 700; }
     .todo-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
     .todo-item { display: flex; align-items: flex-start; gap: 6px; min-width: 0; font-size: var(--fs-md); color: var(--fg); }
-    /* The task's number: tabular figures so the column stays aligned when the list reaches 10+, and
-       it never shrinks (the row's text wraps, the index does not). */
-    .todo-num { flex: none; min-width: 1.5em; text-align: right; color: var(--muted-2); font-variant-numeric: tabular-nums; }
     /* The checkbox: a BOX, not a glyph — 12px, square-ish, with the tick drawn by an icon in the
        panel's own ink. It is a span (aria-hidden): the tasks belong to the model, so a real input
        would promise a toggle nobody can make. */
@@ -969,28 +966,12 @@ ${renderViewConfig(deps)}
     .todo-item.status-in_progress .todo-check::after { content: ""; width: 4px; height: 4px; border-radius: 50%; background: var(--accent); }
     .todo-item.status-cancelled .todo-check { border-color: var(--muted); color: var(--muted); }
     .todo-text { min-width: 0; overflow-wrap: anywhere; }
-    .todo-item.status-completed { color: var(--muted); }
-    .todo-item.status-completed .todo-text { text-decoration: line-through; }
+    /* DONE reads as DONE, not as deleted: the green box at the start and BOLD text — no strikethrough
+       (a line through the words is the universal sign of "gone") and no dimming, because a finished
+       task is an accomplishment, not a footnote. */
+    .todo-item.status-completed .todo-text { font-weight: 600; color: var(--fg-strong); }
     .todo-item.status-cancelled { color: var(--muted); }
     .todo-item.status-cancelled .todo-text { text-decoration: line-through; }
-    /* The SAME list, pinned above the input: the block in the transcript scrolls away
-       with the conversation, this one does not. One shared parser, one shared row
-       builder — the two views can never disagree about a task. */
-    #todo-section { flex-shrink: 0; background: var(--bg); border-top: 1px dashed var(--border); padding: 5px 10px 6px; }
-    #todo-section.hidden { display: none; }
-    #todo-section .todo-head { margin-bottom: 4px; }
-    /* The stop key: a quiet ghost in the header, pushed to the right, that only lights on hover.
-       It must not compete with the count (the information) but it must be findable without hunting:
-       the header is where the list declares itself. */
-    #todo-section .todo-head { align-items: center; }
-    .todo-stop { margin-left: auto; flex: none; min-height: 0; padding: 0 4px; border: 0; background: none; box-shadow: none; color: var(--muted-2); font-size: var(--fs-md); line-height: 1; cursor: pointer; }
-    .todo-stop:hover, .todo-stop:focus-visible { color: var(--fg-strong); background: none; }
-    /* A long list must not eat the input: the section scrolls on its own. */
-    /* SIX ROWS is the budget: the list is a reminder above the input, and a 20-task plan used to
-       take the whole panel. Two caps, because one alone is wrong: min() keeps it at ~6 rows on a
-       TALL panel and at 22% of a SHORT one, so neither "everything" nor a 2-row sliver wins. The
-       HEAD stays outside the scroll (it is a sibling), so the count is always readable. */
-    #todo-section-list { max-height: min(8.4rem, 22vh); overflow-y: auto; scrollbar-gutter: stable; }
     .tool-label { display: block; color: var(--muted); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.4px; margin: 6px 0 2px; }
     .tool-details pre { background: var(--sink-1); border: 1px solid var(--border); border-radius: 4px; padding: 5px 7px; white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow-y: auto; font-size: var(--fs-md); line-height: 1.4; }
     /* The Task/Input arguments block is a <pre>: WRAP it at the bubble width
@@ -2543,21 +2524,6 @@ ${renderViewConfig(deps)}
         <span class="switch-label">Opening session…</span>
       </div>
     </div>
-  </div>
-  <!-- The session's task list: a FOOTER, outside #messages, so it stays on screen
-       while the transcript scrolls (the block under the TodoWrite tool scrolls away
-       with the conversation). Fed by the SAME parser and the same rows as that block,
-       and hidden until the model actually writes a list. -->
-  <div id="todo-section" class="hidden">
-    <div class="todo-head">
-      <span id="todo-section-count" class="todo-count"></span><span>Tasks</span>
-      <!-- Stops the FLOW, not just the pixels: it hides the footer at once and, while a run is in
-           flight, steers the model to abandon the list. Without the second half the plan keeps
-           living in its context and TodoWrite comes back with the same subjects. It does NOT stop a
-           sub-agent already running: that is Stop/Esc (the whole run). -->
-      <button id="todo-stop" class="todo-stop" type="button" aria-label="Stop the task list" title="Stop the task list — hide it, and tell the model not to continue it (a sub-agent in flight keeps working: Stop ends the run)">×</button>
-    </div>
-    <ul id="todo-section-list" class="todo-list"></ul>
   </div>
   <!-- Messages typed while the session works (queue/steer): a real footer,
        outside #messages, so they survive streaming re-renders. A COLLAPSIBLE

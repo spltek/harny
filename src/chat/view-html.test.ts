@@ -321,59 +321,20 @@ describe("renderViewHtml", () => {
     // The two ways a list like this breaks: the leading box shrinking under a long task, and
     // the text refusing to wrap. Both are pinned here.
     expect(cssRule(html, ".todo-check")).toContain("flex: none");
-    // The number column: tabular figures, so 10) lines up with 9) instead of shifting the row.
-    expect(cssRule(html, ".todo-num")).toContain("font-variant-numeric: tabular-nums");
     const text = cssRule(html, ".todo-text");
     expect(text).toContain("min-width: 0");
     expect(text).toContain("overflow-wrap: anywhere");
     // Rows align to the TOP: a task that wraps to two lines must not push its box
     // down to the middle (the pending-badge lesson, one year of pixel grief ago).
     expect(cssRule(html, ".todo-item")).toContain("align-items: flex-start");
-    // The states must be readable without reading: a TICKED box for done, an accent dot for the
-    // running one, nothing inside the box for pending.
-    expect(cssRule(html, ".todo-item.status-completed .todo-text")).toContain("line-through");
+    // The states must be readable without reading: a TICKED green box for done, an accent dot for the
+    // running one, nothing inside the box for pending. DONE is BOLD — never struck through (a line
+    // across the words is the sign of "deleted", and a finished task is the opposite of that).
+    expect(cssRule(html, ".todo-item.status-completed .todo-text")).toContain("font-weight: 600");
+    expect(cssRule(html, ".todo-item.status-completed .todo-text")).not.toContain("line-through");
     expect(cssRule(html, ".todo-item.status-completed .todo-check")).toContain("background: var(--ok)");
     expect(cssRule(html, ".todo-item.status-cancelled .todo-text")).toContain("line-through");
     expect(cssRule(html, ".todo-item.status-in_progress .todo-check")).toContain("border-color: var(--accent)");
-  });
-
-  it("pins the task list above the input, and lets IT scroll, not the panel", () => {
-    const html = renderViewHtml({
-      ...base,
-      state: {
-        sessions: [],
-        openIds: [],
-        messages: [],
-        config: {
-          provider: "openai",
-          model: "gpt-4o",
-          hasKey: true,
-          models: [],
-          providerModels: [],
-          contextWindow: 128000,
-        },
-      },
-    });
-    // The footer needs its three hooks: the section, its count and the list.
-    expect(html).toContain('id="todo-section"');
-    expect(html).toContain('id="todo-section-count"');
-    expect(html).toContain('id="todo-section-list"');
-    // Hidden until there is a list — and the same `.hidden` rule every footer uses.
-    expect(html).toContain('id="todo-section" class="hidden"');
-    expect(cssRule(html, "#todo-section.hidden")).toContain("display: none");
-    // A long list scrolls INSIDE the section: it must never push the input away.
-    const section = cssRule(html, "#todo-section");
-    expect(section).toContain("flex-shrink: 0");
-    expect(section).toContain("border-top: 1px dashed var(--border)");
-    const list = cssRule(html, "#todo-section-list");
-    // SIX ROWS, and the viewport is only the FLOOR: `min(8.4rem, 22vh)` keeps ~6 rows on a tall
-    // panel and 22% of a short one, so a 20-task plan can never take the whole space above the input.
-    expect(list).toContain("max-height: min(8.4rem, 22vh)");
-    expect(list).toContain("overflow-y: auto");
-    // No text jump when the scrollbar appears.
-    expect(list).toContain("scrollbar-gutter: stable");
-    // The HEAD is a sibling of the list, so the count stays readable while the rows scroll.
-    expect(html.indexOf('class="todo-head"')).toBeLessThan(html.indexOf('id="todo-section-list"'));
   });
 
   it("renders sessions, tabs, messages and input containers", () => {

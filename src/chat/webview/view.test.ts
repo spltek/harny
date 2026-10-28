@@ -63,13 +63,6 @@ function setupDom(initOverrides: Record<string, unknown> = {}, savedState: Recor
         </div>
       </div>
     </div>
-    <div id="todo-section" class="hidden">
-      <div class="todo-head">
-        <span id="todo-section-count" class="todo-count"></span><span>Tasks</span>
-        <button id="todo-stop" class="todo-stop" type="button" aria-label="Stop the task list">×</button>
-      </div>
-      <ul id="todo-section-list" class="todo-list"></ul>
-    </div>
     <div id="pending-section" class="hidden">
       <div id="pending-head" role="button" tabindex="0" aria-expanded="true"><span class="toggle is-open"><svg class="toggle-chevron"></svg></span><span id="pending-head-text"></span></div>
       <div id="pending-area" class="hidden"></div>
@@ -3326,185 +3319,25 @@ describe("view webview client", () => {
     expect(document.querySelector(".msg.tool .tool-path")?.textContent).toBe("**/*.ts");
   });
 
-  it("numbers every task, and keeps numbering STABLE when siblings complete", async () => {
-    // The number is the task's identity in the plan, not its rank among the open ones: "task 3" must
-    // still be 3 after 1 and 2 are done, or the model's report and the screen stop agreeing.
+  it("a task row is a checkbox and its text — no number, no index column", async () => {
+    // A checklist, not a table: the order of the rows IS the plan, and an index adds a column nobody
+    // reads (it was there for one day). The count in the header carries the progress.
     await loadView();
     hostMessage({ type: "status", active: true });
-    const write = (id: string, output: string): void => {
-      hostMessage({ type: "toolCall", id, name: "TodoWrite", arguments: { todos: [], merge: false } });
-      hostMessage({ type: "toolResult", toolCallId: id, output, isError: false });
-    };
-    write("t1", "## Task List\n\n⏳ [pending] one\n🔄 [in_progress] two\n✅ [completed] three");
-    const nums = (): (string | null)[] =>
-      [...document.querySelectorAll("#todo-section-list .todo-num")].map((n) => n.textContent);
-    expect(nums()).toEqual(["1.", "2.", "3."]);
-    // Boom: 1 and 2 complete, 3 is the work. The numbers do not move.
-    write("t2", "## Task List\n\n✅ [completed] one\n✅ [completed] two\n🔄 [in_progress] three");
-    expect(nums()).toEqual(["1.", "2.", "3."]);
-    // The number is a real column BEFORE the state mark, in both views.
-    const row = document.querySelector("#todo-section-list .todo-item")!;
-    expect([...row.children].map((c) => c.className)).toEqual(["todo-check", "todo-num", "todo-text"]);
-  });
-
-  it("auto-scrolls the pinned list to the task being worked on", async () => {
-    // Six rows fit; a 12-task plan does not. Opening it on row 1 while the model works on row 9 is
-    // precisely what the reminder must not do.
-    const scrolled: Element[] = [];
-    const original = (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
-    (Element.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView = function (this: Element) {
-      scrolled.push(this);
-    };
-    try {
-      await loadView();
-      hostMessage({ type: "status", active: true });
-      const todos = Array.from({ length: 12 }, (_, i) =>
-        i === 8 ? "🔄 [in_progress] the one being worked on" : i < 8 ? "✅ [completed] done" : "⏳ [pending] later",
-      ).join("\n");
-      hostMessage({ type: "toolCall", id: "t1", name: "TodoWrite", arguments: { todos: [], merge: false } });
-      hostMessage({ type: "toolResult", toolCallId: "t1", output: "## Task List\n\n" + todos, isError: false });
-
-      // `scrollIntoView` is used by other parts too (the active TAB centres itself): count the rows.
-      const rows = scrolled.filter((e) => e.classList.contains("todo-item"));
-      expect(rows).toHaveLength(1);
-      expect(rows[0].classList.contains("status-in_progress")).toBe(true);
-      expect(rows[0].textContent).toContain("the one being worked on");
-    } finally {
-      (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView = original;
+    hostMessage({ type: "toolCall", id: "t1", name: "TodoWrite", arguments: { todos: [], merge: false } });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "t1",
+      output: "## Task List\n\n⏳ [pending] one\n✅ [completed] two",
+      isError: false,
+    });
+    const rows = [...document.querySelectorAll(".todo-block .todo-item")];
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect([...row.children].map((c) => c.className)).toEqual(["todo-check", "todo-text"]);
     }
-  });
-
-  it("falls back to the first OPEN task when nothing is in progress (an interrupted plan)", async () => {
-    const scrolled: Element[] = [];
-    const original = (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
-    (Element.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView = function (this: Element) {
-      scrolled.push(this);
-    };
-    try {
-      await loadView();
-      hostMessage({ type: "status", active: true });
-      hostMessage({ type: "toolCall", id: "t1", name: "TodoWrite", arguments: { todos: [], merge: false } });
-      hostMessage({
-        type: "toolResult",
-        toolCallId: "t1",
-        output: "## Task List\n\n✅ [completed] one\n✅ [completed] two\n⏳ [pending] three\n⏳ [pending] four",
-        isError: false,
-      });
-      const rows = scrolled.filter((e) => e.classList.contains("todo-item"));
-      expect(rows).toHaveLength(1);
-      expect(rows[0].classList.contains("status-pending")).toBe(true);
-      expect(rows[0].textContent).toContain("three");
-    } finally {
-      (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView = original;
-    }
-  });
-
-  it("the pinned list DISAPPEARS when the run ends with everything completed", async () => {
-    // The footer is a "what is left" widget, not a log (the transcript keeps every TodoWrite block).
-    // It used to stay for ever: a new prompt, on another subject, ran next to a finished list of the
-    // previous one — exactly what the user photographed.
-    await loadView();
-    hostMessage({ type: "status", active: true });
-    hostMessage({ type: "toolCall", id: "t1", name: "TodoWrite", arguments: { todos: [], merge: false } });
-    hostMessage({
-      type: "toolResult",
-      toolCallId: "t1",
-      output: "## Task List\n\n✅ [completed] one\n✅ [completed] two",
-      isError: false,
-    });
-    const section = document.getElementById("todo-section") as HTMLElement;
-    expect(section.classList.contains("hidden")).toBe(false);
-
-    hostMessage({ type: "done" });
-    expect(section.classList.contains("hidden")).toBe(true);
-    expect(document.querySelectorAll("#todo-section-list .todo-item")).toHaveLength(0);
-    // The record stays in the transcript.
-    expect(document.querySelector(".todo-block")).toBeTruthy();
-  });
-
-  it("…and STAYS when the run ends with work pending (an interrupted run is the point)", async () => {
-    await loadView();
-    hostMessage({ type: "status", active: true });
-    hostMessage({ type: "toolCall", id: "t1", name: "TodoWrite", arguments: { todos: [], merge: false } });
-    hostMessage({
-      type: "toolResult",
-      toolCallId: "t1",
-      output: "## Task List\n\n✅ [completed] one\n⏳ [pending] two",
-      isError: false,
-    });
-    hostMessage({ type: "done" });
-    const section = document.getElementById("todo-section") as HTMLElement;
-    expect(section.classList.contains("hidden")).toBe(false);
-    expect(document.querySelectorAll("#todo-section-list .todo-item")).toHaveLength(2);
-  });
-
-  it("STOP hides the list, tells the model — and only that list stays silenced", async () => {
-    // Two halves: hiding alone leaves the plan alive in the model's context, so TodoWrite comes back
-    // with the same subjects and the button looks like a lie.
-    await loadView();
-    hostMessage({ type: "status", active: true });
-    hostMessage({ type: "toolCall", id: "t1", name: "TodoWrite", arguments: { todos: [], merge: false } });
-    hostMessage({
-      type: "toolResult",
-      toolCallId: "t1",
-      output: "## Task List\n\n⏳ [pending] one\n⏳ [pending] two",
-      isError: false,
-    });
-    const section = document.getElementById("todo-section") as HTMLElement;
-    expect(section.classList.contains("hidden")).toBe(false);
-
-    posted.length = 0;
-    (document.getElementById("todo-stop") as HTMLButtonElement).click();
-    expect(section.classList.contains("hidden")).toBe(true);
-    const steer = posted.find((m: any) => m.type === "send");
-    expect(steer).toMatchObject({ mode: "steer" });
-    expect(String((steer as any).text)).toMatch(/CANCELLED by the user/);
-
-    // The SAME list must not come back from a rebuild (the transcript replay re-renders it)…
-    hostMessage({
-      type: "refresh",
-      workspaceReady: true,
-      messages: [
-        { role: "user", content: "go", timestamp: 1 },
-        { role: "assistant", content: "", timestamp: 2, toolCalls: [{ id: "t1", name: "TodoWrite", arguments: {} }] },
-        {
-          role: "tool",
-          content: "## Task List\n\n⏳ [pending] one\n⏳ [pending] two",
-          toolCallId: "t1",
-          timestamp: 3,
-        },
-      ],
-      config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], contextWindow: 1 },
-      workingIds: [],
-    });
-    expect(section.classList.contains("hidden")).toBe(true);
-
-    // …while a DIFFERENT list (new work) is shown: the silence is about those rows, not the session.
-    hostMessage({ type: "toolCall", id: "t2", name: "TodoWrite", arguments: { todos: [], merge: false } });
-    hostMessage({
-      type: "toolResult",
-      toolCallId: "t2",
-      output: "## Task List\n\n⏳ [pending] something else entirely",
-      isError: false,
-    });
-    expect(section.classList.contains("hidden")).toBe(false);
-  });
-
-  it("STOP on an IDLE session is local only: nothing is sent to the model", async () => {
-    await loadView();
-    hostMessage({ type: "status", active: true });
-    hostMessage({ type: "toolCall", id: "t1", name: "TodoWrite", arguments: { todos: [], merge: false } });
-    hostMessage({
-      type: "toolResult",
-      toolCallId: "t1",
-      output: "## Task List\n\n⏳ [pending] stale",
-      isError: false,
-    });
-    hostMessage({ type: "status", active: false }); // the run is over: a stale list, not a pending one
-    posted.length = 0;
-    (document.getElementById("todo-stop") as HTMLButtonElement).click();
-    expect(posted.some((m: any) => m.type === "send")).toBe(false);
-    expect((document.getElementById("todo-section") as HTMLElement).classList.contains("hidden")).toBe(true);
+    expect(document.querySelector(".todo-num")).toBeNull();
+    expect(document.querySelector(".todo-block .todo-head")!.textContent).toBe("1/2Tasks");
   });
 
   it("a SUB-AGENT's TodoWrite never touches the pinned footer (the plan pinned is the orchestrator's)", async () => {
@@ -3528,9 +3361,9 @@ describe("view webview client", () => {
         toolResult: { toolCallId: "s1", output: "## Task List\n\n⏳ [pending] sub task", isError: false },
       },
     });
-    const section = document.getElementById("todo-section") as HTMLElement;
-    expect(section.classList.contains("hidden")).toBe(true);
-    expect(document.querySelectorAll("#todo-section-list .todo-item")).toHaveLength(0);
+    // Not a list anywhere: no block in the transcript, and (with the footer gone) nothing else that
+    // could claim to be "the plan of this conversation".
+    expect(document.querySelectorAll(".todo-block")).toHaveLength(0);
     // …and it is not lost either: the call is visible as a nested line in the sub-agent log.
     expect(document.querySelector(".sa-tool")).toBeTruthy();
   });
@@ -3609,85 +3442,6 @@ describe("view webview client", () => {
     expect(second.querySelectorAll(".todo-check")).toHaveLength(2);
     // Ticked only where it is completed; the in-progress box stays empty (its dot is CSS).
     expect(second.querySelectorAll(".todo-check svg")).toHaveLength(1);
-  });
-
-  it("pins the same list above the input, so it does not scroll away", async () => {
-    await loadView();
-    const input = document.getElementById("user-input") as HTMLTextAreaElement;
-    input.value = "go";
-    (document.getElementById("send-btn") as HTMLButtonElement).click();
-
-    const section = document.getElementById("todo-section") as HTMLElement;
-    // Hidden until the model actually writes a list: no empty frame in the panel.
-    expect(section.classList.contains("hidden")).toBe(true);
-
-    hostMessage({ type: "toolCall", id: "tp1", name: "TodoWrite", arguments: { todos: [] } });
-    hostMessage({
-      type: "toolResult",
-      toolCallId: "tp1",
-      output: "## Task List\n\n✅ [completed] fix parser\n🔄 [in_progress] ship it",
-      isError: false,
-    });
-
-    expect(section.classList.contains("hidden")).toBe(false);
-    expect(document.getElementById("todo-section-count")?.textContent).toBe("1/2");
-    const rows = section.querySelectorAll(".todo-item");
-    expect(rows).toHaveLength(2);
-    expect(rows[0].classList.contains("status-completed")).toBe(true);
-    expect(rows[0].querySelector("svg")).toBeTruthy();
-    expect(rows[0].querySelector(".todo-text")?.textContent).toBe("fix parser");
-
-    // …and it mirrors the update instead of appending: same list, newer truth.
-    hostMessage({ type: "toolCall", id: "tp2", name: "TodoWrite", arguments: { todos: [] } });
-    hostMessage({
-      type: "toolResult",
-      toolCallId: "tp2",
-      output: "## Task List\n\n✅ [completed] fix parser\n✅ [completed] ship it\n⏳ [pending] docs",
-      isError: false,
-    });
-    expect(document.getElementById("todo-section-count")?.textContent).toBe("2/3");
-    expect(section.querySelectorAll(".todo-item")).toHaveLength(3);
-  });
-
-  it("clears the pinned list when the session changes (a refresh with no TodoWrite)", async () => {
-    await loadView();
-    const input = document.getElementById("user-input") as HTMLTextAreaElement;
-    input.value = "go";
-    (document.getElementById("send-btn") as HTMLButtonElement).click();
-    hostMessage({ type: "toolCall", id: "tp3", name: "TodoWrite", arguments: { todos: [] } });
-    hostMessage({ type: "toolResult", toolCallId: "tp3", output: "## Task List\n\n⏳ [pending] a", isError: false });
-    expect((document.getElementById("todo-section") as HTMLElement).classList.contains("hidden")).toBe(false);
-
-    // Another session, with no tasks in it: the previous list must NOT survive.
-    hostMessage({ type: "refresh", messages: [{ role: "user", content: "hello", timestamp: 1 }] });
-    expect((document.getElementById("todo-section") as HTMLElement).classList.contains("hidden")).toBe(true);
-    expect(document.getElementById("todo-section-list")?.children.length).toBe(0);
-  });
-
-  it("rebuilds the pinned list from a replayed transcript", async () => {
-    await loadView();
-    hostMessage({
-      type: "refresh",
-      messages: [
-        {
-          role: "assistant",
-          content: "🔧 Tools: TodoWrite",
-          timestamp: 1,
-          toolCalls: [{ id: "tr1", name: "TodoWrite", arguments: { todos: [] } }],
-        },
-        {
-          role: "tool",
-          toolCallId: "tr1",
-          content: "## Task List\n\n✅ [completed] fix parser\n⏳ [pending] docs",
-          timestamp: 2,
-        },
-      ],
-    });
-    // A reload shows the list again, from the transcript: the footer is not session state.
-    const section = document.getElementById("todo-section") as HTMLElement;
-    expect(section.classList.contains("hidden")).toBe(false);
-    expect(document.getElementById("todo-section-count")?.textContent).toBe("1/2");
-    expect(section.querySelectorAll(".todo-item")).toHaveLength(2);
   });
 
   it("does not turn another tool's output into a task list", async () => {
