@@ -129,14 +129,22 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   <path d="M12 9.6v5.2M9.4 12.2h5.2" stroke="currentColor"/>
 </svg>
 `;var uu=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-  <!-- StrReplace: the shape is the reference "replace" SVG verbatim, with the
-       FILL removed on request. The two translucent squares (fill="currentColor"
-       + opacity=".2") are gone: the source square is still readable from its
-       four corner marks, and the destination keeps its stroked outline. With no
-       fill left, the paint is homogeneous again and lives on the root. -->
-  <rect width="8.32" height="8.32" x="13.15" y="13.15" rx="2"/>
-  <path d="M18.44 9.57v-1c0-1.88 0-2.83-.59-3.41c-.58-.59-1.53-.59-3.41-.59h-.23"/>
-  <path d="M21.06 8.29c-1.08 1.07-1.61 1.61-2.26 1.7a2 2 0 0 1-.6 0c-.65-.09-1.19-.63-2.27-1.7M8.38 10.8c.84 0 1.26 0 1.58-.17q.43-.22.66-.65c.16-.32.16-.74.16-1.59M8.4 2.54c.82 0 1.23 0 1.55.16q.45.23.67.67c.16.32.16.73.16 1.56M4.89 10.8c-.84 0-1.26 0-1.59-.17a1.5 1.5 0 0 1-.65-.65c-.17-.32-.17-.74-.17-1.59m2.41-5.85c-.84 0-1.26 0-1.59.17a1.5 1.5 0 0 0-.65.65c-.17.32-.17.74-.17 1.59"/>
+  <!-- StrReplace: the Lucide \`replace\` \u2014 what the tool does, said as a move: an
+       arrow leaving a source (the four corner marks, drawn as 1-unit arcs, not
+       as a box), an elbow carrying it, and a solid destination square.
+       It replaces a busier drawing (a filled source square plus corner marks and
+       a second thin rect): at 13 px the difference is that this one has four
+       elements that matter and no translucency to lose.
+       Geometry verbatim (7 elements); last drawing change in Lucide was
+       2024-08-02 (#2333). Paint on the root, weight 2 \u2192 the family's 1.5, no
+       width/height: a tool call draws this at 13 px. -->
+  <path d="M14 4a1 1 0 0 1 1-1"/>
+  <path d="M15 10a1 1 0 0 1-1-1"/>
+  <path d="M21 4a1 1 0 0 0-1-1"/>
+  <path d="M21 9a1 1 0 0 1-1 1"/>
+  <path d="m3 7 3 3 3-3"/>
+  <path d="M6 10V5a2 2 0 0 1 2-2h2"/>
+  <rect x="3" y="14" width="7" height="7" rx="1"/>
 </svg>
 `;var du=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
   <!-- Edit: the big pencil of the reference, with the short writing line it
