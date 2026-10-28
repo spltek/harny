@@ -29,7 +29,7 @@ import paperclip from "../../media/icons/paperclip.svg";
 import search from "../../media/icons/search.svg";
 import sparkles from "../../media/icons/sparkles.svg";
 import check from "../../media/icons/check.svg";
-import model from "../../media/icons/model.svg";
+import parallel from "../../media/icons/parallel.svg";
 import eye from "../../media/icons/eye.svg";
 // One mark per tool: these are what a tool call wears in the transcript.
 import read from "../../media/icons/read.svg";
@@ -68,7 +68,7 @@ const ARTWORK = {
   search,
   sparkles,
   check,
-  model,
+  parallel,
   eye,
   read,
   write,

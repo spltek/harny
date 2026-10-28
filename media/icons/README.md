@@ -70,15 +70,15 @@ folder, not remembered):
 | **2** | 10 | `branch` `eye` `history` `paperclip` `pencil` `scissors` `search`, and the small three `plus` `check` `close` |
 | **2.5** | 2 | `chevron-down` `minus` |
 | **1.8** | 1 | `sparkles` — the single in-between value |
-| *none* (solid) | 5 | `gear` `play` `skill` `stop` `model` |
+| *none* (solid) | 5 | `gear` `play` `skill` `stop` `parallel` |
 
 What matters is the OPTICAL weight — `stroke-width × rendered px / 24` — not the
 number in the file: 1.5 at 13 px is **0.8 px**, chrome at 2–2.5 drawn at 10–15 px is
 **1.0–1.25 px**. That is the rule: the transcript marks are drawn small and light,
 the chrome is drawn small and heavy, because a 0.8 px line next to a 10 px button
 disappears. Something that has no stroke at all (`skill`, `gear`, `play`, `stop`,
-`model`) is a filled silhouette and reads heavier still at the same size — that is a
-design choice to settle, not a measurement.
+`parallel`) is a filled silhouette and reads heavier still at the same size — that is
+a design choice to settle, not a measurement.
 
 ## How the files reach the bundle
 

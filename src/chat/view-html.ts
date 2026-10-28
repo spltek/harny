@@ -2587,7 +2587,7 @@ ${renderViewConfig(deps)}
            for the current mode. Blue when pressed. -->
       <button type="button" id="parallel-btn" aria-pressed="false"
               title="Parallel: let the agent launch sub-agents (read-only in Analyze)">
-        ${icon("model", 14)}
+        ${icon("parallel", 14)}
         <span>Parallel</span>
       </button>
       <span class="model-label">AI Model:</span>
