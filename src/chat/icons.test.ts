@@ -161,11 +161,13 @@ describe("the contact sheet", () => {
 
     expect(listed.length).toBeGreaterThan(10); // the sheet still IS a sheet
     expect(listed.filter((file) => !onDisk.includes(file))).toEqual([]); // a row, no file
+    // …and the other direction, now that the sheet is the FULL inventory: a file
+    // with no row is a mark nobody ever looks at — drawn, imported, unphotographed.
+    // (This is how `minus` survived unsold: registered in the ARTWORK map and
+    // asked for by no call site.)
+    expect(onDisk.filter((file) => !listed.includes(file))).toEqual([]); // a file, no row
     // The same mark twice is how a sheet starts disagreeing with itself: the sizes
     // are rendered per row, so a duplicate stays invisible until one copy is edited.
     expect([...new Set(listed)]).toEqual(listed);
-    // The other direction is deliberately NOT asserted: the sheet draws what the
-    // TRANSCRIPT draws (tool marks, Sub-agent, Thinking), not the chrome. A button
-    // or a chevron is not in it, and that split is the point.
   });
 });

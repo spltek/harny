@@ -37,11 +37,13 @@
       <code>strreplace.svg</code>, every MCP tool shares the plug, and an unknown name keeps the wrench.
     </p>
     <p class="lead">
-      One weight, one family: every tool mark is <code>stroke-width 1.5</code> on the same 24×24 grid. The
-      chrome (buttons, chevrons) keeps its own heavier weights — at 11–15 px a thinner line disappears — and where
-      the same drawing has to serve both, the call site asks for the weight it needs
-      (<code>icon("trash", 13, 'stroke-width="2"')</code>) instead of keeping a second copy of the file.
-      <code>skill</code> is the only filled mark: it came in that way.
+      Two weights, on purpose. Every mark the TRANSCRIPT draws is <code>stroke-width 1.5</code> on the same
+      24×24 grid — about 0.8 px once drawn at 13 px. The chrome runs heavier (2, and 2.5 for the tiny
+      ones at 10–11 px): a 1.5 line at 11 px is 0.7 px and disappears. <code>sparkles</code> is the one
+      1.8, and four marks are SOLID with no stroke at all (<code>gear</code>, <code>play</code>,
+      <code>skill</code>, <code>stop</code>). Where one drawing has to serve both weights, the call site
+      asks for the one it needs (<code>icon("trash", 13, 'stroke-width="2"')</code>, used twice in the
+      session list) instead of keeping a second copy of the file.
     </p>
 
     <h2>On a light surface</h2>
@@ -51,30 +53,52 @@
     <div class="grid" id="dark"></div>
 
     <footer>
-      The marks the TRANSCRIPT draws: one per tool, plus Sub-agent and Thinking. The chrome (buttons, chevrons,
-      toggles) is not in this sheet — it keeps its own heavier weights. media/icons — 14 · 16 · 24 · 48 px
+      Every file in <code>media/icons/</code> — the transcript marks and the chrome alike. A test reads
+      this page, in both directions: a row with no file, a file with no row, or the same mark listed twice
+      fails the build. Rendered at 14 · 16 · 24 · 48 px.
     </footer>
 
     <script>
       const ICONS = [
-        ["read.svg", "Read", "read a file from the filesystem"],
-        ["write.svg", "Write", "write a whole file"],
-        ["strreplace.svg", "StrReplace", "swap one string inside a file"],
+        // ── The marks the TRANSCRIPT draws: one per tool, plus Sub-agent and Thinking.
+        ["read.svg", "Read", "read a file from the filesystem — a notebook, so the content comes back"],
+        ["write.svg", "Write", "write a whole file — the same notebook, with a pen instead of lines"],
+        ["strreplace.svg", "StrReplace", "swap one string inside a file — a move, arrow to destination"],
         ["edit.svg", "Edit", "several surgical edits per call"],
         ["trash.svg", "Delete", "delete a file (same drawing as the session trash)"],
         ["shell.svg", "Shell", "run a shell command"],
-        ["grep.svg", "Grep", "search file CONTENTS"],
+        ["grep.svg", "Grep", "search file CONTENTS — a lens over code"],
         ["glob.svg", "Glob", "find files by PATTERN"],
         ["skill.svg", "Skill", "activate a skill"],
-        ["todowrite.svg", "TodoWrite", "keep the task list"],
+        ["todowrite.svg", "TodoWrite", "keep the task list — one box still empty, one already ticked"],
         ["websearch.svg", "WebSearch", "search the web"],
         ["webfetch.svg", "WebFetch", "fetch a URL"],
-        ["readlints.svg", "ReadLints", "read the linter's errors"],
+        ["readlints.svg", "ReadLints", "the linter's errors for a file — a warning, not a page"],
         ["mcp.svg", "MCP", "every server tool (one mark)"],
         ["thinking.svg", "Thinking", "the model is thinking"],
-        // One flat folder: every mark here is a file in media/icons/, sibling to
-        // this sheet — no sub-folder to resolve, no path to get wrong.
         ["subagent.svg", "Sub-agent", "delegated work in flight — Delegate has NO separate mark: its call IS this bubble"],
+
+        // ── Chrome: buttons, folds, toggles. These are the ones that were NOT in
+        // this sheet, and their absence is how a mark ends up with no picture
+        // anywhere: drawn, imported, and never looked at.
+        ["model.svg", "Parallel", "the Parallel toggle — a chip with AI inside. Registered as `model`, which is a trap: the AI Model dropdown has NO icon"],
+        ["search.svg", "Analyze", "the read-only mode, on the mode button and its menu row — a lens, NOT the find bar"],
+        ["sparkles.svg", "Build", "the Build mode (full tool use), and the two sparkles in the mode menu"],
+        ["gear.svg", "Settings", "configure providers, sessions, MCP servers, compaction — one gear for all four"],
+        ["plus.svg", "New", "a new session"],
+        ["minus.svg", "Minus", "REGISTERED BUT UNUSED: no call site asks for it today — the `+` steppers it paired with are gone"],
+        ["close.svg", "Close", "dismiss a dialog; also the × of a cancelled task"],
+        ["check.svg", "Check", "the chosen row in a menu; also a completed task"],
+        ["chevron-down.svg", "Fold", "a fold that turns: right when closed, down when open"],
+        ["paperclip.svg", "Attach", "attach files to the prompt"],
+        ["play.svg", "Send", "send the prompt and start the run"],
+        ["stop.svg", "Stop", "stop the running turn"],
+        ["eye.svg", "Reveal", "hold to show the API key that the field masks"],
+        ["history.svg", "Summary", "the synthetic bubble a compaction leaves in place of the turns it dropped"],
+        ["branch.svg", "Branch", "branch the session — a copy from this point"],
+        ["scissors.svg", "Cut", "cut the transcript (compact it now)"],
+        ["pencil.svg", "Rename", "rename a session"],
+        ["file-badge.svg", "File chip", "a TEMPLATE, not a finished mark: {{COLOR}} and {{LABEL}} are filled at runtime, so here it shows them raw"],
       ];
       const SIZES = [14, 16, 24, 48];
 
