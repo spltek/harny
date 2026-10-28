@@ -1,8 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-  <!-- ReadLints: what the linter says about a file. The dot is a zero-length
-       segment with a round cap: a real circle, but no fill to break the rule. -->
-  <path d="M4 21.4V2.6c0-.331.269-.6.6-.6h11.652a.6.6 0 0 1 .424.176l3.148 3.148a.6.6 0 0 1 .176.424V21.4c0 .331-.269.6-.6.6H4.6a.6.6 0 0 1-.6-.6Z" stroke="currentColor"/>
-  <path d="M16 2v3.4c0 .331.269.6.6.6H20" stroke="currentColor"/>
-  <path d="M12 8.75v5.5" stroke="currentColor"/>
-  <path d="M12 17.35h.01" stroke="currentColor"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- ReadLints: the Lucide `triangle-alert` (formerly `alert-triangle`; renamed
+       by #1906, geometry unchanged since — the revision lucide-static serves
+       under both names). What the linter says, said as a warning rather than as
+       another page: it used to be a folded page with a `!` on it, i.e. a fourth
+       page in a transcript that already had Read, Write and Edit.
+       Geometry verbatim (3 paths); the dot is a zero-length segment with a round
+       cap, so it needs no fill. Paint on the root, weight 2 → the family's 1.5,
+       no width/height: a tool call draws this at 13 px. -->
+  <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/>
+  <path d="M12 9v4"/>
+  <path d="M12 17h.01"/>
 </svg>
