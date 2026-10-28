@@ -146,11 +146,19 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   <path d="M12.26 14.14 9.86 11.74" stroke="currentColor"/>
   <path d="M15.4 20.8h4.8" stroke="currentColor"/>
 </svg>
-`;var fu=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-  <!-- Shell: no window chrome, just the prompt and its cursor \u2014 the smallest
-       thing that says "a command runs here". -->
-  <path d="M5 6.75 10.25 12 5 17.25" stroke="currentColor"/>
-  <path d="M13.25 17.25h6.25" stroke="currentColor"/>
+`;var fu=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Shell: the Lucide \`terminal\` \u2014 a prompt and its cursor, no window chrome,
+       which is the same idea the hand-drawn mark had. What changes is the GRID:
+       the old one was hand-tuned smaller and tighter (a chevron 5\u219210.25\u21925 and an
+       underscore of 6.25 units), so next to a family that fills the 24 box it sat
+       a size down. This one is laid out on the grid: \`m4 17 6-6-6-6\` and
+       \`M12 19h8\`.
+       Provenance: inherited from Feather in the 2020 fork, optimised twice since
+       (2023-04-08, 2025-05-16) \u2014 the geometry has not moved from the 2025 pass to
+       today's lucide-static. Paint on the root, weight 2 \u2192 the family's 1.5, no
+       width/height: a tool call draws this at 13 px. -->
+  <path d="M12 19h8"/>
+  <path d="m4 17 6-6-6-6"/>
 </svg>
 `;var pu=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
   <!-- Grep: the Lucide \`search-code\` (revision of 2024-04-24, still what
