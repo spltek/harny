@@ -7,12 +7,15 @@ import { langIdForPath } from "./lang-map";
 import {
   clampContextWindow,
   clampOutputTokens,
+  CONTEXT_SLIDER_STEP,
   DEFAULT_CONTEXT_WINDOW,
   DEFAULT_OUTPUT_TOKENS,
   MAX_CONTEXT_WINDOW,
   MAX_OUTPUT_TOKENS,
   MIN_CONTEXT_WINDOW,
   MIN_OUTPUT_TOKENS,
+  OUTPUT_SLIDER_STEP,
+  reachableStep,
 } from "../context-window";
 import { clampTemperature, clampTopP, TEMPERATURE_MAX, TEMPERATURE_MIN, TEMPERATURE_STEP } from "../temperature";
 // Icon/glyph artwork is FILES under media/icons/, never markup in here (see
@@ -3407,6 +3410,10 @@ const alertMessage = document.getElementById("alert-message") as HTMLDivElement;
 const alertOk = document.getElementById("alert-ok") as HTMLButtonElement;
 const alertCancel = document.getElementById("alert-cancel") as HTMLButtonElement;
 const alertActions = alertOk.parentElement as HTMLElement;
+/** The numeric rows the alert ASKS for (model limits), built by the host. */
+const alertFields = document.getElementById("alert-fields") as HTMLDivElement;
+/** The open alert's sliders, by field key (empty = a plain text alert). */
+const alertFieldStates = new Map<string, { value: number }>();
 let alertId = -1;
 
 /** A destructive answer can ask for a SECOND step. The host provides the words (it owns the
@@ -3417,12 +3424,88 @@ interface AlertConfirm {
   confirmText?: string;
 }
 
+/** A numeric row the alert can ASK for: a labelled slider plus its live value. */
+interface AlertField {
+  /** Key the answer comes back under (e.g. "contextWindow"). */
+  key: string;
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  value: number;
+  /** Tooltip: says WHY the scale is what it is (detected vs unknown). */
+  hint?: string;
+}
+
 /** Set while the modal is showing the SECOND step: the answer it will post. */
 let alertPendingValue: string | true | null = null;
 /** The confirm for the PRIMARY answer (OK), when the host declared one. */
 let alertPrimaryConfirm: AlertConfirm | null = null;
 /** The confirms for the extra answers, by value. */
 const alertExtraConfirms = new Map<string, AlertConfirm>();
+
+/**
+ * Build the alert's numeric rows. Same markup family as the Window / Output card
+ * (`.num-row` + `.num-range` + `.num-value`), so the two never drift apart: the
+ * value label keeps the exact number, the slider is the control.
+ *
+ * The label starts from the EXACT value the host sent and is what the answer
+ * carries: the range snaps its thumb to the nearest step, so reading the input
+ * alone would silently rewrite a detected 32 768 into 33 000 for someone who
+ * never touched the control.
+ */
+function renderAlertFields(fields: AlertField[] | undefined): void {
+  alertFieldStates.clear();
+  alertFields.innerHTML = "";
+  for (const f of fields ?? []) {
+    const row = document.createElement("div");
+    row.className = "alert-field";
+    const label = document.createElement("label");
+    label.className = "alert-field-label";
+    const name = document.createElement("span");
+    name.textContent = f.label;
+    const scale = document.createElement("span");
+    scale.className = "range-label";
+    scale.textContent = `(${formatContext(f.min)} → ${formatContext(f.max)})`;
+    label.append(name, scale);
+    const numRow = document.createElement("div");
+    numRow.className = "num-row";
+    const input = document.createElement("input");
+    input.type = "range";
+    input.className = "num-range";
+    input.min = String(f.min);
+    input.max = String(Math.max(f.min, f.max));
+    input.step = String(f.step > 0 ? f.step : 1);
+    input.value = String(f.value);
+    input.setAttribute("aria-label", f.label);
+    if (f.hint) input.title = f.hint;
+    const shown = document.createElement("span");
+    shown.className = "num-value";
+    const field = { value: f.value };
+    const show = (): void => {
+      shown.textContent = String(field.value);
+    };
+    input.addEventListener("input", () => {
+      field.value = Number(input.value);
+      show();
+    });
+    show();
+    numRow.append(input, shown);
+    row.append(label, numRow);
+    alertFields.append(row);
+    alertFieldStates.set(f.key, field);
+  }
+  alertFields.classList.toggle("hidden", alertFieldStates.size === 0);
+}
+
+/** The numbers the form is showing, keyed as the host asked them. `null` when
+ * the alert has no fields, so a plain OK still answers `true`. */
+function alertFieldValues(): Record<string, number> | null {
+  if (alertFieldStates.size === 0) return null;
+  const out: Record<string, number> = {};
+  for (const [key, field] of alertFieldStates) out[key] = field.value;
+  return out;
+}
 
 function openAlert(a: {
   modalId?: number;
@@ -3436,6 +3519,10 @@ function openAlert(a: {
   /** A second step for the primary answer (a destructive one). */
   confirm?: AlertConfirm;
   extraActions?: { value: string; text: string; title?: string; disabled?: boolean; confirm?: AlertConfirm }[];
+  /** Numbers to ask for (sliders). When present, OK answers with `{ [key]: value }`
+   * instead of `true`, so a question can CARRY the answer instead of pointing at
+   * another control. */
+  fields?: AlertField[];
 }): void {
   alertId = typeof a.modalId === "number" ? a.modalId : typeof a.id === "number" ? a.id : -1;
   alertPendingValue = null;
@@ -3443,6 +3530,7 @@ function openAlert(a: {
   alertExtraConfirms.clear();
   alertTitle.textContent = a.title;
   alertMessage.textContent = a.message;
+  renderAlertFields(a.fields);
   const confirm = (a.alertKind ?? a.kind) === "confirm";
   alertCancel.style.display = confirm ? "" : "none";
   alertOk.textContent = a.confirmText ?? "OK";
@@ -3497,13 +3585,16 @@ function askAlertConfirm(c: AlertConfirm, value: string | true): void {
 
 /** Answer the open modal. `value` is the answer itself: `true`/`false` for the
  * plain confirm, or the action's own string for a question with extra choices. */
-function closeAlert(value: boolean | string): void {
+function closeAlert(value: boolean | string | Record<string, number>): void {
   if (alertId < 0) return;
   const id = alertId;
   alertId = -1;
   alertPendingValue = null;
   alertPrimaryConfirm = null;
   alertExtraConfirms.clear();
+  alertFields.innerHTML = "";
+  alertFieldStates.clear();
+  alertFields.classList.add("hidden");
   alertModal.classList.add("hidden");
   vscode.postMessage({ type: "modalResponse", id, value });
 }
@@ -3519,7 +3610,8 @@ alertOk.addEventListener("click", () => {
     askAlertConfirm(alertPrimaryConfirm, true);
     return;
   }
-  closeAlert(true);
+  // A form answers with its numbers; a plain alert with `true`.
+  closeAlert(alertFieldValues() ?? true);
 });
 alertCancel.addEventListener("click", () => closeAlert(false));
 alertModal.querySelector(".alert-backdrop")?.addEventListener("click", () => closeAlert(false));
@@ -5199,16 +5291,6 @@ function rafThrottle(fn: () => void): () => void {
 let currentCtxMax = MAX_CONTEXT_WINDOW;
 let currentOutMax = MAX_OUTPUT_TOKENS;
 
-/**
- * A step that makes `max` REACHABLE: the nominal step when it divides the range
- * (nice snapping), otherwise 1. A step that does not divide made the thumb stop
- * just short of a model's detected maximum (e.g. max 7 963 with step 256).
- */
-function reachableStep(min: number, max: number, nominal: number): number {
-  const span = max - min;
-  return span > 0 && span % nominal === 0 ? nominal : 1;
-}
-
 function sendContextWindow(value: number): void {
   const v = clampContextWindow(value, currentCtxMax);
   ctxRange.value = String(v);
@@ -5221,7 +5303,7 @@ function sendContextWindow(value: number): void {
 function renderContextWindow(c: ConfigState): void {
   currentCtxMax = c.maxContextWindow ?? MAX_CONTEXT_WINDOW;
   ctxRange.max = String(currentCtxMax);
-  ctxRange.step = String(reachableStep(MIN_CONTEXT_WINDOW, currentCtxMax, 1000));
+  ctxRange.step = String(reachableStep(MIN_CONTEXT_WINDOW, currentCtxMax, CONTEXT_SLIDER_STEP));
   ctxRangeLabel.textContent = `(${formatContext(MIN_CONTEXT_WINDOW)} → ${formatContext(currentCtxMax)})`;
   const v = clampContextWindow(c.contextWindow || DEFAULT_CONTEXT_WINDOW, currentCtxMax);
   ctxRange.value = String(v);
@@ -5239,7 +5321,7 @@ function sendOutputTokens(value: number): void {
 function renderOutputTokens(c: ConfigState): void {
   currentOutMax = c.maxOutputTokens ?? MAX_OUTPUT_TOKENS;
   outRange.max = String(currentOutMax);
-  outRange.step = String(reachableStep(MIN_OUTPUT_TOKENS, currentOutMax, 256));
+  outRange.step = String(reachableStep(MIN_OUTPUT_TOKENS, currentOutMax, OUTPUT_SLIDER_STEP));
   outRangeLabel.textContent = `(${formatContext(MIN_OUTPUT_TOKENS)} → ${formatContext(currentOutMax)})`;
   const v = clampOutputTokens(c.outputTokens ?? DEFAULT_OUTPUT_TOKENS, currentOutMax);
   outRange.value = String(v);

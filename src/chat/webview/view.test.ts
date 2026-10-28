@@ -181,6 +181,7 @@ function setupDom(initOverrides: Record<string, unknown> = {}, savedState: Recor
       <div class="alert-card">
         <h3 id="alert-title"></h3>
         <div id="alert-message" class="alert-message"></div>
+        <div id="alert-fields" class="alert-fields hidden"></div>
         <div class="alert-actions">
           <button id="alert-cancel" class="secondary">Cancel</button>
           <button id="alert-ok">OK</button>
@@ -3434,6 +3435,64 @@ describe("view webview client", () => {
     byText("Empty").click();
     cancel.click();
     expect(posted).toContainEqual({ type: "modalResponse", id: 8, value: false });
+  });
+
+  it("an alert can ASK for numbers: two sliders, answered as an object", async () => {
+    await loadView();
+    const reset = (): void => {
+      posted.length = 0;
+    };
+    hostMessage({
+      type: "modal",
+      kind: "alert",
+      modalId: 21,
+      alertKind: "info",
+      title: "Model limits unknown",
+      message: "set the two values",
+      confirmText: "Apply",
+      fields: [
+        { key: "contextWindow", label: "Context window", min: 1000, max: 2_048_000, step: 1000, value: 128_000 },
+        { key: "outputTokens", label: "Max output tokens", min: 256, max: 512_000, step: 256, value: 16_384 },
+      ],
+    });
+    const ok = document.getElementById("alert-ok") as HTMLButtonElement;
+    const ranges = [...document.querySelectorAll<HTMLInputElement>("#alert-fields .num-range")];
+    const values = (): string[] =>
+      [...document.querySelectorAll("#alert-fields .num-value")].map((e) => e.textContent ?? "");
+    const labels = (): string[] =>
+      [...document.querySelectorAll("#alert-fields .alert-field-label")].map((e) => e.textContent ?? "");
+
+    // Two sliders, each pre-filled with the value IN USE and showing its scale.
+    expect(ranges).toHaveLength(2);
+    expect(ranges[0].min).toBe("1000");
+    expect(ranges[0].max).toBe("2048000");
+    expect(ranges[1].min).toBe("256");
+    expect(ranges[1].max).toBe("512000");
+    expect(values()).toEqual(["128000", "16384"]);
+    expect(labels()[0]).toContain("Context window");
+    expect(labels()[0]).toContain("→");
+
+    // Dragging updates the label live; OK answers with the TWO numbers, keyed as asked.
+    ranges[0].value = "32000";
+    ranges[0].dispatchEvent(new Event("input"));
+    ranges[1].value = "4096";
+    ranges[1].dispatchEvent(new Event("input"));
+    expect(values()).toEqual(["32000", "4096"]);
+    reset();
+    ok.click();
+    expect(posted).toContainEqual({
+      type: "modalResponse",
+      id: 21,
+      value: { contextWindow: 32000, outputTokens: 4096 },
+    });
+
+    // The rows belong to the ALERT: the next plain one must not re-use them.
+    hostMessage({ type: "modal", kind: "alert", modalId: 22, alertKind: "info", title: "Heads up", message: "done" });
+    expect(document.querySelectorAll("#alert-fields .num-range")).toHaveLength(0);
+    expect(document.getElementById("alert-fields")!.classList.contains("hidden")).toBe(true);
+    reset();
+    ok.click();
+    expect(posted).toContainEqual({ type: "modalResponse", id: 22, value: true });
   });
 
   it("the PRIMARY answer has its second step too — and a plain alert keeps the old behaviour", async () => {
@@ -7905,11 +7964,11 @@ describe("context window slider", () => {
 });
 
 describe("output tokens slider", () => {
-  it("renders the value from config (default 16384) and posts on drag", async () => {
+  it("renders the value from config (default 8192) and posts on drag", async () => {
     await loadView();
     const range = document.getElementById("out-range") as HTMLInputElement;
     const label = document.getElementById("out-value") as HTMLElement;
-    expect(label.textContent).toBe("16384");
+    expect(label.textContent).toBe("8192");
 
     hostMessage({
       type: "config",
@@ -10004,10 +10063,10 @@ describe("slider step makes the exact model maximum reachable", () => {
     const ctx = document.getElementById("ctx-range") as HTMLInputElement;
     const out = document.getElementById("out-range") as HTMLInputElement;
     expect(ctx.max).toBe("131072");
-    expect(ctx.step).toBe("1"); // 131072 - 32000 = 99072, not a multiple of 1000
+    expect(ctx.step).toBe("1"); // 131072 - 1000 = 130072, not a multiple of 1000
     expect(ctx.value).toBe("131072");
     expect(out.max).toBe("7963");
-    expect(out.step).toBe("1"); // 7963 - 256 = 7707, not a multiple of 256
+    expect(out.step).toBe("1"); // 7963 - 8 = 7955, not a multiple of 8
     expect(out.value).toBe("7963");
   });
 
@@ -10015,7 +10074,7 @@ describe("slider step makes the exact model maximum reachable", () => {
     await loadView();
     hostMessage(cfg({ contextWindow: 128000, maxContextWindow: 128000, outputTokens: 16384, maxOutputTokens: 16384 }));
     expect((document.getElementById("ctx-range") as HTMLInputElement).step).toBe("1000");
-    expect((document.getElementById("out-range") as HTMLInputElement).step).toBe("256");
+    expect((document.getElementById("out-range") as HTMLInputElement).step).toBe("8");
   });
 });
 
@@ -10062,7 +10121,7 @@ describe("control range labels + sampler scale", () => {
     await loadView();
     hostMessage(cfg({ contextWindow: 131072, maxContextWindow: 131072, outputTokens: 7963, maxOutputTokens: 7963 }));
     expect((document.getElementById("ctx-range-label") as HTMLElement).textContent).toBe("(1k → 131k)");
-    expect((document.getElementById("out-range-label") as HTMLElement).textContent).toBe("(256 → 8k)");
+    expect((document.getElementById("out-range-label") as HTMLElement).textContent).toBe("(8 → 8k)");
   });
 });
 

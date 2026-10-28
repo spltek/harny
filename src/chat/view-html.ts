@@ -3,12 +3,14 @@ import { panelMinWidthCss } from "./panel-width";
 import type { ChatMessage } from "../core/history/types";
 import type { SessionSummary } from "../core/sessions/types";
 import {
+  CONTEXT_SLIDER_STEP,
   DEFAULT_CONTEXT_WINDOW,
   DEFAULT_OUTPUT_TOKENS,
   MAX_CONTEXT_WINDOW,
   MAX_OUTPUT_TOKENS,
   MIN_CONTEXT_WINDOW,
   MIN_OUTPUT_TOKENS,
+  OUTPUT_SLIDER_STEP,
 } from "./context-window";
 import type { SessionLiveProjection } from "./session-live-state";
 // Icon artwork is FILES under media/icons/ (see media/icons/README.md and
@@ -2278,6 +2280,17 @@ ${renderViewConfig(deps)}
       font-size: var(--fs-md); color: var(--fg-dim); line-height: 1.5;
       word-wrap: break-word; white-space: pre-wrap;
     }
+    /* A question can also ASK for NUMBERS (the model limits of a model whose
+       host reports none). The rows reuse the Window/Output markup, so they look
+       and drag exactly like the sliders in the status card — one way to set a
+       value, wherever the panel asks for it. */
+    #alert-modal .alert-fields { display: flex; flex-direction: column; gap: 8px; }
+    #alert-modal .alert-fields.hidden { display: none; }
+    #alert-modal .alert-field { display: flex; flex-direction: column; }
+    #alert-modal .alert-field-label {
+      display: flex; justify-content: space-between; align-items: baseline; gap: 6px;
+      font-size: var(--fs-sm); color: var(--muted-2); margin-bottom: 2px;
+    }
     /* wrap: a question can offer three answers (the session trash asks delete /
        rewind / empty at once) and they must not spill out of the 340px card. */
     #alert-modal .alert-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
@@ -2596,14 +2609,14 @@ ${renderViewConfig(deps)}
         <div class="field">
           <label class="field-label" for="ctx-range">Context window <span class="range-label" id="ctx-range-label"></span></label>
           <div class="num-row">
-            <input type="range" id="ctx-range" class="num-range" min="${MIN_CONTEXT_WINDOW}" max="${MAX_CONTEXT_WINDOW}" step="1000" aria-label="Context window" />
+            <input type="range" id="ctx-range" class="num-range" min="${MIN_CONTEXT_WINDOW}" max="${MAX_CONTEXT_WINDOW}" step="${CONTEXT_SLIDER_STEP}" aria-label="Context window" />
             <span class="num-value" id="ctx-value">${DEFAULT_CONTEXT_WINDOW}</span>
           </div>
         </div>
         <div class="field">
           <label class="field-label" for="out-range">Output tokens <span class="range-label" id="out-range-label"></span></label>
           <div class="num-row">
-            <input type="range" id="out-range" class="num-range" min="${MIN_OUTPUT_TOKENS}" max="${MAX_OUTPUT_TOKENS}" step="256" aria-label="Output tokens" />
+            <input type="range" id="out-range" class="num-range" min="${MIN_OUTPUT_TOKENS}" max="${MAX_OUTPUT_TOKENS}" step="${OUTPUT_SLIDER_STEP}" aria-label="Output tokens" />
             <span class="num-value" id="out-value">${DEFAULT_OUTPUT_TOKENS}</span>
           </div>
         </div>
@@ -2752,6 +2765,7 @@ ${renderViewConfig(deps)}
     <div class="alert-card">
       <h3 id="alert-title"></h3>
       <div id="alert-message" class="alert-message"></div>
+      <div id="alert-fields" class="alert-fields hidden"></div>
       <div class="alert-actions">
         <button id="alert-cancel" class="secondary">Cancel</button>
         <button id="alert-ok">OK</button>

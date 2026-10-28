@@ -118,6 +118,32 @@ describe("renderViewHtml", () => {
     expect(html).toContain("applies immediately");
   });
 
+  it("the alert can carry the SAME sliders as the Window/Output card (the model-limits form)", () => {
+    // The rows are built by the view (the host decides WHICH numbers to ask for); the
+    // CARD must reserve the slot, or the sliders would land outside the dialog and
+    // there would be no way to answer except by cancelling.
+    const html = renderViewHtml({
+      ...base,
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
+    });
+    expect(html).toContain('<div id="alert-fields" class="alert-fields hidden"></div>');
+    // Hidden until the host asks for numbers (a plain alert keeps its old height).
+    expect(cssRule(html, "#alert-modal .alert-fields.hidden")).toContain("display: none");
+    expect(cssRule(html, "#alert-modal .alert-fields")).toContain("display: flex");
+  });
+
   it("renders the brand mark at SPLASH size, as a design token (not a favicon)", () => {
     const html = renderViewHtml({
       ...base,

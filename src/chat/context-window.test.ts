@@ -1,16 +1,19 @@
 import { describe, it, expect } from "vitest";
 import {
+  CONTEXT_SLIDER_STEP,
   DEFAULT_CONTEXT_WINDOW,
   MAX_CONTEXT_WINDOW,
   MIN_CONTEXT_WINDOW,
   DEFAULT_OUTPUT_TOKENS,
   MAX_OUTPUT_TOKENS,
   MIN_OUTPUT_TOKENS,
+  OUTPUT_SLIDER_STEP,
   REQUEST_SAFETY_MARGIN,
   clampAdoptedContextWindow,
   clampAdoptedOutputTokens,
   clampContextWindow,
   clampOutputTokens,
+  reachableStep,
   toContextWindow,
   toOutputTokens,
   usableContext,
@@ -81,6 +84,20 @@ describe("output-token bounds", () => {
   it("toOutputTokens coerces JSON values", () => {
     expect(toOutputTokens("16384")).toBe(16_384);
     expect(toOutputTokens(undefined)).toBe(DEFAULT_OUTPUT_TOKENS);
+  });
+});
+
+describe("reachableStep — a slider must be able to REACH its own maximum", () => {
+  it("keeps the nominal step when it divides the range", () => {
+    expect(reachableStep(MIN_CONTEXT_WINDOW, MAX_CONTEXT_WINDOW, CONTEXT_SLIDER_STEP)).toBe(CONTEXT_SLIDER_STEP);
+    expect(reachableStep(MIN_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS, OUTPUT_SLIDER_STEP)).toBe(OUTPUT_SLIDER_STEP);
+  });
+
+  it("falls back to 1 when it does not (the thumb stopped short of a real limit)", () => {
+    // A detected 7 963-token window with a 256 step: 7 963 was unreachable.
+    expect(reachableStep(MIN_CONTEXT_WINDOW, 7_963, 1_000)).toBe(1);
+    // Degenerate ranges never divide by surprise either.
+    expect(reachableStep(1_000, 1_000, 1_000)).toBe(1);
   });
 });
 

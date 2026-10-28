@@ -843,7 +843,7 @@ describe("ChatViewProvider", () => {
       .filter((m) => m.type === "config")
       .at(-1);
     // The slider must show what the request really sends (CONFIG.maxTokens=100),
-    // not the bare DEFAULT_OUTPUT_TOKENS (16 384).
+    // not the bare DEFAULT_OUTPUT_TOKENS (8 192).
     expect(configMsg.config.outputTokens).toBe(100);
   });
 
@@ -4132,8 +4132,9 @@ describe("ChatViewProvider compaction", () => {
       ),
     );
 
-    // Re-selecting the SAME unknown model DOES alert again (returning to it must
-    // remind you).
+    // Re-selecting the SAME unknown model DOES alert again while the question is
+    // still unanswered (returning to it must remind you); once the form is filled
+    // in, the answer is remembered — see the "answering the form" test.
     const isContextAlert = (m: unknown): boolean =>
       !!m && typeof m === "object" && (m as { title?: string }).title === "Model limits unknown";
     view.webview.postMessage.mockClear();
@@ -4167,7 +4168,7 @@ describe("ChatViewProvider compaction", () => {
     );
     // The host-identified context is KEPT; the unknown output gets the default.
     expect(registry.get("s1")!.contextWindow).toBe(32768);
-    expect(registry.get("s1")!.outputTokens).toBe(16384);
+    expect(registry.get("s1")!.outputTokens).toBe(8192);
   });
 
   it("alerts when ONLY the context is unknown (host reports the output)", async () => {
@@ -4195,6 +4196,91 @@ describe("ChatViewProvider compaction", () => {
     // The host-identified output is KEPT; the unknown context gets the default.
     expect(registry.get("s1")!.outputTokens).toBe(8192);
     expect(registry.get("s1")!.contextWindow).toBe(128000);
+  });
+
+  it("the unknown-limits alert is a FORM: two sliders pre-filled with the values in use", async () => {
+    state.noAutoAlert = true;
+    try {
+      const { provider } = buildHarness({
+        providerEntry: { name: "llama-cpp", baseUrl: "http://localhost:8090/v1", models: [] },
+        fetchModelInfos: async () => [{ id: "Qwen3.8-27B-Q4_K_L.gguf", contextLength: 32768 }], // output unknown
+        modelsDev: { getLimits: vi.fn(async () => ({})) },
+      });
+      const { handler, view } = resolveWith(provider);
+      await vi.waitFor(() => expect(view.webview.html).toBeTruthy());
+      await provider.createNew();
+      await handler({ type: "setModel", model: "Qwen3.8-27B-Q4_K_L.gguf", provider: "llama-cpp" });
+
+      const posts = (): any[] => view.webview.postMessage.mock.calls.map((c: unknown[]) => c[0]);
+      await vi.waitFor(() => expect(posts().some((m) => m?.title === "Model limits unknown")).toBe(true));
+      const alert = posts().find((m) => m?.title === "Model limits unknown");
+      const byKey = (k: string) => alert.fields.find((f: { key: string }) => f.key === k);
+
+      // The two sliders the user asked for: the SAME scale as the Window card
+      // (1 000 → 2 000 000 / 8 → 524 288) when nothing was detected...
+      const outField = byKey("outputTokens");
+      expect(outField.min).toBe(8);
+      expect(outField.max).toBe(524_288);
+      // ...and the value in use, so OK without touching anything changes nothing.
+      expect(outField.value).toBe(8192);
+      // The DETECTED side is not re-typed from scratch: its own limit is the
+      // ceiling (you can only lower it) and the detected value is the start.
+      const ctxField = byKey("contextWindow");
+      expect(ctxField.min).toBe(1000);
+      expect(ctxField.max).toBe(32768);
+      expect(ctxField.value).toBe(32768);
+
+      await handler({ type: "modalResponse", id: alert.modalId, value: true });
+    } finally {
+      state.noAutoAlert = false;
+    }
+  });
+
+  it("answering the form applies BOTH values and stops asking again for that model", async () => {
+    state.noAutoAlert = true;
+    try {
+      const { store, registry, provider } = buildHarness({
+        providerEntry: { name: "llama-cpp", baseUrl: "http://localhost:8090/v1", models: [] },
+        fetchModelInfos: async () => [{ id: "qwen.gguf" }], // host reports NOTHING
+        modelsDev: { getLimits: vi.fn(async () => ({})) },
+      });
+      const { handler, view } = resolveWith(provider);
+      await vi.waitFor(() => expect(view.webview.html).toBeTruthy());
+      await provider.createNew();
+      await handler({ type: "setModel", model: "qwen.gguf", provider: "llama-cpp" });
+
+      const posts = (): any[] => view.webview.postMessage.mock.calls.map((c: unknown[]) => c[0]);
+      await vi.waitFor(() => expect(posts().some((m) => m?.title === "Model limits unknown")).toBe(true));
+      const alert = posts().find((m) => m?.title === "Model limits unknown");
+
+      // The numbers the user dragged the sliders to.
+      await handler({
+        type: "modalResponse",
+        id: alert.modalId,
+        value: { contextWindow: 32768, outputTokens: 4096 },
+      });
+      const rt = registry.get("s1")!;
+      await vi.waitFor(() => expect(rt.contextWindow).toBe(32768));
+      expect(rt.outputTokens).toBe(4096);
+      // Persisted on the session: the compaction ceiling and the output cap read
+      // it from there.
+      const saved = (store.saveSettings as any).mock.calls as any[];
+      expect(saved.some((c: any[]) => c[1]?.contextWindow === 32768 && c[1]?.outputTokens === 4096)).toBe(true);
+
+      // Coming BACK to the model neither re-asks nor throws the answer away.
+      view.webview.postMessage.mockClear();
+      await handler({ type: "setModel", model: "other.gguf", provider: "llama-cpp" });
+      await handler({ type: "setModel", model: "qwen.gguf", provider: "llama-cpp" });
+      await new Promise((r) => setTimeout(r, 20));
+      const askedAgain = view.webview.postMessage.mock.calls
+        .map((c: unknown[]) => c[0] as { title?: string; modalId?: number })
+        .some((m) => m?.title === "Model limits unknown" && m.modalId !== alert.modalId);
+      expect(askedAgain).toBe(false);
+      expect(registry.get("s1")!.contextWindow).toBe(32768);
+      expect(registry.get("s1")!.outputTokens).toBe(4096);
+    } finally {
+      state.noAutoAlert = false;
+    }
   });
 
   it("defers a page rebuild while a modal is open, then applies it (the alert must not flash away)", async () => {
@@ -5383,9 +5469,9 @@ describe("ChatViewProvider model limits (context + output)", () => {
     const { handler } = resolveWith(provider);
     await provider.createNew();
     await handler({ type: "setModel", model: "m1", provider: "p" });
-    // The CONFIGURED budget keeps the scale cap (512k) — that is the value the
+    // The CONFIGURED budget keeps the scale cap (524 288) — that is the value the
     // UI shows and the user edits.
-    expect(registry.get("s1")!.outputTokens).toBe(512_000);
+    expect(registry.get("s1")!.outputTokens).toBe(524_288);
     // The REQUEST budget is additionally clamped to the room left: with no measured
     // input yet, a 128k window leaves the margin. Sending 512k of output on top of
     // any input is exactly what the provider rejects.
@@ -5428,19 +5514,20 @@ describe("ChatViewProvider model limits (context + output)", () => {
     expect(lastMaxTokens()).toBe(16_384);
 
     // The session's OWN editor floors the value when it is SET from the UI
-    // (toOutputTokens applies MIN_OUTPUT_TOKENS): 123 becomes 256. The clamp is
-    // NOT the thing doing it — and it never RAISES a value either: a provider
-    // entry declaring maxTokens: 123 keeps 123 (see the setModel tests).
+    // (toOutputTokens applies MIN_OUTPUT_TOKENS = 8): 123 is left alone, because
+    // it is already above the floor. The clamp is NOT the thing that raises it —
+    // and it never RAISES a value either: a provider entry declaring maxTokens:
+    // 123 keeps 123 (see the setModel tests).
     rt.contextTokens = 100_000;
     await handler({ type: "setOutputTokens", value: 123 });
-    expect(lastMaxTokens()).toBe(256);
+    expect(lastMaxTokens()).toBe(123);
 
     // When the context is already over the limit the clamp floors at the minimum
     // instead of going negative — the fix for that state is a compaction, not a
     // longer request (the auto-compact trigger fires on the usable budget).
     rt.contextTokens = 1_048_576;
     await handler({ type: "setOutputTokens", value: 384_000 });
-    expect(lastMaxTokens()).toBe(256);
+    expect(lastMaxTokens()).toBe(8);
   });
 
   it("leaves the config chain alone for a session with NO model (an override would shadow it)", async () => {
@@ -5625,7 +5712,7 @@ describe("ChatViewProvider model/config switch hygiene", () => {
 });
 
 describe("ChatViewProvider limits on switching to an UNKNOWN model", () => {
-  it("resets context + output to the DEFAULTS (128k / 16384), not the previous model's", async () => {
+  it("resets context + output to the DEFAULTS (128k / 8192), not the previous model's", async () => {
     const { registry, provider } = buildHarness({
       providerEntry: { name: "opencode-go", baseUrl: "https://opencode.ai/zen/go/v1", models: [] },
       fetchModelInfos: async () => [{ id: "known", contextLength: 1000000, maxOutputTokens: 262144 }],
@@ -5642,7 +5729,7 @@ describe("ChatViewProvider limits on switching to an UNKNOWN model", () => {
     // A model the host does NOT report and models.dev does not know.
     await handler({ type: "setModel", model: "mystery", provider: "opencode-go" });
     await vi.waitFor(() => expect(rt.contextWindow).toBe(128000));
-    expect(rt.outputTokens).toBe(16384);
+    expect(rt.outputTokens).toBe(8192);
   });
 });
 

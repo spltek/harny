@@ -42,11 +42,15 @@ import { preprocessJsonc } from "../core/config/jsonc";
 import { renderViewHtml } from "./view-html";
 import { toTemperature, toTopP } from "./temperature";
 import {
+  CONTEXT_SLIDER_STEP,
   DEFAULT_CONTEXT_WINDOW,
   DEFAULT_OUTPUT_TOKENS,
   MAX_CONTEXT_WINDOW,
   MAX_OUTPUT_TOKENS,
+  MIN_CONTEXT_WINDOW,
   MIN_OUTPUT_TOKENS,
+  OUTPUT_SLIDER_STEP,
+  reachableStep,
   REQUEST_SAFETY_MARGIN,
   REQUEST_SAFETY_MARGIN_SHARE,
   clampAdoptedContextWindow,
@@ -162,6 +166,12 @@ export class ChatViewProvider implements WebviewViewProvider {
   /** `provider|model` keys already looked up this session (avoid re-hitting the
    * catalog on every config push). */
   private readonly modelsDevAttempted = new Set<string>();
+  /** Limits the USER typed for a model whose host reported none (`provider|model`).
+   * They settle the question for that model and seed the session on the next
+   * selection, but they are NOT written back to the models.dev maps: those CAP
+   * the sliders, and an underestimate the user just typed must stay correctable
+   * without switching model first. */
+  private readonly userLimits = new Map<string, { context: number; output: number }>();
   // Short host-model cache: the dropdown re-fetches on open (view sends
   // getConfig on mousedown/focus), so a host that comes up later (e.g. llama.cpp
   // started after the panel) shows up on the next open. Kept short because the
@@ -1454,12 +1464,18 @@ export class ChatViewProvider implements WebviewViewProvider {
           }
         }
         // KNOWN model: adopt its real limits. UNKNOWN model: fall back to the
-        // DEFAULTS (context 128k / output = the provider's maxTokens or 16 384)
+        // DEFAULTS (context 128k / output = the provider's maxTokens or 8 192)
         // — never keep the PREVIOUS model's values.
         const entryMaxTokens = provider ? this.providers.getProvider(provider)?.maxTokens : undefined;
-        rt.contextWindow = adoptedCtx ?? DEFAULT_CONTEXT_WINDOW;
+        // A model the USER already sized (answered in the "Model limits unknown"
+        // form): that answer outranks the provider default — otherwise coming back
+        // to a local model would re-ask and throw away what was typed. What the
+        // HOST reports still wins: it is the model's own declaration.
+        const answered = provider ? this.userLimits.get(`${provider}|${model}`) : undefined;
+        rt.contextWindow = adoptedCtx ?? answered?.context ?? DEFAULT_CONTEXT_WINDOW;
         rt.outputTokens =
           adoptedOut ??
+          answered?.output ??
           (typeof entryMaxTokens === "number"
             ? Math.min(MAX_OUTPUT_TOKENS, Math.max(1, Math.round(entryMaxTokens)))
             : DEFAULT_OUTPUT_TOKENS);
@@ -3172,7 +3188,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     const outMax = (curKey ? this.modelsDevOutput.get(curKey) : undefined) ?? MAX_OUTPUT_TOKENS;
     // The value the request will actually send: the session override when set,
     // otherwise the config/provider default. The UI must show THIS (not a bare
-    // 16 384) so the slider matches the real max_tokens.
+    // 8 192) so the slider matches the real max_tokens.
     const cfgOutputDefault = typeof cfg.maxTokens === "number" ? cfg.maxTokens : DEFAULT_OUTPUT_TOKENS;
 
     // Warn ONLY when the models.dev fallback is unreachable AND some model is
@@ -3250,8 +3266,8 @@ export class ChatViewProvider implements WebviewViewProvider {
 
   /**
    * A selected model whose host did not report a context window: try the cached
-   * models.dev value, then the catalog itself; when NEITHER source knows it,
-   * alert the user (in-panel modal) to set the correct window manually.
+   * models.dev value, then the catalog itself; when NEITHER source knows it, ASK
+   * (in-panel form with the same two sliders as the Window / Output card).
    */
   private async ensureModelLimits(
     rt: SessionRuntime,
@@ -3271,7 +3287,28 @@ export class ChatViewProvider implements WebviewViewProvider {
       this.applyLimits(rt, model, { context: ctx, output: out });
       if (ctx && out) return;
     }
-    // 2) Ask models.dev (cached catalog) for whatever is still missing.
+    // 2) The USER already sized this model and one side is still missing (the
+    //    other comes from a source added since): fill the gap silently — the
+    //    question was answered, it must not be asked twice for the same model.
+    const answered = key ? this.userLimits.get(key) : undefined;
+    if (answered && this.activeRuntime() === rt && rt.model === model) {
+      const patch: SessionSettingsPatch = {};
+      if (!ctx) {
+        ctx = answered.context;
+        rt.contextWindow = ctx;
+        patch.contextWindow = ctx;
+      }
+      if (!out) {
+        out = answered.output;
+        rt.outputTokens = out;
+        patch.outputTokens = out;
+      }
+      if (patch.contextWindow !== undefined || patch.outputTokens !== undefined) {
+        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, patch));
+      }
+      if (ctx && out) return;
+    }
+    // 3) Ask models.dev (cached catalog) for whatever is still missing.
     const catalog = this.options.modelsDev;
     if (catalog && provider && (!ctx || !out)) {
       const entry = this.providers.getProvider(provider);
@@ -3291,21 +3328,90 @@ export class ChatViewProvider implements WebviewViewProvider {
       this.applyLimits(rt, model, { context: ctx, output: out });
       if (ctx && out) return;
     }
-    // 3) At least ONE side is unknown everywhere: prompt the user. The missing
-    //    side already carries its DEFAULT value, so the alert says exactly what
-    //    to fix. Shown on EVERY selection (returning to it must remind you
-    //    again); skipped for a SILENT (on-open) pass.
+    // 4) At least ONE side is unknown everywhere: ASK FOR IT — in the form of the
+    //    same two sliders the Window / Output card has, pre-filled with the values
+    //    in use (so OK without touching anything is exactly today's behaviour).
+    //    A local model whose host reports nothing (llama.cpp & friends) is
+    //    precisely this case, and pointing at another card was a dead end: the
+    //    answer belongs in the question. Skipped for a SILENT (on-open) pass.
     if (!alert) return;
     if (this.activeRuntime() !== rt || rt.model !== model) return; // raced
     const missing = [ctx ? "" : "context window", out ? "" : "max output tokens"].filter(Boolean).join(" and ");
-    await this.inPanelAlert({
-      kind: "info",
+    const maxCtx = ctx ?? MAX_CONTEXT_WINDOW;
+    const maxOut = out ?? MAX_OUTPUT_TOKENS;
+    const answer = await this.requestPanelModal({
+      kind: "alert",
+      alertKind: "info",
       title: "Model limits unknown",
       message:
         `Harny could not determine the ${missing} for "${model}" (the host did not report it and it is not in ` +
-        "models.dev). A default value was applied — set the correct one from the Window / Output controls so " +
-        "auto-compaction and the output cap stay accurate.",
+        "models.dev), so it applied defaults. The sliders below start from the values in use — set the real " +
+        "ones and auto-compaction and the output cap follow them.",
+      confirmText: "Apply",
+      fields: [
+        {
+          key: "contextWindow",
+          label: "Context window",
+          min: MIN_CONTEXT_WINDOW,
+          max: maxCtx,
+          step: reachableStep(MIN_CONTEXT_WINDOW, maxCtx, CONTEXT_SLIDER_STEP),
+          value: Math.min(rt.contextWindow ?? DEFAULT_CONTEXT_WINDOW, maxCtx),
+          hint: ctx
+            ? `Detected for this model: ${ctx} tokens. The slider can only lower it.`
+            : "Unknown: set the window the server really serves (the file name of a GGUF often says it).",
+        },
+        {
+          key: "outputTokens",
+          label: "Max output tokens",
+          min: MIN_OUTPUT_TOKENS,
+          max: maxOut,
+          step: reachableStep(MIN_OUTPUT_TOKENS, maxOut, OUTPUT_SLIDER_STEP),
+          value: Math.min(rt.outputTokens ?? DEFAULT_OUTPUT_TOKENS, maxOut),
+          hint: out
+            ? `Detected for this model: ${out} tokens. The slider can only lower it.`
+            : "Unknown: the response budget the server accepts. Too high and the request is refused.",
+        },
+      ],
     });
+    if (this.activeRuntime() !== rt || rt.model !== model) return; // raced
+    if (!answer || typeof answer !== "object") return; // dismissed: defaults stay
+    const values = answer as { contextWindow?: unknown; outputTokens?: unknown };
+    // A side the answer does not carry (a host/webview skew, or a form that only
+    // asked one question) keeps what is in use: a missing number must never
+    // silently reset a limit to the default.
+    const pick = (v: unknown, fallback: number, clamp: (n: number) => number): number => {
+      const n = typeof v === "number" ? v : Number(v);
+      return Number.isFinite(n) && n > 0 ? clamp(n) : fallback;
+    };
+    this.applyUserLimits(rt, model, provider, {
+      context: pick(values.contextWindow, rt.contextWindow ?? DEFAULT_CONTEXT_WINDOW, toContextWindow),
+      output: pick(values.outputTokens, rt.outputTokens ?? DEFAULT_OUTPUT_TOKENS, toOutputTokens),
+    });
+  }
+
+  /**
+   * Limits the USER typed in the "Model limits unknown" form. They ARE the truth
+   * about the model — the session adopts them and the question is not asked again
+   * for this `provider|model` — but they are deliberately NOT written to the
+   * models.dev maps: those CAP the sliders, and an underestimate must stay
+   * correctable from the Window card without switching model first.
+   */
+  private applyUserLimits(
+    rt: SessionRuntime,
+    model: string,
+    provider: string | undefined,
+    limits: { context: number; output: number },
+  ): void {
+    if (this.activeRuntime() !== rt || rt.model !== model) return;
+    rt.contextWindow = limits.context;
+    rt.outputTokens = limits.output;
+    if (provider) this.userLimits.set(`${provider}|${model}`, limits);
+    this.commitSetting(rt, () =>
+      this.sessions.saveSettings(rt.sessionId, {
+        contextWindow: limits.context,
+        outputTokens: limits.output,
+      }),
+    );
   }
 
   /** Apply resolved limits to the session (only if the model is still current). */

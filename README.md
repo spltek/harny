@@ -507,7 +507,7 @@ Harny reads configuration from **three sources**, in this order:
 | `harny.apiKey` | `""` | API key (falls back to `OPENAI_API_KEY`) |
 | `harny.baseUrl` | `https://api.openai.com` | Base URL (for compatible providers) |
 | `harny.model` | `gpt-4o` | Model for chat completions |
-| `harny.maxTokens` | `16384` | Max tokens per response |
+| `harny.maxTokens` | `8192` | Max tokens per response |
 | `harny.temperature` | not set | Sampling temperature (omitted when unset; required by strict models) |
 | `harny.thinkingMode` | not set | How the reasoning phase is expressed (`bool`, `effort`, `type`, `reasoning`, `unspecified`) — the provider's `thinking` field and the per-session radio group override it |
 | `harny.thinkingLevel` | `medium` | Default thinking level (`off`/`low`/`medium`/`high`); per provider entry you can also set `thinkingLevel` — the radio group only unlocks for providers that declare `thinking` |
@@ -546,8 +546,8 @@ For any host that exposes `GET /v1/models` — OpenAI, OpenRouter, opencode-go, 
 
 Below the model dropdown, two cards let you tune the session. Every numeric control is a **slider with a read-only value label**. All are persisted with the session and restored on reopen:
 
-- **Context window** (default `128000`): the slider **scale is the model's real context window** when it is known, otherwise a `2 048 000` fallback; step 1000. It is the compaction ceiling. Auto-compaction runs **before a request**, **mid-run at every agent turn boundary**, and **after the response**.
-- **Output tokens** (default `16384`): the slider **scale is the model's real max output** when known, otherwise a `512 000` fallback; step 256. It is the `max_tokens` sent per request. The session value wins over the provider's declared default.
+- **Context window** (default `128000`): the slider **scale is the model's real context window** when it is known, otherwise a `2 000 000` fallback; minimum `1 000`, step 1000. It is the compaction ceiling. Auto-compaction runs **before a request**, **mid-run at every agent turn boundary**, and **after the response**.
+- **Output tokens** (default `8192`): the slider **scale is the model's real max output** when known, otherwise a `524 288` fallback; minimum `8`, step 8 (a step of 256 would leave the ceiling unreachable from a minimum of 8). It is the `max_tokens` sent per request. The session value wins over the provider's declared default.
 - **Temperature / Top-P** (Auto by default): a segmented toggle chooses which sampler is active — temperature `0.0–2.0` or top-p `0.0–1.0`, step 0.1 — and the slider below follows that scale. Only the active sampler is sent; **switching the toggle resets the value to Auto**. The toggle choice AND the value (when ≠ Auto) are persisted per session.
 - **Presence / Frequency penalty** (Auto by default): sliders `0.0–2.0`, step 0.1. Presence pushes toward new topics; frequency reduces repetition. Sent only when set.
 - **Auto** is the *not sent* state: pressing it clears the value (`null`) **and snaps the slider to the knob's default** — `1.0` for Temperature/Top-P, `0` for the penalties.

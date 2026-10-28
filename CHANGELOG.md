@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The "Model limits unknown" dialog now ASKS for the two numbers, instead of pointing at another card.** A local model
+  whose server reports nothing (llama.cpp & friends) opened a wall of text saying "set them from the Window / Output
+  controls" — and by the time you found that card, the session was already sending the defaults. The dialog is a form:
+  the same two sliders as the Window card (context window **1 000 → 2 000 000**, output tokens **8 → 524 288**),
+  pre-filled with the values in use, so **OK without touching anything changes nothing**. A side the host DID report is
+  not re-typed from scratch: its own limit is the ceiling of the slider, so it can only be lowered. The answer is saved
+  on the session and remembered for that model, so coming back to it no longer asks again — and it is deliberately not
+  written back as the model's ceiling, or an underestimate you typed would be impossible to correct from the Window
+  card without switching model first.
+- **The two token sliders got the scales they were missing.** Context window now runs **1 000 → 2 000 000**, output
+  tokens **8 → 524 288** (it stopped at 512 000, so a 524k model could not be typed in), and the defaults follow what
+  Harny really sends: context **128 000** (unchanged) and output **8 192** instead of 16 384 — the same number as
+  `harny.maxTokens`, so the slider and the setting no longer disagree. Because the output MINIMUM is now 8, its step
+  went from 256 to **8**: a step that does not divide the range leaves the thumb unable to reach the ceiling, which is
+  exactly what happened when the slider restarted from 8 with a 256 stride. A smaller minimum also means a tiny
+  `max_tokens` is finally expressible — 123 is no longer silently raised to 256.
+
 ## [0.9.1] - 2026-10-28
 
 ### Changed
