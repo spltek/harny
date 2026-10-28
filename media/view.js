@@ -68,12 +68,29 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 `;var su=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
   <path d="M5 12l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
-`;var iu=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <!-- Four nodes: the "Parallel" toggle (sub-agents fanning out). -->
-  <circle cx="7.5" cy="9" r="2.4" fill="currentColor"/>
-  <circle cx="16.5" cy="9" r="2.4" fill="currentColor"/>
-  <circle cx="10" cy="15.5" r="2.2" fill="currentColor"/>
-  <circle cx="14" cy="15.5" r="2.2" fill="currentColor"/>
+`;var iu=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Parallel: the Lucide \`cpu-ai\` (added 2026-10-13, the one lucide-static
+       serves). A chip with AI inside, i.e. "more compute at once" \u2014 which is
+       what the pill does: it lets the agent fan work out to sub-agents.
+       Geometry verbatim (17 elements); only the paint moved to the root and the
+       weight from 2 to 1.5, the family's. No width/height: the caller owns the
+       size, and the pill draws it at 12 px. -->
+  <path d="M12 20v2"/>
+  <path d="M12 2v2"/>
+  <path d="M16 9v6"/>
+  <path d="M17 20v2"/>
+  <path d="M17 2v2"/>
+  <path d="M2 12h2"/>
+  <path d="M2 17h2"/>
+  <path d="M2 7h2"/>
+  <path d="M20 12h2"/>
+  <path d="M20 17h2"/>
+  <path d="M20 7h2"/>
+  <path d="M7 20v2"/>
+  <path d="M7 2v2"/>
+  <path d="M8 13h4"/>
+  <path d="M8 15v-4a2 2 0 014 0v4"/>
+  <rect x="4" y="4" width="16" height="16" rx="2"/>
 </svg>
 `;var au=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
   <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
