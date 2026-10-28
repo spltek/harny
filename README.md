@@ -82,7 +82,13 @@ Model lists can be **declared by hand** or **discovered from the server** (`GET 
 - Search **Harny** in the Extensions view, or open
   [open-vsx.org/extension/spltek/harny](https://open-vsx.org/extension/spltek/harny)
 
-**VS Code** — the Marketplace listing is not live yet, so install the `.vsix`:
+**VS Code** — install from the Marketplace:
+
+- Search **Harny** in the Extensions view, or open
+  [marketplace.visualstudio.com/items?itemName=spltek.harny](https://marketplace.visualstudio.com/items?itemName=spltek.harny)
+
+Or install the `.vsix` by hand (same package, useful for a version the Marketplace has not picked up
+yet):
 
 ```bash
 code --install-extension spltek.harny-<version>.vsix

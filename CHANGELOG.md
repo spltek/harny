@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   order of the rows IS the plan — and a completed task is BOLD in full ink behind a green ticked box. No strikethrough
   and no dimming: a line across the words is the universal sign of "gone", and a finished task is the opposite. The four
   "baffi" marks (`todo-pending`/`-active`/`-done`/`-cancelled`) went with the old rendering.
+- **The README no longer says the VS Code Marketplace listing is not live.** It is: `spltek.harny` is
+  published there, so `Install` now points at it first and keeps the `.vsix` as the manual route.
 - **The three destructive session answers ask once more.** Delete / Rewind / Empty now turn the same dialog into a second
   question, with the consequences named (`There is no undo`), the other answers removed and the focus on Cancel — so a
   doubled Enter cannot confirm. Cancel answers "nothing", it does not fall back to the choice that opened it.
