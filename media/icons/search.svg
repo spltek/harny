@@ -1,4 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
-  <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-  <path d="M20 20l-4.3-4.3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Analyze: the Lucide `search`, which is what this mark is — the mode that
+       looks and never touches (`icon("search", …)` wears it on the mode button
+       and on the Analyze row of its menu). Weight stays at 2: this is CHROME,
+       and the folder's rule puts chrome at 2 / 2.5 and tool marks at 1.5.
+       The lens is now the same lens as `grep` (circle r=8 at 11,11, handle from
+       21,21): the two used to be two different magnifiers (r=8.25 at 10.75
+       against r=7 at 11) — one lens, two interiors, which is the difference you
+       can actually read: `</>` for code, nothing for "just look".
+       Geometry verbatim; paint on the root; no width/height (12 px by caller). -->
+  <path d="m21 21-4.34-4.34"/>
+  <circle cx="11" cy="11" r="8"/>
 </svg>

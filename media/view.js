@@ -57,9 +57,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 `;var nu=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
 </svg>
-`;var ru=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
-  <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-  <path d="M20 20l-4.3-4.3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+`;var ru=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Analyze: the Lucide \`search\`, which is what this mark is \u2014 the mode that
+       looks and never touches (\`icon("search", \u2026)\` wears it on the mode button
+       and on the Analyze row of its menu). Weight stays at 2: this is CHROME,
+       and the folder's rule puts chrome at 2 / 2.5 and tool marks at 1.5.
+       The lens is now the same lens as \`grep\` (circle r=8 at 11,11, handle from
+       21,21): the two used to be two different magnifiers (r=8.25 at 10.75
+       against r=7 at 11) \u2014 one lens, two interiors, which is the difference you
+       can actually read: \`</>\` for code, nothing for "just look".
+       Geometry verbatim; paint on the root; no width/height (12 px by caller). -->
+  <path d="m21 21-4.34-4.34"/>
+  <circle cx="11" cy="11" r="8"/>
 </svg>
 `;var ou=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
   <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
