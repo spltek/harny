@@ -85,6 +85,148 @@ function isStyled(cls: string): boolean {
 
 const written = MODULES.flatMap((m) => [...writtenClasses(webview(m))].map((cls) => ({ cls, module: m })));
 
+/**
+ * THE OTHER DIRECTION: the stylesheet → the code.
+ *
+ * The checks above catch a class with no style. Nothing caught the opposite — a RULE nobody dresses
+ * any more — and that is the one that rots in silence: no compiler, no test, no error at runtime, just
+ * dead weight that later reads like a working feature. Five rules were found this way the day this
+ * test was written (`build-cta-btn`, `msg-attach-chips`, `optgroup-failed`, `option-error`, the old
+ * `task-list-item-checkbox`).
+ *
+ * Both sides are read the way the code actually spells them, or the test would lie:
+ *   · COMMENTS are prose, not selectors (`.logoUri` lived in a CSS comment);
+ *   · only SELECTOR positions count (before a `{`), so `--ctl-row` and property values are out;
+ *   · a class can be PRODUCED by a literal, by a template, or by CONCATENATION (`"status-" + status`,
+ *     `'class="subagent-chip access-' + kind`): a literal ending in `-` is a prefix, not a class.
+ */
+const STYLE = (() => {
+  const open = HTML.indexOf("<style>");
+  const close = HTML.indexOf("</style>");
+  return open === -1 || close === -1 ? "" : HTML.slice(open, close);
+})();
+
+/** Class names the stylesheet SELECTS. */
+function styledClasses(): Set<string> {
+  const css = STYLE.replace(/\/\*[\s\S]*?\*\//g, ""); // comments are prose
+  const out = new Set<string>();
+  for (const block of css.matchAll(/([^{}]+)\{/g)) {
+    const selector = block[1];
+    if (selector.trim().startsWith("@")) continue; // at-rules, not selectors
+    for (const m of selector.matchAll(/\.([A-Za-z][\w-]*)/g)) out.add(m[1]);
+  }
+  return out;
+}
+
+/**
+ * Every name that can END UP as a class in the DOM, and every PREFIX one is built from.
+ * Strings are tokenised on whitespace: `class="a b"` dresses two classes, `"access-" + kind` dresses
+ * a family.
+ */
+function producedClasses(): { names: Set<string>; prefixes: Set<string> } {
+  const names = new Set<string>();
+  const prefixes = new Set<string>();
+  const eat = (literal: string): void => {
+    for (const raw of literal.split(/\s+/)) {
+      const token = raw.trim();
+      if (!token || token.includes("+") || token.includes("$")) continue; // an interpolation, not a name
+      if (token.endsWith("-")) prefixes.add(token);
+      else names.add(token);
+    }
+  };
+  const walk = (dir: URL): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const child = new URL(entry.name + (entry.isDirectory() ? "/" : ""), dir);
+      if (entry.isDirectory()) {
+        walk(child);
+        continue;
+      }
+      if (!entry.name.endsWith(".ts") || entry.name.endsWith(".d.ts")) continue;
+      const text = readFileSync(child, "utf8");
+      // TARGETED patterns, not a sweep of every string literal: one apostrophe in a comment ("does
+      // not") shifts the pairing of every quote after it, and the whole check would quietly read
+      // prose. These are the shapes this codebase actually uses to put a class on an element.
+      // The WHOLE statement: `"srow" + (open ? " open" : "") + (busy ? " is-working" : "")` dresses
+      // three names, and reading only the first literal loses two of them. Only the QUOTED parts are
+      // names — the code around them is not.
+      for (const stmt of text.matchAll(/className\s*=\s*([^;\n]*)/g)) {
+        for (const lit of stmt[1].matchAll(/"([^"\n]*)"|`([^`\n]*)`|'([^'\n]*)'/g)) {
+          eat(lit[1] ?? lit[2] ?? lit[3] ?? "");
+        }
+      }
+      for (const stmt of text.matchAll(/classList\.(?:add|toggle|remove|contains)\(([^)\n]*)\)/g)) {
+        for (const lit of stmt[1].matchAll(/"([^"\n]*)"/g)) eat(lit[1]);
+      }
+      // The markup's ATTRIBUTE (both quote styles: the bubbles build spans from single-quoted
+      // fragments, and a concatenated tail like `access-'` is a PREFIX, not a class).
+      for (const m of text.matchAll(/class=\\?"([^"$]*)\\?"/g)) eat(m[1]);
+      for (const m of text.matchAll(/class=\\?'([^'$]*)\\?'/g)) eat(m[1]);
+      // …and the tail that is still open: `class="subagent-chip access-'` continues elsewhere.
+      for (const m of text.matchAll(/class=["']([^"']*)["']?\s*\+/g)) eat(m[1]);
+      // A SELECTOR is a producer too: it names a class something must create, and the forward check
+      // already treats it as a contract.
+      for (const m of text.matchAll(/(?:querySelectorAll|querySelector|closest|matches)(?:<[^>]*>)?\(\s*"([^"]+)"/g)) {
+        for (const cls of m[1].matchAll(/\.([A-Za-z][\w-]*)/g)) names.add(cls[1]);
+      }
+    }
+  };
+  walk(new URL("../", here));
+  return { names, prefixes };
+}
+
+const produced = producedClasses();
+const styled = styledClasses();
+
+/**
+ * Names the stylesheet dresses but no code of OURS writes, with the reason it is legitimate.
+ * Kept short on purpose: an allowlist that swallows everything is a disabled test. Every entry is a
+ * FAMILY or an external owner — never "I could not find it".
+ */
+const CSS_HOOKS = new Map<string, string>([
+  // Prism owns these: the highlighter writes the token classes into the <code> blocks.
+  ...[
+    "token",
+    "comment",
+    "punctuation",
+    "keyword",
+    "string",
+    "number",
+    "boolean",
+    "constant",
+    "builtin",
+    "function",
+    "function-variable",
+    "class-name",
+    "maybe-class-name",
+    "atrule",
+    "attr-name",
+    "attr-value",
+    "selector",
+    "regex",
+    "prolog",
+    "doctype",
+    "cdata",
+    "entity",
+    "char",
+    "important",
+    "operator",
+    "url",
+    "symbol",
+    "variable",
+    "property",
+    "tag",
+    "namespace",
+    "literal-property",
+    "interpolation",
+    "interpolation-punctuation",
+    "template-string",
+    "template-punctuation",
+    "string-property",
+  ].map((c) => [c, "written by Prism, the highlighter"] as const),
+  // VS Code puts the editor's kind on <body>; the palette follows it (see view-config.ts).
+  ...["vscode-dark", "vscode-light", "vscode-high-contrast"].map((c) => [c, "written by VS Code on <body>"] as const),
+]);
+
 describe("the DOM contract between the modules and view-html", () => {
   it("finds classes to check (the parser itself must bite)", () => {
     // A guard on the guard: if the regexes stopped matching, this test would pass for ever.
@@ -109,5 +251,30 @@ describe("the DOM contract between the modules and view-html", () => {
       .filter((f) => /className\s*=|classList\.(?:add|toggle)/.test(webview(f)))
       .sort();
     expect(files).toEqual([...MODULES].filter((m) => files.includes(m)).sort());
+  });
+
+  it("the parsers bite (both directions must fail when the code stops matching)", () => {
+    // A guard on the guard: if these regexes silently stopped matching, both checks would pass for
+    // ever. They are pinned on real names the page ships.
+    expect(styled.size).toBeGreaterThan(300);
+    expect(styled.has("msg")).toBe(true);
+    expect(styled.has("todo-check")).toBe(true);
+    expect(produced.names.has("todo-check")).toBe(true);
+    expect(produced.prefixes.has("status-")).toBe(true);
+    // …and the allowlist stays a list of FAMILIES, not a dumping ground.
+    expect(CSS_HOOKS.size).toBeLessThan(60);
+  });
+
+  it("every class the STYLESHEET selects is written by someone — or declared a hook", () => {
+    // The opposite of the check above, and the one nobody had: a rule that dresses nothing. Five
+    // were found this way on the first run (`.build-cta-btn`, `.msg-attach-chips`,
+    // `#model-select optgroup.optgroup-failed`, `#model-select .option-error`, and the old
+    // `.task-list-item-checkbox`).
+    const orphans = [...styled]
+      .filter((cls) => !produced.names.has(cls))
+      .filter((cls) => ![...produced.prefixes].some((prefix) => cls.startsWith(prefix)))
+      .filter((cls) => !CSS_HOOKS.has(cls))
+      .sort();
+    expect(orphans, "delete the rule, or declare it in CSS_HOOKS with the reason").toEqual([]);
   });
 });

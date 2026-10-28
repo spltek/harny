@@ -612,7 +612,6 @@ ${renderViewConfig(deps)}
       content: ""; flex: 1; height: 1px; background: currentColor; opacity: 0.4;
     }
     .msg-attachments { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 6px; max-width: 100%; }
-    .msg-attach-chips { display: flex; flex-wrap: wrap; gap: 4px; }
     /* Non-image attachments: a large per-type icon + name + size. */
     .msg-attach-files { display: flex; flex-wrap: wrap; gap: 8px; }
     .msg-attach-file {
@@ -623,13 +622,6 @@ ${renderViewConfig(deps)}
     .msg-attach-file-icon { line-height: 0; }
     .msg-attach-file-name { font-size: var(--fs-sm); color: #e8e8e8; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .msg-attach-file-size { font-size: var(--fs-xs); color: var(--muted-2); }
-    .msg-attach {
-      display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
-      padding: 1px 7px; border-radius: 999px; font-size: var(--fs-sm);
-      /* Darker than the terracotta bubble so the white label pops (contrast). */
-      background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(0, 0, 0, 0.5);
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
     .msg.assistant, .msg.tool { width: 100%; max-width: 100%; }
     .msg.assistant { align-self: flex-start; background: var(--assistant-msg); min-width: 0; position: relative; font-size: var(--fs-lg); }
     /* Per-turn metrics badge (REAL usage + timings) under an assistant bubble.
@@ -694,8 +686,6 @@ ${renderViewConfig(deps)}
     .build-cta-static { background: rgba(245, 166, 35, 0.07); border-color: rgba(245, 166, 35, 0.4); }
     .build-cta-static .build-cta-text { color: var(--muted-2); }
     .build-cta-text { color: var(--fg-strong); font-size: 13px; }
-    .build-cta-btn { flex: 0 0 auto; background: var(--warn); color: var(--on-warn); border: none; border-radius: 5px; padding: 6px 12px; font-weight: 600; font-size: 13px; cursor: pointer; white-space: nowrap; }
-    .build-cta-btn:hover { background: var(--warn-bright); }
     .msg.assistant p { margin: 4px 0; }
     .msg.assistant h1, .msg.assistant h2, .msg.assistant h3, .msg.assistant h4, .msg.assistant h5, .msg.assistant h6 { margin: 8px 0 4px; font-weight: 700; color: var(--fg-strong); }
     .msg.assistant h1 { font-size: 1.15em; } .msg.assistant h2 { font-size: 1.05em; } .msg.assistant h3 { font-size: 1em; }
@@ -762,7 +752,6 @@ ${renderViewConfig(deps)}
     .code-block { overflow-x: auto; }
     .code-lang { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.4px; color: var(--muted); background: var(--sink-1); padding: 1px 8px; border-bottom: 1px solid var(--border); }
     .msg.tool { align-self: flex-start; background: var(--tool-bg); border: 1px solid var(--border); font-size: var(--fs-md); }
-    .msg.system { display: none; }
     .msg.welcome { align-self: center; background: transparent; border: 1px dashed var(--border); color: var(--muted); text-align: center; max-width: 100%; }
     /* Brand mark inline in the greeting. The artwork is WIDE (22x16 inside the
        square 24x24 viewBox), so the box is scaled up to ~1.4em to make the
@@ -1159,9 +1148,7 @@ ${renderViewConfig(deps)}
     .thinking-body th { background: var(--sink-1); }
     .thinking-body img { max-width: 100%; border-radius: 4px; }
     .thinking-body hr { border: none; border-top: 1px solid var(--border); margin: 6px 0; }
-    .thinking-body .task-list-item-checkbox { margin-right: 4px; vertical-align: middle; }
     .thinking-body.collapsed { display: none; }
-    .thinking { align-self: flex-start; color: var(--muted-2); font-style: italic; font-size: var(--fs-md); white-space: pre-wrap; }
 
     /* Input area: a full-width card matching the sessions/control cards. */
     #input-area {
@@ -1381,15 +1368,6 @@ ${renderViewConfig(deps)}
        (ask / AI Model / metrics) are then evenly spaced. */
     #status { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px; font-size: var(--fs-md); min-height: 0; }
     #status .warn { color: var(--error); }
-    .ctl-row { display: flex; align-items: center; gap: 6px; }
-    /* Provider whose host model list failed to fetch: still VISIBLE in the
-       dropdown (red) with the error, instead of silently disappearing. */
-    #model-select optgroup.optgroup-failed {
-      color: var(--error);
-    }
-    #model-select .option-error {
-      color: var(--error);
-    }
     /* Grouped cards: the grid collapses to a single column when the panel is
        narrow, so fields are never squeezed or split mid-pair. minmax is font-
        relative: on zoom-in the columns stack gracefully (responsive to both
