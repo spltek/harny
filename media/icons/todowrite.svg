@@ -1,11 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor">
-  <!-- TodoWrite: the shape is the reference SVG verbatim (6 paths, d attributes
-       untouched). Only the PAINT moved to the root — no width/height (the caller
-       owns the size) and no #000000 (currentColor follows the palette). -->
-  <path d="M9 6L20 6"/>
-  <path d="M3.80002 5.79999L4.60002 6.59998L6.60001 4.59999"/>
-  <path d="M3.80002 11.8L4.60002 12.6L6.60001 10.6"/>
-  <path d="M3.80002 17.8L4.60002 18.6L6.60001 16.6"/>
-  <path d="M9 12L20 12"/>
-  <path d="M9 18L20 18"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- TodoWrite: the Lucide `list-todo` — a list where ONE line is still an empty
+       box and another is already ticked, which is what the tool writes: a plan
+       with work left in it. (The mark it replaces ticked all three, i.e. drew a
+       finished list as the icon for a tool you call while it barely started.)
+       Geometry verbatim (5 elements); history: `layout-list-check` on 2023-06-23
+       (#1232), reworked into `list-todo` on 2025-08-29 (#3568) — the drawing
+       lucide-static serves today. Paint on the root, weight 2 → the family's 1.5,
+       no width/height: a tool call draws this at 13 px. -->
+  <path d="M13 5h8"/>
+  <path d="M13 12h8"/>
+  <path d="M13 19h8"/>
+  <path d="m3 17 2 2 4-4"/>
+  <rect x="3" y="4" width="6" height="6" rx="1"/>
 </svg>

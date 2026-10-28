@@ -194,16 +194,20 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
        draws nothing). -->
   <path d="M7.432 5.117h-1.95v4.48A3.26 3.26 0 0 1 4.442 12a3.26 3.26 0 0 1 1.04 2.402v4.48H7.43V21H5.48c-1.107 0-2.004-.948-2.004-2.117v-4.48c0-.391-.205-.749-.53-.934L2 12.933v-1.866l.946-.537c.326-.184.53-.542.53-.932v-4.48C3.477 3.947 4.375 3 5.482 3h1.95zM18.519 3c1.107 0 2.004.948 2.004 2.117v4.48c0 .391.205.749.53.934l.947.536v1.866l-.946.537c-.326.184-.53.542-.53.932v4.48c0 1.17-.898 2.118-2.005 2.118h-1.95v-2.117h1.95v-4.48c0-.934.388-1.807 1.04-2.403a3.26 3.26 0 0 1-1.04-2.402v-4.48H16.57V3zm-5.09 7.518L17 11.946l-3.571 1.429L12 16.946l-1.429-3.571L7 11.946l3.571-1.428L12 6.946z"/>
 </svg>
-`;var gu=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor">
-  <!-- TodoWrite: the shape is the reference SVG verbatim (6 paths, d attributes
-       untouched). Only the PAINT moved to the root \u2014 no width/height (the caller
-       owns the size) and no #000000 (currentColor follows the palette). -->
-  <path d="M9 6L20 6"/>
-  <path d="M3.80002 5.79999L4.60002 6.59998L6.60001 4.59999"/>
-  <path d="M3.80002 11.8L4.60002 12.6L6.60001 10.6"/>
-  <path d="M3.80002 17.8L4.60002 18.6L6.60001 16.6"/>
-  <path d="M9 12L20 12"/>
-  <path d="M9 18L20 18"/>
+`;var gu=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- TodoWrite: the Lucide \`list-todo\` \u2014 a list where ONE line is still an empty
+       box and another is already ticked, which is what the tool writes: a plan
+       with work left in it. (The mark it replaces ticked all three, i.e. drew a
+       finished list as the icon for a tool you call while it barely started.)
+       Geometry verbatim (5 elements); history: \`layout-list-check\` on 2023-06-23
+       (#1232), reworked into \`list-todo\` on 2025-08-29 (#3568) \u2014 the drawing
+       lucide-static serves today. Paint on the root, weight 2 \u2192 the family's 1.5,
+       no width/height: a tool call draws this at 13 px. -->
+  <path d="M13 5h8"/>
+  <path d="M13 12h8"/>
+  <path d="M13 19h8"/>
+  <path d="m3 17 2 2 4-4"/>
+  <rect x="3" y="4" width="6" height="6" rx="1"/>
 </svg>
 `;var bu=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
   <!-- WebSearch: the shape is the reference SVG verbatim \u2014 a globe, the lens
