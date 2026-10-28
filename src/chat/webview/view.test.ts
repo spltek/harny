@@ -3368,6 +3368,110 @@ describe("view webview client", () => {
     expect(document.querySelector(".sa-tool")).toBeTruthy();
   });
 
+  it("a DESTRUCTIVE answer asks once more, in the same dialog, and only then posts it", async () => {
+    // The trash asks delete / rewind / empty — three answers that cannot be undone. Picking one is
+    // not an answer any more: it turns the dialog into "are you sure?", with the consequences named
+    // and the SAFE button focused, so a doubled Enter cannot confirm.
+    await loadView();
+    hostMessage({
+      type: "modal",
+      kind: "alert",
+      modalId: 7,
+      alertKind: "confirm",
+      title: "Delete or empty session",
+      message: "What do you want to do?",
+      confirmText: "Delete",
+      danger: true,
+      confirm: {
+        title: "Delete the session permanently?",
+        message: "There is no undo.",
+        confirmText: "Yes, delete it",
+      },
+      extraActions: [
+        {
+          value: "empty",
+          text: "Empty",
+          confirm: { title: "Empty the transcript?", message: "There is no undo.", confirmText: "Yes, empty it" },
+        },
+        { value: "keep", text: "Keep", title: "no consequences" },
+      ],
+    });
+    const ok = document.getElementById("alert-ok") as HTMLButtonElement;
+    const cancel = document.getElementById("alert-cancel") as HTMLButtonElement;
+    const extras = (): HTMLButtonElement[] => [
+      ...document.querySelectorAll<HTMLButtonElement>("#alert-modal .alert-extra"),
+    ];
+    const title = (): string => document.getElementById("alert-title")!.textContent ?? "";
+    const byText = (t: string): HTMLButtonElement => extras().find((b) => b.textContent === t)!;
+
+    posted.length = 0;
+    // 1. A DESTRUCTIVE answer does not execute: the dialog changes question.
+    byText("Empty").click();
+    expect(posted).toHaveLength(0); // nothing answered yet
+    expect(title()).toBe("Empty the transcript?");
+    expect(ok.textContent).toBe("Yes, empty it");
+    expect(extras()).toHaveLength(0); // the other answers are gone: it is a different question
+    expect(document.activeElement).toBe(cancel); // the safe choice has the focus
+
+    // 2. Confirming posts THAT answer (not `true`).
+    ok.click();
+    expect(posted).toContainEqual({ type: "modalResponse", id: 7, value: "empty" });
+
+    // 3. Cancelling the second step answers nothing at all: the host sees `false` and leaves the
+    //    session alone. It must NOT fall back to the previous answer.
+    hostMessage({
+      type: "modal",
+      kind: "alert",
+      modalId: 8,
+      alertKind: "confirm",
+      title: "Delete or empty session",
+      message: "What do you want to do?",
+      confirmText: "Delete",
+      danger: true,
+      extraActions: [{ value: "empty", text: "Empty", confirm: { title: "Empty?", message: "No undo." } }],
+    });
+    posted.length = 0;
+    byText("Empty").click();
+    cancel.click();
+    expect(posted).toContainEqual({ type: "modalResponse", id: 8, value: false });
+  });
+
+  it("the PRIMARY answer has its second step too — and a plain alert keeps the old behaviour", async () => {
+    await loadView();
+    hostMessage({
+      type: "modal",
+      kind: "alert",
+      modalId: 9,
+      alertKind: "confirm",
+      title: "Delete session",
+      message: "Are you sure?",
+      confirmText: "Delete",
+      danger: true,
+      confirm: { title: "Delete permanently?", message: "No undo.", confirmText: "Yes, delete it" },
+    });
+    const ok = document.getElementById("alert-ok") as HTMLButtonElement;
+    posted.length = 0;
+    ok.click();
+    expect(posted).toHaveLength(0); // the first click only asks
+    expect(document.getElementById("alert-title")!.textContent).toBe("Delete permanently?");
+    ok.click();
+    expect(posted).toContainEqual({ type: "modalResponse", id: 9, value: true });
+
+    // No `confirm` declared = one click, as before: not every question is destructive.
+    hostMessage({
+      type: "modal",
+      kind: "alert",
+      modalId: 10,
+      alertKind: "confirm",
+      title: "Rename?",
+      message: "sure?",
+      confirmText: "OK",
+    });
+    posted.length = 0;
+    (document.getElementById("alert-ok") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "modalResponse", id: 10, value: true });
+  });
+
   it("shows chips for TodoWrite / WebSearch / WebFetch / ReadLints", async () => {
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;

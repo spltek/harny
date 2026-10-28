@@ -81,6 +81,14 @@ function trashOf(sessionId: string): HTMLButtonElement {
 }
 
 /** The extra answer the modal is showing right now, by its label. */
+/**
+ * The SECOND step the destructive answers now require: the dialog asks once more, in place, with
+ * the consequences named. Returns the OK button (the one that actually executes).
+ */
+function confirmStep(): HTMLButtonElement {
+  return document.getElementById("alert-ok") as HTMLButtonElement;
+}
+
 function modalButton(text: string): HTMLButtonElement | undefined {
   return [...document.querySelectorAll<HTMLButtonElement>("#alert-modal .alert-extra")].find(
     (b) => b.textContent === text,
@@ -116,6 +124,15 @@ describe("session cleanup, host ⇄ webview", () => {
     expect(message).toContain("first compaction summary");
 
     modalButton("Empty")!.click();
+    // Nothing has happened yet: the answer asks once more, in the same dialog.
+    expect(store.transcripts.get(id)).toEqual(TRANSCRIPT);
+    expect(document.querySelector("#alert-title")?.textContent).toBe("Empty the transcript?");
+    expect(document.querySelector("#alert-message")?.textContent).toContain("There is no undo");
+    expect(confirmStep().textContent).toBe("Yes, empty it");
+    // …and the extra answers are gone: the question is a different one now.
+    expect(modalButton("Rewind")).toBeUndefined();
+
+    confirmStep().click();
     await settle();
 
     // The session SURVIVES with its settings; only the transcript is gone.
@@ -137,6 +154,9 @@ describe("session cleanup, host ⇄ webview", () => {
 
     trashOf(id).click();
     modalButton("Rewind")!.click();
+    expect(store.transcripts.get(id)).toEqual(TRANSCRIPT); // nothing yet
+    expect(confirmStep().textContent).toBe("Yes, rewind");
+    confirmStep().click();
     await settle();
 
     // [old question][old answer][summary label][summary] — and nothing after.
@@ -178,6 +198,12 @@ describe("session cleanup, host ⇄ webview", () => {
 
     trashOf(id).click();
     (document.getElementById("alert-ok") as HTMLButtonElement).click();
+    // The primary answer is destructive too: it asks once more before removing anything.
+    expect(store.rows.has(id)).toBe(true);
+    expect(document.querySelector("#alert-title")?.textContent).toBe("Delete the session permanently?");
+    expect(confirmStep().textContent).toBe("Yes, delete it");
+
+    confirmStep().click();
     await settle();
 
     expect(store.rows.has(id)).toBe(false);

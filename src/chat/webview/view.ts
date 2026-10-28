@@ -3409,6 +3409,21 @@ const alertCancel = document.getElementById("alert-cancel") as HTMLButtonElement
 const alertActions = alertOk.parentElement as HTMLElement;
 let alertId = -1;
 
+/** A destructive answer can ask for a SECOND step. The host provides the words (it owns the
+ * question), the panel only knows how to show them. */
+interface AlertConfirm {
+  title: string;
+  message: string;
+  confirmText?: string;
+}
+
+/** Set while the modal is showing the SECOND step: the answer it will post. */
+let alertPendingValue: string | true | null = null;
+/** The confirm for the PRIMARY answer (OK), when the host declared one. */
+let alertPrimaryConfirm: AlertConfirm | null = null;
+/** The confirms for the extra answers, by value. */
+const alertExtraConfirms = new Map<string, AlertConfirm>();
+
 function openAlert(a: {
   modalId?: number;
   id?: number;
@@ -3418,9 +3433,14 @@ function openAlert(a: {
   message: string;
   confirmText?: string;
   danger?: boolean;
-  extraActions?: { value: string; text: string; title?: string; disabled?: boolean }[];
+  /** A second step for the primary answer (a destructive one). */
+  confirm?: AlertConfirm;
+  extraActions?: { value: string; text: string; title?: string; disabled?: boolean; confirm?: AlertConfirm }[];
 }): void {
   alertId = typeof a.modalId === "number" ? a.modalId : typeof a.id === "number" ? a.id : -1;
+  alertPendingValue = null;
+  alertPrimaryConfirm = a.confirm ?? null;
+  alertExtraConfirms.clear();
   alertTitle.textContent = a.title;
   alertMessage.textContent = a.message;
   const confirm = (a.alertKind ?? a.kind) === "confirm";
@@ -3441,11 +3461,38 @@ function openAlert(a: {
     // shown DISABLED, not hidden: the row of buttons stays a fixed answer set
     // and nothing jumps around between one session and the next.
     b.disabled = extra.disabled === true;
-    b.addEventListener("click", () => closeAlert(extra.value));
+    if (extra.confirm) alertExtraConfirms.set(extra.value, extra.confirm);
+    b.addEventListener("click", () => {
+      // A DESTRUCTIVE answer does not execute: it asks once more, in the same dialog. The extra
+      // buttons disappear (the question is now a different one) and the safe choice takes the
+      // focus, so a second Enter on the keyboard does not confirm by accident.
+      const again = alertExtraConfirms.get(extra.value);
+      if (again) askAlertConfirm(again, extra.value);
+      else closeAlert(extra.value);
+    });
     alertActions.insertBefore(b, alertOk);
   }
   alertModal.classList.remove("hidden");
   alertOk.focus();
+}
+
+/**
+ * The SECOND step: the same dialog, asking the one question that matters ("are you sure?").
+ *
+ * It keeps the modal's id, so the host gets the answer it was waiting for, and it remembers WHICH
+ * answer is being confirmed: the OK button posts that value, not `true`.
+ */
+function askAlertConfirm(c: AlertConfirm, value: string | true): void {
+  alertPendingValue = value;
+  alertTitle.textContent = c.title;
+  alertMessage.textContent = c.message;
+  alertCancel.style.display = "";
+  alertOk.textContent = c.confirmText ?? "Yes, do it";
+  alertOk.classList.add("danger");
+  alertActions.querySelectorAll(".alert-extra").forEach((b) => b.remove());
+  alertModal.classList.remove("hidden");
+  // Focus the SAFE choice: a doubled Enter must not be a confirmation.
+  alertCancel.focus();
 }
 
 /** Answer the open modal. `value` is the answer itself: `true`/`false` for the
@@ -3454,11 +3501,26 @@ function closeAlert(value: boolean | string): void {
   if (alertId < 0) return;
   const id = alertId;
   alertId = -1;
+  alertPendingValue = null;
+  alertPrimaryConfirm = null;
+  alertExtraConfirms.clear();
   alertModal.classList.add("hidden");
   vscode.postMessage({ type: "modalResponse", id, value });
 }
 
-alertOk.addEventListener("click", () => closeAlert(true));
+alertOk.addEventListener("click", () => {
+  // Already in the second step: post the answer being confirmed.
+  if (alertPendingValue !== null) {
+    closeAlert(alertPendingValue);
+    return;
+  }
+  // A destructive primary answer asks once more before anything happens.
+  if (alertPrimaryConfirm) {
+    askAlertConfirm(alertPrimaryConfirm, true);
+    return;
+  }
+  closeAlert(true);
+});
 alertCancel.addEventListener("click", () => closeAlert(false));
 alertModal.querySelector(".alert-backdrop")?.addEventListener("click", () => closeAlert(false));
 

@@ -2465,6 +2465,16 @@ export class ChatViewProvider implements WebviewViewProvider {
       message,
       confirmText: "Delete",
       danger: true,
+      // All THREE answers are destructive and none can be undone, so each asks once more — in the
+      // same dialog, with the consequences named. The words live here, next to the question: the
+      // panel only knows how to show a second step.
+      confirm: {
+        title: "Delete the session permanently?",
+        message:
+          `"${name}" is removed with its transcript and its settings, and it disappears from every ` +
+          "list. There is no undo.",
+        confirmText: "Yes, delete it",
+      },
       extraActions: [
         {
           value: "rewind",
@@ -2473,8 +2483,26 @@ export class ChatViewProvider implements WebviewViewProvider {
             ? "Keep everything up to the first compaction summary and drop what came after it"
             : "This session has no summary to rewind to yet",
           disabled: !rewindable,
+          confirm: {
+            title: "Rewind to the first summary?",
+            message:
+              `Everything after the first compaction summary of "${name}" is dropped. The summary ` +
+              "itself and what came before it stay. There is no undo.",
+            confirmText: "Yes, rewind",
+          },
         },
-        { value: "empty", text: "Empty", title: "Keep the session and its settings, drop the whole transcript" },
+        {
+          value: "empty",
+          text: "Empty",
+          title: "Keep the session and its settings, drop the whole transcript",
+          confirm: {
+            title: "Empty the transcript?",
+            message:
+              `"${name}" keeps its name, its settings and its place in the list, but every message ` +
+              "is dropped. There is no undo.",
+            confirmText: "Yes, empty it",
+          },
+        },
       ],
     });
     return v === true ? "delete" : v === "rewind" ? "rewind" : v === "empty" ? "empty" : undefined;
