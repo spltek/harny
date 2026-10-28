@@ -1,7 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-  <!-- Read: a page whose CONTENT is what you get — a short title dash and three
-       lines, from the reference. The folded corner is a line, not a fill. -->
-  <path d="M4 21.4V2.6c0-.331.269-.6.6-.6h11.652a.6.6 0 0 1 .424.176l3.148 3.148a.6.6 0 0 1 .176.424V21.4c0 .331-.269.6-.6.6H4.6a.6.6 0 0 1-.6-.6Z" stroke="currentColor"/>
-  <path d="M16 2v3.4c0 .331.269.6.6.6H20" stroke="currentColor"/>
-  <path d="M7.4 8.4h3.2M7.4 12h9.2M7.4 15.6h9.2M7.4 19.2h5.4" stroke="currentColor"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Read: the Lucide `notebook-text` (added 2024-01-06, unchanged since — the
+       revision lucide-static serves). A bound page with ruled lines: what you
+       get back is CONTENT, and the four rings on the spine say it is a document
+       rather than a card. Geometry verbatim (4 paths + the body rect); only the
+       paint moved to the root and the weight from 2 to 1.5, the family's. No
+       width/height: a tool call draws this at 13 px. -->
+  <path d="M2 6h4"/>
+  <path d="M2 10h4"/>
+  <path d="M2 14h4"/>
+  <path d="M2 18h4"/>
+  <rect width="16" height="20" x="4" y="2" rx="2"/>
+  <path d="M9.5 8h5"/>
+  <path d="M9.5 12H16"/>
+  <path d="M9.5 16H14"/>
 </svg>
