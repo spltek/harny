@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A test that compares the palette's surfaces as RELATIONSHIPS, not values.** `src/chat/view-config.test.ts`
+  holds four invariants per theme: the code block sits below the answer card (by a visible step, not a rounding
+  error), the answer card stands out from the page, hover stands out more than the card, and every surface
+  compared is a plain `#rrggbb` so those comparisons mean something. The direction of "above" flips between the
+  themes — on near-black you rise by getting lighter, on paper by getting darker — so only DISTANCES are asserted.
+  A hex-per-role test would have failed on every taste change while missing the inversion below; this one was
+  verified by restoring the old value, and it fails with *"light: tool-bg must sit below assistant-msg"*.
+
+### Changed
+
+- **Tool calls no longer sit on a card.** A tool bubble was a filled rectangle one shade *lighter* than the page in
+  the dark theme, so a long run accumulated a stack of cards that competed with the answers for attention. It keeps
+  its hairline border and loses the fill: the bubble now reads as an outline on the page, the way the thinking
+  block always has. `--tool-bg` is untouched — code blocks, inline code and table headers inside an answer still
+  need their card.
+- **The light theme had its code blocks RAISED instead of recessed.** `--tool-bg` sat a step *below* the answer
+  bubble in the dark theme (`#1a1a1a` under `#1e1e1e`) and a step *above* it in the light one (`#f7f4f1` over
+  `#f4f1ed`): one role with two opposite meanings, unnoticed because the palette tests only checked that a role
+  EXISTS in both themes, never what it means. It is `#eeebe7` now — deeper than the card, as in the dark theme.
+
 ### Removed
 
 - **`minus.svg` is gone: the only mark in the folder that nothing drew.** It had no call site, in any commit

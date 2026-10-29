@@ -259,7 +259,7 @@ The prompt stays usable **while the agent works**.
 ### How every step is tracked
 
 - **Reasoning** is streamed live as it happens, and passed back on later turns so tool-call chains keep their chain of thought.
-- **Tool calls** get a three-section bubble — **Input / Output / Diff**. When a tool touches a file, the Diff section shows the unified diff with the target path and `+N/−M` counts, syntax-highlighted for the main languages.
+- **Tool calls** get a three-section bubble — **Input / Output / Diff**. When a tool touches a file, the Diff section shows the unified diff with the target path and `+N/−M` counts, syntax-highlighted for the main languages. The bubble is a hairline outline on the page itself, with no fill: a long run accumulates a dozen of them, and a dozen cards compete with the answer for attention while saying nothing the outline does not.
 - **Every turn** ends with a **metrics badge** carrying the mode it ran in (`Build` / `Analyze`) and the *real* provider usage: `Build · openai/gpt-4o · 6.9k in · 74 out · ⚡ 800 · elapsed 2.3s · first token 676ms`. The mode chip keeps the badge's own quiet gray, with **one exception: the word `Build` is in the accent** — the one thing you scan a long transcript for (*which turns actually wrote*) without turning half the lines orange. Turns recorded before the mode was stored show no chip.
 - **Diagnostics** go to **Output > Harny**, one line per turn.
 
