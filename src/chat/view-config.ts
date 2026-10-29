@@ -169,7 +169,11 @@ const PALETTE_LIGHT: Palette = {
   border: "rgba(0, 0, 0, 0.10)",
   "input-bg": "#ffffff", // cards are the BRIGHTEST surface here (inverse of dark)
   "surface-2": "#f1eeea",
-  "tool-bg": "#f7f4f1",
+  // tool bubbles, code blocks, inline code. DEEPER than the answer bubble, as it is
+  // in the dark theme (#1a1a1a under #1e1e1e): a code block is RECESSED inside the
+  // card. It used to be #f7f4f1 — LIGHTER than the card, i.e. raised — which was the
+  // one place where the two themes disagreed about what a surface means.
+  "tool-bg": "#eeebe7",
   "assistant-msg": "#f4f1ed", // the answer bubble must still read as a card on paper
   // ── Accent family ──
   "user-msg": "#b8531d",
