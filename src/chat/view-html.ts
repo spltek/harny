@@ -753,7 +753,10 @@ ${renderViewConfig(deps)}
     }
     .code-block { overflow-x: auto; }
     .code-lang { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.4px; color: var(--muted); background: var(--sink-1); padding: 1px 8px; border-bottom: 1px solid var(--border); }
-    .msg.tool { align-self: flex-start; background: var(--tool-bg); border: 1px solid var(--border); font-size: var(--fs-md); }
+    /* ESPERIMENTO (non committato): lo sfondo dei tool come quello del thinking —
+       nessun riquadro, si vede il fondo del pannello. Prima: background var(--tool-bg)
+       (#1a1a1a sul tema scuro, più CHIARO del fondo #111111). */
+    .msg.tool { align-self: flex-start; background: transparent; border: 1px solid var(--border); font-size: var(--fs-md); }
     .msg.welcome { align-self: center; background: transparent; border: 1px dashed var(--border); color: var(--muted); text-align: center; max-width: 100%; }
     /* Brand mark inline in the greeting. The artwork is WIDE (22x16 inside the
        square 24x24 viewBox), so the box is scaled up to ~1.4em to make the
