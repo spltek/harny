@@ -293,7 +293,8 @@ export class OpenAIChatProvider implements LLMProvider {
       // DEBUG: show EXACTLY what reaches the server (model / reasoning_effort /
       // temperature / sampler / session header). Verifies whether the model or
       // the proxy actually receives the configured parameters. Written to the
-      // same /tmp/harny-debug.log as logger.debugLog (no vscode dependency, so
+      // same request log as logger.debugLog (`<os.tmpdir()>/harny-debug.log` — on macOS
+      // that is NOT /tmp: it is the per-user T folder) (no vscode dependency, so
       // the provider also stays unit-testable).
       const line = `[${new Date().toISOString()}] [harny] request ${JSON.stringify({
         url,
