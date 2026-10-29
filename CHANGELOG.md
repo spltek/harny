@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-10-30
+
+### Fixed
+
+- **A run no longer sends another session's model — or none at all.** The config a request carries was
+  written into ONE shared override layer, from whichever tab was visible, and the agent re-reads its config
+  at every turn. Opening a new session (no model yet) cleared the layer, so the running session's next
+  request went out with the config file's model and **no `x-opencode-session`** — OpenCode Go answers
+  `400 MissingSessionID`, and closing/reopening the session "fixed" it because that re-derived the layer.
+  Switching to another session was worse and silent: the running turn was sent under THAT session's model
+  and conversation id. The compaction summarizer had the same defect from its own side (it was built over
+  the host chain), so a summary taken mid-run failed the same way; sub-agents inherit the session's config
+  and are now covered by a test.
+
+### Changed
+
+- **Each session's config is DERIVED on every read, never stored.** `SessionConfigProvider(base, derive)`
+  asks the runtime for the session's overrides at the moment of use, so there is no copy to keep in sync and
+  no ordering to get right. It replaced a per-session override layer plus the four mechanisms that existed
+  only to refresh it (`applySessionModel`, `applyAllSessionModels`, `reapplyActiveAfterRemoval`, the
+  `applyBudget` port step) — every new path that changes a session was a chance to forget one, and forgetting
+  once is the same bug again. `MemoryOverrideConfigProvider` and the output-clamp step went with it: the
+  clamp is computed from the live context at every read, which is strictly fresher than a value written
+  before the run. Measured cost of a derived read: **0.025 ms**.
+
 ## [0.9.3] - 2026-10-29
 
 ### Added
@@ -1714,7 +1739,8 @@ Completions protocol.
 - **Diagnostics**: per-turn lines in *Output > Harny*, an optional request log
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
-[Unreleased]: https://github.com/spltek/harny/compare/v0.9.3...HEAD
+[Unreleased]: https://github.com/spltek/harny/compare/v0.9.4...HEAD
+[0.9.4]: https://github.com/spltek/harny/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/spltek/harny/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/spltek/harny/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/spltek/harny/compare/v0.9.0...v0.9.1
