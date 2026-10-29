@@ -44,7 +44,14 @@ function build() {
       setDelegation: vi.fn(),
     } as unknown as ChatController;
   });
-  const registry = new SessionRegistry({ sessions, store, createAgent });
+  // `configFor` is the view's job in production (it owns the derivation); here a
+  // constant provider is enough — what matters is that spawn HANDS IT to createAgent.
+  const registry = new SessionRegistry({
+    sessions,
+    store,
+    createAgent,
+    configFor: () => ({ get: () => ({}) as never }),
+  });
   return { store, sessions, createAgent, registry };
 }
 
@@ -55,7 +62,13 @@ describe("SessionRegistry", () => {
     const rt = registry.create();
 
     expect(createAgent).toHaveBeenCalledTimes(1);
-    expect(createAgent).toHaveBeenCalledWith(expect.anything(), "s1");
+    // The third argument is the session's OWN config view (derived from its runtime on
+    // every read — see SessionConfigProvider), asked from the view at spawn time.
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.anything(),
+      "s1",
+      expect.objectContaining({ get: expect.any(Function) }),
+    );
     expect(rt.sessionId).toBe("s1");
     expect(registry.isOpen("s1")).toBe(true);
     expect(registry.listOpenIds()).toEqual(["s1"]);
@@ -155,6 +168,7 @@ describe("SessionRegistry per-session model", () => {
     const registry = new SessionRegistry({
       sessions,
       store,
+      configFor: () => ({ get: () => ({}) as never }),
       createAgent: vi.fn(
         (h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() }) as unknown as ChatController,
       ),
@@ -177,6 +191,7 @@ describe("SessionRegistry per-session model", () => {
     const registry = new SessionRegistry({
       sessions,
       store,
+      configFor: () => ({ get: () => ({}) as never }),
       createAgent: vi.fn(() => {
         agent = { addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() } as never;
         return agent as unknown as ChatController;
@@ -210,6 +225,7 @@ describe("SessionRegistry per-session model", () => {
     const registry = new SessionRegistry({
       sessions,
       store,
+      configFor: () => ({ get: () => ({}) as never }),
       createAgent: vi.fn(
         (h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() }) as unknown as ChatController,
       ),
@@ -238,6 +254,7 @@ describe("SessionRegistry per-session model", () => {
     const registry = new SessionRegistry({
       sessions,
       store,
+      configFor: () => ({ get: () => ({}) as never }),
       createAgent: vi.fn(
         (h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() }) as unknown as ChatController,
       ),
@@ -266,6 +283,7 @@ describe("SessionRegistry per-session model", () => {
     const registry = new SessionRegistry({
       sessions,
       store,
+      configFor: () => ({ get: () => ({}) as never }),
       createAgent: vi.fn(
         (h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() }) as unknown as ChatController,
       ),
@@ -295,6 +313,7 @@ describe("SessionRegistry per-session model", () => {
     const registry = new SessionRegistry({
       sessions,
       store,
+      configFor: () => ({ get: () => ({}) as never }),
       createAgent: vi.fn(
         (h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() }) as unknown as ChatController,
       ),
@@ -325,6 +344,7 @@ describe("SessionRegistry per-session model", () => {
     const registry = new SessionRegistry({
       sessions,
       store,
+      configFor: () => ({ get: () => ({}) as never }),
       createAgent: vi.fn(
         (h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() }) as unknown as ChatController,
       ),
@@ -356,6 +376,7 @@ describe("SessionRegistry per-session model", () => {
     const registry = new SessionRegistry({
       sessions,
       store,
+      configFor: () => ({ get: () => ({}) as never }),
       createAgent: vi.fn(
         (h) => ({ addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() }) as unknown as ChatController,
       ),

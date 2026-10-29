@@ -157,7 +157,13 @@ export function wire(opts: WireOptions = {}): Wiring {
   const store = memoryStore();
   opts.prepare?.(store);
   const sessions = new SessionManager(store);
-  const registry = new SessionRegistry({ sessions, store, createAgent: (h) => stubAgent(h) });
+  let provider: ChatViewProvider;
+  const registry = new SessionRegistry({
+    sessions,
+    store,
+    createAgent: (h) => stubAgent(h),
+    configFor: (id) => provider.sessionConfigFor(id),
+  });
   const providers = {
     getProvider: () => undefined,
     readProvidersEditor: () => ({ providers: {} }),
@@ -166,9 +172,8 @@ export function wire(opts: WireOptions = {}): Wiring {
     ...opts.providers,
   } as unknown as ProviderCatalog;
 
-  const provider = new ChatViewProvider(
+  provider = new ChatViewProvider(
     { get: () => CONFIG },
-    { set: vi.fn(), clear: vi.fn() } as never,
     { pick: vi.fn(async () => []), buildContext: vi.fn(async () => ({ text: "", images: [] })) } as never,
     providers,
     { fetchModels: vi.fn(async () => []) } as never,

@@ -17,7 +17,7 @@ import type {
   ThinkingLevel,
 } from "../core/config/types";
 import { isThinkingLevel } from "../core/config/types";
-import type { MemoryOverrideConfigProvider } from "../core/config/memory-override-config-provider";
+import { SessionConfigProvider } from "../core/config/session-config-provider";
 import { requiresApiKey } from "../core/config/requires-api-key";
 import type { ModelInfo, ModelListProvider } from "../core/llm/model-list";
 import { modelsDevProviderCandidates } from "../core/llm/models-dev";
@@ -210,7 +210,6 @@ export class ChatViewProvider implements WebviewViewProvider {
 
   constructor(
     private config: ConfigProvider,
-    private modelSelector: MemoryOverrideConfigProvider,
     private attachments: AttachmentService,
     private providers: ProviderCatalog,
     private modelList: ModelListProvider,
@@ -725,7 +724,6 @@ export class ChatViewProvider implements WebviewViewProvider {
     const active = this.activeRuntime();
     if (active) this.ensureToolScope(active);
     this.resubscribe();
-    this.applyActiveModel();
     // A session may predate the model-limits feature: adopt the model's
     // DETECTED context/output when it has no explicit override yet (silent —
     // no alert on open).
@@ -1003,10 +1001,6 @@ export class ChatViewProvider implements WebviewViewProvider {
       return;
     }
     this.refreshDeferred = false; // this run satisfies any deferred request
-    // Re-apply the per-model overrides FIRST: a CONFIG edit (baseUrl / apiKey /
-    // maxTokens / thinkingMode…) must take effect immediately — the composite
-    // lets runtime overrides win, so a stale override would shadow the file.
-    this.applyActiveModel();
     void this.buildHtml().then((html) => {
       if (this.view) this.view.webview.html = html;
     });
@@ -1021,7 +1015,6 @@ export class ChatViewProvider implements WebviewViewProvider {
    */
   refreshConfig(): void {
     if (!this.view) return;
-    this.applyActiveModel();
     // A server may have been REMOVED from the file (or added): the sessions that named it must
     // stop carrying a decision about something that no longer exists. This is the one place that
     // knows the config just changed, so the write happens here — and only for the rows that
@@ -1495,7 +1488,6 @@ export class ChatViewProvider implements WebviewViewProvider {
         // consumers/other windows read. The session value above still wins at
         // runtime.
         this.providers.saveModelSelection?.(model, provider);
-        this.modelSelector.set(this.computeOverrides(model, provider));
         // Lightweight config push (no full HTML rebuild: the typed prompt,
         // scroll and streaming state are preserved).
         void this.pushConfig();
@@ -1509,7 +1501,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         const rt = this.activeRuntime();
         if (!rt || !isThinkingLevel(msg.level)) break;
         rt.thinkingLevel = msg.level as ThinkingLevel;
-        this.commitSetting(rt, () =>
+        this.commitSetting(() =>
           this.sessions.saveSettings(rt.sessionId, { thinkingLevel: msg.level as ThinkingLevel }),
         );
         break;
@@ -1545,7 +1537,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         }
         const scope = normalizeToolScope(msg.scope) ?? { mcp: [], off: [] };
         rt.toolScope = scope;
-        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { toolScope: scope }), false);
+        this.commitSetting(() => this.sessions.saveSettings(rt.sessionId, { toolScope: scope }));
         void this.pushConfig();
         break;
       }
@@ -1575,7 +1567,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         // session is not using it at all.
         if (all.some((name) => wanted.has(name))) mcp.push(server);
         rt.toolScope = { mcp, off };
-        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { toolScope: rt.toolScope }), false);
+        this.commitSetting(() => this.sessions.saveSettings(rt.sessionId, { toolScope: rt.toolScope }));
         void this.pushConfig();
         break;
       }
@@ -1588,7 +1580,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         // agent now and is re-synced at send time.
         rt.parallel = msg.parallel === true ? true : undefined;
         rt.agent.setDelegation(rt.parallel === true);
-        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { parallel: rt.parallel }), false);
+        this.commitSetting(() => this.sessions.saveSettings(rt.sessionId, { parallel: rt.parallel }));
         break;
       }
 
@@ -1603,7 +1595,7 @@ export class ChatViewProvider implements WebviewViewProvider {
             : undefined;
         rt.maxParallelSubAgents = value;
         rt.agent.setMaxParallelSubAgents(value);
-        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { maxParallelSubAgents: value }), false);
+        this.commitSetting(() => this.sessions.saveSettings(rt.sessionId, { maxParallelSubAgents: value }));
         break;
       }
 
@@ -1617,10 +1609,8 @@ export class ChatViewProvider implements WebviewViewProvider {
         // the new baseline (the UI repopulates its fields from it).
         rt.loopGuardOverrides = undefined;
         this.applyLoopGuard(rt);
-        this.commitSetting(
-          rt,
-          () => this.sessions.saveSettings(rt.sessionId, { loopGuard: level, loopGuardParams: undefined }),
-          false,
+        this.commitSetting(() =>
+          this.sessions.saveSettings(rt.sessionId, { loopGuard: level, loopGuardParams: undefined }),
         );
         break;
       }
@@ -1632,11 +1622,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         // applied to the agent AND SAVED on the session (persisted per session).
         rt.loopGuardOverrides = clampLoopGuardOverrides(msg.overrides);
         this.applyLoopGuard(rt);
-        this.commitSetting(
-          rt,
-          () => this.sessions.saveSettings(rt.sessionId, { loopGuardParams: rt.loopGuardOverrides }),
-          false,
-        );
+        this.commitSetting(() => this.sessions.saveSettings(rt.sessionId, { loopGuardParams: rt.loopGuardOverrides }));
         break;
       }
 
@@ -1647,7 +1633,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         const value = msg.value === true;
         rt.loopGuardResponse = value;
         this.applyLoopGuard(rt);
-        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { loopGuardResponse: value }), false);
+        this.commitSetting(() => this.sessions.saveSettings(rt.sessionId, { loopGuardResponse: value }));
         break;
       }
 
@@ -1674,7 +1660,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         const value = toContextWindow(msg.value);
         rt.contextWindow = value;
         // Context window does not affect the per-model overrides: skip recompute.
-        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { contextWindow: value }), false);
+        this.commitSetting(() => this.sessions.saveSettings(rt.sessionId, { contextWindow: value }));
         break;
       }
       case "setOutputTokens": {
@@ -1683,7 +1669,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         const value = toOutputTokens(msg.value);
         rt.outputTokens = value;
         // Re-apply the active overrides so the runtime config carries maxTokens.
-        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { outputTokens: value }));
+        this.commitSetting(() => this.sessions.saveSettings(rt.sessionId, { outputTokens: value }));
         break;
       }
       case "setCompactionThreshold": {
@@ -1699,14 +1685,11 @@ export class ChatViewProvider implements WebviewViewProvider {
             : undefined;
         if (target !== undefined) rt.compactionTargetPercent = target;
         // Threshold only affects auto-compaction, never the per-model overrides.
-        this.commitSetting(
-          rt,
-          () =>
-            this.sessions.saveSettings(rt.sessionId, {
-              compactionThresholdPercent: value,
-              ...(target !== undefined ? { compactionTargetPercent: target } : {}),
-            }),
-          false,
+        this.commitSetting(() =>
+          this.sessions.saveSettings(rt.sessionId, {
+            compactionThresholdPercent: value,
+            ...(target !== undefined ? { compactionTargetPercent: target } : {}),
+          }),
         );
         break;
       }
@@ -1722,11 +1705,7 @@ export class ChatViewProvider implements WebviewViewProvider {
             ? undefined
             : toTargetPercent(msg.value, thresholdPercent, this.targetFloorFor(rt));
         rt.compactionTargetPercent = value;
-        this.commitSetting(
-          rt,
-          () => this.sessions.saveSettings(rt.sessionId, { compactionTargetPercent: value }),
-          false,
-        );
+        this.commitSetting(() => this.sessions.saveSettings(rt.sessionId, { compactionTargetPercent: value }));
         break;
       }
       case "previewCompaction":
@@ -1744,7 +1723,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         const resetTopP = rt.topP !== undefined;
         if (resetTemperature) rt.temperature = undefined;
         if (resetTopP) rt.topP = undefined;
-        this.commitSetting(rt, () =>
+        this.commitSetting(() =>
           this.sessions.saveSettings(rt.sessionId, {
             sampler: mode,
             ...(resetTemperature ? { temperature: undefined } : {}),
@@ -1762,11 +1741,11 @@ export class ChatViewProvider implements WebviewViewProvider {
         if (active === "topP") {
           const value = toTopP(msg.value);
           rt.topP = value;
-          this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { topP: value }));
+          this.commitSetting(() => this.sessions.saveSettings(rt.sessionId, { topP: value }));
         } else {
           const value = toTemperature(msg.value);
           rt.temperature = value;
-          this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { temperature: value }));
+          this.commitSetting(() => this.sessions.saveSettings(rt.sessionId, { temperature: value }));
         }
         break;
       }
@@ -1775,7 +1754,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         if (!rt) break;
         const value = toTemperature(msg.value); // same 0–2, one-decimal clamp
         rt.presencePenalty = value;
-        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { presencePenalty: value }));
+        this.commitSetting(() => this.sessions.saveSettings(rt.sessionId, { presencePenalty: value }));
         break;
       }
       case "setFrequencyPenalty": {
@@ -1783,7 +1762,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         if (!rt) break;
         const value = toTemperature(msg.value); // same 0–2, one-decimal clamp
         rt.frequencyPenalty = value;
-        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { frequencyPenalty: value }));
+        this.commitSetting(() => this.sessions.saveSettings(rt.sessionId, { frequencyPenalty: value }));
         break;
       }
       case "send":
@@ -1837,8 +1816,48 @@ export class ChatViewProvider implements WebviewViewProvider {
     }
   }
 
+  /**
+   * The config view of a session — what its agent reads at every turn, and what the
+   * panel shows when that session is the visible one.
+   *
+   * Both the model/provider/samplers/budget and the routing identity (`sessionId` +
+   * the provider's session header) are DERIVED from the runtime on each read, so there
+   * is no copy to keep in sync: changing a setting is just changing the runtime, and
+   * another tab becoming visible cannot affect what this session sends.
+   */
+  sessionConfigFor(sessionId: string): ConfigProvider {
+    return new SessionConfigProvider(this.config, () => this.deriveOverrides(sessionId));
+  }
+
+  /** The session's overrides as of NOW; `{}` when it has no model (the chain owns it all).
+   *
+   *  Cost, measured: 0.025 ms per read on this machine — the chain underneath re-parses
+   *  `config.json` on every call and always has (the agent reads its config once per turn,
+   *  which is seconds long). If that ever matters the fix belongs INSIDE
+   *  `HarnyFileConfigProvider` (invalidated by the watcher that already exists), not in a
+   *  per-session copy: one cache, in one place. */
+  private deriveOverrides(sessionId: string): Partial<HarnyConfig> {
+    const rt = this.registry.get(sessionId);
+    return rt?.model ? this.computeOverrides(rt, rt.model, rt.modelProvider) : {};
+  }
+
+  /** The effective config of a GIVEN session (a snapshot, for one host-side request). */
+  private sessionConfig(rt: SessionRuntime): HarnyConfig {
+    return this.sessionConfigFor(rt.sessionId).get();
+  }
+
   private activeRuntime(): SessionRuntime | undefined {
     return this.activeId ? this.registry.get(this.activeId) : undefined;
+  }
+
+  /**
+   * The config the VIEW should show: the host chain with the ACTIVE session's overrides
+   * on top — the very object its agent reads, so what the panel displays and what the
+   * next send carries cannot disagree.
+   */
+  private effectiveConfig(): HarnyConfig {
+    const rt = this.activeRuntime();
+    return rt ? this.sessionConfig(rt) : this.config.get();
   }
 
   /**
@@ -1885,7 +1904,6 @@ export class ChatViewProvider implements WebviewViewProvider {
     if (!rt || this.isCompacting(rt.sessionId)) return;
     // Re-clamp the output budget at EVERY turn boundary: the context grows
     // during the run, so what fitted at the start may not fit now.
-    this.applySessionBudget(rt);
     if (!this.needsAutoCompact(rt)) return;
     await this.compactDuringRun(rt, signal);
   }
@@ -2067,13 +2085,6 @@ export class ChatViewProvider implements WebviewViewProvider {
    * runs write each other's value: the clamp can only ever LOWER `max_tokens`,
    * which cannot turn a valid request into a rejected one.
    */
-  private applySessionBudget(rt: SessionRuntime): void {
-    if (!rt.model) return;
-    this.modelSelector.set({
-      maxTokens: this.outputBudgetFor(rt),
-      contextWindow: clampContextWindow(rt.contextWindow ?? DEFAULT_CONTEXT_WINDOW),
-    });
-  }
 
   /**
    * Apply this session's Loop Guard options to the agent: the sensitivity
@@ -2120,14 +2131,16 @@ export class ChatViewProvider implements WebviewViewProvider {
     rt.mode = mode;
     // The agent enforces it: analyze = read-only; agent = full tools.
     rt.agent.setMode(mode);
-    this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, { mode }), false);
+    this.commitSetting(() => this.sessions.saveSettings(rt.sessionId, { mode }));
   }
 
-  private commitSetting(rt: SessionRuntime, persist: () => void, recomputeOverrides = true): void {
+  /** Persist a session setting, then refresh the view's config.
+   *
+   *  No `rt` and no "recompute" flag: the runtime config is DERIVED on every read
+   *  (`SessionConfigProvider`), so persisting IS the whole update — there is nothing to
+   *  re-apply, and a flag that decides whether to re-apply is a leftover of the layer. */
+  private commitSetting(persist: () => void): void {
     persist();
-    if (recomputeOverrides && rt.model) {
-      this.modelSelector.set(this.computeOverrides(rt.model, rt.modelProvider));
-    }
     void this.pushConfig();
   }
 
@@ -2174,7 +2187,6 @@ export class ChatViewProvider implements WebviewViewProvider {
           infoLog("post-response auto-compaction failed:", e?.message || String(e));
         }
       },
-      applyBudget: () => this.applySessionBudget(rt),
       isDraining: () => this.pendingQueue.isDraining(rt.sessionId),
       enqueue: (intent) => this.pendingQueue.enqueue(rt, intent),
       drain: (dispatch) => this.pendingQueue.drain(rt, dispatch),
@@ -2243,7 +2255,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       displayText = rawText;
     }
     if (images && images.length > 0) {
-      const cfg = this.config.get();
+      const cfg = this.effectiveConfig();
       const modalities = (cfg.modelModalities ?? {})[cfg.model];
       if (modalities && !modalities.includes("image")) {
         this.view?.webview.postMessage({
@@ -2303,22 +2315,23 @@ export class ChatViewProvider implements WebviewViewProvider {
     this.view?.webview.postMessage({ type: "pending", items });
   }
 
-  /** Apply the active session's stored model to the runtime config (clears for new sessions). */
-  private applyActiveModel(): void {
-    const rt = this.activeRuntime();
-    if (rt?.model) {
-      this.modelSelector.set(this.computeOverrides(rt.model, rt.modelProvider));
-    } else {
-      this.modelSelector.clear();
-    }
-  }
-
-  private computeOverrides(model: string, providerName?: string): Partial<HarnyConfig> {
+  /**
+   * THIS session's own runtime overrides. Everything here is derived from the
+   * session's runtime + the named provider entry, so it can be re-derived at any
+   * time and never has to be reconciled between sessions.
+   *
+   * `rt` is a PARAMETER, deliberately: this used to read `activeRuntime()`, i.e.
+   * the tab the view was showing. An agent re-reads its config at EVERY turn, so
+   * deriving a session's overrides from the visible tab meant switching tabs (or
+   * opening a new one, which CLEARED the shared layer) rewrote the next request of
+   * a run happening elsewhere — wrong model, wrong samplers, and no
+   * `x-opencode-session` (400 MissingSessionID on strict hosts).
+   */
+  private computeOverrides(rt: SessionRuntime, model: string, providerName?: string): Partial<HarnyConfig> {
     const overrides: Partial<HarnyConfig> = { model };
-    const rt = this.activeRuntime();
     // Stable per-conversation id, used for routing/session headers (e.g.
     // OpenCode Go's x-opencode-session) and diagnostic logs.
-    if (rt) overrides.sessionId = rt.sessionId;
+    overrides.sessionId = rt.sessionId;
     if (providerName) {
       const entry = this.providers.getProvider(providerName);
       if (entry) {
@@ -2348,29 +2361,30 @@ export class ChatViewProvider implements WebviewViewProvider {
       const thinkMode = entry?.thinkingMode;
       const reasoningProvider =
         thinkMode === "bool" || thinkMode === "effort" || thinkMode === "type" || thinkMode === "reasoning";
-      overrides.thinkingLevel = reasoningProvider ? (rt?.thinkingLevel ?? entry?.thinkingLevel) : undefined;
-    } else if (rt?.thinkingLevel) {
+      overrides.thinkingLevel = reasoningProvider ? (rt.thinkingLevel ?? entry?.thinkingLevel) : undefined;
+    } else if (rt.thinkingLevel) {
       overrides.thinkingLevel = rt.thinkingLevel;
     }
     // The per-session output-token budget wins over the provider's default.
     // Capped at the scale MAXIMUM (never sent as-is) but NOT raised to the MIN:
     // a provider entry's small maxTokens (e.g. 123) must be honoured.
-    if (typeof rt?.outputTokens === "number") overrides.maxTokens = clampAdoptedOutputTokens(rt.outputTokens);
-    if (typeof rt?.presencePenalty === "number") overrides.presencePenalty = rt.presencePenalty;
-    if (typeof rt?.frequencyPenalty === "number") overrides.frequencyPenalty = rt.frequencyPenalty;
+    if (typeof rt.outputTokens === "number") overrides.maxTokens = clampAdoptedOutputTokens(rt.outputTokens);
+    if (typeof rt.presencePenalty === "number") overrides.presencePenalty = rt.presencePenalty;
+    if (typeof rt.frequencyPenalty === "number") overrides.frequencyPenalty = rt.frequencyPenalty;
     // Sampler pick: ONLY the ACTIVE sampler keeps a value; the other is
     // explicitly cleared (undefined) so the request never carries both.
-    const sampler = rt?.sampler ?? "temperature";
+    const sampler = rt.sampler ?? "temperature";
     overrides.temperature =
-      sampler === "temperature" && typeof rt?.temperature === "number" ? rt.temperature : undefined;
-    overrides.topP = sampler === "topP" && typeof rt?.topP === "number" ? rt.topP : undefined;
+      sampler === "temperature" && typeof rt.temperature === "number" ? rt.temperature : undefined;
+    overrides.topP = sampler === "topP" && typeof rt.topP === "number" ? rt.topP : undefined;
     // The window travels WITH the turn's config: the agent records it in the
     // message meta (so every turn stays self-describing) and the request clamp
     // below needs it.
-    if (rt) overrides.contextWindow = clampContextWindow(rt.contextWindow ?? DEFAULT_CONTEXT_WINDOW);
-    // LAST: the request must fit `input + max_tokens ≤ window`. This is a
-    // starting point — a multi-turn run re-clamps at every turn boundary
-    // (`applySessionBudget`), where the context has grown.
+    overrides.contextWindow = clampContextWindow(rt.contextWindow ?? DEFAULT_CONTEXT_WINDOW);
+    // LAST: the request must fit `input + max_tokens ≤ window`. Computed HERE, on every
+    // read — i.e. at every turn, with the context as it is NOW. There is no turn-boundary
+    // step and nothing to remember to re-run (the old `applySessionBudget` wrote this into
+    // a stored layer; a stale copy of a clamp is how a request goes out too big).
     overrides.maxTokens = this.outputBudgetFor(rt, overrides.maxTokens);
     return overrides;
   }
@@ -2621,6 +2635,8 @@ export class ChatViewProvider implements WebviewViewProvider {
         targetTokens,
         maxOutputTokens: this.configuredOutputTokens(rt),
         maxInputTokens: span.ceilingTokens,
+        // A summary is a request made FOR this session: its model, its routing identity.
+        config: this.sessionConfig(rt),
         // Say WHY it failed: an empty stream and a reply that is not the document are
         // different problems (the second is what a guard or confused model does), and both
         // used to read as a single "no summary written".
@@ -2929,6 +2945,8 @@ export class ChatViewProvider implements WebviewViewProvider {
         targetTokens,
         maxOutputTokens: this.configuredOutputTokens(rt),
         maxInputTokens: span.ceilingTokens,
+        // A sub-agent shares the session's model, so it shares its config too.
+        config: this.sessionConfig(rt),
         onUnusableReply: (reply) =>
           infoLog(
             reply.trim()
@@ -3111,7 +3129,9 @@ export class ChatViewProvider implements WebviewViewProvider {
     cachedTokens?: number;
     cachedWrite?: number;
   }> {
-    const cfg = this.config.get();
+    // The ACTIVE session's effective config: the panel shows what the next send
+    // will use, not the host defaults everything else falls back to.
+    const cfg = this.effectiveConfig();
     // EVERY provider gets a fetch (declared models or host-only alike): the
     // dropdown shows only the LIVE lists from each host. A provider whose
     // fetch fails shows up red with the error instead of its stale config list.
@@ -3304,7 +3324,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         patch.outputTokens = out;
       }
       if (patch.contextWindow !== undefined || patch.outputTokens !== undefined) {
-        this.commitSetting(rt, () => this.sessions.saveSettings(rt.sessionId, patch));
+        this.commitSetting(() => this.sessions.saveSettings(rt.sessionId, patch));
       }
       if (ctx && out) return;
     }
@@ -3406,7 +3426,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     rt.contextWindow = limits.context;
     rt.outputTokens = limits.output;
     if (provider) this.userLimits.set(`${provider}|${model}`, limits);
-    this.commitSetting(rt, () =>
+    this.commitSetting(() =>
       this.sessions.saveSettings(rt.sessionId, {
         contextWindow: limits.context,
         outputTokens: limits.output,

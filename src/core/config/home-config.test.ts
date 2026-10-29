@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { CompositeConfigProvider } from "./composite-config-provider";
 import { HarnyFileConfigProvider } from "./harny-file-config-provider";
-import { MemoryOverrideConfigProvider } from "./memory-override-config-provider";
 import { StaticConfigProvider } from "./static-config-provider";
 import { nodeFileSystem } from "../tools/file-system";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -66,15 +65,19 @@ describe("home config resolution (~/.harny/config.json)", () => {
     expect(config.model).toBe("gpt-4o");
   });
 
-  it("lets runtime overrides (model dropdown) win over the file", () => {
+  it("lets a later partial override win over the file", () => {
+    // The runtime layer that used to sit here (the model dropdown writing into one shared
+    // provider) is gone: a session's config is DERIVED now, never stored. What still has to
+    // hold is the ORDER of the chain — a later partial provider wins over the file.
     writeFileSync(join(harnyHome, "config.json"), JSON.stringify({ model: "from-file" }));
-    const runtime = new MemoryOverrideConfigProvider();
+    let override: Record<string, unknown> = {};
+    const runtime = { read: () => override };
     const config = new CompositeConfigProvider(new StaticConfigProvider(BASE), [
       new HarnyFileConfigProvider(() => harnyHome, nodeFileSystem),
       runtime,
     ]);
     expect(config.get().model).toBe("from-file");
-    runtime.set({ model: "from-dropdown" });
+    override = { model: "from-dropdown" };
     expect(config.get().model).toBe("from-dropdown");
   });
 });

@@ -488,18 +488,63 @@ describe("Compactor", () => {
   }
 
   it("returns the model summary text", async () => {
-    const c = new Compactor(factoryWith("## Goal\nFix the bug"), () => CONFIG);
-    const summary = await c.summarize([u("fix the bug")], undefined, undefined, { maxReplyTokens: 8_192 });
+    const c = new Compactor(factoryWith("## Goal\nFix the bug"));
+    const summary = await c.summarize([u("fix the bug")], undefined, undefined, {
+      maxReplyTokens: 8_192,
+      config: CONFIG,
+    });
     expect(summary).toContain("## Goal");
     expect(summary).toContain("Fix the bug");
+  });
+
+  it("runs the summary on the CONFIG IT IS GIVEN — the session's model and routing identity", async () => {
+    // A summary is a real request, made DURING a run (mid-run compaction). It used to be
+    // built from a closure over the host chain, so on a host that routes by conversation
+    // (OpenCode Go's `x-opencode-session`) the summarizer's request carried no session id
+    // — 400 MissingSessionID in the middle of a run — and everywhere else the summary was
+    // written by the config file's model instead of the session's.
+    const configs: HarnyConfig[] = [];
+    const factory = {
+      create: (cfg: HarnyConfig) => {
+        configs.push(cfg);
+        return {
+          protocol: "chat" as const,
+          async *stream() {
+            yield { type: "text", content: "## Goal\nok" };
+          },
+        };
+      },
+    } as unknown as LLMProviderFactory;
+    const session: HarnyConfig = {
+      ...CONFIG,
+      model: "deepseek-v4-pro",
+      sessionId: "s-42",
+      sessionHeader: "x-opencode-session",
+    };
+
+    await new Compactor(factory).summarize([u("work")], undefined, undefined, {
+      maxReplyTokens: 8_192,
+      config: session,
+    });
+
+    expect(configs).toHaveLength(1);
+    expect(configs[0]).toMatchObject({
+      model: "deepseek-v4-pro",
+      sessionId: "s-42",
+      sessionHeader: "x-opencode-session",
+    });
+    // …and the cap still wins over the session's own maxTokens (see requestSummary).
+    expect(configs[0].maxTokens).toBe(8_192);
   });
 
   it("an EMPTY reply is a FAILURE, not a fabricated document", async () => {
     // It used to invent "## Goal <title> / ## Progress No details available." — a document
     // that PASSES the structural check while carrying nothing, and that REPLACES the
     // previous state instead of preserving it. Empty means: let the caller trim.
-    const c = new Compactor(factoryWith("   "), () => CONFIG);
-    expect(await c.summarize([u("Refactor auth")], undefined, undefined, { maxReplyTokens: 8_192 })).toBe("");
+    const c = new Compactor(factoryWith("   "));
+    expect(
+      await c.summarize([u("Refactor auth")], undefined, undefined, { maxReplyTokens: 8_192, config: CONFIG }),
+    ).toBe("");
   });
 
   it("forwards the abort signal to the provider (Stop cancels the summary)", async () => {
@@ -514,7 +559,7 @@ describe("Compactor", () => {
       }),
     } as unknown as LLMProviderFactory;
     const controller = new AbortController();
-    await new Compactor(factory, () => CONFIG).summarize([u("x")], undefined, controller.signal, {
+    await new Compactor(factory).summarize([u("x")], undefined, controller.signal, {
       maxReplyTokens: 8_192,
     });
     expect(seen).toEqual([controller.signal]);
@@ -533,8 +578,9 @@ describe("Compactor", () => {
         };
       },
     } as unknown as LLMProviderFactory;
-    await new Compactor(factory, () => ({ ...CONFIG, maxTokens: 777 })).summarize([u("x")], undefined, undefined, {
+    await new Compactor(factory).summarize([u("x")], undefined, undefined, {
       maxReplyTokens: 777,
+      config: CONFIG,
     });
     // No inheritance from the chat turn and no mutation of what it was handed: the cap is the
     // one the CALLER passed (`maxReplyTokens`), which is required for exactly that.
@@ -592,7 +638,7 @@ describe("Compactor — squeezing an oversized summary", () => {
 
   it("keeps a summary that fits in ONE call (no wasted request)", async () => {
     const factory = scriptedFactory(["Summary of past interactions\n---\n## Goal\nshort"]);
-    const c = new Compactor(factory, () => CONFIG);
+    const c = new Compactor(factory);
     const out = await c.summarize([u("work")], undefined, undefined, {
       maxSummaryTokens: 10_000,
       maxReplyTokens: 8_192,
@@ -605,9 +651,13 @@ describe("Compactor — squeezing an oversized summary", () => {
     const huge = `Summary of past interactions\n---\n${"blah ".repeat(4000)}`; // ~6k tokens
     const small = "Summary of past interactions\n---\n## Goal\ncompressed";
     const factory = scriptedFactory([huge, small]);
-    const c = new Compactor(factory, () => CONFIG);
+    const c = new Compactor(factory);
 
-    const out = await c.summarize([u("work")], undefined, undefined, { maxSummaryTokens: 1000, maxReplyTokens: 8_192 });
+    const out = await c.summarize([u("work")], undefined, undefined, {
+      maxSummaryTokens: 1000,
+      maxReplyTokens: 8_192,
+      config: CONFIG,
+    });
 
     expect(factory.sent).toHaveLength(2); // the second call is the compression
     // …fed with the FIRST summary, inside the data block (the request is ONE message:
@@ -621,18 +671,24 @@ describe("Compactor — squeezing an oversized summary", () => {
     const first = `Summary of past interactions\n---\n${"blah ".repeat(4000)}`;
     const worse = `${first}${first}`;
     const factory = scriptedFactory([first, worse]);
-    const c = new Compactor(factory, () => CONFIG);
+    const c = new Compactor(factory);
     // (the returned summary is trimmed; the point is WHICH text won)
     expect(
-      await c.summarize([u("work")], undefined, undefined, { maxSummaryTokens: 1000, maxReplyTokens: 8_192 }),
+      await c.summarize([u("work")], undefined, undefined, {
+        maxSummaryTokens: 1000,
+        maxReplyTokens: 8_192,
+        config: CONFIG,
+      }),
     ).toBe(first.trim());
   });
 
   it("does not squeeze at all when no budget is given (backward compatible)", async () => {
     const huge = `Summary of past interactions\n---\n${"blah ".repeat(4000)}`;
     const factory = scriptedFactory([huge]);
-    const c = new Compactor(factory, () => CONFIG);
-    expect(await c.summarize([u("work")], undefined, undefined, { maxReplyTokens: 8_192 })).toBe(huge.trim());
+    const c = new Compactor(factory);
+    expect(await c.summarize([u("work")], undefined, undefined, { maxReplyTokens: 8_192, config: CONFIG })).toBe(
+      huge.trim(),
+    );
     expect(factory.sent).toHaveLength(1);
   });
 });
@@ -1032,20 +1088,18 @@ describe("compactHistory — the LANDING POINT is what decides", () => {
     Array.from({ length: n }, (_, i) => [u(`prompt ${i}`), a("x".repeat(4000))]).flat();
   /** A compactor whose summarizer always answers with a USABLE document. */
   const compactorFor = (): Compactor =>
-    new Compactor(
-      {
-        create: () => ({
-          protocol: "chat" as const,
-          async *stream() {
-            yield { type: "text", content: summaryText };
-          },
-        }),
-      } as unknown as LLMProviderFactory,
-      () => CONFIG,
-    );
+    new Compactor({
+      create: () => ({
+        protocol: "chat" as const,
+        async *stream() {
+          yield { type: "text", content: summaryText };
+        },
+      }),
+    } as unknown as LLMProviderFactory);
   const compactWith = (msgs: ChatMessage[], targetTokens: number): Promise<CompactedHistory | null> =>
     compactHistory(msgs, {
       compactor: compactorFor(),
+      config: CONFIG,
       targetTokens,
       maxOutputTokens: 8_192,
       maxInputTokens: 1_000_000,

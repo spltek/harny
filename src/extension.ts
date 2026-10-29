@@ -13,8 +13,8 @@ import type { ChatController } from "./core/agent/chat-controller";
 import type { ChatHistory } from "./core/history/chat-history";
 import type { AgentEvent } from "./core/agent/types";
 import { CompositeConfigProvider } from "./core/config/composite-config-provider";
+import type { ConfigProvider } from "./core/config/types";
 import { HarnyFileConfigProvider } from "./core/config/harny-file-config-provider";
-import { MemoryOverrideConfigProvider } from "./core/config/memory-override-config-provider";
 import { VscodeConfigProvider } from "./core/config/vscode-config-provider";
 import { InMemoryEventBus } from "./core/events/in-memory-event-bus";
 import { SqliteSessionStore } from "./core/sessions/sqlite-session-store";
@@ -75,9 +75,11 @@ export async function activate(context: ExtensionContext) {
   }
   infoLog("storage home=", resolved.home);
 
-  const runtimeOverrides = new MemoryOverrideConfigProvider();
   const fileConfig = new HarnyFileConfigProvider(() => resolved.home, nodeFileSystem);
-  const config = new CompositeConfigProvider(new VscodeConfigProvider(), [fileConfig, runtimeOverrides]);
+  // The host chain, and NOTHING per session: settings → config file. Session-scoped
+  // overrides live in each SessionRuntime (`overrides`), because a shared layer is
+  // read by every agent at every turn — see session-registry.ts for what that broke.
+  const config = new CompositeConfigProvider(new VscodeConfigProvider(), [fileConfig]);
 
   const cwd = () => root ?? process.cwd();
   // Agent Skills: discovered from the standard ecosystem dirs (skills.sh / pi /
@@ -125,7 +127,7 @@ export async function activate(context: ExtensionContext) {
   // capped by the session's DECLARED output) and travels with it as `maxReplyTokens`:
   // inheriting the chat turn's max_tokens (hundreds of thousands of tokens on a big model)
   // is what made a summary request oversized — and its failure silent.
-  const compactor = new Compactor(llmFactory, () => config.get());
+  const compactor = new Compactor(llmFactory);
 
   // Session storage: ONE SQLite database (node:sqlite, built into Node >= 22.5)
   // holding every workspace's sessions (the `folder` column groups them), so the
@@ -213,11 +215,14 @@ export async function activate(context: ExtensionContext) {
     };
   };
 
-  const createAgent = (history: ChatHistory, sessionId: string): ChatController => {
+  const createAgent = (history: ChatHistory, sessionId: string, sessionConfig: ConfigProvider): ChatController => {
+    // The config is BUILT BY THE VIEW for this session (`configFor` below) and derived
+    // from its runtime on every read: never shared, never snapshotted, never stored.
+    // That is what keeps a tab switch from rewriting the next request of a run.
     // One sub-agent runner per session: it owns the ephemeral sub-agent
     // histories and cascades Stop to any in-flight sub-agent.
     const subAgents = new SubAgentRunner({
-      config,
+      config: sessionConfig,
       llmFactory,
       tools,
       cwd,
@@ -242,7 +247,7 @@ export async function activate(context: ExtensionContext) {
       onTurnBoundary: (history, signal) => subAgentTurnBoundary?.(history, sessionId, signal),
     });
     return new Agent({
-      config,
+      config: sessionConfig,
       llmFactory,
       tools,
       history,
@@ -269,11 +274,17 @@ export async function activate(context: ExtensionContext) {
     });
   };
 
-  const registry = new SessionRegistry({ sessions, store, createAgent });
+  // The registry asks the VIEW for each session's config, lazily: the view owns the
+  // derivation (runtime + provider entry), the registry only wires it into the agent.
+  const registry: SessionRegistry = new SessionRegistry({
+    sessions,
+    store,
+    createAgent,
+    configFor: (id) => viewProvider.sessionConfigFor(id),
+  });
 
   const viewProvider = new ChatViewProvider(
     config,
-    runtimeOverrides,
     attachments,
     fileConfig,
     new HttpModelListProvider(nodeHttpClient),

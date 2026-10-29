@@ -64,7 +64,6 @@ function makeHarness(
     },
     compactBeforeRun: async () => calls.push("compactBefore"),
     compactAfterRun: async () => calls.push("compactAfter"),
-    applyBudget: () => calls.push("applyBudget"),
     isDraining: () => false,
     enqueue: (intent) => {
       enqueued.push(intent);
@@ -101,7 +100,6 @@ describe("SessionEngine.send — the run sequence", () => {
       "prepareAgent",
       "preparePrompt",
       "compactBefore",
-      "applyBudget",
       "agent.send", // strictly before the status: see below
       "onRunStarted",
       // The report comes with the lock released, BEFORE the post-response fill: the

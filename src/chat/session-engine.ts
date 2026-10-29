@@ -65,8 +65,6 @@ export interface SessionSendPort {
   compactBeforeRun(): Promise<void>;
   /** Best-effort compaction AFTER the response. */
   compactAfterRun(): Promise<void>;
-  /** Clamp the output budget to the room actually left in the window. */
-  applyBudget(): void;
   /** Another message is already queued/draining for this session. */
   isDraining(): boolean;
   /** Park a message for after the current run (the queue lives in the host). */
@@ -258,7 +256,6 @@ export class SessionEngine {
     const prompt = await port.preparePrompt(intent);
     if (!prompt) return; // an error was posted, or a local command ran
     await port.compactBeforeRun();
-    port.applyBudget();
     this.live.reset();
     // A QUEUED message: the view deliberately drew no bubble when it was typed (it
     // sat in the pending footer), so the host shows it NOW — attachments included —

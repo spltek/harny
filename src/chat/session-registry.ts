@@ -6,6 +6,7 @@ import type { ThinkingLevel } from "../core/config/types";
 import type { LoopGuardOptions, LoopGuardSensitivity } from "../core/agent/loop-guard";
 import type { SessionStore } from "../core/sessions/types";
 import type { SessionManager } from "../core/sessions/session-manager";
+import type { ConfigProvider } from "../core/config/types";
 import { SessionEngine } from "./session-engine";
 
 /** A session that is currently open in the side view, with its own agent+history. */
@@ -70,7 +71,10 @@ export interface SessionRuntime {
 export interface SessionRegistryDeps {
   sessions: SessionManager;
   store: SessionStore;
-  createAgent: (history: ChatHistory, sessionId: string) => ChatController;
+  /** The config view of a session — DERIVED from its runtime on every read (see
+   *  SessionConfigProvider). Asked at spawn time, read at every turn. */
+  configFor: (sessionId: string) => ConfigProvider;
+  createAgent: (history: ChatHistory, sessionId: string, config: ConfigProvider) => ChatController;
 }
 
 /**
@@ -175,7 +179,7 @@ export class SessionRegistry {
   }
 
   private spawn(id: string, history: ChatHistory): SessionRuntime {
-    const agent = this.deps.createAgent(history, id);
+    const agent = this.deps.createAgent(history, id, this.deps.configFor(id));
     const rt: SessionRuntime = { sessionId: id, agent, history, engine: new SessionEngine(id, history, agent) };
     this.open.set(id, rt);
     return rt;

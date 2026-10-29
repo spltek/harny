@@ -222,15 +222,19 @@ function buildHarness(opts: Record<string, unknown> = {}) {
     }
     return agent as unknown as ChatController;
   });
-  const registry = new SessionRegistry({ sessions, store, createAgent });
+  // Same wiring as the composition root: the registry asks the VIEW for each session's
+  // config, lazily (a session can only be spawned after the provider exists).
+  const registry: SessionRegistry = new SessionRegistry({
+    sessions,
+    store,
+    createAgent,
+    configFor: (id: string) => provider.sessionConfigFor(id),
+  });
   // Faithful config chain, like the composition root in extension.ts:
   // base + a REAL memory-override provider wrapped in spies (keeps behaviour
   // for the provider and lets tests assert on set/clear calls).
   const base: ConfigProvider = { get: () => (opts.config as HarnyConfig | undefined) ?? CONFIG };
-  const modelSelector = new MemoryOverrideConfigProvider();
-  vi.spyOn(modelSelector, "set");
-  vi.spyOn(modelSelector, "clear");
-  const config = new CompositeConfigProvider(base, [modelSelector]);
+  const config = new CompositeConfigProvider(base, []);
   const attachments =
     (opts.attachments as AttachmentService | undefined) ??
     ({
@@ -252,18 +256,19 @@ function buildHarness(opts: Record<string, unknown> = {}) {
     ...(opts.fetchModelInfos ? { fetchModelInfos: vi.fn(opts.fetchModelInfos as () => Promise<unknown[]>) } : {}),
   } as unknown as ModelListProvider;
 
-  const provider = new ChatViewProvider(
-    config,
-    modelSelector,
-    attachments,
-    providers,
-    modelList,
-    sessions,
-    registry,
-    opts,
-  );
+  const provider = new ChatViewProvider(config, attachments, providers, modelList, sessions, registry, opts);
   provider.setContext({ extensionUri: { fsPath: "/ext" }, subscriptions: [] } as any);
-  return { store, sessions, registry, createAgent, provider, modelSelector };
+  /**
+   * The config the session's agent will actually read: the host chain with THAT
+   * session's own override layer on top — the same shape extension.ts builds.
+   *
+   * Assert on this, not on a shared store: the overrides are per session now, so
+   * "which session got the value" is half of what a test has to pin down (see the
+   * tab-switch regressions at the bottom of `session switch keeps every run its own`).
+   */
+  const agentConfig = (sessionId: string): Record<string, unknown> =>
+    provider.sessionConfigFor(sessionId).get() as unknown as Record<string, unknown>;
+  return { store, sessions, registry, createAgent, provider, agentConfig };
 }
 
 function resolveWith(provider: ChatViewProvider): { view: any; handler: (msg: any) => Promise<void> } {
@@ -1841,23 +1846,24 @@ describe("ChatViewProvider", () => {
   });
 
   it("sampler value persists on the active field and switching mode clears both to Auto", async () => {
-    const { store, provider, modelSelector } = buildHarness();
+    const { store, agentConfig, provider } = buildHarness();
     const { handler, view } = resolveWith(provider);
     await provider.createNew(); // s1
     await handler({ type: "setModel", model: "gpt-4o", provider: undefined });
     // Temperature (default): the shared value lands on temperature, 0 is valid.
     await handler({ type: "setSamplerValue", value: 0 });
     expect(store.saveSettings).toHaveBeenCalledWith("s1", { temperature: 0 });
-    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ temperature: 0 }));
+    expect(agentConfig("s1")).toMatchObject({ temperature: 0 });
 
     // Switch to Top-P: mode persists AND both stored values reset to Auto.
     await handler({ type: "setSamplerMode", mode: "topP" });
     // temperature was set (0), so it is cleared to Auto in the same patch.
     expect(store.saveSettings).toHaveBeenCalledWith("s1", { sampler: "topP", temperature: undefined });
-    // Only the active sampler carries a value: temperature cleared to none.
-    expect(modelSelector.set).toHaveBeenCalledWith(
-      expect.objectContaining({ topP: undefined, temperature: undefined }),
-    );
+    // Only the ACTIVE sampler carries a value. The session stopped overriding temperature,
+    // so the derived config falls back to the CHAIN's value (that is what "Auto" means after
+    // the session's own value is gone) and has no topP of its own yet.
+    expect(agentConfig("s1").temperature).toBe(CONFIG.temperature);
+    expect(agentConfig("s1")).not.toHaveProperty("topP");
 
     // Now the shared value lands on topP (0.9 valid on the 0–1 scale).
     await handler({ type: "setSamplerValue", value: 0.9 });
@@ -2424,7 +2430,7 @@ describe("ChatViewProvider", () => {
   });
 
   it("setModel with a named provider applies its overrides", async () => {
-    const { provider, modelSelector } = buildHarness({
+    const { provider, agentConfig } = buildHarness({
       providerEntry: {
         name: "opencode-go",
         baseUrl: "https://x/v1",
@@ -2438,19 +2444,18 @@ describe("ChatViewProvider", () => {
     const { handler } = resolveWith(provider);
     await provider.createNew(); // s1
     await handler({ type: "setModel", model: "m1", provider: "opencode-go" });
-    expect(modelSelector.set).toHaveBeenCalledWith(
-      expect.objectContaining({
-        activeProvider: "opencode-go",
-        baseUrl: "https://x/v1",
-        maxTokens: 123,
-        thinkingMode: "effort",
-        availableModels: ["m1"],
-      }),
-    );
+    // The config THIS session's agent reads at the next turn.
+    expect(agentConfig("s1")).toMatchObject({
+      activeProvider: "opencode-go",
+      baseUrl: "https://x/v1",
+      maxTokens: 123,
+      thinkingMode: "effort",
+      availableModels: ["m1"],
+    });
   });
 
   it("setModel defaults thinking to medium on reasoning-capable providers", async () => {
-    const { provider, modelSelector, store } = buildHarness({
+    const { provider, agentConfig, store } = buildHarness({
       providerEntry: {
         name: "opencode-go",
         baseUrl: "https://x/v1",
@@ -2468,11 +2473,11 @@ describe("ChatViewProvider", () => {
       expect.objectContaining({ model: "m1", modelProvider: "opencode-go", thinkingLevel: "medium" }),
     );
     // The runtime overrides carry the default so requests send reasoning_effort.
-    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ thinkingLevel: "medium" }));
+    expect(agentConfig("s1")).toMatchObject({ thinkingLevel: "medium" });
   });
 
   it("setModel keeps an explicit session thinking level (no default overwrite)", async () => {
-    const { provider, modelSelector, store } = buildHarness({
+    const { provider, agentConfig, store } = buildHarness({
       providerEntry: {
         name: "opencode-go",
         baseUrl: "https://x/v1",
@@ -2487,7 +2492,7 @@ describe("ChatViewProvider", () => {
     // Set an explicit level on the active session first, then pick a model.
     await handler({ type: "setThinkingLevel", level: "high" });
     await handler({ type: "setModel", model: "m1", provider: "opencode-go" });
-    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ thinkingLevel: "high" }));
+    expect(agentConfig("s2")).toMatchObject({ thinkingLevel: "high" });
     expect(store.saveSettings).not.toHaveBeenCalledWith(
       "s2",
       expect.objectContaining({ model: "m1", thinkingLevel: "medium" }),
@@ -2495,7 +2500,7 @@ describe("ChatViewProvider", () => {
   });
 
   it("setModel on a provider without reasoning leaves no thinking default", async () => {
-    const { provider, modelSelector, store } = buildHarness({
+    const { provider, agentConfig, store } = buildHarness({
       providerEntry: {
         name: "plain",
         baseUrl: "https://x/v1",
@@ -2507,9 +2512,10 @@ describe("ChatViewProvider", () => {
     const { handler } = resolveWith(provider);
     await provider.createNew(); // s1
     await handler({ type: "setModel", model: "m1", provider: "plain" });
-    expect(modelSelector.set).toHaveBeenCalledWith(
-      expect.objectContaining({ thinkingMode: "unspecified", thinkingLevel: undefined }),
-    );
+    // `thinkingLevel: undefined` DELETES the key: a non-reasoning provider must not
+    // receive a stale level (it would be sent as an unsupported param).
+    expect(agentConfig("s1")).toMatchObject({ thinkingMode: "unspecified" });
+    expect(agentConfig("s1")).not.toHaveProperty("thinkingLevel");
     expect(store.saveSettings).toHaveBeenCalledWith(
       "s1",
       expect.objectContaining({ model: "m1", modelProvider: "plain" }),
@@ -2832,7 +2838,7 @@ describe("ChatViewProvider per-session model", () => {
   });
 
   it("setModel carries the stable session id + the provider's declared session/static headers into the runtime config", async () => {
-    const { provider, modelSelector } = buildHarness({
+    const { provider, agentConfig } = buildHarness({
       providerEntry: {
         baseUrl: "https://opencode.ai/go/v1",
         apiKey: "go-key",
@@ -2845,31 +2851,133 @@ describe("ChatViewProvider per-session model", () => {
     const { handler } = resolveWith(provider);
     await provider.createNew(); // s1 (active runtime with a session id)
     await handler({ type: "setModel", model: "deepseek-v4-pro", provider: "opencode-go" });
-    expect(modelSelector.set).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: expect.any(String),
-        sessionHeader: "x-opencode-session",
-        extraHeaders: { "X-Origin": "harny" },
-      }),
-    );
+    expect(agentConfig("s1")).toMatchObject({
+      // Not `expect.any(String)`: the id must be THIS session's, which is exactly what
+      // the old shared layer could not promise (it held whichever tab was visible).
+      sessionId: "s1",
+      sessionHeader: "x-opencode-session",
+      extraHeaders: { "X-Origin": "harny" },
+    });
   });
 
-  it("applies the session model when switching to it and clears it for new sessions", async () => {
-    const { store, registry, provider, modelSelector } = buildHarness();
+  it("gives every session its OWN override layer: a switch never rewrites another session's config", async () => {
+    const { registry, provider, agentConfig } = buildHarness();
     const { handler } = resolveWith(provider);
-    await provider.createNew(); // s1 (new: no model) -> clear
-    expect(modelSelector.clear).toHaveBeenCalled();
+    await provider.createNew(); // s1: no model
+    // A session with no model leaves its layer EMPTY: the config chain owns everything.
+    expect(agentConfig("s1")).toEqual(CONFIG);
 
     registry.create(); // s2
-    await handler({ type: "switchTab", id: "s2" }); // s2 active (no model) -> clear
+    await handler({ type: "switchTab", id: "s2" }); // s2 active, no model
     await handler({ type: "setModel", model: "deepseek-v4-pro", provider: "opencode-go" }); // on s2
-
     expect(registry.get("s2")!.model).toBe("deepseek-v4-pro");
-    // Switching away (s1: no model) clears, switching back to s2 re-applies its model.
-    modelSelector.set.mockClear();
+    expect(agentConfig("s2")).toMatchObject({ model: "deepseek-v4-pro" });
+
+    // THE REGRESSION: switching away must not touch s2. The layer used to be one
+    // shared object, so activating a session with no model CLEARED it — and the
+    // next turn of a run in s2 went out with the config file's model and no
+    // `x-opencode-session` (400 MissingSessionID), or, switching to another
+    // session WITH a model, under that session's model and id.
     await handler({ type: "switchTab", id: "s1" });
+    expect(agentConfig("s2")).toMatchObject({ model: "deepseek-v4-pro", sessionId: "s2" });
+    expect(agentConfig("s1")).toEqual(CONFIG);
+
+    // …and switching back re-derives s2 from its own runtime, unchanged.
     await handler({ type: "switchTab", id: "s2" });
-    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ model: "deepseek-v4-pro" }));
+    expect(agentConfig("s2")).toMatchObject({ model: "deepseek-v4-pro", sessionId: "s2" });
+  });
+
+  it("opening a NEW session never touches an OPEN session's request identity (the MissingSessionID bug)", async () => {
+    const { registry, provider, agentConfig } = buildHarness({
+      providerEntry: {
+        name: "opencode-go",
+        baseUrl: "https://opencode.ai/go/v1",
+        apiKey: "go-key",
+        sessionHeader: "x-opencode-session",
+        models: [{ id: "deepseek-v4-pro" }],
+      } as any,
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "deepseek-v4-pro", provider: "opencode-go" });
+    const before = agentConfig("s1");
+    expect(before).toMatchObject({
+      sessionId: "s1",
+      sessionHeader: "x-opencode-session",
+      model: "deepseek-v4-pro",
+    });
+
+    // The reported bug, exactly: a session is RUNNING (it reads its config at every
+    // turn) and the user opens a new one. The runtime layer used to be one shared
+    // object, and activating a session with no model CLEARED it — so the running
+    // session's next request went out with the config-file model and NO
+    // `x-opencode-session` (OpenCode Go: 400 MissingSessionID). Reopening the session
+    // restored the layer, which is why it "worked again" after a close and a reopen.
+    await provider.createNew(); // s2: brand new, no model
+    expect(agentConfig("s1")).toEqual(before);
+    expect(agentConfig("s2")).toEqual(CONFIG);
+  });
+
+  it("keeps two sessions' models apart, whichever tab is visible", async () => {
+    const { registry, provider, agentConfig } = buildHarness({
+      providerEntry: { name: "p", baseUrl: "https://x/v1", models: [{ id: "m1" }, { id: "m2" }] },
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "m1", provider: "p" });
+    await provider.createNew(); // s2 (now active)
+    await handler({ type: "setModel", model: "m2", provider: "p" });
+
+    // Switching to a session WITH a model used to write ITS model into the shared
+    // layer, so the other session's next turn silently ran on the wrong model (and
+    // under the wrong session id) — valid, accepted, and wrong.
+    await handler({ type: "switchTab", id: "s1" });
+    expect(agentConfig("s1")).toMatchObject({ model: "m1", sessionId: "s1" });
+    expect(agentConfig("s2")).toMatchObject({ model: "m2", sessionId: "s2" });
+    await handler({ type: "switchTab", id: "s2" });
+    expect(agentConfig("s1")).toMatchObject({ model: "m1", sessionId: "s1" });
+    expect(agentConfig("s2")).toMatchObject({ model: "m2", sessionId: "s2" });
+    expect(agentConfig("s1")).not.toEqual(agentConfig("s2"));
+  });
+
+  it("closing a tab leaves the OTHER session's config untouched, and repairs the next active one", async () => {
+    // The reported sequence also included CLOSING/DELETING sessions while a run was going.
+    // Two things must hold: the surviving session keeps its layer, and the session that
+    // becomes active is DERIVED (the removal path changes the active id without a
+    // setActive() call, so nothing else would re-derive it).
+    const { registry, provider, agentConfig } = buildHarness({
+      providerEntry: { name: "p", baseUrl: "https://x/v1", models: [{ id: "m1" }, { id: "m2" }] },
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "setModel", model: "m1", provider: "p" });
+    await provider.createNew(); // s2 (active)
+    await handler({ type: "setModel", model: "m2", provider: "p" });
+    const s1Before = agentConfig("s1");
+
+    // Close the tab that is ACTIVE: s1 becomes active again, and its config must be its
+    // own — derived, so there is nothing to inherit or to re-derive.
+    await handler({ type: "closeTab", id: "s2" });
+
+    expect(registry.get("s2")).toBeUndefined();
+    expect(agentConfig("s1")).toEqual(s1Before);
+    expect(agentConfig("s1")).toMatchObject({ model: "m1", sessionId: "s1" });
+  });
+
+  it("deleting a session does not touch the one that is running", async () => {
+    const { registry, provider, agentConfig } = buildHarness({
+      providerEntry: { name: "p", baseUrl: "https://x/v1", models: [{ id: "m1" }] },
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1: the one that keeps working
+    await handler({ type: "setModel", model: "m1", provider: "p" });
+    const running = agentConfig("s1");
+    await provider.createNew(); // s2: the one that gets deleted
+    await provider.createNew(); // s3
+
+    await handler({ type: "closeTab", id: "s2" });
+    expect(agentConfig("s1")).toEqual(running);
+    expect(registry.isOpen("s2")).toBe(false);
   });
 });
 
@@ -3217,7 +3325,7 @@ describe("ChatViewProvider compaction", () => {
   }
 
   it("compact (manual) re-summarizes context via the compactor", async () => {
-    const options = { compactor: new Compactor(compactorFactory(), () => CONFIG), compaction: DEFAULT_COMPACTION };
+    const options = { compactor: new Compactor(compactorFactory()), compaction: DEFAULT_COMPACTION };
     const { store, registry, provider } = buildHarness(options);
     const { handler, view } = resolveWith(provider);
     await provider.createNew(); // s1
@@ -3580,6 +3688,63 @@ describe("ChatViewProvider compaction", () => {
   // ── The fail-safe: a window that SHRINKS under a full session. A compaction
   // cannot serve it (the summarizer runs on the session's model, so the span it
   // would have to read does not fit), and the window must move anyway. ──
+
+  it("summarizes a BACKGROUND session with ITS config: the summary carries that session's model and routing id", async () => {
+    // A compaction is an LLM request made DURING a run, and it used to be built from the
+    // host chain: on a host that routes by conversation (OpenCode Go) the summarizer's
+    // request had no `x-opencode-session` — 400 MissingSessionID in the middle of a run —
+    // and on every other host the summary was written by a DIFFERENT model than the
+    // session's. The config now travels from the session being compacted.
+    const configs: HarnyConfig[] = [];
+    const factory = {
+      create: (cfg: HarnyConfig) => {
+        configs.push(cfg);
+        return {
+          protocol: "chat" as const,
+          async *stream() {
+            yield { type: "text", content: "Summary of past interactions\n---\n## Goal\ncarried" };
+          },
+        };
+      },
+    } as unknown as LLMProviderFactory;
+    const options = { compactor: new Compactor(factory), compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness({
+      ...options,
+      providerEntry: {
+        name: "opencode-go",
+        baseUrl: "https://opencode.ai/go/v1",
+        apiKey: "go-key",
+        sessionHeader: "x-opencode-session",
+        models: [{ id: "deepseek-v4-pro" }],
+      } as any,
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt1 = registry.get("s1")!;
+    await handler({ type: "setModel", model: "deepseek-v4-pro", provider: "opencode-go" });
+    const big = 60;
+    const history: ChatMessage[] = [];
+    for (let i = 0; i < big; i++) {
+      history.push({ role: "user", content: `domanda ${i} ${"x".repeat(8000)}`, timestamp: i * 2 + 1 });
+      history.push({ role: "assistant", content: `risposta ${i} ${"y".repeat(8000)}`, timestamp: i * 2 + 2 });
+    }
+    rt1.contextWindow = 32_000;
+    rt1.history.replace(history);
+    rt1.contextTokens = 240_000;
+
+    // The user looks at ANOTHER session while s1 works: the compaction happens on s1.
+    await provider.createNew(); // s2, now active
+    await provider.maybeCompactDuringRun("s1");
+
+    expect(configs.length).toBeGreaterThan(0);
+    expect(configs.at(-1)).toMatchObject({
+      sessionId: "s1",
+      sessionHeader: "x-opencode-session",
+      model: "deepseek-v4-pro",
+    });
+    // The other session has no model yet: it must not have contributed anything.
+    expect(configs.every((c) => c.sessionId === "s1")).toBe(true);
+  });
 
   it("a window that SHRINKS under a full session still summarizes what it can READ (nothing is lost)", async () => {
     const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\ncarried");
@@ -3952,7 +4117,7 @@ describe("ChatViewProvider compaction", () => {
 
   it("auto-compacts against the USABLE budget: the 80% of the RAW window is unreachable when output is reserved", async () => {
     const options = {
-      compactor: new Compactor(compactorFactory(), () => CONFIG),
+      compactor: new Compactor(compactorFactory()),
       compaction: DEFAULT_COMPACTION,
     };
     const { registry, provider } = buildHarness(options);
@@ -3993,7 +4158,7 @@ describe("ChatViewProvider compaction", () => {
 
   it("auto-compacts right after a response when the reply crossed the threshold", async () => {
     const options = {
-      compactor: new Compactor(compactorFactory(), () => CONFIG),
+      compactor: new Compactor(compactorFactory()),
       compaction: DEFAULT_COMPACTION,
     };
     const { store, registry, provider } = buildHarness(options);
@@ -4342,7 +4507,7 @@ describe("ChatViewProvider compaction", () => {
   });
 
   it("setCompactionThreshold stores the session override (clamped) and persists it", async () => {
-    const options = { compactor: new Compactor(compactorFactory(), () => CONFIG), compaction: DEFAULT_COMPACTION };
+    const options = { compactor: new Compactor(compactorFactory()), compaction: DEFAULT_COMPACTION };
     const { store, registry, provider } = buildHarness(options);
     const { handler } = resolveWith(provider);
     await provider.createNew(); // s1
@@ -4369,7 +4534,7 @@ describe("ChatViewProvider compaction", () => {
   });
 
   it("setCompactionTarget stores the landing point (bounded by the trigger) and can be cleared", async () => {
-    const options = { compactor: new Compactor(compactorFactory(), () => CONFIG), compaction: DEFAULT_COMPACTION };
+    const options = { compactor: new Compactor(compactorFactory()), compaction: DEFAULT_COMPACTION };
     const { store, registry, provider } = buildHarness(options);
     const { handler } = resolveWith(provider);
     await provider.createNew(); // s1
@@ -4408,7 +4573,7 @@ describe("ChatViewProvider compaction", () => {
   });
 
   it("the FLOOR comes from the session's own last turn, and anything below it collapses to 0", async () => {
-    const options = { compactor: new Compactor(compactorFactory(), () => CONFIG), compaction: DEFAULT_COMPACTION };
+    const options = { compactor: new Compactor(compactorFactory()), compaction: DEFAULT_COMPACTION };
     const { registry, provider } = buildHarness(options);
     const { handler, view } = resolveWith(provider);
     await provider.createNew(); // s1
@@ -4481,7 +4646,7 @@ describe("ChatViewProvider compaction", () => {
   });
 
   it("buildConfig posts the EFFECTIVE landing point and whether AUTO is in force", async () => {
-    const options = { compactor: new Compactor(compactorFactory(), () => CONFIG), compaction: DEFAULT_COMPACTION };
+    const options = { compactor: new Compactor(compactorFactory()), compaction: DEFAULT_COMPACTION };
     const { provider } = buildHarness(options);
     const { handler, view } = resolveWith(provider);
     await provider.createNew(); // s1
@@ -4510,7 +4675,7 @@ describe("ChatViewProvider compaction", () => {
   });
 
   it("previewCompaction posts the plan the compaction will run (no model call)", async () => {
-    const options = { compactor: new Compactor(compactorFactory(), () => CONFIG), compaction: DEFAULT_COMPACTION };
+    const options = { compactor: new Compactor(compactorFactory()), compaction: DEFAULT_COMPACTION };
     const { registry, provider } = buildHarness(options);
     const { handler, view } = resolveWith(provider);
     await provider.createNew(); // s1
@@ -4550,7 +4715,7 @@ describe("ChatViewProvider compaction", () => {
   });
 
   it("the landing point decides HOW MUCH survives (the session's own policy)", async () => {
-    const options = { compactor: new Compactor(compactorFactory(), () => CONFIG), compaction: DEFAULT_COMPACTION };
+    const options = { compactor: new Compactor(compactorFactory()), compaction: DEFAULT_COMPACTION };
     const { registry, provider } = buildHarness(options);
     const { handler, view } = resolveWith(provider);
     await provider.createNew(); // s1
@@ -4579,7 +4744,7 @@ describe("ChatViewProvider compaction", () => {
 
   it("auto-compaction follows the session's custom threshold %", async () => {
     const options = {
-      compactor: new Compactor(compactorFactory(), () => CONFIG),
+      compactor: new Compactor(compactorFactory()),
       compaction: DEFAULT_COMPACTION,
     };
     const { registry, provider } = buildHarness(options);
@@ -4621,7 +4786,7 @@ describe("ChatViewProvider compaction", () => {
 
   it("auto-compacts before the request when already over the threshold", async () => {
     const options = {
-      compactor: new Compactor(compactorFactory(), () => CONFIG),
+      compactor: new Compactor(compactorFactory()),
       compaction: DEFAULT_COMPACTION,
     };
     const { registry, provider } = buildHarness(options);
@@ -4665,7 +4830,7 @@ describe("ChatViewProvider compaction", () => {
         },
       })),
     } as unknown as LLMProviderFactory;
-    const options = { compactor: new Compactor(failingFactory, () => CONFIG), compaction: DEFAULT_COMPACTION };
+    const options = { compactor: new Compactor(failingFactory), compaction: DEFAULT_COMPACTION };
     const { registry, provider } = buildHarness(options);
     const { handler } = resolveWith(provider);
     await provider.createNew(); // s1
@@ -4691,7 +4856,7 @@ describe("ChatViewProvider compaction", () => {
   });
 
   it("mid-run auto-compaction compacts at a turn boundary without ending the working state", async () => {
-    const options = { compactor: new Compactor(compactorFactory(), () => CONFIG), compaction: DEFAULT_COMPACTION };
+    const options = { compactor: new Compactor(compactorFactory()), compaction: DEFAULT_COMPACTION };
     const { registry, provider } = buildHarness(options);
     const { view } = resolveWith(provider);
     await provider.createNew(); // s1
@@ -4720,7 +4885,7 @@ describe("ChatViewProvider compaction", () => {
   });
 
   it("mid-run auto-compaction is a no-op below the threshold", async () => {
-    const options = { compactor: new Compactor(compactorFactory(), () => CONFIG), compaction: DEFAULT_COMPACTION };
+    const options = { compactor: new Compactor(compactorFactory()), compaction: DEFAULT_COMPACTION };
     const { registry, provider } = buildHarness(options);
     const { view } = resolveWith(provider);
     await provider.createNew(); // s1
@@ -4737,7 +4902,7 @@ describe("ChatViewProvider compaction", () => {
     // the button's planManualCompaction always compacts a fraction, so the
     // auto trigger (same routine) never produces an empty fake bubble.
     const options = {
-      compactor: new Compactor(compactorFactory(), () => CONFIG),
+      compactor: new Compactor(compactorFactory()),
       compaction: DEFAULT_COMPACTION,
     };
     const { store, registry, provider } = buildHarness(options);
@@ -4771,7 +4936,7 @@ describe("ChatViewProvider compaction", () => {
 
   it("does NOT auto-compact after a response that stays under the threshold", async () => {
     const options = {
-      compactor: new Compactor(compactorFactory(), () => CONFIG),
+      compactor: new Compactor(compactorFactory()),
       compaction: DEFAULT_COMPACTION,
     };
     const { registry, provider } = buildHarness(options);
@@ -4802,7 +4967,7 @@ describe("ChatViewProvider compaction", () => {
 
   it("auto-compacts a background session silently (history only, no bubble on the active tab)", async () => {
     const options = {
-      compactor: new Compactor(compactorFactory(), () => CONFIG),
+      compactor: new Compactor(compactorFactory()),
       compaction: DEFAULT_COMPACTION,
     };
     const { registry, provider } = buildHarness(options);
@@ -4838,7 +5003,7 @@ describe("ChatViewProvider compaction", () => {
 
   it("triggers even when the runtime has no explicit context window (default 128k applies)", async () => {
     const options = {
-      compactor: new Compactor(compactorFactory(), () => CONFIG),
+      compactor: new Compactor(compactorFactory()),
       compaction: DEFAULT_COMPACTION,
     };
     const { registry, provider } = buildHarness(options);
@@ -5463,7 +5628,7 @@ describe("ChatViewProvider model limits (context + output)", () => {
   });
 
   it("caps a config maxTokens at the scale maximum AND at the room left in the window", async () => {
-    const { provider, registry, modelSelector } = buildHarness({
+    const { provider, registry, agentConfig } = buildHarness({
       providerEntry: { name: "p", baseUrl: "https://x/v1", maxTokens: 999_999, models: [{ id: "m1" }] },
     });
     const { handler } = resolveWith(provider);
@@ -5478,19 +5643,18 @@ describe("ChatViewProvider model limits (context + output)", () => {
     // The margin SCALES (min(8192, 5% of the window)): on 128k that is 6.4k, and
     // the 8192 it was tuned at only applies from 164k up — a fixed 8k would be 100%
     // of an 8k model's window, i.e. no room at all for its own answer.
-    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ maxTokens: 121_600 }));
+    expect(agentConfig("s1")).toMatchObject({ maxTokens: 121_600 });
   });
 
   it("clamps the output budget to the room left: the request must FIT `input + max_tokens ≤ window`", async () => {
-    const { provider, registry, modelSelector } = buildHarness({
+    const { provider, registry, agentConfig } = buildHarness({
       providerEntry: { name: "p", baseUrl: "https://x/v1", models: [{ id: "m1" }] },
     });
     const { handler } = resolveWith(provider);
     await provider.createNew(); // s1
     await handler({ type: "setModel", model: "m1", provider: "p" });
     const rt = registry.get("s1")!;
-    const lastMaxTokens = (): number | undefined =>
-      (modelSelector.set as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0]?.maxTokens;
+    const lastMaxTokens = (): number | undefined => agentConfig("s1").maxTokens as number | undefined;
 
     // The REAL numbers of the session that failed: 1M window, 384k output, and
     // an input of 666.820 tokens. The provider counts both against the window,
@@ -5535,22 +5699,22 @@ describe("ChatViewProvider model limits (context + output)", () => {
     // a session with no model selected there is nothing to clamp — and writing
     // anything would SHADOW the provider entry / file / settings that legitimately
     // own maxTokens (a provider declaring 123 would silently become the default).
-    const { provider, registry, modelSelector } = buildHarness({
+    const { provider, registry, agentConfig } = buildHarness({
       providerEntry: { name: "p", baseUrl: "https://x/v1", maxTokens: 123, models: [{ id: "m1" }] },
     });
     const { handler } = resolveWith(provider);
     await provider.createNew(); // s1, no model yet
     const rt = registry.get("s1")!;
     expect(rt.model).toBeUndefined();
-    const calls = (modelSelector.set as ReturnType<typeof vi.fn>).mock.calls.length;
+    const before = agentConfig("s1");
 
     // The turn boundary is where the clamp is applied during a run.
     await provider.maybeCompactDuringRun("s1");
-    expect((modelSelector.set as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls);
+    expect(agentConfig("s1")).toEqual(before);
 
     // Selecting a model then DOES apply it, and it honours the entry's 123.
     await handler({ type: "setModel", model: "m1", provider: "p" });
-    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ maxTokens: 123 }));
+    expect(agentConfig("s1")).toMatchObject({ maxTokens: 123 });
   });
 
   it("adopts the models.dev output too when the host reports neither limit", async () => {
@@ -5670,19 +5834,17 @@ describe("ChatViewProvider adopts limits on session open", () => {
 
 describe("ChatViewProvider model/config switch hygiene", () => {
   it("refresh() re-applies the per-model overrides so a CONFIG edit takes effect", async () => {
-    const { provider, modelSelector } = buildHarness({
+    const { provider, agentConfig } = buildHarness({
       providerEntry: { name: "p", baseUrl: "https://x/v1", models: [{ id: "m1" }] },
     });
     const { handler } = resolveWith(provider);
     await provider.createNew();
     await handler({ type: "setModel", model: "m1", provider: "p" });
-    (modelSelector.set as any).mockClear();
-
+    // The derived config reads the chain on every call, so the value shown is the one
+    // the next request will use — there is no copy that a stale edit could shadow.
+    // (`configuredBaseUrl` is what the harness catalog reports for the entry.)
     provider.refresh(); // the config-watcher path
-
-    // The runtime overrides (baseUrl/apiKey/maxTokens/…) are recomputed from the
-    // CURRENT config, so a file/settings edit is not shadowed by stale values.
-    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ model: "m1" }));
+    expect(agentConfig("s1")).toMatchObject({ model: "m1", baseUrl: "https://x/v1" });
   });
 
   it("clears a stale thinking level when switching to a NON-reasoning provider", async () => {
@@ -5735,18 +5897,16 @@ describe("ChatViewProvider limits on switching to an UNKNOWN model", () => {
 
 describe("ChatViewProvider config-change + enrichment robustness", () => {
   it("re-applies the model overrides when a harny.* setting changes", async () => {
-    const { provider, modelSelector } = buildHarness({
+    const { provider, agentConfig } = buildHarness({
       providerEntry: { name: "p", baseUrl: "https://x/v1", models: [{ id: "m1" }] },
     });
     const { handler } = resolveWith(provider);
     await provider.createNew();
     await handler({ type: "setModel", model: "m1", provider: "p" });
-    (modelSelector.set as any).mockClear();
-
     // The host fires onDidChangeConfiguration for a harny.* setting.
     state.configListener?.({ affectsConfiguration: (s: string) => s === "harny" });
 
-    expect(modelSelector.set).toHaveBeenCalledWith(expect.objectContaining({ model: "m1" }));
+    expect(agentConfig("s1")).toMatchObject({ model: "m1", baseUrl: "https://x/v1" });
   });
 
   it("survives a models.dev failure during the background list enrichment", async () => {

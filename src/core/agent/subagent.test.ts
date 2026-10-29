@@ -109,6 +109,47 @@ function makeReadTool(opts: { output?: string } = {}): Tool & { calls: number; b
   return tool;
 }
 
+describe("sub-agents run on the SESSION's config", () => {
+  it("sends the config the runner was given — the session's model and routing identity", async () => {
+    // A sub-agent is a set of real requests made during the session's run, and it shares the
+    // session's model. The config therefore comes from the runner (extension.ts passes the
+    // per-session view), NOT from the host chain: the chain carries no session id, and a host
+    // that routes by conversation (OpenCode Go's `x-opencode-session`) answers 400.
+    const configs: HarnyConfig[] = [];
+    const llm = {
+      create(cfg: HarnyConfig) {
+        configs.push(cfg);
+        return {
+          protocol: "chat" as const,
+          async *stream() {
+            yield { type: "text" as const, content: "done" };
+          },
+        };
+      },
+    } as unknown as LLMProviderFactory;
+    const runner = new SubAgentRunner({
+      config: new StaticConfigProvider({
+        ...CONFIG,
+        model: "deepseek-v4-pro",
+        sessionId: "s-9",
+        sessionHeader: "x-opencode-session",
+      }),
+      llmFactory: llm,
+      tools: new ToolRegistry([]),
+      cwd: () => "/workspace",
+    });
+
+    await runner.run(spec({}));
+
+    expect(configs.length).toBeGreaterThan(0);
+    expect(configs[0]).toMatchObject({
+      model: "deepseek-v4-pro",
+      sessionId: "s-9",
+      sessionHeader: "x-opencode-session",
+    });
+  });
+});
+
 describe("sub-agents inherit the session's tool scope", () => {
   it("a tool switched off in the session is off for the delegated work too", async () => {
     // Without inheritance "this tool is off" is cosmetic: the model delegates and the sub-agent

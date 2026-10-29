@@ -464,6 +464,10 @@ export async function compactHistory(
      *  can say WHY: an empty stream and a classification are different failures, and both
      *  used to read as a single "no summary written". */
     onUnusableReply?: (reply: string) => void;
+    /** The SESSION's effective config (host chain + its overrides). REQUIRED: the summary
+     *  is an LLM request made during a run, so it must carry the session's model and its
+     *  routing identity (e.g. `x-opencode-session`). */
+    config: HarnyConfig;
     signal?: AbortSignal;
   },
 ): Promise<CompactedHistory | null> {
@@ -488,6 +492,7 @@ export async function compactHistory(
   // summarizing a summary (the planner already keeps it out of the span).
   const carried = carriedState(messages);
   const summary0 = await opts.compactor.summarize(toSummarize, carried, opts.signal, {
+    config: opts.config,
     maxSummaryTokens: summaryBudget,
     keptPreview,
     // What the model MAY spend to write it: the session's declared output, never the
@@ -502,6 +507,7 @@ export async function compactHistory(
   const summary = isUsableSummary(summary0)
     ? summary0
     : await opts.compactor.summarize(toSummarize, carried, opts.signal, {
+        config: opts.config,
         maxSummaryTokens: summaryBudget,
         keptPreview,
         maxReplyTokens: opts.maxOutputTokens,
@@ -877,10 +883,18 @@ function compressSummaryMessages(
  * LLM (a lightweight one-shot call, no tools). Falls back to a short label.
  */
 export class Compactor {
-  constructor(
-    private factory: LLMProviderFactory,
-    private buildConfig: () => HarnyConfig,
-  ) {}
+  /**
+   * `factory` only: the CONFIG arrives with each call.
+   *
+   * It used to be a closure over the global chain (`() => config.get()`), which meant
+   * the summary — a real LLM request, made DURING a run — went out with the host
+   * defaults: on a host that routes by conversation (OpenCode Go's
+   * `x-opencode-session`) that is a 400 MissingSessionID in the middle of a
+   * compaction, and everywhere else the summary is written by a DIFFERENT model than
+   * the session's, which is not what the transcript promises. The caller has the
+   * session, so the caller passes its config (see `compactHistory`).
+   */
+  constructor(private factory: LLMProviderFactory) {}
 
   /**
    * One compaction summary.
@@ -893,7 +907,14 @@ export class Compactor {
     toSummarize: ChatMessage[],
     previousSummary?: string,
     signal?: AbortSignal,
-    options: { maxSummaryTokens?: number; keptPreview?: string; maxReplyTokens?: number } = {},
+    options: {
+      maxSummaryTokens?: number;
+      keptPreview?: string;
+      maxReplyTokens?: number;
+      /** The session's EFFECTIVE config (host chain + its own overrides). Required:
+       *  a summary is a request, and a request belongs to a conversation. */
+      config: HarnyConfig;
+    } = {} as { config: HarnyConfig },
   ): Promise<string> {
     const budget = options.maxSummaryTokens;
     let out = await this.requestSummary(
@@ -905,13 +926,19 @@ export class Compactor {
       // EMPTY reply 3 times out of 3; cap = the session's declared output gave a real
       // document 3 times out of 3.
       options.maxReplyTokens,
+      options.config,
     );
     // Still oversized when measured (the instruction is a request, not a limit):
     // ONE compression pass, and only the SHORTER of the two is kept. Bounded to a
     // single extra call on purpose — a loop over a summary would spend more
     // context than it frees.
     if (budget && budget > 0 && out && estimateTokens(out) > Math.ceil(budget * SUMMARY_OVERSHOOT)) {
-      const squeezed = await this.requestSummary(compressSummaryMessages(out, budget), signal, options.maxReplyTokens);
+      const squeezed = await this.requestSummary(
+        compressSummaryMessages(out, budget),
+        signal,
+        options.maxReplyTokens,
+        options.config,
+      );
       if (squeezed && estimateTokens(squeezed) < estimateTokens(out)) out = squeezed;
     }
     const trimmed = out.trim();
@@ -925,12 +952,12 @@ export class Compactor {
   /** One one-shot summary request (no tools; `signal` lets Stop cancel it too). */
   private async requestSummary(
     messages: { role: "system" | "user"; content: string }[],
-    signal?: AbortSignal,
-    maxTokens?: number,
+    signal: AbortSignal | undefined,
+    maxTokens: number | undefined,
+    cfg: HarnyConfig,
   ): Promise<string> {
     // The cap is the session's DECLARED max output when the caller knows it (see the note
     // in `summarize`): room for the model to reason and still answer.
-    const cfg = this.buildConfig();
     const provider = this.factory.create(maxTokens ? { ...cfg, maxTokens } : cfg);
     let out = "";
     // No tools for a summary turn: pass [] so the provider never advertises
