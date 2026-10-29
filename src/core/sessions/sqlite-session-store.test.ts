@@ -162,6 +162,27 @@ describe("SqliteSessionStore — sessions & messages", () => {
     expect(store.list()).toEqual([]);
     expect(store.load("s1").messages).toEqual([]);
   });
+
+  it("a save AFTER a remove RESURRECTS the session — deletion is not defended down here", () => {
+    // `saveMessages` upserts the session row (INSERT … ON CONFLICT DO UPDATE), which is what
+    // makes an incremental append cheap. The consequence is that a writer still holding the
+    // id brings the row back: the defence lives UPSTAIRS, where `deleteSession`/`closeTab`
+    // refuse a session that is working (`if (this.isWorking(id)) return`) — a run keeps
+    // saving its history, and without that guard a deleted session would reappear with a
+    // fragment of its transcript.
+    //
+    // This test exists so nobody concludes, from `remove` alone, that a deletion is final.
+    const { store } = makeStore();
+    store.create("Doomed");
+    store.saveMessages("s1", [msg("user", "one")]);
+    store.remove("s1");
+    expect(store.list()).toEqual([]);
+
+    store.saveMessages("s1", [msg("user", "written after the delete")]);
+
+    expect(store.list().map((s) => s.id)).toEqual(["s1"]);
+    expect(store.load("s1").messages.map((m) => m.content)).toEqual(["written after the delete"]);
+  });
 });
 
 describe("SqliteSessionStore — per-session settings", () => {
