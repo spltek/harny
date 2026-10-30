@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-10-30
+
 ### Added
 
 - **The panel opens on its sessions even with NO folder open.** The first screen used to be a dead end — *"Harny needs a single open folder"* — that also hid the one thing worth showing: sessions live in a single central database keyed by folder, so the full history is available with no root at all. The sessions card now stays on screen in that state and becomes a **workspace picker**: every folder's sessions, most recent first, each row carrying its folder path in the mono face, and **the whole row is the control** (pointer, focus ring, Enter/Space). The trailing label says what the click does — **Open folder**, or **Change folder…** when that path is gone — and the hero names the reason (**No folder is open** / **3 folders are open — Harny needs exactly one**) with **Open folder…** as the one action. Nothing per-session is offered there (branch/rename/delete act on a session that cannot be shown yet; they stay one click away in All sessions), and the gear is hidden because that form would list the very same rows.
@@ -1751,7 +1753,8 @@ Completions protocol.
 - **Diagnostics**: per-turn lines in *Output > Harny*, an optional request log
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
-[Unreleased]: https://github.com/spltek/harny/compare/v0.9.4...HEAD
+[Unreleased]: https://github.com/spltek/harny/compare/v0.9.5...HEAD
+[0.9.5]: https://github.com/spltek/harny/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/spltek/harny/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/spltek/harny/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/spltek/harny/compare/v0.9.1...v0.9.2
