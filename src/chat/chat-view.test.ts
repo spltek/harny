@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { MODAL_STALL_MS } from "./modal-stall-guard";
 import { memoryStore } from "./webview-bridge.test-utils";
 import type { ConfigProvider, HarnyConfig, ProviderCatalog } from "../core/config/types";
 import { MemoryOverrideConfigProvider } from "../core/config/memory-override-config-provider";
@@ -635,6 +636,32 @@ describe("ChatViewProvider", () => {
       await answered;
       expect(view.webview.html).not.toBe(before);
     } finally {
+      state.noAutoName = false;
+    }
+  });
+
+  it("a rebuild stuck behind an unanswered modal RECOVERS by itself (no reload needed)", async () => {
+    // The rescue net: the modal is cancelled and the page rebuilt, with a line in the log.
+    // Only the TIMER is faked; the rest of the provider keeps its real timing.
+    const { store, provider } = buildHarness();
+    const { view } = resolveWith(provider);
+    state.noAutoName = true;
+    const before = view.webview.html;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const pending = provider.createNew(); // a modal nobody answers
+      provider.refresh(); // …and a rebuild that must wait behind it
+      expect(view.webview.html).toBe(before);
+
+      vi.advanceTimersByTime(MODAL_STALL_MS + 1);
+      vi.useRealTimers(); // back to real time before awaiting anything
+
+      // The dialog was cancelled (so the flow ends) and the page was rebuilt.
+      await expect(pending).resolves.toBeUndefined();
+      expect(store.create).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(view.webview.html).not.toBe(before), { timeout: 2000 });
+    } finally {
+      vi.useRealTimers();
       state.noAutoName = false;
     }
   });

@@ -38,6 +38,7 @@ import type { PreparedPrompt, SendIntent, SessionAbortPort, SessionSendPort } fr
 import type { AttachmentService } from "./attachment-service";
 import type { AttachmentPart } from "./attachment-types";
 import { WorkspaceActions } from "./workspace-actions";
+import { ModalStallGuard } from "./modal-stall-guard";
 import type { PendingOpenAction, PendingOpens } from "./pending-open";
 import { debugLog, infoLog } from "../logger";
 import { preprocessJsonc } from "../core/config/jsonc";
@@ -202,6 +203,11 @@ export class ChatViewProvider implements WebviewViewProvider {
   private startupVacuumTimer: ReturnType<typeof setTimeout> | undefined;
   /** Every "open a folder" flow: the picker and `vscode.openFolder` in ONE place. */
   private readonly workspace: WorkspaceActions;
+  /**
+   * Rescue for a modal that blocks a rebuild for too long (see `refresh`): without it a
+   * stuck dialog leaves the panel frozen until the window is reloaded.
+   */
+  private readonly modalGuard: ModalStallGuard;
   /** Actions waiting for the page to exist (see `runWhenReady`). */
   private readonly readyActions: (() => void)[] = [];
 
@@ -262,6 +268,17 @@ export class ChatViewProvider implements WebviewViewProvider {
     // never reaches for `vscode` itself, and a new flow is a call, not a new command.
     this.workspace = options.workspace ?? new WorkspaceActions();
     this.modals = new PanelModalQueue((msg) => this.view?.webview.postMessage(msg));
+    this.modalGuard = new ModalStallGuard({
+      // A stall is a modal pending WHILE a rebuild waits behind it. A dialog simply left
+      // open (nothing to redraw) is the user reading, and is none of the guard's business.
+      stalled: () => this.refreshDeferred && this.modals.hasPending(),
+      recover: () => {
+        this.modals.cancelAll();
+        this.refreshDeferred = false;
+        void this.refresh();
+      },
+      log: (m) => infoLog(m),
+    });
     this.pendingQueue = new PendingInputQueue({
       buildContext: (files) => this.attachments.buildContext(files),
       post: (sessionId, items) => this.postPending(sessionId, items),
@@ -1040,6 +1057,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     // flow that asked (create / rename / delete…) ends instead of hanging on a promise
     // whose webview no longer exists.
     this.modals.cancelAll();
+    this.modalGuard.disarm();
     // Last chance for the metric: the store is still open at this point.
     this.flushContextTokens();
   }
@@ -1070,6 +1088,9 @@ export class ChatViewProvider implements WebviewViewProvider {
     // this refresh via the config watcher). It runs when the queue drains.
     if (this.modals.hasPending()) {
       this.refreshDeferred = true;
+      // Put the deferral on a clock: if the dialog is never answered, the panel must not
+      // stay stale for ever (see ModalStallGuard).
+      this.modalGuard.arm();
       return Promise.resolve();
     }
     this.refreshDeferred = false; // this run satisfies any deferred request
@@ -1082,8 +1103,10 @@ export class ChatViewProvider implements WebviewViewProvider {
       // freezes with a dialog nobody can answer. Defer, exactly like the check above.
       if (this.modals.hasPending()) {
         this.refreshDeferred = true;
+        this.modalGuard.arm();
         return;
       }
+      this.modalGuard.disarm();
       this.view.webview.html = html;
       // The page exists now: whatever was waiting for it can run.
       this.drainReadyActions();
