@@ -8278,6 +8278,66 @@ describe("empty shell (no open session)", () => {
       expect(document.querySelector(".empty-hero p")?.textContent).toContain("3 folders are open");
     });
 
+    it("keeps the CHAT — and its STOP — when a session is open and the folder is gone", async () => {
+      // Seen in the field: the watcher rebuilt the panel while a run was streaming, the
+      // panel became the workspace picker, and a LIVE turn was left with no way to stop it
+      // (the control stack is hidden there) while the stream drew over the hero.
+      setupHome(
+        {
+          sessions: [
+            {
+              id: "a",
+              name: "Working",
+              createdAt: 1,
+              updatedAt: 9,
+              messageCount: 3,
+              folder: "/p/gone",
+              folderMissing: true,
+            },
+          ],
+          openIds: ["a"],
+          activeId: "a",
+          messages: [{ role: "user", content: "hi" }],
+          workingIds: ["a"],
+        },
+        { workspaceFolderCount: 1, workspaceFolder: "/p/gone" },
+      );
+      await loadView();
+      // A session is open: the CHAT is the screen, not the picker…
+      expect(document.body.classList.contains("no-workspace")).toBe(false);
+      expect(document.body.classList.contains("no-session")).toBe(false);
+      expect(document.querySelector(".empty-hero")).toBeNull();
+      expect(document.querySelector("#messages .msg.user")?.textContent).toBe("hi");
+      // …the reason is stated where the eye is, with the one action that fixes it…
+      const banner = document.querySelector(".ws-gone") as HTMLElement;
+      expect(banner.textContent).toContain("/p/gone");
+      expect(banner.textContent).toContain("no longer exists");
+      (banner.querySelector(".ws-gone-fix") as HTMLElement).click();
+      expect(posted).toContainEqual({ type: "openSessionFolder", id: "a" });
+      // …and a re-render does not ADD a second banner for the same session.
+      hostMessage({
+        type: "switchView",
+        switchSeq: 2,
+        sessions: [
+          {
+            id: "a",
+            name: "Working",
+            createdAt: 1,
+            updatedAt: 9,
+            messageCount: 3,
+            folder: "/p/gone",
+            folderMissing: true,
+          },
+        ],
+        openIds: ["a"],
+        activeId: "a",
+        messages: [],
+        config: { ...HOME_CONFIG, workspaceFolderCount: 1, workspaceFolder: "/p/gone" },
+        workingIds: ["a"],
+      });
+      expect(document.querySelectorAll(".ws-gone").length).toBe(1);
+    });
+
     it("names a workspace folder that is GONE, and offers another one", async () => {
       // `workspaceReady: false` with ONE folder means exactly one thing: it no longer
       // exists. Reporting that as "no folder is open" reads like a bug.
