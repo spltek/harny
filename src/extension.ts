@@ -40,6 +40,7 @@ import { ChatViewProvider } from "./chat/chat-view";
 import { SessionRegistry } from "./chat/session-registry";
 import { MementoPendingOpenStore, PendingOpens } from "./chat/pending-open";
 import { WorkspaceRootWatch } from "./chat/workspace-watch";
+import { workspaceGoneSendNote } from "./core/agent/workspace-gone";
 import { AttachmentService } from "./chat/attachment-service";
 import { resolveHome } from "./core/storage/home";
 import { debugLog, infoLog } from "./logger";
@@ -217,6 +218,16 @@ export async function activate(context: ExtensionContext) {
     };
   };
 
+  /**
+   * The ONE precondition of working here: the session's root is configured AND still on disk.
+   *
+   * The two failing states are NOT the same thing: "no root configured" (0 or 2+ folders, a
+   * tool-only context) has nothing to assert and changes no behaviour, while "the root was
+   * deleted" is the reason to refuse every tool call and to STOP the run. It is passed to the
+   * agent and to every sub-agent, so they cannot drift apart.
+   */
+  const workspaceReady = (): boolean => !!root && existsSync(root);
+
   const createAgent = (history: ChatHistory, sessionId: string, sessionConfig: ConfigProvider): ChatController => {
     // The config is BUILT BY THE VIEW for this session (`configFor` below) and derived
     // from its runtime on every read: never shared, never snapshotted, never stored.
@@ -228,6 +239,9 @@ export async function activate(context: ExtensionContext) {
       llmFactory,
       tools,
       cwd,
+      // The same precondition the agent applies: a delegated sub-agent can never write into a
+      // folder that is gone either.
+      workspaceReady,
       // The SAME skills catalog as the orchestrator: a sub-agent activates a skill on
       // its own when the task matches one (progressive disclosure).
       skills: () => skills.list(),
@@ -268,6 +282,9 @@ export async function activate(context: ExtensionContext) {
       // own overflow check against it, without knowing which model it serves.
       contextBudget: () => sessionBudget?.(sessionId) ?? 0,
       cwd,
+      // The root is the ground every tool stands on: when it is gone the agent runs NO tool
+      // (see runOne) and the watcher below STOPS the run, sub-agents included.
+      workspaceReady,
       // Which tools THIS session may use (MCP servers on, built-ins off): read per turn, so a
       // toggle takes effect on the next one. Sub-agents inherit it (see SubAgentRunnerDeps).
       toolScope: () => toolScopeFor(sessionId),
@@ -368,6 +385,16 @@ export async function activate(context: ExtensionContext) {
     exists: existsSync,
     onChange: (lostRoot, existsNow) => {
       infoLog(`workspace root ${existsNow ? "is back" : "disappeared"}:`, lostRoot);
+      if (!existsNow) {
+        // STOP first: a run must not keep working — or writing — against a folder that is not
+        // there, and that `abort` cascades to the session's sub-agents. Then tell the user where
+        // the eye is: a native NON-modal toast (a modal would block the panel) carrying the one
+        // action that fixes it.
+        void viewProvider.stopAllForLostRoot(lostRoot);
+        void window.showWarningMessage(workspaceGoneSendNote(lostRoot), "Change folder…").then((answer) => {
+          if (answer) void viewProvider.openWorkspace();
+        });
+      }
       viewProvider.refresh();
     },
   });

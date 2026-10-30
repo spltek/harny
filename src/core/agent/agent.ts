@@ -1,6 +1,7 @@
 import type { ConfigProvider } from "../config/types";
 import { requiresApiKey } from "../config/requires-api-key";
 import { describeFetchError } from "../tools/url-utils";
+import { workspaceGoneToolRefusal } from "./workspace-gone";
 import type { EventBus } from "../events/event-bus";
 import type { ChatHistory } from "../history/chat-history";
 import type { ChatMessage, MessageMeta } from "../history/types";
@@ -169,6 +170,18 @@ export interface AgentDeps {
   /** Working directory, used to resolve delegate `resources` for the safe
    * parallelism decision (relative vs absolute paths must MATCH). */
   cwd?: () => string;
+  /**
+   * Is the session's workspace root still usable (configured AND on disk)? The ONE
+   * precondition of using it: when it says `false`, no tool call runs — every tool would
+   * fail locally ("0 files found" reads as an empty project, and a model re-creates what it
+   * thinks is missing). The host's watcher STOPS the run on the same condition; this is the
+   * net for the window before its poll.
+   *
+   * Absent = NO CHECK, i.e. inert: tool-only contexts and tests have no workspace to assert.
+   * "No root configured" and "the root was deleted" are different states, and only the
+   * second one is a reason to stop work.
+   */
+  workspaceReady?: () => boolean;
   /** Identity of this agent, passed to tools that keep per-conversation state
    * (e.g. TodoWrite): each session and each sub-agent gets its OWN state. */
   ownerId?: string;
@@ -668,6 +681,21 @@ export class Agent implements ChatController {
     // re-run). This BREAKS tool loops at the source instead of only nudging.
     const runOne = async (index: number): Promise<void> => {
       const tc = toolCalls[index];
+      // The workspace root is the ground every tool stands on. When it is gone NOTHING runs:
+      // "0 files found" or "file not found" would read as an empty (or broken) project, and
+      // the natural repair for an empty project is to CREATE everything — which is how a
+      // deleted folder came back as a ghost. The host's watcher aborts the run within a poll;
+      // this is the net for that window, so it needs no message of its own beyond the refusal.
+      if (this.deps.workspaceReady && !this.deps.workspaceReady()) {
+        const refused: ToolResult = {
+          content: workspaceGoneToolRefusal(this.deps.cwd?.() ?? "", tc.name),
+          isError: true,
+        };
+        results[index] = refused;
+        emitResult(index, refused);
+        this.log(`tool: ${tc.name} refused (the workspace root is gone)`);
+        return;
+      }
       // A Delegate is NEVER cached/deduped: it is an expensive, non-deterministic
       // nested run whose failure must remain retryable, so the loop guard treats
       // it as a side-effecting call (idempotent-read caching would replay a

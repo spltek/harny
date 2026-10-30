@@ -112,6 +112,7 @@ function buildHarness(
     onTurnBoundary?: (signal: AbortSignal) => Promise<void> | void;
     onContextOverflow?: (signal: AbortSignal) => Promise<boolean> | boolean;
     contextBudget?: () => number;
+    workspaceReady?: () => boolean;
     loopGuard?: LoopGuardOptions;
     streamIdleTimeoutMs?: number;
     onFileChanged?: (change: { path: string; tool: string }) => void;
@@ -141,6 +142,7 @@ function buildHarness(
     onTurnBoundary: opts.onTurnBoundary,
     onContextOverflow: opts.onContextOverflow,
     contextBudget: opts.contextBudget,
+    workspaceReady: opts.workspaceReady,
     loopGuard: opts.loopGuard,
     streamIdleTimeoutMs: opts.streamIdleTimeoutMs,
     onFileChanged: opts.onFileChanged,
@@ -149,6 +151,32 @@ function buildHarness(
 }
 
 describe("Agent", () => {
+  it("runs NO tool when the workspace root is gone — and says why, so the model does not scaffold", async () => {
+    // The ghost: with the folder deleted, "file not found" / "0 files found" read as an empty
+    // project, and a model repairs an empty project by CREATING everything. So nothing runs.
+    const read = makeTool("Read", { content: "file content", isError: false });
+    const { agent, history } = buildHarness({
+      tools: [read],
+      chunks: [
+        [
+          { type: "tool_call_start", index: 0, id: "c1", name: "Read" },
+          { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts"}' },
+          { type: "tool_call_end", index: 0 },
+        ],
+        [{ type: "text", content: "done" }],
+      ],
+      workspaceReady: () => false,
+    });
+
+    await agent.send("read a.ts");
+
+    expect(read.called).toBe(false);
+    const toolMsg = history.all().find((m) => m.role === "tool");
+    expect(toolMsg?.content).toContain("no longer exists");
+    // The sentence that stops the "empty project" reflex.
+    expect(toolMsg?.content).toContain("NOT an empty project");
+  });
+
   it("aborts a stalled provider stream after the idle timeout and reports an explicit error", async () => {
     // A provider that accepts the request and then sends NOTHING (dead server).
     const hanging = {

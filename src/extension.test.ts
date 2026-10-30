@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
   registerCommand: vi.fn(() => ({ dispose: () => {} })),
   showErrorMessage: vi.fn(),
   showInformationMessage: vi.fn(),
+  showWarningMessage: vi.fn(async () => undefined),
   showOpenDialog: vi.fn(async () => undefined),
   createOutputChannel: vi.fn(() => ({ appendLine: vi.fn(), dispose: vi.fn() })),
   workspaceFolders: undefined as { uri: { fsPath: string } }[] | undefined,
@@ -22,6 +23,7 @@ vi.mock("vscode", () => ({
     createOutputChannel: state.createOutputChannel,
     showErrorMessage: state.showErrorMessage,
     showInformationMessage: state.showInformationMessage,
+    showWarningMessage: state.showWarningMessage,
     showOpenDialog: state.showOpenDialog,
     registerWebviewViewProvider: state.registerWebviewViewProvider,
   },
@@ -261,6 +263,12 @@ describe("extension activate (smoke)", () => {
           expect(html()).toContain('"workspaceFolder":"' + rootDir + '"');
         },
         { timeout: 2000 },
+      );
+      // …and the user is TOLD, where the eye is: a native non-modal toast carrying the one
+      // action that fixes it (a modal would block the panel).
+      expect(state.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringContaining("no longer exists"),
+        "Change folder…",
       );
     } finally {
       vi.useRealTimers();

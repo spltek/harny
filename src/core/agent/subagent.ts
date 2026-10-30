@@ -34,6 +34,10 @@ export interface SubAgentRunnerDeps {
    *  work it delegates too, or the restriction is cosmetic. */
   toolScope?: () => ToolScope | undefined;
   cwd: () => string;
+  /** The session's workspace root must still be usable for a tool to run — the same
+   *  precondition the parent agent applies, inherited so a delegated sub-agent can never
+   *  write into a folder that is gone either. Absent = no check (inert). */
+  workspaceReady?: () => boolean;
   /** Installed Agent Skills (catalog only): a sub-agent gets the SAME catalog as the
    * orchestrator, so it can activate a skill on its own when the task matches one. The
    * orchestrator can still point it at a specific skill in the Delegate goal/context.
@@ -180,6 +184,8 @@ export class SubAgentRunner {
       // tool-less report turn so the caller always gets a usable synthesis.
       forceFinalReportOnLimit: true,
       cwd: this.deps.cwd,
+      // A sub-agent stands on the same ground: the root is a precondition here too.
+      ...(this.deps.workspaceReady ? { workspaceReady: this.deps.workspaceReady } : {}),
       // Same session, same window: the sub-agent sizes its masking and its tool
       // caps on the budget the host knows (see SubAgentRunnerDeps.contextBudget).
       contextBudget: this.deps.contextBudget,

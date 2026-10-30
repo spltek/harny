@@ -184,7 +184,18 @@ export class SessionEngine {
    * BETWEEN the turn's `tool_calls` and its results, which every provider rejects
    * on every later request.
    */
-  async abort(port: SessionAbortPort): Promise<boolean> {
+  /**
+   * Stop the run — and everything under it: `agent.abort()` cuts the stream and the tools in
+   * flight AND cascades to the sub-agents (`deps.onAbort` → `subAgents.abortAll()`), so one
+   * call stops the whole tree.
+   *
+   * `reason` is what the persistent note says. The UI's Stop passes nothing ("Processing
+   * interrupted"); a HOST-driven stop says why it decided for the user (the workspace folder
+   * disappeared) — a stop nobody pressed must not read like an accident.
+   *
+   * No-op when the session is idle, so a host can call it unconditionally.
+   */
+  async abort(port: SessionAbortPort, reason?: string): Promise<boolean> {
     if (!this.agent.streaming) return false;
     port.clearQueue();
     this.agent.abort();
@@ -192,7 +203,7 @@ export class SessionEngine {
     port.onInterrupted();
     this.history.add({
       role: "assistant",
-      content: "❌ ⏹ Processing interrupted.",
+      content: "❌ ⏹ " + (reason ?? "Processing interrupted."),
       timestamp: Date.now(),
       uiOnly: true,
     });

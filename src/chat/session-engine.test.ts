@@ -49,6 +49,27 @@ describe("SessionEngine", () => {
     expect(engine.compacting).toBe(false);
   });
 
+  it("a HOST stop carries its reason, a user stop keeps today's words", async () => {
+    const added: ChatMessage[] = [];
+    const history = {
+      all: () => [],
+      add: (m: ChatMessage) => {
+        added.push(m);
+      },
+    } as unknown as ChatHistory;
+    const agent = { streaming: true, abort: () => {} } as unknown as ChatController;
+    const engine = new SessionEngine("s1", history, agent);
+    const port = { clearQueue: () => {}, onInterrupted: () => {} } as never;
+
+    // A stop nobody pressed must explain itself (the workspace folder disappeared).
+    await engine.abort(port, "Stopped: the workspace folder /p/gone no longer exists.");
+    expect(added.at(-1)?.content).toBe("❌ ⏹ Stopped: the workspace folder /p/gone no longer exists.");
+
+    // The Stop button: same call, no reason — byte for byte what it always said.
+    await engine.abort(port);
+    expect(added.at(-1)?.content).toBe("❌ ⏹ Processing interrupted.");
+  });
+
   it("has no projection when nothing is in flight", () => {
     expect(engineWith().projection()).toBeUndefined();
   });

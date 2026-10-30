@@ -8308,6 +8308,9 @@ describe("empty shell (no open session)", () => {
       expect(document.body.classList.contains("no-session")).toBe(false);
       expect(document.querySelector(".empty-hero")).toBeNull();
       expect(document.querySelector("#messages .msg.user")?.textContent).toBe("hi");
+      // …and the PROMPT is blocked (a send could only be refused), while STOP stays live:
+      // a run already in flight must remain interruptible by hand.
+      expect((document.getElementById("user-input") as HTMLTextAreaElement).disabled).toBe(true);
       // …the reason is stated where the eye is, with the one action that fixes it…
       const banner = document.querySelector(".ws-gone") as HTMLElement;
       expect(banner.textContent).toContain("/p/gone");

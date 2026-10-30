@@ -612,6 +612,23 @@ describe("ChatViewProvider", () => {
     });
   });
 
+  it("never ENTERS working without a usable root: the send is refused in-panel", async () => {
+    // The hole this closes: the panel hides the prompt in the home state, but a session that is
+    // OPEN with a dead folder is the chat — and the host used to hand any message to the engine.
+    const { provider } = buildHarness({ workspaceReady: () => false });
+    const { handler, view } = resolveWith(provider);
+
+    await handler({ type: "send", text: "hello" });
+
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "modal",
+        kind: "alert",
+        message: expect.stringContaining("cannot work here"),
+      }),
+    );
+  });
+
   it("a rebuild that lands while a modal OPENED does not wipe it (that froze the panel)", async () => {
     // `buildHtml()` is async (config, skills, MCP status): a modal can open in the middle.
     // Wiping the page then would leave its answer never arriving, the queue non-empty for

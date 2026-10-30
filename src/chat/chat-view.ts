@@ -39,6 +39,7 @@ import type { AttachmentService } from "./attachment-service";
 import type { AttachmentPart } from "./attachment-types";
 import { WorkspaceActions } from "./workspace-actions";
 import { ModalStallGuard } from "./modal-stall-guard";
+import { workspaceGoneRunNote, workspaceGoneSendNote } from "../core/agent/workspace-gone";
 import type { PendingOpenAction, PendingOpens } from "./pending-open";
 import { debugLog, infoLog } from "../logger";
 import { preprocessJsonc } from "../core/config/jsonc";
@@ -739,6 +740,28 @@ export class ChatViewProvider implements WebviewViewProvider {
   }
 
   /**
+   * Pick a folder and open it as the workspace — the panel's CTA and the lost-folder toast's
+   * action. ONE entry for both: the gesture is the same, only who asks changes.
+   */
+  async openWorkspace(): Promise<void> {
+    await this.chooseFolder();
+  }
+
+  /**
+   * The workspace root disappeared: STOP every running session, with the reason written into
+   * each transcript. One `abort` per session cascades to that session's sub-agents
+   * (`agent.abort()` → `onAbort` → `subAgents.abortAll()`), so nothing keeps working — or
+   * writing — against a folder that is not there. Idle sessions are no-ops.
+   */
+  async stopAllForLostRoot(root: string): Promise<void> {
+    const note = workspaceGoneRunNote(root);
+    for (const id of this.registry.listOpenIds()) {
+      const rt = this.registry.get(id);
+      if (rt) await rt.engine.abort(this.enginePort(rt), note);
+    }
+  }
+
+  /**
    * Pick a folder and make it the workspace — the answer to "Harny needs one open folder".
    *
    * `next` is what to do once the window has RELOADED on that folder, and it is written
@@ -1253,7 +1276,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       case "openWorkspace":
         // The home screen's CTA: pick a folder and open it as the workspace. No session is
         // touched ("New session" is its own flow, which remembers that a session was next).
-        await this.chooseFolder();
+        await this.openWorkspace();
         break;
       case "openSessionFolder":
         // A HOME row: open the folder that session lives in (the picker when that folder
@@ -1914,6 +1937,17 @@ export class ChatViewProvider implements WebviewViewProvider {
         break;
       }
       case "send":
+        // The engine never ENTERS working without a usable root: with none, every tool would
+        // run against a folder that is not there (and could recreate it). Defence in depth —
+        // the panel disables the prompt too, but the HOST is what cannot be bypassed.
+        if (!this.workspaceReady()) {
+          await this.inPanelAlert({
+            kind: "error",
+            title: "Folder no longer available",
+            message: workspaceGoneSendNote(this.options.currentFolder?.() ?? ""),
+          });
+          break;
+        }
         // The run SEQUENCE (lock, queue, status, refresh) lives in the session's
         // engine; this route only hands it the port (services + view posts).
         if (rt) await rt.engine.send(msg as SendIntent, this.enginePort(rt));
