@@ -2035,13 +2035,18 @@ ${renderViewConfig(deps)}
     body.no-workspace #metrics { display: none; }
     /* All sessions would be the SAME list as the card above: the form has no job here. */
     body.no-workspace #sessions-gear-btn { display: none; }
-    /* The prompt is gone, so the list may use the room it left. */
-    body.no-workspace #sessions { max-height: 55vh; }
+    /* The prompt is gone, so the list may use the room it left — but never so much that the
+       hero below it is squeezed out: this state's message is the point. */
+    body.no-workspace #sessions { max-height: 45vh; }
     /* Point the eye up at the sessions list: the second path to act. */
     body.no-session #session-head { color: var(--accent); }
     .empty-hero {
       flex: 1; display: flex; flex-direction: column; align-items: center;
-      justify-content: center; gap: 8px; padding: 24px; text-align: center;
+      /* SAFE CENTER: centred when it FITS, top-aligned when it does not. A plain
+         centering clips the top of an overflowing flex container — on a short panel the
+         message ("… no longer exists") was pushed out of reach while the button stayed
+         visible, which is how a clear state reads as a mystery. */
+      justify-content: safe center; gap: 8px; padding: 24px; text-align: center;
       color: var(--muted-2);
     }
     .empty-hero .empty-icon { font-size: var(--fs-hero); }

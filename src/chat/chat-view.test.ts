@@ -611,6 +611,48 @@ describe("ChatViewProvider", () => {
     });
   });
 
+  it("a rebuild that lands while a modal OPENED does not wipe it (that froze the panel)", async () => {
+    // `buildHtml()` is async (config, skills, MCP status): a modal can open in the middle.
+    // Wiping the page then would leave its answer never arriving, the queue non-empty for
+    // ever and EVERY later refresh deferred behind it — a dialog nobody can answer and a
+    // panel that no longer updates.
+    const { provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    const before = view.webview.html;
+    state.noAutoName = true; // the modal stays open, like a user reading it
+    try {
+      const rebuilding = provider.refresh();
+      const answered = handler({ type: "newSession" });
+      await rebuilding;
+
+      expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "modal", kind: "name" }));
+      // The page was NOT replaced under the open modal…
+      expect(view.webview.html).toBe(before);
+
+      // …and answering it lets the deferred rebuild through: the panel comes back to life.
+      const modalPost = view.webview.postMessage.mock.calls.map((c) => c[0] as any).find((m) => m.type === "modal");
+      await handler({ type: "modalResponse", id: modalPost.modalId, value: "Casa" });
+      await answered;
+      expect(view.webview.html).not.toBe(before);
+    } finally {
+      state.noAutoName = false;
+    }
+  });
+
+  it("dispose() cancels a pending modal instead of leaving the flow hanging", async () => {
+    const { store, provider } = buildHarness();
+    resolveWith(provider);
+    state.noAutoName = true;
+    try {
+      const pending = provider.createNew(); // nobody will answer: the host is going away
+      provider.dispose();
+      await expect(pending).resolves.toBeUndefined();
+      expect(store.create).not.toHaveBeenCalled();
+    } finally {
+      state.noAutoName = false;
+    }
+  });
+
   it("cancelling the in-panel name prompt creates nothing", async () => {
     const { provider, registry } = buildHarness();
     const { handler, view } = resolveWith(provider);

@@ -39,10 +39,14 @@ export class PanelModalQueue {
   }
 
   /**
-   * Cancel every pending request. Called when the webview page is rebuilt
-   * (refresh/reload) with a modal open: the DOM modal is wiped, so its promise
-   * would otherwise never resolve and the host flow (create/rename/delete…)
-   * would hang forever. Each request resolves with `undefined` (= cancelled).
+   * Cancel every pending request, resolving each with `undefined` (= cancelled).
+   *
+   * Called by `dispose()`: the host is going away, so a modal that nobody can answer must
+   * not leave its flow waiting on a promise whose webview no longer exists. It used to
+   * claim it was called when the page was rebuilt with a modal open — nothing called it at
+   * all, and a rebuild that landed while a modal was OPENING left such a promise forever
+   * pending (and every later refresh deferred behind it: a frozen panel). The rebuild now
+   * DEFERS instead of wiping the page, so this is the shutdown path, not the rebuild one.
    */
   cancelAll(): void {
     const pending = this.queue.splice(0);

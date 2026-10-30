@@ -1036,6 +1036,10 @@ export class ChatViewProvider implements WebviewViewProvider {
       clearTimeout(this.startupVacuumTimer);
       this.startupVacuumTimer = undefined;
     }
+    // A modal still waiting has nobody left to answer it: resolve it as CANCELLED so the
+    // flow that asked (create / rename / delete…) ends instead of hanging on a promise
+    // whose webview no longer exists.
+    this.modals.cancelAll();
     // Last chance for the metric: the store is still open at this point.
     this.flushContextTokens();
   }
@@ -1070,7 +1074,17 @@ export class ChatViewProvider implements WebviewViewProvider {
     }
     this.refreshDeferred = false; // this run satisfies any deferred request
     return this.buildHtml().then((html) => {
-      if (this.view) this.view.webview.html = html;
+      if (!this.view) return;
+      // A modal can OPEN while `buildHtml()` runs — it is async (config, skills, MCP status,
+      // hundreds of ms), and a timer or a click can land in the middle. Assigning the HTML
+      // now would wipe the modal's DOM for good: its answer would never arrive, the queue
+      // would stay non-empty, and EVERY later refresh would defer behind it — the panel
+      // freezes with a dialog nobody can answer. Defer, exactly like the check above.
+      if (this.modals.hasPending()) {
+        this.refreshDeferred = true;
+        return;
+      }
+      this.view.webview.html = html;
       // The page exists now: whatever was waiting for it can run.
       this.drainReadyActions();
     });
