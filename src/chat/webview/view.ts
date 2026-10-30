@@ -22,6 +22,8 @@ import { clampTemperature, clampTopP, TEMPERATURE_MAX, TEMPERATURE_MIN, TEMPERAT
 // src/chat/icons.ts): this module only names the icon and its size.
 import { icon, toolIcon, fileBadgeIcon } from "../icons";
 import { setFold, toggleMarkup } from "./fold";
+import { folderAction, folderActionLabel } from "./session-folder";
+import { sameFolder } from "../folder-path";
 import { createFind } from "./find";
 import { createMcpCard } from "./mcp-card";
 import { createMcpToolsPopover } from "./mcp-tools-popover";
@@ -120,6 +122,10 @@ interface ConfigState {
   noModels?: boolean;
   configHome?: string;
   workspaceReady?: boolean;
+  /** Folders open in the window (0 = none, >1 = multi-root: both unusable). */
+  workspaceFolderCount?: number;
+  /** The window's root path, EVEN when it no longer exists (the UI must name it). */
+  workspaceFolder?: string;
   thinkingMode?: string;
   thinkingLevel?: string;
   /** Per-session chat mode (host truth): analyze (default) or agent. */
@@ -329,6 +335,12 @@ const init = JSON.parse(
 let activeId: string | undefined = init.activeId;
 let openIds: string[] = init.openIds || [];
 let currentSessions: SessionInfo[] = init.sessions || [];
+/** Folders open in the window (host truth): 1 is the only state Harny can work in. */
+let workspaceFolderCount = init.config?.workspaceFolderCount ?? 0;
+/** The window's root path as the host reports it — it may no longer exist on disk. */
+let workspaceFolder: string | undefined = init.config?.workspaceFolder;
+/** No single folder open: the HOME state, where a list row chooses a WORKSPACE. */
+let homeMode = init.config?.workspaceReady === false;
 let workingIds = new Set<string>(init.workingIds || []);
 /** Current auto-compaction threshold % of the context window (updated from config pushes). */
 let compactionThresholdPct = 80;
@@ -821,12 +833,19 @@ function renderSessions(sessions: SessionInfo[]): void {
     p.className = "empty" + (sessionSearchIds ? " no-match" : "");
     p.textContent = sessionSearchIds
       ? "No session matches the search."
-      : "No sessions in this folder. Create a new session.";
+      : homeMode
+        ? "No sessions yet. Open a folder to start one."
+        : "No sessions in this folder. Create a new session.";
     sessionsEl.appendChild(p);
     return;
   }
   const openSet = new Set(openIds);
   for (const s of visible) {
+    // Home: the row is a WORKSPACE choice, not a session — a different control.
+    if (homeMode) {
+      sessionsEl.appendChild(renderHomeRow(s));
+      continue;
+    }
     const row = document.createElement("div");
     row.className = "srow" + (openSet.has(s.id) ? " open" : "") + (workingIds.has(s.id) ? " is-working" : "");
     row.dataset.id = s.id;
@@ -835,6 +854,10 @@ function renderSessions(sessions: SessionInfo[]): void {
     if (s.foreign) {
       row.classList.add("foreign");
       row.title = s.folder ? `Open, from another folder: ${s.folder}` : "Open, created outside a workspace folder";
+    } else if (s.folderMissing) {
+      // The workspace itself was deleted on disk (or this session's folder was): opening it
+      // is refused by the host, so the click must SAY so instead of doing nothing.
+      row.title = "This session's folder no longer exists — click to pick another one";
     }
     // Creation + last-modified dates, shown before the name.
     const meta = document.createElement("span");
@@ -846,6 +869,15 @@ function renderSessions(sessions: SessionInfo[]): void {
     name.className = "name";
     name.textContent = s.name || "Session";
     name.addEventListener("click", () => {
+      // A session whose folder is GONE cannot be opened (the host refuses it: its tools
+      // would run in a directory that no longer exists). Asking for `openSession` here
+      // showed an "opening…" veil for something that would never arrive and then nothing
+      // at all; the folder route instead explains and opens the picker, exactly like a
+      // home row.
+      if (s.folderMissing) {
+        vscode.postMessage({ type: "openSessionFolder", id: s.id });
+        return;
+      }
       // Same veil as a tab click — opening can take longer still (the messages come
       // off disk) and the list collapses right after, so the transcript is what
       // stays on screen: it must say that something is happening.
@@ -897,8 +929,74 @@ function renderSessions(sessions: SessionInfo[]): void {
     row.appendChild(meta);
     row.appendChild(name);
     row.appendChild(actions);
+    if (s.folderMissing) {
+      // Say it IN the row, not only in a tooltip: a row that looks like every other one is
+      // how you end up clicking a session that cannot open. Same wording as the manage form.
+      const gone = document.createElement("span");
+      gone.className = "srow-folder missing";
+      gone.textContent = (s.folder ?? "(folder not set)") + " — missing";
+      row.appendChild(gone);
+    }
     sessionsEl.appendChild(row);
   }
+}
+
+/**
+ * A row of the HOME list: it does not OPEN a session, it chooses the folder that session
+ * lives in — with no root there is nothing to open one in.
+ *
+ * So the WHOLE row is the control (pointer, focus ring, Enter/Space), the identifying
+ * fact is the folder path on its own line, and the trailing label says what the click
+ * does. The per-session keys (branch/rename/delete) are deliberately ABSENT: they act on
+ * a session that cannot be shown yet, and they all live one click away in All sessions.
+ *
+ * The label and the open-vs-pick decision come from `session-folder.ts`, the SAME rule
+ * the All-sessions form uses: two surfaces, one answer.
+ */
+function renderHomeRow(s: SessionInfo): HTMLDivElement {
+  const action = folderAction(s);
+  const row = document.createElement("div");
+  row.className = "srow home";
+  row.dataset.id = s.id;
+  row.tabIndex = 0;
+  row.setAttribute("role", "button");
+  row.title =
+    action === "open"
+      ? "Open " + s.folder + " in VS Code (Harny then works in that folder)"
+      : "This session's folder is not available: pick another one for it";
+
+  const meta = document.createElement("span");
+  meta.className = "smeta";
+  meta.textContent = "created " + fmtDate(s.createdAt) + " · updated " + fmtDate(s.updatedAt);
+  meta.title =
+    "Created: " + new Date(s.createdAt).toLocaleString() + " · Updated: " + new Date(s.updatedAt).toLocaleString();
+
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = s.name || "Session";
+
+  const label = document.createElement("span");
+  label.className = "srow-open";
+  label.textContent = folderActionLabel(action);
+
+  const folder = document.createElement("span");
+  folder.className = "srow-folder" + (s.folder && s.folderMissing ? " missing" : "");
+  folder.textContent = s.folder ?? "(folder not set)";
+  folder.title = s.folderMissing && s.folder ? s.folder + " is no longer available" : (s.folder ?? "");
+
+  const choose = () => vscode.postMessage({ type: "openSessionFolder", id: s.id });
+  row.addEventListener("click", choose);
+  row.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    choose();
+  });
+
+  row.appendChild(meta);
+  row.appendChild(name);
+  row.appendChild(label);
+  row.appendChild(folder);
+  return row;
 }
 
 /** Compact date+time: dd/mm hh:mm (local time). */
@@ -917,7 +1015,14 @@ function renderTabs(sessions: SessionInfo[]): void {
     const tab = document.createElement("div");
     tab.className = "tab" + (id === activeId ? " active" : "");
     tab.dataset.id = id;
-    tab.title = s?.name || "Session";
+    // A tab whose folder is gone: the transcript still opens (`switchTab` needs no root),
+    // but the agent has nowhere to work — say it on the TAB, not only after a failed tool.
+    if (s?.folderMissing) {
+      tab.classList.add("missing");
+      tab.title = (s.name || "Session") + " — its folder no longer exists";
+    } else {
+      tab.title = s?.name || "Session";
+    }
     const label = document.createElement("span");
     label.textContent = s?.name || "Session";
     const close = document.createElement("span");
@@ -2095,9 +2200,15 @@ function addWelcome(): HTMLDivElement {
 }
 
 /**
- * No single workspace folder: sessions are bucketed centrally per workspace,
- * so Harny requires exactly one open folder. The whole control stack and the
- * sessions card are hidden; a folder hero takes over the chat area.
+ * NO single workspace folder: the HOME state.
+ *
+ * Sessions are bucketed centrally per workspace, so nothing can be CREATED until one
+ * folder is the workspace. Harny's HISTORY does not need a folder, though, and the old
+ * shell hid it behind "go to File → Open Folder": the panel's first screen threw away
+ * the only thing that made it worth opening. So the sessions card STAYS (with no root,
+ * `sessionsForView` returns every folder's sessions, most recent first) and becomes a
+ * WORKSPACE picker — each row opens the folder its session lives in. The control stack
+ * stays hidden: there is no session to talk to.
  */
 function renderWorkspaceShell(): void {
   document.body.classList.add("no-workspace");
@@ -2105,15 +2216,62 @@ function renderWorkspaceShell(): void {
   messagesEl.innerHTML = "";
   const hero = document.createElement("div");
   hero.className = "empty-hero";
+  const copy = homeCopy();
   hero.innerHTML =
-    '<div class="empty-icon">📁</div>' +
+    '<div class="empty-icon empty-logo">' +
+    (init.logoUri ? '<img src="' + escapeHtml(init.logoUri) + '" alt="Harny" draggable="false">' : "") +
+    "</div>" +
     "<h2>Harny</h2>" +
-    (init.version ? '<div class="empty-version">v' + escapeHtml(init.version) + "</div>" : "") +
-    "<p>Harny needs a single open folder.</p>" +
-    '<p class="empty-hint">Open one folder (File → Open Folder) to start sessions and chat.<br>' +
-    "Multi-root workspaces are not supported yet.</p>";
+    heroMetaLine() +
+    "<p>" +
+    copy.reason +
+    "</p>" +
+    '<p class="empty-hint">' +
+    copy.hint +
+    "</p>" +
+    '<button id="home-open-folder" class="empty-cta" title="Choose a folder and open it as the workspace">' +
+    copy.cta +
+    "</button>";
   messagesEl.appendChild(hero);
+  hero.querySelector("#home-open-folder")?.addEventListener("click", () => {
+    vscode.postMessage({ type: "openWorkspace" });
+  });
   updateTranscriptActions();
+  // The list is the second path to act — and the only one that already shows
+  // something useful: it must be open whenever this shell is on screen.
+  setSessionsExpanded(true);
+}
+
+/**
+ * The three sentences of the home hero, chosen by WHY it is home.
+ *
+ * Three situations the host refuses for the same reason but the user does not experience
+ * the same way: no folder, several folders, and a workspace folder that was DELETED (the
+ * window still shows it, the panel says "not usable"). Reporting the last one as "no folder
+ * is open" reads like a bug and hides the one action that fixes it — so it is named, with
+ * its path, and the answer is "open another folder".
+ */
+function homeCopy(): { reason: string; hint: string; cta: string } {
+  if (workspaceFolderCount === 1 && workspaceFolder) {
+    return {
+      reason:
+        'The workspace folder <span class="folder-path">' + escapeHtml(workspaceFolder) + "</span> no longer exists.",
+      hint: "Your sessions are safe. Choose another folder to keep working.",
+      cta: "Open another folder…",
+    };
+  }
+  if (workspaceFolderCount > 1) {
+    return {
+      reason: escapeHtml(String(workspaceFolderCount)) + " folders are open — Harny needs exactly one.",
+      hint: "Harny works in one folder at a time: open the one you want to use.",
+      cta: "Open folder…",
+    };
+  }
+  return {
+    reason: "No folder is open.",
+    hint: "Pick a session above to open its folder,<br>or choose another folder.",
+    cta: "Open folder…",
+  };
 }
 
 /** Confirm a workspace folder is present before touching the transcript. */
@@ -3756,23 +3914,6 @@ function closeSessionsManager(): void {
 }
 
 /**
- * True when two absolute folder paths refer to the same location. VS Code
- * `fsPath` values use `\` on Windows and `/` on POSIX, so separators and a
- * trailing separator are normalized away. Windows drive paths are also
- * compared case-insensitively (that filesystem is); POSIX paths stay
- * case-sensitive, so two genuinely distinct Linux folders never collapse.
- */
-function sameFolder(a?: string, b?: string): boolean {
-  if (!a || !b) return false;
-  const norm = (p: string) => p.replace(/[\\/]+/g, "/").replace(/\/+$/, "");
-  const na = norm(a);
-  const nb = norm(b);
-  if (na === nb) return true;
-  const windowsPath = /^[a-zA-Z]:\//;
-  return windowsPath.test(na) && windowsPath.test(nb) && na.toLowerCase() === nb.toLowerCase();
-}
-
-/**
  * Rows for the manage form: every session of every folder, most recent first
  * (the host sorts). Red rows = folder unavailable; per-row actions: open the
  * session's folder in VS Code (changes the working directory) or change the
@@ -3840,16 +3981,13 @@ function renderSessionsManager(): void {
     actions.className = "sm-actions";
     const folderBtn = document.createElement("button");
     folderBtn.className = "secondary-ghost folder-btn";
-    // A usable folder (exists, and not the one already open) is OPENED in VS
-    // Code — this changes the working directory. Otherwise the picker is the
-    // only useful action: re-point a missing/unset session's folder.
-    const canOpen = !!s.folder && !s.folderMissing && !sameFolder(s.folder, smCurrentFolder);
-    if (canOpen) {
-      folderBtn.textContent = "Open folder";
+    // The rule AND its wording are shared with the home list (see session-folder.ts).
+    const action = folderAction(s, smCurrentFolder);
+    folderBtn.textContent = folderActionLabel(action);
+    if (action === "open") {
       folderBtn.title = "Open this folder in VS Code (changes the working directory)";
       folderBtn.addEventListener("click", () => vscode.postMessage({ type: "sessionsManagerOpenFolder", id: s.id }));
     } else {
-      folderBtn.textContent = "Change folder…";
       folderBtn.title = "Pick the workspace folder this session points to";
       folderBtn.addEventListener("click", () => vscode.postMessage({ type: "sessionsManagerChangeFolder", id: s.id }));
     }
@@ -6062,6 +6200,7 @@ window.addEventListener("message", (e) => {
       // reference to any previously appended compaction bubble (already wiped
       // with the container) so a later auto-compaction shows a fresh one.
       compactionEl = null;
+      document.body.classList.remove("no-workspace");
       if (workspaceLocked({ workspaceReady: msg.workspaceReady })) {
         renderWorkspaceShell();
       } else if (!activeId) {
@@ -6516,6 +6655,11 @@ function renderViewState(state: {
   for (const key of [...transcriptSize.keys()]) {
     if (key && !openIds.includes(key)) transcriptSize.delete(key);
   }
+  // The HOME state is decided per RENDER: the same list selects sessions with a root and
+  // chooses a WORKSPACE without one (see renderHomeRow).
+  workspaceFolderCount = state.config?.workspaceFolderCount ?? workspaceFolderCount;
+  workspaceFolder = state.config?.workspaceFolder ?? workspaceFolder;
+  homeMode = workspaceLocked(state.config || {});
   // An omitted list means "unchanged": keep the one already rendered (see the
   // `sessions?` note on the parameter type).
   if (state.sessions) currentSessions = state.sessions;
@@ -6542,6 +6686,10 @@ function renderViewState(state: {
   renderCompactionThreshold();
   renderCompactionValues();
   renderMetrics(state.config || {});
+  // The HOME class is a STATE, not a one-way latch: a session can follow it (a refresh,
+  // a folder opened while this page is alive), and a body class that is only ever ADDED
+  // would keep the control stack hidden for good.
+  document.body.classList.remove("no-workspace");
   messagesEl.innerHTML = "";
   resetStreamState();
   if (workspaceLocked(state.config || {})) {

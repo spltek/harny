@@ -101,7 +101,7 @@ Download it from the [Open VSX page](https://open-vsx.org/extension/spltek/harny
 ## Quick start
 
 1. Install Harny and click the **Harny icon** in the Activity Bar.
-2. Open **exactly one folder** (Harny is per-workspace: without a single folder it shows a hint instead of a chat).
+2. Open **exactly one folder** — or let the panel do it: with no folder open Harny lists **every** workspace's sessions and **Open folder…** (or any row) opens one. Harny is per-workspace.
 3. Add your provider **in the panel**: the gear at the **right end of the AI Model row** (⚙, after the model selector) opens **Providers & Models** → **+ New**, paste your key, pick a model (each host's list is fetched live; **Test connection** checks the entry). It lives in Harny's own data folder, never in your project.
    Prefer files? `harny.apiKey` in VS Code settings, or a `config.json` — see [Setup](#setup).
 4. Type a request and press **Enter**.
@@ -357,7 +357,7 @@ just want to use Harny, you can stop reading here.
 - **Cut / sanitize** (✂) truncates the session **in place** from that prompt downward, after a confirmation. The removed tail is **not** kept — branch first to preserve it
 - **Unique names**: two sessions of the same workspace cannot share a name (case-insensitive, validated live on create/rename/branch)
 - **In-panel alerts**: all confirmations and notices appear as in-panel modals, no native VS Code popups
-- **Single-folder requirement**: exactly one open workspace folder; without it the panel shows an "open a folder" hero and session commands are guarded
+- **Single-folder requirement**: exactly one open workspace folder, and it must **exist**: if it is deleted, the panel says so **within seconds** (naming the path — no click needed) and offers **Open another folder…**. With none — or with several — the same list becomes a **workspace picker**: a row opens the folder its session lives in, **Open folder…** picks another, and **New session** asks for the folder first instead of refusing. The click is **remembered across the reload** that opening a folder causes: the session you picked is already open when the window comes back, and a New session left waiting asks for its name. A session whose folder is gone is marked (red path in the row, red tab) and offers the picker instead of opening, and a multi-root window is told how many folders it has, not that it has none
 - **Empty shell**: with no open session the control stack is hidden and a hero invites you to pick or create one
 
 **Agent Skills**

@@ -1,6 +1,6 @@
 import { window, workspace, commands } from "vscode";
 import type { ExtensionContext } from "vscode";
-import { mkdirSync, watch } from "node:fs";
+import { mkdirSync, watch, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Agent } from "./core/agent/agent";
@@ -38,6 +38,8 @@ import { SkillRegistry, defaultSkillRoots } from "./core/skills";
 import { McpManager } from "./core/mcp";
 import { ChatViewProvider } from "./chat/chat-view";
 import { SessionRegistry } from "./chat/session-registry";
+import { MementoPendingOpenStore, PendingOpens } from "./chat/pending-open";
+import { WorkspaceRootWatch } from "./chat/workspace-watch";
 import { AttachmentService } from "./chat/attachment-service";
 import { resolveHome } from "./core/storage/home";
 import { debugLog, infoLog } from "./logger";
@@ -283,6 +285,9 @@ export async function activate(context: ExtensionContext) {
     configFor: (id) => viewProvider.sessionConfigFor(id),
   });
 
+  // A gesture that a folder change interrupts ("open THAT session", "start a new one")
+  // leaves a marker in `globalState`, the only store that survives the reload.
+  const pendingOpens = new PendingOpens(new MementoPendingOpenStore(context.globalState));
   const viewProvider = new ChatViewProvider(
     config,
     attachments,
@@ -293,8 +298,14 @@ export async function activate(context: ExtensionContext) {
     {
       compactor,
       compaction: DEFAULT_COMPACTION,
-      workspaceReady: () => !!root,
+      // A folder that no longer exists on disk is NOT a workspace: the panel would look
+      // healthy while every tool fails with ENOENT. Losing it turns this into "no usable
+      // folder", i.e. the home screen — which already speaks the language of picking one
+      // ("Open folder…", red rows, "Change folder…").
+      workspaceReady: () => !!root && existsSync(root),
+      workspaceFolderCount: () => workspace.workspaceFolders?.length ?? 0,
       currentFolder: () => root,
+      pending: pendingOpens,
       configHome: resolved.home,
       // Fallback context window for hosts that don't report it (OpenCode Go).
       modelsDev: new ModelsDevCatalog(nodeHttpClient),
@@ -338,6 +349,30 @@ export async function activate(context: ExtensionContext) {
     // stop with the extension (see ChatViewProvider.dispose).
     { dispose: () => viewProvider.dispose() },
   );
+
+  // This host may exist BECAUSE of a click in the panel (a folder change reloads us):
+  // finish that gesture instead of showing a home screen that forgot it. `take` answers
+  // only for the folder that has just loaded, and clears the marker either way, so it can
+  // never fire in another workspace nor twice.
+  void pendingOpens.take(root).then((action) => {
+    if (!action) return;
+    if (action.kind === "session") viewProvider.resumeSession(action.sessionId);
+    else viewProvider.runWhenReady(() => void viewProvider.createNew());
+  });
+
+  // Nothing else would notice the folder being DELETED while the panel sits still: every
+  // other path is reactive (a click, a config change, the end of a run). One stat every few
+  // seconds turns "your workspace is gone" into a screen instead of an ENOENT minutes later.
+  const rootWatch = new WorkspaceRootWatch({
+    root: () => root,
+    exists: existsSync,
+    onChange: (lostRoot, existsNow) => {
+      infoLog(`workspace root ${existsNow ? "is back" : "disappeared"}:`, lostRoot);
+      viewProvider.refresh();
+    },
+  });
+  rootWatch.start();
+  context.subscriptions.push({ dispose: () => rootWatch.stop() });
 
   // Find in the chat, bound to ⌘F/Ctrl+F while THIS view has the focus (package.json). The
   // webview cannot win that chord on its own: inside a webview the key also reaches VS Code's

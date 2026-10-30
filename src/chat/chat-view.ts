@@ -37,6 +37,8 @@ import { Telemetry } from "./telemetry";
 import type { PreparedPrompt, SendIntent, SessionAbortPort, SessionSendPort } from "./session-engine";
 import type { AttachmentService } from "./attachment-service";
 import type { AttachmentPart } from "./attachment-types";
+import { WorkspaceActions } from "./workspace-actions";
+import type { PendingOpenAction, PendingOpens } from "./pending-open";
 import { debugLog, infoLog } from "../logger";
 import { preprocessJsonc } from "../core/config/jsonc";
 import { renderViewHtml } from "./view-html";
@@ -198,6 +200,10 @@ export class ChatViewProvider implements WebviewViewProvider {
   private tokenFlushTimer: ReturnType<typeof setTimeout> | undefined;
   /** The one-shot startup vacuum check (cleared on dispose). */
   private startupVacuumTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Every "open a folder" flow: the picker and `vscode.openFolder` in ONE place. */
+  private readonly workspace: WorkspaceActions;
+  /** Actions waiting for the page to exist (see `runWhenReady`). */
+  private readonly readyActions: (() => void)[] = [];
 
   /** Is THIS session compacting? The flag lives on the ENGINE (`engine.compacting`):
    * per session, so one session's summary cannot swallow another's. */
@@ -223,6 +229,12 @@ export class ChatViewProvider implements WebviewViewProvider {
       workspaceReady?: () => boolean;
       /** Absolute path of the current workspace root (filters the main sessions list; undefined = none). */
       currentFolder?: () => string | undefined;
+      /** How many folders the window has open (0 = none, >1 = multi-root: both unusable). */
+      workspaceFolderCount?: () => number;
+      /** Folder-opening flows (home screen, session folders). Injected by tests. */
+      workspace?: WorkspaceActions;
+      /** Gestures interrupted by a window reload (see pending-open.ts). */
+      pending?: PendingOpens;
       /** Extension data folder (home), for error hints pointing at config.json. */
       configHome?: string;
       /** Optional models.dev catalog: fallback context window for hosts that
@@ -246,6 +258,9 @@ export class ChatViewProvider implements WebviewViewProvider {
       searchSessions?: (query: string) => { sessionId: string; snippet: string }[];
     } = {},
   ) {
+    // Folder flows go through one injectable object: a test can prove the provider
+    // never reaches for `vscode` itself, and a new flow is a call, not a new command.
+    this.workspace = options.workspace ?? new WorkspaceActions();
     this.modals = new PanelModalQueue((msg) => this.view?.webview.postMessage(msg));
     this.pendingQueue = new PendingInputQueue({
       buildContext: (files) => this.attachments.buildContext(files),
@@ -280,6 +295,21 @@ export class ChatViewProvider implements WebviewViewProvider {
     void this.openSessionId(id);
   }
 
+  /**
+   * Open the session a click asked for BEFORE the window reloaded on another folder
+   * (see PendingOpens): the reload is what interrupted the gesture, so this finishes it.
+   *
+   * The session may be gone (deleted meanwhile) and the panel may not be able to show
+   * anything yet, so the work is deferred to `runWhenReady` — a gesture that has already
+   * happened must leave the panel where it is rather than fail in front of the user.
+   */
+  resumeSession(id: string): void {
+    this.runWhenReady(() => {
+      if (!this.sessions.summary(id)) return;
+      void this.openSessionId(id);
+    });
+  }
+
   private async openSessionId(id: string): Promise<void> {
     const s = this.sessions.list().find((x) => x.id === id);
     if (s?.folderMissing) return;
@@ -293,8 +323,16 @@ export class ChatViewProvider implements WebviewViewProvider {
     this.pushSessionsManager();
   }
 
-  /** The single workspace root the MAIN sessions list is anchored to. */
+  /**
+   * The single workspace root the MAIN sessions list is anchored to.
+   *
+   * `undefined` when there is no USABLE root — including the case of a folder that still
+   * "is" the workspace but no longer exists on disk: with nowhere to work there is nothing
+   * to filter by, and the list must show EVERY workspace (that is the picker you choose the
+   * next folder from), exactly as it does when no folder is open at all.
+   */
   private currentFolder(): string | undefined {
+    if (!this.workspaceReady()) return undefined;
     return this.options.currentFolder ? this.options.currentFolder() : undefined;
   }
 
@@ -366,17 +404,17 @@ export class ChatViewProvider implements WebviewViewProvider {
       await this.changeSessionFolder(id);
       return;
     }
-    const { commands, Uri } = await import("vscode");
-    // forceNewWindow=false: reuse the current window (the extension reloads
-    // and re-derives its root from the newly opened folder).
-    await commands.executeCommand("vscode.openFolder", Uri.file(session.folder), false);
+    // Remember WHY before the window reloads: the host that would carry the click is the
+    // one that goes away (see PendingOpens). The session then opens by itself.
+    await this.options.pending?.remember(session.folder, { kind: "session", sessionId: id });
+    // Same window (see WorkspaceActions): the extension reloads and re-derives its
+    // root from the newly opened folder, so the panel the user is looking at is the
+    // one that changes.
+    await this.workspace.open(session.folder);
   }
 
   /** Change the folder a session points to (pointer-only; the file stays put). */
   private async changeSessionFolder(id: string): Promise<void> {
-    const { window, Uri } = await import("vscode");
-    // Default the picker to the session's folder when it is still available,
-    // so re-pointing a session usually takes one click.
     const session = this.sessions.list().find((s) => s.id === id);
     // A folder that is known but gone cannot be the default: warn the user
     // first, then still open the picker so they can re-point the session.
@@ -387,17 +425,15 @@ export class ChatViewProvider implements WebviewViewProvider {
         message: `The folder this session points to (${session.folder}) no longer exists. Pick a new one.`,
       });
     }
+    // Default the picker to the session's folder when it is still available, so
+    // re-pointing a session usually takes one click.
     const defaultFolder = session?.folder && !session.folderMissing ? session.folder : undefined;
-    const uris = await window.showOpenDialog({
-      canSelectFiles: false,
-      canSelectFolders: true,
-      canSelectMany: false,
+    const folder = await this.workspace.pick({
       title: "Choose the folder for this session",
       openLabel: "Select folder",
-      ...(defaultFolder ? { defaultUri: Uri.file(defaultFolder) } : {}),
+      ...(defaultFolder ? { defaultFolder } : {}),
     });
-    if (!uris || uris.length === 0) return;
-    const folder = uris[0].fsPath;
+    if (!folder) return;
     this.sessions.saveSettings(id, { folder });
     // Refresh both the form and the main list.
     this.pushSessionsManager();
@@ -409,9 +445,25 @@ export class ChatViewProvider implements WebviewViewProvider {
     return this.options.workspaceReady ? this.options.workspaceReady() : true;
   }
 
+  /**
+   * How many folders the window has open. The webview needs the NUMBER, not only the
+   * verdict: "no folder" and "three folders" are the same refusal but a different
+   * sentence, and someone looking at three open roots must not be told none is open.
+   */
+  private workspaceFolderCount(): number {
+    if (this.options.workspaceFolderCount) return this.options.workspaceFolderCount();
+    // No reporter (tests, other embedders): derive it from the verdict, so the two can
+    // never contradict each other.
+    return this.workspaceReady() ? 1 : 0;
+  }
+
   async createNew(): Promise<void> {
+    // No single folder: the FIRST thing a session needs is a workspace, so this asks for
+    // one instead of refusing — and REMEMBERS that a new session was the point, so the
+    // naming modal is waiting when the window comes back, instead of a home screen that
+    // forgot the click.
     if (!this.workspaceReady()) {
-      await this.warnWorkspaceRequired();
+      await this.chooseFolder({ kind: "create" });
       return;
     }
     const name = await this.askName("create");
@@ -669,12 +721,23 @@ export class ChatViewProvider implements WebviewViewProvider {
     return v === true;
   }
 
-  private async warnWorkspaceRequired(): Promise<void> {
-    await this.inPanelAlert({
-      kind: "info",
-      title: "No single folder open",
-      message: "Harny needs exactly one open folder (File → Open Folder) to store sessions and use this command.",
+  /**
+   * Pick a folder and make it the workspace — the answer to "Harny needs one open folder".
+   *
+   * `next` is what to do once the window has RELOADED on that folder, and it is written
+   * BEFORE the folder opens: `vscode.openFolder` takes the process away, so anything
+   * written after the command would be written by nobody. Cancelling changes nothing at
+   * all — no marker, no reload.
+   */
+  private async chooseFolder(next?: PendingOpenAction): Promise<string | undefined> {
+    const folder = await this.workspace.pick({
+      title: "Open a folder as the Harny workspace",
+      openLabel: "Open folder",
     });
+    if (!folder) return undefined;
+    if (next) await this.options.pending?.remember(folder, next);
+    await this.workspace.open(folder);
+    return folder;
   }
 
   /**
@@ -948,7 +1011,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     };
     webviewView.webview.onDidReceiveMessage((msg) => this.onMessage(msg));
     this.resubscribe();
-    this.refresh();
+    void this.refresh();
     // Measure the two walls that matter with several sessions running (event loop
     // + webview traffic). Prints nothing unless HARNY_DEBUG is set.
     this.telemetry.start();
@@ -989,21 +1052,58 @@ export class ChatViewProvider implements WebviewViewProvider {
     this.view?.webview.postMessage({ type: "openFind" });
   }
 
-  /** Rebuild the whole view (host-side refresh after any change). */
-  refresh(): void {
-    if (!this.view) return;
+  /**
+   * Rebuild the whole view (host-side refresh after any change).
+   *
+   * @returns a promise for "the page HTML has been sent": a message posted before that
+   * lands nowhere, and the actions a reload deferred (see `runWhenReady`) need the page.
+   */
+  refresh(): Promise<void> {
+    if (!this.view) return Promise.resolve();
     // A modal is OPEN: DEFER the rebuild. Replacing the page HTML wipes the
     // modal DOM, so it would flash and vanish (e.g. the "Model limits unknown"
     // alert right after a model switch — which writes config.json and triggers
     // this refresh via the config watcher). It runs when the queue drains.
     if (this.modals.hasPending()) {
       this.refreshDeferred = true;
-      return;
+      return Promise.resolve();
     }
     this.refreshDeferred = false; // this run satisfies any deferred request
-    void this.buildHtml().then((html) => {
+    return this.buildHtml().then((html) => {
       if (this.view) this.view.webview.html = html;
+      // The page exists now: whatever was waiting for it can run.
+      this.drainReadyActions();
     });
+  }
+
+  /**
+   * Run `action` as soon as the panel can show it.
+   *
+   * It cannot always run NOW: activation happens before the first `resolveWebviewView`
+   * (the panel may not even be visible), and `refresh()` sends the page HTML
+   * asynchronously — a `postMessage` before that lands nowhere, so a modal opened that way
+   * would simply never appear. Until then the action waits; afterwards it runs at once.
+   */
+  runWhenReady(action: () => void): void {
+    if (this.view) {
+      action();
+      return;
+    }
+    this.readyActions.push(action);
+  }
+
+  /** Drain what was waiting for the page (called once the HTML is really there). */
+  private drainReadyActions(): void {
+    if (this.readyActions.length === 0) return;
+    const actions = this.readyActions.splice(0, this.readyActions.length);
+    for (const action of actions) {
+      try {
+        action();
+      } catch (e) {
+        // A deferred gesture must never take the panel down with it.
+        debugLog("deferred panel action failed", e);
+      }
+    }
   }
 
   /**
@@ -1112,6 +1212,17 @@ export class ChatViewProvider implements WebviewViewProvider {
       case "getAllSessions":
         // show:true — the user clicked the gear: the form opens with this data.
         this.view?.webview.postMessage(this.sessionsManagerPayload(true));
+        break;
+      case "openWorkspace":
+        // The home screen's CTA: pick a folder and open it as the workspace. No session is
+        // touched ("New session" is its own flow, which remembers that a session was next).
+        await this.chooseFolder();
+        break;
+      case "openSessionFolder":
+        // A HOME row: open the folder that session lives in (the picker when that folder
+        // is gone or unset — see openSessionFolder). A session is never opened here: with
+        // no root its tools would run in `process.cwd()`.
+        if (typeof msg.id === "string") await this.openSessionFolder(msg.id);
         break;
       case "searchSessions": {
         // Full-text search over session messages: reply with the matching ids.
@@ -3081,6 +3192,10 @@ export class ChatViewProvider implements WebviewViewProvider {
     noModels: boolean;
     configHome: string;
     workspaceReady: boolean;
+    /** Folders open in the window (0 = none, >1 = multi-root: both unusable). */
+    workspaceFolderCount: number;
+    /** The window's root path, EVEN when it no longer exists (the UI names it). */
+    workspaceFolder?: string;
     thinkingMode?: "bool" | "effort" | "type" | "reasoning" | "unspecified";
     thinkingLevel?: "off" | "low" | "medium" | "high";
     mode?: "analyze" | "agent";
@@ -3217,12 +3332,18 @@ export class ChatViewProvider implements WebviewViewProvider {
       this.options.modelsDev?.isReachable?.() === false &&
       providerModels.some((m) => !m.contextLength || !m.maxOutputTokens);
 
+    // The window's root AS IT IS: the home hero must be able to NAME a folder that no
+    // longer exists (that is the whole difference between "no folder" and "your folder is
+    // gone"), and `currentFolder()` above deliberately hides it from the LIST.
+    const rootPath = this.options.currentFolder ? this.options.currentFolder() : undefined;
     return {
       provider: cfg.provider,
       activeProvider: sessionProvider,
       model: sessionModel,
       hasKey: !requiresApiKey(cfg),
       workspaceReady: this.workspaceReady(),
+      workspaceFolderCount: this.workspaceFolderCount(),
+      ...(rootPath ? { workspaceFolder: rootPath } : {}),
       models: cfg.availableModels ?? [],
       providerModels,
       modelMissing,

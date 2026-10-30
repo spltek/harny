@@ -92,6 +92,9 @@ function makeStore(): SessionStore {
       summary: { id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 0 },
       messages: [],
     })),
+    // One session's METADATA without its messages (the interface requires it; the cast
+    // above used to hide the gap, and `resumeSession` reads it).
+    summary: vi.fn((id: string) => ({ id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 0 })),
     saveMessages: vi.fn((id: string, messages) => ({
       id,
       name: "S",
@@ -358,18 +361,254 @@ describe("ChatViewProvider", () => {
     expect(state.showInputBox).not.toHaveBeenCalled(); // no native box: modal instead
   });
 
-  it("createNew without a single workspace asks for a folder and creates nothing", async () => {
-    const { store, provider } = buildHarness({ workspaceReady: () => false });
-    const { handler, view } = resolveWith(provider);
-    await handler({ type: "newSession" });
-    expect(store.create).not.toHaveBeenCalled();
-    expect(view.webview.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "modal",
-        kind: "alert",
-        message: expect.stringContaining("exactly one open folder"),
-      }),
-    );
+  /**
+   * THE HOME SCREEN (no single folder open).
+   *
+   * Harny cannot work without one folder, and the old answer was an alert that named
+   * the menu — a dead end that also hid the history. Every flow below now ends in a
+   * FOLDER, through one injected object, and never in an opened session (with no root
+   * its tools would run in `process.cwd()`).
+   */
+  describe("folder flows (home screen: no single folder open)", () => {
+    /** The last config the provider pushed (it pushes more than one while resolving). */
+    function lastConfig(view: any): any {
+      const posts = view.webview.postMessage.mock.calls
+        .map((c: unknown[]) => c[0] as any)
+        .filter((m: any) => m.type === "config");
+      return posts[posts.length - 1].config;
+    }
+
+    it("createNew opens the PICKER for a folder and creates nothing", async () => {
+      const { store, provider } = buildHarness({ workspaceReady: () => false });
+      const { handler, view } = resolveWith(provider);
+      state.showOpenDialog.mockResolvedValue([{ fsPath: "/home/me/new" }]);
+      await handler({ type: "newSession" });
+      expect(store.create).not.toHaveBeenCalled();
+      expect(state.showOpenDialog).toHaveBeenCalledWith(
+        expect.objectContaining({ canSelectFiles: false, canSelectFolders: true, canSelectMany: false }),
+      );
+      expect(state.executeCommand).toHaveBeenCalledWith("vscode.openFolder", { fsPath: "/home/me/new" }, false);
+      // No more "exactly one open folder" alert: the folder IS the answer.
+      expect(view.webview.postMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: "modal", kind: "alert" }),
+      );
+    });
+
+    it("…and a cancelled dialog changes nothing at all", async () => {
+      const { store, provider } = buildHarness({ workspaceReady: () => false });
+      const { handler } = resolveWith(provider);
+      state.showOpenDialog.mockResolvedValue(undefined);
+      await handler({ type: "newSession" });
+      expect(store.create).not.toHaveBeenCalled();
+      // A cancelled picker must not reload the window.
+      expect(state.executeCommand).not.toHaveBeenCalled();
+    });
+
+    it("openWorkspace (the home screen's CTA) opens the chosen folder as the workspace", async () => {
+      const { provider } = buildHarness({ workspaceReady: () => false });
+      const { handler } = resolveWith(provider);
+      state.showOpenDialog.mockResolvedValue([{ fsPath: "/p/chosen" }]);
+      await handler({ type: "openWorkspace" });
+      expect(state.executeCommand).toHaveBeenCalledWith("vscode.openFolder", { fsPath: "/p/chosen" }, false);
+    });
+
+    it("openSessionFolder (a HOME row) opens that session's folder and NOT the session", async () => {
+      const { store, provider, registry } = buildHarness({ workspaceReady: () => false });
+      (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+        {
+          id: "x",
+          name: "Casa",
+          createdAt: 1,
+          updatedAt: 2,
+          messageCount: 3,
+          folder: "/p/harny",
+          folderMissing: false,
+        },
+      ]);
+      const { handler } = resolveWith(provider);
+      await handler({ type: "openSessionFolder", id: "x" });
+      expect(state.executeCommand).toHaveBeenCalledWith("vscode.openFolder", { fsPath: "/p/harny" }, false);
+      expect(state.showOpenDialog).not.toHaveBeenCalled();
+      // Opening a session with no root would leave its tools in `process.cwd()`.
+      expect(registry.listOpenIds()).toEqual([]);
+    });
+
+    it("routes every folder flow through the injected WorkspaceActions (one implementation)", async () => {
+      // The provider must not keep its own copy of "ask and open": this is what makes the
+      // gesture identical from the CTA, from New session and from a row.
+      const workspace = {
+        pick: vi.fn(async () => "/p/picked" as string | undefined),
+        open: vi.fn(async () => undefined),
+      };
+      const { store, provider } = buildHarness({ workspaceReady: () => false, workspace });
+      const { handler } = resolveWith(provider);
+
+      await handler({ type: "openWorkspace" });
+      expect(workspace.pick).toHaveBeenCalledTimes(1);
+      expect(workspace.open).toHaveBeenCalledWith("/p/picked");
+
+      workspace.pick.mockClear();
+      (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+        {
+          id: "s",
+          name: "S",
+          createdAt: 1,
+          updatedAt: 2,
+          messageCount: 0,
+          folder: "/p/old",
+          folderMissing: false,
+        },
+      ]);
+      await handler({ type: "sessionsManagerChangeFolder", id: "s" });
+      expect(workspace.pick).toHaveBeenCalledWith(expect.objectContaining({ defaultFolder: "/p/old" }));
+      // Re-pointing a session only ASKS: it must not reload the window.
+      expect(store.saveSettings).toHaveBeenCalledWith("s", { folder: "/p/picked" });
+
+      // …and the provider never reached for `vscode` to do any of it.
+      expect(state.showOpenDialog).not.toHaveBeenCalled();
+      expect(state.executeCommand).not.toHaveBeenCalled();
+    });
+
+    it("remembers the session to reopen BEFORE the folder opens (the reload is the interruption)", async () => {
+      // The marker has to be on disk when the process goes away: the ORDER is the test.
+      const order: string[] = [];
+      const pending = { remember: vi.fn(async () => void order.push("remember")), take: vi.fn() };
+      const workspace = {
+        pick: vi.fn(async () => undefined as string | undefined),
+        open: vi.fn(async () => void order.push("open")),
+      };
+      const { store, provider } = buildHarness({ workspaceReady: () => false, workspace, pending });
+      (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+        {
+          id: "x",
+          name: "Casa",
+          createdAt: 1,
+          updatedAt: 2,
+          messageCount: 3,
+          folder: "/p/harny",
+          folderMissing: false,
+        },
+      ]);
+      const { handler } = resolveWith(provider);
+      await handler({ type: "openSessionFolder", id: "x" });
+      expect(pending.remember).toHaveBeenCalledWith("/p/harny", { kind: "session", sessionId: "x" });
+      expect(order).toEqual(["remember", "open"]);
+    });
+
+    it("New session with no folder remembers 'create' for the folder it opens", async () => {
+      const pending = { remember: vi.fn(async () => {}), take: vi.fn() };
+      const workspace = { pick: vi.fn(async () => "/p/new"), open: vi.fn(async () => undefined) };
+      const { provider } = buildHarness({ workspaceReady: () => false, workspace, pending });
+      const { handler } = resolveWith(provider);
+      await handler({ type: "newSession" });
+      expect(pending.remember).toHaveBeenCalledWith("/p/new", { kind: "create" });
+      expect(workspace.open).toHaveBeenCalledWith("/p/new");
+    });
+
+    it("the home CTA opens a folder and remembers NOTHING (it is not a session)", async () => {
+      const pending = { remember: vi.fn(async () => {}), take: vi.fn() };
+      const workspace = { pick: vi.fn(async () => "/p/x"), open: vi.fn(async () => undefined) };
+      const { provider } = buildHarness({ workspaceReady: () => false, workspace, pending });
+      const { handler } = resolveWith(provider);
+      await handler({ type: "openWorkspace" });
+      expect(workspace.open).toHaveBeenCalledWith("/p/x");
+      expect(pending.remember).not.toHaveBeenCalled();
+    });
+
+    it("a cancelled picker remembers nothing and reloads nothing", async () => {
+      const pending = { remember: vi.fn(async () => {}), take: vi.fn() };
+      const { provider } = buildHarness({ workspaceReady: () => false, pending });
+      const { handler } = resolveWith(provider);
+      state.showOpenDialog.mockResolvedValue(undefined);
+      await handler({ type: "newSession" });
+      await handler({ type: "openWorkspace" });
+      expect(pending.remember).not.toHaveBeenCalled();
+      expect(state.executeCommand).not.toHaveBeenCalled();
+    });
+
+    it("resumeSession finishes the gesture — as soon as the panel can show it", async () => {
+      const { store, provider, registry } = buildHarness();
+      (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+        { id: "x", name: "Casa", createdAt: 1, updatedAt: 2, messageCount: 3, folder: "/p/harny" },
+      ]);
+      // The reload finished, the panel did not exist yet: the action must WAIT, or its
+      // `switchView` would be posted into a page that is not there.
+      provider.resumeSession("x");
+      expect(registry.isOpen("x")).toBe(false);
+
+      resolveWith(provider);
+      await vi.waitFor(() => expect(registry.isOpen("x")).toBe(true));
+    });
+
+    it("resumeSession ignores a session that is gone (deleted while the window reloaded)", async () => {
+      const { store, provider, registry } = buildHarness();
+      (store.summary as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+      resolveWith(provider);
+      provider.resumeSession("gone");
+      // The marker is an intent, not a promise that the row still exists.
+      expect(registry.isOpen("gone")).toBe(false);
+    });
+
+    it("reports HOW MANY folders are open (a multi-root must not be told 'none is open')", async () => {
+      const { provider } = buildHarness({ workspaceReady: () => false, workspaceFolderCount: () => 3 });
+      const { handler, view } = resolveWith(provider);
+      await handler({ type: "getConfig" });
+      const config = lastConfig(view);
+      expect(config.workspaceFolderCount).toBe(3);
+      expect(config.workspaceReady).toBe(false);
+    });
+
+    it("a workspace folder that is GONE is not ready, and the list opens to every folder", async () => {
+      // VS Code keeps the workspace open when its folder is deleted on disk. The panel must
+      // stop treating it as usable (every tool would fail) AND stop filtering by it: the
+      // list becomes the workspace picker, which is the way out.
+      const { store, provider } = buildHarness({
+        workspaceReady: () => false,
+        workspaceFolderCount: () => 1,
+        currentFolder: () => "/p/gone",
+      });
+      (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+        { id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 0, folder: "/p/a" },
+        { id: "b", name: "B", createdAt: 1, updatedAt: 1, messageCount: 0, folder: "/p/b" },
+      ]);
+      const { view } = resolveWith(provider);
+      await vi.waitFor(() => expect(view.webview.html).toContain('id="harny-view-init"'), { timeout: 2000 });
+      const raw = view.webview.html.match(/id="harny-view-init" type="application\/json">([\s\S]*?)<\/script>/);
+      const init = JSON.parse(raw![1] as string);
+      // Both folders' sessions, in the order the store returned them.
+      expect(init.sessions.map((s: { id: string }) => s.id)).toEqual(["a", "b"]);
+      expect(init.config.workspaceReady).toBe(false);
+      expect(init.config.workspaceFolderCount).toBe(1);
+      // …and the hero can NAME the folder it is complaining about.
+      expect(init.config.workspaceFolder).toBe("/p/gone");
+    });
+
+    it("an embedder that never reports the count still gets a coherent number", async () => {
+      const { provider } = buildHarness();
+      const { handler, view } = resolveWith(provider);
+      await handler({ type: "getConfig" });
+      expect(lastConfig(view).workspaceFolderCount).toBe(1);
+    });
+
+    it("refresh() before the panel exists is a no-op (activation comes first)", async () => {
+      // The composition root can ask for a rebuild before anyone has ever shown the view.
+      const { provider } = buildHarness();
+      await expect(provider.refresh()).resolves.toBeUndefined();
+    });
+
+    it("a deferred action that throws neither breaks the page nor the actions after it", async () => {
+      const { store, provider, registry } = buildHarness();
+      (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+        { id: "x", name: "Casa", createdAt: 1, updatedAt: 2, messageCount: 3, folder: "/p/harny" },
+      ]);
+      provider.runWhenReady(() => {
+        throw new Error("boom");
+      });
+      provider.resumeSession("x");
+      resolveWith(provider);
+      // The throwing one is swallowed; the queue keeps going.
+      await vi.waitFor(() => expect(registry.isOpen("x")).toBe(true));
+    });
   });
 
   it("cancelling the in-panel name prompt creates nothing", async () => {

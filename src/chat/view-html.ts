@@ -29,6 +29,8 @@ export interface ViewConfigState {
   noModels?: boolean;
   configHome?: string;
   workspaceReady?: boolean;
+  /** Folders open in the window (0 = none, >1 = multi-root: both unusable). */
+  workspaceFolderCount?: number;
   contextWindow: number;
   outputTokens: number;
   temperature?: number;
@@ -237,7 +239,7 @@ ${renderViewConfig(deps)}
        element — including form controls, which do NOT inherit by default —
        takes its family from these two central rules. */
     body, button, input, select, textarea { font-family: var(--font-ui); }
-    pre, code, .code-lang, .fd-stat, .fd-body, .sm-folder { font-family: var(--font-mono); }
+    pre, code, .code-lang, .fd-stat, .fd-body, .sm-folder, .srow-folder { font-family: var(--font-mono); }
     /* Never squeeze the LAYOUT below this: past it the panel gets a horizontal
        scrollbar instead of compressing the controls. (The PANEL's own minimum
        width is controlled by VS Code — the extension cannot force it: this floor
@@ -358,6 +360,23 @@ ${renderViewConfig(deps)}
     /* An open session that lives in ANOTHER folder: listed so its tab is never
        orphaned, dimmed so it never reads as one of this folder's. */
     .srow.foreign .name { opacity: 0.75; font-style: italic; }
+    /* ── HOME row (no folder open): it CHOOSES a workspace ──
+       The whole row is the control (there are no per-session keys there), so it must
+       read as one: a pointer, a focus ring, Enter/Space. The folder path is the
+       identifying fact in this state — it IS what you are choosing — so it gets its own
+       line in the mono face, and the trailing label says what the click does before you
+       commit to it (opening a folder reloads the window). */
+    .srow.home { cursor: pointer; align-items: baseline; }
+    .srow.home:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+    .srow-folder {
+      flex: 1 1 100%; min-width: 0; font-size: var(--fs-xs);
+      color: var(--muted-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .srow-folder.missing { color: var(--error); }
+    .srow-open { flex: 0 0 auto; font-size: var(--fs-sm); color: var(--accent); white-space: nowrap; }
+    /* A folder that is gone is named in the HERO too (home screen): the path is the one
+       fact that identifies WHAT is missing, so it sits in the mono face. */
+    .empty-hero .folder-path { font-family: var(--font-mono); color: var(--fg-dim); }
     .srow-actions { display: inline-flex; align-items: center; gap: 8px; }
     .srow-actions button {
       background: transparent; border: none; color: var(--fg);
@@ -423,6 +442,9 @@ ${renderViewConfig(deps)}
         0 -1px 3px var(--overlay-2);
     }
     .tab.active .close { color: var(--fg-dim); }
+    /* A tab whose folder is gone: the transcript still opens (a tab switch needs no root),
+       but the agent has nowhere to work — so the tab says so instead of looking healthy. */
+    .tab.missing, .tab.missing .close { color: var(--error); }
     .tab .close {
       font-size: var(--fs-sm); line-height: 1; padding: 1px 3px; margin-right: -2px;
       border-radius: 4px; color: var(--muted-2); flex-shrink: 0;
@@ -2001,14 +2023,20 @@ ${renderViewConfig(deps)}
     body.no-session #status,
     body.no-session #pending-section,
     body.no-session #metrics { display: none; }
-    /* No (single) workspace: sessions/tabs/controls are all hidden; the foldes
-       hero asks the user to open one folder. Takes precedence over no-session. */
-    body.no-workspace #sessions-card,
+    /* No single workspace: the control stack goes, the SESSIONS CARD STAYS. Sessions are
+       bucketed per workspace, so with no folder there is nothing to chat with — but the
+       history does not need a folder, and it is what tells you WHICH workspace to open.
+       The card is the workspace picker here (see renderHomeRow) and the hero names the
+       action. Takes precedence over no-session. */
     body.no-workspace #tabs,
     body.no-workspace #input-area,
     body.no-workspace #status,
     body.no-workspace #pending-section,
     body.no-workspace #metrics { display: none; }
+    /* All sessions would be the SAME list as the card above: the form has no job here. */
+    body.no-workspace #sessions-gear-btn { display: none; }
+    /* The prompt is gone, so the list may use the room it left. */
+    body.no-workspace #sessions { max-height: 55vh; }
     /* Point the eye up at the sessions list: the second path to act. */
     body.no-session #session-head { color: var(--accent); }
     .empty-hero {

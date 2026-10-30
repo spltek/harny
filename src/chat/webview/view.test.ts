@@ -2229,6 +2229,51 @@ describe("view webview client", () => {
     expect(local.title).toBe("");
   });
 
+  it("a row whose folder is GONE asks for a folder instead of doing nothing", async () => {
+    // Reachable: the open workspace folder (or a foreign session's folder) is deleted on
+    // disk. `openSession` is refused by the host, so that click used to show an
+    // "opening…" veil and then nothing at all.
+    await loadView();
+    hostMessage({
+      type: "switchView",
+      switchSeq: 1,
+      sessions: [
+        { id: "a", name: "Gone", createdAt: 1, updatedAt: 2, messageCount: 1, folder: "/p/gone", folderMissing: true },
+      ],
+      openIds: ["a"],
+      activeId: undefined,
+      messages: [],
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+        workspaceReady: true,
+      },
+      workingIds: [],
+    });
+    const row = document.querySelector('.srow[data-id="a"]') as HTMLElement;
+    expect(row.title).toContain("no longer exists");
+    // Said IN the row, not only in a tooltip: a row that looks healthy is how you end up
+    // clicking a session that cannot open.
+    const marker = row.querySelector(".srow-folder") as HTMLElement;
+    expect(marker.classList.contains("missing")).toBe(true);
+    expect(marker.textContent).toBe("/p/gone — missing");
+    // …and on the TAB: its transcript still opens, but the agent has nowhere to work.
+    const tab = document.querySelector('.tab[data-id="a"]') as HTMLElement;
+    expect(tab.classList.contains("missing")).toBe(true);
+    expect(tab.title).toContain("folder no longer exists");
+    (row.querySelector(".name") as HTMLElement).click();
+    expect(posted).toContainEqual({ type: "openSessionFolder", id: "a" });
+    expect(posted.some((m: any) => m.type === "openSession")).toBe(false);
+    // No veil for something that will never open, and the list stays where it is (the
+    // alert + picker are overlays, not a navigation).
+    expect(document.getElementById("switch-veil")?.classList.contains("visible")).toBe(false);
+    expect(document.getElementById("sessions")?.classList.contains("hidden")).toBe(false);
+  });
+
   it("ignores a STALE switchView (two quick clicks resolving out of order)", async () => {
     // The host posts one switchView per click and each awaits a config build, so
     // the OLDER one can land last. Applying it would jump the UI back to the tab
@@ -8126,27 +8171,166 @@ describe("empty shell (no open session)", () => {
     expect(document.querySelector("#messages .msg.user")?.textContent).toBe("hello");
   });
 
-  it("shows the folder hero when no single workspace is open", async () => {
-    setupDom({
-      sessions: [],
-      openIds: [],
-      activeId: undefined,
-      messages: [],
-      config: {
-        provider: "openai",
-        model: "gpt-4o",
-        hasKey: true,
-        models: [],
-        providerModels: [],
-        contextWindow: 128000,
-        workspaceReady: false,
-      },
+  describe("home shell (no single folder open)", () => {
+    /** What the host sends when there is no usable root: `workspaceReady: false`. */
+    const HOME_CONFIG = {
+      provider: "openai",
+      model: "gpt-4o",
+      hasKey: true,
+      models: [],
+      providerModels: [],
+      contextWindow: 128000,
+      workspaceReady: false,
+    };
+    /** Two sessions of two DIFFERENT workspaces, most recent first. */
+    const TWO_FOLDERS = [
+      { id: "a", name: "Casa", createdAt: 1, updatedAt: 9, messageCount: 25, folder: "/p/harny" },
+      { id: "b", name: "Test", createdAt: 2, updatedAt: 8, messageCount: 6, folder: "/p/test" },
+    ];
+
+    function setupHome(overrides: Record<string, unknown> = {}, config: Record<string, unknown> = {}): void {
+      setupDom({
+        sessions: TWO_FOLDERS,
+        openIds: [],
+        activeId: undefined,
+        messages: [],
+        ...overrides,
+        config: { ...HOME_CONFIG, ...config },
+      });
+    }
+
+    it("keeps the sessions list on screen: the history says WHICH workspace to open", async () => {
+      setupHome();
+      await loadView();
+      expect(document.body.classList.contains("no-workspace")).toBe(true);
+      expect(document.body.classList.contains("no-session")).toBe(false);
+      // The card and its search field are NOT hidden: they are the picker now.
+      expect(document.getElementById("sessions")!.classList.contains("hidden")).toBe(false);
+      expect(document.getElementById("session-search-row")!.classList.contains("hidden")).toBe(false);
+      // Every folder's sessions, and each row names its folder.
+      expect(document.querySelectorAll(".srow.home").length).toBe(2);
+      expect(document.querySelector('.srow[data-id="a"] .srow-folder')?.textContent).toBe("/p/harny");
+      expect(document.querySelector('.srow[data-id="b"] .srow-folder')?.textContent).toBe("/p/test");
     });
-    await loadView();
-    expect(document.body.classList.contains("no-workspace")).toBe(true);
-    expect(document.body.classList.contains("no-session")).toBe(false);
-    expect(document.querySelector(".empty-hero")).not.toBeNull();
-    expect(document.querySelector(".empty-hero p")?.textContent).toContain("single open folder");
+
+    it("a row opens its FOLDER, never the session (no root means no working directory)", async () => {
+      setupHome();
+      await loadView();
+      const row = document.querySelector('.srow[data-id="b"]') as HTMLElement;
+      row.click();
+      expect(posted).toContainEqual({ type: "openSessionFolder", id: "b" });
+      expect(posted.some((m: any) => m.type === "openSession")).toBe(false);
+      // The whole row is a real control, so the keyboard must work too.
+      row.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+      expect(posted.filter((m: any) => m.type === "openSessionFolder").length).toBe(2);
+    });
+
+    it("offers the PICKER when the folder is gone, and says so in red", async () => {
+      setupHome({
+        sessions: [
+          {
+            id: "g",
+            name: "Gone",
+            createdAt: 1,
+            updatedAt: 2,
+            messageCount: 1,
+            folder: "/p/gone",
+            folderMissing: true,
+          },
+        ],
+      });
+      await loadView();
+      const row = document.querySelector('.srow[data-id="g"]') as HTMLElement;
+      // "Open folder" would reload the window onto a path that does not exist.
+      expect(row.querySelector(".srow-open")?.textContent).toBe("Change folder…");
+      expect((row.querySelector(".srow-folder") as HTMLElement).classList.contains("missing")).toBe(true);
+      expect(row.title).toContain("not available");
+      row.click();
+      // One message either way: the HOST decides (open vs pick) for both surfaces.
+      expect(posted).toContainEqual({ type: "openSessionFolder", id: "g" });
+    });
+
+    it("ignores keys that are not Enter/Space (typing must not reload the window)", async () => {
+      setupHome();
+      await loadView();
+      const row = document.querySelector('.srow[data-id="a"]') as HTMLElement;
+      row.dispatchEvent(new KeyboardEvent("keydown", { key: "a" }));
+      row.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab" }));
+      expect(posted.some((m: any) => m.type === "openSessionFolder")).toBe(false);
+    });
+
+    it("has no per-session keys: they act on a session that cannot be shown yet", async () => {
+      setupHome();
+      await loadView();
+      const row = document.querySelector('.srow[data-id="a"]') as HTMLElement;
+      expect(row.querySelectorAll("button").length).toBe(0);
+      expect(row.getAttribute("role")).toBe("button");
+    });
+
+    it("names WHY it cannot work: no folder, or more than one", async () => {
+      setupHome();
+      await loadView();
+      expect(document.querySelector(".empty-hero p")?.textContent).toBe("No folder is open.");
+
+      // Telling someone with three open roots that no folder is open reads like a bug.
+      setupHome({}, { workspaceFolderCount: 3 });
+      await loadView();
+      expect(document.querySelector(".empty-hero p")?.textContent).toContain("3 folders are open");
+    });
+
+    it("names a workspace folder that is GONE, and offers another one", async () => {
+      // `workspaceReady: false` with ONE folder means exactly one thing: it no longer
+      // exists. Reporting that as "no folder is open" reads like a bug.
+      setupHome({}, { workspaceFolderCount: 1, workspaceFolder: "/p/gone" });
+      await loadView();
+      expect(document.querySelector(".empty-hero p")?.textContent).toBe(
+        "The workspace folder /p/gone no longer exists.",
+      );
+      // The path is the one fact that says WHAT is missing.
+      expect(document.querySelector(".empty-hero .folder-path")?.textContent).toBe("/p/gone");
+      expect(document.querySelector(".empty-hero .empty-hint")?.textContent).toContain("Your sessions are safe");
+      expect(document.getElementById("home-open-folder")?.textContent).toBe("Open another folder…");
+    });
+
+    it("asks the host for a folder from the hero's CTA (and nothing else)", async () => {
+      setupHome();
+      await loadView();
+      const cta = document.getElementById("home-open-folder") as HTMLButtonElement;
+      expect(cta).not.toBeNull();
+      expect(cta.textContent).toBe("Open folder…");
+      cta.click();
+      expect(posted).toContainEqual({ type: "openWorkspace" });
+      // No session is created from here: the folder comes first.
+      expect(posted.some((m: any) => m.type === "newSession")).toBe(false);
+    });
+
+    it("an empty history still points at the folder instead of claiming there is nothing", async () => {
+      setupHome({ sessions: [] });
+      await loadView();
+      expect(document.querySelector("#sessions .empty")?.textContent).toContain("Open a folder to start one");
+    });
+
+    it("goes back to normal rows as soon as a folder IS open (the mode is per render)", async () => {
+      setupHome();
+      await loadView();
+      expect(document.querySelector(".srow.home")).not.toBeNull();
+
+      hostMessage({
+        type: "switchView",
+        switchSeq: 1,
+        sessions: [{ id: "a", name: "Casa", createdAt: 1, updatedAt: 9, messageCount: 25, folder: "/p/harny" }],
+        openIds: [],
+        activeId: undefined,
+        messages: [],
+        config: { ...HOME_CONFIG, workspaceReady: true, workspaceFolderCount: 1 },
+        workingIds: [],
+      });
+      expect(document.body.classList.contains("no-workspace")).toBe(false);
+      expect(document.querySelector(".srow.home")).toBeNull();
+      // …and the row is a SESSION control again.
+      (document.querySelector(".srow .name") as HTMLElement).click();
+      expect(posted).toContainEqual({ type: "openSession", id: "a" });
+    });
   });
 
   it("credits the publisher next to the version, linked to the repository", async () => {

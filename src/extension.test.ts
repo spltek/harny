@@ -67,14 +67,76 @@ describe("extension activate (smoke)", () => {
   // opened in a temp home), so it is an integration test living in the unit suite: the 5s
   // default is a unit-test default and Windows runners need more than that (it timed out
   // at 5.75s there while ubuntu and macos passed).
-  it("activates without errors: opens the DB, wires the view provider and returns the sessions manager", async () => {
-    const { activate } = await import("./extension");
+  /**
+   * An ExtensionContext with the two pieces that survive a WINDOW RELOAD: the temp
+   * globalStorage (the database) and `globalState` (the gesture marker, see
+   * pending-open.ts). Calling `dispose()` is the honest "window is going away".
+   */
+  function makeContext(): {
+    context: Record<string, unknown>;
+    globalState: Map<string, unknown>;
+    dispose: () => void;
+  } {
     const subscriptions: { dispose(): void }[] = [];
+    const globalState = new Map<string, unknown>();
     const context = {
       globalStorageUri: { fsPath: home },
       extensionUri: { fsPath: "/ext" },
       subscriptions,
+      globalState: {
+        get: (key: string, fallback: unknown) => globalState.get(key) ?? fallback,
+        update: async (key: string, value: unknown) => {
+          globalState.set(key, value);
+        },
+      },
     };
+    const dispose = (): void => {
+      for (const d of [...subscriptions].reverse()) {
+        try {
+          d.dispose();
+        } catch {
+          /* best-effort */
+        }
+      }
+    };
+    return { context, globalState, dispose };
+  }
+
+  /** A WebviewView good enough for `resolveWebviewView` (the panel, stubbed). */
+  function makePanel(): { view: Record<string, unknown>; postMessage: ReturnType<typeof vi.fn> } {
+    const postMessage = vi.fn();
+    return {
+      postMessage,
+      view: {
+        webview: {
+          html: "",
+          cspSource: "vscode-webview://test",
+          options: {},
+          onDidReceiveMessage: vi.fn(),
+          postMessage,
+          asWebviewUri: () => ({
+            with: (opts: { query: string }) => ({ toString: () => "https://r/view.js?" + opts.query }),
+            toString: () => "https://r/view.js",
+          }),
+        },
+      },
+    };
+  }
+
+  /** The provider the composition root registered (there is exactly one per activation). */
+  function registeredProvider(): any {
+    return state.registerWebviewViewProvider.mock.calls.at(-1)?.[1];
+  }
+
+  /** The marker the provider writes BEFORE `vscode.openFolder` tears the host down. */
+  async function rememberGesture(context: Record<string, unknown>, value: unknown): Promise<void> {
+    const memento = context.globalState as { update: (key: string, value: unknown) => Promise<void> };
+    await memento.update("harny.pendingOpen", value);
+  }
+
+  it("activates without errors: opens the DB, wires the view provider and returns the sessions manager", async () => {
+    const { activate } = await import("./extension");
+    const { context, dispose } = makeContext();
 
     const sessions = await activate(context as never);
 
@@ -92,12 +154,132 @@ describe("extension activate (smoke)", () => {
     expect(state.showErrorMessage).not.toHaveBeenCalled();
 
     // Clean shutdown: dispose everything the extension registered (closes the DB).
-    for (const d of [...subscriptions].reverse()) {
-      try {
-        d.dispose();
-      } catch {
-        /* best-effort */
-      }
+    dispose();
+  }, 30_000);
+
+  it("finishes a 'New session' gesture: the naming modal is waiting after the reload", async () => {
+    const { activate } = await import("./extension");
+    const { context, globalState, dispose } = makeContext();
+    // The workspace root must be a REAL folder: a session whose folder is gone is never
+    // opened (see openSessionId), and these tests are about the gesture, not about that guard.
+    state.workspaceFolders = [{ uri: { fsPath: home } }];
+    // What the click wrote BEFORE the folder opened (the host is about to be torn down).
+    await rememberGesture(context, { folder: home, action: { kind: "create" }, at: Date.now() });
+
+    await activate(context as never);
+    // The panel appears (it is restored by VS Code after the reload): the gesture runs.
+    const panel = makePanel();
+    registeredProvider().resolveWebviewView(panel.view, {}, {});
+    await vi.waitFor(
+      () =>
+        expect(panel.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ type: "modal", kind: "name", mode: "create" }),
+        ),
+      { timeout: 2000 },
+    );
+    // Consume-once: the marker is gone, so the next activation has nothing to do.
+    expect(globalState.get("harny.pendingOpen")).toBeUndefined();
+    dispose();
+  }, 30_000);
+
+  it("finishes an 'open that session' gesture across a REAL reload (two hosts, one database)", async () => {
+    const { activate } = await import("./extension");
+    // A folder that really exists: the temp home IS the workspace root here.
+    state.workspaceFolders = [{ uri: { fsPath: home } }];
+    // FIRST host: the session exists in this workspace.
+    const first = makeContext();
+    const sessions = await activate(first.context as never);
+    const created = sessions.create("Casa");
+    sessions.saveSettings(created.id, { folder: home });
+    first.dispose(); // the window reloads on the folder the user chose
+
+    // SECOND host: the marker is all that survived, and it names the folder + session.
+    const second = makeContext();
+    await rememberGesture(second.context, {
+      folder: home,
+      action: { kind: "session", sessionId: created.id },
+      at: Date.now(),
+    });
+    await activate(second.context as never);
+
+    const panel = makePanel();
+    registeredProvider().resolveWebviewView(panel.view, {}, {});
+    await vi.waitFor(
+      () =>
+        expect(panel.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ type: "switchView", activeId: created.id }),
+        ),
+      { timeout: 5000 },
+    );
+    second.dispose();
+  }, 30_000);
+
+  it("a workspace whose FOLDER was deleted is not ready, and the panel offers another one", async () => {
+    const { activate } = await import("./extension");
+    const { context, dispose } = makeContext();
+    // VS Code keeps such a workspace open: the folder is the root, but it is not on disk.
+    state.workspaceFolders = [{ uri: { fsPath: join(home, "gone-folder") } }];
+
+    await activate(context as never);
+    const panel = makePanel();
+    registeredProvider().resolveWebviewView(panel.view, {}, {});
+    const html = () => (panel.view.webview as { html: string }).html;
+    await vi.waitFor(() => expect(html()).toContain('id="harny-view-init"'), { timeout: 2000 });
+    const raw = html().match(/id="harny-view-init" type="application\/json">([\s\S]*?)<\/script>/);
+    const init = JSON.parse(raw![1] as string);
+    // Not usable → the home screen, and the hero can name the path it lost.
+    expect(init.config.workspaceReady).toBe(false);
+    expect(init.config.workspaceFolderCount).toBe(1);
+    expect(init.config.workspaceFolder).toBe(join(home, "gone-folder"));
+    dispose();
+  }, 30_000);
+
+  it("notices the workspace folder DISAPPEARING while the panel sits still", async () => {
+    const { activate } = await import("./extension");
+    const { context, dispose } = makeContext();
+    // A real folder we can delete from outside, the way a `rm -rf` would.
+    const rootDir = mkdtempSync(join(home, "ws-"));
+    state.workspaceFolders = [{ uri: { fsPath: rootDir } }];
+    // Only the INTERVAL is faked (the watcher polls on it): activation and `waitFor` keep
+    // their real timers, so nothing else about the boot changes.
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      await activate(context as never);
+      const panel = makePanel();
+      registeredProvider().resolveWebviewView(panel.view, {}, {});
+      const html = () => (panel.view.webview as { html: string }).html;
+      await vi.waitFor(() => expect(html()).toContain('"workspaceReady":true'), { timeout: 2000 });
+
+      // Nobody clicks anything: the folder simply goes away.
+      rmSync(rootDir, { recursive: true, force: true });
+      vi.advanceTimersByTime(6000); // one poll
+
+      // The panel rebuilds itself into the home screen (and names the folder).
+      await vi.waitFor(
+        () => {
+          expect(html()).toContain('"workspaceReady":false');
+          expect(html()).toContain('"workspaceFolder":"' + rootDir + '"');
+        },
+        { timeout: 2000 },
+      );
+    } finally {
+      vi.useRealTimers();
+      dispose();
     }
+  }, 30_000);
+
+  it("discards a marker that belongs to ANOTHER folder (it must never fire in the wrong project)", async () => {
+    const { activate } = await import("./extension");
+    const { context, globalState, dispose } = makeContext();
+    state.workspaceFolders = [{ uri: { fsPath: home } }];
+    await rememberGesture(context, { folder: "/somewhere/else", action: { kind: "create" }, at: Date.now() });
+
+    await activate(context as never);
+    const panel = makePanel();
+    registeredProvider().resolveWebviewView(panel.view, {}, {});
+    // Consumed and dropped, without opening anything.
+    await vi.waitFor(() => expect(globalState.get("harny.pendingOpen")).toBeUndefined(), { timeout: 2000 });
+    expect(panel.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "modal" }));
+    dispose();
   }, 30_000);
 });
