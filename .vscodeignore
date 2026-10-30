@@ -25,3 +25,8 @@ vitest.config.mts
 config.example.jsonc
 *.vsix
 .DS_Store
+# `vsce` packs the WORKING TREE (not the git index), so tracked DEV files a user never
+# needs ride along: prettier's config is a formatter's, and .git-blame-ignore-revs is for
+# `git blame`. Neither is read at runtime.
+prettier.config.mjs
+.git-blame-ignore-revs
