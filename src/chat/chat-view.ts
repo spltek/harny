@@ -747,6 +747,11 @@ export class ChatViewProvider implements WebviewViewProvider {
     await this.chooseFolder();
   }
 
+  /** Is a session open, so a question about it has somewhere to land? */
+  hasActiveSession(): boolean {
+    return Boolean(this.activeId);
+  }
+
   /**
    * The folder disappeared and the run is ALREADY stopped: ask what to do, in the panel's own
    * dialog ("Folder no longer available… Pick a new one.", OK → the picker). Blocking is
@@ -1960,10 +1965,14 @@ export class ChatViewProvider implements WebviewViewProvider {
         // run against a folder that is not there (and could recreate it). Defence in depth —
         // the panel disables the prompt too, but the HOST is what cannot be bypassed.
         if (!this.workspaceReady()) {
-          await this.inPanelAlert({
-            kind: "error",
-            title: "Folder no longer available",
-            message: workspaceGoneSendNote(this.options.currentFolder?.() ?? ""),
+          // A TYPED refusal, not a dialog: the panel takes back the paint it had already made
+          // (the optimistic bubble and its "Working…" bar) and says why in the transcript,
+          // where the message would have appeared. One surface — the one the user is looking
+          // at — and nothing left hanging (see the `denied` handler in the webview).
+          this.view?.webview.postMessage({
+            type: "denied",
+            action: "send",
+            reason: workspaceGoneSendNote(this.options.currentFolder?.() ?? ""),
           });
           break;
         }

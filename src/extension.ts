@@ -41,6 +41,7 @@ import { SessionRegistry } from "./chat/session-registry";
 import { MementoPendingOpenStore, PendingOpens } from "./chat/pending-open";
 import { WorkspaceRootWatch } from "./chat/workspace-watch";
 import { workspaceGoneSendNote } from "./core/agent/workspace-gone";
+import { routeNotice } from "./chat/notice-policy";
 import { AttachmentService } from "./chat/attachment-service";
 import { resolveHome } from "./core/storage/home";
 import { debugLog, infoLog } from "./logger";
@@ -389,12 +390,17 @@ export async function activate(context: ExtensionContext) {
         // 1) STOP everything first (the abort cascades to the sub-agents and leaves the reason
         //    in each transcript), so what follows cannot interrupt anything.
         void viewProvider.stopAllForLostRoot(lostRoot);
-        // 2) ONE notice, in the panel's own dialog — safe BECAUSE the work is already stopped.
-        //    When the view is not on screen a modal cannot be shown, so a native toast takes
-        //    over: same fact, the only surface left.
-        if (viewProvider.panelVisible()) {
+        // 2) ONE surface, chosen by the notice table (see chat/notice-policy.ts): ask when a
+        //    dialog can be seen AND there is something to ask about, toast when the panel is
+        //    not on screen (a dialog cannot exist there), stay silent when the panel's own
+        //    home already says it and offers the picker.
+        const action = routeNotice("workspace-gone", {
+          panelVisible: viewProvider.panelVisible(),
+          sessionOpen: viewProvider.hasActiveSession(),
+        });
+        if (action === "ask") {
           void viewProvider.warnLostFolder();
-        } else {
+        } else if (action === "toast") {
           void window.showWarningMessage(workspaceGoneSendNote(lostRoot), "Change folder…").then((answer) => {
             if (answer) void viewProvider.openWorkspace();
           });

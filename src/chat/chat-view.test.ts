@@ -663,11 +663,14 @@ describe("ChatViewProvider", () => {
 
     expect(view.webview.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: "modal",
-        kind: "alert",
-        message: expect.stringContaining("cannot work here"),
+        type: "denied",
+        action: "send",
+        reason: expect.stringContaining("cannot work here"),
       }),
     );
+    // …and NOT a dialog: the refusal is said in the transcript, where the message would have
+    // gone (no modal on top of the panel for something the panel can say itself).
+    expect(view.webview.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "modal" }));
   });
 
   it("a rebuild that lands while a modal OPENED does not wipe it (that froze the panel)", async () => {

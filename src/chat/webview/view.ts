@@ -364,6 +364,12 @@ let draftTargetIsAuto = compactionTargetIsAuto;
 let currentResultEl: HTMLDivElement | null = null;
 let currentThinkingBlock: HTMLDivElement | null = null;
 let currentThinkingText = "";
+/**
+ * The bubble the panel painted BEFORE the host confirmed the send (see send()). Kept only so a
+ * refusal can take it back: showing a message as sent when it never left is worse than no
+ * message at all.
+ */
+let optimisticUserEl: HTMLElement | null = null;
 let currentRawText = "";
 let workingEl: HTMLDivElement | null = null;
 let compactionEl: HTMLDivElement | null = null;
@@ -2992,7 +2998,10 @@ function send(): void {
   pendingToolCalls.clear();
   // Show the user's message immediately (don't wait for the turn to finish).
   // Attachments render as chips; the bubble text is just the typed prompt.
+  // `optimisticUserEl` remembers it: if the HOST refuses the send, this bubble must be taken
+  // back — a message shown as sent that never was is worse than no message at all.
   const userEl = addMessage("user", text, attachments);
+  optimisticUserEl = userEl;
   // The ✂ cut key also on the LIVE bubble (disabled while working, like the
   // others); its index is the position the host is about to append it at.
   attachTruncateAt(userEl, historyLength);
@@ -6193,6 +6202,24 @@ window.addEventListener("message", (e) => {
       setStreaming(false);
       focusPrompt();
       break;
+    case "denied": {
+      // The host said NO to something the panel had already painted optimistically (the user
+      // bubble and its "Working…" bar). Undo the paint, then say why in the TRANSCRIPT — the
+      // surface the user is looking at — instead of a dialog on top of it.
+      flushStreamingMd();
+      setStreaming(false);
+      hideWorking();
+      resetStreamState();
+      optimisticUserEl?.remove();
+      optimisticUserEl = null;
+      const whyEl = addMessage("assistant", "❌ " + (msg.reason || "The action was refused."));
+      whyEl.classList.add("error");
+      // The run never started: no "(empty response)" fallback if a `done` follows.
+      terminalShown = true;
+      scrollDown();
+      focusPrompt();
+      break;
+    }
     case "error": {
       flushStreamingMd();
       setStreaming(false);

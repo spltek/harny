@@ -1564,6 +1564,29 @@ describe("view webview client", () => {
     expect(marker.compareDocumentPosition(answers[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it("a host refusal takes back the optimistic paint and says why (the `denied` event)", async () => {
+    // The panel paints the user bubble and "Working…" BEFORE the host answers, to feel instant.
+    // A refusal must undo that paint: a message shown as sent that never left, plus a working
+    // bar nothing will ever clear, is exactly the hang reported from the field.
+    await loadView();
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "ciao";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r, 20));
+    const sent = (): boolean =>
+      [...document.querySelectorAll("#messages .msg.user")].some((e) => (e.textContent ?? "").includes("ciao"));
+    expect(sent()).toBe(true); // painted before the host answered
+    expect(document.getElementById("working-bar")?.classList.contains("hidden")).toBe(false);
+
+    hostMessage({ type: "denied", action: "send", reason: "Harny cannot work here: no folder." });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(sent()).toBe(false); // the bubble is gone
+    expect(document.getElementById("working-bar")?.classList.contains("hidden")).toBe(true); // and so is the bar
+    const note = document.querySelector("#messages .msg.assistant.error") as HTMLElement;
+    expect(note.textContent).toContain("cannot work here"); // the reason, in the transcript
+    expect(document.querySelectorAll("#messages .msg.assistant.error").length).toBe(1);
+  });
+
   it('a reasoning chunk that is only punctuation opens NO section (the stray ".")', async () => {
     // Providers sometimes emit a lone "." as a separator. It is not a thought: the block must
     // not hold a line in the transcript that says nothing, and must not stay behind either.
