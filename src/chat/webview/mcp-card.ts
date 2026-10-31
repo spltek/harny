@@ -1,5 +1,5 @@
 import { offToolNames } from "./mcp-tool-flags";
-import { createSwitch } from "./switch";
+import { createSwitch, setSwitch, switchIsOn } from "./switch";
 
 /**
  * THE MCP CARD — one row per installed server, in the control strip.
@@ -124,8 +124,22 @@ export function createMcpCard(deps: McpCardDeps): McpCard {
         if (busyAtClick || !enabled) return;
         // The session's scope is the ONE thing written here: adding or dropping this server while
         // leaving every other decision (another server, a built-in) exactly as it was.
+        //
+        // The NEXT state is read from the PILL, not from the `onInSession` captured when this row was
+        // built. Two reasons, and the second is why a test exists: the paint is optimistic (see
+        // below), so the DOM is ahead of the payload; and rows survive until the next render, so a
+        // quick second click on a captured `onInSession` would post the OLD direction again and leave
+        // the user pressing a switch that never comes back.
+        const turningOn = !switchIsOn(sw);
         const mcp = scope.mcp.filter((s) => s !== name);
-        if (!onInSession) mcp.push(name);
+        if (turningOn) mcp.push(name);
+        // ANSWER NOW. The pill used to wait for the host's next config push to move, and that push
+        // re-fetches every provider's model list first: with one slow or unreachable host the switch
+        // sat there for seconds and read as broken. The write is a message away and the host
+        // re-states the truth immediately after it (`setToolScope` answers with a config), so the
+        // paint is optimistic and not a lie for longer than one round trip — a failed write is
+        // corrected by the config that follows.
+        setSwitch(sw, turningOn);
         deps.post({ type: "setToolScope", scope: { ...scope, mcp } });
       });
       row.appendChild(sw);

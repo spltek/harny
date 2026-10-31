@@ -137,6 +137,23 @@ describe("the clicks", () => {
     expect(post).toHaveBeenCalledWith({ type: "setToolScope", scope: { mcp: ["a"], off: ["Shell"] } });
   });
 
+  it("the pill answers IMMEDIATELY, without waiting for the host round trip", () => {
+    // Field report: "quando spengo l'mcp ci mette tanto a modificare il toggle, anche qualche
+    // secondo". The pill used to repaint only when the host's config push came back — and that push
+    // re-fetches every provider's model list first, so one slow host meant seconds of a switch that
+    // looked stuck. The click must move it NOW; the config that follows is what corrects a failed
+    // write, not what enables the paint.
+    ui.render(CONFIG, { mcp: ["a"], off: [] }, false);
+    expect(switches()[0].getAttribute("aria-checked")).toBe("true");
+
+    switches()[0].click();
+    // No re-render, no await: the same DOM node already shows the new state.
+    expect(switches()[0].getAttribute("aria-checked")).toBe("false");
+
+    switches()[0].click();
+    expect(switches()[0].getAttribute("aria-checked")).toBe("true");
+  });
+
   it("the NAME is the machine's switch: it posts toggleMcpServer", () => {
     ui.render(CONFIG, SCOPE, false);
     (list.querySelector(".mcp-name") as HTMLElement).click();

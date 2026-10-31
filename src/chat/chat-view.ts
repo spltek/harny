@@ -163,7 +163,7 @@ export class ChatViewProvider implements WebviewViewProvider {
    * counter, and sharing it would let an unrelated push invalidate a legitimate
    * tab switch. */
   private switchSeq = 0;
-  private hostCache = new Map<string, { at: number; models: ModelInfo[] }>();
+  private hostCache = new Map<string, { at: number; models: ModelInfo[]; error?: string }>();
   /** models.dev context windows resolved for hosts that do NOT report one
    * (e.g. opencode-go), keyed by `provider|model`. Filled in the background so
    * the model LIST shows the same window that selecting the model adopts. */
@@ -184,6 +184,15 @@ export class ChatViewProvider implements WebviewViewProvider {
   // started after the panel) shows up on the next open. Kept short because the
   // fetch itself is bounded by HOST_MODEL_TIMEOUT_MS anyway.
   private static readonly HOST_CACHE_TTL = 5_000;
+  /**
+   * How long a FAILED model fetch is remembered.
+   *
+   * `buildConfig()` re-fetches every provider on every push, and a setting write pushes — so without
+   * this, one unreachable host made every toggle in the MCP card (and every mode/Parallel/slider
+   * change) wait for its connect timeout, again and again. Long enough to kill the stampede, short
+   * enough that starting a local host is noticed without a reload.
+   */
+  private static readonly HOST_FAILURE_TTL = 15_000;
   /** Counts what compaction DID, and says so on the line each event already logs.
    *  A log answers "what happened here"; only a ratio answers "is the trim a rare
    *  rescue or the normal path" — which is a question about the tuning. */
@@ -3772,10 +3781,31 @@ export class ChatViewProvider implements WebviewViewProvider {
     if (!entry?.baseUrl) throw new Error("no baseUrl configured");
     const key = `${name}|${entry.baseUrl}|${entry.apiKey ?? ""}`;
     const cached = this.hostCache.get(key);
-    if (cached && Date.now() - cached.at < ChatViewProvider.HOST_CACHE_TTL) return cached.models;
-    const models: ModelInfo[] = this.modelList.fetchModelInfos
-      ? await this.modelList.fetchModelInfos({ baseUrl: entry.baseUrl, apiKey: entry.apiKey })
-      : (await this.modelList.fetchModels({ baseUrl: entry.baseUrl, apiKey: entry.apiKey })).map((id) => ({ id }));
+    if (cached) {
+      // A FAILURE is remembered too, and for longer than a success. Why: `buildConfig` fetches EVERY
+      // provider on every push, and every setting write pushes. An unreachable host (a tunnel down, a
+      // local llama.cpp not started, opencode.ai timing out) therefore cost its full timeout on EVERY
+      // toggle — the switch in the MCP card looked like it took seconds to answer, and it did: it was
+      // waiting for a dead host's connect timeout before the card could repaint. Successes keep the
+      // short TTL above (a host that comes up later must show up); failures get their own, long
+      // enough to stop the stampede and short enough that starting the server is noticed.
+      const ttl = cached.error ? ChatViewProvider.HOST_FAILURE_TTL : ChatViewProvider.HOST_CACHE_TTL;
+      if (Date.now() - cached.at < ttl) {
+        if (cached.error) throw new Error(cached.error);
+        return cached.models;
+      }
+    }
+    let models: ModelInfo[];
+    try {
+      models = this.modelList.fetchModelInfos
+        ? await this.modelList.fetchModelInfos({ baseUrl: entry.baseUrl, apiKey: entry.apiKey })
+        : (await this.modelList.fetchModels({ baseUrl: entry.baseUrl, apiKey: entry.apiKey })).map((id) => ({ id }));
+    } catch (e) {
+      // Cached before rethrowing: the caller still reports the host in `hostModelErrors` (the red row
+      // in the model picker is the truth), but the NEXT push will not pay for the same timeout again.
+      this.hostCache.set(key, { at: Date.now(), models: [], error: e instanceof Error ? e.message : String(e) });
+      throw e;
+    }
     this.hostCache.set(key, { at: Date.now(), models });
     // Diagnostics: how many models reported a context window (Output > Harny).
     const withCtx = models.filter((m) => m.contextLength);
