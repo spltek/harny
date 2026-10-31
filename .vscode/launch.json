@@ -6,11 +6,11 @@
       "type": "extensionHost",
       "request": "launch",
       "args": [
-        "--extensionDevelopmentPath=${workspaceFolder}"
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "--user-data-dir=${workspaceFolder}/.vscode/dev-profile",
+        "--extensions-dir=${workspaceFolder}/.vscode/dev-extensions"
       ],
-      "outFiles": [
-        "${workspaceFolder}/dist/**/*.js"
-      ],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
       "preLaunchTask": "npm: build",
       "env": {
         "OPENAI_API_KEY": "${env:OPENAI_API_KEY}"
@@ -21,11 +21,11 @@
       "type": "extensionHost",
       "request": "launch",
       "args": [
-        "--extensionDevelopmentPath=${workspaceFolder}"
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "--user-data-dir=${workspaceFolder}/.vscode/dev-profile",
+        "--extensions-dir=${workspaceFolder}/.vscode/dev-extensions"
       ],
-      "outFiles": [
-        "${workspaceFolder}/dist/**/*.js"
-      ],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
       "preLaunchTask": "npm: build",
       "env": {
         "OPENAI_API_KEY": "${env:OPENAI_API_KEY}",
@@ -38,7 +38,9 @@
       "request": "launch",
       "args": [
         "--extensionDevelopmentPath=${workspaceFolder}",
-        "--extensionTestsPath=${workspaceFolder}/dist/test"
+        "--extensionTestsPath=${workspaceFolder}/dist/test",
+        "--user-data-dir=${workspaceFolder}/.vscode/test-profile",
+        "--extensions-dir=${workspaceFolder}/.vscode/test-extensions"
       ],
       "outFiles": ["${workspaceFolder}/dist/**/*.js"]
     }

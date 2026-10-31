@@ -17,6 +17,7 @@ import { estimateTokens } from "../sessions/compactor";
 import type { LLMProviderFactory, LLMMessage, Usage } from "../llm/types";
 import type { Tool, ToolCall, ToolRegistry, ToolResult } from "../tools";
 import { DEFAULT_ANALYZE_POLICY, type AnalyzePolicy } from "../tools/tool";
+import { unknownToolMessage } from "../tools/unknown-tool";
 import {
   DEFAULT_CHAT_MODE,
   analyzeRefusalMessage,
@@ -25,7 +26,7 @@ import {
   type ChatMode,
 } from "../tools/mode-policy";
 import type { ToolDefinition } from "../tools/tool";
-import type { ToolScope } from "../tools/tool-scope";
+import { declaresReadOnlyInAnalyze, type ToolScope } from "../tools/tool-scope";
 import type { ChatController, SendOptions } from "./chat-controller";
 import type { PreparedChange } from "./types";
 import {
@@ -182,6 +183,20 @@ export interface AgentDeps {
    * second one is a reason to stop work.
    */
   workspaceReady?: () => boolean;
+  /**
+   * Is this window's folder TRUSTED (VS Code Workspace Trust)? `false` = Restricted Mode.
+   *
+   * It does not refuse anything on its own: it changes what a mode can MEAN. Build is a promise
+   * to write and to run, and that promise is not ours to make in a folder the user has not
+   * vetted, so `setMode("agent")` resolves to Analyze here — see {@link Agent.setMode}. The panel
+   * refuses the switch (and says why) before it ever gets this far; this is the layer that cannot
+   * be bypassed, whatever the caller is: a persisted preference from a trusted folder, a reload,
+   * a sub-agent that inherited "write" access.
+   *
+   * Absent = TRUSTED: tool-only contexts and tests have no Workspace Trust to consult, and
+   * "nobody told me" must never silently downgrade a real session.
+   */
+  workspaceTrusted?: () => boolean;
   /** Identity of this agent, passed to tools that keep per-conversation state
    * (e.g. TodoWrite): each session and each sub-agent gets its OWN state. */
   ownerId?: string;
@@ -228,6 +243,10 @@ export class Agent implements ChatController {
    * with it does not lose them under a flip. `delegationEnabled` stays the PENDING choice
    * (what the next run will use). */
   private runDelegation = false;
+  /** The tool names the model was OFFERED this turn — what an `Unknown tool` reply must
+   * list. Not the whole registry: a tool switched off for the session is not an option,
+   * and naming it would send the model into a second refusal. */
+  private offeredToolNames: string[] = [];
   /** Loop detection/breaking state (reset per run). */
   private readonly guard: LoopGuard;
   /** Per-session concurrent sub-agent cap: undefined = fall back to the config
@@ -280,9 +299,26 @@ export class Agent implements ChatController {
   }
 
   /** Switch chat mode: "analyze" (read-only) or "agent" (full tools). Takes effect on the
-   * NEXT run (see runMode): a run in flight keeps the mode it started with. */
+   * NEXT run (see runMode): a run in flight keeps the mode it started with.
+   *
+   * An UNTRUSTED folder (Restricted Mode) can only ever resolve to Analyze: Build is a promise to
+   * write and to run, and that is exactly what Workspace Trust is asked about. The coercion lives
+   * here — the one place every caller goes through — so no path (a saved preference, a reload, a
+   * sub-agent with write access) can talk itself into Build. */
   setMode(mode: ChatMode): void {
-    this._mode = mode === "agent" ? "agent" : DEFAULT_CHAT_MODE;
+    const trusted = this.deps.workspaceTrusted?.() ?? true;
+    this._mode = mode === "agent" && trusted ? "agent" : DEFAULT_CHAT_MODE;
+  }
+
+  /**
+   * The mode the NEXT run will use — i.e. what {@link setMode} actually ACCEPTED, not what the
+   * caller asked for (Restricted Mode resolves "agent" to Analyze). Read by callers that must
+   * REPORT what happened instead of assuming it: a sub-agent whose "write access" was resolved to
+   * Analyze prepared previews, and its report has to say so, or the orchestrator is told a
+   * write succeeded when nothing was written.
+   */
+  get mode(): ChatMode {
+    return this._mode;
   }
 
   get streaming(): boolean {
@@ -1075,6 +1111,9 @@ export class Agent implements ChatController {
       scope: this.deps.toolScope?.(),
     });
     const toolDefinitions: ToolDefinition[] = toolDefinitionsOverride ?? modeDefs;
+    // Remembered for the `Unknown tool` reply: the model may only be told about what it
+    // was actually offered (a forced tool-less turn offers nothing, and says so).
+    this.offeredToolNames = toolDefinitions.map((d) => d.name);
 
     const messages: LLMMessage[] = [
       {
@@ -1310,7 +1349,14 @@ export class Agent implements ChatController {
 
   /** The Analyze policy of a tool, by name. Unknown ⇒ `refuse` (see AnalyzePolicy). */
   private analyzePolicyFor(name: string): AnalyzePolicy {
-    return this.deps.tools.get(name)?.analyzePolicy ?? DEFAULT_ANALYZE_POLICY;
+    const own: AnalyzePolicy = this.deps.tools.get(name)?.analyzePolicy ?? DEFAULT_ANALYZE_POLICY;
+    if (own === "read-only") return own;
+    // The per-TOOL declaration is the SESSION's (ToolScope.analyze), so it is applied HERE — where
+    // the session is known — and not inside the tool: the registry is global, and one conversation
+    // allowing a tool must not allow it for the tab next to it. The overlay can only WIDEN
+    // (refuse → read-only): a request of this conversation cannot revoke its server's own
+    // declaration, which is a fact of the INSTALL, not a choice of the run.
+    return declaresReadOnlyInAnalyze(name, this.deps.toolScope?.()) ? "read-only" : own;
   }
 
   private async executeToolSafely(tc: ToolCall): Promise<ToolResult> {
@@ -1320,7 +1366,13 @@ export class Agent implements ChatController {
     // the tool list.
     if (tc.name === DELEGATE_TOOL_NAME) return this.executeDelegate(tc);
     const tool: Tool | undefined = this.deps.tools.get(tc.name);
-    if (!tool) return { content: `Unknown tool: ${tc.name}`, isError: true };
+    // The reply carries the DIAGNOSIS and the list, not just the name: a tool result is the
+    // only channel the model can learn from, and a bare "Unknown tool" taught it nothing —
+    // a call whose name had the arguments glued to it came back, was repeated, and left a
+    // bubble wearing the default wrench. See unknown-tool.ts.
+    if (!tool) {
+      return { content: unknownToolMessage(tc.name, this.offeredToolNames), isError: true };
+    }
     // Analyze (read-only PREVIEW) mode — the promise is "no resource is modified", and
     // the TOOL says how it keeps it (see AnalyzePolicy). The default is `refuse`: a tool
     // nobody described (a new MCP server, a plugin, a tool added tomorrow) is NOT assumed

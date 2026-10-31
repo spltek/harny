@@ -7,6 +7,7 @@ import { join } from "node:path";
 const state = vi.hoisted(() => ({
   registerWebviewViewProvider: vi.fn(() => ({ dispose: () => {} })),
   onDidChangeWorkspaceFolders: vi.fn(() => ({ dispose: () => {} })),
+  onDidGrantWorkspaceTrust: vi.fn(() => ({ dispose: () => {} })),
   onDidChangeConfiguration: vi.fn(() => ({ dispose: () => {} })),
   executeCommand: vi.fn(async () => undefined),
   registerCommand: vi.fn(() => ({ dispose: () => {} })),
@@ -16,6 +17,8 @@ const state = vi.hoisted(() => ({
   showOpenDialog: vi.fn(async () => undefined),
   createOutputChannel: vi.fn(() => ({ appendLine: vi.fn(), dispose: vi.fn() })),
   workspaceFolders: undefined as { uri: { fsPath: string } }[] | undefined,
+  /** Workspace Trust verdict: false = Restricted Mode (the panel must stay, the writes not). */
+  isTrusted: true,
 }));
 
 vi.mock("vscode", () => ({
@@ -38,6 +41,13 @@ vi.mock("vscode", () => ({
     }),
     onDidChangeConfiguration: state.onDidChangeConfiguration,
     onDidChangeWorkspaceFolders: state.onDidChangeWorkspaceFolders,
+    // Workspace Trust: `isTrusted` is read LIVE before every mode decision, and granting trust
+    // re-pushes the panel. The PROPERTY may be absent (undefined = trusted, which is what this
+    // mock means); the SUBSCRIPTION may not — activation would throw a TypeError without it.
+    get isTrusted() {
+      return state.isTrusted;
+    },
+    onDidGrantWorkspaceTrust: state.onDidGrantWorkspaceTrust,
     fs: {
       writeFile: vi.fn(async () => {}),
       readFile: vi.fn(async () => new Uint8Array()),
@@ -54,6 +64,7 @@ describe("extension activate (smoke)", () => {
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), "harny-ext-"));
     state.workspaceFolders = [{ uri: { fsPath: "/workspace" } }];
+    state.isTrusted = true;
     savedHarnyHome = process.env.HARNY_HOME;
     delete process.env.HARNY_HOME; // always use the temp globalStorage
     vi.clearAllMocks();
@@ -160,6 +171,38 @@ describe("extension activate (smoke)", () => {
     expect(state.showErrorMessage).not.toHaveBeenCalled();
 
     // Clean shutdown: dispose everything the extension registered (closes the DB).
+    dispose();
+  }, 30_000);
+
+  it("Restricted Mode (untrusted folder): the panel IS resolved, and its state says so", async () => {
+    // The field report was an empty side bar: without `capabilities.untrustedWorkspaces` the
+    // extension is DISABLED in Restricted Mode and contributes no view at all. The manifest is
+    // pinned in package-manifest.test.ts; this asserts the OTHER half — the view really resolves
+    // in that state, and the panel is TOLD the truth (`workspaceTrusted: false`), which is what
+    // disables Build and keeps the pill on Analyze.
+    const { activate } = await import("./extension");
+    const { context, dispose } = makeContext();
+    state.isTrusted = false;
+
+    await activate(context as never);
+    // Granting trust has to reach the panel without a reload (the handler rebuilds it).
+    expect(state.onDidGrantWorkspaceTrust).toHaveBeenCalled();
+
+    const panel = makePanel();
+    registeredProvider().resolveWebviewView(panel.view, {}, {});
+    await vi.waitFor(() => expect(String((panel.view.webview as any).html)).toContain('"workspaceTrusted":false'), {
+      timeout: 5000,
+    });
+
+    // …and the same page, after “Trust” at the top of the window, carries the new verdict: the
+    // whole panel (mode, Build choice, skills catalog) follows from this one live value.
+    state.isTrusted = true;
+    const onGrant = state.onDidGrantWorkspaceTrust.mock.calls[0]?.[0] as (() => void) | undefined;
+    expect(typeof onGrant).toBe("function");
+    onGrant!();
+    await vi.waitFor(() => expect(String((panel.view.webview as any).html)).toContain('"workspaceTrusted":true'), {
+      timeout: 5000,
+    });
     dispose();
   }, 30_000);
 

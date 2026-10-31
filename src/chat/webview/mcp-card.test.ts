@@ -33,7 +33,7 @@ beforeEach(() => {
 });
 
 const rows = (): HTMLElement[] => [...list.querySelectorAll<HTMLElement>(".mcp-status")];
-const switches = (): HTMLButtonElement[] => [...list.querySelectorAll<HTMLButtonElement>(".mcp-switch")];
+const switches = (): HTMLButtonElement[] => [...list.querySelectorAll<HTMLButtonElement>(".harny-switch")];
 
 const CONFIG = {
   servers: { a: { command: "node" }, b: { command: "node", enabled: false } },

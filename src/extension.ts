@@ -33,7 +33,7 @@ import {
   VscodeDiagnosticsProvider,
 } from "./core/tools";
 import { toolDefinitionsForMode } from "./core/tools/mode-policy";
-import type { ToolScope } from "./core/tools/tool-scope";
+import { mcpPrefix, type ToolScope } from "./core/tools/tool-scope";
 import { SkillRegistry, defaultSkillRoots } from "./core/skills";
 import { McpManager } from "./core/mcp";
 import { ChatViewProvider } from "./chat/chat-view";
@@ -86,10 +86,29 @@ export async function activate(context: ExtensionContext) {
   const config = new CompositeConfigProvider(new VscodeConfigProvider(), [fileConfig]);
 
   const cwd = () => root ?? process.cwd();
+  /**
+   * Is the folder open in this window TRUSTED (VS Code Workspace Trust)?
+   *
+   * `false` = Restricted Mode, and it changes what Harny may DO — not whether it is here. The
+   * extension declares `capabilities.untrustedWorkspaces: "limited"` (package.json) so the panel
+   * stays on screen instead of vanishing (an extension that disappears in Restricted Mode is
+   * indistinguishable from a broken one), and every session resolves to Analyze until the folder
+   * is trusted: reads, and changes prepared as validated previews. The verdict is read LIVE, so
+   * granting trust needs no reload (see the onDidGrantWorkspaceTrust handler below).
+   *
+   * `!== false` and NOT `=== true`: a host that does not expose Workspace Trust has not told us the
+   * folder is dirty, and must not be silently downgraded to read-only.
+   */
+  const workspaceTrusted = (): boolean => workspace.isTrusted !== false;
   // Agent Skills: discovered from the standard ecosystem dirs (skills.sh / pi /
   // Claude / Cursor …): project `.agents|.claude|.pi/skills`, then the user-level
   // equivalents. Project skills shadow user skills of the same name.
-  const skillRoots = (): string[] => defaultSkillRoots(cwd(), homedir());
+  //
+  // The PROJECT roots are workSPACE content — instructions a repo checks in and ships — so in
+  // Restricted Mode only the user-level ones are read: trusting the folder is what makes a
+  // repo's own skills count. The registry takes a thunk and reads it live, so granting trust is
+  // enough; nothing has to be reloaded.
+  const skillRoots = (): string[] => defaultSkillRoots(workspaceTrusted() ? cwd() : undefined, homedir());
   const skills = new SkillRegistry(nodeFileSystem, skillRoots);
   const tools = new ToolRegistry(
     createDefaultTools({
@@ -216,6 +235,12 @@ export async function activate(context: ExtensionContext) {
       mcp: declared.mcp.filter((name) => installed.includes(name)),
       // Built-ins are filtered against the registry: a tool this build dropped must not linger.
       off: declared.off.filter((name) => tools.getAll().some((t) => t.name === name)),
+      // Same rule for the Analyze declarations: they name `mcp__server__tool` entries, so a server
+      // that is gone (or a tool it no longer offers) takes its declaration with it.
+      analyze: declared.analyze.filter((name) => {
+        const server = installed.find((s) => name.startsWith(mcpPrefix(s)));
+        return !!server && tools.get(name) !== undefined;
+      }),
     };
   };
 
@@ -243,6 +268,9 @@ export async function activate(context: ExtensionContext) {
       // The same precondition the agent applies: a delegated sub-agent can never write into a
       // folder that is gone either.
       workspaceReady,
+      // …and the same TRUST verdict: "write access" is a request, and in Restricted Mode it
+      // resolves to Analyze (see Agent.setMode), so delegating cannot launder Build.
+      workspaceTrusted,
       // The SAME skills catalog as the orchestrator: a sub-agent activates a skill on
       // its own when the task matches one (progressive disclosure).
       skills: () => skills.list(),
@@ -286,6 +314,9 @@ export async function activate(context: ExtensionContext) {
       // The root is the ground every tool stands on: when it is gone the agent runs NO tool
       // (see runOne) and the watcher below STOPS the run, sub-agents included.
       workspaceReady,
+      // Build is a promise to write and to run; in an untrusted folder it resolves to Analyze
+      // (see Agent.setMode). Passed in so no caller can talk itself into Build.
+      workspaceTrusted,
       // Which tools THIS session may use (MCP servers on, built-ins off): read per turn, so a
       // toggle takes effect on the next one. Sub-agents inherit it (see SubAgentRunnerDeps).
       toolScope: () => toolScopeFor(sessionId),
@@ -322,6 +353,8 @@ export async function activate(context: ExtensionContext) {
       // ("Open folder…", red rows, "Change folder…").
       workspaceReady: () => !!root && existsSync(root),
       workspaceFolderCount: () => workspace.workspaceFolders?.length ?? 0,
+      // Restricted Mode: the panel stays, the WRITES do not (see workspaceTrusted above).
+      workspaceTrusted,
       currentFolder: () => root,
       pending: pendingOpens,
       configHome: resolved.home,
@@ -356,6 +389,17 @@ export async function activate(context: ExtensionContext) {
         infoLog("workspace folders changed: root=", root ?? "<none>");
         viewProvider.refresh();
       }
+    }),
+  );
+
+  // Trust granted while the panel sits still: nothing else would notice, and the panel is showing
+  // read-only because of a decision the user has just reversed. Everything follows from the live
+  // verdict (the mode, the Build choice, the skills catalog), so a rebuild is the whole update —
+  // and a session that had Build saved gets it back without another click.
+  context.subscriptions.push(
+    workspace.onDidGrantWorkspaceTrust(() => {
+      infoLog("workspace trust granted: Restricted Mode off");
+      viewProvider.refresh();
     }),
   );
 

@@ -30,3 +30,9 @@ npm-debug.log*
 
 # Extension testing
 .vscode-test/
+
+# Profiles of the debug host and of the test host (see .vscode/launch.json).
+.vscode/dev-profile/
+.vscode/dev-extensions/
+.vscode/test-profile/
+.vscode/test-extensions/

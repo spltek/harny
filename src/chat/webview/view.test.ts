@@ -154,7 +154,7 @@ function setupDom(initOverrides: Record<string, unknown> = {}, savedState: Recor
       <textarea id="mcp-args"></textarea>
       <textarea id="mcp-env"></textarea>
       <textarea id="mcp-headers"></textarea>
-      <input type="checkbox" id="mcp-enabled" />
+      <label class="mcp-enabled-row"><input type="checkbox" id="mcp-enabled" role="switch" /> Enabled</label>
       <button id="mcp-test"></button><span id="mcp-test-result"></span>
       <button id="mcp-add"></button><button id="mcp-delete"></button>
       <button id="mcp-save"></button><button id="mcp-cancel"></button>
@@ -502,6 +502,71 @@ describe("view webview client", () => {
     expect(label.textContent).toBe("Build");
     expect(btn.classList.contains("is-agent")).toBe(true);
     expect(agent.classList.contains("is-active")).toBe(true);
+  });
+
+  it("Restricted Mode (untrusted folder): Build is DISABLED and Analyze is shown, whatever the host sends", async () => {
+    // The host already resolves the mode (ChatViewProvider.effectiveMode) and sends the effective
+    // one; this is the second half of the same promise — the panel must not OFFER a choice the
+    // host will refuse, and must not paint "Build" over a read-only run if a stale "agent" ever
+    // arrives (a push from another window, a reload mid-grant).
+    await loadView();
+    const label = document.getElementById("mode-btn-label") as HTMLSpanElement;
+    const btn = document.getElementById("mode-btn") as HTMLButtonElement;
+    const agent = document.querySelector('.mode-item[data-mode="agent"]') as HTMLButtonElement;
+    const analyze = document.querySelector('.mode-item[data-mode="analyze"]') as HTMLButtonElement;
+
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        mode: "agent", // what the user asked for before the folder was opened untrusted
+        workspaceTrusted: false,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
+    });
+
+    expect(label.textContent).toBe("Analyze");
+    expect(btn.classList.contains("is-agent")).toBe(false);
+    expect(analyze.classList.contains("is-active")).toBe(true);
+    // The choice says it is unavailable, with the reason in the place the choice is made…
+    expect(agent.disabled).toBe(true);
+    expect(agent.title).toContain("Restricted Mode");
+    expect(agent.title).toContain("Trust the folder");
+    // …and a click can neither switch nor post (a disabled button fires nothing).
+    agent.click();
+    expect(posted.some((m: any) => m.type === "setMode")).toBe(false);
+    // The pill carries the same reason for whoever never opens the menu.
+    expect(btn.title).toContain("Restricted Mode");
+  });
+
+  it("…and a TRUSTED folder re-enables Build on the same surface (no reload needed)", async () => {
+    await loadView();
+    const label = document.getElementById("mode-btn-label") as HTMLSpanElement;
+    const agent = document.querySelector('.mode-item[data-mode="agent"]') as HTMLButtonElement;
+    const config = {
+      provider: "openai",
+      model: "gpt-4o",
+      hasKey: true,
+      models: [],
+      providerModels: [],
+      contextWindow: 128000,
+    };
+    hostMessage({ type: "config", config: { ...config, workspaceTrusted: false } });
+    expect(agent.disabled).toBe(true);
+    // Trust granted (extension.ts rebuilds the panel; the config arrives with the verdict).
+    hostMessage({ type: "config", config: { ...config, workspaceTrusted: true, mode: "agent" } });
+    expect(agent.disabled).toBe(false);
+    expect(agent.hasAttribute("title")).toBe(false);
+    expect(label.textContent).toBe("Build");
+    // The menu is LIVE again: both halves post, so nothing was left inert by the gate.
+    (document.querySelector('.mode-item[data-mode="analyze"]') as HTMLButtonElement).click();
+    expect(posted).toContainEqual({ type: "setMode", mode: "analyze" });
+    agent.click();
+    expect(posted).toContainEqual({ type: "setMode", mode: "agent" });
   });
 
   it("Parallel: off by default, turns blue on click and posts setParallel", async () => {
@@ -3880,7 +3945,10 @@ describe("view webview client", () => {
     const tool = document.querySelector(".msg.tool") as HTMLElement;
     expect(tool.textContent).toContain("read_file");
     expect(tool.querySelector(".tool-details")?.classList.contains("collapsed")).toBe(true);
-    expect(tool.querySelector(".tool-name")?.textContent).toContain("🔧 read_file");
+    expect(tool.querySelector(".tool-name")?.textContent).toContain("read_file");
+    // …and the unknown mark is DRAWN now, not an emoji: one artwork family, same 13px box.
+    expect(tool.querySelector(".tool-name svg")).toBeTruthy();
+    expect(tool.querySelector(".tool-name")?.textContent).not.toContain("🔧");
     // final answer is the last assistant bubble
     expect(messagesElLastContent()).toContain("Answers");
   });
@@ -3900,6 +3968,37 @@ describe("view webview client", () => {
     expect(plug.querySelector("svg")).toBeTruthy();
     expect(plug.querySelector("svg")?.innerHTML).toContain("M5.5 7.5h13"); // the plug body
     expect(plug.textContent).toContain("mcp__fs__read_file");
+  });
+
+  it("marks a name that carried the ARGUMENTS instead of painting it as a tool", async () => {
+    // A real transcript: a provider handed over a second call named `Greplike" string="true`
+    // (the arguments landed in the name field). Painted like any other tool, that bubble read
+    // as "Grep has no icon" — it is not Grep, and it is not a tool at all.
+    await loadView();
+    hostMessage({ type: "toolCall", id: "bad", name: 'Greplike" string="true', arguments: {} });
+    const card = document.querySelector(".msg.tool") as HTMLElement;
+    const name = card.querySelector(".tool-name") as HTMLElement;
+
+    // The wrongness is said in the header itself, not only in the output.
+    expect(card.dataset.toolInvalid).toBe("1");
+    expect(name.textContent).toContain('Greplike" string="true');
+    // A real tool is NOT marked: the rule must not leak onto every bubble.
+    hostMessage({ type: "toolCall", id: "good", name: "Grep", arguments: { pattern: "x" } });
+    const cards = document.querySelectorAll(".msg.tool");
+    expect((cards[cards.length - 1] as HTMLElement).dataset.toolInvalid).toBeUndefined();
+  });
+
+  it("clamps a runaway name but keeps the whole text in the title", async () => {
+    // Unclamped, a 200-char "name" pushes the header apart and the reader cannot tell where
+    // the name ends; the title is where the exact emission stays available.
+    await loadView();
+    const long = "Grep" + "x".repeat(200);
+    hostMessage({ type: "toolCall", id: "long", name: long, arguments: {} });
+    const name = document.querySelector(".msg.tool .tool-name") as HTMLElement;
+
+    expect(name.textContent).toContain("…");
+    expect(name.textContent).not.toContain(long);
+    expect(name.getAttribute("title")).toBe(long);
   });
 
   it("renders a dedicated sub-agent bubble for Delegate calls with a live status", async () => {
@@ -5656,7 +5755,7 @@ describe("view webview client", () => {
     expect((document.querySelector(".mcp-tools-btn") as HTMLButtonElement).textContent).toBe("(2 tools)");
   });
 
-  it("the tools panel edits what the model sees, and Save posts the excluded list", async () => {
+  it("the tools panel edits what the model sees, and Save posts the selection", async () => {
     await loadView();
     pushMcpTools([
       { name: "echo", description: "Echo text" },
@@ -5668,30 +5767,32 @@ describe("view webview client", () => {
     btn.click();
 
     const rows = [...document.querySelectorAll<HTMLElement>("#mcp-tools-popover .mcp-pop-row")];
-    const boxes = rows.map((r) => r.querySelector("input") as HTMLInputElement);
-    // Checked = exposed; the excluded one starts UNchecked and dimmed.
-    expect(boxes.map((b) => b.checked)).toEqual([true, false]);
+    // The EXPOSURE switch is the row's own child; the Analyze one lives inside its labelled cluster.
+    const switches = rows.map((r) => r.querySelector(":scope > .harny-switch") as HTMLButtonElement);
+    // ON = exposed; the excluded one starts OFF and dimmed. The state is `aria-checked`: these are
+    // switches, the same pill the server rows wear, not checkboxes.
+    expect(switches.map((s) => s.getAttribute("aria-checked"))).toEqual(["true", "false"]);
     expect(rows[1].classList.contains("off")).toBe(true);
     expect(document.querySelector(".mcp-pop-count")!.textContent).toBe("1 of 2 enabled");
     expect(mcpPanelSave().disabled).toBe(true); // nothing edited yet
     // A short list does not get a search box: the filter only appears past 8 tools.
     expect(document.querySelector(".mcp-pop-filter")).toBeNull();
 
-    boxes[0].click(); // hide echo
-    boxes[1].click(); // expose ping
+    switches[0].click(); // hide echo
+    switches[1].click(); // expose ping
     expect(document.querySelector(".mcp-pop-count")!.textContent).toBe("1 of 2 enabled");
     expect(rows[0].classList.contains("off")).toBe(true);
     expect(mcpPanelSave().disabled).toBe(false);
 
     posted.length = 0;
     mcpPanelSave().click();
-    // TWO messages, two axes: the MACHINE's (this server's tool list, global, reconnect) and the
-    // SESSION's, sent as INTENT (the names it wants enabled) — the host owns the spelling.
-    expect(posted).toContainEqual({ type: "setMcpToolExclusions", server: "test", exclude: ["echo"], analyze: [] });
-    expect(posted).toContainEqual({ type: "setMcpToolSelection", server: "test", enabled: ["ping"] });
+    // ONE message: the session's scope holds BOTH answers (`off` and `analyze`), so they are written
+    // together — and the config file is not touched at all (the file only seeds a new session).
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toEqual({ type: "setMcpToolSelection", server: "test", enabled: ["ping"], analyze: [] });
 
     // The host's answer closes the panel (it has already re-pushed the fresh state).
-    hostMessage({ type: "mcpToolExclusionsSaved", server: "test", ok: true });
+    hostMessage({ type: "mcpToolSelectionSaved", server: "test", ok: true });
     expect((document.getElementById("mcp-tools-popover") as HTMLElement).classList.contains("hidden")).toBe(true);
   });
 
@@ -5717,30 +5818,54 @@ describe("view webview client", () => {
     expect((document.getElementById("mcp-tools-popover") as HTMLElement).classList.contains("hidden")).toBe(true);
   });
 
+  it("the per-tool control IS the server's switch — same class, same role, same meaning", async () => {
+    // The report: the popover asked "is this tool on in this conversation?" with a checkbox while the
+    // card above asked the SAME question with a pill. Two visual languages for one question, three
+    // rows apart. They now share `harny-switch` outright, so they cannot drift back — and BOTH pills of
+    // a row are that same switch, one per question.
+    await loadView();
+    pushMcpTools([{ name: "echo" }, { name: "ping", excluded: true }]);
+    const serverSwitch = document.querySelector("#mcp-list .harny-switch") as HTMLButtonElement;
+    expect(serverSwitch).toBeTruthy();
+
+    (document.querySelector(".mcp-tools-btn") as HTMLButtonElement).click();
+    const all = [...document.querySelectorAll<HTMLButtonElement>("#mcp-tools-popover .harny-switch")];
+    expect(all).toHaveLength(4); // two rows × (exposure + Analyze)
+    for (const sw of all) {
+      // The CLASS is the contract (it brings the pill, the knob, the accent, the disabled state):
+      // asserting it per element is what makes "identical to the server toggle" a testable claim.
+      expect(sw.className).toBe(serverSwitch.className);
+      expect(sw.getAttribute("role")).toBe(serverSwitch.getAttribute("role"));
+      expect(sw.hasAttribute("aria-checked")).toBe(true);
+    }
+    // …and no checkbox is left anywhere in the form.
+    expect(document.querySelectorAll("#mcp-tools-popover input[type=checkbox]")).toHaveLength(0);
+  });
+
   it("a refused save keeps the panel open with the draft intact", async () => {
     await loadView();
     pushMcpTools([{ name: "echo" }, { name: "ping" }]);
     (document.querySelector(".mcp-tools-btn") as HTMLButtonElement).click();
-    (document.querySelector("#mcp-tools-popover .mcp-pop-row input") as HTMLInputElement).click();
+    (document.querySelector("#mcp-tools-popover .mcp-pop-row .harny-switch") as HTMLButtonElement).click();
     mcpPanelSave().click();
-    hostMessage({ type: "mcpToolExclusionsSaved", server: "test", ok: false });
+    hostMessage({ type: "mcpToolSelectionSaved", server: "test", ok: false });
     const pop = document.getElementById("mcp-tools-popover") as HTMLElement;
     expect(pop.classList.contains("hidden")).toBe(false);
     expect(document.querySelector(".mcp-pop-status")!.textContent).toContain("Save failed");
     // The choice is still there: losing the draft on a write error would be cruel.
-    const box = document.querySelector("#mcp-tools-popover .mcp-pop-row input") as HTMLInputElement;
-    expect(box.checked).toBe(false);
+    const sw = document.querySelector("#mcp-tools-popover .mcp-pop-row .harny-switch") as HTMLButtonElement;
+    expect(sw.getAttribute("aria-checked")).toBe("false");
   });
 
   it("Save is refused while a run is working (a reconnect would swap the live tool list)", async () => {
     await loadView();
     pushMcpTools([{ name: "echo" }, { name: "ping" }]);
     (document.querySelector(".mcp-tools-btn") as HTMLButtonElement).click();
-    (document.querySelector("#mcp-tools-popover .mcp-pop-row input") as HTMLInputElement).click();
+    (document.querySelector("#mcp-tools-popover .mcp-pop-row .harny-switch") as HTMLButtonElement).click();
     hostMessage({ type: "status", active: true });
     posted.length = 0;
     mcpPanelSave().click();
-    expect(posted.some((m) => (m as { type?: string }).type === "setMcpToolExclusions")).toBe(false);
+    expect(posted.some((m) => (m as { type?: string }).type === "setMcpToolSelection")).toBe(false);
     expect(document.querySelector(".mcp-pop-status")!.textContent).toContain("Stop the run first");
   });
 
@@ -5774,7 +5899,7 @@ describe("view webview client", () => {
     // The draft lives OUTSIDE the DOM, so a toggle survives the rows being rebuilt.
     filter.value = "";
     filter.dispatchEvent(new Event("input"));
-    (document.querySelector("#mcp-tools-popover .mcp-pop-row input") as HTMLInputElement).click();
+    (document.querySelector("#mcp-tools-popover .mcp-pop-row .harny-switch") as HTMLButtonElement).click();
     filter.value = "tool_4";
     filter.dispatchEvent(new Event("input"));
     expect(document.querySelector(".mcp-pop-count")!.textContent).toBe("9 of 10 enabled");
@@ -5963,7 +6088,7 @@ describe("view webview client", () => {
     });
     // The host says: this session uses `a` and not `b`.
     hostMessage({ type: "toolScope", scope: { mcp: ["a"], off: [] } });
-    const sw = [...document.querySelectorAll<HTMLButtonElement>("#mcp-list .mcp-switch")];
+    const sw = [...document.querySelectorAll<HTMLButtonElement>("#mcp-list .harny-switch")];
     expect(sw.map((s) => s.getAttribute("role"))).toEqual(["switch", "switch"]);
     // The knob position IS the state (the CSS reads aria-checked), so the switch cannot lie.
     expect(sw.map((s) => s.getAttribute("aria-checked"))).toEqual(["true", "false"]);
@@ -5974,7 +6099,7 @@ describe("view webview client", () => {
 
     posted.length = 0;
     sw[0].click();
-    expect(posted).toContainEqual({ type: "setToolScope", scope: { mcp: [], off: [] } });
+    expect(posted).toContainEqual({ type: "setToolScope", scope: { mcp: [], off: [], analyze: [] } });
     // Nothing global is written by the switch.
     expect(posted.some((m) => (m as { type?: string }).type === "toggleMcpServer")).toBe(false);
   });
@@ -5994,7 +6119,7 @@ describe("view webview client", () => {
         },
       },
     });
-    const sw = () => document.querySelector("#mcp-list .mcp-switch") as HTMLButtonElement;
+    const sw = () => document.querySelector("#mcp-list .harny-switch") as HTMLButtonElement;
     expect(sw().disabled).toBe(false);
 
     hostMessage({ type: "status", active: true });
@@ -6265,65 +6390,66 @@ describe("view webview client", () => {
     expect(posted).toContainEqual({ type: "setCompactionTarget", value: 30 });
   });
 
-  it("the tools panel has a SECOND control per tool: declared read-only in Analyze", async () => {
-    // Two questions, two controls: the checkbox decides what the MODEL sees, the shield decides
-    // what may run in ANALYZE. The shield is an include list (default-deny).
+  it("the tools panel has a SECOND switch per tool: declared read-only in Analyze", async () => {
+    // Two questions, two switches — the SAME pill for both, the second one labelled "Analyze": what
+    // the model sees, and what may run in ANALYZE (an include list: default-deny).
     await loadView();
     pushMcpTools([{ name: "read_query", readOnly: true, analyzeFlag: true }, { name: "drop_table" }]);
     (document.querySelector(".mcp-tools-btn") as HTMLButtonElement).click();
-    const shields = [...document.querySelectorAll<HTMLButtonElement>("#mcp-tools-popover .mcp-pop-shield")];
-    expect(shields).toHaveLength(2);
-    // The first is declared by YOU (lit), the second is refused in Analyze (dim).
-    expect(shields.map((s) => s.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
-    expect(shields.map((s) => s.disabled)).toEqual([false, false]);
+    const runs = [...document.querySelectorAll<HTMLButtonElement>("#mcp-tools-popover .mcp-pop-analyze .harny-switch")];
+    expect(runs).toHaveLength(2);
+    // The first is declared by THIS session (on), the second is refused in Analyze (off).
+    expect(runs.map((s) => s.getAttribute("aria-checked"))).toEqual(["true", "false"]);
+    expect(runs.map((s) => s.disabled)).toEqual([false, false]);
 
     posted.length = 0;
-    shields[1].click(); // declare drop_table read-only: legal, it is YOUR word
+    runs[1].click(); // declare drop_table read-only: legal, it is this session's word
     const saveBtn = document.querySelector(
       "#mcp-tools-popover .mcp-pop-actions button:last-child",
     ) as HTMLButtonElement;
     saveBtn.click();
-    expect(posted).toContainEqual({
-      type: "setMcpToolExclusions",
-      server: "test",
-      exclude: [],
-      analyze: ["read_query", "drop_table"],
-    });
+    expect(posted).toEqual([
+      {
+        type: "setMcpToolSelection",
+        server: "test",
+        enabled: ["read_query", "drop_table"],
+        analyze: ["read_query", "drop_table"],
+      },
+    ]);
   });
 
-  it("a tool already allowed by the SERVER declaration shows an inherited shield (not a rule of yours)", async () => {
+  it("a tool allowed by the SERVER declaration shows an INHERITED Analyze switch (not a rule of ours)", async () => {
     await loadView();
     // The server is declared read-only, so every tool of it runs: `readOnly` is true and there is
-    // NO per-tool entry (`analyzeFlag` absent). The shield must say so, not fake a rule of yours.
+    // NO per-session entry (`analyzeFlag` absent). The switch must say so, not fake a rule of ours.
     pushMcpTools([{ name: "read_query", readOnly: true }]);
     (document.querySelector(".mcp-tools-btn") as HTMLButtonElement).click();
-    const shield = document.querySelector("#mcp-tools-popover .mcp-pop-shield") as HTMLButtonElement;
-    expect(shield.getAttribute("aria-pressed")).toBe("true");
+    const run = document.querySelector("#mcp-tools-popover .mcp-pop-analyze .harny-switch") as HTMLButtonElement;
+    expect(run.getAttribute("aria-checked")).toBe("true");
     // Inherited, so it is locked and says where it comes from.
-    expect(shield.disabled).toBe(true);
-    expect(shield.title).toContain("server's own Analyze declaration");
+    expect(run.disabled).toBe(true);
+    expect(run.title).toContain("declares every tool of it read-only");
   });
 
-  it("a tool excluded from the model has an INERT shield: nothing to allow in Analyze", async () => {
-    // An excluded tool is not registered at all, so its Analyze flag cannot do anything. Showing
-    // a live shield there would promise a policy that does not exist.
+  it("a tool hidden from the model has an INERT Analyze switch: nothing to allow", async () => {
+    // A hidden tool is not offered to the model at all, so its Analyze flag cannot do anything.
+    // Showing a live switch there would promise a policy that does not exist.
     await loadView();
     pushMcpTools([{ name: "read_query", readOnly: true, analyzeFlag: true }]);
     (document.querySelector(".mcp-tools-btn") as HTMLButtonElement).click();
-    const box = document.querySelector("#mcp-tools-popover .mcp-pop-row input") as HTMLInputElement;
-    const shield = document.querySelector("#mcp-tools-popover .mcp-pop-shield") as HTMLButtonElement;
-    expect(shield.disabled).toBe(false);
-    expect(shield.getAttribute("aria-pressed")).toBe("true");
+    const sw = document.querySelector("#mcp-tools-popover .mcp-pop-row > .harny-switch") as HTMLButtonElement;
+    const run = document.querySelector("#mcp-tools-popover .mcp-pop-analyze .harny-switch") as HTMLButtonElement;
+    expect(run.disabled).toBe(false);
+    expect(run.getAttribute("aria-checked")).toBe("true");
 
-    box.click(); // exclude it from the model
-    expect(shield.disabled).toBe(true);
-    expect(shield.getAttribute("aria-pressed")).toBe("false"); // nothing runs: not read-only
-    expect(shield.classList.contains("inert")).toBe(true);
-    expect(shield.title).toContain("there is nothing to allow in Analyze");
+    sw.click(); // hide it from the model
+    expect(run.disabled).toBe(true);
+    expect(run.getAttribute("aria-checked")).toBe("false"); // nothing runs: not read-only
+    expect(run.title).toContain("switch the tool on first");
 
-    box.click(); // include it again: the shield comes back with the SAVED flag
-    expect(shield.disabled).toBe(false);
-    expect(shield.getAttribute("aria-pressed")).toBe("true");
+    sw.click(); // show it again: the switch comes back with the SAVED declaration
+    expect(run.disabled).toBe(false);
+    expect(run.getAttribute("aria-checked")).toBe("true");
   });
 
   it("text that is still streaming can be SELECTED: the repaint waits for the selection", async () => {
@@ -8320,12 +8446,48 @@ describe("empty shell (no open session)", () => {
       expect(posted.some((m: any) => m.type === "openSessionFolder")).toBe(false);
     });
 
-    it("has no per-session keys: they act on a session that cannot be shown yet", async () => {
+    it("carries rename and delete, but NOT branch: a copy needs a folder, and home IS 'no folder'", async () => {
       setupHome();
       await loadView();
       const row = document.querySelector('.srow[data-id="a"]') as HTMLElement;
-      expect(row.querySelectorAll("button").length).toBe(0);
       expect(row.getAttribute("role")).toBe("button");
+      // The two keys that act BY ID on the stored row need no working directory: they are
+      // what you want when you land here and notice a session you would rather not keep.
+      expect(row.querySelector(".srow-actions .rename")).toBeTruthy();
+      expect(row.querySelector(".srow-actions .del")).toBeTruthy();
+      // …branch does: the store stamps the CURRENT root on `create`, so a copy made in this
+      // state would be born outside every workspace and live nowhere. All sessions has it.
+      expect(row.querySelector(".srow-actions .branch")).toBeNull();
+      expect(row.querySelectorAll("button").length).toBe(2);
+    });
+
+    it("rename/delete act on the row WITHOUT choosing the folder — by click and by keyboard", async () => {
+      setupHome();
+      await loadView();
+      const row = document.querySelector('.srow[data-id="a"]') as HTMLElement;
+      const rename = row.querySelector(".srow-actions .rename") as HTMLButtonElement;
+      const del = row.querySelector(".srow-actions .del") as HTMLButtonElement;
+      rename.click();
+      expect(posted).toContainEqual({ type: "renameSession", id: "a" });
+      del.click();
+      expect(posted).toContainEqual({ type: "deleteSession", id: "a" });
+      // ⏎ on ✎ bubbles to the row, which would pick a WORKSPACE instead of renaming: a
+      // write gesture disguised as another one. The row listens to its own keys only.
+      rename.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      del.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+      expect(posted.filter((m: any) => m.type === "openSessionFolder").length).toBe(0);
+    });
+
+    it("a WORKING session's keys are disabled here too (one rule for both lists)", async () => {
+      setupHome({ workingIds: ["a"] });
+      await loadView();
+      const row = document.querySelector('.srow[data-id="a"]') as HTMLElement;
+      const del = row.querySelector(".srow-actions .del") as HTMLButtonElement;
+      const rename = row.querySelector(".srow-actions .rename") as HTMLButtonElement;
+      expect(del.disabled).toBe(true);
+      expect(del.title).toContain("stop it before deleting");
+      expect(rename.disabled).toBe(true);
+      expect(rename.title).toContain("stop it before renaming");
     });
 
     it("names WHY it cannot work: no folder, or more than one", async () => {
@@ -9933,6 +10095,69 @@ describe("Insert-in hint — Queue/Steer (webview)", () => {
     expect(posted.find((m: any) => m.type === "send")).toMatchObject({ mode: "steer", text: "use Rome" });
   });
 
+  it("a keyup swallowed by a system overlay does not leave Steer stuck (macOS ⌘⇧4 / ⌘⇧5)", async () => {
+    // The screenshot / screen-recording overlay takes Cmd's keyup for itself, and the VS Code window
+    // is never deactivated — so neither `keyup` nor `blur` ever reaches this page (field report: "lo
+    // stato steer rimane incastrato"). The next ordinary KEY carries the real modifier state, so the
+    // pill cannot stay lit until the user happens to tap Ctrl/Cmd again.
+    await loadView();
+    hostMessage({ type: "status", active: true });
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true }));
+    expect(word().textContent).toBe("Steer");
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "a", metaKey: false, ctrlKey: false }));
+
+    expect(word().textContent).toBe("Queue");
+    expect(hint().classList.contains("is-steer")).toBe(false);
+  });
+
+  it("…and it is corrected BEFORE Enter reads it: a plain ⏎ QUEUES", async () => {
+    // The damage of a stuck flag is not the pill: `effectiveSendMode()` reads the same value, so the
+    // next plain Enter would have STEERED into the running loop. The correction listener runs in the
+    // CAPTURE phase for exactly this reason — a bubble listener on window fires after the
+    // textarea's own handler, one event too late.
+    await loadView();
+    hostMessage({ type: "status", active: true });
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true }));
+
+    input().value = "andrea";
+    input().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: false, bubbles: true }));
+
+    expect(posted.find((m: any) => m.type === "send")).toMatchObject({ mode: "queue", text: "andrea" });
+  });
+
+  it("a mouse move, a click or coming back into the panel also clears it (all three OSes)", async () => {
+    await loadView();
+    hostMessage({ type: "status", active: true });
+    const stuck = (): void => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true }));
+      expect(word().textContent).toBe("Steer");
+    };
+    // Motion carries the real modifier state.
+    stuck();
+    window.dispatchEvent(new MouseEvent("mousemove", { metaKey: false, ctrlKey: false }));
+    expect(word().textContent).toBe("Queue");
+    // …and so does a press, for a pointer that never moved (a click, a pen, a touch tap).
+    stuck();
+    window.dispatchEvent(new MouseEvent("mousedown", { metaKey: false, ctrlKey: false }));
+    expect(word().textContent).toBe("Queue");
+    // Back from another app: the state is UNKNOWABLE, so it starts clean.
+    stuck();
+    window.dispatchEvent(new Event("focus"));
+    expect(word().textContent).toBe("Queue");
+  });
+
+  it("while the modifier IS held none of those events clear it (the fix only ever releases)", async () => {
+    await loadView();
+    hostMessage({ type: "status", active: true });
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true }));
+    // A ⌘C copy is a keystroke WITH the modifier: it must keep Steer lit.
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "c", metaKey: true }));
+    expect(word().textContent).toBe("Steer");
+    window.dispatchEvent(new MouseEvent("mousemove", { metaKey: true, ctrlKey: false }));
+    expect(word().textContent).toBe("Steer");
+  });
+
   // ── the OTHER platform, tested on purpose ──
   //
   // Everything above runs with the UA pinned to macOS (see `MAC_USER_AGENT`): the fixture used to
@@ -9963,6 +10188,21 @@ describe("Insert-in hint — Queue/Steer (webview)", () => {
         window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control", ctrlKey: true }));
         expect(word().textContent).toBe("Steer");
         expect(hint().classList.contains("is-steer")).toBe(true);
+      });
+
+      it(`on ${name} a stuck Ctrl is released exactly the same way`, async () => {
+        setupFixture();
+        setUa(ua);
+        await loadView();
+        hostMessage({ type: "status", active: true });
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control", ctrlKey: true }));
+        expect(word().textContent).toBe("Steer");
+        // The keyup went to another window/app (Alt+Tab, a system tool): the next mouse move knows.
+        window.dispatchEvent(new MouseEvent("mousemove", { ctrlKey: false, metaKey: false }));
+        expect(word().textContent).toBe("Queue");
+        // …and here Meta is the SUPER key: a tap of it must not light the pill (it never did).
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true }));
+        expect(word().textContent).toBe("Queue");
       });
     }
 

@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ICON_NAMES, fileBadgeIcon, icon, toolIcon } from "./icons";
+import { SKILL_TOOL_NAME } from "../core/tools/skill-tool";
 
 /** Every .ts file under src/ (the walk never enters node_modules). */
 function tsSources(dir: string, out: string[] = []): string[] {
@@ -114,7 +115,7 @@ describe("icon registry", () => {
     expect(toolIcon("StrReplace")).toBe(icon("strreplace", 13));
     expect(toolIcon("TodoWrite")).toBe(icon("todowrite", 13));
     expect(toolIcon("ReadLints", 16)).toBe(icon("readlints", 16));
-    expect(toolIcon("Shell")).not.toBe("🔧 ");
+    expect(toolIcon("Shell")).toBe(icon("shell", 13));
   });
 
   it("gives every MCP tool the same plug (there can be any number of them)", () => {
@@ -139,11 +140,42 @@ describe("icon registry", () => {
     expect(heavy.match(/stroke-width=/g)).toHaveLength(1);
   });
 
-  it("falls back to the wrench for a tool nobody has drawn", () => {
-    // Not a hole in the header: an unknown tool must still read as "some tool".
-    // It is wrapped in a class so the stylesheet can size it like the SVG marks beside it — a bare
-    // glyph cannot be targeted, and an unscaled emoji next to 1.5× icons looks like a bug.
-    expect(toolIcon("read_file")).toBe('<span class="tool-emoji">🔧</span> ');
+  it("falls back to the QUESTION mark for a tool nobody has drawn", () => {
+    // Not a hole in the header, and not the 🔧 any more: the emoji was the only "mark" in the
+    // panel that was not artwork in media/icons/, it changed shape on every OS, and it said
+    // "some tool" where the truth is "no tool" — `Greplike" string="true` never was one.
+    expect(toolIcon("read_file")).toBe(icon("unknown", 13));
+    expect(toolIcon("read_file")).toContain("<svg");
+    expect(toolIcon("read_file")).not.toContain("tool-emoji");
+  });
+
+  it("gives EVERY tool the registry ships its own mark — none of them wears the default", () => {
+    // The report that produced this test: a tool card wearing the DEFAULT mark although that tool
+    // ALREADY had artwork. Nothing failed back then, because the map and the registry are two
+    // places, and a tool added to one of them is invisible to the other: the panel simply drew
+    // the generic one over a name a reader recognises, which looks like a bug and is one.
+    //
+    // So the names here are read from the TOOLS THEMSELVES (each one's `definition`), never typed
+    // by hand, and the count is cross-checked against the list the registry actually wires up: add
+    // a tool without a mark and this goes red instead of shipping a wrench.
+    const dir = join(process.cwd(), "src", "core", "tools");
+    const names = readdirSync(dir)
+      .filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts"))
+      .flatMap((file) => {
+        const source = readFileSync(join(dir, file), "utf8");
+        // `readonly definition: ToolDefinition = { name: "Read",` …
+        // `get definition(): ToolDefinition { return { name: SKILL_TOOL_NAME,` (the one constant)
+        const found = /definition(?:\(\))?\s*:[\s\S]{0,160}?\bname:\s*(?:"([^"]+)"|SKILL_TOOL_NAME)/.exec(source);
+        return found ? [found[1] ?? SKILL_TOOL_NAME] : [];
+      });
+
+    const wired = (readFileSync(join(dir, "create-default-tools.ts"), "utf8").match(/new \w+Tool\(/g) ?? []).length;
+    expect(wired).toBeGreaterThan(10); // the list is still the registry's
+    expect(names.length).toBe(wired); // …and every wired tool declared its name where we look for it
+    expect(names).toContain("Grep"); // a name we KNOW wears a mark: the walk really walks
+    for (const name of names) {
+      expect(toolIcon(name), `${name} wears the DEFAULT question mark`).not.toBe(icon("unknown", 13));
+    }
   });
 });
 

@@ -15,8 +15,15 @@ const base = {
 function cssRule(html: string, selector: string): string {
   const compact = flat(html);
   const key = selector.replace(/\s+/g, " ").trim();
-  const start = compact.indexOf(key + " {");
-  return start < 0 ? "" : compact.slice(start, compact.indexOf("}", start));
+  // The selector may be a MEMBER of a group (`.a, .b { … }`, `button.off, .a:checked { … }`): the
+  // declarations belong to the whole group, so a comma after the key is a match too — otherwise a
+  // DRY grouped rule would look like a missing one and push a copy of the declarations into the
+  // sheet just to satisfy the pin.
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const m = new RegExp(`${escaped}\\s*[,{]`).exec(compact);
+  if (!m) return "";
+  const open = compact.indexOf("{", m.index);
+  return compact.slice(m.index, compact.indexOf("}", open));
 }
 
 /** CSS whitespace collapsed: media/view.css is formatted by prettier, so the line breaks and
@@ -68,15 +75,92 @@ describe("renderViewHtml", () => {
     expect(start).toBeGreaterThan(-1);
     const rule = html.slice(start, html.indexOf("}", start));
     expect(rule).toContain("transform: scale(1.25)");
-    // All the heads are in the same rule — including the EMOJI fallback, which is not an SVG and
-    // would otherwise stay small next to the others (the reason this is a class, not a glyph).
-    expect(rule).toContain(".tool-name > .tool-emoji");
+    // All the heads are in the same rule, and every one of them is artwork now: the unknown-tool
+    // fallback used to be an EMOJI in a span, which is why this list had a `.tool-emoji` entry.
+    // It is an SVG in the same family since media/icons/unknown.svg, so the rule needs no hook
+    // for a glyph — and a class-based one would only come back with another emoji.
+    expect(rule).not.toContain(".tool-emoji");
     expect(rule).toContain(".thinking-header > svg");
     expect(rule).toContain(".subagent-header .subagent-icon");
     expect(rule).toContain(".synthetic-icon");
     // …and the LAYOUT is untouched: no width/height in that block.
     expect(rule).not.toMatch(/\bwidth:/);
     expect(rule).not.toMatch(/\bheight:/);
+  });
+
+  it("a call site may SIZE the slider — it may not repaint it", () => {
+    // The sliders are already one control: `input[type="range"]` plus the five engine pseudo-
+    // elements, defined once. What was NOT unified was the temptation to restyle at the call site:
+    // three blocks carried `accent-color: var(--accent)` (dead, since the thumb is drawn by us and
+    // `appearance` is none) plus copies of `height`, `margin`, `cursor` and `:disabled`. This pins
+    // the rule that keeps it true: a site rule owns the ROW, never the control.
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], activeId: undefined, config: {} } as never,
+    });
+    // One appearance, both engines: exactly one rule per part, and nothing per-site.
+    for (const part of [
+      "::-webkit-slider-runnable-track",
+      "::-webkit-slider-thumb",
+      "::-moz-range-track",
+      "::-moz-range-progress",
+      "::-moz-range-thumb",
+    ]) {
+      expect(html.split(`input[type="range"]${part}`).length - 1).toBe(1);
+    }
+    // No site paints a slider: no `accent-color` on any range rule, no `appearance` re-declared.
+    expect(html).not.toMatch(/input\[type="range"\][^{]*\{[^}]*accent-color/);
+    for (const sel of [".num-range", ".lg-range", '.sm-vacuum-slider input[type="range"]']) {
+      // Comments are prose (they may NAME the properties this rule refuses to set): stripped first.
+      const rule = cssRule(html, sel).replace(/\/\*[\s\S]*?\*\//g, "");
+      expect(rule, `${sel} must exist`).not.toBe("");
+      expect(rule, `${sel} must not repaint the control`).not.toMatch(
+        /accent-color|appearance|background|border-radius|box-shadow|height:|::-webkit/,
+      );
+    }
+    // …and the shared rule still IS the painting (so "unified" is not "deleted").
+    expect(cssRule(html, 'input[type="range"]::-webkit-slider-thumb')).toContain("var(--knob-shadow)");
+    expect(cssRule(html, 'input[type="range"]::-webkit-slider-runnable-track')).toContain("var(--fill");
+  });
+
+  it("every native toggle wears the SAME switch the view builds (one control, two shapes)", () => {
+    // `switch.ts` builds the pill as a button; the two static toggles of the markup are native
+    // checkboxes (their modules read `.checked`). The class name is therefore written in more than
+    // one place, and nothing links them at compile time — the stylesheet answers `:checked` and
+    // `aria-checked` with ONE rule, so a typo here would not break the build, only the look. This is
+    // the pin, and `switch.test.ts` pins the module's side (createSwitch().className).
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], activeId: undefined, config: {} } as never,
+    });
+    expect(html).toContain('<input type="checkbox" class="harny-switch" id="mcp-enabled" role="switch"');
+    expect(html).toContain('<input type="checkbox" class="harny-switch" id="lg-response" role="switch"');
+    // No OTHER checkbox is left in the page: a native tick beside a pill is the drift this ends.
+    // Comments are prose (the stylesheet is inlined in this same string and NAMES the markup it
+    // dresses), so they are stripped before counting.
+    const page = html.replace(/\/\*[\s\S]*?\*\//g, "");
+    expect([...page.matchAll(/<input[^>]*type="checkbox"/g)].length).toBe(2);
+    for (const m of page.matchAll(/<input[^>]*type="checkbox"[^>]*>/g)) {
+      expect(m[0]).toContain('class="harny-switch"');
+      expect(m[0]).toContain('role="switch"');
+    }
+  });
+
+  it("the per-tool switch of the MCP form only PLACES the server pill — it never restyles it", () => {
+    // The two controls answer one question ("is this ON in this conversation?"), so they share
+    // `.harny-switch` outright. The rule for the popover may position it and NOTHING else: a width,
+    // a height or a background here would be a second control wearing the same name — which is
+    // exactly what the checkbox it replaced was.
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], activeId: undefined, config: {} } as never,
+    });
+    const rule = cssRule(html, ".mcp-pop-row .harny-switch");
+    expect(rule).toContain("margin-top");
+    expect(rule).not.toMatch(/width:|height:|background|border-radius|box-shadow:/);
+    // …and the old checkbox hook is gone, or a checkbox would still be styled for a row that no
+    // longer has one.
+    expect(cssRule(html, ".mcp-pop-row input")).toBe("");
   });
 
   it("every modal footer follows ONE rule: drafts commit, overlays dismiss, prompts name the verb", () => {
@@ -645,8 +729,8 @@ describe("renderViewHtml", () => {
         },
       } as never,
     });
-    const track = cssRule(html, ".mcp-switch");
-    const knob = cssRule(html, ".mcp-switch::after");
+    const track = cssRule(html, ".harny-switch");
+    const knob = cssRule(html, ".harny-switch::after");
     const px = (rule: string, prop: string) => Number(new RegExp(`(?:^|[\\s;])${prop}:\\s*(\\d+)px`).exec(rule)?.[1]);
     // "the seat must be as tall as the knob": no slack above or below it, so the switch reads
     // as one object (14px track with a 10px knob looked like a hobby project).
@@ -661,15 +745,15 @@ describe("renderViewHtml", () => {
     expect(px(track, "width")).toBeGreaterThan(px(knob, "width"));
     expect(knob).toContain("border-radius: 50%");
     // …and the knob travels exactly the leftover track, so nothing pokes out on either side.
-    expect(cssRule(html, '.mcp-switch[aria-checked="true"]::after')).toContain(
+    expect(cssRule(html, '.harny-switch[aria-checked="true"]::after')).toContain(
       `translateX(${px(track, "width") - px(knob, "width")}px)`,
     );
     // OFF: a white veil (overlay-3 is white-alpha on the dark theme, black-alpha on paper) and
     // a grey dot — the "disabled" look; ON: accent track + a WHITE sphere (see below).
     expect(track).toContain("background: var(--overlay-3)");
     expect(knob).toContain("background: var(--muted-2)");
-    expect(cssRule(html, '.mcp-switch[aria-checked="true"]')).toContain("background: var(--accent)");
-    const onDot = cssRule(html, '.mcp-switch[aria-checked="true"]::after');
+    expect(cssRule(html, '.harny-switch[aria-checked="true"]')).toContain("background: var(--accent)");
+    const onDot = cssRule(html, '.harny-switch[aria-checked="true"]::after');
     // A LITERAL colour, not a themed role: the dot must look the same on both themes, so no
     // var() it could re-resolve into…
     expect(onDot).not.toContain("var(--bg)");
@@ -683,7 +767,7 @@ describe("renderViewHtml", () => {
     // The theme-dependent role from an earlier attempt is GONE, not orphaned in the palette.
     expect(html).not.toContain("switch-dot");
     // …and it is visibly unavailable while a run is working.
-    expect(cssRule(html, ".mcp-switch:disabled")).toContain("opacity: 0.3");
+    expect(cssRule(html, ".harny-switch:disabled")).toContain("opacity: 0.3");
   });
 
   it("keeps an MCP row on ONE line, so the card cannot change height while you click", () => {

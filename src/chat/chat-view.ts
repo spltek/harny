@@ -1,5 +1,7 @@
 import type { ExtensionContext, WebviewView, WebviewViewProvider, WebviewViewResolveContext } from "vscode";
 import {
+  EMPTY_TOOL_SCOPE,
+  declaresReadOnlyInAnalyze,
   mcpPrefix,
   normalizeToolScope,
   reconcileToolScope,
@@ -40,6 +42,7 @@ import type { AttachmentPart } from "./attachment-types";
 import { WorkspaceActions } from "./workspace-actions";
 import { ModalStallGuard } from "./modal-stall-guard";
 import { workspaceGoneRunNote, workspaceGoneSendNote } from "../core/agent/workspace-gone";
+import { untrustedBuildNote } from "../core/agent/workspace-trust";
 import type { PendingOpenAction, PendingOpens } from "./pending-open";
 import { debugLog, infoLog } from "../logger";
 import { preprocessJsonc } from "../core/config/jsonc";
@@ -238,6 +241,18 @@ export class ChatViewProvider implements WebviewViewProvider {
       currentFolder?: () => string | undefined;
       /** How many folders the window has open (0 = none, >1 = multi-root: both unusable). */
       workspaceFolderCount?: () => number;
+      /**
+       * Is the window's folder TRUSTED (VS Code Workspace Trust)? `false` = Restricted Mode.
+       *
+       * It does not hide the panel — an extension that vanishes reads as a broken one (see
+       * `capabilities.untrustedWorkspaces` in package.json) — it changes what a session can DO:
+       * the mode resolves to Analyze, and asking for Build is answered with the reason
+       * (`core/agent/workspace-trust.ts`) instead of being stored and silently ignored.
+       *
+       * Absent = trusted (tests, other embedders): no trust verdict to consult is not the same as
+       * "this folder is dirty".
+       */
+      workspaceTrusted?: () => boolean;
       /** Folder-opening flows (home screen, session folders). Injected by tests. */
       workspace?: WorkspaceActions;
       /** Gestures interrupted by a window reload (see pending-open.ts). */
@@ -422,6 +437,14 @@ export class ChatViewProvider implements WebviewViewProvider {
       await this.changeSessionFolder(id);
       return;
     }
+    // The folder is ALREADY this window's workspace: there is nothing to open. Asking anyway costs a
+    // reload — and, when the same folder is open in ANOTHER window, made that window come forward
+    // instead (see WorkspaceActions.isCurrent). The click means "open that session": do that, here,
+    // now. No marker is left behind either, because no reload has to be survived.
+    if (await this.workspace.isCurrent(session.folder)) {
+      await this.resumeSession(id);
+      return;
+    }
     // Remember WHY before the window reloads: the host that would carry the click is the
     // one that goes away (see PendingOpens). The session then opens by itself.
     await this.options.pending?.remember(session.folder, { kind: "session", sessionId: id });
@@ -461,6 +484,25 @@ export class ChatViewProvider implements WebviewViewProvider {
   /** True when exactly one workspace folder is open (sessions are bucketed centrally). */
   private workspaceReady(): boolean {
     return this.options.workspaceReady ? this.options.workspaceReady() : true;
+  }
+
+  /** Is this window's folder TRUSTED (VS Code Workspace Trust)? Absent = true (see the option). */
+  private workspaceTrusted(): boolean {
+    return this.options.workspaceTrusted ? this.options.workspaceTrusted() : true;
+  }
+
+  /**
+   * The mode a session really runs in — the ONE place trust becomes a mode.
+   *
+   * Restricted Mode (an untrusted folder) can only ever resolve to Analyze: Build is a promise to
+   * write and to run, and that is precisely what Workspace Trust is asked about. Everything
+   * downstream follows from this single answer — the system prompt, the tool list, the preview
+   * contract, the badge under the answer, and the pill in the panel — so the UI can never show a
+   * Build that silently previews. The stored preference is left ALONE: it is the user's choice, and
+   * trusting the folder turns it back on without another click.
+   */
+  private effectiveMode(mode: "analyze" | "agent"): "analyze" | "agent" {
+    return mode === "agent" && this.workspaceTrusted() ? "agent" : "analyze";
   }
 
   /**
@@ -512,7 +554,7 @@ export class ChatViewProvider implements WebviewViewProvider {
    */
   private ensureToolScope(rt: { sessionId: string; toolScope?: ToolScope }): void {
     if (rt.toolScope) return;
-    rt.toolScope = { mcp: [], off: this.seededToolOffList() };
+    rt.toolScope = { mcp: [], off: this.seededToolOffList(), analyze: this.seededAnalyzeList() };
     this.sessions.saveSettings(rt.sessionId, { toolScope: rt.toolScope });
   }
 
@@ -523,10 +565,32 @@ export class ChatViewProvider implements WebviewViewProvider {
     for (const [server, cfg] of Object.entries(servers)) {
       for (const tool of cfg.excludeTools ?? []) {
         const name = typeof tool === "string" ? tool.trim() : "";
-        if (name) off.push(`mcp__${server}__${name}`);
+        // Through `mcpPrefix`, so a server named `files-extra` seeds the name the registry
+        // registers (`mcp__files_extra__…`) instead of one nothing will ever match.
+        if (name) off.push(mcpPrefix(server) + sanitizeToolNamePart(name));
       }
     }
     return off;
+  }
+
+  /**
+   * The `analyzeTools` of every configured server, as the scope names the Analyze gate reads.
+   *
+   * Same deal as `excludeTools`: the FILE is the seed of a new session, not a law over every
+   * conversation. The per-tool Analyze declaration is the session's now (ToolScope.analyze), which
+   * is where the Analyze switch in the tools panel writes it — so a user who edits `analyzeTools` by hand
+   * gets it honoured by the sessions created after that, and by nothing else.
+   */
+  private seededAnalyzeList(): string[] {
+    const servers = this.providers.readMcpServers?.() ?? {};
+    const analyze: string[] = [];
+    for (const [server, cfg] of Object.entries(servers)) {
+      for (const tool of cfg.analyzeTools ?? []) {
+        const name = typeof tool === "string" ? tool.trim() : "";
+        if (name) analyze.push(mcpPrefix(server) + sanitizeToolNamePart(name));
+      }
+    }
+    return analyze;
   }
 
   /**
@@ -903,6 +967,13 @@ export class ChatViewProvider implements WebviewViewProvider {
   private async promptSwitchToBuild(sessionId: string): Promise<void> {
     const before = this.registry.get(sessionId);
     if (!before || before.mode === "agent") return; // already in Build (or gone)
+    // Restricted Mode: the CTA offers a mode the host will not run. Asking a question whose
+    // answer cannot be honoured is worse than saying no — so say WHY (the same note the pill's
+    // refused switch writes), and send the user to Workspace Trust instead of Build.
+    if (!this.workspaceTrusted()) {
+      this.view?.webview.postMessage({ type: "denied", action: "setMode", reason: untrustedBuildNote() });
+      return;
+    }
     const ok = await this.inPanelAlert({
       kind: "confirm",
       title: "Switch to Build?",
@@ -1229,8 +1300,12 @@ export class ChatViewProvider implements WebviewViewProvider {
   }
 
   /**
-   * The MCP statuses as the panel needs them: each tool flagged with whether THIS session has it
-   * off.
+   * The MCP statuses as the panel needs them: each tool flagged with what THIS session decided.
+   *
+   * Two kinds of flag, answering different questions. `off` and `analyzeFlag` are the SESSION's own
+   * (what the two switches edit); `readOnly` is what Analyze will actually do, which also includes
+   * the server's INSTALL-level declaration. The panel draws the difference: a tool that runs in
+   * Analyze because the server says so must not look like a per-tool rule did it.
    *
    * The naming rule (sanitized `mcp__server__tool`) stays HERE, on the side that owns it. The panel
    * used to rebuild those prefixes to compare them, which is how a server named `files-extra` ended
@@ -1239,15 +1314,21 @@ export class ChatViewProvider implements WebviewViewProvider {
   private mcpStatusesForView(): McpServerStatus[] {
     const statuses = this.options.mcp?.getStatuses() ?? [];
     const scope = this.activeRuntime()?.toolScope;
-    if (!scope || scope.off.length === 0) return statuses;
+    if (!scope) return statuses;
     return statuses.map((status) => ({
       ...status,
       ...(status.tools
         ? {
-            tools: status.tools.map((tool) => ({
-              ...tool,
-              ...(scope.off.includes(mcpPrefix(status.name) + sanitizeToolNamePart(tool.name)) ? { off: true } : {}),
-            })),
+            tools: status.tools.map((tool) => {
+              const name = mcpPrefix(status.name) + sanitizeToolNamePart(tool.name);
+              const declared = declaresReadOnlyInAnalyze(name, scope);
+              return {
+                ...tool,
+                ...(scope.off.includes(name) ? { off: true } : {}),
+                ...(declared ? { analyzeFlag: true } : {}),
+                ...(declared || tool.readOnly ? { readOnly: true } : {}),
+              };
+            }),
           }
         : {}),
     }));
@@ -1374,61 +1455,6 @@ export class ChatViewProvider implements WebviewViewProvider {
           this.view?.webview.postMessage({ type: "mcpServers", data: this.mcpEditorData() });
           void this.pushConfig();
         }
-        break;
-      }
-      case "setMcpToolExclusions": {
-        // The tools panel's Save: which tools of ONE server the model must not see.
-        // Written on that server's own entry — every other key survives, because the
-        // config file is the user's too (analyze, url, headers…) — then RECONNECT,
-        // which is what actually rebuilds the tool list the model is offered.
-        const name = typeof msg.server === "string" ? msg.server : "";
-        const servers = this.providers.readMcpServers?.() ?? {};
-        if (!name || !servers[name]) break;
-        // `msg` is untyped JSON from the webview: read it as `unknown[]` FIRST, so the
-        // type predicate below is what produces the string[] (filtering `any[]` does not
-        // narrow, and would hand `unknown[]` to the config writer).
-        const rawExclude: unknown = msg.exclude;
-        const excludeList: unknown[] = Array.isArray(rawExclude) ? rawExclude : [];
-        const exclude = excludeList.filter((t: unknown): t is string => typeof t === "string" && t.trim() !== "");
-        // `exclude` is ACCEPTED and IGNORED: which tools a conversation may use is the SESSION's
-        // scope now (see setToolScope), so writing it globally here would make one panel decide
-        // for every session — the exact bug this change removes. The key stays in the file only as
-        // the SEED a new session starts from (see seededToolOffList).
-        // The per-TOOL Analyze list travels with it, and with the OPPOSITE polarity: an include
-        // list of tools the user declares read-only (default-deny — a tool the server adds
-        // tomorrow is not silently allowed in Analyze).
-        const rawAnalyze: unknown = msg.analyze;
-        const analyzeList: unknown[] = Array.isArray(rawAnalyze) ? rawAnalyze : [];
-        // Trimmed: a name with a stray space would never match the tool it names.
-        const analyze = analyzeList
-          .filter((t: unknown): t is string => typeof t === "string" && t.trim() !== "")
-          .map((t) => t.trim());
-        const current = servers[name];
-        void exclude;
-        // An EMPTY list is deleted, not written as []: a server with nothing declared must look
-        // untouched in the file (see McpServerCommon.analyzeTools).
-        const analyzeTools = analyze.length > 0 ? [...new Set(analyze)] : undefined;
-        if (analyzeTools) current.analyzeTools = analyzeTools;
-        else delete current.analyzeTools;
-        infoLog(
-          `[mcp] "${name}": ${analyzeTools?.length ?? 0} tool(s) declared read-only in Analyze ` +
-            "(the session's scope decides which ones the model sees)",
-        );
-        servers[name] = current;
-        // The EXCLUDE list is a connect-time decision (it changes what is REGISTERED), so it needs
-        // a reconnect; the per-tool Analyze list is read live and does not — but they are saved
-        // together, and one reconnect for both is cheaper than two paths that can disagree.
-        const ok = this.providers.saveMcpServers?.(servers) ?? false;
-        if (ok) {
-          // NO RECONNECT. What changed is the per-tool ANALYZE declaration, which is read live at
-          // every call (see McpManager's `declaredTools`), and the tools themselves stay
-          // registered because which of them a session may use is the session's scope. Saving the
-          // shields used to respawn the server for nothing — and emptied the registry while it
-          // did, which is how a save could make the tool count flicker to zero.
-          this.view?.webview.postMessage({ type: "mcpServers", data: this.mcpEditorData() });
-          void this.pushConfig();
-        }
-        this.view?.webview.postMessage({ type: "mcpToolExclusionsSaved", server: name, ok });
         break;
       }
       case "saveMcpServers": {
@@ -1712,6 +1738,14 @@ export class ChatViewProvider implements WebviewViewProvider {
           void this.pushConfig();
           break;
         }
+        // Restricted Mode: a preference the host would refuse to honour must not be STORED —
+        // the panel would go on painting "Build" over a read-only run, which is the one thing
+        // worse than a refusal (a lie). The reason lands in the transcript, the surface being
+        // looked at; trusting the folder is the only way in, and it needs nothing else from us.
+        if (msg.mode === "agent" && !this.workspaceTrusted()) {
+          this.view?.webview.postMessage({ type: "denied", action: "setMode", reason: untrustedBuildNote() });
+          break;
+        }
         this.setSessionMode(rt, msg.mode);
         break;
       }
@@ -1730,7 +1764,7 @@ export class ChatViewProvider implements WebviewViewProvider {
           void this.pushConfig(); // re-state the host's truth, so an optimistic UI cannot stick
           break;
         }
-        const scope = normalizeToolScope(msg.scope) ?? { mcp: [], off: [] };
+        const scope = normalizeToolScope(msg.scope) ?? EMPTY_TOOL_SCOPE;
         rt.toolScope = scope;
         this.commitSetting(() => this.sessions.saveSettings(rt.sessionId, { toolScope: scope }));
         void this.pushConfig();
@@ -1738,32 +1772,47 @@ export class ChatViewProvider implements WebviewViewProvider {
       }
 
       case "setMcpToolSelection": {
-        // The tools panel's Save, as INTENT: which of one server's tools this session may use. The
-        // host turns that into scope names (sanitized prefix, merge with the other decisions) —
-        // the webview no longer knows how a tool is spelled on the wire.
+        // The tools panel's Save, as INTENT: which of one server's tools this session may use, and
+        // which of them IT declares read-only for Analyze. Both are the SESSION's decision — the
+        // same tool can be shown and read-only here, hidden there — so they travel together and land
+        // in the same row, in ONE write. Nothing in the config file is touched: the file only seeds a
+        // new session (see seededAnalyzeList / seededToolOffList).
+        // The names are the host's business (sanitized prefix, merge with the other decisions): the
+        // webview never learns how a tool is spelled on the wire.
         const server = typeof msg.server === "string" ? msg.server : "";
         const rt = this.activeRuntime();
         if (!server || !rt) break;
         const all =
           (this.options.mcp?.getStatuses() ?? []).find((s) => s.name === server)?.tools?.map((t) => t.name) ?? [];
-        const wanted = new Set(
-          (Array.isArray(msg.enabled) ? (msg.enabled as unknown[]) : []).filter(
-            (n): n is string => typeof n === "string" && n.trim() !== "",
-          ),
-        );
+        const strings = (value: unknown): string[] =>
+          (Array.isArray(value) ? (value as unknown[]) : [])
+            .filter((n): n is string => typeof n === "string")
+            .map((n) => n.trim())
+            .filter((n) => n !== "");
+        const wanted = new Set(strings(msg.enabled));
+        // An INCLUDE list, of the tools this session declares read-only. Names the server does not
+        // offer are dropped: a declaration about a tool that is gone would come back to life if the
+        // server ever renamed another one to it. Deduplicated: the wire is a UI, not a schema.
+        const declared = [...new Set(strings(msg.analyze).filter((name) => all.includes(name)))];
         const prefix = mcpPrefix(server);
-        const previous = rt.toolScope ?? { mcp: [], off: [] };
+        const previous = rt.toolScope ?? EMPTY_TOOL_SCOPE;
         const off = [
           ...previous.off.filter((name) => !name.startsWith(prefix)),
           ...all.filter((name) => !wanted.has(name)).map((name) => prefix + sanitizeToolNamePart(name)),
+        ];
+        const analyze = [
+          ...previous.analyze.filter((name) => !name.startsWith(prefix)),
+          ...declared.map((name) => prefix + sanitizeToolNamePart(name)),
         ];
         const mcp = previous.mcp.filter((name) => name !== server);
         // A server counts as ON as soon as one of its tools is: an empty selection means the
         // session is not using it at all.
         if (all.some((name) => wanted.has(name))) mcp.push(server);
-        rt.toolScope = { mcp, off };
+        rt.toolScope = { mcp, off, analyze };
         this.commitSetting(() => this.sessions.saveSettings(rt.sessionId, { toolScope: rt.toolScope }));
-        void this.pushConfig();
+        // The panel's answer: success closes the popover, a failure keeps the draft. It names the
+        // SESSION now (not the config), because that is what was written.
+        this.view?.webview.postMessage({ type: "mcpToolSelectionSaved", server, ok: true });
         break;
       }
 
@@ -2339,8 +2388,9 @@ export class ChatViewProvider implements WebviewViewProvider {
    */
   private setSessionMode(rt: SessionRuntime, mode: "analyze" | "agent"): void {
     rt.mode = mode;
-    // The agent enforces it: analyze = read-only; agent = full tools.
-    rt.agent.setMode(mode);
+    // The agent enforces it: analyze = read-only; agent = full tools. Restricted Mode resolves
+    // Build to Analyze here too (see effectiveMode) — the agent would refuse it anyway.
+    rt.agent.setMode(this.effectiveMode(mode));
     this.commitSetting(() => this.sessions.saveSettings(rt.sessionId, { mode }));
   }
 
@@ -2369,7 +2419,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       prepareAgent: () => {
         // Re-assert the controls right before the run: a session created before a
         // UI toggle (or a reloaded panel) must not send with stale mode/Parallel.
-        rt.agent.setMode(rt.mode ?? "analyze");
+        rt.agent.setMode(this.effectiveMode(rt.mode ?? "analyze"));
         rt.agent.setDelegation(rt.parallel === true);
         rt.agent.setMaxParallelSubAgents(rt.maxParallelSubAgents);
         this.applyLoopGuard(rt);
@@ -3293,6 +3343,8 @@ export class ChatViewProvider implements WebviewViewProvider {
     workspaceReady: boolean;
     /** Folders open in the window (0 = none, >1 = multi-root: both unusable). */
     workspaceFolderCount: number;
+    /** Is the window's folder TRUSTED (Workspace Trust)? False = Restricted Mode (Analyze only). */
+    workspaceTrusted: boolean;
     /** The window's root path, EVEN when it no longer exists (the UI names it). */
     workspaceFolder?: string;
     thinkingMode?: "bool" | "effort" | "type" | "reasoning" | "unspecified";
@@ -3442,6 +3494,10 @@ export class ChatViewProvider implements WebviewViewProvider {
       hasKey: !requiresApiKey(cfg),
       workspaceReady: this.workspaceReady(),
       workspaceFolderCount: this.workspaceFolderCount(),
+      // Restricted Mode travels with the config the panel already receives (no extra message to
+      // race the switch view): the view needs it to disable Build, and to know that Analyze was
+      // not the user's click.
+      workspaceTrusted: this.workspaceTrusted(),
       ...(rootPath ? { workspaceFolder: rootPath } : {}),
       models: cfg.availableModels ?? [],
       providerModels,
@@ -3452,9 +3508,10 @@ export class ChatViewProvider implements WebviewViewProvider {
       configHome: this.options.configHome ?? "",
       thinkingMode: cfg.thinkingMode,
       thinkingLevel: cfg.thinkingLevel,
-      // CONCRETE mode (never undefined): a fresh session is analyze, so the UI
-      // always mirrors what the agent actually enforces (no stale read-only).
-      mode: this.activeRuntime()?.mode ?? "analyze",
+      // CONCRETE mode (never undefined): a fresh session is analyze, so the UI always mirrors
+      // what the agent ACTUALLY enforces (no stale read-only) — including Restricted Mode, where
+      // a stored "agent" preference resolves to analyze and the panel must say so.
+      mode: this.effectiveMode(this.activeRuntime()?.mode ?? "analyze"),
       parallel: this.activeRuntime()?.parallel === true,
       // The SESSION's tool scope travels with the config it already receives: a separate message
       // would have to race the switch view (the webview drops one for a session it is not showing).

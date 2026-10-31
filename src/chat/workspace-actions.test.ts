@@ -19,11 +19,17 @@ import {
 const state = vi.hoisted(() => ({
   showOpenDialog: vi.fn(),
   executeCommand: vi.fn(async () => undefined),
+  /** What THIS window has open — the fact `isCurrent` reads (see the class). */
+  workspaceFolders: undefined as { uri: { fsPath: string } }[] | undefined,
 }));
 
 vi.mock("vscode", () => ({
   window: { showOpenDialog: state.showOpenDialog },
   commands: { executeCommand: state.executeCommand },
+  get workspace() {
+    // A GETTER on purpose: the folders change between tests (home mode → a folder → another).
+    return { workspaceFolders: state.workspaceFolders };
+  },
   Uri: { file: (p: string) => ({ fsPath: p }) },
 }));
 
@@ -32,14 +38,18 @@ beforeEach(() => {
 });
 
 /** Ports that record what they were asked, with a scripted answer. */
-function fakePorts(picked: string | undefined): {
+function fakePorts(
+  picked: string | undefined,
+  current?: string,
+): {
   ports: WorkspacePorts;
   pickFolder: ReturnType<typeof vi.fn>;
   openFolder: ReturnType<typeof vi.fn>;
 } {
   const pickFolder = vi.fn(async () => picked);
   const openFolder = vi.fn(async () => undefined);
-  return { ports: { pickFolder, openFolder } as WorkspacePorts, pickFolder, openFolder };
+  const currentFolder = vi.fn(async () => current);
+  return { ports: { pickFolder, openFolder, currentFolder } as WorkspacePorts, pickFolder, openFolder };
 }
 
 describe("WorkspaceActions", () => {
@@ -64,6 +74,36 @@ describe("WorkspaceActions", () => {
     const { ports, openFolder } = fakePorts(undefined);
     await new WorkspaceActions(ports).open("/p/a");
     expect(openFolder).toHaveBeenCalledWith("/p/a");
+  });
+
+  it("open() does NOTHING when the folder is already this window's workspace", async () => {
+    // The field report: from the Extension Development Host, choosing the folder the MAIN window
+    // has open threw the user into that window. The dev host had that folder open too — so the
+    // request was "re-open the workspace I am in", and VS Code answered it by focusing the other
+    // window that shows it. There is nothing to open: no command, no reload, no window dance.
+    const { ports, openFolder } = fakePorts(undefined, "/p/a");
+    await new WorkspaceActions(ports).open("/p/a");
+    expect(openFolder).not.toHaveBeenCalled();
+  });
+
+  it("open() still opens a DIFFERENT folder, and compares the way the OS does", async () => {
+    const { ports, openFolder } = fakePorts(undefined, "/p/a");
+    await new WorkspaceActions(ports).open("/p/b");
+    expect(openFolder).toHaveBeenCalledWith("/p/b");
+    // A trailing slash is the same folder, not a different one (folder-path.sameFolder).
+    await new WorkspaceActions(ports).open("/p/a/");
+    expect(openFolder).toHaveBeenCalledTimes(1);
+  });
+
+  it("isCurrent() answers the question the flows ask, and never guesses", async () => {
+    expect(await new WorkspaceActions(fakePorts(undefined, "/p/a").ports).isCurrent("/p/a")).toBe(true);
+    expect(await new WorkspaceActions(fakePorts(undefined, "/p/a").ports).isCurrent("/p/b")).toBe(false);
+    // No root (home mode) or no folder asked about: never "current".
+    expect(await new WorkspaceActions(fakePorts(undefined).ports).isCurrent("/p/a")).toBe(false);
+    expect(await new WorkspaceActions(fakePorts(undefined, "/p/a").ports).isCurrent(undefined)).toBe(false);
+    // A port that cannot tell (a fake) must not block a real open: undefined is not "current".
+    const blind: WorkspacePorts = { pickFolder: async () => undefined, openFolder: async () => undefined };
+    expect(await new WorkspaceActions(blind).isCurrent("/p/a")).toBe(false);
   });
 });
 
@@ -99,9 +139,39 @@ describe("VscodeWorkspacePorts (the real ports)", () => {
     expect(await new VscodeWorkspacePorts().pickFolder({ title: "T" })).toBeUndefined();
   });
 
-  it("opens the folder in the CURRENT window (forceNewWindow = false)", async () => {
+  it("opens the folder in the CURRENT window — explicitly, not by VS Code's heuristic", async () => {
+    // The bare boolean `false` (deprecated) only meant "do not FORCE a new window": with two
+    // instances on one profile — the real one and the Extension Development Host — VS Code then
+    // chose the window that already showed the workspace and brought THAT forward, instead of
+    // loading the folder where the click happened. `forceReuseWindow` names the intent.
     await new VscodeWorkspacePorts().openFolder("/p/b");
-    expect(state.executeCommand).toHaveBeenCalledWith("vscode.openFolder", { fsPath: "/p/b" }, false);
+    expect(state.executeCommand).toHaveBeenCalledWith(
+      "vscode.openFolder",
+      { fsPath: "/p/b" },
+      {
+        forceReuseWindow: true,
+      },
+    );
+  });
+
+  it("knows which folder THIS window has open — and refuses to reopen it", async () => {
+    // The whole guard end to end (real ports, mocked host): no command is issued for the folder the
+    // window already shows, which is what used to hand the request to VS Code's window heuristic.
+    await new VscodeWorkspacePorts().currentFolder().then((f) => expect(f).toBeUndefined());
+    state.workspaceFolders = [{ uri: { fsPath: "/p/b" } }];
+    expect(await new VscodeWorkspacePorts().currentFolder()).toBe("/p/b");
+
+    await new WorkspaceActions().open("/p/b");
+    expect(state.executeCommand).not.toHaveBeenCalled();
+
+    await new WorkspaceActions().open("/p/z");
+    expect(state.executeCommand).toHaveBeenCalledWith(
+      "vscode.openFolder",
+      { fsPath: "/p/z" },
+      {
+        forceReuseWindow: true,
+      },
+    );
   });
 
   it("wires the real ports by default (the production path is exercised)", async () => {
@@ -111,6 +181,12 @@ describe("VscodeWorkspacePorts (the real ports)", () => {
     const folder = await actions.pick({ title: "T" });
     if (folder) await actions.open(folder);
     expect(state.showOpenDialog).toHaveBeenCalledWith(expect.objectContaining({ title: "T" }));
-    expect(state.executeCommand).toHaveBeenCalledWith("vscode.openFolder", { fsPath: "/p/z" }, false);
+    expect(state.executeCommand).toHaveBeenCalledWith(
+      "vscode.openFolder",
+      { fsPath: "/p/z" },
+      {
+        forceReuseWindow: true,
+      },
+    );
   });
 });

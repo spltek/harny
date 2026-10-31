@@ -87,6 +87,14 @@ const panelSave = () =>
 /** The card's `(N tools)` key — re-queried every time: a config push REPLACES it. */
 const toolsKey = () => document.querySelector(".mcp-tools-btn") as HTMLButtonElement;
 
+/** Is this tool row ON? A switch, not a checkbox: the state is the attribute, `aria-checked`. */
+const switchState = (row: HTMLElement): string =>
+  (row.querySelector(":scope > .harny-switch") as HTMLButtonElement).getAttribute("aria-checked")!;
+
+/** Is this row's ANALYZE switch on? Same attribute, the second pill of the row. */
+const analyzeState = (row: HTMLElement): string =>
+  (row.querySelector(".mcp-pop-analyze .harny-switch") as HTMLButtonElement).getAttribute("aria-checked")!;
+
 beforeEach(() => {
   resetBridge();
   dir = mkdtempSync(join(tmpdir(), "harny-mcp-"));
@@ -113,24 +121,25 @@ describe("MCP tools panel, host ⇄ webview ⇄ server", () => {
     await bootClient(await pageOf(html));
     const sess = store.create("scope-1");
     provider.openSession(sess.id); // a session to hold the decision
-    await vi.waitFor(() => expect(store.summary(sess.id)?.toolScope).toEqual({ mcp: [], off: [] }));
+    await vi.waitFor(() => expect(store.summary(sess.id)?.toolScope).toEqual({ mcp: [], off: [], analyze: [] }));
 
     // Nothing is switched off yet: the panel opens fully checked.
     await vi.waitFor(() => expect(toolsKey().textContent).toBe("(2 tools)"), { timeout: 5000 });
     toolsKey().click();
     const rows = [...document.querySelectorAll<HTMLElement>("#mcp-tools-popover .mcp-pop-row")];
     expect(rows.map((r) => r.querySelector(".mcp-pop-name")!.textContent)).toEqual(["echo", "ping"]);
-    expect(rows.map((r) => (r.querySelector("input") as HTMLInputElement).checked)).toEqual([true, true]);
+    expect(rows.map((r) => switchState(r))).toEqual(["true", "true"]);
 
     // Hide `ping` and save.
-    (rows[1].querySelector("input") as HTMLInputElement).click();
+    (rows[1].querySelector(":scope > .harny-switch") as HTMLButtonElement).click();
     panelSave().click();
 
     // 1. THE SESSION carries the decision, as the name a scope holds.
     const scope = await vi.waitFor(() => {
       const value = store.summary(sess.id)?.toolScope;
-      // The server stays ON for this session (its `echo` is enabled): only `ping` is off, by name.
-      expect(value).toEqual({ mcp: ["test"], off: ["mcp__test__ping"] });
+      // The server stays ON for this session (its `echo` is enabled): only `ping` is off, by name —
+      // and the Analyze list is the session's own (empty here).
+      expect(value).toEqual({ mcp: ["test"], off: ["mcp__test__ping"], analyze: [] });
       return value;
     });
     void scope;
@@ -145,7 +154,7 @@ describe("MCP tools panel, host ⇄ webview ⇄ server", () => {
     expect(manager.getTools().map((t) => t.name)).toEqual(["mcp__test__echo", "mcp__test__ping"]);
     // 4. The model's per-turn list is filtered by that scope.
     const defs = toolDefinitionsForMode(manager.getTools(), "agent", {
-      scope: { mcp: ["test"], off: ["mcp__test__ping"] },
+      scope: { mcp: ["test"], off: ["mcp__test__ping"], analyze: [] },
     });
     expect(defs.map((d) => d.name)).toEqual(["mcp__test__echo"]);
 
@@ -155,7 +164,7 @@ describe("MCP tools panel, host ⇄ webview ⇄ server", () => {
     // Reopening shows the SAVED state.
     toolsKey().click();
     const reopened = [...document.querySelectorAll<HTMLElement>("#mcp-tools-popover .mcp-pop-row")];
-    expect(reopened.map((r) => (r.querySelector("input") as HTMLInputElement).checked)).toEqual([true, false]);
+    expect(reopened.map((r) => switchState(r))).toEqual(["true", "false"]);
   });
 
   it("a tool excluded in the FILE seeds a new session, which then owns the decision", async () => {
@@ -178,7 +187,9 @@ describe("MCP tools panel, host ⇄ webview ⇄ server", () => {
 
     // The new session starts with every server OFF and the file's exclusions carried over as
     // `off` names — so unchecking a tool in the file still means "the model must not see it".
-    await vi.waitFor(() => expect(store.summary(sess.id)?.toolScope).toEqual({ mcp: [], off: ["mcp__test__ping"] }));
+    await vi.waitFor(() =>
+      expect(store.summary(sess.id)?.toolScope).toEqual({ mcp: [], off: ["mcp__test__ping"], analyze: [] }),
+    );
 
     // The panel shows exactly that: `ping` unchecked, the card counting what the SESSION can use,
     // and the list COMPLETE so it stays editable.
@@ -186,7 +197,7 @@ describe("MCP tools panel, host ⇄ webview ⇄ server", () => {
     toolsKey().click();
     const rows = [...document.querySelectorAll<HTMLElement>("#mcp-tools-popover .mcp-pop-row")];
     expect(rows).toHaveLength(2);
-    expect(rows.map((r) => (r.querySelector("input") as HTMLInputElement).checked)).toEqual([true, false]);
+    expect(rows.map((r) => switchState(r))).toEqual(["true", "false"]);
   });
 
   it("switching every tool off keeps the server connected (zero exposed is a state, not a crash)", async () => {
@@ -203,7 +214,7 @@ describe("MCP tools panel, host ⇄ webview ⇄ server", () => {
     await bootClient(await pageOf(html));
     const sess = store.create("scope-2");
     provider.openSession(sess.id);
-    await vi.waitFor(() => expect(store.summary(sess.id)?.toolScope).toEqual({ mcp: [], off: [] }));
+    await vi.waitFor(() => expect(store.summary(sess.id)?.toolScope).toEqual({ mcp: [], off: [], analyze: [] }));
 
     await vi.waitFor(() => expect(toolsKey().textContent).toBe("(2 tools)"), { timeout: 5000 });
     toolsKey().click();
@@ -216,6 +227,7 @@ describe("MCP tools panel, host ⇄ webview ⇄ server", () => {
       expect(store.summary(sess.id)?.toolScope).toEqual({
         mcp: [],
         off: ["mcp__test__echo", "mcp__test__ping"],
+        analyze: [],
       }),
     );
     // The server is still connected and still offers both tools; only the per-turn list is empty.
@@ -223,17 +235,17 @@ describe("MCP tools panel, host ⇄ webview ⇄ server", () => {
     expect(manager.getTools()).toHaveLength(2);
     expect(
       toolDefinitionsForMode(manager.getTools(), "agent", {
-        scope: { mcp: [], off: ["mcp__test__echo", "mcp__test__ping"] },
+        scope: { mcp: [], off: ["mcp__test__echo", "mcp__test__ping"], analyze: [] },
       }),
     ).toEqual([]);
   });
 
-  it("the shield declares ONE tool read-only in Analyze, end to end (config file → gate)", async () => {
+  it("the Analyze switch declares ONE tool read-only for THIS session (scope, not the file)", async () => {
     // Nothing about the server is declared in the file: in Analyze none of its tools runs.
     setup({ command: process.execPath, args: ["-e", SERVER] });
     await manager.connect();
 
-    const { html } = wire({
+    const { provider, store, html } = wire({
       providers: {
         readMcpServers: () => config.readMcpServers(),
         saveMcpServers: (servers) => config.saveMcpServers(servers),
@@ -241,33 +253,33 @@ describe("MCP tools panel, host ⇄ webview ⇄ server", () => {
       mcp: manager,
     });
     await bootClient(await pageOf(html));
+    const sess = store.create("analyze-1");
+    provider.openSession(sess.id);
 
     await vi.waitFor(() => expect(toolsKey().textContent).toBe("(2 tools)"), { timeout: 5000 });
     // Before: both tools refuse — the server declares nothing.
     expect(manager.getTools().map((t) => t.analyzePolicy)).toEqual(["refuse", "refuse"]);
 
     toolsKey().click();
-    const shields = [...document.querySelectorAll<HTMLButtonElement>("#mcp-tools-popover .mcp-pop-shield")];
-    expect(shields.map((s) => s.getAttribute("aria-pressed"))).toEqual(["false", "false"]);
-    shields[0].click(); // declare `echo` read-only in Analyze
+    const rows = [...document.querySelectorAll<HTMLElement>("#mcp-tools-popover .mcp-pop-row")];
+    expect(rows.map(analyzeState)).toEqual(["false", "false"]);
+    (rows[0].querySelector(".mcp-pop-analyze .harny-switch") as HTMLButtonElement).click();
     panelSave().click();
 
-    // 1. the FILE carries it (an include list, next to the exclude list)…
-    await vi.waitFor(() => expect(config.readMcpServers().test.analyzeTools).toEqual(["echo"]), { timeout: 5000 });
+    // 1. the SESSION carries it, as the registered name the Analyze gate reads…
+    await vi.waitFor(() => expect(store.summary(sess.id)?.toolScope?.analyze).toEqual(["mcp__test__echo"]));
+    // 2. …and the FILE is untouched: the server's install-level keys are the user's, not this panel's.
+    expect(config.readMcpServers().test.analyzeTools).toBeUndefined();
     const raw = JSON.parse(readFileSync(join(dir, "config.json"), "utf8"));
-    expect(raw.mcpServers.test.analyzeTools).toEqual(["echo"]);
-    expect(raw.mcpServers.test.command).toBe(process.execPath); // the server survived the write
-    expect("excludeTools" in raw.mcpServers.test).toBe(false); // nothing excluded: no empty list
+    expect("analyzeTools" in raw.mcpServers.test).toBe(false);
+    // 3. the tool's own policy is the INSTALL's and does NOT move: the session's half is applied by
+    //    the agent (see agent.test.ts), the only side that knows which conversation is running.
+    expect(manager.getTools().map((t) => t.analyzePolicy)).toEqual(["refuse", "refuse"]);
 
-    // 2. the GATE followed: one tool runs in Analyze, the other still refuses.
-    await vi.waitFor(() => expect(manager.getTools().map((t) => t.analyzePolicy)).toEqual(["read-only", "refuse"]), {
-      timeout: 5000,
-    });
-
-    // 3. …and the panel reopens on the SAVED state, with the count saying it.
+    // 4. the panel reopens on the SAVED state, with the count saying it.
     toolsKey().click();
-    const reopened = [...document.querySelectorAll<HTMLButtonElement>("#mcp-tools-popover .mcp-pop-shield")];
-    expect(reopened.map((s) => s.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
+    const reopened = [...document.querySelectorAll<HTMLElement>("#mcp-tools-popover .mcp-pop-row")];
+    expect(reopened.map(analyzeState)).toEqual(["true", "false"]);
     expect(document.querySelector(".mcp-pop-count")!.textContent).toBe("2 of 2 enabled · 1 read-only in Analyze");
     expect(panelSave().disabled).toBe(true); // nothing left to save
   });

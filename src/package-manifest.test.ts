@@ -38,6 +38,23 @@ describe("package.json manifest", () => {
     const views = (contributes.views?.harny ?? []) as { id: string }[];
     expect(views.some((v) => v.id === "harny.chatView")).toBe(true);
   });
+
+  it("declares Workspace Trust support — otherwise the panel does not EXIST in Restricted Mode", () => {
+    // Reported from the field as "Harny does not appear in the panel" in a folder opened untrusted:
+    // the panel was not broken, it was never contributed. An extension that does not declare
+    // `capabilities.untrustedWorkspaces` is DISABLED in Restricted Mode by VS Code/VSCodium (the
+    // same Workbench), so its view container and webview are not rendered at all — an empty side
+    // bar with nothing to hover, nothing to click, and no hint. The declared level is `limited`
+    // on purpose: `true` would keep the panel AND let it write and run commands in a folder the
+    // user has not vetted, which is what Workspace Trust is for. `limited` + the read-only gate
+    // (see core/agent/workspace-trust.ts) is the pair that makes it honest.
+    const support = manifest.capabilities?.untrustedWorkspaces;
+    expect(support).toBeTruthy();
+    expect(["limited", true]).toContain(support.supported);
+    // The reason shown in the Extensions view must be a sentence, not a restatement.
+    expect(typeof support.description).toBe("string");
+    expect(support.description.length).toBeGreaterThan(40);
+  });
 });
 
 const ICON_SVG = join(process.cwd(), "media", "icon.svg");

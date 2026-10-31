@@ -16,10 +16,16 @@ export interface ToolScope {
   mcp: string[];
   /** Built-in tool names this session switched OFF. Empty = all of them available. */
   off: string[];
+  /** Registered names (`mcp__server__tool`) this session DECLARES read-only, so they run in
+   *  Analyze. An INCLUDE list on purpose: Analyze is denied by default, so a tool the server adds
+   *  tomorrow is not silently allowed there. Per SESSION, like `off` — the same tool can be
+   *  declared read-only in one conversation and refused in the next, and the file is only the seed
+   *  a new session starts from (see McpServerCommon.analyzeTools). */
+  analyze: string[];
 }
 
 /** A session that has decided nothing yet: every built-in on, every MCP server off. */
-export const EMPTY_TOOL_SCOPE: ToolScope = { mcp: [], off: [] };
+export const EMPTY_TOOL_SCOPE: ToolScope = { mcp: [], off: [], analyze: [] };
 
 /** The prefix MCP tools are registered under: `mcp__<server>__<tool>`. */
 const MCP_PREFIX = "mcp__";
@@ -73,7 +79,21 @@ export function normalizeToolScope(raw: unknown): ToolScope | undefined {
   }
   if (typeof raw !== "object") return undefined;
   const rec = raw as Record<string, unknown>;
-  return { mcp: cleanList(rec.mcp), off: cleanList(rec.off) };
+  // `analyze` is read like the others and DROPPED when it is junk. A row written before it existed
+  // simply has no key: the scope then declares nothing, which is the strict answer (the tool is
+  // refused in Analyze) — never a silent loosening.
+  return { mcp: cleanList(rec.mcp), off: cleanList(rec.off), analyze: cleanList(rec.analyze) };
+}
+
+/**
+ * True when THIS SESSION declared `name` read-only for Analyze.
+ *
+ * The registry a session draws its tools from is global (one `McpTool` instance serves every
+ * conversation), so the tool itself cannot answer this: the per-session statement is applied where
+ * the session is known — the agent's `analyzePolicyFor` — and the panel reads it from here too.
+ */
+export function declaresReadOnlyInAnalyze(name: string, scope: ToolScope | undefined): boolean {
+  return scope?.analyze.includes(name) ?? false;
 }
 
 /** True when this session may use `name`. */
@@ -117,6 +137,13 @@ export function reconcileToolScope(scope: ToolScope | undefined, known: KnownToo
   if (!scope) return undefined;
   const mcp = scope.mcp.filter((server) => known.servers.includes(server));
   const off = known.builtins ? scope.off.filter((tool) => known.builtins!.includes(tool)) : [...scope.off];
-  if (mcp.length === scope.mcp.length && off.length === scope.off.length) return undefined;
-  return { mcp, off };
+  // A declaration about a server that is gone is dead weight, and it must not come back with the
+  // name if the server is reinstalled (the decision belonged to that install). Tolerating a scope
+  // without the key on purpose: a row written before `analyze` existed reconciles to an empty one.
+  const before = scope.analyze ?? [];
+  const analyze = before.filter((name) => known.servers.some((server) => name.startsWith(mcpPrefix(server))));
+  if (mcp.length === scope.mcp.length && off.length === scope.off.length && analyze.length === before.length) {
+    return undefined;
+  }
+  return { mcp, off, analyze };
 }

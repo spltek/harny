@@ -284,12 +284,12 @@ describe("SqliteSessionStore — per-session settings", () => {
     // price a toggle as a full message read.
     const { store } = makeStore();
     const created = store.create("meta");
-    store.saveSettings(created.id, { toolScope: { mcp: ["files"], off: [] } });
+    store.saveSettings(created.id, { toolScope: { mcp: ["files"], off: [], analyze: [] } });
     store.saveMessages(created.id, [msg("user", "one"), msg("assistant", "two")]);
 
     const summary = store.summary(created.id);
     expect(summary?.name).toBe("meta");
-    expect(summary?.toolScope).toEqual({ mcp: ["files"], off: [] });
+    expect(summary?.toolScope).toEqual({ mcp: ["files"], off: [], analyze: [] });
     // …and an id that is not there is `undefined`, not a fabricated row.
     expect(store.summary("nope")).toBeUndefined();
   });
@@ -303,21 +303,33 @@ describe("SqliteSessionStore — per-session settings", () => {
     const loadedA = store.load(a.id).summary;
     expect("toolScope" in loadedA).toBe(false); // never decided: not stored at all
 
-    store.saveSettings(a.id, { toolScope: { mcp: [], off: [] } });
+    store.saveSettings(a.id, { toolScope: { mcp: [], off: [], analyze: [] } });
     const b = store.load(a.id).summary;
-    expect(b.toolScope).toEqual({ mcp: [], off: [] }); // decided "nothing", and it survived
+    expect(b.toolScope).toEqual({ mcp: [], off: [], analyze: [] }); // decided "nothing", and it survived
 
     // …and "decided nothing" survives a later save that does not mention the scope at all
     // (carrySummary must not drop it).
     store.saveSettings(a.id, { thinkingLevel: "low" });
-    expect(store.load(a.id).summary.toolScope).toEqual({ mcp: [], off: [] });
+    expect(store.load(a.id).summary.toolScope).toEqual({ mcp: [], off: [], analyze: [] });
   });
 
   it("normalizes junk on the way in, so the column never holds it", () => {
     const { store } = makeStore();
     const s = store.create("junk")!;
-    store.saveSettings(s.id, { toolScope: { mcp: [" a ", "a", 7], off: [" Shell "] } as never });
-    expect(store.load(s.id).summary.toolScope).toEqual({ mcp: ["a"], off: ["Shell"] });
+    store.saveSettings(s.id, { toolScope: { mcp: [" a ", "a", 7], off: [" Shell "], analyze: [" x "] } as never });
+    expect(store.load(s.id).summary.toolScope).toEqual({ mcp: ["a"], off: ["Shell"], analyze: ["x"] });
+  });
+
+  it("round-trips the per-session Analyze declarations, which is what makes them per-session", () => {
+    // The gain of keeping this in `tool_scope` instead of the config file: TWO sessions of the same
+    // workspace can disagree about the same tool, and a reload keeps them apart.
+    const { store } = makeStore();
+    const a = store.create("reader")!;
+    const b = store.create("editor")!;
+    store.saveSettings(a.id, { toolScope: { mcp: ["files"], off: [], analyze: ["mcp__files__read"] } });
+    store.saveSettings(b.id, { toolScope: { mcp: ["files"], off: [], analyze: [] } });
+    expect(store.load(a.id).summary.toolScope?.analyze).toEqual(["mcp__files__read"]);
+    expect(store.load(b.id).summary.toolScope?.analyze).toEqual([]);
   });
 
   it("loopGuard: off round-trips, and a legacy 'normal' row loads as 'medium'", () => {

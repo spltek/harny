@@ -104,20 +104,24 @@ export class McpManager {
         // failed with "MCP server is not running" while the card still showed it green.
         client.onExit?.((message) => this.markDead(name, message));
         // The Analyze gate needs the USER's declaration for this server, read live so a
-        // settings change lands on the next turn (see ServerAnalyzePolicy). The per-TOOL list is
-        // read the same way: it is the narrowest statement, and saving it does NOT reconnect the
-        // server (the policy is consulted per call, not at connect time).
+        // settings change lands on the next turn (see ServerAnalyzePolicy). This is the statement
+        // about the INSTALL ("this server cannot modify anything" / "believe its own hints") and it
+        // speaks for every conversation.
         const declared = (): ServerAnalyzePolicy | undefined => this.deps.servers()?.[name]?.analyze;
-        const declaredTools = (): string[] | undefined => this.deps.servers()?.[name]?.analyzeTools;
+        // The per-TOOL declaration is NOT read here any more: it belongs to the SESSION
+        // (ToolScope.analyze, applied by the agent's `analyzePolicyFor`) because the same tool can be
+        // declared read-only in one conversation and refused in the next. The file's `analyzeTools`
+        // survives only as the SEED a new session starts from (see ChatViewProvider.ensureToolScope),
+        // for the same reason — and with the same shape — as `excludeTools` below.
         // `excludeTools` is NOT a connect-time veto any more: which tools a conversation may use is
         // a PER-SESSION decision (see ToolScope), so registering them all is what lets a session
-        // re-enable a tool the config left out — and it means saving the panel's checkboxes no
+        // re-enable a tool the config left out — and it means saving the panel's switches no
         // longer has to reconnect anything. The key is still read: it SEEDS the default for a new
         // session (see ChatViewProvider.createNew).
         let exposed = 0;
         const taken = new Set<string>();
         for (const info of infos) {
-          const tool = new McpTool(name, info, client, declared, declaredTools);
+          const tool = new McpTool(name, info, client, declared);
           if (taken.has(tool.name)) {
             // Two raw names can sanitize to the SAME Harny name (`a-b` and `a_b`): the
             // registry keeps the first and the second would vanish without a word.
@@ -138,13 +142,11 @@ export class McpManager {
           tools: infos.map((t) => ({
             name: t.name,
             ...(t.description ? { description: t.description } : {}),
-            // The EFFECTIVE answer for this tool, so the panel's shield shows what Analyze will
-            // actually do — including a tool allowed by the server-level declaration…
-            ...(new McpTool(name, t, client, declared, declaredTools).analyzePolicy === "read-only"
-              ? { readOnly: true }
-              : {}),
-            // …and whether it is in the per-tool list, which is what the toggle edits.
-            ...(declaredTools()?.includes(t.name) ? { analyzeFlag: true } : {}),
+            // The EFFECTIVE answer for this INSTALL, so the panel can tell a tool that runs in
+            // Analyze because the server says so from one the SESSION declared: only the first is
+            // not editable here. The session's own half is added by the host, which is the only
+            // side that knows which conversation is open (see mcpStatusesForView).
+            ...(new McpTool(name, t, client, declared).analyzePolicy === "read-only" ? { readOnly: true } : {}),
           })),
         });
         this.deps.log?.(

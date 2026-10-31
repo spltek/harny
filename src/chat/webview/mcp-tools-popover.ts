@@ -1,13 +1,19 @@
 import { analyzeToolNames, offToolNames } from "./mcp-tool-flags";
+import { createSwitch, setSwitch } from "./switch";
 
 /**
- * THE MCP TOOLS POPOVER — "which of this server's tools may the model see, here?"
+ * THE MCP TOOLS POPOVER — "which of this server's tools may the model see, and which may run in
+ * Analyze? IN THIS CONVERSATION?"
  *
- * Two controls per tool, two different questions:
- *   · the CHECKBOX is the session's scope (the model sees it in this conversation);
- *   · the SHIELD is the Analyze declaration (`analyzeTools`, an INCLUDE list — Analyze is denied by
- *     default, so a tool has to be named), and when the server's own `analyze` declaration already
- *     allows everything the shield says so instead of pretending a per-tool rule did it.
+ * TWO SWITCHES PER TOOL, and they are THE panel's switch (`switch.ts` — the same pill the server
+ * list wears) because both answer a question about THIS SESSION: the left one is exposure (the model
+ * sees the tool), the right one is the Analyze declaration (the tool may run read-only in Analyze). They
+ * used to be a switch and a shield glyph, which asked two questions in two visual languages and read
+ * as "what is this checkbox?" — so the second one is labelled, and both follow the same rules:
+ *   · a DRAFT until Save, saved in ONE write with the session's scope;
+ *   · disabled when the tool is not exposed (nothing to allow) — the pill greys out, no lie;
+ *   · inherited (on and not editable) when the SERVER declares every tool of it read-only, which is
+ *     a fact of the install, not a choice of this conversation.
  *
  * Everything is a DRAFT until Save: the host persists it, and a save that wrote on every click would
  * respawn an MCP process per click. The module owns the draft, the filter, the counts and the
@@ -24,7 +30,9 @@ export interface McpToolLike {
   off?: boolean;
   /** The server declares this tool read-only (its own hint). */
   readOnly?: boolean;
-  /** YOU declared it read-only in Analyze (`analyzeTools`). */
+  /** THIS SESSION declared it read-only in Analyze (ToolScope.analyze) — what the second switch
+   *  edits, and the reason `readOnly` alone is not enough: `readOnly && !analyzeFlag` is the
+   *  inherited case, which this panel does not own. */
   analyzeFlag?: boolean;
 }
 
@@ -78,7 +86,9 @@ export function createMcpToolsPopover(deps: McpToolsPopoverDeps): McpToolsPopove
     if (!draft) return;
     if (countEl) {
       const total = draft.tools.length;
-      const readOnly = draft.analyze.size;
+      // Only the EXPOSED ones: a declaration about a tool the model cannot see has no effect in
+      // Analyze, so counting it would promise something the run will not do.
+      const readOnly = draft.tools.filter((t) => draft?.analyze.has(t.name) && !draft?.off.has(t.name)).length;
       countEl.textContent =
         `${total - draft.off.size} of ${total} enabled` + (readOnly > 0 ? ` · ${readOnly} read-only in Analyze` : "");
     }
@@ -105,25 +115,24 @@ export function createMcpToolsPopover(deps: McpToolsPopoverDeps): McpToolsPopove
     }
     for (const t of shown) {
       const off = (): boolean => !!draft?.off.has(t.name);
-      const row = document.createElement("label");
+      const declared = (): boolean => !!draft?.analyze.has(t.name);
+      /** The server declares EVERY tool of it read-only: there is nothing per-tool to decide here. */
+      const inherited = t.readOnly === true && t.analyzeFlag !== true;
+
+      // A <div>, not a <label>: the row used to wrap a checkbox, which is what made a click anywhere
+      // in it a press of that box. Each control is a BUTTON of its own, and the row is a shortcut for
+      // the FIRST one (a bigger target, the way the server list treats its name).
+      const row = document.createElement("div");
       row.className = "mcp-pop-row" + (off() ? " off" : "");
-      row.title = off() ? "Excluded: the model does not see this tool" : "Included: the model can call this tool";
-      const box = document.createElement("input");
-      box.type = "checkbox";
-      box.checked = !off();
-      box.setAttribute("aria-label", t.name);
-      box.addEventListener("change", () => {
-        if (!draft) return;
-        if (box.checked) draft.off.delete(t.name);
-        else draft.off.add(t.name);
-        row.classList.toggle("off", !box.checked);
-        row.title = box.checked
-          ? "Included: the model can call this tool"
-          : "Excluded: the model does not see this tool";
-        syncShield();
-        updateHead();
+
+      // ── SWITCH 1 of 2 · EXPOSURE: does the model SEE this tool in this conversation? The panel's
+      // one switch (src/chat/webview/switch.ts).
+      const sw = createSwitch(`${t.name}: exposed to the model`);
+      sw.addEventListener("click", (e) => {
+        e.stopPropagation(); // the row is a shortcut for THIS: one press, one flip
+        flip();
       });
-      row.appendChild(box);
+      row.appendChild(sw);
 
       const text = document.createElement("span");
       text.className = "mcp-pop-text";
@@ -139,42 +148,81 @@ export function createMcpToolsPopover(deps: McpToolsPopoverDeps): McpToolsPopove
       }
       row.appendChild(text);
 
-      // The second control: this tool runs in ANALYZE (declared read-only by YOU). The narrowest
-      // statement available, and the only way to allow one safe tool of an otherwise refused server.
-      const shield = document.createElement("button");
-      shield.type = "button";
-      /** Allowed because the SERVER says so, not because of a per-tool rule. */
-      const inherited = t.readOnly === true && t.analyzeFlag !== true;
-      const syncShield = (): void => {
-        // A tool the model cannot see is not registered at all, so its Analyze flag is inert:
-        // saying "read-only in Analyze" there would be a lie.
-        const isOff = off();
-        const on = !isOff && (!!draft?.analyze.has(t.name) || inherited);
-        shield.className =
-          "mcp-pop-shield" + (on ? " on" : "") + (inherited ? " inherited" : "") + (isOff ? " inert" : "");
-        shield.textContent = on ? "🛡" : "·";
-        shield.setAttribute("aria-pressed", String(on));
-        shield.setAttribute("aria-label", `${t.name}: ${on ? "read-only" : "not allowed"} in Analyze`);
-        shield.disabled = inherited || isOff;
-        shield.title = isOff
-          ? "The model does not see this tool, so there is nothing to allow in Analyze — include it first"
+      // ── SWITCH 2 of 2 · ANALYZE: may it RUN in Analyze? The SAME control, LABELLED — two
+      // identical pills with no words are a guessing game, and this one has no state a reader could
+      // infer from the row.
+      const analyzeBox = document.createElement("span");
+      analyzeBox.className = "mcp-pop-analyze";
+      const analyzeLabel = document.createElement("span");
+      analyzeLabel.className = "mcp-pop-analyze-label";
+      analyzeLabel.textContent = "Analyze";
+      analyzeBox.appendChild(analyzeLabel);
+      const run = createSwitch(`${t.name}: runs in Analyze`);
+      analyzeBox.appendChild(run);
+      row.appendChild(analyzeBox);
+
+      /** One writer for every visible trace of the ANALYZE state: the pill, the box, both titles. */
+      const syncAnalyze = (): void => {
+        const inert = off();
+        const on = !inert && (declared() || inherited);
+        setSwitch(run, on);
+        // DISABLED, not merely dimmed, in the two cases where a press must do nothing: there is
+        // nothing to allow (the model does not see the tool) and nothing to decide (the server
+        // declared every tool read-only). Same rule as the exposure switch on a busy run.
+        run.disabled = inert || inherited;
+        analyzeBox.classList.toggle("on", on);
+        analyzeBox.classList.toggle("inherited", inherited);
+        const say = inert
+          ? "Hidden from the model, so there is nothing to allow in Analyze — switch the tool on first"
           : inherited
-            ? "Allowed by the server's own Analyze declaration — every tool of it runs in Analyze"
-            : draft?.analyze.has(t.name)
-              ? "Read-only in Analyze because YOU said so — click to take it back"
-              : "Does NOT run in Analyze. Click to declare this tool read-only there";
+            ? "The server declares every tool of it read-only: this one runs in Analyze by the SERVER's statement, not this conversation's"
+            : declared()
+              ? "Runs in Analyze: this conversation declares it read-only. Click to take it back"
+              : "Refused in Analyze: it may modify resources, and an external call cannot be previewed. Click to declare it read-only";
+        analyzeBox.title = say;
+        run.title = say;
       };
-      shield.addEventListener("click", (e) => {
-        e.preventDefault(); // the row is a <label>: do not forward the click to the checkbox
-        e.stopPropagation();
-        if (!draft || inherited || off()) return;
+      const flipAnalyze = (): void => {
+        if (!draft || off() || inherited) return;
         if (draft.analyze.has(t.name)) draft.analyze.delete(t.name);
         else draft.analyze.add(t.name);
-        syncShield();
+        syncAnalyze();
         updateHead();
+      };
+      // ONE handler on the whole cluster, so the WORD is as clickable as the pill (the way the row's
+      // name toggles exposure) — and it stops there, or the press would reach the row and flip the
+      // OTHER switch. A disabled button also swallows its own clicks: the guard is the second belt.
+      analyzeBox.addEventListener("click", (e) => {
+        e.stopPropagation();
+        flipAnalyze();
       });
-      syncShield(); // paint the initial state: a shield without a class is not a shield
-      row.appendChild(shield);
+
+      /** Every visible trace of the EXPOSURE state — and it re-derives the other switch, because a
+       *  hidden tool cannot be declared read-only: two controls, two states, ONE row. */
+      const paint = (): void => {
+        const on = !off();
+        setSwitch(sw, on);
+        row.classList.toggle("off", !on);
+        const say = on
+          ? "The model can call this tool in this conversation"
+          : "Hidden: the model does not see this tool in this conversation";
+        row.title = say;
+        sw.title = say;
+      };
+      const flip = (): void => {
+        if (!draft) return;
+        if (draft.off.has(t.name)) draft.off.delete(t.name);
+        else draft.off.add(t.name);
+        paint();
+        syncAnalyze();
+        updateHead();
+      };
+      // The row stays a shortcut for EXPOSURE (a bigger target than a 26px pill), exactly like the
+      // server list, where the NAME toggles too. The Analyze cluster stops its own clicks above.
+      row.addEventListener("click", flip);
+
+      paint();
+      syncAnalyze();
       list.appendChild(row);
     }
   }
@@ -205,6 +253,14 @@ export function createMcpToolsPopover(deps: McpToolsPopoverDeps): McpToolsPopove
     countEl.className = "mcp-pop-count";
     head.appendChild(countEl);
     deps.popover.appendChild(head);
+
+    // One line that says what the two pills do, because they are identical by design and the WORD
+    // next to the second one is the only thing that tells them apart.
+    const legend = document.createElement("div");
+    legend.className = "mcp-pop-legend";
+    legend.textContent =
+      "Left: the model sees the tool · Analyze: it may run read-only · Both for this conversation only";
+    deps.popover.appendChild(legend);
 
     // Only worth a filter when the list is long enough to scroll: a two-tool server does not need
     // a search box.
@@ -256,13 +312,13 @@ export function createMcpToolsPopover(deps: McpToolsPopoverDeps): McpToolsPopove
     const cancel = mini("Cancel", "Discard these changes", () => hide());
     saveEl = mini(
       "Save",
-      "Apply to this session (and to the server's config)",
+      "Apply to THIS conversation: which tools the model sees, and which run in Analyze",
       () => {
         // Captured once: a call in between resets TS's narrowing on the outer `let`.
         const d = draft;
         if (!d) return;
-        // Reconnecting mid-run would swap the tool list under a live turn (and kill any in-flight
-        // MCP call): the same reason the server's name toggle is locked. Read NOW, not at build.
+        // Writing mid-run would swap the tool list under a live turn (and kill any in-flight MCP
+        // call): the same reason the server's own switch is locked. Read NOW, not at build.
         if (deps.busy()) {
           if (statusEl) {
             statusEl.textContent = "Stop the run first";
@@ -274,20 +330,16 @@ export function createMcpToolsPopover(deps: McpToolsPopoverDeps): McpToolsPopove
           statusEl.textContent = "Saving…";
           statusEl.className = "mcp-pop-status";
         }
-        deps.post({
-          type: "setMcpToolExclusions",
-          server: d.server,
-          exclude: [...d.off],
-          // The opposite polarity rides along: the tools declared read-only in Analyze.
-          analyze: [...d.analyze],
-        });
-        // …and this SESSION's selection for the same server, sent as INTENT: the names it wants
-        // ENABLED. Turning that into scope names (sanitized prefix, merged with every other
-        // decision) is the host's job — one spelling of the rule, on the side that owns it.
+        // ONE message, ONE write: the session's scope holds BOTH answers (`off` and `analyze`), so
+        // sending them apart is how the two halves could disagree for a moment. Sent as INTENT: the
+        // names the session wants exposed and the name it declares read-only. Turning them into scope
+        // names (sanitized prefix, merged with the other decisions) is the host's job — one spelling
+        // of the rule, on the side that owns it. Nothing in the config file is written.
         deps.post({
           type: "setMcpToolSelection",
           server: d.server,
           enabled: d.tools.filter((t) => !d.off.has(t.name)).map((t) => t.name),
+          analyze: [...d.analyze],
         });
       },
       "",

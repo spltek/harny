@@ -10,12 +10,14 @@
  * What they share is exactly two decisions — WHICH folders the dialog offers, and HOW a
  * chosen folder becomes the workspace — and that is all this module owns. Two copies of
  * `commands.executeCommand("vscode.openFolder", …)` would be two chances to pass a
- * different `forceNewWindow`, i.e. two different behaviours for the same gesture.
+ * different window preference, i.e. two different behaviours for the same gesture.
  *
  * The VS Code API sits behind `WorkspacePorts` (dependency inversion): the flows above
  * are testable without a host, and a NEW flow (e.g. "open the folder and resume a
  * session") is a call, never another copy of the command string.
  */
+
+import { sameFolder } from "./folder-path";
 
 /** What the folder dialog should say and where it should start. */
 export interface FolderPickOptions {
@@ -27,12 +29,17 @@ export interface FolderPickOptions {
   defaultFolder?: string;
 }
 
-/** The two capabilities this module needs from the host. */
+/** The two capabilities this module needs from the host, plus one fact about it. */
 export interface WorkspacePorts {
   /** Ask the user for a folder. `undefined` = the dialog was cancelled. */
   pickFolder(opts: FolderPickOptions): Promise<string | undefined>;
   /** Open that folder as the window's workspace. */
   openFolder(folder: string): Promise<void>;
+  /**
+   * The folder THIS window has open, if any. Async because the real port reaches `vscode` through a
+   * dynamic import (see the class below); optional so a fake port need not know it.
+   */
+  currentFolder?(): Promise<string | undefined>;
 }
 
 /**
@@ -61,10 +68,23 @@ export class VscodeWorkspacePorts implements WorkspacePorts {
 
   async openFolder(folder: string): Promise<void> {
     const { commands, Uri } = await import("vscode");
-    // forceNewWindow = false: reuse the current window. The extension host reloads and
-    // re-derives its root from the newly opened folder, which is exactly the point — a
-    // new window would leave the panel the user is looking at untouched.
-    await commands.executeCommand("vscode.openFolder", Uri.file(folder), false);
+    // `forceReuseWindow` and NOT the bare boolean. The old call was
+    // `executeCommand("vscode.openFolder", uri, false)` — a deprecated form whose `false` only
+    // meant "do not FORCE a new window", leaving VS Code's own heuristic to choose: and that
+    // heuristic includes "a window that already shows this workspace", which in a machine with two
+    // instances (the real one and the Extension Development Host, same profile) brought the OTHER
+    // window forward instead of loading the folder in the one the user clicked in. Field report:
+    // "dall'istanza di debug salta in quella principale, forse perché lì la cartella è già aperta".
+    // Every flow here means ONE thing — this window should now show that folder — so it is said
+    // explicitly. It also stops the deprecation warning in the extension host log.
+    await commands.executeCommand("vscode.openFolder", Uri.file(folder), { forceReuseWindow: true });
+  }
+
+  async currentFolder(): Promise<string | undefined> {
+    const { workspace } = await import("vscode");
+    // The FIRST root: Harny works per single-folder workspace (`singleWorkspaceRoot`), and a
+    // multi-root window is not something it ever asks for.
+    return workspace.workspaceFolders?.[0]?.uri.fsPath;
   }
 }
 
@@ -85,8 +105,26 @@ export class WorkspaceActions {
     return this.ports.pickFolder(opts);
   }
 
+  /**
+   * Is `folder` already the workspace of THIS window?
+   *
+   * The question the flows forgot to ask. `openFolder` on the folder the window already has is not
+   * a harmless no-op: it is a request VS Code must INTERPRET, and its interpretation can be
+   * "another window already shows this — bring it forward", which is how a click in the debug
+   * instance used to throw the user into the main window (same folder, obviously). It also costs a
+   * full window reload for nothing.
+   */
+  async isCurrent(folder: string | undefined): Promise<boolean> {
+    if (!folder) return false;
+    const current = await this.ports.currentFolder?.();
+    return !!current && sameFolder(current, folder);
+  }
+
   /** Open a folder as the workspace (the window reloads onto it). */
   async open(folder: string): Promise<void> {
+    // Defence in depth: even a caller that forgot to ask (`isCurrent`) cannot make VS Code re-open
+    // the workspace it is already in.
+    if (await this.isCurrent(folder)) return;
     return this.ports.openFolder(folder);
   }
 }

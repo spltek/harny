@@ -3,8 +3,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createMcpToolsPopover, type McpToolsPopover } from "./mcp-tools-popover";
 
 /**
- * The tools popover on its own: the draft, the two controls per tool, the filter, the counts, the
- * Save as intent, and the busy rule.
+ * The tools popover on its own: the draft, the two switches per tool, the filter, the counts, the Save
+ * as intent, and the busy rule.
  *
  * The rule worth re-reading: `busy` is a GETTER. The popover outlives the moment it was built (a run
  * can start underneath it), so a captured boolean would go stale exactly when it matters — and the
@@ -35,8 +35,18 @@ beforeEach(() => {
 });
 
 const rows = (): HTMLElement[] => [...popover.querySelectorAll<HTMLElement>(".mcp-pop-row")];
-const boxes = (): HTMLInputElement[] => [...popover.querySelectorAll<HTMLInputElement>(".mcp-pop-row input")];
-const shields = (): HTMLButtonElement[] => [...popover.querySelectorAll<HTMLButtonElement>(".mcp-pop-shield")];
+/** The EXPOSURE control of each row: the SAME pill the server list wears, not a checkbox. It is the
+ *  row's first child — which is also the structural promise the CSS and the row-delegation rely on. */
+const switches = (): HTMLButtonElement[] => [
+  ...popover.querySelectorAll<HTMLButtonElement>(".mcp-pop-row > .harny-switch"),
+];
+/** The ANALYZE control of each row: the same pill, inside its labelled cluster. */
+const analyzeSwitches = (): HTMLButtonElement[] => [
+  ...popover.querySelectorAll<HTMLButtonElement>(".mcp-pop-analyze .harny-switch"),
+];
+/** Is that pill ON? The state lives in `aria-checked` (a switch has no `checked` property). */
+const onStates = (): boolean[] => switches().map((s) => s.getAttribute("aria-checked") === "true");
+const analyzeStates = (): boolean[] => analyzeSwitches().map((s) => s.getAttribute("aria-checked") === "true");
 const save = (): HTMLButtonElement =>
   popover.querySelector<HTMLButtonElement>(".mcp-pop-actions .mcp-pop-mini:not(.secondary)")!;
 const count = (): HTMLElement => popover.querySelector<HTMLElement>(".mcp-pop-count")!;
@@ -53,12 +63,27 @@ describe("opening", () => {
     expect(rows()).toHaveLength(2);
     // `read_query` is already declared read-only in Analyze, so the count says so.
     expect(count().textContent).toBe("2 of 2 enabled · 1 read-only in Analyze");
-    expect(boxes().map((b) => b.checked)).toEqual([true, true]);
+    expect(onStates()).toEqual([true, true]);
+    // Two switches, not a switch and a checkbox: the same class, role and attribute the server card
+    // uses, so the controls cannot drift into two looks for two versions of one question.
+    for (const sw of [...switches(), ...analyzeSwitches()]) {
+      expect(sw.className).toBe("harny-switch");
+      expect(sw.getAttribute("role")).toBe("switch");
+    }
+    expect(popover.querySelector(".mcp-pop-row input")).toBeNull();
   });
 
-  it("starts from the HOST's flags: a tool switched off for this session is unchecked", () => {
+  it("labels the second switch in WORDS, and says what the two columns do", () => {
+    // The user's report that started this: two identical pills with no words are a guessing game.
+    ui.show(anchor, "test", TOOLS);
+    expect(rows().map((r) => r.querySelector(".mcp-pop-analyze-label")!.textContent)).toEqual(["Analyze", "Analyze"]);
+    expect(popover.querySelector(".mcp-pop-legend")!.textContent).toContain("the model sees the tool");
+    expect(popover.querySelector(".mcp-pop-legend")!.textContent).toContain("read-only");
+  });
+
+  it("starts from the HOST's flags: a tool switched off for this session is off", () => {
     ui.show(anchor, "test", [{ name: "a", off: true }, { name: "b" }]);
-    expect(boxes().map((b) => b.checked)).toEqual([false, true]);
+    expect(onStates()).toEqual([false, true]);
     expect(rows()[0].classList.contains("off")).toBe(true);
     expect(count().textContent).toBe("1 of 2 enabled");
   });
@@ -88,13 +113,13 @@ describe("opening", () => {
 });
 
 describe("the draft", () => {
-  it("a checkbox toggles ONE tool, and Save stays disabled until something changes", () => {
+  it("a switch toggles ONE tool, and Save stays disabled until something changes", () => {
     ui.show(anchor, "test", TOOLS);
     expect(save().disabled).toBe(true);
 
-    boxes()[1].checked = false;
-    boxes()[1].dispatchEvent(new Event("change"));
+    switches()[1].click();
     expect(rows()[1].classList.contains("off")).toBe(true);
+    expect(onStates()).toEqual([true, false]);
     expect(count().textContent).toBe("1 of 2 enabled · 1 read-only in Analyze");
     expect(save().disabled).toBe(false);
   });
@@ -102,13 +127,26 @@ describe("the draft", () => {
   it("All / None flip the whole list, and come back to clean when the draft stops differing", () => {
     ui.show(anchor, "test", TOOLS);
     byText("None").click();
-    expect(boxes().map((b) => b.checked)).toEqual([false, false]);
-    expect(count().textContent).toBe("0 of 2 enabled · 1 read-only in Analyze");
+    expect(onStates()).toEqual([false, false]);
+    // The Analyze count only speaks for tools the model can SEE: hiding everything leaves nothing
+    // that could run in Analyze, so the suffix disappears instead of promising a run.
+    expect(count().textContent).toBe("0 of 2 enabled");
     expect(save().disabled).toBe(false);
 
     byText("All").click();
-    expect(boxes().map((b) => b.checked)).toEqual([true, true]);
+    expect(onStates()).toEqual([true, true]);
+    expect(count().textContent).toBe("2 of 2 enabled · 1 read-only in Analyze");
     expect(save().disabled).toBe(true); // nothing differs from what is saved
+  });
+
+  it("the whole row is a shortcut for its switch — one press, one flip", () => {
+    // The row is a <div> now, so nothing forwards a click for us: the delegation is explicit, and it
+    // must not run TWICE when the press lands on the switch itself.
+    ui.show(anchor, "test", TOOLS);
+    rows()[1].click();
+    expect(onStates()).toEqual([true, false]);
+    switches()[1].click();
+    expect(onStates()).toEqual([true, true]);
   });
 
   it("the filter narrows the rows WITHOUT rebuilding the input in use", () => {
@@ -128,72 +166,111 @@ describe("the draft", () => {
   });
 });
 
-describe("the Analyze shield", () => {
-  it("is lit for a declaration of YOURS, dim for a refused tool, and says who decided", () => {
+describe("the Analyze switch", () => {
+  it("follows the host's flags: ON for a declaration of THIS session, OFF otherwise", () => {
     ui.show(anchor, "test", TOOLS);
-    expect(shields().map((s) => s.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
-    expect(shields()[0].title).toContain("because YOU said so");
-    expect(shields()[1].title).toContain("Does NOT run in Analyze");
+    expect(analyzeStates()).toEqual([true, false]);
+    expect(analyzeSwitches()[0].title).toContain("this conversation declares it read-only");
+    expect(analyzeSwitches()[1].title).toContain("Refused in Analyze");
+    expect(analyzeSwitches()[1].disabled).toBe(false); // a tool the model can see is editable
   });
 
-  it("is INHERITED (and disabled) when the server itself declares the tool read-only", () => {
-    ui.show(anchor, "test", [{ name: "ro", readOnly: true }]); // no analyzeFlag: the server's hint
-    expect(shields()[0].className).toContain("inherited");
-    expect(shields()[0].disabled).toBe(true);
-    expect(shields()[0].title).toContain("server's own Analyze declaration");
+  it("is INHERITED (on, disabled) when the SERVER declares every tool of it read-only", () => {
+    // `readOnly` without `analyzeFlag` is the server's own statement: a fact of the INSTALL, not a
+    // decision of this conversation, so the switch must not pretend it could be taken back here.
+    ui.show(anchor, "test", [{ name: "ro", readOnly: true }]);
+    expect(analyzeStates()).toEqual([true]);
+    expect(analyzeSwitches()[0].disabled).toBe(true);
+    expect(popover.querySelector(".mcp-pop-analyze")!.classList.contains("inherited")).toBe(true);
+    expect(analyzeSwitches()[0].title).toContain("declares every tool of it read-only");
   });
 
-  it("is INERT for a tool the model cannot see, and says to include it first", () => {
+  it("is INERT for a tool the model cannot see, and says to switch it on first", () => {
+    // Same rule as the exposure switch on a busy run: no state to change, so no press to accept.
     ui.show(anchor, "test", [{ name: "a", off: true, analyzeFlag: true }]);
-    expect(shields()[0].className).toContain("inert");
-    expect(shields()[0].disabled).toBe(true);
-    expect(shields()[0].title).toContain("include it first");
+    expect(analyzeSwitches()[0].disabled).toBe(true);
+    expect(analyzeStates()).toEqual([false]); // a hidden tool does not run in Analyze, whatever it holds
+    expect(analyzeSwitches()[0].title).toContain("switch the tool on first");
   });
 
-  it("adding a tool to Analyze marks the draft dirty and counts it", () => {
+  it("turning the exposure switch off re-derives it: the two controls are one row, one state each", () => {
+    ui.show(anchor, "test", [{ name: "a", analyzeFlag: true }]);
+    expect(analyzeStates()).toEqual([true]);
+    switches()[0].click();
+    expect(onStates()).toEqual([false]);
+    expect(analyzeStates()).toEqual([false]);
+    expect(analyzeSwitches()[0].disabled).toBe(true);
+    // …and switching it back on restores the declaration: hiding a tool does not ERASE the decision.
+    switches()[0].click();
+    expect(analyzeStates()).toEqual([true]);
+    expect(analyzeSwitches()[0].disabled).toBe(false);
+  });
+
+  it("declaring a tool read-only marks the draft dirty and counts it; clicking again takes it back", () => {
     ui.show(anchor, "test", TOOLS);
-    shields()[1].click();
-    expect(shields()[1].getAttribute("aria-pressed")).toBe("true");
+    analyzeSwitches()[1].click();
+    expect(analyzeStates()[1]).toBe(true);
     expect(count().textContent).toBe("2 of 2 enabled · 2 read-only in Analyze");
     expect(save().disabled).toBe(false);
-    // Clicking again takes it back, and the count follows.
-    shields()[1].click();
+    analyzeSwitches()[1].click();
+    expect(analyzeStates()[1]).toBe(false);
     expect(count().textContent).toBe("2 of 2 enabled · 1 read-only in Analyze");
   });
 
-  it("clicking the shield does NOT toggle the checkbox of its row", () => {
+  it("is ONE press per click — the pill and the WORD both flip it exactly once", () => {
     ui.show(anchor, "test", TOOLS);
-    shields()[1].click();
-    expect(boxes()[1].checked).toBe(true); // the row is a <label>: the click must not fall through
+    // The label is part of the cluster's target, and the click on the pill bubbles to that same
+    // handler: a second flip would leave the switch exactly where it started.
+    rows()[1].querySelector<HTMLElement>(".mcp-pop-analyze-label")!.click();
+    expect(analyzeStates()[1]).toBe(true);
+    analyzeSwitches()[1].click();
+    expect(analyzeStates()[1]).toBe(false);
+  });
+
+  it("never toggles the exposure switch of its row", () => {
+    ui.show(anchor, "test", TOOLS);
+    analyzeSwitches()[1].click();
+    expect(onStates()[1]).toBe(true); // the cluster stops its own click: it answers another question
+    rows()[1].querySelector<HTMLElement>(".mcp-pop-analyze-label")!.click();
+    expect(onStates()[1]).toBe(true);
   });
 });
 
 describe("Save", () => {
-  it("posts the two axes: the config's exclusions and the SESSION's intent", () => {
+  it("posts ONE message: the session's selection and its Analyze declarations, together", () => {
+    // One write, because both answers live in the same `tool_scope` row: sending them apart is how
+    // the two halves could disagree for a moment — and the config file is not touched at all.
     ui.show(anchor, "test", TOOLS);
-    boxes()[1].checked = false;
-    boxes()[1].dispatchEvent(new Event("change"));
-    // `drop_table` is now EXCLUDED, so its shield is INERT: a tool the model cannot see has no
-    // Analyze flag to declare ("include it first"). Only the pre-existing declaration rides along.
-    shields()[1].click();
-    expect(shields()[1].disabled).toBe(true);
+    switches()[1].click(); // hide `drop_table`
     save().click();
 
+    expect(post).toHaveBeenCalledTimes(1);
     expect(post).toHaveBeenCalledWith({
-      type: "setMcpToolExclusions",
+      type: "setMcpToolSelection",
       server: "test",
-      exclude: ["drop_table"],
+      enabled: ["read_query"],
+      // The declaration of a tool that is now HIDDEN rides along untouched: hiding is not erasing.
       analyze: ["read_query"],
     });
-    // …and the session's selection, as INTENT: the names it wants ENABLED (the host spells them).
-    expect(post).toHaveBeenCalledWith({ type: "setMcpToolSelection", server: "test", enabled: ["read_query"] });
     expect(status().textContent).toBe("Saving…");
+  });
+
+  it("sends an Analyze this session ADDED, and stops sending one it took back", () => {
+    ui.show(anchor, "test", TOOLS);
+    analyzeSwitches()[1].click(); // declare `drop_table` read-only
+    analyzeSwitches()[0].click(); // …and take `read_query` back
+    save().click();
+    expect(post).toHaveBeenCalledWith({
+      type: "setMcpToolSelection",
+      server: "test",
+      enabled: ["read_query", "drop_table"],
+      analyze: ["drop_table"],
+    });
   });
 
   it("refuses while a run is in flight — and the flag is read at CLICK time", () => {
     ui.show(anchor, "test", TOOLS);
-    boxes()[1].checked = false;
-    boxes()[1].dispatchEvent(new Event("change"));
+    switches()[1].click();
     busy = true; // the run started AFTER the popover was built
     save().click();
     expect(post).not.toHaveBeenCalled();
@@ -221,15 +298,14 @@ describe("the edges", () => {
     // `hide()` hides and drops the state but leaves the DOM in place (invisible): a stray event on a
     // stale row must be inert, or a closed panel would still write.
     ui.show(anchor, "test", TOOLS);
-    const staleBox = boxes()[1];
-    const staleShield = shields()[1];
+    const staleSwitch = switches()[1];
+    const staleAnalyze = analyzeSwitches()[1];
     const staleSave = save();
     ui.hide();
     post.mockClear();
 
-    staleBox.checked = false;
-    staleBox.dispatchEvent(new Event("change"));
-    staleShield.click();
+    staleSwitch.click();
+    staleAnalyze.click();
     staleSave.click();
     expect(post).not.toHaveBeenCalled();
   });
@@ -263,11 +339,10 @@ describe("the edges", () => {
 describe("hiding", () => {
   it("empties its state, so the next open starts from the host's flags again", () => {
     ui.show(anchor, "test", [{ name: "a" }]);
-    boxes()[0].checked = false;
-    boxes()[0].dispatchEvent(new Event("change")); // a draft that was never saved
+    switches()[0].click(); // a draft that was never saved
     ui.hide();
     ui.show(anchor, "test", [{ name: "a" }]);
-    expect(boxes()[0].checked).toBe(true); // the draft did not leak
+    expect(onStates()).toEqual([true]); // the draft did not leak
     expect(save().disabled).toBe(true);
   });
 

@@ -38,6 +38,10 @@ export interface SubAgentRunnerDeps {
    *  precondition the parent agent applies, inherited so a delegated sub-agent can never
    *  write into a folder that is gone either. Absent = no check (inert). */
   workspaceReady?: () => boolean;
+  /** Is the folder TRUSTED (Workspace Trust)? Inherited for the same reason as the root itself:
+   *  a sub-agent with write access must not be the way around Restricted Mode — `setMode`
+   *  resolves a "writer" to Analyze when this says `false` (see AgentDeps.workspaceTrusted). */
+  workspaceTrusted?: () => boolean;
   /** Installed Agent Skills (catalog only): a sub-agent gets the SAME catalog as the
    * orchestrator, so it can activate a skill on its own when the task matches one. The
    * orchestrator can still point it at a specific skill in the Delegate goal/context.
@@ -186,6 +190,9 @@ export class SubAgentRunner {
       cwd: this.deps.cwd,
       // A sub-agent stands on the same ground: the root is a precondition here too.
       ...(this.deps.workspaceReady ? { workspaceReady: this.deps.workspaceReady } : {}),
+      // …and so does the TRUST verdict: "write access" is a request, and in Restricted Mode the
+      // agent resolves it to Analyze (setMode below), so delegation cannot launder Build.
+      ...(this.deps.workspaceTrusted ? { workspaceTrusted: this.deps.workspaceTrusted } : {}),
       // Same session, same window: the sub-agent sizes its masking and its tool
       // caps on the budget the host knows (see SubAgentRunnerDeps.contextBudget).
       contextBudget: this.deps.contextBudget,
@@ -216,6 +223,11 @@ export class SubAgentRunner {
       log: this.deps.log ? (m) => this.deps.log!(`subagent "${spec.id}": ${m}`) : undefined,
     });
     agent.setMode(mode);
+    // What the agent ACTUALLY accepted — and the only honest source for the report below: in an
+    // untrusted folder "write access" resolves to Analyze, so this sub-agent may have PREPARED
+    // instead of writing, and a report claiming `done` with no files touched would be a lie the
+    // orchestrator cannot detect.
+    const runMode = agent.mode;
 
     // Forward the sub-agent's live activity (thinking / text / tools) to the
     // caller, tagged by the Delegate tool call — nested streaming in the UI.
@@ -272,9 +284,9 @@ export class SubAgentRunner {
       const base = formatSubAgentReport(spec, report);
       // A READ-ONLY sub-agent that prepared previews could not write: make that
       // explicit and machine-obvious so the orchestrator re-delegates a writer.
-      const needsWrite = mode === "analyze" && prepared.length > 0;
+      const needsWrite = runMode === "analyze" && prepared.length > 0;
       const content =
-        (needsWrite ? base + subAgentEscalationNote(prepared) : base) +
+        (needsWrite ? base + subAgentEscalationNote(prepared, this.deps.workspaceTrusted?.() === false) : base) +
         structuredFooter(needsWrite ? "needs-write" : "done", touched, prepared);
       return { content, isError: false };
     } catch (e) {
@@ -318,11 +330,18 @@ function structuredFooter(
  * prepared previews: it could not write, so the orchestrator must re-delegate
  * with access "write" to apply them. Host-generated, so it cannot be forgotten
  * by a weak model. */
-function subAgentEscalationNote(changes: readonly PreparedChange[]): string {
+function subAgentEscalationNote(changes: readonly PreparedChange[], untrusted = false): string {
   const list = changes.map((c) => `- ${c.tool} \`${c.path}\``).join("\n");
   return (
     `\n\n⛔ This sub-agent ran READ-ONLY and could NOT write: it prepared previews for\n${list}\n` +
-    `Re-delegate this sub-task with access "write" (and those resources) to apply them in Build.`
+    // In an UNTRUSTED folder the usual advice is a dead end: re-delegating a writer changes
+    // nothing, because the folder itself is what has to be trusted. Telling the orchestrator to
+    // "re-delegate with access write" would send it round the same loop until the turn budget ran
+    // out — the one thing a host-generated note must never do.
+    (untrusted
+      ? `No sub-agent can write: this folder is open in Restricted Mode (Workspace Trust not granted). ` +
+        `Report these previews to the user — they apply once the folder is trusted.`
+      : `Re-delegate this sub-task with access "write" (and those resources) to apply them in Build.`)
   );
 }
 

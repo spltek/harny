@@ -388,7 +388,13 @@ describe("ChatViewProvider", () => {
       expect(state.showOpenDialog).toHaveBeenCalledWith(
         expect.objectContaining({ canSelectFiles: false, canSelectFolders: true, canSelectMany: false }),
       );
-      expect(state.executeCommand).toHaveBeenCalledWith("vscode.openFolder", { fsPath: "/home/me/new" }, false);
+      expect(state.executeCommand).toHaveBeenCalledWith(
+        "vscode.openFolder",
+        { fsPath: "/home/me/new" },
+        {
+          forceReuseWindow: true,
+        },
+      );
       // No more "exactly one open folder" alert: the folder IS the answer.
       expect(view.webview.postMessage).not.toHaveBeenCalledWith(
         expect.objectContaining({ type: "modal", kind: "alert" }),
@@ -410,7 +416,48 @@ describe("ChatViewProvider", () => {
       const { handler } = resolveWith(provider);
       state.showOpenDialog.mockResolvedValue([{ fsPath: "/p/chosen" }]);
       await handler({ type: "openWorkspace" });
-      expect(state.executeCommand).toHaveBeenCalledWith("vscode.openFolder", { fsPath: "/p/chosen" }, false);
+      expect(state.executeCommand).toHaveBeenCalledWith(
+        "vscode.openFolder",
+        { fsPath: "/p/chosen" },
+        {
+          forceReuseWindow: true,
+        },
+      );
+    });
+
+    it("a row whose folder is ALREADY this window's workspace resumes the session, with no reload", async () => {
+      // The field report, from the Extension Development Host: the same folder the main window has
+      // open was also this window's, so "open that folder" was a no-op that VS Code answered by
+      // bringing the OTHER window forward. Nothing to open, so nothing is asked: the click meant
+      // "open that session", and it does exactly that, here.
+      const pending = { remember: vi.fn(async () => {}), take: vi.fn() };
+      const workspace = {
+        pick: vi.fn(async () => undefined as string | undefined),
+        open: vi.fn(async () => undefined),
+        isCurrent: vi.fn(async () => true),
+      };
+      const { store, provider, registry } = buildHarness({ workspaceReady: () => true, workspace, pending });
+      (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+        {
+          id: "x",
+          name: "Casa",
+          createdAt: 1,
+          updatedAt: 2,
+          messageCount: 3,
+          folder: "/p/harny",
+          folderMissing: false,
+        },
+      ]);
+      const { handler } = resolveWith(provider);
+      await handler({ type: "openSessionFolder", id: "x" });
+
+      expect(workspace.open).not.toHaveBeenCalled();
+      expect(state.executeCommand).not.toHaveBeenCalledWith("vscode.openFolder", expect.anything(), expect.anything());
+      // No marker either: there is no reload to survive, so a marker would only be debris that the
+      // next window to activate would have to discard.
+      expect(pending.remember).not.toHaveBeenCalled();
+      // …and the session IS open here, in this window: the gesture finished, it did not evaporate.
+      expect(registry.listOpenIds()).toContain("x");
     });
 
     it("openSessionFolder (a HOME row) opens that session's folder and NOT the session", async () => {
@@ -428,7 +475,13 @@ describe("ChatViewProvider", () => {
       ]);
       const { handler } = resolveWith(provider);
       await handler({ type: "openSessionFolder", id: "x" });
-      expect(state.executeCommand).toHaveBeenCalledWith("vscode.openFolder", { fsPath: "/p/harny" }, false);
+      expect(state.executeCommand).toHaveBeenCalledWith(
+        "vscode.openFolder",
+        { fsPath: "/p/harny" },
+        {
+          forceReuseWindow: true,
+        },
+      );
       expect(state.showOpenDialog).not.toHaveBeenCalled();
       // Opening a session with no root would leave its tools in `process.cwd()`.
       expect(registry.listOpenIds()).toEqual([]);
@@ -440,6 +493,7 @@ describe("ChatViewProvider", () => {
       const workspace = {
         pick: vi.fn(async () => "/p/picked" as string | undefined),
         open: vi.fn(async () => undefined),
+        isCurrent: vi.fn(async () => false),
       };
       const { store, provider } = buildHarness({ workspaceReady: () => false, workspace });
       const { handler } = resolveWith(provider);
@@ -477,6 +531,7 @@ describe("ChatViewProvider", () => {
       const workspace = {
         pick: vi.fn(async () => undefined as string | undefined),
         open: vi.fn(async () => void order.push("open")),
+        isCurrent: vi.fn(async () => false),
       };
       const { store, provider } = buildHarness({ workspaceReady: () => false, workspace, pending });
       (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
@@ -498,7 +553,11 @@ describe("ChatViewProvider", () => {
 
     it("New session with no folder remembers 'create' for the folder it opens", async () => {
       const pending = { remember: vi.fn(async () => {}), take: vi.fn() };
-      const workspace = { pick: vi.fn(async () => "/p/new"), open: vi.fn(async () => undefined) };
+      const workspace = {
+        pick: vi.fn(async () => "/p/new"),
+        open: vi.fn(async () => undefined),
+        isCurrent: vi.fn(async () => false),
+      };
       const { provider } = buildHarness({ workspaceReady: () => false, workspace, pending });
       const { handler } = resolveWith(provider);
       await handler({ type: "newSession" });
@@ -508,7 +567,11 @@ describe("ChatViewProvider", () => {
 
     it("the home CTA opens a folder and remembers NOTHING (it is not a session)", async () => {
       const pending = { remember: vi.fn(async () => {}), take: vi.fn() };
-      const workspace = { pick: vi.fn(async () => "/p/x"), open: vi.fn(async () => undefined) };
+      const workspace = {
+        pick: vi.fn(async () => "/p/x"),
+        open: vi.fn(async () => undefined),
+        isCurrent: vi.fn(async () => false),
+      };
       const { provider } = buildHarness({ workspaceReady: () => false, workspace, pending });
       const { handler } = resolveWith(provider);
       await handler({ type: "openWorkspace" });
@@ -1590,6 +1653,53 @@ describe("ChatViewProvider", () => {
     expect(rt.mode).toBe("agent");
   });
 
+  it("Restricted Mode (untrusted folder): Build is REFUSED with a reason, never stored", async () => {
+    // An untrusted folder outranks the mode toggle. Storing the preference would leave the pill
+    // saying "Build" over a run that can only preview: a refusal that is EXPLAINED is honest, a
+    // promise that is not kept is not. The reason lands in the transcript (the `denied` contract)
+    // and the panel is told the truth on the next config push.
+    const { provider, registry, store } = buildHarness({ workspaceTrusted: () => false });
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    (rt.agent as any).setMode.mockClear();
+    view.webview.postMessage.mockClear();
+    // A FRESH read of the posts: pushConfig is async, so a snapshot taken before a call would
+    // simply not contain that call's push (and the assertion would blame the host).
+    const postsOf = (): any[] => view.webview.postMessage.mock.calls.map((c: unknown[]) => c[0] as any);
+
+    await handler({ type: "setMode", mode: "agent" });
+
+    expect(rt.mode).not.toBe("agent"); // nothing stored…
+    expect(store.saveSettings).not.toHaveBeenCalledWith("s1", expect.objectContaining({ mode: "agent" }));
+    expect((rt.agent as any).setMode).not.toHaveBeenCalledWith("agent"); // …and nothing promised
+    expect(postsOf().find((m) => m.type === "denied")?.reason).toMatch(/Restricted Mode/);
+
+    // Analyze is still allowed — and that is what the panel is TOLD the session is.
+    await handler({ type: "setMode", mode: "analyze" });
+    await new Promise((r) => setTimeout(r, 0));
+    const configs = postsOf().filter((m) => m.type === "config");
+    expect(configs.length).toBeGreaterThan(0);
+    expect(configs[configs.length - 1].config.workspaceTrusted).toBe(false);
+    expect(configs[configs.length - 1].config.mode).toBe("analyze");
+  });
+
+  it("a session that had Build SAVED runs Analyze in Restricted Mode (the preference survives)", async () => {
+    // The other direction of the same rule: the stored choice is left alone, so trusting the folder
+    // gives Build back without another click — but the agent must never RUN it meanwhile.
+    const { provider, registry } = buildHarness({ workspaceTrusted: () => false });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.mode = "agent"; // e.g. saved in a trusted folder, then the window reloaded untrusted
+    await handler({ type: "setModel", model: "gpt-4o", provider: undefined });
+    (rt.agent as any).setMode.mockClear();
+    await handler({ type: "send", text: "do it" });
+
+    expect((rt.agent as any).setMode).toHaveBeenCalledWith("analyze");
+    expect(rt.mode).toBe("agent"); // the preference is the user's, not ours to erase
+  });
+
   it("setParallel is PER-SESSION, persists and pushes config", async () => {
     const { provider, registry, store } = buildHarness();
     const { handler, view } = resolveWith(provider);
@@ -1807,41 +1917,50 @@ describe("ChatViewProvider", () => {
     expect(connect).toHaveBeenCalledWith("test");
   });
 
-  it("setMcpToolExclusions writes ONLY the Analyze declarations: no exclude list, no reconnect", async () => {
-    // The route stopped owning "which tools the model sees": that is the SESSION's scope now, so a
-    // save here must not touch `excludeTools` (one panel would decide for every session) and must
-    // not reconnect (nothing about the registration changed — the declarations are read live).
+  it("setMcpToolSelection writes ONLY the session: the config file and the connection are untouched", async () => {
+    // The panel's Save answers "what does THIS conversation do", so it must not decide for the file
+    // (one panel would rule every session) and must not reconnect (nothing about the registration
+    // changed — the scope is read live at every turn). It used to do both.
     const saveMcpServers = vi.fn(() => true);
     const connect = vi.fn(async () => {});
-    const mcp = { connect, getStatuses: () => [], getTools: () => [] } as any;
-    const { provider } = buildHarness({
+    const mcp = {
+      connect,
+      getTools: () => [],
+      getStatuses: () => [
+        {
+          name: "test",
+          ok: true,
+          enabled: true,
+          toolCount: 2,
+          tools: [{ name: "echo" }, { name: "drop_table" }],
+        },
+      ],
+    } as any;
+    const { provider, registry } = buildHarness({
       mcp,
       providers: {
         getProvider: vi.fn(),
         saveModelSelection: vi.fn(),
-        // Two servers, one with a declaration the panel does not manage: it must survive.
-        readMcpServers: vi.fn(() => ({
-          test: { command: "node", analyze: "read-only" },
-          other: { command: "node", args: ["x"] },
-        })),
+        readMcpServers: vi.fn(() => ({ test: { command: "node", analyze: "read-only" } })),
         saveMcpServers,
       } as unknown as ProviderCatalog,
     });
-    const { handler } = resolveWith(provider);
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    saveMcpServers.mockClear();
 
-    await handler({
-      type: "setMcpToolExclusions",
-      server: "test",
-      exclude: ["drop_table"],
-      analyze: [" echo ", "echo"],
-    });
+    await handler({ type: "setMcpToolSelection", server: "test", enabled: ["echo"], analyze: ["echo"] });
 
-    // `exclude` is ignored — and the file stays without one.
-    expect(saveMcpServers).toHaveBeenCalledWith({
-      test: { command: "node", analyze: "read-only", analyzeTools: ["echo"] },
-      other: { command: "node", args: ["x"] },
+    expect(registry.get("s1")!.toolScope).toEqual({
+      mcp: ["test"],
+      off: ["mcp__test__drop_table"],
+      analyze: ["mcp__test__echo"],
     });
+    expect(saveMcpServers).not.toHaveBeenCalled(); // the file is the user's, not this panel's
     expect(connect).not.toHaveBeenCalled();
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "mcpToolSelectionSaved", server: "test", ok: true }),
+    );
   });
 
   it("a server name that needs SANITIZING round-trips: one spelling, on the host's side", async () => {
@@ -1871,7 +1990,11 @@ describe("ChatViewProvider", () => {
     await handler({ type: "setMcpToolSelection", server: "my-server", enabled: ["write"] });
 
     // 1. The SCOPE holds the registered spelling.
-    expect(registry.get("s1")!.toolScope).toEqual({ mcp: ["my-server"], off: ["mcp__my_server__read_file"] });
+    expect(registry.get("s1")!.toolScope).toEqual({
+      mcp: ["my-server"],
+      off: ["mcp__my_server__read_file"],
+      analyze: [],
+    });
     // 2. …and the payload tells the panel about it with that same spelling, so the checkbox shows
     //    the truth instead of comparing two different names.
     const configs = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
@@ -1977,8 +2100,8 @@ describe("ChatViewProvider", () => {
     });
     const a = store.create("a");
     const b = store.create("b");
-    store.saveSettings(a.id, { toolScope: { mcp: ["files", "git"], off: [] } });
-    store.saveSettings(b.id, { toolScope: { mcp: [], off: ["Shell"] } });
+    store.saveSettings(a.id, { toolScope: { mcp: ["files", "git"], off: [], analyze: ["mcp__git__status"] } });
+    store.saveSettings(b.id, { toolScope: { mcp: [], off: ["Shell"], analyze: [] } });
 
     // Session `a` is OPEN: the in-memory runtime must not keep the stale value either.
     provider.openSession(a.id);
@@ -1986,9 +2109,10 @@ describe("ChatViewProvider", () => {
 
     servers = { files: { command: "node" } }; // `git` was uninstalled
     expect(provider.reconcileToolScopes()).toBe(1); // ONE row changed, not both
-    expect(store.summary(a.id)?.toolScope).toEqual({ mcp: ["files"], off: [] });
-    expect(registry.get(a.id)?.toolScope).toEqual({ mcp: ["files"], off: [] });
-    expect(store.summary(b.id)?.toolScope).toEqual({ mcp: [], off: ["Shell"] });
+    // The declaration about the uninstalled server goes with it: it must not revive on reinstall.
+    expect(store.summary(a.id)?.toolScope).toEqual({ mcp: ["files"], off: [], analyze: [] });
+    expect(registry.get(a.id)?.toolScope).toEqual({ mcp: ["files"], off: [], analyze: [] });
+    expect(store.summary(b.id)?.toolScope).toEqual({ mcp: [], off: ["Shell"], analyze: [] });
 
     // Running it again writes nothing: a config edit must not rewrite every session.
     expect(provider.reconcileToolScopes()).toBe(0);
@@ -2004,16 +2128,22 @@ describe("ChatViewProvider", () => {
 
     await handler({ type: "setToolScope", scope: { mcp: ["files"], off: ["Shell"] } });
 
-    expect(rt.toolScope).toEqual({ mcp: ["files"], off: ["Shell"] });
-    expect(store.saveSettings).toHaveBeenCalledWith("s1", { toolScope: { mcp: ["files"], off: ["Shell"] } });
+    expect(rt.toolScope).toEqual({ mcp: ["files"], off: ["Shell"], analyze: [] });
+    expect(store.saveSettings).toHaveBeenCalledWith("s1", {
+      toolScope: { mcp: ["files"], off: ["Shell"], analyze: [] },
+    });
     // The panel learns it from the CONFIG push it already receives (one message, no ordering
     // hazard with the switch view).
     const configPosts = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
-    expect(configPosts[configPosts.length - 1].config.toolScope).toEqual({ mcp: ["files"], off: ["Shell"] });
+    expect(configPosts[configPosts.length - 1].config.toolScope).toEqual({
+      mcp: ["files"],
+      off: ["Shell"],
+      analyze: [],
+    });
 
     // Junk is normalized on the way in — the agent must never read a malformed scope.
     await handler({ type: "setToolScope", scope: { mcp: [" files "], off: "nope" } });
-    expect(rt.toolScope).toEqual({ mcp: ["files"], off: [] });
+    expect(rt.toolScope).toEqual({ mcp: ["files"], off: [], analyze: [] });
   });
 
   it("the ⌘F keybinding's command opens find INSIDE the panel (the chord is ours, not VS Code's)", () => {
@@ -2034,63 +2164,101 @@ describe("ChatViewProvider", () => {
     expect(() => provider.openFind()).not.toThrow();
   });
 
-  it("setMcpToolExclusions also writes the per-TOOL Analyze list, with the opposite polarity", async () => {
-    // `excludeTools` is what the MODEL must not see; `analyzeTools` is what YOU declare read-only
-    // for Analyze — an INCLUDE list, because Analyze is denied by default.
+  it("the per-tool Analyze declaration is the SESSION's: two conversations can disagree", async () => {
+    // `excludeTools` is what the MODEL must not see; the Analyze declaration is what THIS
+    // conversation allows read-only — an INCLUDE list, because Analyze is denied by default. Both
+    // live in the same row now, so the same tool can be allowed in one tab and refused in the next.
     const saveMcpServers = vi.fn(() => true);
-    const { provider } = buildHarness({
+    const mcp = {
+      connect: vi.fn(async () => {}),
+      getTools: () => [],
+      getStatuses: () => [
+        {
+          name: "sqlite",
+          ok: true,
+          enabled: true,
+          toolCount: 2,
+          tools: [{ name: "read_query" }, { name: "drop_table" }],
+        },
+      ],
+    } as any;
+    const { provider, registry } = buildHarness({
+      mcp,
       providers: {
         getProvider: vi.fn(),
         saveModelSelection: vi.fn(),
-        readMcpServers: vi.fn(() => ({ sqlite: { command: "node", analyze: "trusted", args: ["x"] } })),
+        readMcpServers: vi.fn(() => ({ sqlite: { command: "node", analyze: "trusted" } })),
         saveMcpServers,
       } as unknown as ProviderCatalog,
     });
     const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    saveMcpServers.mockClear();
 
     await handler({
-      type: "setMcpToolExclusions",
+      type: "setMcpToolSelection",
       server: "sqlite",
-      exclude: ["drop_table"],
+      enabled: ["read_query", "drop_table"],
+      // Deduplicated and trimmed by `strings`, then spelled with the sanitized prefix by the host.
       analyze: ["read_query", "read_query", ""],
     });
-    // `exclude` is NOT written: it belongs to the session's scope (see setToolScope).
-    expect(saveMcpServers).toHaveBeenCalledWith({
-      sqlite: { command: "node", analyze: "trusted", args: ["x"], analyzeTools: ["read_query"] },
-    });
+    expect(registry.get("s1")!.toolScope?.analyze).toEqual(["mcp__sqlite__read_query"]);
+    expect(saveMcpServers).not.toHaveBeenCalled(); // the file keeps only its role as a SEED
 
-    // Empty lists are DELETED, not written as []: a server with nothing declared must look
-    // untouched in the file.
-    await handler({ type: "setMcpToolExclusions", server: "sqlite", exclude: [], analyze: [] });
-    expect(saveMcpServers).toHaveBeenLastCalledWith({
-      sqlite: { command: "node", analyze: "trusted", args: ["x"] },
-    });
+    // Taking it back puts the tool in the empty state — the strict answer, not "allowed by default".
+    await handler({ type: "setMcpToolSelection", server: "sqlite", enabled: ["read_query"], analyze: [] });
+    expect(registry.get("s1")!.toolScope?.analyze).toEqual([]);
+    // …and the OTHER tools of the server are untouched by a save that does not name them.
+    expect(registry.get("s1")!.toolScope?.off).toEqual(["mcp__sqlite__drop_table"]);
   });
 
-  it("an existing exclude list in the file SURVIVES a save: it is the seed, not our property", async () => {
-    // The key means "the default a new session starts from" (see seededToolOffList). Deleting it
-    // from a route that no longer owns it would drop the user's intent without saying so.
+  it("the seed keys in the file are never written by the panel's Save", async () => {
+    // `excludeTools` / `analyzeTools` mean "the default a NEW session starts from". A route that
+    // wrote them would decide for every conversation — the exact bug this change removes — so the
+    // file must come out of a save byte-identical.
     const saveMcpServers = vi.fn(() => true);
     const { provider } = buildHarness({
+      mcp: {
+        connect: vi.fn(async () => {}),
+        getTools: () => [],
+        getStatuses: () => [
+          { name: "test", ok: true, enabled: true, toolCount: 1, tools: [{ name: "echo" }, { name: "ping" }] },
+        ],
+      } as any,
       providers: {
         getProvider: vi.fn(),
         saveModelSelection: vi.fn(),
-        readMcpServers: vi.fn(() => ({ test: { command: "node", excludeTools: ["ping"] } })),
+        readMcpServers: vi.fn(() => ({
+          test: { command: "node", excludeTools: ["ping"], analyzeTools: ["echo"] },
+        })),
         saveMcpServers,
       } as unknown as ProviderCatalog,
     });
     const { handler } = resolveWith(provider);
-    await handler({ type: "setMcpToolExclusions", server: "test", exclude: [], analyze: ["echo"] });
-    expect(saveMcpServers).toHaveBeenCalledWith({
-      test: { command: "node", excludeTools: ["ping"], analyzeTools: ["echo"] },
-    });
+    await provider.createNew();
+    saveMcpServers.mockClear();
+
+    await handler({ type: "setMcpToolSelection", server: "test", enabled: ["ping"], analyze: [] });
+    expect(saveMcpServers).not.toHaveBeenCalled();
   });
 
-  it("setMcpToolExclusions ignores an unknown server and a failed save", async () => {
-    const saveMcpServers = vi.fn(() => false);
-    const connect = vi.fn(async () => {});
-    const { provider } = buildHarness({
-      mcp: { connect, getStatuses: () => [], getTools: () => [] } as any,
+  it("setMcpToolSelection ignores an unknown server and a scope-less session, and drops junk names", async () => {
+    const saveMcpServers = vi.fn(() => true);
+    const mcp = {
+      connect: vi.fn(async () => {}),
+      getTools: () => [],
+      getStatuses: () => [
+        {
+          name: "test",
+          ok: true,
+          enabled: true,
+          toolCount: 1,
+          tools: [{ name: "a" }, { name: "b" }],
+        },
+      ],
+    } as any;
+    const { provider, registry } = buildHarness({
+      mcp,
       providers: {
         getProvider: vi.fn(),
         saveModelSelection: vi.fn(),
@@ -2098,19 +2266,28 @@ describe("ChatViewProvider", () => {
         saveMcpServers,
       } as unknown as ProviderCatalog,
     });
-    const { handler, view } = resolveWith(provider);
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const before = registry.get("s1")!.toolScope;
 
-    await handler({ type: "setMcpToolExclusions", server: "nope", exclude: ["a"] });
+    // A server nobody installed: nothing to decide, nothing written.
+    await handler({ type: "setMcpToolSelection", server: "nope", enabled: ["a"], analyze: ["a"] });
+    expect(registry.get("s1")!.toolScope).toEqual(before);
+
+    // Junk in the payload is dropped, and a name the server does not offer is refused: a
+    // declaration about a tool that is gone would revive on a rename.
+    await handler({
+      type: "setMcpToolSelection",
+      server: "test",
+      enabled: ["a", 42, "", null],
+      analyze: ["a", 7, "  ", "ghost"],
+    });
+    expect(registry.get("s1")!.toolScope).toEqual({
+      mcp: ["test"],
+      off: ["mcp__test__b"],
+      analyze: ["mcp__test__a"],
+    });
     expect(saveMcpServers).not.toHaveBeenCalled();
-
-    // Junk in the payload is dropped, not written into the file: names are strings or nothing.
-    await handler({ type: "setMcpToolExclusions", server: "test", analyze: ["a", 42, "  ", null, undefined] });
-    expect(saveMcpServers).toHaveBeenCalledWith({ test: { command: "node", analyzeTools: ["a"] } });
-    // A failed save must NOT reconnect (the config did not change) and must say so.
-    expect(connect).not.toHaveBeenCalled();
-    expect(view.webview.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "mcpToolExclusionsSaved", server: "test", ok: false }),
-    );
   });
 
   it("testMcpServer rejects a server with neither command nor url", async () => {
@@ -3537,7 +3714,13 @@ describe("ChatViewProvider all-sessions manager", () => {
     ]);
     const { handler } = resolveWith(provider);
     await handler({ type: "sessionsManagerOpenFolder", id: "x" });
-    expect(state.executeCommand).toHaveBeenCalledWith("vscode.openFolder", { fsPath: "/home/me/b" }, false);
+    expect(state.executeCommand).toHaveBeenCalledWith(
+      "vscode.openFolder",
+      { fsPath: "/home/me/b" },
+      {
+        forceReuseWindow: true,
+      },
+    );
     expect(state.showOpenDialog).not.toHaveBeenCalled();
   });
 
@@ -3557,9 +3740,21 @@ describe("ChatViewProvider all-sessions manager", () => {
     ]);
     const { handler } = resolveWith(provider);
     await handler({ type: "sessionsManagerOpenFolder", id: "w" });
-    expect(state.executeCommand).toHaveBeenLastCalledWith("vscode.openFolder", { fsPath: "C:\\Users\\Me\\B" }, false);
+    expect(state.executeCommand).toHaveBeenLastCalledWith(
+      "vscode.openFolder",
+      { fsPath: "C:\\Users\\Me\\B" },
+      {
+        forceReuseWindow: true,
+      },
+    );
     await handler({ type: "sessionsManagerOpenFolder", id: "p" });
-    expect(state.executeCommand).toHaveBeenLastCalledWith("vscode.openFolder", { fsPath: "/home/me/b" }, false);
+    expect(state.executeCommand).toHaveBeenLastCalledWith(
+      "vscode.openFolder",
+      { fsPath: "/home/me/b" },
+      {
+        forceReuseWindow: true,
+      },
+    );
     expect(state.showOpenDialog).not.toHaveBeenCalled();
   });
 

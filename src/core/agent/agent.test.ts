@@ -114,10 +114,14 @@ function buildHarness(
     onContextOverflow?: (signal: AbortSignal) => Promise<boolean> | boolean;
     contextBudget?: () => number;
     workspaceReady?: () => boolean;
+    workspaceTrusted?: () => boolean;
     cwd?: () => string;
     loopGuard?: LoopGuardOptions;
     streamIdleTimeoutMs?: number;
     onFileChanged?: (change: { path: string; tool: string }) => void;
+    /** What THIS session may use, read at every turn — and, since the per-tool Analyze declaration
+     *  moved into the session, the only place a test can say "this conversation allows it". */
+    toolScope?: () => ToolScope | undefined;
   } = {},
 ): Harness {
   const config = new StaticConfigProvider(opts.config ?? VALID_CONFIG);
@@ -145,15 +149,47 @@ function buildHarness(
     onContextOverflow: opts.onContextOverflow,
     contextBudget: opts.contextBudget,
     workspaceReady: opts.workspaceReady,
+    workspaceTrusted: opts.workspaceTrusted,
     cwd: opts.cwd,
     loopGuard: opts.loopGuard,
     streamIdleTimeoutMs: opts.streamIdleTimeoutMs,
     onFileChanged: opts.onFileChanged,
+    toolScope: opts.toolScope,
   });
   return { agent, factory, events: eventsLog, history };
 }
 
 describe("Agent", () => {
+  it("an UNTRUSTED folder can never run Build: setMode('agent') resolves to Analyze", async () => {
+    // Workspace Trust is asked exactly one question: may this folder's code make the machine do
+    // things? A session can arrive here already carrying "agent" (a preference saved in a trusted
+    // folder, a reload, a sub-agent inheriting write access), so the coercion lives in setMode —
+    // the one path every caller takes — instead of in each caller.
+    const logs: string[] = [];
+    const { agent } = buildHarness({ workspaceTrusted: () => false, log: (m) => logs.push(m) });
+    agent.setMode("agent");
+    // `mode` is the mode the agent ACCEPTED (not the one asked for): that is what the run uses,
+    // and what callers read to report what happened (a sub-agent's status footer).
+    expect(agent.mode).toBe("analyze");
+    await agent.send("hi");
+    expect(logs.join("\n")).toContain("send: mode=analyze");
+  });
+
+  it("…and a TRUSTED folder still gets Build (the gate is the verdict, never a default)", async () => {
+    const logs: string[] = [];
+    const { agent } = buildHarness({ workspaceTrusted: () => true, log: (m) => logs.push(m) });
+    agent.setMode("agent");
+    expect(agent.mode).toBe("agent");
+    await agent.send("hi");
+    expect(logs.join("\n")).toContain("send: mode=agent");
+  });
+
+  it('with NO verdict passed in, Build is allowed: "nobody told me" is not "the folder is dirty"', () => {
+    const { agent } = buildHarness();
+    agent.setMode("agent");
+    expect(agent.mode).toBe("agent");
+  });
+
   it("runs NO tool when the workspace root is gone — and says why, so the model does not scaffold", async () => {
     // The ghost: with the folder deleted, "file not found" / "0 files found" read as an empty
     // project, and a model repairs an empty project by CREATING everything. So nothing runs.
@@ -582,9 +618,35 @@ describe("Agent", () => {
     await agent.send("x");
 
     const toolResult = events.find((e) => e.type === "tool_result");
-    expect(toolResult && toolResult.type === "tool_result" ? toolResult.toolResult.output : "").toContain(
-      "Unknown tool",
-    );
+    const output = toolResult && toolResult.type === "tool_result" ? toolResult.toolResult.output : "";
+    expect(output).toContain("Unknown tool");
+    // The reply is the model's ONLY channel for learning: it says the name does not exist
+    // AND which names do (the ones this turn offered), so the next attempt can succeed.
+    expect(output).toContain("No tool by that name is offered in this run.");
+    expect(output).toContain("Available tools: FakeTool.");
+  });
+
+  it("diagnoses a name that carried the ARGUMENTS, instead of a mute 'Unknown tool'", async () => {
+    // A real transcript: the provider handed over a call whose name field held part of the
+    // arguments. The old reply was `Unknown tool: Greplike" string="true` — no diagnosis, no
+    // list, so the model had nothing to correct and the bubble just wore the default wrench.
+    const { agent, events } = buildHarness({
+      chunks: [
+        [
+          { type: "tool_call_start", index: 0, id: "c1", name: 'Greplike" string="true' },
+          { type: "tool_call_end", index: 0 },
+        ],
+      ],
+    });
+
+    await agent.send("x");
+
+    const toolResult = events.find((e) => e.type === "tool_result");
+    const output = toolResult && toolResult.type === "tool_result" ? toolResult.toolResult.output : "";
+    expect(output).toContain('Unknown tool: Greplike" string="true');
+    expect(output).toContain("not a tool name");
+    expect(output).toContain("ONE call per tool");
+    expect(toolResult && toolResult.type === "tool_result" ? toolResult.toolResult.isError : false).toBe(true);
   });
 
   it("stops after maxTurns when the model keeps calling tools", async () => {
@@ -1299,6 +1361,61 @@ describe("Agent", () => {
     await agent.send("count the rows");
 
     expect(called).toBe(true);
+  });
+
+  it("runs it in Analyze when THIS SESSION declares that one tool read-only — the server says nothing", async () => {
+    // The per-TOOL declaration is the session's (ToolScope.analyze): the registry is global, so the
+    // tool itself cannot answer it, and `analyzePolicyFor` overlays the session where it is known.
+    let called = false;
+    const client = {
+      callTool: async () => {
+        called = true;
+        return { text: "rows", isError: false };
+      },
+    } as unknown as import("../mcp/mcp-client").McpStdioClient;
+    const call: StreamChunk[] = [
+      { type: "tool_call_start", index: 0, id: "m", name: "mcp__db__read_query" },
+      { type: "tool_call_delta", index: 0, delta: "{}" },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const { agent } = buildHarness({
+      tools: [new McpTool("db", { name: "read_query" }, client)], // the server declares nothing
+      chunks: [call, [{ type: "text", content: "ok" }]],
+      toolScope: () => ({ mcp: ["db"], off: [], analyze: ["mcp__db__read_query"] }),
+    });
+
+    await agent.send("count the rows");
+
+    expect(called).toBe(true);
+  });
+
+  it("…and still REFUSES the tools that same session did not name, in the SAME server", async () => {
+    // An include list, tool by tool: allowing `read_query` here must not open `drop_table` — the
+    // whole point of the narrowest statement, which is now per conversation.
+    let called = false;
+    const client = {
+      callTool: async () => {
+        called = true;
+        return { text: "dropped", isError: false };
+      },
+    } as unknown as import("../mcp/mcp-client").McpStdioClient;
+    const call: StreamChunk[] = [
+      { type: "tool_call_start", index: 0, id: "m", name: "mcp__db__drop_table" },
+      { type: "tool_call_delta", index: 0, delta: "{}" },
+      { type: "tool_call_end", index: 0 },
+    ];
+    const { agent, history } = buildHarness({
+      tools: [new McpTool("db", { name: "read_query" }, client), new McpTool("db", { name: "drop_table" }, client)],
+      chunks: [call, [{ type: "text", content: "I did not run it" }]],
+      toolScope: () => ({ mcp: ["db"], off: [], analyze: ["mcp__db__read_query"] }),
+    });
+
+    await agent.send("drop it");
+
+    expect(called).toBe(false);
+    const refusal = history.all().find((m) => m.role === "tool")?.content ?? "";
+    expect(refusal).toContain("mcp__db__drop_table");
+    expect(refusal).toContain("Analyze"); // the mode is named, not just "denied"
   });
 
   it("logs a periodic stream heartbeat while the provider stalls (watchdog)", async () => {

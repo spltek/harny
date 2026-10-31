@@ -1,4 +1,5 @@
 import { offToolNames } from "./mcp-tool-flags";
+import { createSwitch } from "./switch";
 
 /**
  * THE MCP CARD — one row per installed server, in the control strip.
@@ -68,7 +69,7 @@ export function createMcpCard(deps: McpCardDeps): McpCard {
   let busyAtClick = false;
 
   function refreshSwitches(busy: boolean): void {
-    for (const sw of deps.list.querySelectorAll<HTMLButtonElement>(".mcp-switch")) {
+    for (const sw of deps.list.querySelectorAll<HTMLButtonElement>(".harny-switch")) {
       // Three reasons a switch cannot be flipped, in order of fatality: the server is not installed
       // here (a machine fact), a run is in flight (a mid-run toggle would only land on the next
       // turn), or it is simply available.
@@ -109,14 +110,10 @@ export function createMcpCard(deps: McpCardDeps): McpCard {
       const row = document.createElement("div");
       row.className = "mcp-status " + (!enabled ? "off" : onInSession && st?.ok ? "ok" : onInSession ? "err" : "off");
 
-      // The SWITCH is the control: a pill with a knob that slides right when the server is ON. It
-      // exists because the affordance was invisible — the name was the toggle and nothing said so.
-      const sw = document.createElement("button");
-      sw.type = "button";
-      sw.className = "mcp-switch";
-      sw.setAttribute("role", "switch");
-      sw.setAttribute("aria-checked", String(onInSession));
-      sw.setAttribute("aria-label", `${onInSession ? "Stop using" : "Use"} ${name} in this session`);
+      // The SWITCH is the control: THE panel's on/off pill (src/chat/webview/switch.ts, one look
+      // everywhere). It exists because the affordance was invisible — the name was the toggle and
+      // nothing said so.
+      const sw = createSwitch(`${onInSession ? "Stop using" : "Use"} ${name} in this session`, onInSession);
       sw.title = enabled
         ? "Use this server in THIS session (installing it is global, using it is per conversation)"
         : "Not installed/enabled in the config: turn it on there first";

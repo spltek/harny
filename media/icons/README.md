@@ -39,11 +39,16 @@ file and one line there — nothing else.
 | Skill · TodoWrite · WebSearch · WebFetch | `skill` · `todowrite` · `websearch` · `webfetch` |
 | Delete | **`trash`** — the same drawing as the session trash, one file, so they cannot drift |
 | every MCP tool (`mcp__server__tool`) | `mcp` — one plug for all of them |
+| a name that matches NO tool | `unknown` — a question badge |
 | Delegate | `subagent` |
 | Thinking | `thinking` |
 
-A name nobody has drawn yet keeps the old wrench (🔧): a tool must still read as
-"some tool" rather than leaving a hole in the header.
+A name nobody has drawn wears `unknown.svg` (the question badge). It used to be
+the 🔧 emoji inside a `span.tool-emoji`: the only "mark" that was not artwork in
+this folder, drawn differently on every OS, and it said "some tool" where the
+truth is "no tool" — the call named something that does not exist here (see
+`src/core/tools/unknown-tool.ts`). The mark stays because an empty header reads as
+a broken icon; what it SAYS is now accurate.
 
 ## Drawing rules
 

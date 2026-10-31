@@ -33,7 +33,9 @@ import { createMcpEditor } from "./mcp-editor";
 // request from ever disagreeing about where the window starts.
 import { checkpointStart } from "../../core/history/conversation-validity";
 import { toolArgTarget } from "../../core/tools/tool-call-text";
-import { normalizeToolScope } from "../../core/tools/tool-scope";
+import { EMPTY_TOOL_SCOPE, normalizeToolScope, type ToolScope } from "../../core/tools/tool-scope";
+import { isToolName } from "../../core/tools/unknown-tool";
+import { untrustedModeHint } from "../../core/agent/workspace-trust";
 import type { SessionLiveProjection } from "../session-live-state";
 
 declare function acquireVsCodeApi(): {
@@ -124,6 +126,9 @@ interface ConfigState {
   workspaceReady?: boolean;
   /** Folders open in the window (0 = none, >1 = multi-root: both unusable). */
   workspaceFolderCount?: number;
+  /** Is this folder TRUSTED (VS Code Workspace Trust)? False = Restricted Mode: the session runs
+   *  as Analyze only, so Build is disabled here and the reason is in its title. */
+  workspaceTrusted?: boolean;
   /** The window's root path, EVEN when it no longer exists (the UI must name it). */
   workspaceFolder?: string;
   thinkingMode?: string;
@@ -963,8 +968,15 @@ function renderSessions(sessions: SessionInfo[]): void {
  *
  * So the WHOLE row is the control (pointer, focus ring, Enter/Space), the identifying
  * fact is the folder path on its own line, and the trailing label says what the click
- * does. The per-session keys (branch/rename/delete) are deliberately ABSENT: they act on
- * a session that cannot be shown yet, and they all live one click away in All sessions.
+ * does.
+ *
+ * The per-session keys are here for the two that need NO working directory — rename and
+ * delete act BY ID on the stored row, so they are exactly what you want when you land in a
+ * window with no folder and notice a session you would rather not keep. BRANCH is absent on
+ * purpose: a branch is a NEW session and every session belongs to a folder, while home mode
+ * is the state "there is no folder" — the store stamps the CURRENT root on `create`, so a
+ * copy made here would be born outside every workspace and live nowhere. It keeps its one
+ * click away in All sessions, where a folder can be chosen first.
  *
  * The label and the open-vs-pick decision come from `session-folder.ts`, the SAME rule
  * the All-sessions form uses: two surfaces, one answer.
@@ -1003,14 +1015,48 @@ function renderHomeRow(s: SessionInfo): HTMLDivElement {
   const choose = () => vscode.postMessage({ type: "openSessionFolder", id: s.id });
   row.addEventListener("click", choose);
   row.addEventListener("keydown", (e) => {
+    // ONLY the row's own keys choose the folder. A key pressed on ✎/🗑 belongs to that
+    // button (Enter on a button fires its click, which is already handled and stopped):
+    // letting it bubble would pick a workspace INSTEAD of renaming — a write gesture
+    // disguised as another one.
+    if (e.target !== row) return;
     if (e.key !== "Enter" && e.key !== " ") return;
     e.preventDefault();
     choose();
   });
 
+  // Rename + delete, the same two keys (and the same wording) as a normal row: one
+  // vocabulary across the two lists, and a working session is untouchable in both.
+  const actions = document.createElement("span");
+  actions.className = "srow-actions";
+  actions.innerHTML =
+    '<button class="rename" title="Rename">' +
+    icon("pencil", 13) +
+    "</button>" +
+    '<button class="del" title="Delete">' +
+    icon("trash", 13, 'stroke-width="2"') +
+    "</button>";
+  const renameBtn = actions.querySelector(".rename") as HTMLButtonElement;
+  const delBtn = actions.querySelector(".del") as HTMLButtonElement;
+  if (workingIds.has(s.id)) {
+    delBtn.disabled = true;
+    delBtn.title = "Session is working — stop it before deleting";
+    renameBtn.disabled = true;
+    renameBtn.title = "Session is working — stop it before renaming";
+  }
+  renameBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    vscode.postMessage({ type: "renameSession", id: s.id });
+  });
+  delBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    vscode.postMessage({ type: "deleteSession", id: s.id });
+  });
+
   row.appendChild(meta);
   row.appendChild(name);
   row.appendChild(label);
+  row.appendChild(actions);
   row.appendChild(folder);
   return row;
 }
@@ -1758,19 +1804,38 @@ function toolTargetArg(args: unknown): string | undefined {
   return toolArgTarget(args);
 }
 
+/**
+ * The name a tool bubble PAINTS: the tool's own, or — for a call whose name field carried
+ * the arguments (`Greplike" string="true`, a real transcript) — a clamped version of it.
+ * The bubble must not lie about the shape of a name, and a 200-char name must not push the
+ * icons of the header apart. The FULL text stays in the `title`, so hovering still shows
+ * exactly what the model emitted.
+ */
+const TOOL_LABEL_MAX_CHARS = 44;
+function toolLabel(name: string): string {
+  return name.length > TOOL_LABEL_MAX_CHARS ? name.slice(0, TOOL_LABEL_MAX_CHARS) + "…" : name;
+}
+
 function addToolCall(name: string, args: unknown, beforeEl?: HTMLElement | null): HTMLDivElement {
   const div = document.createElement("div");
   div.className = "msg tool tool-call-pending";
   // The NAME travels with the bubble: the result handler has to know WHICH tool it
   // is describing (TodoWrite renders a task list, every other tool a <pre>).
   div.dataset.tool = name;
+  // A name no tool could have was never a tool: marked here so the stylesheet can say so
+  // instead of painting it like every other tool (it also wears the wrench, for the same
+  // reason — see toolIcon).
+  if (!isToolName(name)) div.dataset.toolInvalid = "1";
+  const label = toolLabel(name);
   const target = toolTargetArg(args);
   div.innerHTML =
     '<div class="tool-header">' +
     toggleMarkup("tool-toggle") +
-    '<span class="tool-name">' +
+    '<span class="tool-name"' +
+    (label === name ? "" : ' title="' + escapeHtml(name) + '"') +
+    ">" +
     toolIcon(name) +
-    escapeHtml(name) +
+    escapeHtml(label) +
     "</span>" +
     (target ? '<span class="tool-path" title="' + escapeHtml(target) + '">' + escapeHtml(target) + "</span>" : "") +
     "</div>" +
@@ -2080,9 +2145,13 @@ function handleSubAgentEvent(parentId: string, event: SubAgentStreamEvent): void
     line.className = "sa-tool pending";
     const id = event.toolCall.id ?? event.toolCall.name;
     line.dataset.id = id;
+    // Same rule as the tool bubble: a name no tool could have is marked, not painted as a tool.
+    if (!isToolName(event.toolCall.name)) line.dataset.toolInvalid = "1";
     const target = toolTargetArg(event.toolCall.arguments);
     line.innerHTML =
-      toolIcon(event.toolCall.name) + escapeHtml(event.toolCall.name) + (target ? " " + escapeHtml(target) : "");
+      toolIcon(event.toolCall.name) +
+      escapeHtml(toolLabel(event.toolCall.name)) +
+      (target ? " " + escapeHtml(target) : "");
     log.appendChild(line);
     subAgentToolEls.set(parentId + ":" + id, line);
     scrollDown();
@@ -2152,7 +2221,7 @@ function setWorkingPhase(toolName?: string): void {
   workingEl.innerHTML =
     toolName === "Delegate"
       ? "● Working... " + SUBAGENT_ICON + " sub-agent"
-      : "● Working... " + toolIcon(toolName) + escapeHtml(toolName);
+      : "● Working... " + toolIcon(toolName) + escapeHtml(toolLabel(toolName));
 }
 
 /** The tool of the most recent call that has NOT finished yet, if any. */
@@ -2918,6 +2987,36 @@ function renderSteerMode(): void {
   // they were about to copy, on the very keystroke that was meant to copy it.
 }
 
+/**
+ * Release the Steer indicator when the event's OWN modifier state says the key is not held.
+ *
+ * A `keyup` is not guaranteed to arrive here: on macOS ⌘⇧4 / ⌘⇧5 (screenshot, screen recording)
+ * take Cmd's keyup for the system overlay, and the VS Code window is never deactivated — so `blur`
+ * does not fire either — leaving the pill on "Steer" until the next Ctrl/Cmd press (reported: "lo
+ * stato steer rimane incastrato"). It is not cosmetic: `effectiveSendMode()` reads the same flag,
+ * so the next plain ⏎ would have STEERED instead of queued.
+ *
+ * The state is therefore re-derived from any event that carries the truth, the way a browser
+ * corrects a stuck key. Two rules keep it safe on EVERY platform:
+ *   · this only ever CLEARS. Setting stays the business of a bare modifier keydown, so no mouse
+ *     move, focus change or keystroke can light the pill on its own;
+ *   · it asks the SAME provider the pill uses (`holdsSteerModifier`: ⌘ or Ctrl on macOS, Ctrl on
+ *     Windows and Linux), so it can never disagree with what the hint shows — and off macOS, where
+ *     Meta is the Super/Windows key, a tap of it still does nothing.
+ */
+function releaseSteerModifier(): void {
+  if (!steerModifierHeld) return;
+  steerModifierHeld = false;
+  renderSteerMode();
+}
+
+/** Clear a stuck modifier using an event's own `metaKey`/`ctrlKey` (see above). */
+function syncSteerModifier(e: Event): void {
+  if (!steerModifierHeld) return;
+  if (holdsSteerModifier(e as MouseEvent)) return;
+  releaseSteerModifier();
+}
+
 /** True when the user has text selected OUTSIDE a form control — a copy gesture in progress. */
 function hasTextSelection(): boolean {
   const sel = window.getSelection?.();
@@ -3052,6 +3151,21 @@ window.addEventListener("keyup", (e) => {
 window.addEventListener("blur", () => {
   steerModifierHeld = false;
   renderSteerMode();
+});
+// ── Stuck-modifier recovery (see releaseSteerModifier) ──
+// CAPTURE, and that is the whole point: the key's OWN handler decides with this flag (Enter picks
+// Queue vs Steer), so the correction has to happen BEFORE it. A bubble listener on window runs
+// after the textarea's handler — one event too late to matter.
+window.addEventListener("keydown", (e) => syncSteerModifier(e), { capture: true });
+// The mouse is the cheapest truth there is: coming back to the panel means moving or clicking, and
+// both carry the real modifier state. Passive — they never influence the event.
+window.addEventListener("mousemove", syncSteerModifier, { passive: true });
+window.addEventListener("mousedown", syncSteerModifier, { passive: true });
+// Back from another app: the keyup went there, so the state is UNKNOWABLE — start clean and let the
+// next key say otherwise. Companion of `blur`, which covers the way out.
+window.addEventListener("focus", releaseSteerModifier);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) releaseSteerModifier();
 });
 // Ctrl+click IS a secondary click on macOS: over a control it would pop the native
 // cut/copy/paste menu and swallow the Ctrl+click. That ambiguity exists ONLY there — on
@@ -4424,7 +4538,7 @@ const tipEl = document.getElementById("tip") as HTMLDivElement;
 
 /** What the ACTIVE session may use, as the host last reported it. The card reads it (the switches
  *  are this session's), and `applyToolScope` is the only writer. */
-let sessionToolScope: { mcp: string[]; off: string[] } = { mcp: [], off: [] };
+let sessionToolScope: ToolScope = EMPTY_TOOL_SCOPE;
 
 const DEFAULT_PARALLEL = 4;
 
@@ -4739,7 +4853,7 @@ function renderControl(config: ConfigState): void {
   // BEFORE the MCP list: the switches and the tool checkboxes are read from the scope, so it must
   // already be the one this config describes (adopting it also redraws, which is why the render
   // below is what the user actually sees).
-  sessionToolScope = normalizeToolScope(config.toolScope) ?? { mcp: [], off: [] };
+  sessionToolScope = normalizeToolScope(config.toolScope) ?? EMPTY_TOOL_SCOPE;
   renderMcpCard(config.mcp);
 }
 
@@ -4772,7 +4886,7 @@ let lastMcpConfig: ConfigState["mcp"] | undefined;
 
 /** Adopt the scope the host reports (from a `config` push or a scope-only message). */
 function applyToolScope(raw: unknown): void {
-  sessionToolScope = normalizeToolScope(raw) ?? { mcp: [], off: [] };
+  sessionToolScope = normalizeToolScope(raw) ?? EMPTY_TOOL_SCOPE;
   // The switches and the tool checkboxes are derived from it: redraw them from the last payload,
   // without waiting for another config push.
   if (lastMcpConfig) renderMcpCard(lastMcpConfig);
@@ -4797,7 +4911,8 @@ function renderMcpCard(mcp: ConfigState["mcp"] | undefined): void {
 
 /**
  * The tools popover lives in `./mcp-tools-popover` now: the draft, the filter, the counts, the two
- * controls per tool (the session's checkbox and the Analyze shield) and the Save as INTENT.
+ * switches per tool (the session's exposure and the session's Analyze declaration) and the Save as
+ * INTENT.
  *
  * `busy` is passed as a GETTER: the popover outlives the moment it was built — a run can start
  * underneath it, and a captured boolean would go stale exactly when it matters.
@@ -5062,6 +5177,11 @@ function setStreaming(active: boolean): void {
 type ChatMode = "analyze" | "agent";
 const DEFAULT_MODE: ChatMode = "analyze";
 let currentMode: ChatMode = DEFAULT_MODE;
+/** Is this folder TRUSTED (VS Code Workspace Trust)? False = Restricted Mode, where the host runs
+ *  every session as Analyze (see ChatViewProvider.effectiveMode). The panel does NOT invent that
+ *  rule — the host's config already carries the effective mode — it only refuses to OFFER what the
+ *  host will not run, and says why where the choice is made. Absent = trusted. */
+let workspaceTrusted = true;
 /** The policies the RUN IN FLIGHT was born with (null = no run running).
  *
  * Mode and Parallel are decided ONCE per run (see `Agent.runMode`): they are safety
@@ -5086,6 +5206,9 @@ function isChatMode(v: unknown): v is ChatMode {
  * persisted in the panel: every load starts from Analyze. */
 function applyMode(mode: ChatMode, opts?: { notify?: boolean }): void {
   if (!isChatMode(mode)) mode = DEFAULT_MODE;
+  // Restricted Mode can never resolve to Build, so a stale "agent" (a push from another window, a
+  // reload mid-grant) is shown as what the agent is actually doing: Analyze.
+  if (!workspaceTrusted && mode === "agent") mode = DEFAULT_MODE;
   currentMode = mode;
   modeBtn.classList.toggle("is-agent", mode === "agent");
   modeBtnLabel.textContent = mode === "agent" ? "Build" : "Analyze";
@@ -5095,6 +5218,14 @@ function applyMode(mode: ChatMode, opts?: { notify?: boolean }): void {
     const on = item.dataset.mode === mode;
     item.classList.toggle("is-active", on);
     item.setAttribute("aria-selected", String(on));
+  }
+  // The Build CHOICE itself says it is unavailable (a disabled button, the reason in its title):
+  // the pill alone would look like the click did nothing.
+  for (const item of modeItems) {
+    if (item.dataset.mode !== "agent") continue;
+    item.disabled = !workspaceTrusted;
+    if (workspaceTrusted) item.removeAttribute("title");
+    else item.title = untrustedModeHint();
   }
   if (opts?.notify) vscode.postMessage({ type: "setMode", mode });
   refreshPolicyHints();
@@ -5186,6 +5317,9 @@ function refreshPolicyHints(): void {
   } else if (runMode !== null) {
     const running = runMode === "agent" ? "Build" : "Analyze";
     modeBtn.title = `${running} — locked to this run: a switch now applies to the NEXT one. Stop to stop now.`;
+  } else if (!workspaceTrusted) {
+    // No run to explain: the one fact about this pill is that Build is not on offer here.
+    modeBtn.title = untrustedModeHint();
   } else {
     modeBtn.removeAttribute("title");
   }
@@ -6458,7 +6592,7 @@ window.addEventListener("message", (e) => {
       if (msg.ok) mcpEditor.close();
       else if (typeof msg.reason === "string" && msg.reason) mcpEditor.error(msg.reason);
       break;
-    case "mcpToolExclusionsSaved":
+    case "mcpToolSelectionSaved":
       // The tools panel's Save: success closes it, failure keeps the draft and says why.
       mcpTools.saved(msg.ok === true);
       break;
@@ -6477,8 +6611,17 @@ window.addEventListener("message", (e) => {
       }
       renderModelSelect(msg.config || {});
       renderThinkingSelect(msg.config || {});
+      // Trust BEFORE the mode: applyMode decides what the menu may offer.
+      if (msg.config && typeof msg.config.workspaceTrusted === "boolean") {
+        workspaceTrusted = msg.config.workspaceTrusted;
+      }
       if (msg.config && isChatMode(msg.config.mode)) {
         applyMode(msg.config.mode);
+      } else {
+        // A push without a mode (a partial config, another window's) still has to re-render the
+        // TRUST GATE: otherwise "Build" would stay clickable until the next full push, and the
+        // one message that says the folder is untrusted would be the one that changes nothing.
+        applyMode(currentMode);
       }
       if (msg.config && typeof msg.config.parallel === "boolean") {
         applyParallel(msg.config.parallel);
@@ -6741,9 +6884,12 @@ function renderViewState(state: {
   renderTabs(currentSessions);
   renderModelSelect(state.config || {});
   renderThinkingSelect(state.config || {});
-  if (state.config && isChatMode(state.config.mode)) {
-    applyMode(state.config.mode);
+  // Trust BEFORE the mode: applyMode decides what the menu may offer.
+  if (state.config && typeof state.config.workspaceTrusted === "boolean") {
+    workspaceTrusted = state.config.workspaceTrusted;
   }
+  // Always: the gate is rendered even when the state carries no mode (see the config handler).
+  applyMode(isChatMode(state.config?.mode) ? state.config.mode : currentMode);
   if (state.config && typeof state.config.parallel === "boolean") {
     applyParallel(state.config.parallel);
   }

@@ -71,12 +71,13 @@ function writeCall(): StreamChunk[] {
   return toolCallChunks("c1", "Write", { path: "a.ts", content: "x" });
 }
 
-function buildRunner(llmFactory: LLMProviderFactory, tools: Tool[] = []) {
+function buildRunner(llmFactory: LLMProviderFactory, tools: Tool[] = [], extra: Record<string, unknown> = {}) {
   return new SubAgentRunner({
     config: new StaticConfigProvider(CONFIG),
     llmFactory,
     tools: new ToolRegistry(tools),
     cwd: () => "/workspace",
+    ...extra,
   });
 }
 
@@ -729,6 +730,29 @@ describe("SubAgentRunner", () => {
     // halves are the whole promise of the delegated work: a reader never writes, a writer does.
     expect(write.lastDryRun).toBeUndefined();
     expect(res.content).toContain("done writing");
+  });
+
+  it("an UNTRUSTED folder turns a WRITER sub-agent into a reader (delegation cannot launder Build)", async () => {
+    // Restricted Mode must survive delegation: the orchestrator must not be able to get a helper
+    // to do what it may not do itself. `setMode("agent")` inside the sub-agent resolves to
+    // Analyze (see AgentDeps.workspaceTrusted), so the very same Write call that really writes in
+    // the test above PREPARES here — and the report says so instead of claiming `done`.
+    const write = makeWriteTool();
+    const runner = buildRunner(factory([writeCall(), [{ type: "text", content: "report" }]]), [write], {
+      workspaceTrusted: () => false,
+    });
+
+    const res = await runner.run(spec({ access: "write", resources: ["a.ts"] }));
+
+    expect(write.called).toBe(true); // the tool call happens…
+    expect(write.lastDryRun).toBe(true); // …as a validated preview, not a write
+    // A report that said `done` with no files touched would be a lie the orchestrator cannot
+    // detect: the status is needs-write, machine-readable, and the note names the REAL blocker.
+    expect(res.content).toContain("needs-write");
+    expect(res.content).toContain("Restricted Mode");
+    // …and it must NOT send the orchestrator to re-delegate a writer: in an untrusted folder the
+    // folder is what has to change, so that advice would loop until the turn budget ran out.
+    expect(res.content).not.toContain('Re-delegate this sub-task with access "write"');
   });
 
   it("wraps a failing sub-agent as an error result", async () => {

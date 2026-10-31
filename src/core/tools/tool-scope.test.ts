@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   EMPTY_TOOL_SCOPE,
+  declaresReadOnlyInAnalyze,
   mcpPrefix,
   normalizeToolScope,
   reconcileToolScope,
@@ -9,7 +10,7 @@ import {
   type ToolScope,
 } from "./tool-scope";
 
-const scope = (mcp: string[], off: string[] = []): ToolScope => ({ mcp, off });
+const scope = (mcp: string[], off: string[] = [], analyze: string[] = []): ToolScope => ({ mcp, off, analyze });
 
 describe("a session's tool scope", () => {
   it("decides MCP tools by SERVER, so switching one server off never touches another", () => {
@@ -64,8 +65,8 @@ describe("a session's tool scope", () => {
 
 describe("reading a scope from the outside world", () => {
   it("takes a JSON string, an object, or nothing", () => {
-    expect(normalizeToolScope('{"mcp":["a"],"off":["Shell"]}')).toEqual({ mcp: ["a"], off: ["Shell"] });
-    expect(normalizeToolScope({ mcp: ["a"], off: [] })).toEqual({ mcp: ["a"], off: [] });
+    expect(normalizeToolScope('{"mcp":["a"],"off":["Shell"]}')).toEqual({ mcp: ["a"], off: ["Shell"], analyze: [] });
+    expect(normalizeToolScope({ mcp: ["a"], off: [] })).toEqual({ mcp: ["a"], off: [], analyze: [] });
     expect(normalizeToolScope(undefined)).toBeUndefined();
     expect(normalizeToolScope(null)).toBeUndefined();
   });
@@ -73,11 +74,25 @@ describe("reading a scope from the outside world", () => {
   it("never throws on junk, and keeps only what it can use", () => {
     expect(normalizeToolScope("{not json")).toBeUndefined();
     expect(normalizeToolScope(42)).toBeUndefined();
-    expect(normalizeToolScope({ mcp: "nope", off: 7 })).toEqual({ mcp: [], off: [] });
+    expect(normalizeToolScope({ mcp: "nope", off: 7 })).toEqual({ mcp: [], off: [], analyze: [] });
     expect(normalizeToolScope({ mcp: [1, " a ", "", null, "a"], off: ["Shell", " Shell "] })).toEqual({
       mcp: ["a"], // trimmed, deduplicated, junk dropped
       off: ["Shell"],
+      analyze: [],
     });
+  });
+
+  it("reads the Analyze declarations too, and drops the junk ones", () => {
+    expect(normalizeToolScope({ analyze: ["mcp__files__read", 7, "  ", " mcp__files__read "] })).toEqual({
+      mcp: [],
+      off: [],
+      analyze: ["mcp__files__read"], // trimmed, deduplicated
+    });
+  });
+
+  it("a row written BEFORE the key existed declares nothing — never a silent loosening", () => {
+    // The strict answer: nothing is allowed in Analyze, so an upgrade cannot widen a session.
+    expect(normalizeToolScope({ mcp: ["files"], off: [] })?.analyze).toEqual([]);
   });
 
   it("is STABLE: normalizing twice gives the same list order (no diff churn in the row)", () => {
@@ -93,10 +108,20 @@ describe("reconciling a stored scope with what exists now", () => {
     expect(reconcileToolScope(scope(["files", "gone"], ["Shell", "Removed"]), known)).toEqual({
       mcp: ["files"],
       off: ["Shell"],
+      analyze: [],
+    });
+  });
+
+  it("drops an Analyze declaration about a server that is gone — it must not revive on reinstall", () => {
+    expect(reconcileToolScope(scope(["files"], [], ["mcp__files__read", "mcp__gone__x"]), known)).toEqual({
+      mcp: ["files"],
+      off: [],
+      analyze: ["mcp__files__read"],
     });
   });
 
   it("says NOTHING when nothing would change — a loader must not rewrite the row for nothing", () => {
+    expect(reconcileToolScope(scope(["files"], ["Shell"], ["mcp__files__read"]), known)).toBeUndefined();
     expect(reconcileToolScope(scope(["files"], ["Shell"]), known)).toBeUndefined();
     expect(reconcileToolScope(EMPTY_TOOL_SCOPE, known)).toBeUndefined();
     expect(reconcileToolScope(undefined, known)).toBeUndefined();
@@ -105,7 +130,27 @@ describe("reconciling a stored scope with what exists now", () => {
   it("keeps an EMPTY scope empty instead of turning it into 'no scope'", () => {
     // Losing the empty array would silently re-enable every built-in tool.
     const reconciled = reconcileToolScope(scope(["gone"]), known);
-    expect(reconciled).toEqual({ mcp: [], off: [] });
+    expect(reconciled).toEqual({ mcp: [], off: [], analyze: [] });
+  });
+});
+
+describe("the Analyze declaration is the SESSION's", () => {
+  it("answers for the exact registered name, and only for it", () => {
+    const s = scope(["files"], [], ["mcp__files__read"]);
+    expect(declaresReadOnlyInAnalyze("mcp__files__read", s)).toBe(true);
+    expect(declaresReadOnlyInAnalyze("mcp__files__write", s)).toBe(false);
+    expect(declaresReadOnlyInAnalyze("mcp__git__status", s)).toBe(false);
+  });
+
+  it("says NO for a session that declared nothing — Analyze is denied by default", () => {
+    expect(declaresReadOnlyInAnalyze("mcp__files__read", EMPTY_TOOL_SCOPE)).toBe(false);
+    expect(declaresReadOnlyInAnalyze("mcp__files__read", undefined)).toBe(false);
+  });
+
+  it("is an INCLUDE list: allowing one tool of a server does not allow its neighbours", () => {
+    const s = scope(["files"], [], ["mcp__files__read"]);
+    expect(declaresReadOnlyInAnalyze("mcp__files__read", s)).toBe(true);
+    expect(declaresReadOnlyInAnalyze("mcp__files__delete", s)).toBe(false);
   });
 });
 
@@ -114,11 +159,11 @@ describe("names are SANITIZED, and the scope must speak the same language", () =
     // The registry registers `mcp-server-git` as `mcp__mcp_server_git__…`: a scope holding the raw
     // name would never match, and the server would be permanently off — silently.
     expect(mcpPrefix("mcp-server-git")).toBe("mcp__mcp_server_git__");
-    expect(toolScopeAllows("mcp__mcp_server_git__status", { mcp: ["mcp-server-git"], off: [] })).toBe(true);
+    expect(toolScopeAllows("mcp__mcp_server_git__status", scope(["mcp-server-git"]))).toBe(true);
   });
 
   it("a TOOL whose name carries a dash is matched by its sanitized name, as the registry spells it", () => {
-    expect(toolScopeAllows("mcp__files__read_file", { mcp: ["files"], off: ["mcp__files__read_file"] })).toBe(false);
-    expect(toolScopeAllows("mcp__files__read_file", { mcp: ["files"], off: [] })).toBe(true);
+    expect(toolScopeAllows("mcp__files__read_file", scope(["files"], ["mcp__files__read_file"]))).toBe(false);
+    expect(toolScopeAllows("mcp__files__read_file", scope(["files"]))).toBe(true);
   });
 });

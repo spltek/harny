@@ -389,7 +389,7 @@ ${VIEW_CSS}
               <label class="sampler-opt" title="Permissive: only clear, sustained loops are flagged"><input type="radio" name="lg-level" id="lg-low" value="low" />Low</label>
               <label class="sampler-opt" title="Balanced: the default preset"><input type="radio" name="lg-level" id="lg-medium" value="medium" checked />Medium</label>
               <label class="sampler-opt" title="Aggressive: flags loops sooner (more nudges, lower thresholds)"><input type="radio" name="lg-level" id="lg-high" value="high" />High</label>
-              <label class="sampler-opt" title="Also apply the Loop Guard to the final answer text (detects the model repeating the same response). Default off."><input type="checkbox" id="lg-response" />Include response</label>
+              <label class="sampler-opt" title="Also apply the Loop Guard to the final answer text (detects the model repeating the same response). Default off."><input type="checkbox" class="harny-switch" id="lg-response" role="switch" />Include response</label>
             </div>
             <button id="lg-collapse" class="lg-collapse" aria-expanded="false" aria-controls="lg-params-field" title="Show the Loop Guard parameters">
               ${icon("chevronDown", 13)}
@@ -632,7 +632,7 @@ ${VIEW_CSS}
           <div class="field"><label class="field-label" for="mcp-args">Args (one per line)</label><textarea id="mcp-args" rows="3" spellcheck="false"></textarea></div>
           <div class="field"><label class="field-label" for="mcp-env">Env (KEY=VALUE, one per line)</label><textarea id="mcp-env" rows="3" spellcheck="false"></textarea></div>
           <div class="field"><label class="field-label" for="mcp-headers">Headers (KEY=VALUE, one per line — HTTP only)</label><textarea id="mcp-headers" rows="2" spellcheck="false"></textarea></div>
-          <label class="mcp-enabled-row"><input type="checkbox" id="mcp-enabled" /> Enabled (disabled servers are kept but not connected)</label>
+          <label class="mcp-enabled-row" title="A disabled server keeps its config and its tools stay out of reach: nothing is connected"><input type="checkbox" class="harny-switch" id="mcp-enabled" role="switch" /> Enabled (disabled servers are kept but not connected)</label>
           <div class="mcp-form-actions">
             <button id="mcp-test" class="secondary" type="button">Test</button>
             <span id="mcp-test-result" class="mcp-io"></span>

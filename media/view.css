@@ -17,9 +17,21 @@
   --knob-sphere: radial-gradient(circle at 34% 30%, #ffffff 0%, #ededed 55%, #bdbdbd 100%);
   --knob-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
 }
-/* Sliders: a thin rounded bar with the ORANGE fill left of the knob, and the knob itself
-   drawn by us (accent-color can colour the native thumb but cannot shade it). Both engines'
-   parts are here, or the slider would look native in one and custom in the other. */
+/* ── THE SLIDER: one appearance, ten controls ──
+   Every range input in the panel — context window, output tokens, the three sampler knobs, the
+   parallel count, the Loop Guard parameters, the two compaction knobs, the two History-vacuum
+   knobs — is painted HERE and nowhere else: a thin rounded bar with the ORANGE fill left of the
+   knob, and the knob itself drawn by us (`accent-color` can colour the native thumb but cannot
+   shade it). Both engines' parts are here, or the slider would look native in one and custom in
+   the other.
+
+   What a call site MAY do: size the control — `flex`, `width`, `grid-area`, `min-width`. What it may
+   NOT do: repaint it. Three sites used to repeat `accent-color` (dead once the thumb is drawn by
+   us), plus `height`, `margin`, `cursor` and `:disabled` copied from these rules; that is how one
+   control grows four looks. The VALUE RANGE is per slider by nature (min/max/step are data, set in
+   the markup), and the fill follows the value on its own: view.ts reconciles `--fill` for every
+   range input after any input/change/click and after every host message, so there is no per-slider
+   wiring to forget. */
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
@@ -70,6 +82,86 @@ input[type="range"]::-moz-range-thumb {
 input[type="range"]:disabled {
   opacity: 0.5;
   cursor: default;
+}
+/* ── THE SWITCH: the panel's ONE on/off control ──
+   Every toggle in Harny is this pill, and every toggle in Harny gets it from HERE — a stylesheet
+   rule per call site is how the same question ended up with four looks (a pill in the tools
+   popover, a 15px checkbox in the MCP form, an 11px tick next to "Include response", a 9px radio
+   beside it). The module is src/chat/webview/switch.ts; this is its only appearance.
+
+   TWO DOM SHAPES, ONE RULE: a <button role="switch" aria-checked="true|false"> and a native
+   <input type="checkbox" class="harny-switch"> are answered by the same declarations, because the
+   shapes differ only in where the state lives (:checked vs the attribute). A native input keeps its
+   label click, its keyboard toggle and its `checked` property; appearance:none is the ONLY thing
+   that stops it from being painted by the browser.
+
+   Geometry: the TRACK is exactly as tall as the knob (no slack above/below it), so the switch reads
+   as one solid piece at 12px tall, and the travel (14px) is track − knob. The knob is the same
+   `--knob-sphere` as the slider thumbs: one light source for every round thing in the panel. */
+.harny-switch {
+  position: relative;
+  display: block;
+  flex: none;
+  width: 26px;
+  height: 12px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  /* A native checkbox obeys the browser until this line: -webkit- for Electron, appearance for the
+     standard. Both, or the input keeps its box and the knob has nowhere to sit. */
+  -webkit-appearance: none;
+  appearance: none;
+  /* OFF: a WHITE veil on the dark theme (--overlay-* is white-alpha here and black-alpha on paper,
+     so the same rule reads as a light grey track in both). */
+  border: none;
+  border-radius: 999px;
+  background: var(--overlay-3);
+  /* The button chrome (3D borders, filter, shadow) belongs to BUTTONS: a pill has none of it. */
+  box-shadow: none;
+  filter: none;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.harny-switch::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  /* A dot must contrast with ITS track: grey on the white veil (the "off" look)… */
+  border-radius: 50%;
+  background: var(--muted-2);
+  transition:
+    transform 0.12s ease,
+    background 0.12s ease;
+}
+/* …ON: the TRACK is the accent and the DOT is WHITE with a small radial gradient — lit from the
+   top-left, a shade darker at the bottom-right, plus a hairline shadow underneath — so it reads as
+   a tiny sphere instead of a flat sticker. One literal value for both themes: white sits on either
+   terracotta. */
+.harny-switch[aria-checked="true"],
+.harny-switch:checked {
+  background: var(--accent);
+}
+.harny-switch[aria-checked="true"]::after,
+.harny-switch:checked::after {
+  transform: translateX(14px);
+  background: var(--knob-sphere);
+  box-shadow: var(--knob-shadow);
+}
+/* A switch that cannot be flipped (a run in flight, a tool with nothing to allow) says so instead of
+   ignoring the press. */
+.harny-switch:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+/* Keyboard users get the same ring as the other controls, drawn OUTSIDE the pill: the pill has no
+   border to thicken and an inset ring would fight the knob. */
+.harny-switch:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
 }
 /* UI: one sans family everywhere (inherited); only real code/diff
    content switches to the single mono family. Grouped selectors so every
@@ -278,11 +370,13 @@ body {
   font-style: italic;
 }
 /* ── HOME row (no folder open): it CHOOSES a workspace ──
-   The whole row is the control (there are no per-session keys there), so it must
-   read as one: a pointer, a focus ring, Enter/Space. The folder path is the
-   identifying fact in this state — it IS what you are choosing — so it gets its own
-   line in the mono face, and the trailing label says what the click does before you
-   commit to it (opening a folder reloads the window). */
+   The whole row is the control, so it must read as one: a pointer, a focus ring,
+   Enter/Space. The folder path is the identifying fact in this state — it IS what you are
+   choosing — so it gets its own line in the mono face, and the trailing label says what
+   the click does before you commit to it (opening a folder reloads the window).
+   The only keys it carries are rename/delete: they act on the stored row BY ID, so they
+   need no working directory. Branch needs one (a copy is born in a folder), so it is not
+   here. */
 .srow.home {
   cursor: pointer;
   align-items: baseline;
@@ -308,6 +402,13 @@ body {
   font-size: var(--fs-sm);
   color: var(--accent);
   white-space: nowrap;
+}
+/* The home row's rename/delete sit at the END of the name line, after the "Open folder"
+   label: they are secondary to the choice, and they must not push the folder path (the one
+   fact that identifies WHAT you are choosing) off its own line. */
+.srow.home .srow-actions {
+  flex: 0 0 auto;
+  margin-left: 8px;
 }
 /* A folder that is gone is named in the HERO too (home screen): the path is the one
    fact that identifies WHAT is missing, so it sits in the mono face. */
@@ -1496,9 +1597,14 @@ body {
 .tool-name > svg {
   flex: 0 0 auto;
 }
-.tool-name > .tool-emoji {
-  display: inline-block;
-  flex: 0 0 auto;
+/* A call whose NAME FIELD carried the arguments (`Greplike" string="true` — real transcript,
+   see core/tools/unknown-tool.ts): it never was a tool, so it must not be painted like one.
+   Monospace and the error colour say "this is text the model got wrong", and the question
+   badge it wears is not a missing icon. */
+.msg.tool[data-tool-invalid="1"] .tool-name,
+.sa-tool[data-tool-invalid="1"] {
+  color: var(--error);
+  font-family: var(--font-mono);
 }
 /* "In testa" marks of a bubble — the tool, thinking, sub-agent and synthetic-summary icons —
    are painted a QUARTER larger (1.25×). A TRANSFORM, never a bigger width/height: a transform
@@ -1506,7 +1612,6 @@ body {
    only its ink grows). Centred origin keeps the growth inside the header's own 5px gap.
    1.5× was tried and read as too big; this is the middle ground — ONE number, tune it here. */
 .tool-name > svg,
-.tool-name > .tool-emoji,
 .thinking-header > svg,
 .subagent-header .subagent-icon,
 .msg.user.synthetic-summary .synthetic-icon {
@@ -2730,66 +2835,8 @@ body.no-workspace #ctl-toggle {
   flex: none;
   white-space: nowrap;
 }
-/* The enable/disable switch: a pill whose knob SLIDES right when the server is on. It is
-   the control, and it exists because the affordance used to be invisible — the name was
-   the toggle and nothing said so. The name keeps working as a shortcut.
-   The TRACK is exactly as tall as the knob (no slack above/below it), so the switch reads
-   as one object; the knob travels the rest of the track.
-   min-height / min-width / padding / box-shadow MUST be reset: the global button rule sets
-   min-height: 1.54rem, padding 0 .46rem and a beveled shadow, and min-height WINS over
-   height — the track rendered ~25px tall with the 12px knob stuck at the top and empty
-   space below it. Same trap the compact buttons elsewhere in this sheet already dodge. */
-.mcp-switch {
-  position: relative;
-  display: block;
-  flex: none;
-  width: 26px;
-  height: 12px;
-  min-width: 0;
-  min-height: 0;
-  padding: 0;
-  /* OFF: a WHITE veil on the dark theme (--overlay-* is white-alpha here and
-     black-alpha on paper, so the same rule reads as a light grey track in both). */
-  border: none;
-  border-radius: 999px;
-  background: var(--overlay-3);
-  box-shadow: none;
-  filter: none;
-  cursor: pointer;
-  transition: background 0.12s ease;
-}
-.mcp-switch::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 12px;
-  height: 12px;
-  /* A dot must contrast with ITS track: grey on the white veil (the "disabled" look),
-     white on the accent (see below). */
-  border-radius: 50%;
-  background: var(--muted-2);
-  transition:
-    transform 0.12s ease,
-    background 0.12s ease;
-}
-/* ON: the TRACK is the accent and the DOT is WHITE with a small radial gradient — lit from
-   the top-left, a shade darker at the bottom-right, plus a hairline shadow underneath — so
-   it reads as a tiny sphere instead of a flat sticker. One literal value for both themes:
-   white sits on either terracotta. */
-.mcp-switch[aria-checked="true"] {
-  background: var(--accent);
-}
-.mcp-switch[aria-checked="true"]::after {
-  transform: translateX(14px);
-  background: var(--knob-sphere);
-  box-shadow: var(--knob-shadow);
-}
-/* A working session cannot flip a server: the switch says so instead of ignoring the click. */
-.mcp-switch:disabled {
-  opacity: 0.3;
-  cursor: default;
-}
+/* The server's switch is THE control (.harny-switch, defined once at the top of this sheet): a
+   click on the NAME is a shortcut for it, which is why the name looks pressable. */
 .mcp-status .mcp-detail {
   color: var(--muted-2);
   flex: 1 1 auto;
@@ -2855,6 +2902,13 @@ body.no-workspace #ctl-toggle {
   padding: 3px 6px;
   font-size: var(--fs-sm);
 }
+/* One line of explanation above the list: the two pills are identical on purpose, so the sentence
+   is what tells a reader which is which before they have to guess. */
+.mcp-pop-legend {
+  font-size: var(--fs-xs);
+  color: var(--muted-3);
+  line-height: 1.4;
+}
 .mcp-pop-list {
   flex: 1 1 auto;
   min-height: 0;
@@ -2873,52 +2927,46 @@ body.no-workspace #ctl-toggle {
 .mcp-pop-row:first-of-type {
   border-top: none;
 }
-.mcp-pop-row input {
-  margin: 2px 0 0;
-  flex: none;
-  accent-color: var(--accent);
+/* The row's controls are THE switch (.harny-switch): one look, one meaning — "is this thing ON in
+   this conversation?" — instead of a second visual language one card above the pill it duplicates.
+   Only the POSITION is this row's business: 3px down, so the 12px pill sits on the name's first
+   line rather than on a description's second. */
+.mcp-pop-row .harny-switch {
+  margin-top: 3px;
+  align-self: flex-start;
 }
-/* The per-tool ANALYZE toggle: a shield that is lit when the tool runs in Analyze. It sits at
-   the far right of the row, away from the exposure checkbox on the left, because the two
-   answer different questions ("may the model see it" vs "may it run in Analyze"). */
-.mcp-pop-shield {
+/* The Analyze cluster: the WORD plus the same pill, at the far right of the row and away from the
+   exposure switch on the left, because they answer different questions ("may the model see it" vs
+   "may it run in Analyze"). The label is not decoration: two identical pills side by side would be a
+   guessing game, and this one carries no state a reader could infer from the row. */
+.mcp-pop-analyze {
   flex: none;
   margin-left: auto;
-  width: 18px;
-  height: 18px;
-  padding: 0;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: 1px solid var(--overlay-3);
-  border-radius: 5px;
-  color: var(--muted-3);
-  font-size: var(--fs-xs);
-  line-height: 1;
+  gap: 6px;
+  /* The whole cluster is a target (the word as much as the pill), like the row's name for exposure. */
   cursor: pointer;
-  box-shadow: none;
 }
-.mcp-pop-shield.on {
+.mcp-pop-analyze-label {
+  font-size: var(--fs-xs);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted-3);
+  white-space: nowrap;
+}
+/* ON means "this tool may run in Analyze", so the word lights with the pill: the colour is the second
+   signal after the knob, and it is what makes the state readable at a glance down the column. */
+.mcp-pop-analyze.on .mcp-pop-analyze-label {
   color: var(--ok);
-  border-color: var(--ok);
 }
-.mcp-pop-shield.inherited {
+/* The server declares every tool of it read-only: the pill is on and not editable (the host says so
+   with `disabled`), and the label dims with it rather than claiming a decision of this conversation. */
+.mcp-pop-analyze.inherited {
+  cursor: default;
+}
+.mcp-pop-analyze.inherited .mcp-pop-analyze-label {
   opacity: 0.55;
-  cursor: default;
-}
-/* Excluded from the model: not registered at all, so there is no Analyze policy to set. */
-.mcp-pop-shield.inert {
-  opacity: 0.3;
-  cursor: default;
-}
-.mcp-pop-shield:not(:disabled):hover {
-  color: var(--fg-strong);
-  border-color: var(--fg-strong);
-}
-.mcp-pop-shield.on:not(:disabled):hover {
-  color: var(--ok);
-  border-color: var(--ok);
 }
 .mcp-pop-text {
   display: flex;
@@ -3186,8 +3234,12 @@ body.no-workspace #ctl-toggle {
   color: var(--muted-2);
   cursor: pointer;
 }
-.mcp-enabled-row input {
-  accent-color: var(--accent);
+/* The enable flag is THE switch (.harny-switch): the one control in this form that turns a whole
+   SERVER on or off, and it must look like every other on/off control in the panel. Its own
+   dimensions and colours used to live here — that is exactly how it drifted away from the pill in
+   the tools popover. Only the LAYOUT is this row's business. */
+.mcp-enabled-row .harny-switch {
+  flex: none;
 }
 /* A disabled server is grayed out (name + detail). */
 .mcp-status.off,
@@ -3215,7 +3267,13 @@ body.no-workspace #mcp-card {
   display: none;
 }
 /* Numeric rows (Window + Sampling): a SLIDER plus a read-only value label.
-   The label keeps the exact value; the slider is the control. */
+   The label keeps the exact value; the slider is the control.
+   The LOOK of a slider is set in exactly ONE place — the pair of rules at the top of this sheet that
+   paints the track, the orange fill, the knob and the disabled state for both engines. A rule like
+   this one owns the ROW (how much space the control takes), never the control: `accent-color`,
+   `height`, `margin`, `cursor` and `:disabled` used to be repeated at every site, and with
+   `appearance: none` plus a thumb drawn by us, `accent-color` coloured nothing at all while the rest
+   were copies left free to drift apart one site at a time. */
 .num-row {
   display: flex;
   align-items: center;
@@ -3226,10 +3284,6 @@ body.no-workspace #mcp-card {
 .num-range {
   flex: 1 1 auto;
   min-width: 0;
-  height: 14px;
-  margin: 0;
-  accent-color: var(--accent);
-  cursor: pointer;
 }
 .num-value {
   flex: 0 0 auto;
@@ -3238,10 +3292,6 @@ body.no-workspace #mcp-card {
   font-size: var(--fs-xs);
   color: var(--fg);
   font-variant-numeric: tabular-nums;
-}
-.num-range:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 /* Loop Guard card: the sensitivity row wraps inside its half-width card. */
 /* The sensitivity row NEVER wraps: "Include response" always stays on the
@@ -3351,12 +3401,10 @@ body.no-workspace #mcp-card {
   font-variant-numeric: tabular-nums;
 }
 .lg-range {
+  /* LOOK: the shared range rules at the top of the sheet. Here only the GRID SLOT this control
+     fills — it shares its row with the parameter's name and its value label. */
   grid-area: range;
   width: 100%;
-  height: 14px;
-  margin: 0;
-  accent-color: var(--accent);
-  cursor: pointer;
 }
 /* Loop Guard OFF: the parameter sliders are inert (they stay in place, with their
    values, so switching level never changes the card's height — the column-count
@@ -3373,13 +3421,6 @@ body.no-workspace #mcp-card {
   align-items: center;
   gap: 8px;
   min-width: 0;
-}
-.ctl-inline input[type="checkbox"] {
-  flex: 0 0 auto;
-  width: 15px;
-  height: 15px;
-  accent-color: var(--accent);
-  cursor: pointer;
 }
 /* The AI Model card keeps the ORIGINAL proportions: one full-width row
    with the label inline and the select stretching (card chrome only). */
@@ -3854,13 +3895,11 @@ body.no-workspace #mcp-card {
   height: 9px;
   cursor: pointer;
 }
-/* The Loop Guard "Include response" flag shares the sampler row styling. */
-.sampler-opt input[type="checkbox"] {
-  accent-color: var(--accent);
-  margin: 0;
-  width: 11px;
-  height: 11px;
-  cursor: pointer;
+/* The Loop Guard "Include response" flag shares the sampler row styling. Its SWITCH is the shared
+   control (.harny-switch) — the sizes it used to carry (11px tick beside 9px radios) made one
+   on/off question look like a different species from the pill in the MCP card. */
+.sampler-opt .harny-switch {
+  flex: 0 0 auto;
 }
 .sampler-opt:hover {
   color: var(--fg);
@@ -4554,10 +4593,10 @@ body.no-session .empty-hero {
   gap: 8px;
 }
 #compact-settings-modal .cs-inline input[type="range"] {
+  /* Sizing only; the appearance is the shared range rules' business. */
   flex: 1 1 auto;
   min-width: 0;
   width: 100%;
-  accent-color: var(--accent);
 }
 #compact-settings-modal .cs-val {
   flex: 0 0 auto;
@@ -4848,8 +4887,8 @@ body.no-session .empty-hero {
   color: var(--muted);
 }
 .sm-vacuum-slider input[type="range"] {
+  /* Sizing only (its grid column); the appearance is the shared range rules'. */
   width: 100%;
-  accent-color: var(--accent);
 }
 .sm-vacuum-val {
   text-align: right;

@@ -31,6 +31,7 @@ const MODULES = [
   "mcp-tools-popover.ts",
   "mcp-editor.ts",
   "fold.ts",
+  "switch.ts",
 ];
 const HTML = src("./view-html.ts");
 /**
@@ -238,7 +239,7 @@ describe("the DOM contract between the modules and view-html", () => {
   it("finds classes to check (the parser itself must bite)", () => {
     // A guard on the guard: if the regexes stopped matching, this test would pass for ever.
     expect(written.length).toBeGreaterThan(30);
-    expect(written.map((w) => w.cls)).toContain("mcp-switch");
+    expect(written.map((w) => w.cls)).toContain("harny-switch");
     expect(written.map((w) => w.cls)).toContain("mcp-pop-row");
     expect(HOOKS.size).toBeGreaterThan(20);
   });

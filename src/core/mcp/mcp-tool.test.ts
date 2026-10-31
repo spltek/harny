@@ -33,53 +33,16 @@ describe("McpTool — the Analyze policy (the trust rule)", () => {
     expect(tool({ name: "anything" }, () => "read-only").analyzePolicy).toBe("read-only");
   });
 
-  it("a per-TOOL statement is the narrowest one and it wins: one safe tool of a refused server runs", () => {
-    // The whole point of `analyzeTools`: name ONE tool, leave the server undeclared.
-    const one = (name: string) =>
-      new McpTool(
-        "db",
-        { name },
-        noop(),
-        () => undefined,
-        () => ["read_query"],
-      );
-    expect(one("read_query").analyzePolicy).toBe("read-only");
-    // …and everything else of that server is still refused (the list is an INCLUDE list: a tool
-    // the server adds tomorrow must prove itself, exactly like DEFAULT_ANALYZE_POLICY).
-    expect(one("drop_table").analyzePolicy).toBe("refuse");
-  });
-
-  it("the per-tool statement does not need the server's hint, and survives a trusted server", () => {
-    const t = new McpTool(
-      "db",
-      { name: "read_query" },
-      noop(),
-      () => "trusted",
-      () => ["read_query"],
-    );
-    expect(t.analyzePolicy).toBe("read-only"); // no readOnlyHint at all: YOUR word is enough
-    const other = new McpTool(
-      "db",
-      { name: "write_query" },
-      noop(),
-      () => "trusted",
-      () => ["read_query"],
-    );
-    expect(other.analyzePolicy).toBe("refuse"); // trusted alone still needs the hint
-  });
-
-  it("reads the per-tool list LIVE, so the panel's Save lands on the next turn", () => {
-    let list: string[] | undefined;
-    const t = new McpTool(
-      "db",
-      { name: "read_query" },
-      noop(),
-      () => undefined,
-      () => list,
-    );
-    expect(t.analyzePolicy).toBe("refuse");
-    list = ["read_query"];
-    expect(t.analyzePolicy).toBe("read-only");
+  it("knows nothing about per-TOOL declarations: those belong to the SESSION", () => {
+    // This object is shared by every conversation (one registry, one instance), so it can answer
+    // only for the INSTALL — the server's declaration plus its own hints. Naming ONE tool is the
+    // session's statement (`ToolScope.analyze`), applied by `Agent.analyzePolicyFor` where the
+    // session is known: see agent.test.ts ("runs it in Analyze when THIS SESSION declares …") and
+    // tool-scope.test.ts. Handing it the file's `analyzeTools` here is what made one conversation's
+    // click speak for every tab, so that parameter is gone.
+    const hinted = tool({ name: "read_query", annotations: { readOnlyHint: true } }, () => "trusted");
+    expect(hinted.analyzePolicy).toBe("read-only"); // the server + its hint, and nothing else
+    expect(tool({ name: "read_query" }, () => undefined).analyzePolicy).toBe("refuse");
   });
 
   it("reads the declaration LIVE, so a settings change lands on the next turn", () => {
@@ -95,13 +58,15 @@ describe("McpTool — the Analyze policy (the trust rule)", () => {
     expect(undeclared).toContain("db");
     expect(undeclared).toContain("read-only");
     expect(undeclared).toContain("Build");
-    // The narrowest escape exists now, so the message must name it: otherwise the model (and the
+    // The narrowest escape exists, so the message must name it: otherwise the model (and the
     // user reading the refusal) is told there are fewer options than there really are.
-    expect(undeclared).toContain("shield in the tools panel");
+    expect(undeclared).toContain("Analyze switch in the tools panel");
+    // …and that the escape is the SESSION's, so nobody goes looking for it in `config.json`.
+    expect(undeclared).toContain("THIS conversation only");
     // A trusted server that did not declare read-only is told the DETAIL (not just "no").
     const trusted = tool({ name: "write_query" }, () => "trusted").analyzeRefusal;
     expect(trusted).toContain("readOnlyHint");
-    expect(trusted).toContain("shield in the tools panel");
+    expect(trusted).toContain("Analyze switch in the tools panel");
   });
 });
 

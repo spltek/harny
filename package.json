@@ -50,6 +50,12 @@
     "onStartupFinished"
   ],
   "main": "./dist/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In Restricted Mode (an untrusted folder) Harny stays fully visible and works read-only: it can read, search and PREPARE changes as validated previews, but it does not write files, run commands or load the workspace's own skills until you trust the folder. Build comes back as soon as you do."
+    }
+  },
   "contributes": {
     "viewsContainers": {
       "activitybar": [

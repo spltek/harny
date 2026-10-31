@@ -31,4 +31,14 @@ describe("defaultSkillRoots", () => {
       expect(roots).toContain(p);
     }
   });
+
+  it("with NO cwd (Restricted Mode) returns ONLY the user roots — a repo's skills are workspace content", () => {
+    // Workspace Trust is about what a REPO may make the machine do. A checked-in `SKILL.md` is
+    // instructions from that repo, so an untrusted folder contributes no roots at all: the user's
+    // own skills stay available (they installed them), the project's do not.
+    const roots = defaultSkillRoots(undefined, "/home/u");
+    expect(roots).not.toContain(join("/w", ".agents", "skills"));
+    expect(roots.filter((r) => !r.startsWith("/home/u"))).toEqual([]);
+    expect(roots).toContain(join("/home/u", ".agents", "skills"));
+  });
 });

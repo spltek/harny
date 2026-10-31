@@ -38,6 +38,7 @@ import edit from "../../media/icons/edit.svg";
 import shell from "../../media/icons/shell.svg";
 import grep from "../../media/icons/grep.svg";
 import glob from "../../media/icons/glob.svg";
+import unknown from "../../media/icons/unknown.svg";
 import skill from "../../media/icons/skill.svg";
 import todowrite from "../../media/icons/todowrite.svg";
 import websearch from "../../media/icons/websearch.svg";
@@ -75,6 +76,7 @@ const ARTWORK = {
   shell,
   grep,
   glob,
+  unknown,
   skill,
   todowrite,
   websearch,
@@ -123,20 +125,18 @@ const TOOL_ARTWORK: Record<string, IconName> = {
  * Every tool exposed by an MCP server shares ONE mark (the plug): there can be
  * any number of them and a per-server drawing is not worth the noise.
  *
- * An unknown name returns the wrench it always had: a tool we have not drawn yet
- * must still be recognisable as "some tool", and silently rendering nothing
- * would leave an empty space in the header. The wrench carries its OWN trailing
- * space — it is text, and the flex `gap` that separates an <svg> from the name
- * does not exist for it.
+ * An unknown name wears the QUESTION badge (`media/icons/unknown.svg`). It used to
+ * be the 🔧 emoji inside a span: the only "mark" in the panel that was not artwork
+ * in media/icons/, drawn differently on every OS, unscalable by the sprite rules
+ * and HONEST ONLY UP TO A POINT — it said "some tool" where the truth is "no tool".
+ * A name nobody drew still needs a mark (an empty space in the header reads as a
+ * broken icon), and a question says exactly what happened: the call named something
+ * that does not exist here (see core/tools/unknown-tool.ts).
  */
 export function toolIcon(name: string, size = 13): string {
   if (name.startsWith("mcp__")) return icon("mcp", size);
   const key = name.toLowerCase().replace(/[^a-z]/g, "");
-  const artwork = TOOL_ARTWORK[key];
-  // The fallback is TEXT (an emoji), not an SVG: it needs its own hook so the head icons can all
-  // be painted at the same size by the stylesheet (a bare glyph could not be targeted).
-  if (!artwork) return '<span class="tool-emoji">🔧</span> ';
-  return icon(artwork, size);
+  return icon(TOOL_ARTWORK[key] ?? "unknown", size);
 }
 
 /** A todo's status, as the TodoWrite tool spells it. */
