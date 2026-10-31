@@ -1564,6 +1564,42 @@ describe("view webview client", () => {
     expect(marker.compareDocumentPosition(answers[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it('a reasoning chunk that is only punctuation opens NO section (the stray ".")', async () => {
+    // Providers sometimes emit a lone "." as a separator. It is not a thought: the block must
+    // not hold a line in the transcript that says nothing, and must not stay behind either.
+    await loadView();
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+
+    hostMessage({ type: "textDelta", content: "Risposta." });
+    hostMessage({ type: "thinkingDelta", content: "." });
+    await new Promise((r) => setTimeout(r, 40));
+
+    // Opened at the first delta (its POSITION depends on that) but invisible while it is empty.
+    const block = document.querySelector(".thinking-block") as HTMLElement;
+    expect(block.classList.contains("hidden")).toBe(true);
+
+    // …and gone once the turn closes, instead of an empty "Thought during this answer" for ever.
+    hostMessage({ type: "done" });
+    await new Promise((r) => setTimeout(r, 40));
+    expect(document.querySelector(".thinking-block")).toBeNull();
+  });
+
+  it("…and the same block shows up as soon as it has something to say", async () => {
+    await loadView();
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+
+    hostMessage({ type: "textDelta", content: "Risposta." });
+    hostMessage({ type: "thinkingDelta", content: "." });
+    hostMessage({ type: "thinkingDelta", content: " Ora controllo la store." });
+    await new Promise((r) => setTimeout(r, 40));
+
+    const block = document.querySelector(".thinking-block") as HTMLElement;
+    expect(block.classList.contains("hidden")).toBe(false);
+    expect(block.textContent).toContain("Ora controllo la store");
+  });
+
   it("keeps the reasoning readable: expanding the mid-answer marker shows it", async () => {
     await loadView();
     (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";

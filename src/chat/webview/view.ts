@@ -2173,6 +2173,18 @@ function settlePulse(el: HTMLElement | null): void {
   window.setTimeout(() => el.classList.remove("settling"), 700);
 }
 
+/**
+ * Is this reasoning worth a line in the transcript?
+ *
+ * Some providers emit a stray `.` (or just punctuation/whitespace) as a separator, and the
+ * panel would open a "Thought during this answer" section with a single dot inside it — a
+ * block that says nothing but takes space in the story of the run. A block becomes visible
+ * when it has a letter or a digit, and is dropped if it never gets one.
+ */
+function hasMeaningfulThinking(text: string): boolean {
+  return /[^\s\p{P}\p{S}]/u.test(text);
+}
+
 /** Close the live streaming bubble: stop its border pulse before it becomes
  * a permanent transcript entry (final flush / new segment / reset). */
 function clearStreamingBubble(): void {
@@ -2183,6 +2195,9 @@ function clearStreamingBubble(): void {
 /** Stop the live thinking block's pulse when it stops being the active one. */
 function clearThinkingBlock(): void {
   settlePulse(currentThinkingBlock);
+  // A block that never said anything (a stray "." from the provider) is dropped instead of
+  // staying in the transcript as an empty "Thought during this answer".
+  if (currentThinkingBlock && !hasMeaningfulThinking(currentThinkingText)) currentThinkingBlock.remove();
   currentThinkingBlock = null;
 }
 
@@ -6006,6 +6021,9 @@ window.addEventListener("message", (e) => {
         const body = currentThinkingBlock.querySelector(".thinking-body");
         // `push`/`paint` scrolls (see the answer path).
         if (body) thinkingMd.push(body, () => currentThinkingText);
+        // The block is created on the FIRST delta, so whether it says anything can only be
+        // judged afterwards: keep it invisible until it does (see hasMeaningfulThinking).
+        currentThinkingBlock.classList.toggle("hidden", !hasMeaningfulThinking(currentThinkingText));
       }
       break;
     }
