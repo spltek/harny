@@ -7,10 +7,16 @@ const base = {
 };
 
 /** The body of one CSS rule, so an assertion cannot match a DIFFERENT rule that
- * happens to share a property (several elements legitimately use ellipsis). */
+ * happens to share a property (several elements legitimately use ellipsis).
+ *
+ * Whitespace is normalised on BOTH sides: the sheet is a real .css file now, so its line
+ * breaks and indentation are a formatter's business — a test that pins them breaks for a
+ * reason that has nothing to do with the rule. */
 function cssRule(html: string, selector: string): string {
-  const start = html.indexOf(selector + " {");
-  return start < 0 ? "" : html.slice(start, html.indexOf("}", start));
+  const flat = html.replace(/\s+/g, " ");
+  const key = selector.replace(/\s+/g, " ").trim();
+  const start = flat.indexOf(key + " {");
+  return start < 0 ? "" : flat.slice(start, flat.indexOf("}", start));
 }
 
 describe("renderViewHtml", () => {
@@ -1242,8 +1248,11 @@ describe("renderViewHtml", () => {
     // takes over past a ~15.6px font (32rem === 500px exactly there).
     // It also clears the control-row overflow (~407px) and the pills reaching the
     // centred ctl-toggle chevron (~379px).
-    expect(html).toMatch(/html\s*\{\s*min-width:\s*max\(500px,\s*32rem\);\s*overflow-x:\s*auto/);
-    expect(html).toMatch(/body\s*\{[^}]*min-width:\s*max\(500px,\s*32rem\)/);
+    // The VALUE is emitted with the other measured numbers (`:root`), and the sheet reads it
+    // as a variable: media/view.css is a static file and cannot compute anything.
+    expect(html).toMatch(/--panel-min-width:\s*max\(500px,\s*32rem\)/);
+    expect(html).toMatch(/html\s*\{\s*min-width:\s*var\(--panel-min-width\);\s*overflow-x:\s*auto/);
+    expect(html).toMatch(/body\s*\{[^}]*min-width:\s*var\(--panel-min-width\)/);
     // The old providers-form flag is gone (moved to the per-session Parallel card).
     expect(html).not.toContain("pe-maxparallel");
   });

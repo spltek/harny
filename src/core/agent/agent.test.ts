@@ -9,6 +9,7 @@ import { StaticConfigProvider } from "../config/static-config-provider";
 import { ToolRegistry } from "../tools/tool-registry";
 import type { HarnyConfig } from "../config/types";
 import type { LLMMessage, LLMProviderFactory, StreamChunk } from "../llm/types";
+import { toolCallChunks, toolCallChunksFromJson, textChunks } from "../llm/stream-chunks.test-utils";
 import { Semaphore, limitLlmFactory } from "../llm/concurrency";
 import type { Tool, ToolResult } from "../tools/tool";
 import type { ToolDefinition } from "../tools/tool";
@@ -159,14 +160,7 @@ describe("Agent", () => {
     const read = makeTool("Read", { content: "file content", isError: false });
     const { agent, history } = buildHarness({
       tools: [read],
-      chunks: [
-        [
-          { type: "tool_call_start", index: 0, id: "c1", name: "Read" },
-          { type: "tool_call_delta", index: 0, delta: '{"path":"a.ts"}' },
-          { type: "tool_call_end", index: 0 },
-        ],
-        [{ type: "text", content: "done" }],
-      ],
+      chunks: [toolCallChunks("c1", "Read", { path: "a.ts" }), textChunks("done")],
       workspaceReady: () => false,
       cwd: () => "/p/gone",
     });
@@ -1792,14 +1786,6 @@ describe("Analyze (read-only) mode", () => {
     return { agent, seenDefinitions, seenSystemPrompts, history };
   }
 
-  function toolCallChunks(name: string, argsJson: string): StreamChunk[] {
-    return [
-      { type: "tool_call_start", index: 0, id: "c1", name },
-      { type: "tool_call_delta", index: 0, delta: argsJson },
-      { type: "tool_call_end", index: 0 },
-    ];
-  }
-
   it("survives a tool vanishing MID-RUN: the call fails as a result, the turn goes on", async () => {
     // The real race: the MCP server is removed from the config while a turn is in flight, the
     // manager reconnects and the tool is gone from the registry — but the model already has it in
@@ -1941,7 +1927,7 @@ describe("Analyze (read-only) mode", () => {
     };
     const { agent, history } = capturingHarness(
       [writeTool],
-      [toolCallChunks("Write", '{"path":"a.txt","content":"x"}'), [{ type: "text", content: "ok" }]],
+      [toolCallChunksFromJson("c1", "Write", '{"path":"a.txt","content":"x"}'), [{ type: "text", content: "ok" }]],
     );
 
     await agent.send("write a file");
@@ -1962,7 +1948,7 @@ describe("Analyze (read-only) mode", () => {
     };
     const { agent, history } = capturingHarness(
       [writeTool],
-      [toolCallChunks("Write", '{"path":"a.txt","content":"x"}'), [{ type: "text", content: "ok" }]],
+      [toolCallChunksFromJson("c1", "Write", '{"path":"a.txt","content":"x"}'), [{ type: "text", content: "ok" }]],
       "agent",
     );
 
@@ -1984,14 +1970,14 @@ describe("Analyze (read-only) mode", () => {
     const shell = new ShellTool({ run }, () => "/workspace");
     const { agent } = capturingHarness(
       [shell],
-      [toolCallChunks("Shell", '{"command":"rm -rf /tmp/x"}'), [{ type: "text", content: "ok" }]],
+      [toolCallChunksFromJson("c1", "Shell", '{"command":"rm -rf /tmp/x"}'), [{ type: "text", content: "ok" }]],
     );
     await agent.send("delete temp");
     expect(run).not.toHaveBeenCalled(); // refused BEFORE running anything
 
     const { agent: agent2, history: history2 } = capturingHarness(
       [shell, makeTool("Read")],
-      [toolCallChunks("Shell", '{"command":"ls -la"}'), [{ type: "text", content: "ok" }]],
+      [toolCallChunksFromJson("c1", "Shell", '{"command":"ls -la"}'), [{ type: "text", content: "ok" }]],
     );
     await agent2.send("list files");
     expect(run).toHaveBeenCalledTimes(1); // the read-only command DID run
@@ -2002,7 +1988,7 @@ describe("Analyze (read-only) mode", () => {
     const readTool = makeTool("Read", { content: "contents", isError: false });
     const { agent, history } = capturingHarness(
       [readTool],
-      [toolCallChunks("Read", '{"path":"a.ts"}'), [{ type: "text", content: "ok" }]],
+      [toolCallChunksFromJson("c1", "Read", '{"path":"a.ts"}'), [{ type: "text", content: "ok" }]],
     );
 
     await agent.send("read the file");
@@ -2015,7 +2001,7 @@ describe("Analyze (read-only) mode", () => {
     const { agent, history } = capturingHarness(
       [previewTool("Edit"), makeTool("Read")],
       [
-        toolCallChunks("Edit", '{"path":"a.ts","edits":[{"oldText":"x","newText":"y"}]}'),
+        toolCallChunksFromJson("c1", "Edit", '{"path":"a.ts","edits":[{"oldText":"x","newText":"y"}]}'),
         [{ type: "text", content: "I fixed the bug for you." }],
       ],
       "analyze",
@@ -2037,8 +2023,8 @@ describe("Analyze (read-only) mode", () => {
     const { agent, history } = capturingHarness(
       [previewTool("Edit"), previewTool("Write")],
       [
-        toolCallChunks("Edit", '{"path":"src/a.ts","edits":[]}'),
-        toolCallChunks("Write", '{"path":"src/b.ts","contents":"x"}'),
+        toolCallChunksFromJson("c1", "Edit", '{"path":"src/a.ts","edits":[]}'),
+        toolCallChunksFromJson("c1", "Write", '{"path":"src/b.ts","contents":"x"}'),
         [{ type: "text", content: "Prepared the changes." }],
       ],
       "analyze",
@@ -2059,7 +2045,7 @@ describe("Analyze (read-only) mode", () => {
     const { agent, history } = capturingHarness(
       [previewTool("Edit")],
       [
-        toolCallChunks("Edit", '{"path":"a.ts","edits":[{"oldText":"x","newText":"y"}]}'),
+        toolCallChunksFromJson("c1", "Edit", '{"path":"a.ts","edits":[{"oldText":"x","newText":"y"}]}'),
         [{ type: "text", content: `Done.\n\n${BUILD_SWITCH_HINT}` }],
       ],
       "analyze",
@@ -2078,7 +2064,10 @@ describe("Analyze (read-only) mode", () => {
   it("does not add the preview footer in Build mode", async () => {
     const { agent, history } = capturingHarness(
       [previewTool("Edit")],
-      [toolCallChunks("Edit", '{"path":"a.ts","edits":[]}'), [{ type: "text", content: "Applied the change." }]],
+      [
+        toolCallChunksFromJson("c1", "Edit", '{"path":"a.ts","edits":[]}'),
+        [{ type: "text", content: "Applied the change." }],
+      ],
       "agent",
     );
 
@@ -4562,14 +4551,6 @@ describe("tool-call pairing on an interrupted run", () => {
         },
       }),
     } as unknown as LLMProviderFactory & { requests: LLMMessage[][] };
-  }
-
-  function toolCallChunks(id: string, name: string, args: Record<string, unknown>): StreamChunk[] {
-    return [
-      { type: "tool_call_start", index: 0, id, name },
-      { type: "tool_call_delta", index: 0, delta: JSON.stringify(args) },
-      { type: "tool_call_end", index: 0 },
-    ];
   }
 
   it("a Stop while a tool runs leaves a conversation the provider still accepts", async () => {

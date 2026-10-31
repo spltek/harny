@@ -21,12 +21,31 @@ export default defineConfig({
       // otherwise hand a test the asset URL instead of the markup, so the jsdom
       // tests would assert against `<svg>` placeholders instead of the drawing.
       // Same bytes as production, and no test-only branch in the sources.
+      // (The stylesheet needs none of this: it is imported with `?raw`, which Vite
+      // supports natively.)
       name: "svg-as-text",
       enforce: "pre",
       transform(_code, id) {
         const file = id.split("?")[0];
         if (!file.endsWith(".svg")) return null;
         return { code: `export default ${JSON.stringify(readFileSync(file, "utf8"))};`, map: null };
+      },
+    },
+    {
+      // `import css from "./view.css?raw"` is native in Vite, but Vitest STUBS every CSS module
+      // (its css option is off by default) and `?raw` does not escape that. So the text is
+      // produced here: Vite's own resolver finds the file (`this.resolve`), and the id gets a
+      // neutral `.rawtext` suffix so the CSS pipeline cannot recognise (and empty) it.
+      name: "raw-text-in-tests",
+      enforce: "pre",
+      async resolveId(source, importer, options) {
+        if (!source.endsWith("?raw")) return null;
+        const resolved = await this.resolve(source.slice(0, -4), importer, { ...options, skipSelf: true });
+        return resolved ? resolved.id + ".rawtext" : null;
+      },
+      load(id) {
+        if (!id.endsWith(".rawtext")) return null;
+        return `export default ${JSON.stringify(readFileSync(id.slice(0, -8), "utf8"))};`;
       },
     },
   ],

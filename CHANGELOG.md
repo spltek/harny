@@ -11,24 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **The panel opens on its sessions even with NO folder open.** The first screen used to be a dead end — *"Harny needs a single open folder"* — that also hid the one thing worth showing: sessions live in a single central database keyed by folder, so the full history is available with no root at all. The sessions card now stays on screen in that state and becomes a **workspace picker**: every folder's sessions, most recent first, each row carrying its folder path in the mono face, and **the whole row is the control** (pointer, focus ring, Enter/Space). The trailing label says what the click does — **Open folder**, or **Change folder…** when that path is gone — and the hero names the reason (**No folder is open** / **3 folders are open — Harny needs exactly one**) with **Open folder…** as the one action. Nothing per-session is offered there (branch/rename/delete act on a session that cannot be shown yet; they stay one click away in All sessions), and the gear is hidden because that form would list the very same rows.
+- **The stylesheet is a file again, not a template literal.** `view-html.ts` held ~2,300 lines of CSS inside the string that builds the page: no formatter, no linter, no type check — and a stray backtick in a CSS comment was a syntax error nobody could catch (it happened TWICE while adding one rule). The sheet now lives in `media/view.css` and reaches the page through the generated module `src/chat/view-css.ts` (`npm run gen:css`, run before every bundle): JSON-encoded, so it cannot end a literal or start an interpolation, with `view-css.test.ts` failing if the two ever drift apart. Importing the `.css` directly was tried and rejected on evidence: Vitest stubs every CSS import (`?raw` included), and keeping Vite's CSS pipeline out of the way needed a chain of hacks — a generated string needs neither bundler to agree on anything. `view-html.ts`: 3,001 → 666 lines.
+- **Test fixtures are typed like production.** The stream chunks that drive the agent tests come from one shared, typed builder (`src/core/llm/stream-chunks.test-utils.ts`) instead of three local copies, and the host fixtures take options (`makePanel({ visible })`) instead of positional flags. The reason is on record: a hand-written chunk literal typechecked and failed at RUNTIME, in a test meant to prove something else — the compiler should say no first.
+
+- **The panel opens on its sessions even with NO folder open.** The first screen used to be a dead end — _"Harny needs a single open folder"_ — that also hid the one thing worth showing: sessions live in a single central database keyed by folder, so the full history is available with no root at all. The sessions card now stays on screen in that state and becomes a **workspace picker**: every folder's sessions, most recent first, each row carrying its folder path in the mono face, and **the whole row is the control** (pointer, focus ring, Enter/Space). The trailing label says what the click does — **Open folder**, or **Change folder…** when that path is gone — and the hero names the reason (**No folder is open** / **3 folders are open — Harny needs exactly one**) with **Open folder…** as the one action. Nothing per-session is offered there (branch/rename/delete act on a session that cannot be shown yet; they stay one click away in All sessions), and the gear is hidden because that form would list the very same rows.
 - **`workspaceFolderCount` and the root's PATH travel with the config** (host → view), so a multi-root window is told how many folders it has (instead of "no folder is open") and the hero can name a folder that went missing.
-- **A folder that is GONE is never hidden.** `folderMissing` was already computed at list time; what was missing was the SCREEN. Now a workspace whose folder was deleted on disk is **not "ready"** any more (`workspaceReady` also checks that the root exists), so the panel falls back to the home, which NAMES it — *"The workspace folder /path no longer exists"* — reassures (*"Your sessions are safe"*) and offers **Open another folder…**; the list stops being filtered by the dead root, so it shows every workspace again (that is the picker). A session row whose folder is gone carries a visible **`/path — missing`** line (not just a tooltip) and its **tab turns red**. Clicking either opens the picker instead of silently doing nothing, which is what `openSession` did — the host refuses to open a session whose folder is missing, so a row that looked healthy was a click that went nowhere. And it is noticed **without any interaction**: every other path is reactive, so a folder deleted from outside (`rm -rf`, a mount that drops) left the panel claiming a workspace until the next click — the first symptom being a tool failing with `ENOENT`. `WorkspaceRootWatch` (`src/chat/workspace-watch.ts`) polls the root with ONE `stat` every 5 s, reports the verdict only when it CHANGES (both ways: a mount that comes back brings the chat back) and rebuilds the panel; a poll rather than `fs.watch`, which behaves differently per platform on a deleted directory and cannot even be armed when the folder is already gone.
-- **A click into another workspace now FINISHES instead of restarting.** Opening a folder reloads the extension host, so the click that asked for it had nothing left to carry it: you picked a session, the window reloaded, and the panel showed a home screen that had forgotten. The intent is written to `globalState` (the only store that survives the reload) **before** the folder opens, and consumed once on activation (`src/chat/pending-open.ts`): a row opens its folder *and then the session*, and **New session** with no folder leaves the naming modal waiting on the other side. Two rules bound it — the marker is honoured only in the folder it names (any other activation discards it) and only for five minutes (a reload takes seconds), and it is always consumed, so it can never fire in the wrong project nor twice. The panel also gained `runWhenReady`: a gesture that arrives before the page exists now waits for it, because a `postMessage` into a webview that is not there yet lands nowhere.
+- **A folder that is GONE is never hidden.** `folderMissing` was already computed at list time; what was missing was the SCREEN. Now a workspace whose folder was deleted on disk is **not "ready"** any more (`workspaceReady` also checks that the root exists), so the panel falls back to the home, which NAMES it — _"The workspace folder /path no longer exists"_ — reassures (_"Your sessions are safe"_) and offers **Open another folder…**; the list stops being filtered by the dead root, so it shows every workspace again (that is the picker). A session row whose folder is gone carries a visible **`/path — missing`** line (not just a tooltip) and its **tab turns red**. Clicking either opens the picker instead of silently doing nothing, which is what `openSession` did — the host refuses to open a session whose folder is missing, so a row that looked healthy was a click that went nowhere. And it is noticed **without any interaction**: every other path is reactive, so a folder deleted from outside (`rm -rf`, a mount that drops) left the panel claiming a workspace until the next click — the first symptom being a tool failing with `ENOENT`. `WorkspaceRootWatch` (`src/chat/workspace-watch.ts`) polls the root with ONE `stat` every 5 s, reports the verdict only when it CHANGES (both ways: a mount that comes back brings the chat back) and rebuilds the panel; a poll rather than `fs.watch`, which behaves differently per platform on a deleted directory and cannot even be armed when the folder is already gone.
+- **A click into another workspace now FINISHES instead of restarting.** Opening a folder reloads the extension host, so the click that asked for it had nothing left to carry it: you picked a session, the window reloaded, and the panel showed a home screen that had forgotten. The intent is written to `globalState` (the only store that survives the reload) **before** the folder opens, and consumed once on activation (`src/chat/pending-open.ts`): a row opens its folder _and then the session_, and **New session** with no folder leaves the naming modal waiting on the other side. Two rules bound it — the marker is honoured only in the folder it names (any other activation discards it) and only for five minutes (a reload takes seconds), and it is always consumed, so it can never fire in the wrong project nor twice. The panel also gained `runWhenReady`: a gesture that arrives before the page exists now waits for it, because a `postMessage` into a webview that is not there yet lands nowhere.
 
 ### Changed
 
-- **Opening a folder has ONE implementation.** The three flows that need a workspace — the home CTA, a session row and "New session" — went through two copies of `commands.executeCommand("vscode.openFolder", …)` plus an ad-hoc picker. They now share `WorkspaceActions` over an injected `WorkspacePorts` (`src/chat/workspace-actions.ts`): the dialog and the reload live in one adapter, and the flows are unit-tested without a host. The *open-vs-pick* rule — and its wording — is likewise one pure function (`src/chat/webview/session-folder.ts`) shared by the home list and the All-sessions form, instead of two copies that could disagree about a gesture that reloads the window.
-- **"New session" with no folder open asks for a folder instead of refusing.** The old alert named *File → Open Folder* and stopped; the picker is the answer to the same question, and cancelling still changes nothing.
+- **Opening a folder has ONE implementation.** The three flows that need a workspace — the home CTA, a session row and "New session" — went through two copies of `commands.executeCommand("vscode.openFolder", …)` plus an ad-hoc picker. They now share `WorkspaceActions` over an injected `WorkspacePorts` (`src/chat/workspace-actions.ts`): the dialog and the reload live in one adapter, and the flows are unit-tested without a host. The _open-vs-pick_ rule — and its wording — is likewise one pure function (`src/chat/webview/session-folder.ts`) shared by the home list and the All-sessions form, instead of two copies that could disagree about a gesture that reloads the window.
+- **"New session" with no folder open asks for a folder instead of refusing.** The old alert named _File → Open Folder_ and stopped; the picker is the answer to the same question, and cancelling still changes nothing.
 
 ### Fixed
 
-- **A reasoning block that says nothing no longer holds a line in the transcript.** Some providers emit a lone `.` (or just punctuation) as a separator, and the panel faithfully opened a *"Thought during this answer"* section with a single dot inside it — space taken in the story of a run, for something that was never a thought. The block is created at the position it must occupy (that decision cannot wait) but stays **invisible** until it contains a letter or a digit, and is **removed** when the turn closes if it never got one. No chunk is filtered: dropping a legitimate "…" or "?" mid-reasoning would be the worse bug — the choice is only whether the section is shown.
-- **The engine will not work — or keep working — without its folder.** The root is now a PRECONDITION of using it, enforced in three places that share one rule (`workspaceReady`) and one set of words (`core/agent/workspace-gone.ts`): a **send** is refused before it becomes a run — the panel does not even paint its optimistic "Working…" for it, because nothing would ever arrive to clear it (play on a dead folder opens the re-point dialog instead, and typing/attaching stay allowed: the decision may be "later"); every **tool call** is refused when the root is gone — the net for the window before the next poll — with a message written for the MODEL (*"this is NOT an empty project… do not scaffold"*), which is the sentence that stops the re-create-the-folder reflex; and the **watcher STOPS** a run in flight (`abort` carries the reason into the transcript) as soon as the folder disappears, which cascades to its sub-agents. Before this, a run whose folder was deleted kept going, `Write` re-created the folder (`mkdir -p` of the parent) and the session silently "healed" to an empty ghost. A dialog that blocks the panel would be a second problem — *while a run is going*. So the order is: **abort first** (the run and its sub-agents stop, the reason is written in the transcript), **then** ask — in the panel's own dialog ("Folder no longer available… Pick a new one.", OK → the picker). Blocking is harmless once nothing is running, and there is nothing else on screen saying it: no banner, no toast on top of it. The toast survives only as the fallback for a panel that is NOT on screen (`panelVisible()`), where a modal cannot be shown at all.
+- **A reasoning block that says nothing no longer holds a line in the transcript.** Some providers emit a lone `.` (or just punctuation) as a separator, and the panel faithfully opened a _"Thought during this answer"_ section with a single dot inside it — space taken in the story of a run, for something that was never a thought. The block is created at the position it must occupy (that decision cannot wait) but stays **invisible** until it contains a letter or a digit, and is **removed** when the turn closes if it never got one. No chunk is filtered: dropping a legitimate "…" or "?" mid-reasoning would be the worse bug — the choice is only whether the section is shown.
+- **The engine will not work — or keep working — without its folder.** The root is now a PRECONDITION of using it, enforced in three places that share one rule (`workspaceReady`) and one set of words (`core/agent/workspace-gone.ts`): a **send** is refused before it becomes a run — the panel does not even paint its optimistic "Working…" for it, because nothing would ever arrive to clear it (play on a dead folder opens the re-point dialog instead, and typing/attaching stay allowed: the decision may be "later"); every **tool call** is refused when the root is gone — the net for the window before the next poll — with a message written for the MODEL (_"this is NOT an empty project… do not scaffold"_), which is the sentence that stops the re-create-the-folder reflex; and the **watcher STOPS** a run in flight (`abort` carries the reason into the transcript) as soon as the folder disappears, which cascades to its sub-agents. Before this, a run whose folder was deleted kept going, `Write` re-created the folder (`mkdir -p` of the parent) and the session silently "healed" to an empty ghost. A dialog that blocks the panel would be a second problem — _while a run is going_. So the order is: **abort first** (the run and its sub-agents stop, the reason is written in the transcript), **then** ask — in the panel's own dialog ("Folder no longer available… Pick a new one.", OK → the picker). Blocking is harmless once nothing is running, and there is nothing else on screen saying it: no banner, no toast on top of it. The toast survives only as the fallback for a panel that is NOT on screen (`panelVisible()`), where a modal cannot be shown at all.
 - **A running session keeps its CHAT (and its STOP) even when the folder is gone.** The home rule was "no usable folder ⇒ picker", which took the entire control stack — STOP included — away from a session that was **still running**: the stream kept drawing over the hero, the live turn could not be interrupted by hand, and the panel looked like a dead end (reported from the field, with a screenshot of exactly that). A session that is open now WINS: the chat and its controls stay, and the reason is stated IN the transcript — a banner naming the dead path with **Change folder…** one click away, the same route as the red row. The picker is for "nothing to talk to".
 - **A panel that froze behind a dialog nobody could answer.** `PanelModalQueue.cancelAll()` documented itself as "called when the webview page is rebuilt with a modal open" — and nothing called it, so the guard was a promise, not a mechanism. The hole it was meant to cover is real: `refresh()` skips the rebuild when a modal is ALREADY pending, but `buildHtml()` is async (config, skills, MCP status — hundreds of ms), so a modal could OPEN in the middle of a build and the page was replaced underneath it. Its DOM vanished, the answer never arrived, the queue stayed non-empty for ever — and since every later `refresh()` defers behind a pending modal, the panel stopped updating entirely: the frozen "interface blocked" state, with the folder already gone and a red row as the only thing on screen. The rebuild now DEFERS when a modal opened while the page was being built, and `dispose()` cancels whatever is still waiting (a flow must not hang on a webview that no longer exists).
-- **The home hero could be clipped out of reach.** `.empty-hero` centred its content with a plain flex centering, which on a short panel pushes the TOP of an overflowing column out of the scrollable area: the message (*"The workspace folder /… no longer exists"*) disappeared while the button underneath stayed visible, so a state that explains itself read as a mystery. It is `safe center` now (centred when it fits, top-aligned when it does not) and the list is capped at 45vh instead of 55vh, so the explanation always has room.
-- **A stuck dialog can no longer make the panel unrecoverable.** Belt to the brace above: the modal overlay covers the whole panel, so one dialog nobody can answer takes every control with it ("non riesco a cambiare mode/parallel"). `ModalStallGuard` puts the deferral on a clock: if a modal is pending WHILE a rebuild waits behind it for more than two minutes, the dialog is cancelled and the panel rebuilds itself, with a line in *Output > Harny*. It fires only on that combination — a dialog left open while nothing wants to redraw is the user reading, and is left alone.
+- **The home hero could be clipped out of reach.** `.empty-hero` centred its content with a plain flex centering, which on a short panel pushes the TOP of an overflowing column out of the scrollable area: the message (_"The workspace folder /… no longer exists"_) disappeared while the button underneath stayed visible, so a state that explains itself read as a mystery. It is `safe center` now (centred when it fits, top-aligned when it does not) and the list is capped at 45vh instead of 55vh, so the explanation always has room.
+- **A stuck dialog can no longer make the panel unrecoverable.** Belt to the brace above: the modal overlay covers the whole panel, so one dialog nobody can answer takes every control with it ("non riesco a cambiare mode/parallel"). `ModalStallGuard` puts the deferral on a clock: if a modal is pending WHILE a rebuild waits behind it for more than two minutes, the dialog is cancelled and the panel rebuilds itself, with a line in _Output > Harny_. It fires only on that combination — a dialog left open while nothing wants to redraw is the user reading, and is left alone.
 
 ## [0.9.4] - 2026-10-30
 
@@ -65,17 +68,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compared is a plain `#rrggbb` so those comparisons mean something. The direction of "above" flips between the
   themes — on near-black you rise by getting lighter, on paper by getting darker — so only DISTANCES are asserted.
   A hex-per-role test would have failed on every taste change while missing the inversion below; this one was
-  verified by restoring the old value, and it fails with *"light: tool-bg must sit below assistant-msg"*.
+  verified by restoring the old value, and it fails with _"light: tool-bg must sit below assistant-msg"_.
 
 ### Changed
 
-- **Tool calls no longer sit on a card.** A tool bubble was a filled rectangle one shade *lighter* than the page in
+- **Tool calls no longer sit on a card.** A tool bubble was a filled rectangle one shade _lighter_ than the page in
   the dark theme, so a long run accumulated a stack of cards that competed with the answers for attention. It keeps
   its hairline border and loses the fill: the bubble now reads as an outline on the page, the way the thinking
   block always has. `--tool-bg` is untouched — code blocks, inline code and table headers inside an answer still
   need their card.
-- **The light theme had its code blocks RAISED instead of recessed.** `--tool-bg` sat a step *below* the answer
-  bubble in the dark theme (`#1a1a1a` under `#1e1e1e`) and a step *above* it in the light one (`#f7f4f1` over
+- **The light theme had its code blocks RAISED instead of recessed.** `--tool-bg` sat a step _below_ the answer
+  bubble in the dark theme (`#1a1a1a` under `#1e1e1e`) and a step _above_ it in the light one (`#f7f4f1` over
   `#f4f1ed`): one role with two opposite meanings, unnoticed because the palette tests only checked that a role
   EXISTS in both themes, never what it means. It is `#eeebe7` now — deeper than the card, as in the dark theme.
 
@@ -153,7 +156,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   existed but was INVISIBLE: the server's name was the toggle and nothing on screen said so, so the only way to find
   out was to click something and see what happened. The row now leads with a `role="switch"` button whose
   `aria-checked` drives the look (off: white veil with a gray dot at the left — the "disabled" reading; on: ACCENT
-track with a WHITE dot), and
+  track with a WHITE dot), and
   the name still works as a shortcut — the leading `●` is gone, since the switch now carries the state. The track is
   exactly as tall as the knob (26×12 with a 12×12 knob, no border, knob flush) so the switch reads as one object; that
   took resetting `min-height`, `padding` and `box-shadow`, because the global `button` rule's `min-height: 1.54rem`
@@ -213,9 +216,9 @@ track with a WHITE dot), and
   deliberately absent from `contributes.commands`, so the palette stays clean — a manifest test now enforces that every
   Harny keybinding is view-scoped instead of banning them all.
 
-- **Three gaps found in the final review, each fixed with the test that locks it.** *Copy* claimed success when the
+- **Three gaps found in the final review, each fixed with the test that locks it.** _Copy_ claimed success when the
   clipboard API was missing (`await navigator.clipboard?.writeText` resolves to `undefined`) and never tried the legacy
-  path — it now reports the truth. *Find* counted a hit inside a FOLDED section and then scrolled to a `display: none`
+  path — it now reports the truth. _Find_ counted a hit inside a FOLDED section and then scrolled to a `display: none`
   node, so the jump did nothing: the match now opens its ancestors (chevron and state included). And a fold header is a
   **disclosure button** for the keyboard and the screen reader (role, tab stop, Enter/Space, `aria-expanded`), not just a
   clickable `div`; the debounced search is also disarmed on close, where it used to fire after the bar was gone and clear
@@ -242,7 +245,7 @@ track with a WHITE dot), and
 - **Find in the chat (⌘F / Ctrl+F), which did not exist at all.** A webview has no native find — the browser's ⌘F
   belongs to the host window and never reaches the panel — so the shortcut was dead. A small bar over the transcript's
   top-right searches every bubble case-insensitively, `Enter`/`Shift+Enter` step through the matches (wrapping), the
-  counter says `3/17` or *no match*, and `Esc` closes find instead of stopping the run. Matches are capped at 500, and a
+  counter says `3/17` or _no match_, and `Esc` closes find instead of stopping the run. Matches are capped at 500, and a
   list built before more text arrived is rebuilt rather than pointing at ranges that no longer exist.
 
 - **Typing in the find field no longer stops after one character.** The first cut used the document SELECTION as the
@@ -276,7 +279,7 @@ track with a WHITE dot), and
   and the focus went to the prompt — which discarded the selection the keystroke was about to copy. The indicator now
   only paints; the view and the caret move on a real decision (a send, a pending change). And the `contextmenu` handler
   suppressed the native menu everywhere outside inputs, so **Copy existed only as a shortcut**: it is now suppressed
-  only on macOS over the chrome (where Ctrl+click *is* a click), and **never** on a text selection anywhere.
+  only on macOS over the chrome (where Ctrl+click _is_ a click), and **never** on a text selection anywhere.
 
 - **The keyboard now follows the host OS, where it must.** The Steer modifier is the OS's own — **⌘** on macOS (Ctrl
   accepted too, as the hint says "Ctrl/Cmd"), **Ctrl** on Windows/Linux, where a bare **Win/Super** key is the OS's and
@@ -340,7 +343,7 @@ track with a WHITE dot), and
 
 - **The session trash asks ONE question with THREE answers: delete / rewind / empty.** It used to ask a plain
   yes/no ("Delete session X? This removes its transcript and settings"), which is the wrong question for the case
-  that actually comes up: a session that grew too big, where throwing away the *state of the work* is a last
+  that actually comes up: a session that grew too big, where throwing away the _state of the work_ is a last
   resort and the usual intent is "start over, but keep what we decided so far". Clicking 🗑 (in the sessions list
   and in the All-sessions manager alike) now opens one in-panel dialog with the three outcomes spelled out:
   **Delete** removes the session, transcript and settings included; **Rewind** keeps everything up to the
@@ -416,7 +419,7 @@ track with a WHITE dot), and
 
 - **One weight for the tool marks, and the bot that was missing.** The marks had arrived in two weights — the trash
   kept the 2 it had as a row button while everything else was 1.5 — so the set is now uniform at 1.5 on the same
-  24×24 grid. The one drawing that genuinely serves two families (the trash: Delete's mark *and* the session
+  24×24 grid. The one drawing that genuinely serves two families (the trash: Delete's mark _and_ the session
   row's button, where it sits next to a 13 px pencil at 2) is still ONE file: `icon()` now lets the caller
   override an artwork attribute, so the row asks for `stroke-width="2"` and the transcript gets 1.5. A second
   copy of the file was the alternative, and a copy is exactly how two marks drift apart. `skill` remains the only
@@ -869,7 +872,7 @@ track with a WHITE dot), and
 ### Fixed
 
 - **A warning in the Problems panel, gone.** The manifest declared
-  `onView:harny.chatView`, which VS Code and VSCodium have generated *implicitly* from
+  `onView:harny.chatView`, which VS Code and VSCodium have generated _implicitly_ from
   `contributes.views` since 1.74: the `package.json` schema flagged it as removable, so every
   checkout showed a permanent warning on line 51. It is now declared nowhere and still fires — the
   editor registers the implicit event before it activates the extension, which is exactly what the
@@ -902,7 +905,7 @@ track with a WHITE dot), and
   `@types/vscode: ^1.85.0` while `engines.vscode` said `^1.101.0`: the floor was two years older than
   the minimum supported editor, so a fresh checkout could happily compile against types the extension
   is not allowed to use. They now agree, and `npm ci` installs the same types as before (1.140).
-- **The Settings UI shows ONE setting: the theme.** Opening *Settings* from the extension used to list
+- **The Settings UI shows ONE setting: the theme.** Opening _Settings_ from the extension used to list
   eleven keys — the provider preset, the API key, the base URL, the model, the token budget, the
   sampler, the thinking knobs, `autoOpen` and the two DB thresholds — next to a panel that already has
   a form for each of them (and a `config.json` the panel writes). They were removed from
@@ -959,7 +962,7 @@ track with a WHITE dot), and
 ### Changed
 
 - **“Insert prompt in Queue” instead of “Insert in Queue”.** The indicator above the prompt read as a
-  fragment: insert *what*? The two-word fix makes the line self-explanatory without touching the
+  fragment: insert _what_? The two-word fix makes the line self-explanatory without touching the
   behaviour — the pill still shows `Queue`, and `Steer` only while a run is active AND Ctrl/Cmd is
   held, and the webview still rewrites just the single word inside it.
 
@@ -973,7 +976,7 @@ track with a WHITE dot), and
   `openrouter`, `deepseek`, `mcp`, `model context protocol`, `skills`, …), plus a `galleryBanner`
   matching the app's anthracite and a `bugs` link. The tagline sells the PROTOCOL instead of
   rehearsing the baseline: `tool-calling` and `streaming` are the price of entry for any extension in
-  this category, while *"any OpenAI-compatible endpoint works out of the box"* is the promise that
+  this category, while _"any OpenAI-compatible endpoint works out of the box"_ is the promise that
   says what the thing actually is (one wire, every provider — local or cloud). No behaviour changes:
   this release exists to put the extension on the VS Code Marketplace with a listing that does it
   justice (Open VSX, where it has been published since 0.2.0, gets the same metadata).
@@ -989,7 +992,7 @@ track with a WHITE dot), and
   `Branch`, `Rename`, `Cut`, `Delete`, `VACUUM & optimize indexes`) instead of a bare `OK`.
   `Cancel` only exists where something can actually be cancelled — the model picker said `Cancel`
   while applying the choice on click, which taught the wrong thing about every other dialog.
-- **The live card says so.** The two VACUUM sliders inside *All sessions* are global settings stored
+- **The live card says so.** The two VACUUM sliders inside _All sessions_ are global settings stored
   as you move them, in a dialog that otherwise promises nothing is applied: they now carry an
   `applies immediately` badge, with the reason in the tooltip.
 
@@ -1016,7 +1019,7 @@ track with a WHITE dot), and
   that does is the request that ENDS with a `tool` result (the loop-back after a tool call) when the
   assistant turn carrying `tool_calls` left no reasoning behind:
   `[user, assistant(tool_calls), tool]` → 400 `The reasoning_content in the thinking mode must be
-  passed back to the API`, and the same request with `reasoning_content: ""` → 200. So:
+passed back to the API`, and the same request with `reasoning_content: ""` → 200. So:
   - the pass-back covers `reasoning` AND `type`;
   - it also switches on by itself when the HISTORY proves the upstream reasons (an assistant message
     with plaintext `thinking`), whatever the knob says — the requirement belongs to the upstream,
@@ -1024,8 +1027,8 @@ track with a WHITE dot), and
     is passed back verbatim, and inventing a plaintext field there is the OPPOSITE 400;
   - the thinking dialect is computed ONCE per request, so the payload (`thinking` / `reasoning` /
     `chat_template_kwargs`) and the pass-back cannot disagree about which protocol is in force.
-  Proof with the real converter against the live gateway: old payload → 400
-  `invalid_request_error`, new payload → 200, the only delta being `reasoning_content: ""`.
+    Proof with the real converter against the live gateway: old payload → 400
+    `invalid_request_error`, new payload → 200, the only delta being `reasoning_content: ""`.
 
 - **Cancel in the Compaction card now really cancels.** The sliders wrote straight into the LIVE state
   (`compactionThresholdPct` & co.), so closing with Cancel left the unsaved trigger behind: reopening
@@ -1045,7 +1048,7 @@ track with a WHITE dot), and
   with another model in the same session, the synthetic state document a compaction writes, the
   forced final report, a turn that reasoned zero tokens — went back without the field, and the
   NEXT request failed with `The reasoning_content in the thinking mode must be passed back to the
-  API`. It is now sent as an empty string when there is nothing to send, in that dialect only
+API`. It is now sent as an empty string when there is nothing to send, in that dialect only
   (`bool`, `effort`, `type`, `unspecified` are byte-for-byte unchanged, because an unexpected
   field where it is not wanted is the opposite 400). **Superseded by 0.5.1**: the dialect that was
   actually failing is `type`, and the shape is the tool-call loop-back.
@@ -1111,7 +1114,7 @@ track with a WHITE dot), and
   knows nothing about that floor: the Providers form was squeezed down to the visible slice while the
   panel below still laid out at its floor, the card re-centred every time the bar appeared, and it
   stayed put while the panel scrolled sideways. The overlay is now `position: absolute; inset: 0`
-  against the body (`position: relative`), which *is* the panel content: the card keeps the floor
+  against the body (`position: relative`), which _is_ the panel content: the card keeps the floor
   width and scrolls away together with the rest of the panel. All eight dialogs share ONE rule now
   (they used to carry eight drifting copies); each card centres with `margin: auto` +
   `max-height: 100%` — centring that survives a card taller than the screen, where the old
@@ -1120,7 +1123,7 @@ track with a WHITE dot), and
   covering the visible slice while the dialog itself scrolls with the content.
 
 - **The panel grew a second, phantom scrollbar.** `body` was `height: 100vh`, which is measured
-  *without* scrollbars: the moment the horizontal bar appeared (~15px) the body was that much taller
+  _without_ scrollbars: the moment the horizontal bar appeared (~15px) the body was that much taller
   than the area actually drawn, so the window also scrolled vertically. `html` and `body` are now
   `height: 100%`, which always matches the viewport the panel is drawn in; the width-floor test still
   pins `html { min-width: max(500px, 32rem); overflow-x: auto }`.
@@ -1138,7 +1141,7 @@ track with a WHITE dot), and
   a sub-agent — naming the tool or skill it must use, in `goal`/`context`, when that matters.
 
 - **Window trim — the fail-safe for a window that shrank under a session.** A compaction summarizes
-  the span it removes, and the summarizer runs on the *session's* model — so a span larger than that
+  the span it removes, and the summarizer runs on the _session's_ model — so a span larger than that
   model's window can never be read. A session that had filled up on a big model and was then switched
   to a small one could therefore neither compact (the summary request was rejected for length) nor
   send (the request was too long), and died with an opaque error. In that case the window now moves
@@ -1149,7 +1152,7 @@ track with a WHITE dot), and
 
 - **Compaction tally** (`sessions/compaction-tally.ts`): each compaction and trim now logs its own
   event AND a running count on the same line, because the question that decides whether the budget is
-  right cannot be read off a single event — *is the trim a rare rescue, or the normal path?* The line
+  right cannot be read off a single event — _is the trim a rare rescue, or the normal path?_ The line
   to log is returned by the tally, so an event cannot be logged without being counted, and the trim
   line now carries WHY it fired (`span 41.2k > ceiling 8.9k`). It counts the mechanism, not the
   quality of a summary: it cannot tell whether the state document carried the right facts.
@@ -1165,7 +1168,7 @@ track with a WHITE dot), and
 - **Loop Guard grows an `Off` state.** The guard had only three sensitivities, so a user who found the
   corrective nudges disruptive had no way to say so — every level still detected, nudged and could
   stop the run. `Off` is a real fourth preset, first in the row, and it makes the guard **completely
-  inert**: no reasoning/answer detection, no per-turn classification, no nudges, no stop — *and* no
+  inert**: no reasoning/answer detection, no per-turn classification, no nudges, no stop — _and_ no
   tool-call deduplication either, because "off" has to mean off (identical read-only calls are re-run,
   identical failures are retried). The tooltip says exactly that, and the 12 parameter sliders stay
   in place, dimmed and disabled, instead of disappearing: hiding them would change the card's height
@@ -1175,7 +1178,7 @@ track with a WHITE dot), and
 ### Changed
 
 - **The summary request is ONE message: the data first, the instructions last.** They used to sit in
-  the `system` role with the transcript *after* them — the opposite of what long-context guidance
+  the `system` role with the transcript _after_ them — the opposite of what long-context guidance
   recommends ("put longform data at the top; a query at the end can improve quality by up to 30% on
   20k+ token inputs"), and a shape that depends on the `system` role being honoured at all. Now:
   `<transcript>…</transcript>` and then the task, in a single user message. The tags are **closed**
@@ -1190,7 +1193,7 @@ track with a WHITE dot), and
 - **Compaction no longer discards the part of a conversation it summarizes.** The summarized span
   stays in the session — still in the transcript, still searchable — and the **context window begins
   at the summary** instead of the span being replaced by it. Nothing is lost any more, so a long
-  session does not become amnesia, and the boundary is a *stored* marker rather than a position
+  session does not become amnesia, and the boundary is a _stored_ marker rather than a position
   recomputed every turn — which is also what keeps the provider's prompt cache warm. A ✂ cut stays
   physical: cutting at or before a summary removes it, and the surviving past becomes the window
   again. The `README` and the manual-compact dialog now describe what actually happens.
@@ -1198,7 +1201,7 @@ track with a WHITE dot), and
 - **The context window is now VISIBLE in the transcript.** The summary pair rendered as two unrelated
   bubbles and the past looked exactly like the live context, so a long session grew with no cue about
   what the model still receives. A divider now marks the boundary and carries the count (`N messages
-  above · kept in the session, out of the context window`), and the checkpoint reads as ONE card — the
+above · kept in the session, out of the context window`), and the checkpoint reads as ONE card — the
   label with its summary body attached — instead of two bubbles. The boundary comes from
   `checkpointStart`, the SAME function the request uses, imported into the webview: the marker and the
   request cannot disagree about where the window begins.
@@ -1259,7 +1262,7 @@ track with a WHITE dot), and
   never move.
 
 - **The compaction threshold reads `Auto: 80% ctx`.** It used to spell out `Auto Compact threshold:
-  80%`, which was the widest thing on the metrics row for a number that is a status, not a control.
+80%`, which was the widest thing on the metrics row for a number that is a status, not a control.
   The shorter form says the same in about half the width (~72px against ~154px, measured), which is
   the slack the row needs now that the panel can be dragged narrower.
 
@@ -1287,11 +1290,11 @@ track with a WHITE dot), and
   the model/provider/token text stays gray.
 
 - **The Queue/Steer pill is now an `Insert in …` hint in the control strip.** The pill sat in the
-  model row, competing with the controls that actually *do* something, and it was the only indicator
+  model row, competing with the controls that actually _do_ something, and it was the only indicator
   wearing a button's clothes. It moved to the strip above the prompt: `Insert in` followed by the
   word `Queue` (neutral pill) or `Steer` (muted red pill with its glow), on the LEFT — the same slot
   geometry as `Collapse all`/`Follow` on the right, same 18px height, so nothing reflows. The
-  behaviour is unchanged *exactly*: Steer only while a run is active **and** Ctrl/Cmd is held, back
+  behaviour is unchanged _exactly_: Steer only while a run is active **and** Ctrl/Cmd is held, back
   to Queue on key release, on blur, or when the run ends, with the same one-shot `followAndFocus()`
   per real switch. It is still a pure indicator (a span, no click handler); when nothing is running
   it is dimmed instead of `disabled`. The model row also got ~169px of its width back.
@@ -1411,7 +1414,7 @@ track with a WHITE dot), and
   already says which mode the turn ran in.
 - **Analyze/Build and Parallel are decided ONCE PER RUN and LOCKED while it works.**
   They are not request parameters — the model, the window and the samplers stay locked — but
-  they are **safety promises**: *Analyze* means nothing is written, and a promise that can
+  they are **safety promises**: _Analyze_ means nothing is written, and a promise that can
   change under a run cannot be trusted. Both ways it broke were real. A **writer sub-agent**
   delegated before a switch to Analyze kept writing while the pill said Analyze. And a switch
   to Build **erased the "Nothing has been applied" footer** on files that were still
@@ -1427,7 +1430,7 @@ track with a WHITE dot), and
 - **A user bubble with attachments no longer reads as centre-aligned.** The bubble centres its
   TEXT on purpose — a one-character message sits in the middle of its 48px floor — and it does
   so with a shrink-to-fit, left-aligned block inside. With an attachment (usually wider than
-  the text) that block floated in the middle of a wide bubble: the message *looked* centred
+  the text) that block floated in the middle of a wide bubble: the message _looked_ centred
   while the previews sat at the left. The bubble now declares the attachment, and the text
   takes the full width, starting where the previews do. The caption under a preview is
   left-aligned with it as well.
@@ -1500,7 +1503,7 @@ track with a WHITE dot), and
   re-run the command when it needs the data again.
 - **Queue/steer bubbles can be converted** (`→ Steer` / `→ Queued`, next to the
   cancel). The two modes are not two views of the same message — they differ in
-  *when* the text reaches the model — so converting a steer back also **withdraws the
+  _when_ the text reaches the model — so converting a steer back also **withdraws the
   draft from the agent**, instead of letting it be injected into the running loop
   anyway.
 - **Transcript action pills**: **Collapse all** (closes every expanded section at
@@ -1599,8 +1602,8 @@ track with a WHITE dot), and
   and the **wire rules are complete**: 8 rules checked at the last point before the
   request, with five of them prevented at the source (atomic turn groups, id synthesis,
   non-blank results, the stall nudge). A violation is **named, never silently
-  repaired** — the request is refused instead of being rejected by the provider *and
-  every request after it*.
+  repaired** — the request is refused instead of being rejected by the provider _and
+  every request after it_.
 - **Reasoning models that reject `max_tokens` by name now work.** No model list keeps
   up with that rule, so the provider follows the server's own instruction: rename the
   field to `max_completion_tokens` and retry once — and remember it **per model and
@@ -1759,7 +1762,7 @@ Completions protocol.
 - **Attachments**: files/images via the picker, paste or drag & drop; images sent
   as multimodal content; **binary files detected from their content** (magic
   bytes) and never inlined as garbage.
-- **Diagnostics**: per-turn lines in *Output > Harny*, an optional request log
+- **Diagnostics**: per-turn lines in _Output > Harny_, an optional request log
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
 [Unreleased]: https://github.com/spltek/harny/compare/v0.9.5...HEAD

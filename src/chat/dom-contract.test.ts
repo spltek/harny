@@ -33,6 +33,12 @@ const MODULES = [
   "fold.ts",
 ];
 const HTML = src("./view-html.ts");
+/**
+ * The stylesheet lives in its own file (media/view.css, generated into view-css.ts) instead of
+ * inside view-html.ts: the contract this file guards is about MARKUP **and** CSS, so both are
+ * read, and the rules are parsed from the sheet itself.
+ */
+const CSS_TEXT = src("../../media/view.css");
 
 /**
  * Class names a module WRITES. The shapes used in this codebase:
@@ -80,7 +86,7 @@ const HOOKS = selectorClasses();
 /** Styled: the markup or CSS mentions it as a whole token. */
 function isStyled(cls: string): boolean {
   const escaped = cls.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`\\.${escaped}(?![\\w-])`).test(HTML);
+  return new RegExp(`\\.${escaped}(?![\\w-])`).test(HTML + CSS_TEXT);
 }
 
 const written = MODULES.flatMap((m) => [...writtenClasses(webview(m))].map((cls) => ({ cls, module: m })));
@@ -101,9 +107,10 @@ const written = MODULES.flatMap((m) => [...writtenClasses(webview(m))].map((cls)
  *     `'class="subagent-chip access-' + kind`): a literal ending in `-` is a prefix, not a class.
  */
 const STYLE = (() => {
-  const open = HTML.indexOf("<style>");
-  const close = HTML.indexOf("</style>");
-  return open === -1 || close === -1 ? "" : HTML.slice(open, close);
+  const open = CSS_TEXT.indexOf("<style>");
+  const close = CSS_TEXT.indexOf("</style>");
+  // The sheet IS the stylesheet now; a page-embedded copy (an older layout) still works.
+  return open === -1 || close === -1 ? CSS_TEXT : CSS_TEXT.slice(open, close);
 })();
 
 /** Class names the stylesheet SELECTS. */

@@ -105,12 +105,15 @@ describe("extension activate (smoke)", () => {
   }
 
   /** A WebviewView good enough for `resolveWebviewView` (the panel, stubbed). */
-  function makePanel(visible = false): { view: Record<string, unknown>; postMessage: ReturnType<typeof vi.fn> } {
+  function makePanel(opts: { visible?: boolean } = {}): {
+    view: Record<string, unknown>;
+    postMessage: ReturnType<typeof vi.fn>;
+  } {
     const postMessage = vi.fn();
     return {
       postMessage,
       view: {
-        visible,
+        visible: opts.visible === true,
         webview: {
           html: "",
           cspSource: "vscode-webview://test",
@@ -286,7 +289,7 @@ describe("extension activate (smoke)", () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     try {
       await activate(context as never);
-      const panel = makePanel(true); // the view IS on screen (the field case)
+      const panel = makePanel({ visible: true }); // the view IS on screen (the field case)
       registeredProvider().resolveWebviewView(panel.view, {}, {});
       const html = () => (panel.view.webview as { html: string }).html;
       await vi.waitFor(() => expect(html()).toContain('"workspaceReady":true'), { timeout: 2000 });

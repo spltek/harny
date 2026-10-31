@@ -1,0 +1,3 @@
+# GENERATED FILES — a formatter must not rewrite them, or `npm run check` would fight the
+# generator (`view-css.test.ts` pins the generated module to media/view.css byte for byte).
+src/chat/view-css.ts

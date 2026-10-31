@@ -29,4 +29,8 @@ config.example.jsonc
 # needs ride along: prettier's config is a formatter's, and .git-blame-ignore-revs is for
 # `git blame`. Neither is read at runtime.
 prettier.config.mjs
+.prettierignore
 .git-blame-ignore-revs
+# The stylesheet reaches the panel through the GENERATED module src/chat/view-css.ts
+# (scripts/gen-view-css.mjs): shipping the .css source too would be a second, dead copy of it.
+media/view.css
