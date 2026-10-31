@@ -35,6 +35,20 @@ export interface ToolScopeLike {
   off: string[];
 }
 
+/**
+ * How long an optimistic switch flip waits for the host to confirm it.
+ *
+ * The pill moves on click (waiting for the round trip made it feel broken — the config push
+ * re-fetches every provider's model list first). That paint is a PROMISE, and nothing else would keep
+ * it honest: the rows are rebuilt only when the payload's signature changes, so a failed
+ * `saveSettings` produces no new payload and the pill would sit on a state the session does not have.
+ * After this window, with no redraw, the pill goes back to the scope it was built from.
+ *
+ * 3s: longer than a healthy round trip (milliseconds) plus a full `buildConfig` behind a slow host,
+ * shorter than a user's patience for a switch that lied.
+ */
+const PENDING_REVERT_MS = 3_000;
+
 export interface McpCardDeps {
   /** The card element (hidden when no server is installed). */
   card: HTMLElement;
@@ -58,6 +72,13 @@ export interface McpCard {
 
 export function createMcpCard(deps: McpCardDeps): McpCard {
   let drawn = "";
+  /**
+   * How many times the rows were REBUILT. An optimistic flip captures it and gives up if it has not
+   * moved: a rebuild re-derives every pill from the payload, which is the only thing that can confirm
+   * or overrule the paint. A push with an UNCHANGED signature does not count — the rows were not
+   * rebuilt, `refreshSwitches` only touches availability, so the promise is still unconfirmed.
+   */
+  let builds = 0;
   let statuses: McpServerStatusLike[] = [];
   /**
    * The busy flag the CLICK handlers read.
@@ -96,6 +117,7 @@ export function createMcpCard(deps: McpCardDeps): McpCard {
       return;
     }
     drawn = signature;
+    builds++;
     statuses = mcp?.statuses ?? [];
     const names = Object.keys(mcp?.servers ?? {});
     deps.card.classList.toggle("hidden", names.length === 0);
@@ -114,6 +136,8 @@ export function createMcpCard(deps: McpCardDeps): McpCard {
       // everywhere). It exists because the affordance was invisible — the name was the toggle and
       // nothing said so.
       const sw = createSwitch(`${onInSession ? "Stop using" : "Use"} ${name} in this session`, onInSession);
+      /** The pending confirmation of THIS row's last flip (one per row, so a new click supersedes it). */
+      let pendingRevert: ReturnType<typeof setTimeout> | undefined;
       sw.title = enabled
         ? "Use this server in THIS session (installing it is global, using it is per conversation)"
         : "Not installed/enabled in the config: turn it on there first";
@@ -141,6 +165,16 @@ export function createMcpCard(deps: McpCardDeps): McpCard {
         // corrected by the config that follows.
         setSwitch(sw, turningOn);
         deps.post({ type: "setToolScope", scope: { ...scope, mcp } });
+        // …and the promise has an expiry. A rebuild of the rows re-derives the pill from the payload,
+        // so it is the ONLY event that confirms this flip; if none comes, the write did not land and
+        // the pill returns to the scope this row was built from. `isConnected` covers the other exit:
+        // a rebuild REPLACES this node, so a late timer must not paint a detached one.
+        if (pendingRevert !== undefined) clearTimeout(pendingRevert);
+        const builtAt = builds;
+        pendingRevert = setTimeout(() => {
+          pendingRevert = undefined;
+          if (builds === builtAt && sw.isConnected) setSwitch(sw, onInSession);
+        }, PENDING_REVERT_MS);
       });
       row.appendChild(sw);
 

@@ -154,6 +154,41 @@ describe("the clicks", () => {
     expect(switches()[0].getAttribute("aria-checked")).toBe("true");
   });
 
+  it("the optimistic flip is TAKEN BACK if the host never confirms it", () => {
+    // The flip is a promise made to the user before the write lands. The rows rebuild only when the
+    // payload's signature changes, so a failed `saveSettings` would leave the pill showing a scope the
+    // session does not have — for ever, until some unrelated push. A rebuild confirms; silence does
+    // not, and silence is what a failed write looks like.
+    vi.useFakeTimers();
+    try {
+      ui.render(CONFIG, { mcp: ["a"], off: [] }, false);
+      switches()[0].click();
+      expect(switches()[0].getAttribute("aria-checked")).toBe("false");
+
+      // No config comes back: the pill admits it and returns to the scope it was built from.
+      vi.advanceTimersByTime(3_000);
+      expect(switches()[0].getAttribute("aria-checked")).toBe("true");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a rebuild confirms the flip, so the timer leaves it alone", () => {
+    vi.useFakeTimers();
+    try {
+      ui.render(CONFIG, { mcp: ["a"], off: [] }, false);
+      switches()[0].click();
+      // The host answers with the NEW scope: the rows are rebuilt from the payload.
+      ui.render(CONFIG, { mcp: [], off: [] }, false);
+      expect(switches()[0].getAttribute("aria-checked")).toBe("false");
+
+      vi.advanceTimersByTime(3_000);
+      expect(switches()[0].getAttribute("aria-checked")).toBe("false"); // still off: the truth
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("the NAME is the machine's switch: it posts toggleMcpServer", () => {
     ui.render(CONFIG, SCOPE, false);
     (list.querySelector(".mcp-name") as HTMLElement).click();
