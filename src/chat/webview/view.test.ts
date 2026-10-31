@@ -1598,11 +1598,12 @@ describe("view webview client", () => {
     hostMessage({ type: "thinkingDelta", content: "." });
     await new Promise((r) => setTimeout(r, 40));
 
-    // Opened at the first delta (its POSITION depends on that) but invisible while it is empty.
-    const block = document.querySelector(".thinking-block") as HTMLElement;
-    expect(block.classList.contains("hidden")).toBe(true);
+    // No section AT ALL: the block is not opened until the reasoning says something. (Hiding it
+    // was the first attempt and it did not work: the sheet has no generic `.hidden` rule, only
+    // per-id ones — so the class was a no-op and the dot stayed on screen.)
+    expect(document.querySelector(".thinking-block")).toBeNull();
 
-    // …and gone once the turn closes, instead of an empty "Thought during this answer" for ever.
+    // …and still nothing once the turn closes.
     hostMessage({ type: "done" });
     await new Promise((r) => setTimeout(r, 40));
     expect(document.querySelector(".thinking-block")).toBeNull();
@@ -1619,7 +1620,8 @@ describe("view webview client", () => {
     await new Promise((r) => setTimeout(r, 40));
 
     const block = document.querySelector(".thinking-block") as HTMLElement;
-    expect(block.classList.contains("hidden")).toBe(false);
+    expect(block).not.toBeNull(); // opened as soon as there is something to read
+    expect(block.className).not.toContain("hidden");
     expect(block.textContent).toContain("Ora controllo la store");
   });
 

@@ -365,6 +365,16 @@ let currentResultEl: HTMLDivElement | null = null;
 let currentThinkingBlock: HTMLDivElement | null = null;
 let currentThinkingText = "";
 /**
+ * Reasoning accumulated BEFORE its block exists. A block used to be opened at the first chunk to
+ * keep its POSITION in the transcript — but punctuation alone (a stray `.` some providers emit
+ * as a separator) is not a thought, and hiding the block afterwards is not an option: the sheet
+ * has NO generic `.hidden` rule (only per-id ones like `#working-bar.hidden`), so a class the
+ * panel never styles was invisible to CSS and the block stayed on screen. The buffer waits
+ * until there is something to say; the block is created there, still in front of the answer
+ * bubble, which is where it gets inserted anyway.
+ */
+let pendingThinking = "";
+/**
  * The bubble the panel painted BEFORE the host confirmed the send (see send()). Kept only so a
  * refusal can take it back: showing a message as sent when it never left is worse than no
  * message at all.
@@ -2558,6 +2568,7 @@ function resetStreamState(): void {
   clearStreamingBubble();
   clearThinkingBlock();
   currentThinkingText = "";
+  pendingThinking = "";
   currentRawText = "";
   hideWorking();
   aborted = false;
@@ -2992,6 +3003,7 @@ function send(): void {
   clearStreamingBubble();
   clearThinkingBlock();
   currentThinkingText = "";
+  pendingThinking = "";
   currentRawText = "";
   aborted = false;
   terminalShown = false;
@@ -6002,6 +6014,13 @@ window.addEventListener("message", (e) => {
       // Empty thinking chunks must not create an empty thinking block.
       if (!msg.content) break;
       if (!currentThinkingBlock) {
+        // Buffer until the reasoning SAYS something (see pendingThinking): a lone "." must not
+        // leave a section behind — neither now nor after a repaint (appendLiveText applies the
+        // same rule, or the guard would only hold until the next switchView).
+        pendingThinking += msg.content;
+        if (!hasMeaningfulThinking(pendingThinking)) break;
+        const openingText = pendingThinking;
+        pendingThinking = "";
         // A reasoning phase BEFORE the answer opens its own block (the common case:
         // reason, then answer) and the answer that follows gets its own bubble.
         // One that arrives DURING the answer is a different thing: closing the bubble
@@ -6012,28 +6031,24 @@ window.addEventListener("message", (e) => {
         const duringAnswer = Boolean(currentResultEl && currentRawText.trim());
         flushStreamingMd();
         if (duringAnswer) {
-          currentThinkingBlock = addThinkingBlock("", currentResultEl, {
+          currentThinkingBlock = addThinkingBlock(openingText, currentResultEl, {
             label: icon("thinking", 13) + "Thought during this answer",
           });
-          currentThinkingText = "";
+          currentThinkingText = openingText;
           // NOTE: the bubble is NOT closed and `currentRawText` is NOT reset: the
           // next deltas repaint the SAME bubble with the whole answer.
         } else {
-          currentThinkingBlock = addThinkingBlock("");
-          currentThinkingText = "";
+          currentThinkingBlock = addThinkingBlock(openingText);
+          currentThinkingText = openingText;
           clearStreamingBubble();
           currentRawText = "";
         }
-      }
-      if (currentThinkingBlock) {
+      } else {
         currentThinkingText += msg.content;
-        const body = currentThinkingBlock.querySelector(".thinking-body");
-        // `push`/`paint` scrolls (see the answer path).
-        if (body) thinkingMd.push(body, () => currentThinkingText);
-        // The block is created on the FIRST delta, so whether it says anything can only be
-        // judged afterwards: keep it invisible until it does (see hasMeaningfulThinking).
-        currentThinkingBlock.classList.toggle("hidden", !hasMeaningfulThinking(currentThinkingText));
       }
+      const body = currentThinkingBlock.querySelector(".thinking-body");
+      // `push`/`paint` scrolls (see the answer path).
+      if (body) thinkingMd.push(body, () => currentThinkingText);
       break;
     }
     case "turnMeta":
@@ -6822,7 +6837,9 @@ function restoreLiveStream(state: {
 
 /** Append the current segment's thinking + answer text as live bubbles. */
 function appendLiveText(thinking: string, answer: string): void {
-  if (thinking) {
+  // The SAME rule as the delta path: a repaint must not resurrect what a chunk was not allowed
+  // to create (that is exactly how a lone "." came back at every switchView).
+  if (thinking && hasMeaningfulThinking(thinking)) {
     currentThinkingText = thinking;
     currentThinkingBlock = addThinkingBlock(thinking);
   }

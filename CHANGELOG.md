@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.6] - 2026-10-31
+
+### Fixed
+
+- **The stray-`.` section is gone FOR REAL this time — the first fix could not work.** It hid the block with a `hidden` class, but the stylesheet has no generic `.hidden` rule (only per-id ones, `#working-bar.hidden`, `#sessions.hidden`…): the class was a no-op, so the block kept its single dot on screen. The block is now not CREATED until the reasoning contains a letter or a digit — punctuation alone waits in a buffer, and when a real sentence arrives the block opens there, still above the answer bubble, with the dot inside it (nothing is filtered from the stream: dropping a legitimate "…" or "?" mid-thought would be the worse bug). The same rule applies to the REPLAY path (`liveThinking` restored on a rebuild), which is the other way the dot came back: hiding it only on the delta side held just until the next repaint.
+
 ## [0.9.5] - 2026-10-30
 
 ### Added
