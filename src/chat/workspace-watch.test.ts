@@ -127,3 +127,60 @@ describe("WorkspaceRootWatch", () => {
     expect(d.onChange).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * The one that a fake cannot prove: `exists` here is the REAL `fs.existsSync` and the folder
+ * is REALLY deleted on disk. It is the closest thing to the manual smoke test that runs
+ * unattended — the production function, the production poll loop, the real kernel answering.
+ */
+describe("WorkspaceRootWatch — against a real filesystem", () => {
+  it("reports a folder deleted on disk, and again when it comes back", async () => {
+    const { existsSync, mkdtempSync, mkdirSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const dir = mkdtempSync(join(tmpdir(), "harny-watch-"));
+    const seen: boolean[] = [];
+    const watch = new WorkspaceRootWatch({
+      root: () => dir,
+      exists: existsSync, // ← production, no fake
+      onChange: (_root, existsNow) => seen.push(existsNow),
+      intervalMs: 5, // real timers, tiny period: the RULE is what matters, not the 5 s
+    });
+
+    try {
+      watch.start();
+      await new Promise((r) => setTimeout(r, 30));
+      expect(seen).toEqual([]); // nothing changed: silence
+
+      rmSync(dir, { recursive: true, force: true });
+      await new Promise((r) => setTimeout(r, 80));
+      expect(seen).toEqual([false]); // ONE report, in one direction
+
+      mkdirSync(dir);
+      await new Promise((r) => setTimeout(r, 80));
+      expect(seen).toEqual([false, true]); // a mount that comes back brings the chat back
+    } finally {
+      watch.stop();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("stays silent when the window has no root to lose (that is the home, not a loss)", async () => {
+    const { existsSync } = await import("node:fs");
+    const seen: boolean[] = [];
+    const watch = new WorkspaceRootWatch({
+      root: () => undefined,
+      exists: existsSync,
+      onChange: (_root, existsNow) => seen.push(existsNow),
+      intervalMs: 5,
+    });
+    try {
+      watch.start();
+      await new Promise((r) => setTimeout(r, 40));
+      expect(seen).toEqual([]);
+    } finally {
+      watch.stop();
+    }
+  });
+});
