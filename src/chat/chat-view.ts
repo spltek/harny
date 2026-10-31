@@ -747,6 +747,13 @@ export class ChatViewProvider implements WebviewViewProvider {
     await this.chooseFolder();
   }
 
+  /** Is the panel on screen? A notice belongs where the user is LOOKING: the panel says it
+   *  itself when it is visible (a banner pinned above the transcript), and a native toast is
+   *  the fallback for when it is not — sidebar collapsed, another tab in front. */
+  panelVisible(): boolean {
+    return this.view?.visible === true;
+  }
+
   /**
    * The workspace root disappeared: STOP every running session, with the reason written into
    * each transcript. One `abort` per session cascades to that session's sub-agents

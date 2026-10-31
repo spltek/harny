@@ -105,11 +105,12 @@ describe("extension activate (smoke)", () => {
   }
 
   /** A WebviewView good enough for `resolveWebviewView` (the panel, stubbed). */
-  function makePanel(): { view: Record<string, unknown>; postMessage: ReturnType<typeof vi.fn> } {
+  function makePanel(visible = false): { view: Record<string, unknown>; postMessage: ReturnType<typeof vi.fn> } {
     const postMessage = vi.fn();
     return {
       postMessage,
       view: {
+        visible,
         webview: {
           html: "",
           cspSource: "vscode-webview://test",
@@ -270,6 +271,33 @@ describe("extension activate (smoke)", () => {
         expect.stringContaining("no longer exists"),
         "Change folder…",
       );
+    } finally {
+      vi.useRealTimers();
+      dispose();
+    }
+  }, 30_000);
+
+  it("does NOT shout twice: with the panel on screen the banner is the notice, not a toast", async () => {
+    const { activate } = await import("./extension");
+    const { context, dispose } = makeContext();
+    state.showWarningMessage.mockClear();
+    const rootDir = mkdtempSync(join(home, "ws-"));
+    state.workspaceFolders = [{ uri: { fsPath: rootDir } }];
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      await activate(context as never);
+      const panel = makePanel(true); // the view IS on screen (the field case)
+      registeredProvider().resolveWebviewView(panel.view, {}, {});
+      const html = () => (panel.view.webview as { html: string }).html;
+      await vi.waitFor(() => expect(html()).toContain('"workspaceReady":true'), { timeout: 2000 });
+
+      rmSync(rootDir, { recursive: true, force: true });
+      vi.advanceTimersByTime(6000);
+
+      // The panel rebuilt itself and says it in the transcript…
+      await vi.waitFor(() => expect(html()).toContain('"workspaceReady":false'), { timeout: 2000 });
+      // …and no toast repeated the same fact in the corner of the screen.
+      expect(state.showWarningMessage).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
       dispose();

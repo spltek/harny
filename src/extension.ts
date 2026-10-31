@@ -387,13 +387,16 @@ export async function activate(context: ExtensionContext) {
       infoLog(`workspace root ${existsNow ? "is back" : "disappeared"}:`, lostRoot);
       if (!existsNow) {
         // STOP first: a run must not keep working — or writing — against a folder that is not
-        // there, and that `abort` cascades to the session's sub-agents. Then tell the user where
-        // the eye is: a native NON-modal toast (a modal would block the panel) carrying the one
-        // action that fixes it.
+        // there, and that `abort` cascades to the session's sub-agents.
         void viewProvider.stopAllForLostRoot(lostRoot);
-        void window.showWarningMessage(workspaceGoneSendNote(lostRoot), "Change folder…").then((answer) => {
-          if (answer) void viewProvider.openWorkspace();
-        });
+        // ONE notice, where the eye is. The panel says it itself — a banner pinned above the
+        // transcript, the red row, an inert prompt — so a toast on top of that is the same fact
+        // twice (noise). The toast covers the case the panel CANNOT: the view is not on screen.
+        if (!viewProvider.panelVisible()) {
+          void window.showWarningMessage(workspaceGoneSendNote(lostRoot), "Change folder…").then((answer) => {
+            if (answer) void viewProvider.openWorkspace();
+          });
+        }
       }
       viewProvider.refresh();
     },
