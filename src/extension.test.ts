@@ -264,7 +264,10 @@ describe("extension activate (smoke)", () => {
       await vi.waitFor(
         () => {
           expect(html()).toContain('"workspaceReady":false');
-          expect(html()).toContain('"workspaceFolder":"' + rootDir + '"');
+          // The folder travels JSON-ENCODED in the page, so the expectation must be encoded the
+          // same way: on Windows `rootDir` is `C:\Users\…` and the page carries `C:\\Users\\…`,
+          // which is why a raw path substring failed there and only there.
+          expect(html()).toContain('"workspaceFolder":' + JSON.stringify(rootDir));
         },
         { timeout: 2000 },
       );

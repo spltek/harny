@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The suite is green on Windows again — the two failures were the tests' fault, not the product's.** `extension activate (smoke)` compared the page against a RAW path (`"workspaceFolder":"C:\Users\…"`) while the page carries it JSON-ENCODED (`C:\\Users\\…`): it could only pass on POSIX. It now encodes the expectation the same way the page does. The other was `view-css`: the generated module is committed with LF, but a Windows checkout delivered `media/view.css` with CRLF (`core.autocrlf=true`), so the pin compared different bytes. `.gitattributes` (`* text=auto eol=lf`) now normalises in the repo AND in the working tree, the generator normalises `\r\n`, and the pin normalises both sides — three layers, because one is never enough when the artifact is committed.
+
+> 0.9.5 is already published (Marketplace + Open VSX, from tag `v0.9.5`); these fixes are test-side only and travel with the next release.
+
 ## [0.9.5] - 2026-10-31
 
 ### Added
