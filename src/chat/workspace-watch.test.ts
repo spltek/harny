@@ -147,22 +147,26 @@ describe("WorkspaceRootWatch — against a real filesystem", () => {
       onChange: (_root, existsNow) => seen.push(existsNow),
       intervalMs: 5, // real timers, tiny period: the RULE is what matters, not the 5 s
     });
+    // Windows: a handle held by the indexer/antivirus makes a fresh delete fail with EPERM,
+    // and timer granularity is ~15 ms (not 1 ms). Both are handled here so the test measures
+    // the RULE — report a change once, both ways — and not the platform's mood.
+    const rm = { recursive: true, force: true, maxRetries: 10, retryDelay: 50 } as const;
 
     try {
       watch.start();
-      await new Promise((r) => setTimeout(r, 30));
+      await new Promise((r) => setTimeout(r, 100));
       expect(seen).toEqual([]); // nothing changed: silence
 
-      rmSync(dir, { recursive: true, force: true });
-      await new Promise((r) => setTimeout(r, 80));
+      rmSync(dir, rm);
+      await new Promise((r) => setTimeout(r, 300));
       expect(seen).toEqual([false]); // ONE report, in one direction
 
       mkdirSync(dir);
-      await new Promise((r) => setTimeout(r, 80));
+      await new Promise((r) => setTimeout(r, 300));
       expect(seen).toEqual([false, true]); // a mount that comes back brings the chat back
     } finally {
       watch.stop();
-      rmSync(dir, { recursive: true, force: true });
+      rmSync(dir, rm);
     }
   });
 
@@ -177,7 +181,7 @@ describe("WorkspaceRootWatch — against a real filesystem", () => {
     });
     try {
       watch.start();
-      await new Promise((r) => setTimeout(r, 40));
+      await new Promise((r) => setTimeout(r, 120));
       expect(seen).toEqual([]);
     } finally {
       watch.stop();

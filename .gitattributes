@@ -1,0 +1,23 @@
+# Line endings are LF for TEXT, everywhere, on every OS.
+#
+# Not a style preference: this repo COMMITS generated text (`src/chat/view-css.ts` is the
+# stylesheet JSON-encoded, `media/view.js` is a bundle) and pins it against its source with
+# `expect(VIEW_CSS).toBe(readFileSync("media/view.css"))`. With the Git-for-Windows default
+# (`core.autocrlf=true`) the checkout got CRLF while the committed module kept LF, so that test
+# failed on Windows only — and `prettier --check` (default `endOfLine: "lf"`) failed with it.
+#
+# `text=auto eol=lf` normalises in the repo AND writes LF in the working tree, so the two can
+# never disagree again.
+* text=auto eol=lf
+
+# Binary: never normalised, never diffed as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.vsix binary
+*.db binary
+*.sqlite binary

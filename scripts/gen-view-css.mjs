@@ -19,7 +19,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const css = readFileSync(join(root, "media/view.css"), "utf8");
+// NORMALISE the line endings: the generated module is committed, so it must be byte-identical
+// whichever OS generated it. Without this, a CRLF checkout (Git for Windows) produced a module
+// that differed from the committed one and `view-css.test.ts` failed on Windows only.
+const css = readFileSync(join(root, "media/view.css"), "utf8").replace(/\r\n/g, "\n");
 
 const out = `// GENERATED from media/view.css by scripts/gen-view-css.mjs — do not edit by hand.
 // Rebuild with \`npm run gen:css\` (the build does it too). The stylesheet is a real .css file

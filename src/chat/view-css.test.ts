@@ -18,7 +18,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
 
 describe("view-css (generated from media/view.css)", () => {
   it("is exactly the stylesheet on disk — regenerate with `npm run gen:css`", () => {
-    const css = readFileSync(join(root, "media/view.css"), "utf8");
+    // CRLF is normalised on BOTH sides: the module is committed, so it must be identical on
+    // every OS, and a Windows checkout that predates `.gitattributes` must not fail here for a
+    // reason that has nothing to do with the stylesheet (the generator normalises too).
+    const css = readFileSync(join(root, "media/view.css"), "utf8").replace(/\r\n/g, "\n");
     expect(VIEW_CSS).toBe(css);
   });
 
@@ -34,7 +37,8 @@ describe("view-css (generated from media/view.css)", () => {
   it("keeps the sheet real: a .css file a formatter can read", () => {
     const css = readFileSync(join(root, "media/view.css"), "utf8");
     expect(css).toContain("box-sizing");
-    // Sanity: the sheet is where the panel's rules live, not a stub.
-    expect(css.split("\n").length).toBeGreaterThan(1000);
+    // Sanity: the sheet is where the panel's rules live, not a stub. Counted on normalised
+    // text, so a CRLF checkout counts the same lines.
+    expect(css.split(/\r?\n/).length).toBeGreaterThan(1000);
   });
 });
