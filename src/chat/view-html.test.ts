@@ -13,10 +13,17 @@ const base = {
  * breaks and indentation are a formatter's business — a test that pins them breaks for a
  * reason that has nothing to do with the rule. */
 function cssRule(html: string, selector: string): string {
-  const flat = html.replace(/\s+/g, " ");
+  const compact = flat(html);
   const key = selector.replace(/\s+/g, " ").trim();
-  const start = flat.indexOf(key + " {");
-  return start < 0 ? "" : flat.slice(start, flat.indexOf("}", start));
+  const start = compact.indexOf(key + " {");
+  return start < 0 ? "" : compact.slice(start, compact.indexOf("}", start));
+}
+
+/** CSS whitespace collapsed: media/view.css is formatted by prettier, so the line breaks and
+ *  the indentation inside a rule are NOT part of what a test pins. Structure, selectors and
+ *  declarations are — those survive this. */
+function flat(s: string): string {
+  return s.replace(/\s+/g, " ");
 }
 
 describe("renderViewHtml", () => {
@@ -36,8 +43,9 @@ describe("renderViewHtml", () => {
     // Closed by default is the RESTING rotation: pointing right — one rule, one svg.
     // (the rules share a selector list, so the slice starts at the selector and ends at the brace)
     const ruleOf = (sel: string): string => {
-      const at = html.indexOf(sel);
-      return at < 0 ? "" : html.slice(at, html.indexOf("}", at));
+      const page = flat(html);
+      const at = page.indexOf(sel);
+      return at < 0 ? "" : page.slice(at, page.indexOf("}", at));
     };
     const chevron = ruleOf(".toggle > .toggle-chevron");
     expect(chevron).toContain("rotate(-90deg)");
@@ -171,7 +179,7 @@ describe("renderViewHtml", () => {
     // ~31px — a speck in a 500px+ panel. The size now comes from the size
     // families, so the mark and its tuning live in ONE place (view-config.ts).
     expect(html).toContain("--fs-logo: 6rem"); // ~78px at a 13px base
-    expect(html).toContain(".empty-hero .empty-logo img { width: var(--fs-logo); height: var(--fs-logo)");
+    expect(flat(html)).toContain(".empty-hero .empty-logo img { width: var(--fs-logo); height: var(--fs-logo)");
   });
 
   it("lets a pending message be read WHOLE, with its actions pinned top-right", () => {
@@ -229,7 +237,7 @@ describe("renderViewHtml", () => {
     expect(cssRule(html, ".pending-actions")).toContain("margin-left: auto");
     expect(cssRule(html, ".pending-convert:hover")).toContain("var(--accent)");
     // The steer/queue colors stay as they were (accent vs neutral).
-    expect(html).toContain(".pending-msg.pending-steer { border-color: var(--accent);");
+    expect(flat(html)).toContain(".pending-msg.pending-steer { border-color: var(--accent);");
   });
 
   it("makes the queue/steer block a COLLAPSIBLE section, like the sessions list", () => {
@@ -796,7 +804,7 @@ describe("renderViewHtml", () => {
       },
     });
     // Horizontal scroll only (no vertical bar on a single-row strip).
-    expect(html).toMatch(/#tabs \{[\s\S]*?overflow-x: auto; overflow-y: hidden/);
+    expect(flat(html)).toMatch(/#tabs \{[\s\S]*?overflow-x: auto; overflow-y: hidden/);
     // Tabs keep a readable floor and never shrink (the strip scrolls instead).
     expect(html).toMatch(/\.tab \{[\s\S]*?flex-shrink: 0/);
     expect(html).toMatch(/\.tab \{[\s\S]*?min-width: 5\.5rem/);
@@ -880,7 +888,7 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/id="compact-settings-btn" class="gear-btn"[^>]*><svg width="14" height="14"/);
     expect(html).toMatch(/id="mcp-configure" class="gear-btn"[^>]*><svg width="14" height="14"/);
     // One shared rule sizes them; the old one-off (big/small) styles are gone.
-    expect(html).toMatch(/\.gear-btn, #session-head \.gear-btn\s*\{/);
+    expect(flat(html)).toMatch(/\.gear-btn, #session-head \.gear-btn\s*\{/);
     expect(html).not.toMatch(/#compact-settings-btn\s*\{/);
     expect(html).not.toContain("icon-btn");
   });
@@ -1002,10 +1010,11 @@ describe("renderViewHtml", () => {
     // pulse must peak (full accent) at 0%/100% and dim at 50% — not inverted.
     // The two stops are ROLES, so the halo follows the palette instead of being
     // stuck on the dark theme's #d95f27 (a fixed glow reads wrong on paper).
-    expect(html).toMatch(
+    // (Flattened: prettier puts each keyframe selector on its own line.)
+    expect(flat(html)).toMatch(
       /@keyframes stream-border-pulse[\s\S]*0%, 100% \{\s*border-color: var\(--accent\); box-shadow: 0 0 14px 1px var\(--accent-glow\)/,
     );
-    expect(html).toMatch(
+    expect(flat(html)).toMatch(
       /@keyframes stream-border-pulse[\s\S]*50% \{\s*border-color: var\(--accent-line\); box-shadow: 0 0 4px 0 var\(--accent-glow-soft\)/,
     );
     expect(html).toMatch(

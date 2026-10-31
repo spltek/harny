@@ -112,8 +112,8 @@
     "test:watch": "vitest",
     "coverage": "vitest run --coverage",
     "package": "vsce package --no-dependencies",
-    "format": "prettier --write 'src/**/*.ts'",
-    "format:check": "prettier --check 'src/**/*.ts'"
+    "format": "prettier --write 'src/**/*.ts' 'media/*.css'",
+    "format:check": "prettier --check 'src/**/*.ts' 'media/*.css'"
   },
   "devDependencies": {
     "@types/diff": "^7.0.2",
