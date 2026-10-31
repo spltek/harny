@@ -612,6 +612,37 @@ describe("ChatViewProvider", () => {
     });
   });
 
+  it("play on a dead folder brings the DIALOG back (play → openSessionFolder → alert)", async () => {
+    // The whole point of the send gate: the panel posts `openSessionFolder` instead of `send`,
+    // and the host answers with the SAME dialog the red row opens — the way forward is always
+    // one gesture away, and nothing ever paints a "Working…" that cannot be cleared.
+    const store = makeStore();
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+      {
+        id: "s1",
+        name: "Sessione morta",
+        createdAt: 1,
+        updatedAt: 2,
+        messageCount: 3,
+        folder: "/p/gone",
+        folderMissing: true,
+      },
+    ]);
+    const { provider } = buildHarness({ store, workspaceReady: () => false });
+    const { handler, view } = resolveWith(provider);
+
+    await handler({ type: "openSessionFolder", id: "s1" });
+
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "modal",
+        kind: "alert",
+        title: "Folder no longer available",
+        message: expect.stringContaining("no longer exists. Pick a new one."),
+      }),
+    );
+  });
+
   it("warnLostFolder says nothing when no session is on screen (the home IS the picker)", async () => {
     const { provider } = buildHarness({ workspaceReady: () => false });
     const { view } = resolveWith(provider);

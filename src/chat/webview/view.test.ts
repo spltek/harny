@@ -8308,9 +8308,16 @@ describe("empty shell (no open session)", () => {
       expect(document.body.classList.contains("no-session")).toBe(false);
       expect(document.querySelector(".empty-hero")).toBeNull();
       expect(document.querySelector("#messages .msg.user")?.textContent).toBe("hi");
-      // …and the PROMPT is blocked (a send could only be refused), while STOP stays live:
-      // a run already in flight must remain interruptible by hand.
-      expect((document.getElementById("user-input") as HTMLTextAreaElement).disabled).toBe(true);
+      // The prompt stays YOURS (typing and attaching are allowed — the decision may be "later"),
+      // but PLAY cannot start a run: it opens the re-point dialog instead of painting an
+      // optimistic "Working…" that nothing would ever clear.
+      expect((document.getElementById("user-input") as HTMLTextAreaElement).disabled).toBe(false);
+      (document.getElementById("user-input") as HTMLTextAreaElement).value = "hello";
+      document.getElementById("send-btn")?.click();
+      expect(posted).toContainEqual({ type: "openSessionFolder", id: "a" });
+      expect(posted.some((m) => (m as { type: string }).type === "send")).toBe(false);
+      // …and no "Working…" was painted: the run never started.
+      expect(document.querySelector(".working")).toBeNull();
       // The NOTICE is the host's dialog (`warnLostFolder` → the same "Folder no longer
       // available" alert as the red row), not a banner drawn here: one voice, and the panel
       // stays readable. What stays local is the inert prompt.

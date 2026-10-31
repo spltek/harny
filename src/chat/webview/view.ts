@@ -2928,6 +2928,14 @@ function isSteerModifierKey(e: KeyboardEvent): boolean {
 
 function send(): void {
   if (!activeId) return;
+  // A dead workspace folder: the run must not even START. The host refuses it anyway, but the
+  // optimistic "Working…" this function paints would then hang for ever — nothing would ever
+  // arrive to clear it (reported from the field: play with an image, "Working…" until reload).
+  // One gesture is left: re-point the session, which is the only way forward.
+  if (currentSessions.find((s) => s.id === activeId)?.folderMissing) {
+    vscode.postMessage({ type: "openSessionFolder", id: activeId });
+    return;
+  }
   const text = inputEl.value.trim();
   const attachments = attachedFiles.slice();
   // A file whose payload could not survive a reload must NOT be sent as an empty
@@ -4987,9 +4995,7 @@ function setStreaming(active: boolean): void {
   // What stays here is what the table cannot own — the compound Loop Guard state, which also
   // depends on the LEVEL, not just on the run.
   applyLgEnabledState(normalizeLgLevel(currentLgLevel()), active);
-  // The prompt's own `disabled` belongs to the LOCK TABLE (see applyLocks): setting it here is
-  // how a stale flag ends up fighting the table — the folder-gone rule is one of its rows now.
-  applyLocks();
+  inputEl.disabled = false;
   // Mode and Parallel are LOCKED while the session works, exactly like the request
   // parameters: they are decided once per run (see Agent.runMode) — a run is born with its
   // mode and its Parallel setting and keeps them to its last tool result — so a switch cannot
@@ -6490,9 +6496,6 @@ interface LockSnapshot {
   activeBusy: boolean;
   /** Any session is running. */
   anyBusy: boolean;
-  /** The session on screen has no folder on disk: nothing it sends could be worked on (the
-   *  host refuses the send), so the prompt is inert — and its tooltip says why. */
-  folderGone: boolean;
 }
 
 /** One row of the lock table: a control and the rule that makes it inert. */
@@ -6528,12 +6531,6 @@ const never = (): boolean => false;
  * made "is this a decision or a forgotten line?" unanswerable.
  */
 const LOCKS: readonly LockRule[] = [
-  // ── the prompt: a dead folder can be READ and STOPPED, but not talked to ──
-  {
-    el: inputEl,
-    lock: (s) => s.folderGone,
-    title: (_s, locked) => (locked ? "This session's folder no longer exists — change it first" : ""),
-  },
   // ── the model, and the manager that edits it ──
   { el: modelBtn, lock: whenActive }, // its tooltip names the current model (config push)
   {
@@ -6586,11 +6583,7 @@ const LOCKS: readonly LockRule[] = [
 /** Apply the table. Called from the ONE point every way of starting a run passes through (see
  *  setStreaming), plus the status handler that brings `workingIds` in. */
 function applyLocks(): void {
-  const snap: LockSnapshot = {
-    activeBusy: sessionBusy(),
-    anyBusy: workingIds.size > 0,
-    folderGone: !!currentSessions.find((s) => s.id === activeId)?.folderMissing,
-  };
+  const snap: LockSnapshot = { activeBusy: sessionBusy(), anyBusy: workingIds.size > 0 };
   for (const rule of LOCKS) {
     if (!rule.el) continue;
     const locked = rule.lock(snap);
