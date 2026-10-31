@@ -2274,34 +2274,6 @@ function homeCopy(): { reason: string; hint: string; cta: string } {
   };
 }
 
-/**
- * The active session's folder is GONE: say it in the transcript, with the way out.
- *
- * Shown only in the CHAT (with no usable folder and nothing open, the home hero says it and
- * the list is the picker). It carries the same action as the row — `openSessionFolder`,
- * which explains once more and opens the picker — because the fix has to be one click from
- * where the problem is visible.
- */
-function addFolderGoneBanner(s: SessionInfo): void {
-  const banner = document.createElement("div");
-  banner.className = "ws-gone";
-  const text = document.createElement("span");
-  text.className = "ws-gone-text";
-  text.innerHTML =
-    "This session's folder " +
-    '<span class="folder-path">' +
-    escapeHtml(s.folder ?? "(folder not set)") +
-    "</span> no longer exists: Harny cannot read or write there.";
-  const fix = document.createElement("button");
-  fix.className = "ws-gone-fix";
-  fix.textContent = "Change folder…";
-  fix.title = "Pick the folder this session should use";
-  fix.addEventListener("click", () => vscode.postMessage({ type: "openSessionFolder", id: s.id }));
-  banner.appendChild(text);
-  banner.appendChild(fix);
-  messagesEl.insertBefore(banner, messagesEl.firstChild);
-}
-
 /** Confirm a workspace folder is present before touching the transcript. */
 function workspaceLocked(config: { workspaceReady?: boolean }): boolean {
   return config.workspaceReady === false;
@@ -6745,10 +6717,6 @@ function renderViewState(state: {
   } else if (activeId) {
     document.body.classList.remove("no-session");
     if (!renderMessages(state.messages || [])) addWelcome();
-    // The chat wins over the picker, so the reason the agent cannot work has to be SAID
-    // here (the red row in the list is above the fold more often than not).
-    const activeRow = currentSessions.find((s) => s.id === activeId);
-    if (activeRow?.folderMissing) addFolderGoneBanner(activeRow);
   } else {
     renderEmptyShell();
   }

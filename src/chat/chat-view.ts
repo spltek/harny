@@ -747,6 +747,18 @@ export class ChatViewProvider implements WebviewViewProvider {
     await this.chooseFolder();
   }
 
+  /**
+   * The folder disappeared and the run is ALREADY stopped: ask what to do, in the panel's own
+   * dialog ("Folder no longer available… Pick a new one.", OK → the picker). Blocking is
+   * harmless now — nothing is running — and a modal that interrupts work would be a second
+   * problem. No session on screen: the home already explains and offers the picker, so there
+   * is nothing to ask.
+   */
+  async warnLostFolder(): Promise<void> {
+    if (!this.activeId) return;
+    await this.changeSessionFolder(this.activeId);
+  }
+
   /** Is the panel on screen? A notice belongs where the user is LOOKING: the panel says it
    *  itself when it is visible (a banner pinned above the transcript), and a native toast is
    *  the fallback for when it is not — sidebar collapsed, another tab in front. */

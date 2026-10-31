@@ -8311,34 +8311,10 @@ describe("empty shell (no open session)", () => {
       // …and the PROMPT is blocked (a send could only be refused), while STOP stays live:
       // a run already in flight must remain interruptible by hand.
       expect((document.getElementById("user-input") as HTMLTextAreaElement).disabled).toBe(true);
-      // …the reason is stated where the eye is, with the one action that fixes it…
-      const banner = document.querySelector(".ws-gone") as HTMLElement;
-      expect(banner.textContent).toContain("/p/gone");
-      expect(banner.textContent).toContain("no longer exists");
-      (banner.querySelector(".ws-gone-fix") as HTMLElement).click();
-      expect(posted).toContainEqual({ type: "openSessionFolder", id: "a" });
-      // …and a re-render does not ADD a second banner for the same session.
-      hostMessage({
-        type: "switchView",
-        switchSeq: 2,
-        sessions: [
-          {
-            id: "a",
-            name: "Working",
-            createdAt: 1,
-            updatedAt: 9,
-            messageCount: 3,
-            folder: "/p/gone",
-            folderMissing: true,
-          },
-        ],
-        openIds: ["a"],
-        activeId: "a",
-        messages: [],
-        config: { ...HOME_CONFIG, workspaceFolderCount: 1, workspaceFolder: "/p/gone" },
-        workingIds: ["a"],
-      });
-      expect(document.querySelectorAll(".ws-gone").length).toBe(1);
+      // The NOTICE is the host's dialog (`warnLostFolder` → the same "Folder no longer
+      // available" alert as the red row), not a banner drawn here: one voice, and the panel
+      // stays readable. What stays local is the inert prompt.
+      expect(document.querySelector(".ws-gone")).toBeNull();
     });
 
     it("names a workspace folder that is GONE, and offers another one", async () => {

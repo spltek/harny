@@ -377,26 +377,6 @@ ${renderViewConfig(deps)}
     /* A folder that is gone is named in the HERO too (home screen): the path is the one
        fact that identifies WHAT is missing, so it sits in the mono face. */
     .empty-hero .folder-path { font-family: var(--font-mono); color: var(--fg-dim); }
-    /* The same warning INSIDE the chat: a session that is open (and maybe still running)
-       keeps the transcript and the controls, so the reason it cannot work has to live at
-       the top of the messages — with the one action that fixes it. */
-    .ws-gone {
-      /* STICKY: a run's transcript is scrolled to the bottom, so a warning that lives at the
-         top of the history is a warning nobody ever sees (that is exactly how a deleted
-         folder went unnoticed). Pinned, with a solid face so bubbles scroll under it. */
-      position: sticky; top: 0; z-index: 4; background: var(--bg);
-      display: flex; align-items: baseline; gap: 10px; margin: 0 10px 4px 0; padding: 8px 10px;
-      border: 1px solid var(--border); border-left: 2px solid var(--error); border-radius: 6px;
-      font-size: var(--fs-sm); color: var(--muted-2);
-    }
-    .ws-gone-text { flex: 1; min-width: 0; }
-    .ws-gone .folder-path { font-family: var(--font-mono); color: var(--error); }
-    .ws-gone-fix {
-      flex: 0 0 auto; padding: 2px 8px; border-radius: 5px; cursor: pointer;
-      border: 1px solid var(--border); background: transparent; color: var(--fg);
-      font-size: var(--fs-sm);
-    }
-    .ws-gone-fix:hover { border-color: var(--accent); color: var(--accent); }
     .srow-actions { display: inline-flex; align-items: center; gap: 8px; }
     .srow-actions button {
       background: transparent; border: none; color: var(--fg);

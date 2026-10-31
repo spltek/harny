@@ -612,6 +612,16 @@ describe("ChatViewProvider", () => {
     });
   });
 
+  it("warnLostFolder says nothing when no session is on screen (the home IS the picker)", async () => {
+    const { provider } = buildHarness({ workspaceReady: () => false });
+    const { view } = resolveWith(provider);
+
+    await provider.warnLostFolder();
+
+    // No session to re-point: the picker is already the screen, so there is nothing to ask.
+    expect(view.webview.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "modal" }));
+  });
+
   it("never ENTERS working without a usable root: the send is refused in-panel", async () => {
     // The hole this closes: the panel hides the prompt in the home state, but a session that is
     // OPEN with a dead folder is the chat — and the host used to hand any message to the engine.

@@ -386,13 +386,15 @@ export async function activate(context: ExtensionContext) {
     onChange: (lostRoot, existsNow) => {
       infoLog(`workspace root ${existsNow ? "is back" : "disappeared"}:`, lostRoot);
       if (!existsNow) {
-        // STOP first: a run must not keep working — or writing — against a folder that is not
-        // there, and that `abort` cascades to the session's sub-agents.
+        // 1) STOP everything first (the abort cascades to the sub-agents and leaves the reason
+        //    in each transcript), so what follows cannot interrupt anything.
         void viewProvider.stopAllForLostRoot(lostRoot);
-        // ONE notice, where the eye is. The panel says it itself — a banner pinned above the
-        // transcript, the red row, an inert prompt — so a toast on top of that is the same fact
-        // twice (noise). The toast covers the case the panel CANNOT: the view is not on screen.
-        if (!viewProvider.panelVisible()) {
+        // 2) ONE notice, in the panel's own dialog — safe BECAUSE the work is already stopped.
+        //    When the view is not on screen a modal cannot be shown, so a native toast takes
+        //    over: same fact, the only surface left.
+        if (viewProvider.panelVisible()) {
+          void viewProvider.warnLostFolder();
+        } else {
           void window.showWarningMessage(workspaceGoneSendNote(lostRoot), "Change folder…").then((answer) => {
             if (answer) void viewProvider.openWorkspace();
           });
