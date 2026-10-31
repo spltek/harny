@@ -113,6 +113,7 @@ function buildHarness(
     onContextOverflow?: (signal: AbortSignal) => Promise<boolean> | boolean;
     contextBudget?: () => number;
     workspaceReady?: () => boolean;
+    cwd?: () => string;
     loopGuard?: LoopGuardOptions;
     streamIdleTimeoutMs?: number;
     onFileChanged?: (change: { path: string; tool: string }) => void;
@@ -143,6 +144,7 @@ function buildHarness(
     onContextOverflow: opts.onContextOverflow,
     contextBudget: opts.contextBudget,
     workspaceReady: opts.workspaceReady,
+    cwd: opts.cwd,
     loopGuard: opts.loopGuard,
     streamIdleTimeoutMs: opts.streamIdleTimeoutMs,
     onFileChanged: opts.onFileChanged,
@@ -166,6 +168,7 @@ describe("Agent", () => {
         [{ type: "text", content: "done" }],
       ],
       workspaceReady: () => false,
+      cwd: () => "/p/gone",
     });
 
     await agent.send("read a.ts");

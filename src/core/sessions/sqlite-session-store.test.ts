@@ -24,11 +24,11 @@ const msg = (role: ChatMessage["role"], content: string, timestamp = 1): ChatMes
  * Every test gets its OWN in-memory database, closed in afterEach: nothing is
  * written to disk and no state leaks between tests.
  */
-function makeStore(opts: { existing?: string[]; currentFolder?: () => string | undefined } = {}) {
+function makeStore(opts: { existing?: string[]; currentFolder?: () => string | undefined; fs?: FileSystem } = {}) {
   const db = new DatabaseSync(":memory:");
   const store = new SqliteSessionStore({
     db,
-    fs: fakeFs(opts.existing),
+    fs: opts.fs ?? fakeFs(opts.existing),
     currentFolder: opts.currentFolder,
     idGen: (() => {
       let n = 0;
@@ -42,6 +42,38 @@ function makeStore(opts: { existing?: string[]; currentFolder?: () => string | u
 const dbs: DatabaseSync[] = [];
 afterEach(() => {
   for (const db of dbs.splice(0)) db.close();
+});
+
+describe("SqliteSessionStore — folderMissing costs ONE stat per DISTINCT folder", () => {
+  it("does not probe the filesystem once per session on every list", () => {
+    // The list is rebuilt on every render, tab switch, rename, run end… With a stat per ROW, a
+    // big history of one project meant hundreds of synchronous syscalls each time (and on a
+    // network mount, milliseconds each on the host thread). Sessions share a few folders.
+    let probes = 0;
+    const base = fakeFs(["/p/a"]);
+    const fs = {
+      ...base,
+      exists: (p: string) => {
+        probes++;
+        return base.exists(p);
+      },
+    } as FileSystem;
+    const { store } = makeStore({ fs, currentFolder: () => "/p/a" });
+
+    const ids: string[] = [];
+    for (let i = 0; i < 60; i++) ids.push(store.create(`s${i}`).id);
+    // 40 of them move to a SECOND project (which no longer exists on disk).
+    for (const id of ids.slice(0, 40)) store.saveSettings(id, { folder: "/p/gone" });
+
+    probes = 0;
+    const rows = store.list();
+
+    // Two folders in play → two stats, however many sessions.
+    expect(probes).toBe(2);
+    // …and the answer is still per-folder, not one for everybody.
+    expect(rows.filter((r) => r.folderMissing).length).toBe(40);
+    expect(rows.filter((r) => !r.folderMissing).length).toBe(20);
+  });
 });
 
 describe("SqliteSessionStore — sessions & messages", () => {

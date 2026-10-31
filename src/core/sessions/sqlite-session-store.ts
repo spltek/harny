@@ -75,7 +75,14 @@ export class SqliteSessionStore implements SessionStore {
 
   list(): SessionSummary[] {
     const rows = this.deps.db.prepare("SELECT * FROM sessions").all() as Row[];
-    return rows.map((r) => this.rowToSummary(r));
+    // ONE probe per DISTINCT folder, not one per ROW. `folderMissing` used to cost a
+    // synchronous stat for EVERY session on every list — and the list is rebuilt on every
+    // render, tab switch, rename, run end… With 200 sessions that is 200 syscalls each time,
+    // and on a network mount (or a sleeping external disk) each one can take milliseconds on
+    // the host thread. Sessions share a handful of folders, so the memo collapses the cost to
+    // the number of PROJECTS. It lives for one call only: never stale, never invalidated.
+    const probe = new Map<string, boolean>();
+    return rows.map((r) => this.rowToSummary(r, probe));
   }
 
   create(name?: string): SessionSummary {
@@ -510,7 +517,19 @@ export class SqliteSessionStore implements SessionStore {
       );
   }
 
-  private rowToSummary(r: Row): SessionSummary {
+  /**
+   * Does this folder still exist? `probe` memoizes the answer for ONE list() call (see the note
+   * there); without it — a single-row read — the question is asked directly.
+   */
+  private folderPresent(folder: string, probe?: Map<string, boolean>): boolean {
+    const cached = probe?.get(folder);
+    if (cached !== undefined) return cached;
+    const present = this.deps.fs.exists(folder);
+    probe?.set(folder, present);
+    return present;
+  }
+
+  private rowToSummary(r: Row, probe?: Map<string, boolean>): SessionSummary {
     const folder = typeof r.folder === "string" && r.folder.trim() ? r.folder : undefined;
     const loopGuard = normalizeLoopGuardSensitivity(r.loop_guard);
     const cap = toMaxParallelSubAgents(r.max_parallel_sub_agents);
@@ -530,7 +549,7 @@ export class SqliteSessionStore implements SessionStore {
       updatedAt: Number(r.updated_at ?? 0),
       messageCount: Number(r.message_count ?? 0),
       ...(folder ? { folder } : {}),
-      ...(folder && !this.deps.fs.exists(folder) ? { folderMissing: true } : {}),
+      ...(folder && !this.folderPresent(folder, probe) ? { folderMissing: true } : {}),
       ...(typeof r.model === "string" ? { model: r.model } : {}),
       ...(typeof r.model_provider === "string" ? { modelProvider: r.model_provider } : {}),
       ...(typeof r.thinking_level === "string" && isThinkingLevel(r.thinking_level)
