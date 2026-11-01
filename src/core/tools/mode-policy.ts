@@ -438,6 +438,9 @@ const GIT_BRANCH_READ_FLAGS = new Set([
   "--show-current",
 ]);
 const GIT_BRANCH_VALUE_FLAGS = new Set(["--contains", "--merged", "--no-merged", "--points-at", "--sort"]);
+/** `-l`/`--list` take an OPTIONAL pattern: `git branch --list 'feat*'` and `git branch --list` are
+ * both reads. One set for `branch` and `tag`, which mean the same thing by it. */
+const GIT_OPTIONAL_VALUE_FLAGS = new Set(["-l", "--list"]);
 const GIT_TAG_READ_FLAGS = new Set([
   "-l",
   "--list",
@@ -451,7 +454,7 @@ const GIT_TAG_READ_FLAGS = new Set([
   "--sort",
 ]);
 const GIT_REMOTE_READ = new Set(["-v", "--verbose", "show", "get-url"]);
-const GIT_FLAG_WITH_VALUE = /^--(sort|contains|merged|no-merged|points-at)=/;
+const GIT_FLAG_WITH_VALUE = /^--(sort|contains|merged|no-merged|points-at|list)=/;
 
 /** True when every argument is a READ flag (or the value of a value-flag).
  * A positional argument (e.g. `git branch foo`) creates/renames → rejected. */
@@ -459,6 +462,13 @@ function gitReadFlags(args: string[], readFlags: Set<string>, valueFlags: Set<st
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (!a.startsWith("-")) return false;
+    if (GIT_OPTIONAL_VALUE_FLAGS.has(a) && readFlags.has(a)) {
+      // The pattern is OPTIONAL, so this skip must not be blind: consuming `--force` as if it
+      // were a pattern is how a flag gets past the read-flag check below.
+      const next = args[i + 1];
+      if (next !== undefined && !next.startsWith("-")) i++;
+      continue;
+    }
     if (valueFlags.has(a)) {
       i++; // skip its value
       continue;

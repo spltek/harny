@@ -236,14 +236,28 @@ describe("mode policy", () => {
     }
   });
 
-  // FINDING, not an endorsement: `--list` takes an OPTIONAL pattern and is not in the
-  // value-flag set, so the pattern is read as a positional — and a positional on `git branch`
-  // creates one. The filter fails CLOSED (it refuses a harmless read), which is the right side
-  // to err on, but it is too strict. Changing a security filter's surface deserves its own
-  // change, so this test pins today's behaviour and will fail the day we decide otherwise.
-  it("isSafeReadCommand currently refuses `git branch --list <pattern>` (fail-closed, too strict)", () => {
-    expect(isSafeReadCommand("git branch --list 'feat*'")).toBe(false);
-    expect(isSafeReadCommand("git branch --list")).toBe(true); // the flag alone is fine
+  it("allows `git branch/tag --list <pattern>`, and does NOT open the positional hatch", () => {
+    // `--list`/`-l` take an OPTIONAL pattern, and it used to be read as a positional — which on
+    // `git branch` CREATES one. Fail-closed was the right side to err on, but it refused a
+    // harmless read. The pattern is now the flag's value, so what must still be refused is a
+    // positional that is NOT attached to `--list`.
+    const allowed = [
+      "git branch --list 'feat*'",
+      "git branch -l 'feat*'",
+      "git branch --list",
+      "git branch --list=feat*",
+      "git branch --list 'feat*' --merged",
+      "git tag --list 'v1*'",
+      "git tag -l 'v1*' -n",
+    ];
+    for (const cmd of allowed) expect(isSafeReadCommand(cmd), `should allow: ${cmd}`).toBe(true);
+    const refused = [
+      "git branch new-branch",
+      "git branch --list 'feat*' new-branch", // the pattern is consumed, the second is a create
+      "git branch --list --force", // the skip must not swallow a FLAG
+      "git tag -l 'v1*' v1.0.0",
+    ];
+    for (const cmd of refused) expect(isSafeReadCommand(cmd), `should refuse: ${cmd}`).toBe(false);
   });
 
   it("isSafeReadCommand REFUSES every find/fd action that writes or executes", () => {
