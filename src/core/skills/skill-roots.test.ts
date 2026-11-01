@@ -38,7 +38,12 @@ describe("defaultSkillRoots", () => {
     // own skills stay available (they installed them), the project's do not.
     const roots = defaultSkillRoots(undefined, "/home/u");
     expect(roots).not.toContain(join("/w", ".agents", "skills"));
-    expect(roots.filter((r) => !r.startsWith("/home/u"))).toEqual([]);
+    // The prefix is built with the SAME `join` the implementation uses, never the literal
+    // "/home/u": `join` rewrites the separators on Windows (`\home\u\.agents\skills`), where a
+    // literal prefix matches nothing and the filter silently keeps every root — green on macOS
+    // and Ubuntu, red on the one runner that could see it. `skill-roots.win32.test.ts` asserts
+    // this file's contracts under `path.win32` so the dialect is checked on every OS.
+    expect(roots.filter((r) => !r.startsWith(join("/home/u")))).toEqual([]);
     expect(roots).toContain(join("/home/u", ".agents", "skills"));
   });
 });
