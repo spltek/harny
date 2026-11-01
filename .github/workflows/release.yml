@@ -18,8 +18,27 @@ permissions:
   id-token: write
 
 jobs:
+  # A release must never publish UNTESTED code — and "tested" means tested on the OSes the .vsix
+  # is installed on. This gate used to be a single `ubuntu-24.04` job while the release shipped to
+  # Windows and macOS users too: `v0.9.5` and `v0.9.6` were both tagged while `windows-latest` had
+  # been red for twelve commits. The gate is now the SAME reusable workflow CI runs, so a release
+  # cannot be blessed by a narrower suite than the one that guards `main`.
+  verify:
+    name: verify (3 OSes)
+    uses: ./.github/workflows/test-matrix.yml
+    # The gate tests the SAME tree the release job will package (see the `if [ "$want" = "$have" ]`
+    # step below, which rewrites the version when the tag and the manifest disagree): a hand-run
+    # dispatch carries the tag as an INPUT while the triggering ref is `main`, so leaving this out
+    # would bless one tree and ship another.
+    with:
+      ref: ${{ github.event.inputs.tag || github.ref_name }}
+
   release:
     name: release ${{ github.event.inputs.tag || github.ref_name }}
+    # `needs:` on a whole matrix job waits for EVERY leg: one red OS and nothing is published,
+    # no .vsix on the Release, no Marketplace, no Open VSX. The publish steps are irreversible,
+    # so the gate has to be a dependency rather than a step in the middle of them.
+    needs: verify
     runs-on: ubuntu-24.04
     env:
       TAG: ${{ github.event.inputs.tag || github.ref_name }}
@@ -33,9 +52,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      # A release must never publish UNTESTED code.
-      - run: npm run typecheck
-      - run: npm test
+      # Typecheck and the suite already ran in `verify`, on all three OSes — the only steps left
+      # here are the ones that need THIS checked-out ref and the credentials: build, package, ship.
       # Version the extension from the tag (v0.2.0 -> 0.2.0) so the shipped
       # .vsix is named and carries that exact version. Usually the tag already
       # points at the `npm version` commit, so this is a no-op then; it only

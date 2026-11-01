@@ -13,25 +13,14 @@ concurrency:
 
 jobs:
   test:
-    name: test (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
+    name: test (3 OSes)
+    uses: ./.github/workflows/test-matrix.yml
 
   package:
     name: package (vsix)
+    # The .vsix is universal (pure JS, no native deps) and built on Linux, but it INSTALLS on
+    # Windows, Linux and macOS — so it is built only from a tree all three have already blessed.
+    needs: test
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7

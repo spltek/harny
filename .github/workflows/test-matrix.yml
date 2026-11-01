@@ -1,0 +1,47 @@
+name: test-matrix
+
+# The ONE definition of "the suite is green", CALLED by every workflow that ships something.
+#
+# Why a reusable workflow and not a copy of the matrix in each file: the release workflow used to
+# run `npm test` on ubuntu-24.04 alone while the extension ships to Windows and macOS users too,
+# and the difference is not academic — `v0.9.5` and `0.9.6` were both tagged while
+# `windows-latest` had been RED for twelve commits, because a single assertion in
+# `skill-roots.test.ts` was written in POSIX and only that runner could see it. A gate that a
+# file can spell differently is a gate that will be spelled differently; this one cannot.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        # What the gate must check out. A release dispatched by hand carries the TAG as an input
+        # while the triggering ref is still `main`; without this the gate would bless `main` and
+        # the release job would then package the tag — two different trees, one green tick.
+        description: "Ref to test (a tag when releasing). Empty = the triggering ref."
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      # Every OS reports, even when the first one fails: a red Windows job must not be hidden by
+      # a red Ubuntu job, which is how "green enough to ship" gets decided on one runner.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      # The webview runs the COMMITTED `media/view.js`, not `src`, so a stale bundle is a green
+      # suite over code the panel never loads. `bundle-fresh.test.ts` catches the drift; this step
+      # keeps the build itself working on all three OSes.
+      - run: npm run build
