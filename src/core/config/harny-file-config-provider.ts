@@ -290,6 +290,9 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
         if (before) parsed = before;
       }
 
+      // The map as it is on DISK, before this save replaces it: the only way to tell a rename
+      // (one name out, one name in) from a delete or a merge. See `renameTarget`.
+      const previousProviders = this.asProviderMap(parsed) ?? {};
       const providers: Record<string, Record<string, unknown>> = {};
       for (const [name, entry] of Object.entries(data.providers)) {
         // Start from the keys the editor does NOT manage (models, unknown
@@ -323,10 +326,23 @@ export class HarnyFileConfigProvider implements PartialConfigProvider, ProviderC
         "maxParallelSubAgents",
         isPositiveInt(data.maxParallelSubAgents) ? data.maxParallelSubAgents : undefined,
       );
-      if (data.activeProvider && providers[data.activeProvider]) {
-        parsed.provider = data.activeProvider;
-      } else if (data.activeProvider === undefined) {
+      if (data.activeProvider === undefined) {
         // No change requested for the active provider.
+      } else if (providers[data.activeProvider]) {
+        parsed.provider = data.activeProvider;
+      } else {
+        // The requested active name is NOT in the map being written. The editor renames by
+        // rewriting a key and can leave the active name behind: keeping it here is what made the
+        // NEXT request dial another server, because `activeProviderName` falls back to the FIRST
+        // entry of the map (renaming the OpenRouter provider sent its models to
+        // `ECONNREFUSED 127.0.0.1:8090`, the local llama server listed first).
+        const target = renameTarget(previousProviders, providers, data.activeProvider);
+        if (target) parsed.provider = target;
+        else if (typeof parsed.provider === "string" && !providers[parsed.provider]) {
+          // Nothing to point at: drop the key rather than keep a name that resolves to nothing.
+          // `activeProviderName` then falls back on purpose, and the file stops lying.
+          delete parsed.provider;
+        }
       }
 
       // Preserve the file extension the user already uses (json vs jsonc);
@@ -587,4 +603,23 @@ function editorExtras(raw: Record<string, unknown>): Record<string, unknown> | u
 function setOrDelete(obj: Record<string, unknown>, key: string, value: unknown): void {
   if (value === undefined || value === null || value === "") delete obj[key];
   else obj[key] = value;
+}
+
+/**
+ * The name the active provider was RENAMED to, when the payload proves it: `wasActive` exists on
+ * disk, is gone from the map being written, and EXACTLY one key disappeared while EXACTLY one
+ * appeared. Anything else — a delete, a merge, several names moving at once — returns undefined:
+ * guessing there would point the config at an entry the user never chose, which is the very
+ * failure this guards (`activeProviderName` silently falling back to the first provider).
+ */
+function renameTarget(
+  previous: Record<string, unknown>,
+  next: Record<string, unknown>,
+  wasActive: string,
+): string | undefined {
+  if (!(wasActive in previous)) return undefined;
+  const gone = Object.keys(previous).filter((name) => !(name in next));
+  const added = Object.keys(next).filter((name) => !(name in previous));
+  if (gone.length !== 1 || added.length !== 1 || gone[0] !== wasActive) return undefined;
+  return added[0];
 }

@@ -611,6 +611,64 @@ describe("HarnyFileConfigProvider multi-provider format", () => {
     expect(readFileSync(join(dir, "config.json"), "utf-8")).toContain("futureFlag");
   });
 
+  it("a save that renames the ACTIVE provider follows the rename instead of dangling", () => {
+    // Reported from real use: renaming a provider aligned the dropdown, then the FIRST request
+    // after it died with `ECONNREFUSED 127.0.0.1:8090` — the local llama server, i.e. the FIRST
+    // entry of the map, because the file still pointed at the old name and `activeProviderName`
+    // falls back to the first entry when the name resolves to nothing.
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({
+        provider: "openrouter",
+        providers: {
+          llamacpp: { baseUrl: "http://127.0.0.1:8090/v1" },
+          openrouter: { baseUrl: "https://openrouter.ai/api/v1", apiKey: "sk-or" },
+        },
+      }),
+    );
+    const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+    // The editor rewrites the key and its own copy of the active name is still the old one.
+    const editor = provider.readProvidersEditor();
+    editor.providers.or = editor.providers.openrouter!;
+    delete editor.providers.openrouter;
+    expect(provider.saveProvidersEditor(editor)).toBe(true);
+
+    expect(provider.read()).toMatchObject({ activeProvider: "or", baseUrl: "https://openrouter.ai/api/v1" });
+    expect(JSON.parse(readFileSync(join(dir, "config.json"), "utf8"))).toMatchObject({ provider: "or" });
+  });
+
+  it("drops an active name that resolves to nothing instead of keeping the dangling key", () => {
+    // Two deletions at once are NOT a rename: nothing proves which entry the user meant. The name
+    // is then removed rather than left pointing at a provider that no longer exists.
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({ provider: "a", providers: { a: { baseUrl: "http://a/v1" }, b: { baseUrl: "http://b/v1" } } }),
+    );
+    const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+    provider.saveProvidersEditor({ activeProvider: "a", providers: { merged: { baseUrl: "http://m/v1" } } });
+
+    const raw = JSON.parse(readFileSync(join(dir, "config.json"), "utf8")) as Record<string, unknown>;
+    expect("provider" in raw).toBe(false);
+    // …and the read stays deterministic: the only entry left.
+    expect(provider.read().activeProvider).toBe("merged");
+  });
+
+  it("leaves the active provider ALONE when the requested name still names an entry", () => {
+    // The editor does not own the active choice: a save that does not touch it must not rewrite
+    // `provider`, and a stale name in the payload must not wipe the valid one in the file.
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({ provider: "b", providers: { a: { baseUrl: "http://a/v1" }, b: { baseUrl: "http://b/v1" } } }),
+    );
+    const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);
+    provider.saveProvidersEditor({
+      activeProvider: "ghost",
+      providers: { a: { baseUrl: "http://a/v1" }, b: { baseUrl: "http://b/v1" } },
+    });
+    expect(provider.read().activeProvider).toBe("b");
+    expect(provider.read().baseUrl).toBe("http://b/v1");
+  });
+
   it("ignores invalid maxParallelSubAgents values (0, negative, non-integer)", () => {
     writeFileSync(join(dir, "config.json"), JSON.stringify({ providers: {}, maxParallelSubAgents: 0 }));
     const provider = new HarnyFileConfigProvider(() => dir, nodeFileSystem);

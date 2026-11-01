@@ -4707,8 +4707,13 @@ describe("view webview client", () => {
         ],
       },
     });
-    // The selector BUTTON shows the current model.
-    expect((document.getElementById("model-btn-label") as HTMLElement).textContent).toContain("deepseek-v4-flash");
+    // The selector BUTTON names the GATEWAY first, then the model it serves.
+    const label = document.getElementById("model-btn-label") as HTMLElement;
+    expect(label.querySelector(".mb-provider")?.textContent).toBe("opencode-go");
+    expect(label.textContent).toBe("opencode-go · deepseek-v4-flash · - · out -");
+    expect((document.getElementById("model-btn") as HTMLButtonElement).title).toContain(
+      "opencode-go · deepseek-v4-flash",
+    );
 
     (document.getElementById("model-btn") as HTMLButtonElement).click();
     const list = document.getElementById("model-list") as HTMLElement;
@@ -4722,6 +4727,41 @@ describe("view webview client", () => {
     local.click();
     expect(posted).toContainEqual({ type: "setModel", model: "LLM/gemma.gguf", provider: "llamacpp" });
     expect((document.getElementById("model-modal") as HTMLElement).classList.contains("hidden")).toBe(true);
+  });
+
+  it("the button names the provider that WILL serve, not the one the last session used", async () => {
+    // `activeProvider` is authoritative when the model exists there, but a model saved on another
+    // gateway must name THAT gateway: the button is a promise about who answers the next message.
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai-compatible",
+        activeProvider: "openrouter",
+        model: "LLM/gemma.gguf",
+        hasKey: true,
+        providerModels: [
+          { provider: "openrouter", model: "qwen/qwen3.8" },
+          { provider: "llamacpp", model: "LLM/gemma.gguf", contextLength: 32768 },
+        ],
+      },
+    });
+    const label = document.getElementById("model-btn-label") as HTMLElement;
+    expect(label.querySelector(".mb-provider")?.textContent).toBe("llamacpp");
+    expect(label.textContent).toBe("llamacpp · LLM/gemma.gguf · 33k · out -");
+  });
+
+  it("a flat model list has no provider to name, so the label starts with the model", async () => {
+    // The pre-`providerModels` hosts send one bare list: no provider, and above all no dangling
+    // separator in front of the model name.
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: { provider: "openai-compatible", model: "gpt-4o", hasKey: true, models: ["gpt-4o", "gpt-4o-mini"] },
+    });
+    const label = document.getElementById("model-btn-label") as HTMLElement;
+    expect(label.querySelector(".mb-provider")).toBeNull();
+    expect(label.textContent).toBe("gpt-4o · - · out -");
   });
 
   it("filters the model modal keeping the provider tree (only matches remain)", async () => {
@@ -7113,6 +7153,74 @@ describe("view webview client", () => {
     expect(data.renamed).toBeTruthy();
     expect(data.renamed.extra).toEqual({ models: [{ id: "m1" }], customAnything: 7 });
     expect(data.renamed.thinkingLevel).toBe("high");
+  });
+
+  it("renaming the ACTIVE provider sends the NEW name, so the file cannot keep the old one", async () => {
+    // Reported from real use: the dropdown realigned, then the first turn dialed the FIRST
+    // provider in the file (`ECONNREFUSED 127.0.0.1:8090`) because the config kept naming the
+    // provider by a key that no longer existed.
+    await loadView();
+    hostMessage({
+      type: "providersEditor",
+      data: {
+        activeProvider: "or",
+        providers: { local: { baseUrl: "http://127.0.0.1:8090/v1" }, or: { baseUrl: "https://openrouter.ai/api/v1" } },
+      },
+    });
+    const select = document.getElementById("provider-select") as HTMLSelectElement;
+    select.value = "or";
+    select.dispatchEvent(new Event("change"));
+    (document.getElementById("pe-name") as HTMLInputElement).value = "OPENROUTER";
+    posted.length = 0;
+    (document.getElementById("providers-save") as HTMLButtonElement).click();
+
+    const sent = posted.find((m) => (m as { type?: string }).type === "saveProviders") as {
+      data: { activeProvider?: string; providers: Record<string, unknown> };
+    };
+    expect(Object.keys(sent.data.providers)).toEqual(["local", "OPENROUTER"]);
+    expect(sent.data.activeProvider).toBe("OPENROUTER");
+  });
+
+  it("renaming a provider that is NOT active says nothing about the active one", async () => {
+    // The editor does not own that choice — it only repairs it when a rename breaks it.
+    await loadView();
+    hostMessage({
+      type: "providersEditor",
+      data: {
+        activeProvider: "local",
+        providers: { local: { baseUrl: "http://127.0.0.1:8090/v1" }, or: { baseUrl: "https://openrouter.ai/api/v1" } },
+      },
+    });
+    const select = document.getElementById("provider-select") as HTMLSelectElement;
+    select.value = "or";
+    select.dispatchEvent(new Event("change"));
+    (document.getElementById("pe-name") as HTMLInputElement).value = "openrouter";
+    posted.length = 0;
+    (document.getElementById("providers-save") as HTMLButtonElement).click();
+
+    const sent = posted.find((m) => (m as { type?: string }).type === "saveProviders") as {
+      data: { activeProvider?: string };
+    };
+    expect(sent.data.activeProvider).toBeUndefined();
+  });
+
+  it("deleting the ACTIVE provider hands over a surviving name", async () => {
+    await loadView();
+    hostMessage({
+      type: "providersEditor",
+      data: { activeProvider: "a", providers: { a: { baseUrl: "http://a/v1" }, b: { baseUrl: "http://b/v1" } } },
+    });
+    const del = document.getElementById("provider-delete") as HTMLButtonElement;
+    del.click();
+    del.click();
+    posted.length = 0;
+    (document.getElementById("providers-save") as HTMLButtonElement).click();
+
+    const sent = posted.find((m) => (m as { type?: string }).type === "saveProviders") as {
+      data: { activeProvider?: string; providers: Record<string, unknown> };
+    };
+    expect(Object.keys(sent.data.providers)).toEqual(["b"]);
+    expect(sent.data.activeProvider).toBe("b");
   });
 
   it("deletes a provider after the two-step confirmation", async () => {
@@ -10409,12 +10517,14 @@ describe("per-turn metrics badge (webview)", () => {
     });
     const badges = Array.from(document.querySelectorAll(".msg-meta")) as HTMLElement[];
     expect(badges.length).toBe(2);
-    expect(badges[0].textContent).toContain("llama-local/qwen3-32b");
+    expect(badges[0].textContent).toContain("qwen3-32b");
     expect(badges[0].textContent).toContain("12k in");
-    expect(badges[1].textContent).toContain("opencode-go/deepseek-v4.1-flash");
+    expect(badges[1].textContent).toContain("deepseek-v4.1-flash");
     // The model is the FIRST part: the row is nowrap + ellipsized, so whatever
     // gets cut has to be the least important thing.
-    expect(badges[1].textContent!.indexOf("opencode-go/")).toBe(0);
+    expect(badges[1].textContent!.indexOf("deepseek-v4.1-flash")).toBe(0);
+    // The provider is NOT on the row — it is one hover away.
+    expect(badges[1].textContent).not.toContain("opencode-go");
     // The full budget of the turn stays one hover away.
     expect(badges[1].title).toContain("model: deepseek-v4.1-flash");
     expect(badges[1].title).toContain("provider: opencode-go");
@@ -10479,8 +10589,19 @@ describe("per-turn metrics badge — live turnMeta", () => {
     expect(chip.classList.contains("build")).toBe(true);
     expect(chip.title).toContain("wrote for real");
     // The rest of the row follows, and the mode is in the tooltip too.
-    expect((document.querySelector(".msg-meta") as HTMLElement).textContent).toContain("openai/gpt-4o");
+    expect((document.querySelector(".msg-meta") as HTMLElement).textContent).toContain("gpt-4o");
     expect((document.querySelector(".msg-meta") as HTMLElement).title).toContain("mode: Build");
+  });
+
+  it("keeps the provider OFF the badge line, in the tooltip only", async () => {
+    // The row repeats under every turn and is nowrap + ellipsized: the gateway (which the model
+    // selector already names) would cost width and say nothing new. One hover keeps it available.
+    await loadView();
+    hostMessage({ type: "turnMeta", meta: { model: "openrouter/free", provider: "openrouter", inputTokens: 10 } });
+    const badge = document.querySelector(".msg-meta") as HTMLElement;
+    expect(badge.textContent).toContain("openrouter/free");
+    expect(badge.textContent).not.toContain("openrouter ·");
+    expect(badge.title).toContain("provider: openrouter");
   });
 
   it("marks an Analyze turn as such, and shows NO chip on turns recorded before the mode existed", async () => {
@@ -10746,13 +10867,13 @@ describe("model selector button shows the limits", () => {
   it("shows the detected context + output next to the model", async () => {
     await loadView();
     hostMessage(cfg({ provider: "p", model: "m1", contextLength: 128000, maxOutputTokens: 16384 }));
-    expect((document.getElementById("model-btn-label") as HTMLElement).textContent).toBe("m1 · 128k · out 16k");
+    expect((document.getElementById("model-btn-label") as HTMLElement).textContent).toBe("p · m1 · 128k · out 16k");
   });
 
   it("shows '-' for an unrecognized model (unknown limits)", async () => {
     await loadView();
     hostMessage(cfg({ provider: "p", model: "m1" }));
-    expect((document.getElementById("model-btn-label") as HTMLElement).textContent).toBe("m1 · - · out -");
+    expect((document.getElementById("model-btn-label") as HTMLElement).textContent).toBe("p · m1 · - · out -");
   });
 });
 

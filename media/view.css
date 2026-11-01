@@ -3787,10 +3787,30 @@ body.no-workspace #mcp-card {
 #model-btn-label {
   flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: baseline;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* The gateway, in front of the model it serves: upper-cased and dimmed so it reads as an eyebrow
+   and never competes with the model name. `flex: none` on purpose — the provider is the word that
+   makes a model unambiguous, so it must not be the part the ellipsis eats. */
+#model-btn-label .mb-provider {
+  flex: none;
+  text-transform: uppercase;
+  font-size: 0.9em;
+  letter-spacing: 0.05em;
+  opacity: 0.62;
+}
+
+#model-btn-label .mb-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .model-btn.placeholder #model-btn-label {
   color: var(--muted);
   font-style: italic;

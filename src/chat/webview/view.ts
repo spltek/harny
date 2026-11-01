@@ -1509,12 +1509,10 @@ function fmtDuration(ms: number): string {
 /** Compact per-turn metrics badge (REAL usage + timings) shown under a bubble. */
 function metaBadge(meta: MsgMeta): HTMLElement | undefined {
   const parts: string[] = [];
-  // The model comes FIRST: with a session switching between llama-local,
-  // OpenRouter and opencode, the identity of the turn is what makes the token
-  // counts that follow readable. The tooltip carries the rest of the budget
-  // (provider, window, output budget) — the row itself is nowrap + ellipsized,
-  // so only what identifies the turn belongs on it.
-  if (meta.model) parts.push(meta.provider ? `${meta.provider}/${meta.model}` : meta.model);
+  // The MODEL alone. The provider is one hover away (`provider:` in the tooltip) and lives in
+  // the selector; this row repeats under EVERY turn, already carries mode + tokens + timings,
+  // and is nowrap + ellipsized — the gateway would cost width and say nothing new.
+  if (meta.model) parts.push(meta.model);
   if (typeof meta.inputTokens === "number") parts.push(`${fmtTokens(meta.inputTokens)} in`);
   if (typeof meta.outputTokens === "number") parts.push(`${fmtTokens(meta.outputTokens)} out`);
   if (typeof meta.cachedTokens === "number" && meta.cachedTokens > 0) parts.push(`⚡ ${fmtTokens(meta.cachedTokens)}`);
@@ -4284,6 +4282,10 @@ let providerEditorData: {
   providers: {},
 };
 let providerEditorSelected = "";
+/** The provider the config file names as ACTIVE (see `openProvidersEditor`), and whether this
+ * draft had to change it — a rename or a delete of that entry. Undefined active = not sent. */
+let providerEditorActive: string | undefined;
+let providerActiveDirty = false;
 let providerDeleteArmed = false;
 let providerDeleteTimer: number | undefined;
 
@@ -4332,12 +4334,21 @@ function loadProviderIntoForm(name: string): void {
 }
 
 function openProvidersEditor(data: {
+  activeProvider?: string;
   providers: Record<
     string,
     { baseUrl?: string; apiKey?: string; thinking?: string; thinkingLevel?: string; extra?: Record<string, unknown> }
   >;
 }): void {
   providerEditorData = { providers: JSON.parse(JSON.stringify(data.providers ?? {})) };
+  // Which provider the config file NAMES as active — kept aside, not in the draft: the editor
+  // does not own that choice (picking a model does). It is only sent back when a RENAME or a
+  // DELETE breaks it, because the host writes `provider` from `activeProvider` and a name that
+  // no longer exists in the map is a reference to nothing: the next request then silently dials
+  // whichever provider is FIRST in the file (`ECONNREFUSED 127.0.0.1:8090` was exactly that
+  // after renaming the OpenRouter provider).
+  providerEditorActive = data.activeProvider;
+  providerActiveDirty = false;
   const names = Object.keys(providerEditorData.providers);
   providerEditorSelected = names.length > 0 ? names[0] : "";
   refreshProviderList();
@@ -4362,6 +4373,8 @@ function openProvidersEditor(data: {
 
 function closeProvidersEditor(): void {
   providerEditorData = { providers: {} };
+  providerEditorActive = undefined;
+  providerActiveDirty = false;
   providerEditorSelected = "";
   providersModal.classList.add("hidden");
 }
@@ -4438,6 +4451,13 @@ providerDeleteBtn.addEventListener("click", () => {
   if (!name || !providerEditorData.providers[name]) return;
   delete providerEditorData.providers[name];
   const names = Object.keys(providerEditorData.providers);
+  // Deleting the ACTIVE provider breaks the name the config file points at, exactly as a rename
+  // does: hand the host a surviving name (or "" when none is left, which makes it drop the key)
+  // instead of leaving a reference to nothing.
+  if (providerEditorActive === name) {
+    providerEditorActive = names[0] ?? "";
+    providerActiveDirty = true;
+  }
   if (names.length === 0) {
     providerEditorSelected = "";
     refreshProviderList();
@@ -4467,6 +4487,13 @@ function commitProviderForm(): string {
   const given = peName.value.trim() || oldName;
   if (given !== oldName) {
     delete providerEditorData.providers[oldName];
+    // A rename must take the ACTIVE name with it: the host writes `provider` from
+    // `activeProvider`, so leaving the old name here is how the next request ended up dialing
+    // the FIRST provider in the file instead of the one just renamed.
+    if (providerEditorActive === oldName) {
+      providerEditorActive = given;
+      providerActiveDirty = true;
+    }
   }
   providerEditorData.providers[given] = {
     // Keys the form does not manage are CARRIED OVER untouched so a commit is
@@ -4493,7 +4520,14 @@ providersSaveBtn.addEventListener("click", () => {
   const name = commitProviderForm();
   if (!name) return;
   refreshProviderList(); // the form can rename the provider
-  vscode.postMessage({ type: "saveProviders", data: { ...providerEditorData } });
+  // The draft may carry an active name only because a rename/delete broke it — that is the ONE
+  // case the editor speaks about the active provider (picking a model owns the choice otherwise).
+  vscode.postMessage({
+    type: "saveProviders",
+    data: providerActiveDirty
+      ? { ...providerEditorData, activeProvider: providerEditorActive }
+      : { ...providerEditorData },
+  });
   providersSaveBtn.disabled = true;
   window.clearTimeout(providersSaveWatchdog);
   providersSaveWatchdog = window.setTimeout(() => {
@@ -5405,7 +5439,7 @@ function buildModelGroups(c: ConfigState): ModelGroup[] {
   return models.length > 0 ? [{ provider: "", models: models.map((m) => ({ model: m })) }] : [];
 }
 
-/** Update the selector BUTTON label (current model + its context window).
+/** Update the selector BUTTON label: the GATEWAY, the model it serves, its limits.
  * A saved model that is NO LONGER served falls back to the placeholder. */
 function updateModelButton(c: ConfigState): void {
   const providerModels = c.providerModels && c.providerModels.length > 0 ? c.providerModels : null;
@@ -5414,9 +5448,29 @@ function updateModelButton(c: ConfigState): void {
   const current =
     providerModels?.find((p) => p.model === c.model && (p.provider === c.activeProvider || !c.activeProvider)) ??
     providerModels?.find((p) => p.model === c.model);
-  modelBtnLabel.textContent = usable ? c.model + modelLimitsLabel(current) : "Select a model";
+  // The PROVIDER comes first: the same model name answers on several gateways with different
+  // limits, and this button is the only place that says which one will serve the next message.
+  // Two spans on purpose — the CSS upper-cases and dims the gateway, and `flex: none` keeps the
+  // ellipsis on the MODEL: the provider is the word that makes a model unambiguous, so it cannot
+  // be the part that gets cut.
+  modelBtnLabel.textContent = "";
+  if (usable) {
+    if (current?.provider) {
+      const provider = document.createElement("span");
+      provider.className = "mb-provider";
+      provider.textContent = current.provider;
+      modelBtnLabel.appendChild(provider);
+    }
+    const name = document.createElement("span");
+    name.className = "mb-name";
+    name.textContent = (current?.provider ? " · " : "") + c.model + modelLimitsLabel(current);
+    modelBtnLabel.appendChild(name);
+  } else {
+    modelBtnLabel.textContent = "Select a model";
+  }
   modelBtn.classList.toggle("placeholder", !usable);
-  modelBtn.title = usable ? `Switch model — current: ${c.model}` : "Select a model";
+  const served = current?.provider ? `${current.provider} · ${c.model}` : c.model;
+  modelBtn.title = usable ? `Switch model — current: ${served}` : "Select a model";
   // A soft ⚠ badge when the models.dev fallback is down (limits may be unknown).
   modelWarn.classList.toggle("hidden", !c.modelsDevError);
 }
