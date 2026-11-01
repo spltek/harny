@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ANALYZE_BLOCKED_SHELL_MESSAGE,
   FILE_PREVIEW_NOTE,
   SHELL_READ_ONLY_NOTE,
   analyzeRefusalMessage,
@@ -158,10 +159,109 @@ describe("mode policy", () => {
       "Get-Content file.txt",
       "Select-String -Pattern foo",
       "Get-ChildItem -Recurse",
+      // the rest of the POSIX/Windows set: one READ invocation each, because the allowlist
+      // is the contract and an entry nobody ever runs is an entry nobody has ever checked
+      "less README.md",
+      "more README.md",
+      "jq .name package.json",
+      "du -sh src",
+      "df -h",
+      "free -m",
+      "top -l 1",
+      "htop",
+      "ps aux",
+      "uptime",
+      "cal",
+      "date",
+      "uname -a",
+      "whoami",
+      "id",
+      "hostname",
+      "netstat -an",
+      "ipconfig",
+      "systeminfo",
+      "tasklist",
+      "ver",
+      "whereis node",
+      "bat src/index.ts",
+      "eza -la",
+      "printf 'x\\n'",
+      // the rest of the PowerShell read cmdlets
+      "Get-Command node",
+      "Get-Date",
+      "Get-Help Get-Item",
+      "Get-Item file.txt",
+      "Get-ItemProperty HKLM:",
+      "Get-Location",
+      "Get-Member",
+      "Get-Process",
+      "Get-Service",
+      "Measure-Object -Line",
+      "Select-Object -First 1",
+      "Sort-Object name",
+      "ConvertTo-Json",
+      "ConvertFrom-Json",
+      "Out-String",
+      "Test-Path file.txt",
+      // the rest of the git READ subcommands and read flags
+      "git cat-file -p HEAD",
+      "git check-attr -a file",
+      "git check-ignore -v file",
+      "git count-objects -v",
+      "git describe --tags",
+      "git diff-index HEAD",
+      "git diff-tree HEAD",
+      "git for-each-ref",
+      "git help status",
+      "git merge-base main dev",
+      "git name-rev HEAD",
+      "git reflog",
+      "git rev-list --count HEAD",
+      "git shortlog -sn",
+      "git version",
+      "git whatchanged",
+      "git branch --all",
+      "git branch --remotes",
+      "git branch --show-current",
+      "git branch -v",
+      "git branch -vv",
+      "git branch --merged main",
+      "git branch --no-merged main",
+      "git branch --points-at HEAD",
+      "git tag -n",
+      "git remote --verbose",
     ];
     for (const cmd of allowed) {
       expect(isSafeReadCommand(cmd), `should allow: ${cmd}`).toBe(true);
     }
+  });
+
+  // FINDING, not an endorsement: `--list` takes an OPTIONAL pattern and is not in the
+  // value-flag set, so the pattern is read as a positional — and a positional on `git branch`
+  // creates one. The filter fails CLOSED (it refuses a harmless read), which is the right side
+  // to err on, but it is too strict. Changing a security filter's surface deserves its own
+  // change, so this test pins today's behaviour and will fail the day we decide otherwise.
+  it("isSafeReadCommand currently refuses `git branch --list <pattern>` (fail-closed, too strict)", () => {
+    expect(isSafeReadCommand("git branch --list 'feat*'")).toBe(false);
+    expect(isSafeReadCommand("git branch --list")).toBe(true); // the flag alone is fine
+  });
+
+  it("isSafeReadCommand REFUSES every find/fd action that writes or executes", () => {
+    // find and fd are allowlisted for SEARCHING, and each of these turns a search into an
+    // arbitrary command or a file write. One case per action, because they are separate entries.
+    const refused = [
+      "find . -name '*.ts' -execdir rm {} ;",
+      "find . -name '*.ts' -okdir rm {} ;",
+      "find . -name '*.ts' -fls /tmp/log",
+      "find . -name '*.ts' -fprint /tmp/out",
+      "find . -name '*.ts' -fprint0 /tmp/out",
+      "find . -name '*.ts' -fprintf /tmp/out %p",
+      "fd . --exec rm",
+      "fd . --exec-batch rm",
+      "fd . -x rm",
+      "fd . -X rm",
+    ];
+    for (const cmd of refused) expect(isSafeReadCommand(cmd), `should refuse: ${cmd}`).toBe(false);
   });
 
   it("isSafeReadCommand REFUSES writes, installers, git writes and build drivers", () => {
@@ -255,6 +355,110 @@ describe("mode policy", () => {
     expect(isSafeReadCommand("echo x > /dev/null")).toBe(true);
     expect(isSafeReadCommand("echo x > out.txt")).toBe(false);
     expect(isSafeReadCommand("echo x > /dev/sda")).toBe(false);
+  });
+
+  it("isSafeReadCommand handles the BACKSLASH escape inside double quotes", () => {
+    // In `"a\"b"` the quote is escaped, so the string does not end there: what follows is still
+    // an ARGUMENT, not a separator and not a redirection. Getting this wrong is a two-way bug —
+    // it can refuse harmless reads, and it can split a command where the shell would not.
+    expect(isSafeReadCommand('grep "a\\"b" file.txt')).toBe(true);
+    expect(isSafeReadCommand('echo "a\\"; rm -rf /"')).toBe(true); // the `;` is INSIDE the quotes
+    expect(isSafeReadCommand('echo "a\\">/tmp/x"')).toBe(true); // …and so is the `>`
+    // The same escape OUTSIDE quotes is a literal too.
+    expect(isSafeReadCommand("grep a\\;b file.txt")).toBe(true);
+  });
+
+  it("isSafeReadCommand reads every git subcommand in its READ form", () => {
+    const allowed = [
+      "git worktree list",
+      "git submodule status",
+      "git submodule summary",
+      "git stash list",
+      "git stash show",
+      "git remote -v",
+      "git remote get-url origin",
+      "git config --get user.email",
+      "git config -l",
+      "git symbolic-ref HEAD",
+      "git branch --contains abc1234",
+      "git branch --sort name", // the value is skipped, not read as a positional
+      "git branch --sort=-committerdate",
+      "git tag --merged main",
+    ];
+    for (const cmd of allowed) expect(isSafeReadCommand(cmd), cmd).toBe(true);
+  });
+
+  it("…and REFUSES the writing form of the same subcommands", () => {
+    const refused = [
+      "git", // no subcommand at all
+      "git worktree prune",
+      "git submodule update",
+      "git stash push",
+      "git remote add origin https://x",
+      "git config user.email a@b.c",
+      "git symbolic-ref HEAD refs/heads/main", // two args = a write
+      "git branch new-branch", // positional = create/rename
+      "git branch -D old",
+      "git tag v1.0.0",
+    ];
+    for (const cmd of refused) expect(isSafeReadCommand(cmd), cmd).toBe(false);
+  });
+
+  it("a DANGLING escape at the end of the line does not invent a character", () => {
+    // An unbalanced quote or a trailing backslash is a command the shell itself would reject,
+    // but the PARSER still runs on it first, and what it must not do is read past the end and
+    // paste something onto the command name (`ls\` becoming a different binary).
+    expect(isSafeReadCommand("ls\\")).toBe(true);
+    expect(isSafeReadCommand('echo "a\\')).toBe(true);
+    expect(isSafeReadCommand('grep "a\\"b" file.txt')).toBe(true);
+    // …and an escaped SPACE joins the name: `git\ status` is not `git`, so it is refused —
+    // fail-closed, and correct, because that is what the shell would run.
+    expect(isSafeReadCommand("git\\ status")).toBe(false);
+  });
+
+  it("the refusal tells an UNKNOWN command from an ALLOWLISTED one used wrongly", () => {
+    // Two of the four causes, by their wording: one says the command is not curated, the other
+    // says the command IS curated and this invocation is what writes. `curl https://x` would be
+    // the wrong witness for the first — it is ALLOWED (it only reads).
+    const unknown = ANALYZE_BLOCKED_SHELL_MESSAGE("docker ps");
+    const unsafe = ANALYZE_BLOCKED_SHELL_MESSAGE("git branch new-branch");
+    expect(unknown).toContain("`docker` is not in the read-only allowlist");
+    expect(unsafe).toContain("`git` is a read-only command, but THIS invocation");
+  });
+
+  it("the refusal names the CAUSE when there is one to name", () => {
+    // An ALLOWLISTED command refused for its invocation is the case that used to lie: the agent
+    // saw "not in the allowlist" and concluded the session was read-only. It must say WHY.
+    expect(ANALYZE_BLOCKED_SHELL_MESSAGE("cat a > b")).toContain("Reason:");
+    expect(ANALYZE_BLOCKED_SHELL_MESSAGE("cat a > b")).toContain("here the MODE is the reason");
+    expect(ANALYZE_BLOCKED_SHELL_MESSAGE("docker ps")).toContain("read-only allowlist");
+  });
+
+  describe("the Analyze refusal message", () => {
+    // A refusal used to say "Analyze is READ-ONLY: X is not in the allowlist" for EVERY cause —
+    // including a redirection in a command that IS allowlisted. An agent reading it concluded the
+    // SESSION was in Analyze when only the command was refused, and kept planning writes. So: the
+    // mode the enforcement sees is stated explicitly, and the reason is the one that fired.
+    it("states the enforced mode, so a refusal cannot be misread as a statement about the session", () => {
+      const msg = ANALYZE_BLOCKED_SHELL_MESSAGE("rm -rf build");
+      expect(msg.split("\n")[0]).toContain("enforced mode: ANALYZE");
+      expect(msg).toContain("Command: rm -rf build");
+      expect(msg).toContain("switch to Build");
+    });
+
+    it("names the cause that actually fired, one per class", () => {
+      const reason = (cmd: string) => ANALYZE_BLOCKED_SHELL_MESSAGE(cmd).split("Reason: ")[1].split("\n")[0];
+      // A WRITE: the mode is the reason, and saying "cat is not allowlisted" would be a lie.
+      expect(reason("cat file.txt > out.txt")).toContain("MODE is the reason");
+      // A KNOWN read command with a write/exec flag: the command is fine, this invocation is not.
+      expect(reason("find . -delete")).toContain("THIS invocation can write or execute");
+      expect(reason("git diff --output=patch.diff")).toContain("THIS invocation");
+      // An UNKNOWN command: nothing to fix but the choice of command.
+      expect(reason("docker ps")).toContain("`docker` is not in the read-only allowlist");
+      // Command substitution can run anything, whatever the outer command looks like.
+      expect(reason('echo "$(rm -rf x)"')).toContain("command substitution");
+      expect(reason("   ")).toBe("the command is empty.");
+    });
   });
 
   it("isAnalyzeMode: only analyze is read-only; agent is full access", () => {

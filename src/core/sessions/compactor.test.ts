@@ -19,10 +19,10 @@ import {
   minExplicitTargetPercent,
   planCompactionToBudget,
   planForTarget,
-  planManualCompaction,
   realWindowTokens,
   recentStartFor,
   serializeConversation,
+  snapCutToGroup,
   shouldCompact,
   splitSummary,
   clampCompactionThresholdPercent,
@@ -38,6 +38,7 @@ import type { LLMProviderFactory } from "../llm/types";
 import type { HarnyConfig } from "../config/types";
 import type { ChatMessage } from "../history/types";
 import { conversationFaults } from "../history/conversation-validity";
+import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, usableContext } from "../../chat/context-window";
 
 const CONFIG: HarnyConfig = {
   provider: "openai",
@@ -126,6 +127,28 @@ describe("window boundaries never split a tool-call pair", () => {
   });
 });
 
+describe("snapCutToGroup — the cut lands on a WHOLE turn, forward when nothing is behind it", () => {
+  it("moves FORWARD to the next input when the boundary fell inside the FIRST group", () => {
+    // Keeping everything would make the compaction a no-op, so the boundary walks ahead to
+    // the next input: summarizing that whole group still frees real room.
+    const msgs = [u("first"), a("calling a tool"), a("answer"), u("second"), a("done")];
+    // turnStart finds no input BEHIND the index (message 0 is the head, never inspected),
+    // so the only cut that keeps complete turns is the input at 3.
+    expect(snapCutToGroup(msgs, 2)).toBe(3);
+    expect(msgs[snapCutToGroup(msgs, 2)].role).toBe("user");
+  });
+
+  it("prefers the input that OPENS the group containing the boundary", () => {
+    const msgs = [u("first"), a("answer"), u("second"), a("answer")];
+    expect(snapCutToGroup(msgs, 3)).toBe(2);
+  });
+
+  it("returns 0 when the conversation is a single group: half a turn is never kept", () => {
+    const msgs = [u("only"), a("calling a tool"), a("answer")];
+    expect(snapCutToGroup(msgs, 2)).toBe(0);
+  });
+});
+
 describe("serializeConversation — the summarizer's view of the span", () => {
   it("names every tool call, so a result is never anonymous", () => {
     const msgs: ChatMessage[] = [
@@ -176,6 +199,25 @@ describe("serializeConversation — the summarizer's view of the span", () => {
     expect(serializeConversation(msgs)).toBe("[User]: hi\n[Assistant]: hello");
   });
 
+  it("never serializes a system or uiOnly message, wherever it sits in the span", () => {
+    // The two filters are one rule: a summarizer sees the WORK of the span, never the frame
+    // around it. The system prompt is rebuilt per request (prepending it to a summary would
+    // duplicate it), and a uiOnly bubble is text the panel drew, not something the model said.
+    const msgs: ChatMessage[] = [
+      { role: "system", content: "SYSTEM PROMPT", timestamp: 1 },
+      { role: "user", content: "hi", timestamp: 2 },
+      { role: "assistant", content: "hello", timestamp: 3 },
+      { role: "user", content: "UI NOISE", timestamp: 4, uiOnly: true },
+    ];
+    expect(serializeConversation(msgs)).toBe("[User]: hi\n[Assistant]: hello");
+    // The PLANNER applies the same rule — it is a separate filter in a separate function, and
+    // drifting apart there is how a system prompt ends up inside a summary.
+    const plan = planCompactionToBudget(msgs, 0);
+    expect(plan.kept.some((m) => m.role === "system" || m.uiOnly)).toBe(false);
+    expect(plan.toSummarize.some((m) => m.role === "system" || m.uiOnly)).toBe(false);
+    expect(plan.tokensBefore).toBe(estimateTokens("[User]: hi\n[Assistant]: hello"));
+  });
+
   it("is WIRED: the named calls reach the message the model actually receives", () => {
     // The regression this pins: a fix INSIDE serializeConversation is inert if the
     // request is built some other way. It is exactly the class of bug that hid the
@@ -204,6 +246,53 @@ describe("serializeConversation — the summarizer's view of the span", () => {
     // …and the tag is CLOSED (it used to be opened in the system prompt and never closed).
     expect(sent[0].content).toContain("</transcript>");
     expect(sent[0].content.trimEnd().endsWith("Never invent details absent from the transcript.")).toBe(true);
+  });
+});
+
+describe("splitSummary — the two blocks a model was asked for", () => {
+  it("splits the label from the document, whatever the separator LOOKS like", () => {
+    // The separator is written by a MODEL, not by us: extra dashes and padding spaces are
+    // normal replies, and a split that only accepts a bare "---" throws the document away.
+    const expected = { prompt: "Summary of past interactions", response: "## Goal\ndid it" };
+    for (const text of [
+      "Summary of past interactions\n---\n## Goal\ndid it",
+      "Summary of past interactions\n-----\n## Goal\ndid it",
+      "Summary of past interactions\n   ---   \n## Goal\ndid it",
+      "Summary of past interactions\n\n---\n\n## Goal\ndid it",
+      "\n\nSummary of past interactions\n---\n## Goal\ndid it\n\n",
+    ]) {
+      expect(splitSummary(text)).toEqual(expected);
+    }
+    // CRLF survives inside the body: the split is about the SEPARATOR lines only.
+    expect(splitSummary("Summary of past interactions\r\n---\r\n## Goal\r\ndid it")).toEqual({
+      prompt: "Summary of past interactions",
+      response: "## Goal\r\ndid it",
+    });
+  });
+
+  it("trims both blocks, and falls back to the generic prompt when the label is EMPTY", () => {
+    expect(splitSummary("  Summary of past interactions  \n---\n\n  ## Goal\ndid it  \n\n")).toEqual({
+      prompt: "Summary of past interactions",
+      response: "## Goal\ndid it",
+    });
+    // A separator with NOTHING above it is not a label at all: the generic prompt is used and
+    // the separator stays IN the body — dropping it would take the document with it.
+    expect(splitSummary("   \n---\n## Goal\ndid it")).toEqual({
+      prompt: "Continue the work from the summarized context below.",
+      response: "---\n## Goal\ndid it",
+    });
+  });
+
+  it("treats a reply with no separator, or no text at all, as one whole body", () => {
+    expect(splitSummary("## Goal\ndid it")).toEqual({
+      prompt: "Continue the work from the summarized context below.",
+      response: "## Goal\ndid it",
+    });
+    // An empty reply must not become an empty bubble: the body says so instead.
+    expect(splitSummary("   \n ")).toEqual({
+      prompt: "Continue the work from the summarized context below.",
+      response: "## Progress\nNo details available.",
+    });
   });
 });
 
@@ -682,6 +771,38 @@ describe("Compactor — squeezing an oversized summary", () => {
     ).toBe(first.trim());
   });
 
+  it("does NOT squeeze when the budget is not a real budget (0 or negative)", async () => {
+    // A negative budget is TRUTHY: without the `> 0` guard it would trigger a second call
+    // whose ceiling is a negative token count, i.e. one that is always exceeded.
+    const huge = `Summary of past interactions\n---\n${"blah ".repeat(4000)}`;
+    for (const maxSummaryTokens of [0, -5]) {
+      const factory = scriptedFactory([huge]);
+      await new Compactor(factory).summarize([u("work")], undefined, undefined, {
+        maxSummaryTokens,
+        maxReplyTokens: 8_192,
+        config: CONFIG,
+      });
+      expect(factory.sent).toHaveLength(1);
+    }
+  });
+
+  it("keeps a summary that overshoots the budget but stays inside the ALLOWED overshoot", async () => {
+    // The budget is a REQUEST, not a limit: between `budget` and `budget × 1.15` the summary
+    // is kept as it is — a second call there would spend tokens to fix nothing.
+    const text = `Summary of past interactions\n---\n${"word ".repeat(873)}`;
+    const size = estimateTokens(text);
+    expect(size).toBeGreaterThan(1000); // over the budget…
+    expect(size).toBeLessThanOrEqual(1150); // …but inside the overshoot we tolerate
+    const factory = scriptedFactory([text, "Summary of past interactions\n---\n## Goal\nsqueezed"]);
+    const out = await new Compactor(factory).summarize([u("work")], undefined, undefined, {
+      maxSummaryTokens: 1000,
+      maxReplyTokens: 8_192,
+      config: CONFIG,
+    });
+    expect(factory.sent).toHaveLength(1);
+    expect(out).toBe(text.trim());
+  });
+
   it("does not squeeze at all when no budget is given (backward compatible)", async () => {
     const huge = `Summary of past interactions\n---\n${"blah ".repeat(4000)}`;
     const factory = scriptedFactory([huge]);
@@ -690,6 +811,84 @@ describe("Compactor — squeezing an oversized summary", () => {
       huge.trim(),
     );
     expect(factory.sent).toHaveLength(1);
+  });
+});
+
+/**
+ * The band is DERIVED from whatever a session declares — no policy baked in.
+ *
+ * There is deliberately no "recommended window" here. A session may legitimately run an 8k
+ * model or a 2M one, and the rules have to be the same at both ends: the trigger is a share
+ * of the USABLE context (window − reply reserve), the landing point is a share of that same
+ * usable number, and the cut always frees real room.
+ *
+ * What must never come back is the bug those rules exist for: a trigger measured on the RAW
+ * window. On 1M with a 16 384 reserve, a fill of 830 000 is under 80% of the declared window
+ * (838 861) and past 80% of what can actually be sent (825 754) — which is exactly how a
+ * real 1M/384k session answered 400 with 63% of its window in use.
+ */
+describe("the compaction band is DERIVED from the declared window (no policy baked in)", () => {
+  const settings = DEFAULT_COMPACTION;
+
+  it("scales across three orders of magnitude: 8k → 2M", () => {
+    const cases: Array<[window: number, reserve: number, usable: number]> = [
+      [8_000, 2_000, 6_000],
+      [32_768, 8_192, 24_576],
+      [128_000, 16_384, 111_616],
+      [1_048_576, 16_384, 1_032_192],
+      [2_000_000, 32_000, 1_968_000],
+    ];
+    for (const [window, reserve, expected] of cases) {
+      const usable = usableContext(window, reserve);
+      expect(usable).toBe(expected);
+      // Trigger: the session's share of the USABLE context, exclusive (`shouldCompact` uses `>`).
+      const trigger = (usable * settings.thresholdPercent) / 100;
+      expect(shouldCompact(trigger, usable, settings)).toBe(false);
+      expect(shouldCompact(Math.floor(trigger) + 1, usable, settings)).toBe(true);
+      // Landing point: the same share of the same number, always under the trigger and never 0.
+      // AUTO is a tenth with the default 80% trigger (a ratio, so it travels with the number).
+      const land = targetTokensFor(usable, toTargetPercent(undefined, settings.thresholdPercent));
+      expect(land).toBe(Math.round(usable / 10));
+      expect(land).toBeGreaterThan(0);
+      expect(land).toBeLessThan(trigger);
+    }
+  });
+
+  it("measures the fill on the USABLE context at every scale, never on the raw window", () => {
+    // 128k with a 16 384 reserve: 89 293 is under 70% of the declared window.
+    expect(shouldCompact(89_293, 128_000, settings)).toBe(false);
+    expect(shouldCompact(89_293, usableContext(128_000, 16_384), settings)).toBe(true);
+    // 1M with the same reserve: 830 000 is under 80% of the window and past the usable trigger.
+    expect(830_000).toBeLessThan((1_048_576 * settings.thresholdPercent) / 100);
+    expect(shouldCompact(830_000, 1_048_576, settings)).toBe(false);
+    expect(shouldCompact(830_000, usableContext(1_048_576, 16_384), settings)).toBe(true);
+  });
+
+  it("lets a session BUY a bigger context: a large reserve is a choice, not a contradiction", () => {
+    // The configuration that killed a real session — 1M with 384k declared for the reply — is a
+    // legitimate one: 664 576 of usable input, the trigger at 531 660.8, the landing point at
+    // 66 458. Nothing refuses it; the rules simply follow the numbers.
+    const usable = usableContext(1_048_576, 384_000);
+    expect(usable).toBe(664_576);
+    const trigger = (usable * settings.thresholdPercent) / 100;
+    expect(shouldCompact(trigger, usable, settings)).toBe(false);
+    expect(shouldCompact(Math.ceil(trigger), usable, settings)).toBe(true);
+    const land = targetTokensFor(usable, toTargetPercent(undefined, settings.thresholdPercent));
+    expect(land).toBe(66_458);
+    expect(land).toBeLessThan(trigger);
+  });
+
+  it("whatever the shipped defaults are, they must leave a REACHABLE trigger", () => {
+    // The defaults are an OBSERVATION, not a policy: this test stays green if they change, and
+    // only fails if they stop making sense together (a reserve as big as the window).
+    expect(DEFAULT_OUTPUT_TOKENS).toBeLessThan(DEFAULT_CONTEXT_WINDOW);
+    const usable = usableContext(DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS);
+    expect(usable).toBeGreaterThan(DEFAULT_OUTPUT_TOKENS);
+    // A full usable context always crosses the threshold: the trigger is reachable at all.
+    expect(shouldCompact(usable, usable, settings)).toBe(true);
+    const land = targetTokensFor(usable, toTargetPercent(undefined, settings.thresholdPercent));
+    expect(land).toBeGreaterThan(0);
+    expect(land).toBeLessThan(usable);
   });
 });
 
@@ -728,7 +927,11 @@ describe("landing point + keep budget (a TARGET whose bounds are DERIVED, never 
     // A MISSING or unparsable value is AUTO: the derived default.
     expect(toTargetPercent(undefined, 80)).toBe(10);
     expect(toTargetPercent("abc", 80)).toBe(10);
+    // …while a value STORED as a string (older sessions) is a real choice, not garbage.
+    expect(toTargetPercent("25", 80)).toBe(25);
     expect(toTargetPercent(25, 80)).toBe(25);
+    // null is a MISSING value as well — not `0`, which is the deliberate minimum.
+    expect(toTargetPercent(null, 80)).toBe(10);
   });
 
   it("the FLOOR is derived from the session, not a constant", () => {
@@ -741,6 +944,10 @@ describe("landing point + keep budget (a TARGET whose bounds are DERIVED, never 
     expect(minExplicitTargetPercent(0, 2_000, 5_000)).toBe(PERCENT_UNIT);
     // A floor ABOVE the derived ceiling leaves the MINIMUM (0) as the only answer.
     expect(clampTargetPercent(40, 20, 70)).toBe(0);
+    // …even when the VALUE itself sits above both: the floor outranks the ceiling.
+    expect(clampTargetPercent(75, 20, 70)).toBe(0);
+    // A floor EQUAL to the ceiling is not above it, so it still lands on the ceiling.
+    expect(clampTargetPercent(19, 20, 19)).toBe(19);
     // …and so does an explicit 0, always: it is the bottom of the range, not a sentinel.
     expect(clampTargetPercent(0, 20, 70)).toBe(0);
   });
@@ -815,14 +1022,6 @@ describe("landing point + keep budget (a TARGET whose bounds are DERIVED, never 
     }
   });
 
-  it("the fraction entry point still behaves like the token one", () => {
-    const msgs = [u("a"), a("b"), u("c"), a("d"), u("e"), a("f")];
-    const byFraction = planManualCompaction(msgs, 0.5);
-    const byBudget = planCompactionToBudget(msgs, byFraction.tokensBefore * 0.5);
-    expect(byFraction.kept).toEqual(byBudget.kept);
-    expect(byFraction.toSummarize).toEqual(byBudget.toSummarize);
-  });
-
   it("a 10% landing point frees real room on a huge window (no fixed cap in the way)", () => {
     // 616k usable (the session that started this work) and a long history: the old
     // fraction policy kept ~60% of it and freed nearly nothing.
@@ -864,81 +1063,6 @@ describe("the summary prompt (schematic, minimal, no duplication)", () => {
     expect(withPreview).toContain("a".repeat(600));
     expect(withPreview).not.toContain("a".repeat(601));
     expect(buildSummaryMessages([u("work")])[0].content).not.toContain("do NOT summarize");
-  });
-});
-
-describe("planManualCompaction", () => {
-  function call(content: string, ...ids: string[]): ChatMessage {
-    return {
-      role: "assistant",
-      content,
-      toolCalls: ids.map((id) => ({ id, name: "Shell", arguments: {} })),
-      timestamp: 2,
-    };
-  }
-  function res(toolCallId: string, content = "out"): ChatMessage {
-    return { role: "tool", content, toolCallId, timestamp: 3 };
-  }
-
-  it("never leaves the kept tail starting with a tool result, whatever the fraction", () => {
-    // Turns that mix text, tool calls and BIG results, so the token boundary lands
-    // in many different places as the fraction changes (it is chosen by size).
-    const msgs: ChatMessage[] = [
-      u("start"),
-      call("let me check", "c1"),
-      res("c1", "x".repeat(4000)),
-      a("done with that"),
-      u("next"),
-      call("checking again", "c2"),
-      res("c2", "y".repeat(200)),
-      a("all good"),
-      u("continue"),
-      call("one more", "c3"),
-      res("c3", "z".repeat(2000)),
-      a("finished"),
-      // …and it ENDS on a just-completed tool turn (the shape right after the
-      // results have landed): that is where a size-based boundary can fall
-      // exactly on the result, orphaning it.
-      call("last check", "c4"),
-      res("c4", "w".repeat(300)),
-    ];
-    for (const f of [0.001, 0.005, 0.02, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95]) {
-      const plan = planManualCompaction(msgs, f);
-      // The kept tail is what goes back to the model after the summary: it must
-      // still be replayable on its own.
-      expect(conversationFaults(plan.kept)).toEqual([]);
-      // A tail that STARTS with a result would have no call above it in the
-      // request — the provider rejects the whole conversation.
-      expect(plan.kept[0]?.role).not.toBe("tool");
-      // …and it must actually compact (the summarized side is never empty).
-      expect(plan.toSummarize.length).toBeGreaterThan(0);
-    }
-  });
-
-  it("keeps the turn that owns the results instead of orphaning them", () => {
-    // Boundary chosen so the naive cut would fall right after the call, i.e. on
-    // its result: the snap must pull the call back into the kept tail.
-    const msgs: ChatMessage[] = [u("start"), call("", "c1"), res("c1", "x".repeat(4000))];
-    const plan = planManualCompaction(msgs, 0.001);
-    expect(conversationFaults(plan.kept)).toEqual([]);
-    if (plan.kept.some((m) => m.role === "tool")) {
-      // Whenever a result is kept, its call is kept too.
-      expect(plan.kept.some((m) => m.role === "assistant" && !!m.toolCalls?.length)).toBe(true);
-    }
-  });
-
-  it("always summarizes a fraction, dropping the estimated tokens", () => {
-    const msgs = [u("1"), a("1"), u("2"), a("2"), u("3"), a("3"), u("4"), a("4")];
-    const plan = planManualCompaction(msgs, 0.5);
-    expect(plan.toSummarize.length).toBeGreaterThan(0);
-    expect(plan.kept.length).toBeGreaterThan(0);
-  });
-
-  it("falls back to summarizing half by count for shallow histories", () => {
-    const msgs = [u("a"), a("b"), u("c"), a("d")];
-    const plan = planManualCompaction(msgs, 0.6);
-    expect(plan.toSummarize.length).toBe(2);
-    expect(plan.kept.length).toBe(2);
   });
 });
 
