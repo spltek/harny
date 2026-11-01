@@ -4647,6 +4647,46 @@ describe("ChatViewProvider compaction", () => {
     expect(posted.filter((m) => m.type === "compactDone" && m.ok === true)).toHaveLength(1);
   });
 
+  it("a mid-run refresh says the run is ALIVE even with nothing left to replay", async () => {
+    // The reported "the Working bar vanished while everything kept going". The rebuild can
+    // land on a TURN BOUNDARY, where the committed text is already out of the live
+    // projection (`projection()` → undefined). `streaming` is a fact about the RUN, so it
+    // must not be paired with the replay data: the webview uses it to put the bar back, and
+    // the bar is the anchor the streaming answer bubble is inserted BEFORE.
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\ncarried");
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    const { view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 200_000;
+    rt.contextTokens = 190_000;
+    rt.history.replace([
+      { role: "user", content: "a".repeat(20_000), timestamp: 1 },
+      { role: "assistant", content: "b".repeat(20_000), timestamp: 2 },
+      { role: "user", content: "c".repeat(20_000), timestamp: 3 },
+      { role: "assistant", content: "d".repeat(20_000), timestamp: 4 },
+      { role: "user", content: "e".repeat(20_000), timestamp: 5 },
+      { role: "assistant", content: "f".repeat(20_000), timestamp: 6 },
+    ]);
+    // A run in flight with NOTHING uncommitted: no live text, no pending bubble.
+    (rt.agent as { streaming: boolean }).streaming = true;
+    expect(rt.engine.projection()).toBeUndefined();
+    view.webview.postMessage.mockClear();
+
+    await provider.maybeCompactDuringRun("s1");
+
+    const posted = view.webview.postMessage.mock.calls.map((c) => c[0] as any);
+    const refresh = posted.find((m) => m.type === "refresh");
+    expect(refresh?.streaming).toBe(true); // the bar comes back
+    expect(refresh?.liveThinking ?? "").toBe(""); // …with nothing to replay
+    // The skills catalog is only carried when the caller asked for it: this path must not
+    // pay for it (and a default turned to `true` would ship it on every rebuild).
+    expect(refresh?.skills).toBeUndefined();
+    // Still no `status`: mid-run the indicator is not to be re-posted, only preserved.
+    expect(posted.filter((m) => m.type === "status")).toHaveLength(0);
+  });
+
   it("feeds the summarizer a budget that is a COMPRESSION of the span", async () => {
     const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\nx");
     const options = {

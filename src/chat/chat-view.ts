@@ -3832,9 +3832,13 @@ export class ChatViewProvider implements WebviewViewProvider {
       type: "refresh",
       messages: rt.agent.getMessages(),
       ...(withSkills ? { skills: this.skillCatalog() } : {}),
-      ...(rt.agent.streaming && live
-        ? { streaming: true, liveThinking: live.thinking, liveAnswer: live.answer, liveTurn: live }
-        : {}),
+      // `streaming` is a fact of its own: the RUN is alive. It must NOT depend on there
+      // being live text to replay. A mid-run rebuild can land exactly on a turn boundary,
+      // where the committed text was dropped from the projection (a summary-only run has
+      // nothing left in it): pairing the two dropped the working bar AND the anchor the
+      // answer bubble needs, so the rest of the run painted nowhere.
+      streaming: rt.agent.streaming,
+      ...(rt.agent.streaming && live ? { liveThinking: live.thinking, liveAnswer: live.answer, liveTurn: live } : {}),
     });
   }
 

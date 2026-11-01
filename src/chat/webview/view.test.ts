@@ -1708,6 +1708,62 @@ describe("view webview client", () => {
     expect(body.textContent).toContain("il ragionamento di mezzo");
   });
 
+  it("a padding chunk does NOT split one reasoning into two blocks (the second continuing the first)", async () => {
+    // The reported symptom: two collapsible blocks one after the other, the second
+    // completing the sentence of the first. A whitespace-only chunk cannot open an answer
+    // bubble (`!currentRawText.trim()` → break), so it must not be enough to SETTLE the
+    // reasoning either: one thought, one block.
+    await loadView();
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+
+    hostMessage({ type: "thinkingDelta", content: "Devo leggere il file" });
+    hostMessage({ type: "textDelta", content: "\n" }); // padding between two segments
+    hostMessage({ type: "thinkingDelta", content: ", poi la store." });
+    await new Promise((r) => setTimeout(r, 40));
+
+    const blocks = document.querySelectorAll(".thinking-block");
+    expect(blocks.length).toBe(1);
+    (blocks[0].querySelector(".thinking-header") as HTMLElement).click();
+    expect(blocks[0].querySelector(".thinking-body")?.textContent).toContain("poi la store");
+  });
+
+  it("a delta that carries NO text paints nothing and does not close the reasoning", async () => {
+    // Providers emit a trailing/leading EMPTY chunk, and a malformed one can omit the field
+    // outright: `currentRawText += undefined` would paint the word "undefined", so the guard
+    // has to come first. Skipping such a chunk must not settle the block either.
+    await loadView();
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+
+    hostMessage({ type: "thinkingDelta", content: "Sto ragionando" });
+    hostMessage({ type: "textDelta" }); // no `content` field at all
+    hostMessage({ type: "textDelta", content: "" }); // the ordinary empty chunk
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(document.querySelectorAll(".thinking-block").length).toBe(1);
+    expect(messagesElLastContent()).not.toContain("undefined");
+  });
+
+  it("a MID-RUN rebuild keeps the working bar, and the answer keeps painting", async () => {
+    // A compaction rebuilds the transcript while the run continues (refreshTranscript).
+    // Without the bar, `ensureResult()` has no anchor to insert the bubble before, so the
+    // answer stops painting — the reported "the bar vanished while everything kept going".
+    await loadView();
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    hostMessage({ type: "textDelta", content: "prima" });
+
+    hostMessage({ type: "compactStart" });
+    hostMessage({ type: "refresh", messages: [], streaming: true, liveAnswer: "prima" });
+    const bar = document.getElementById("working-bar") as HTMLElement;
+    expect(bar.classList.contains("hidden")).toBe(false);
+
+    hostMessage({ type: "textDelta", content: " e dopo" });
+    await new Promise((r) => setTimeout(r, 40));
+    expect(messagesElLastContent()).toContain("prima e dopo");
+  });
+
   it("still gives reasoning its OWN block when it comes BEFORE the answer (the common case)", async () => {
     // The fix must not swallow the normal order: reason first, then answer. The
     // block stands on its own and the answer that follows is its own bubble.
@@ -2820,6 +2876,31 @@ describe("view webview client", () => {
     const chip = document.querySelector(".attach-chip") as HTMLElement;
     expect(chip.querySelector(".attach-icon svg")).toBeTruthy();
     expect(chip.querySelector(".attach-name")?.textContent).toBe("a.pdf");
+  });
+
+  it("two picked files with the SAME path are one chip", async () => {
+    // The host may repeat a file in one answer; the de-duplication has to hold INSIDE the
+    // batch too, not only against the chips already shown.
+    await loadView();
+    hostMessage({
+      type: "attachments",
+      files: [
+        { name: "a.txt", path: "/d/a.txt", size: 3 },
+        { name: "a.txt", path: "/d/a.txt", size: 3 },
+      ],
+    });
+    expect(document.querySelectorAll(".attach-chip")).toHaveLength(1); // chips mirror the list sent
+  });
+
+  it("the picker's response puts the caret back in the prompt", async () => {
+    // The host answers `pickFiles` with `attachments`: the user has just chosen the files and
+    // expects to keep typing, not to click the box again.
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.blur();
+    expect(document.activeElement).not.toBe(input);
+    hostMessage({ type: "attachments", files: [{ name: "a.txt", path: "/a.txt", size: 3 }] });
+    expect(document.activeElement).toBe(input);
   });
 
   it("removing an attachment returns focus to the prompt", async () => {

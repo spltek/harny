@@ -6128,14 +6128,18 @@ window.addEventListener("message", (e) => {
       // Ignore empty chunks (some providers emit a trailing/leading empty
       // content delta).
       if (!msg.content) break;
-      // Thinking phase is over (the answer is streaming now): the thinking
-      // block stops pulsing and settles, instead of animating until done.
-      if (currentThinkingBlock) clearThinkingBlock();
       // Accumulate ALWAYS, but only CREATE the bubble once the segment has
       // MEANINGFUL text: a whitespace-only chunk (e.g. a lone newline after a
       // thinking/tool phase) must not create an empty bubble.
       currentRawText += msg.content;
       if (!currentRawText.trim()) break;
+      // Thinking phase is over (the answer is streaming now): the thinking
+      // block stops pulsing and settles, instead of animating until done.
+      // ONLY once the answer is REAL: a padding chunk that may not create a bubble
+      // must not be enough to settle the reasoning either — closing it there split ONE
+      // thought into two blocks, the second completing the sentence of the first (the
+      // reported defect: reason, a lone newline, reason again).
+      if (currentThinkingBlock) clearThinkingBlock();
       const resultEl = ensureResult();
       if (resultEl) {
         // `push`/`paint` scrolls: scrolling HERE would force one extra layout
