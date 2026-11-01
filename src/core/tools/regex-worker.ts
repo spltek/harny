@@ -32,11 +32,11 @@ parentPort.on("message", (msg) => {
 });
 `;
 
-export interface MatchItem {
+interface MatchItem {
   path: string;
   text: string;
 }
-export interface MatchResult {
+interface MatchResult {
   path: string;
   /** Line indices that matched (lines mode). */
   hit?: number[];

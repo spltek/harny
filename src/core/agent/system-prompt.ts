@@ -157,7 +157,7 @@ Guidelines:
 }
 
 /** Options describing a delegated sub-agent, provided by the orchestrator. */
-export interface SubAgentPromptOptions {
+interface SubAgentPromptOptions {
   role?: string;
   access: "read" | "write" | "create";
   resources: readonly string[];

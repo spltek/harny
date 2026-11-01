@@ -7,7 +7,7 @@
  * order. It returns per-chunk events so the caller can stream the two channels
  * (visible text vs. reasoning) to different sinks as they arrive.
  */
-export type ThinkingParseEvent = { kind: "text"; content: string } | { kind: "thinking"; content: string };
+type ThinkingParseEvent = { kind: "text"; content: string } | { kind: "thinking"; content: string };
 
 export class ThinkingTagParser {
   /** Text inside an open thinking block, waiting for its closing tag. */

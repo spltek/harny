@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { CompositeConfigProvider } from "./composite-config-provider";
-import { StaticConfigProvider } from "./static-config-provider";
+import { StaticConfigProvider } from "./static-config-provider.test-utils";
 import type { HarnyConfig } from "./types";
 
 const BASE: HarnyConfig = {

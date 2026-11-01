@@ -85,7 +85,7 @@ export const DEFAULT_MAX_PARALLEL_SUB_AGENTS = 4;
  * (accepted-but-silent connection, crashed server, stuck model load) and the
  * turn is aborted with an explicit error instead of hanging the run forever.
  * Deliberately generous so a slow local model warming up is not killed. */
-export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 5 * 60_000;
+const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 5 * 60_000;
 
 function streamIdleError(ms: number): Error {
   const e = new Error(

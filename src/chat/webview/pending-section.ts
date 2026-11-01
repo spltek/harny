@@ -24,7 +24,7 @@ export interface PendingViewItem {
   attachments?: { name: string; size: number; isImage?: boolean; dataUri?: string }[];
 }
 
-export interface PendingSectionDeps {
+interface PendingSectionDeps {
   /** The section wrapper (hidden when there is nothing to show). */
   section: HTMLElement;
   /** The header row: click/Enter toggles the list, `headText` carries the counts. */
@@ -40,7 +40,7 @@ export interface PendingSectionDeps {
   renderAttachments?: (host: HTMLElement, item: PendingViewItem) => void;
 }
 
-export interface PendingSection {
+interface PendingSection {
   /** Render the items the host just pushed. */
   render(items: PendingViewItem[]): void;
   /** How many rows are OPEN: the transcript's "Collapse all" is only meaningful while

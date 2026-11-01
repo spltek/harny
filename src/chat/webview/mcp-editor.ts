@@ -15,7 +15,7 @@
  * which would swap the tool list under a live turn.
  */
 
-export interface McpEditorServerLike {
+interface McpEditorServerLike {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
@@ -26,7 +26,7 @@ export interface McpEditorServerLike {
   [key: string]: unknown;
 }
 
-export interface McpEditorDeps {
+interface McpEditorDeps {
   modal: HTMLElement;
   backdrop: HTMLElement | null;
   select: HTMLSelectElement;

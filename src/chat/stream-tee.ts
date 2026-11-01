@@ -2,7 +2,7 @@ import type { AgentEvent } from "../core/agent/types";
 import type { Usage } from "../core/llm/types";
 import type { SessionRuntime } from "./session-registry";
 
-export interface StreamTeeDeps {
+interface StreamTeeDeps {
   /** Whether the session is the one whose events reach the view. */
   isActive: (sessionId: string) => boolean;
   /** Forward a message to the webview (called only for the active session). */

@@ -104,7 +104,7 @@ export function memoryStore(): MemoryStore {
 }
 
 /** The agent, reduced to what these flows need (no model is ever called). */
-export function stubAgent(history: ChatHistory): ChatController {
+function stubAgent(history: ChatHistory): ChatController {
   const agent: Record<string, unknown> = {
     streaming: false,
     getMessages: () => history.all(),
@@ -134,7 +134,7 @@ let hostHandler: ((msg: unknown) => unknown) | undefined;
  * or each test would add one more handler onto the same DOM. */
 let windowListeners: { type: string; fn: EventListener; options?: AddEventListenerOptions | boolean }[] = [];
 
-export interface WireOptions {
+interface WireOptions {
   /** Seed the store BEFORE the provider builds its HTML (the list comes from it). */
   prepare?: (store: MemoryStore) => void;
   /** Overrides for the config/provider catalog the host reads and writes. */
@@ -145,7 +145,7 @@ export interface WireOptions {
   options?: Record<string, unknown>;
 }
 
-export interface Wiring {
+interface Wiring {
   provider: ChatViewProvider;
   store: MemoryStore;
   sessions: SessionManager;

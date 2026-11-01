@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { CompositeConfigProvider } from "./composite-config-provider";
 import { HarnyFileConfigProvider } from "./harny-file-config-provider";
-import { StaticConfigProvider } from "./static-config-provider";
+import { StaticConfigProvider } from "./static-config-provider.test-utils";
 import { nodeFileSystem } from "../tools/file-system";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

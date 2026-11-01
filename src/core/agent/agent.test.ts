@@ -5,7 +5,7 @@ import { ToolCallAccumulator } from "./tool-call-accumulator";
 import { BUILD_SWITCH_HINT, DefaultSystemPromptBuilder } from "./system-prompt";
 import { InMemoryEventBus } from "../events/in-memory-event-bus";
 import { InMemoryChatHistory } from "../history/in-memory-chat-history";
-import { StaticConfigProvider } from "../config/static-config-provider";
+import { StaticConfigProvider } from "../config/static-config-provider.test-utils";
 import { ToolRegistry } from "../tools/tool-registry";
 import type { HarnyConfig } from "../config/types";
 import type { LLMMessage, LLMProviderFactory, StreamChunk } from "../llm/types";

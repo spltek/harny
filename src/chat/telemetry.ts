@@ -10,7 +10,7 @@ const RING = 240;
 /** A lag above this counts as "the host was busy" and forces a report. */
 const BUSY_LAG_MS = 25;
 
-export interface TelemetrySnapshot {
+interface TelemetrySnapshot {
   /** Event-loop delay: the drift of a 50 ms timer. The single most honest signal
    * that the host is saturated (and in a single-threaded host, EVERYTHING shares
    * that thread: streaming, SQLite writes, tool spawns). */

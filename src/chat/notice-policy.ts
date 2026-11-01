@@ -14,7 +14,7 @@
  */
 
 /** The facts that need a voice outside the panel's own rendering. */
-export type Notice = "workspace-gone";
+type Notice = "workspace-gone";
 
 /** What the panel is showing right now. */
 export interface ViewState {
@@ -25,7 +25,7 @@ export interface ViewState {
 }
 
 /** What the host must do about it. */
-export type HostAction = "ask" | "toast" | "silent";
+type HostAction = "ask" | "toast" | "silent";
 
 const ROUTES: Record<Notice, (state: ViewState) => HostAction> = {
   /**

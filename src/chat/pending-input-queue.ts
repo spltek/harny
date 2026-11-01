@@ -15,14 +15,14 @@ export interface PendingInput {
 }
 
 /** The fields `enqueue` reads off an incoming webview message. */
-export interface PendingEnqueueMessage {
+interface PendingEnqueueMessage {
   text?: string;
   attachments?: AttachmentInfo[];
   mode?: "queue" | "steer";
   id?: string;
 }
 
-export interface PendingInputQueueDeps {
+interface PendingInputQueueDeps {
   /** Build the LLM context (inlined text + images + parts) for a steer draft. */
   buildContext: (files: AttachmentInfo[]) => Promise<AttachmentContext>;
   /** Push a session's pending list to the view (no-op when it is not active). */

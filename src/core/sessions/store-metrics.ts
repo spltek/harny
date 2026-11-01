@@ -35,7 +35,7 @@ export function noteDbOp(name: string, ms: number): void {
   if (s.samples.length > RING) s.samples.shift();
 }
 
-export interface DbOpMetric {
+interface DbOpMetric {
   op: string;
   /** Writes since the last reset (the COUNT matters as much as the time). */
   count: number;

@@ -20,7 +20,7 @@
 
 /** The tally's per-kind counts. The session and a sub-agent share the strategy but
  * not the storage, and they can fail independently — so they are counted apart. */
-export interface TallyCounts {
+interface TallyCounts {
   session: number;
   subAgent: number;
 }
@@ -43,7 +43,7 @@ export interface CompactionFacts {
   keptCount: number;
 }
 
-export interface TrimFacts {
+interface TrimFacts {
   subAgent?: boolean;
   /** The span that could NOT be summarized (larger than the model's window). */
   spanTokens: number;
@@ -53,7 +53,7 @@ export interface TrimFacts {
   budgetTokens: number;
 }
 
-export interface TallySnapshot {
+interface TallySnapshot {
   compaction: TallyCounts;
   trim: TallyCounts;
   /** The widest span ever summarized, and the ceiling it had to fit under. */

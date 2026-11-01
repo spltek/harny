@@ -4,7 +4,7 @@ import type { ToolResult } from "../tools/tool";
 /** The orchestration tool: launches a sub-agent and returns its report. */
 export const DELEGATE_TOOL_NAME = "Delegate";
 
-export type DelegateAccess = "read" | "write" | "create";
+type DelegateAccess = "read" | "write" | "create";
 
 /**
  * A structured sub-agent request declared by the orchestrator. The orchestrator
@@ -138,7 +138,7 @@ export interface PlannedCall {
 }
 
 /** One execution step: a single call, or a batch that may run concurrently. */
-export type ExecutionStep = { kind: "single"; index: number } | { kind: "parallel"; indices: number[] };
+type ExecutionStep = { kind: "single"; index: number } | { kind: "parallel"; indices: number[] };
 
 /**
  * Plan how to execute a turn's tool calls.

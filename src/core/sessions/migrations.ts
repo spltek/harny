@@ -103,7 +103,10 @@ const MIGRATIONS: readonly Migration[] = [
   },
 ];
 
-/** The version this build expects after running every migration. */
+/** The version this build expects after running every migration — DERIVED from the table,
+ * never typed twice. Exported for the SUITE only (it asserts a fresh DB lands here): a
+ * hard-coded number in that test would go stale the day a migration is appended, and would
+ * keep passing while the DB was behind. */
 export const LATEST_VERSION: number = MIGRATIONS[MIGRATIONS.length - 1].version;
 
 /** Read the database's schema version (0 = never versioned). */
@@ -116,13 +119,13 @@ function tableExists(db: DatabaseSync, name: string): boolean {
   return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
 }
 
-export interface MigrationRunResult {
+interface MigrationRunResult {
   from: number;
   to: number;
   applied: number;
 }
 
-export interface MigrationOptions {
+interface MigrationOptions {
   /** Diagnostic sink (one line per applied migration). */
   log?: (message: string) => void;
   /** Called ONCE before running pending migrations when at least one is

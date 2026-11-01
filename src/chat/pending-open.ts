@@ -39,7 +39,7 @@ export interface PendingOpenStore {
 }
 
 /** The slice of VS Code's `Memento` this needs (it is what `globalState` is). */
-export interface MementoLike {
+interface MementoLike {
   get<T>(key: string, fallback: T): T;
   update(key: string, value: unknown): PromiseLike<void>;
 }

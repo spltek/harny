@@ -68,7 +68,7 @@ export interface SessionRuntime {
   cachedWriteTokens?: number;
 }
 
-export interface SessionRegistryDeps {
+interface SessionRegistryDeps {
   sessions: SessionManager;
   store: SessionStore;
   /** The config view of a session — DERIVED from its runtime on every read (see

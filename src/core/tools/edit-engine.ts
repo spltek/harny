@@ -12,16 +12,16 @@ export interface EditOp {
   afterText?: string;
 }
 
-export type EditMode = "exact" | "fuzzy" | "insert" | "invalid";
+type EditMode = "exact" | "fuzzy" | "insert" | "invalid";
 
-export interface EditFailure {
+interface EditFailure {
   index: number;
   reason: string;
   detail?: string;
   anchor?: string;
 }
 
-export interface EditResult {
+interface EditResult {
   /** Content after applying all successful edits (never written unless `failed` is empty). */
   content: string;
   failed: EditFailure[];

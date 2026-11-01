@@ -1,7 +1,7 @@
 import type { LLMMessage } from "./types";
 import type { ToolDefinition } from "../tools/tool";
 
-export interface ToOpenAIMessagesOptions {
+interface ToOpenAIMessagesOptions {
   /**
    * Dialect `thinking: "reasoning"`: the upstream REQUIRES `reasoning_content` back on the
    * assistant messages of a session running in thinking mode — INCLUDING the ones that never

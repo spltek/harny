@@ -1,7 +1,7 @@
 import { endpointUrl } from "./endpoint";
 import type { HttpClient } from "./http-client";
 
-export interface ModelListOptions {
+interface ModelListOptions {
   baseUrl: string;
   apiKey?: string;
 }

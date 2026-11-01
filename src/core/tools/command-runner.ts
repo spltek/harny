@@ -11,7 +11,7 @@ export interface CommandResult {
   aborted?: boolean;
 }
 
-export interface CommandRunOptions {
+interface CommandRunOptions {
   cwd: string;
   timeoutMs: number;
   maxBuffer?: number;

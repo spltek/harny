@@ -23,7 +23,7 @@ import { createSwitch, setSwitch } from "./switch";
  * underneath it), so a captured boolean would go stale exactly when it matters.
  */
 
-export interface McpToolLike {
+interface McpToolLike {
   name: string;
   description?: string;
   /** The host's flag: this session has the tool switched OFF. */
@@ -36,7 +36,7 @@ export interface McpToolLike {
   analyzeFlag?: boolean;
 }
 
-export interface McpToolsPopoverDeps {
+interface McpToolsPopoverDeps {
   /** The popover container (positioned by this module, emptied on every open). */
   popover: HTMLElement;
   /** The panel's `postMessage`. */

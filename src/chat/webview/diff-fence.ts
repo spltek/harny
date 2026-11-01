@@ -5,7 +5,7 @@
  */
 
 /** A diff found inside a tool output (```diff fence). */
-export interface FoundDiff {
+interface FoundDiff {
   body: string;
   stat: string | undefined;
   rest: string;

@@ -89,9 +89,12 @@ const ARTWORK = {
   fileBadge,
 };
 
-export type IconName = keyof typeof ARTWORK;
+type IconName = keyof typeof ARTWORK;
 
-/** The registered names, in the order they are declared (tests walk this). */
+/** Every icon name, in the order they are declared. Exported for the SUITE only: it is the
+ * list the icon test walks to prove each mark renders and has artwork on disk, and inlining
+ * that list in the test would silently stop covering an icon added here. No production
+ * reader — this is the one export in this file that is deliberately test-facing. */
 export const ICON_NAMES = Object.keys(ARTWORK) as IconName[];
 
 /**
@@ -138,9 +141,6 @@ export function toolIcon(name: string, size = 13): string {
   const key = name.toLowerCase().replace(/[^a-z]/g, "");
   return icon(TOOL_ARTWORK[key] ?? "unknown", size);
 }
-
-/** A todo's status, as the TodoWrite tool spells it. */
-export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
 
 /**
  * The mark for one todo status. All four share the same box and differ only in the

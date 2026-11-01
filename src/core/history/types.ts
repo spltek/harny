@@ -111,7 +111,3 @@ export interface ChatMessage {
    */
   displayText?: string;
 }
-
-export type UserMessage = Omit<ChatMessage, "role" | "toolCalls" | "toolCallId" | "uiOnly"> & {
-  role: "user";
-};

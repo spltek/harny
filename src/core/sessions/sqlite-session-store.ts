@@ -17,7 +17,7 @@ import type {
 } from "./types";
 
 /** One full-text search hit: which message matched, its snippet and BM25 rank. */
-export interface SessionSearchHit {
+interface SessionSearchHit {
   sessionId: string;
   seq: number;
   /** Highlighted excerpt from FTS5 (`[...]` around the matched terms). */
@@ -33,7 +33,7 @@ function toMaxParallelSubAgents(value: unknown): number | undefined {
   return n < 0 ? undefined : n;
 }
 
-export interface SqliteSessionStoreDeps {
+interface SqliteSessionStoreDeps {
   /** An already-open SQLite database (production: `<home>/sessions.db`). */
   db: DatabaseSync;
   /** Used only to annotate `folderMissing` at list time (a folder that is gone). */

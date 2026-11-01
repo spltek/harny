@@ -13,8 +13,6 @@ export const MIN_CONTEXT_WINDOW = 1_000;
 /** FALLBACK ceiling when a model's context window is UNKNOWN. An identified
  * model uses its own (possibly higher) limit instead. */
 export const MAX_CONTEXT_WINDOW = 2_000_000;
-/** Amount the +/- spinner buttons adjust the value by (typing is unconstrained). */
-export const CONTEXT_STEP = 16_000;
 /** Nominal slider step for the context window (see `reachableStep`). */
 export const CONTEXT_SLIDER_STEP = 1_000;
 

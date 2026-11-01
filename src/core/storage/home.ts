@@ -1,11 +1,11 @@
 export const HARNY_HOME_ENV = "HARNY_HOME";
 
-export interface ResolvedHome {
+interface ResolvedHome {
   /** Base directory for extension data (env override or VS Code globalStorage). */
   home: string;
 }
 
-export interface ResolveHomeOptions {
+interface ResolveHomeOptions {
   /** Absolute path of the extension's VS Code globalStorage directory. */
   globalStorageFsPath: string;
   /** Process environment, used for the HARNY_HOME override. */

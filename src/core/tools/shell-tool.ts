@@ -7,7 +7,7 @@ import type { Tool, ToolContext, ToolDefinition, ToolResult } from "./tool";
 const MAX_OUTPUT = 50000;
 /** Hard ceiling for a single command: the model can ask for less, never more
  * (an unbounded wait would keep a tool call pending for hours). */
-export const MAX_SHELL_TIMEOUT_MS = 300000;
+const MAX_SHELL_TIMEOUT_MS = 300000;
 
 /**
  * Collapse runs of consecutive identical lines (e.g. `yes … | head` floods)

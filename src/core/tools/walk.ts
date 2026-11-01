@@ -9,7 +9,7 @@ import type { FileSystem } from "./file-system";
  * AUTHORITATIVE (like ripgrep), so a project that tracks `dist/` is not
  * over-skipped.
  */
-export const DEFAULT_SKIP_DIRS: ReadonlySet<string> = new Set([
+const DEFAULT_SKIP_DIRS: ReadonlySet<string> = new Set([
   ".git",
   "node_modules",
   "dist",
@@ -32,7 +32,7 @@ export const DEFAULT_SKIP_DIRS: ReadonlySet<string> = new Set([
   ".idea",
 ]);
 
-export interface WalkOptions {
+interface WalkOptions {
   /** Skip dot-files/dot-dirs (fd/rg default). Default true. */
   skipHidden?: boolean;
   /** Directory names to skip when no ignore file governs the tree. Default {@link DEFAULT_SKIP_DIRS}. */

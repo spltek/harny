@@ -27,7 +27,7 @@
 export const MASK_MIN_TOKENS = 256;
 
 /** Bounds of the verbatim tool-output budget: scaled by the window, capped. */
-export const MASK_KEEP_MIN_TOKENS = 8_000;
+const MASK_KEEP_MIN_TOKENS = 8_000;
 export const MASK_KEEP_MAX_TOKENS = 120_000;
 
 /**
@@ -50,7 +50,7 @@ export function maskedResultStub(toolName: string | undefined, tokens: number): 
 
 /** The subset of a message this module needs (structural: ChatMessage and
  * LLMMessage both satisfy it). */
-export interface MaskableMessage {
+interface MaskableMessage {
   role: "system" | "user" | "assistant" | "tool";
   content?: string;
   toolCalls?: { id?: string; name?: string }[];
@@ -58,7 +58,7 @@ export interface MaskableMessage {
   uiOnly?: boolean;
 }
 
-export interface MaskingResult<T> {
+interface MaskingResult<T> {
   messages: T[];
   /** How many results were masked. */
   masked: number;

@@ -1,4 +1,4 @@
-export interface HttpHeaders {
+interface HttpHeaders {
   get(name: string): string | null;
 }
 

@@ -11,16 +11,6 @@ export interface ToolResult {
   isError: boolean;
 }
 
-export interface ToolParameter {
-  type?: string;
-  description?: string;
-  items?: unknown;
-  enum?: string[];
-  properties?: Record<string, unknown>;
-  required?: string[];
-  minItems?: number;
-}
-
 export interface ToolDefinition {
   name: string;
   description: string;

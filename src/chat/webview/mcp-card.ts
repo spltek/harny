@@ -15,7 +15,7 @@ import { createSwitch, setSwitch, switchIsOn } from "./switch";
  */
 
 /** The shape the host sends for one server, as far as this card needs it. */
-export interface McpServerStatusLike {
+interface McpServerStatusLike {
   name: string;
   ok?: boolean;
   /** `false` = not installed/enabled on this machine: a fact, not a session choice. */
@@ -25,12 +25,12 @@ export interface McpServerStatusLike {
   tools?: { name: string; off?: boolean }[];
 }
 
-export interface McpCardConfig {
+interface McpCardConfig {
   servers?: Record<string, unknown>;
   statuses?: McpServerStatusLike[];
 }
 
-export interface ToolScopeLike {
+interface ToolScopeLike {
   mcp: string[];
   off: string[];
 }

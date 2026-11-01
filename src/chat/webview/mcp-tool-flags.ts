@@ -7,7 +7,7 @@
  * same rule ends up agreeing with itself until one copy is edited.
  */
 
-export interface ToolFlagsLike {
+interface ToolFlagsLike {
   name: string;
   /** The host's flag: this session has the tool switched OFF. */
   off?: boolean;

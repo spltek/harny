@@ -25,7 +25,7 @@ export interface FindElements {
   transcript: HTMLElement;
 }
 
-export interface FindOptions {
+interface FindOptions {
   /** Open every folded section containing `node`, so the match is actually visible. */
   reveal?: (node: Node) => void;
 }

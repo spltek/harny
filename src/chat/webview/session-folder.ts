@@ -16,7 +16,7 @@
 import { sameFolder } from "../folder-path";
 
 /** A session's folder pointer, as every surface receives it from the host. */
-export interface SessionFolderRef {
+interface SessionFolderRef {
   /** Absolute path of the folder this session points to (absent in legacy sessions). */
   folder?: string;
   /** The path no longer exists (computed by the host at list time). */
@@ -24,7 +24,7 @@ export interface SessionFolderRef {
 }
 
 /** What the "go to the folder" affordance must do. */
-export type FolderAction = "open" | "pick";
+type FolderAction = "open" | "pick";
 
 /**
  * `open` = a usable folder that is NOT the one already open: opening it in VS Code

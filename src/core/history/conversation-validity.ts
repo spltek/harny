@@ -39,7 +39,7 @@
  * sit between a call and its results in storage.
  */
 
-export type FaultKind =
+type FaultKind =
   | "missing_tool_results"
   | "orphan_tool_result"
   | "tool_result_without_id"
@@ -49,7 +49,7 @@ export type FaultKind =
   | "conversation_starts_with_role"
   | "attachment_outside_user";
 
-export interface ConversationFault {
+interface ConversationFault {
   /** Index in the conversation of the message at fault. */
   index: number;
   kind: FaultKind;
@@ -219,7 +219,7 @@ export function turnEnd(messages: PairingMessage[], index: number): number {
 /** The minimum {@link checkpointStart} needs to see — structural, so the stored
  * history (`ChatMessage`) AND the webview's own message shape both fit without a
  * cast. The boundary is a property of `synthetic` and nothing else. */
-export interface CheckpointMessage {
+interface CheckpointMessage {
   role: string;
   synthetic?: boolean;
 }

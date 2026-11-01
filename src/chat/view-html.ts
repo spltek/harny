@@ -20,7 +20,7 @@ import type { SessionLiveProjection } from "./session-live-state";
 // src/chat/icons.ts): the panel markup only names an icon and its size.
 import { icon } from "./icons";
 
-export interface ViewConfigState {
+interface ViewConfigState {
   provider: string;
   activeProvider?: string;
   model: string;
@@ -78,7 +78,7 @@ export interface ViewState {
   }[];
 }
 
-export interface ViewHtmlDeps {
+interface ViewHtmlDeps {
   cspSource: string;
   scriptUri: string;
   state: ViewState;

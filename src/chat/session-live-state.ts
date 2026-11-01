@@ -1,10 +1,10 @@
 import type { AgentEvent, SubAgentEvent } from "../core/agent/types";
 
 /** Terminal/non-terminal state of one sub-agent bubble. */
-export type LiveSubAgentStatus = "queued" | "running" | "done" | "failed" | "aborted";
+type LiveSubAgentStatus = "queued" | "running" | "done" | "failed" | "aborted";
 
 /** One tool call of the IN-FLIGHT turn (not yet in the history). */
-export interface LiveToolCall {
+interface LiveToolCall {
   id: string;
   name: string;
   /** Arguments as the model sent them (re-rendered by the view's own builders). */
@@ -21,7 +21,7 @@ export interface LiveToolCall {
 }
 
 /** Live nested activity of one sub-agent (Delegate bubble). */
-export interface LiveSubAgent {
+interface LiveSubAgent {
   status: LiveSubAgentStatus;
   /** Events in arrival order, capped (see MAX_LIVE_SUBAGENT_EVENTS). */
   events: SubAgentEvent[];

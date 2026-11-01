@@ -50,7 +50,7 @@ export class ToolCallAccumulator {
   }
 }
 
-export interface ParsedToolArgs {
+interface ParsedToolArgs {
   args: Record<string, unknown>;
   /** True when no valid JSON could be produced (malformed/truncated/empty). */
   malformed: boolean;
