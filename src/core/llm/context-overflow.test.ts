@@ -134,6 +134,21 @@ describe("overflowLimitFromError — learn the real window from the rejection", 
     expect(overflowLimitFromError(new Error("maximum context length is 42 tokens"))).toBeUndefined();
     expect(MIN_PLAUSIBLE_LIMIT_TOKENS).toBeGreaterThanOrEqual(256);
   });
+
+  it("keeps the plausibility floor INCLUSIVE", () => {
+    // 256 is the smallest value trusted as a window; 255 is still a stray number.
+    const floor = MIN_PLAUSIBLE_LIMIT_TOKENS;
+    expect(overflowLimitFromError(new Error(`maximum context length is ${floor} tokens`))).toBe(floor);
+    expect(overflowLimitFromError(new Error(`maximum context length is ${floor - 1} tokens`))).toBeUndefined();
+  });
+
+  it("reuses the learned window instead of inventing one when the limit is absent", () => {
+    // "Requested 40,000 tokens but the model only supports 32,768" — two numbers, and the
+    // second one is the window. A regex that grabs the first would DOUBLE the budget.
+    expect(overflowLimitFromError(new Error("Requested 40,000 tokens but the model only supports 32,768."))).toBe(
+      32768,
+    );
+  });
 });
 
 /** Rejections that are NOT about size: compacting would be wasted work. */
@@ -203,5 +218,23 @@ describe("isRequestRejection / providerErrorStatus — the status leg", () => {
     expect(isContextOverflowError({ response: { error: { message: "Too many tokens" } } })).toBe(true);
     expect(isContextOverflowError(undefined)).toBe(false);
     expect(isContextOverflowError(new Error(""))).toBe(false);
+  });
+
+  it("a server failure that MENTIONS the context is still not an overflow", () => {
+    // The status must win over the text. A 5xx is transient: it gets retried. Compacting
+    // on it would shrink a healthy session AND hide the real failure behind a "recovered"
+    // run. This is the one precedence rule the whole recovery rests on.
+    const err = new Error("OpenAI API error 500: maximum context length is 128000 tokens");
+    expect(providerErrorStatus(err)).toBe(500);
+    expect(isRequestRejection(err)).toBe(false);
+    expect(isContextOverflowError(err)).toBe(false);
+  });
+
+  it("names the family it matched (the label is what the dev log shows)", () => {
+    const label = (m: string) => matchedOverflowSignature(new Error(m));
+    expect(label("The input token count (30500) exceeds the maximum number of tokens allowed (20480).")).toBe("Gemini");
+    // The SECOND Gemini phrasing, with no "input token count" in front of it.
+    expect(label("The request exceeds the maximum number of tokens.")).toBe("Gemini");
+    expect(label("Please reduce the length of the messages.")).toBe("Groq/OpenRouter/llama.cpp");
   });
 });

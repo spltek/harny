@@ -118,7 +118,7 @@ export function scopeTools<T extends { name: string }>(tools: readonly T[], scop
   return tools.filter((t) => toolScopeAllows(t.name, scope));
 }
 
-export interface KnownTools {
+interface KnownTools {
   /** Server names that exist in the config RIGHT NOW. */
   servers: readonly string[];
   /** Built-in tool names the registry has RIGHT NOW. OMIT to leave the built-in half untouched

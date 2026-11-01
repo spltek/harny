@@ -1,4 +1,4 @@
-export type { Tool, ToolCall, ToolResult, ToolDefinition, ToolParameter, ToolContext } from "./tool";
+export type { Tool, ToolCall, ToolResult, ToolDefinition, ToolContext } from "./tool";
 export { ToolRegistry } from "./tool-registry";
 export { createDefaultTools, type DefaultToolsDeps } from "./create-default-tools";
 export type { FileSystem } from "./file-system";
@@ -25,7 +25,6 @@ export {
   ANALYZE_BLOCKED_SHELL_MESSAGE,
   FILE_PREVIEW_NOTE,
   isAnalyzeMode,
-  isFullAccessMode,
   isSafeReadCommand,
   toolDefinitionsForMode,
   toolsForMode,

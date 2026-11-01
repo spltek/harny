@@ -4,6 +4,7 @@ import {
   callSignature,
   stableArgs,
   trigramDuplication,
+  tokenize,
   isRepetitiveThinking,
   thinkingSimilarity,
   resolveLoopGuardOptions,
@@ -12,8 +13,6 @@ import {
   loopGuardPresets,
   clampLoopGuardOverrides,
   LOOP_GUARD_FIELD_RANGES,
-  LOOP_GUARD_SENSITIVITIES,
-  DEFAULT_LOOP_GUARD_SENSITIVITY,
   DEFAULT_LOOP_GUARD_OPTIONS,
   type ToolOutcome,
 } from "./loop-guard";
@@ -36,6 +35,24 @@ describe("stableArgs / callSignature", () => {
   it("distinguishes different values and different tools", () => {
     expect(callSignature("Read", { path: "a" })).not.toBe(callSignature("Read", { path: "b" }));
     expect(callSignature("Read", { path: "a" })).not.toBe(callSignature("Write", { path: "a" }));
+  });
+
+  it("serialises every JSON shape the arguments can hold", () => {
+    expect(stableArgs(undefined)).toBe("undefined");
+    expect(stableArgs(null)).toBe("null");
+    expect(stableArgs(3)).toBe("3");
+    expect(stableArgs("x")).toBe('"x"');
+    expect(stableArgs([1, "a"])).toBe('[1,"a"]');
+    expect(stableArgs({ b: null, a: [1] })).toBe('{"a":[1],"b":null}');
+  });
+
+  it("never lets two DIFFERENT argument sets collide", () => {
+    // Distinctness is the whole contract: a collision would refuse a legitimate call
+    // as a "repeat". The delimiters are what keeps a nested value from flattening.
+    expect(stableArgs([])).not.toBe(stableArgs({}));
+    expect(stableArgs(["a,b"])).not.toBe(stableArgs(["a", "b"]));
+    expect(stableArgs({ a: "b" })).not.toBe(stableArgs({ a: "b", c: "" }));
+    expect(stableArgs({ a: [1] })).not.toBe(stableArgs({ a: "[1]" }));
   });
 });
 
@@ -66,6 +83,29 @@ describe("reasoning repetition detection", () => {
     const a = "alpha beta gamma delta epsilon zeta eta theta iota kappa";
     expect(thinkingSimilarity(a, a)).toBeCloseTo(1, 5);
     expect(thinkingSimilarity(a, "one two three four five six seven eight nine ten")).toBe(0);
+  });
+
+  it("tokenize folds case and splits on punctuation", () => {
+    // Folding is what makes similarity and duplication case-blind: "The" and "the"
+    // must be the SAME token, otherwise normal prose reads as repetition.
+    expect(tokenize("HELLO World, again!")).toEqual(["hello", "world", "again"]);
+  });
+
+  it("trigramDuplication counts TRIGRAMS, not tokens", () => {
+    // 5 tokens → exactly 3 trigrams, all distinct → 0. Counting the wrong number
+    // would still "work" on long texts and lie on short ones.
+    expect(trigramDuplication("a b c d e")).toBe(0);
+    expect(trigramDuplication("a b c a b c")).toBeCloseTo(0.25, 5); // 4 trigrams, 3 distinct
+  });
+
+  it("the threshold is INCLUSIVE, and a clean text never trips it", () => {
+    // "a b c a b c" duplicates exactly 0.25: at the threshold it must already flag.
+    // (minTokens 0 removes the length floor so only the comparison decides.)
+    expect(trigramDuplication("a b c a b c")).toBeCloseTo(0.25, 5);
+    expect(isRepetitiveThinking("a b c a b c", 0.25, 0)).toBe(true);
+    expect(isRepetitiveThinking("a b c a b c", 0.26, 0)).toBe(false);
+    // Zero duplication is below any positive threshold.
+    expect(isRepetitiveThinking("a b c d e", 0.5, 0)).toBe(false);
   });
 });
 
@@ -264,13 +304,97 @@ describe("LoopGuard turn classification + escalation", () => {
     expect(second.kind).toBe("react");
     if (second.kind === "react") expect(second.type).toBe("reasoning");
   });
+
+  it("does not carry one type's escalation into another type", () => {
+    const g = new LoopGuard(); // medium: maxNudges 2
+    // Empty turns reach the LAST nudge (level 2)…
+    expect(g.observeTurn(empty).kind).toBe("react");
+    expect(g.observeTurn(empty).kind).toBe("react");
+    // …then another type becomes active, which must clear "empty"'s level…
+    const tc = toolCall("Shell", { command: "ls" });
+    const repeated = {
+      content: "",
+      thinking: "",
+      toolCalls: [tc],
+      toolResults: [outcome("Shell", { command: "ls" }, false)],
+    };
+    for (let i = 0; i < 3; i++) expect(g.observeTurn(repeated).kind).toBe(i < 2 ? "continue" : "react");
+    // …so an empty turn starts over at level 1 instead of stopping the run.
+    expect(g.observeTurn(empty).kind).toBe("react");
+  });
+
+  it("the consecutiveness counter alone flags a repeat, without the window", () => {
+    // Wide window + high threshold: only `toolRepeatConsecutive` can fire here, so
+    // this pins ITS boundary (medium = 3) instead of letting the window mask it.
+    const g = new LoopGuard({ ...DEFAULT_LOOP_GUARD_OPTIONS, toolRepeatWindow: 50, toolRepeatWindowThreshold: 50 });
+    const tc = toolCall("Shell", { command: "ls" });
+    const obs = {
+      content: "",
+      thinking: "",
+      toolCalls: [tc],
+      toolResults: [outcome("Shell", { command: "ls" }, false)],
+    };
+    expect(g.observeTurn(obs).kind).toBe("continue"); // 1st
+    expect(g.observeTurn(obs).kind).toBe("continue"); // 2nd
+    const third = g.observeTurn(obs); // 3rd = the threshold exactly
+    expect(third.kind).toBe("react");
+    if (third.kind === "react") expect(third.type).toBe("tool-repeat");
+  });
+
+  it("ignores identical thinking that is too SHORT to judge", () => {
+    const g = new LoopGuard(); // medium: crossTurnMinLength 120
+    const turn = (path: string) => ({
+      content: "progress",
+      thinking: "ok, next",
+      toolCalls: [toolCall("Read", { path })],
+      toolResults: [outcome("Read", { path }, false)],
+    });
+    expect(g.observeTurn(turn("a")).kind).toBe("continue");
+    // Identical, but 8 characters: below the length floor the guard must stay quiet.
+    expect(g.observeTurn(turn("b")).kind).toBe("continue");
+  });
+});
+
+describe("Loop Guard mid-stream checks", () => {
+  /** Exactly 200 characters of the same token: its trigrams all repeat, so it IS a loop. */
+  const looping = "ab ".repeat(67).trim();
+
+  it("observeThinking stays quiet below 200 chars and fires AT 200", () => {
+    // minTokens 0 + a low threshold: only the length floor can keep this quiet, so
+    // the floor is what these two lines actually pin.
+    const g = new LoopGuard({ ...DEFAULT_LOOP_GUARD_OPTIONS, reasoningMinTokens: 0, reasoningThreshold: 0.2 });
+    expect(looping.length).toBe(200);
+    expect(g.observeThinking("ab ab ab")).toBe(false); // 8 chars: too short to judge
+    expect(g.observeThinking(looping)).toBe(true); // exactly the floor → checked, and it loops
+  });
+
+  it("observeThinking reports a reasoning loop only ONCE", () => {
+    const g = new LoopGuard({ ...DEFAULT_LOOP_GUARD_OPTIONS, reasoningMinTokens: 0, reasoningThreshold: 0.2 });
+    expect(g.observeThinking(looping)).toBe(true);
+    // The stream keeps growing, but the turn is already flagged: never again.
+    for (let i = 0; i < 3; i++) expect(g.observeThinking(looping + looping.repeat(i + 1))).toBe(false);
+  });
+
+  it("observeAnswer mirrors it, and only when the answer guard is ON", () => {
+    const off = new LoopGuard({ ...DEFAULT_LOOP_GUARD_OPTIONS, answerMinTokens: 0, answerThreshold: 0.2 });
+    expect(off.observeAnswer(looping)).toBe(false); // guardResponse is off by default
+
+    const on = new LoopGuard({
+      ...DEFAULT_LOOP_GUARD_OPTIONS,
+      guardResponse: true,
+      answerMinTokens: 0,
+      answerThreshold: 0.2,
+    });
+    expect(on.observeAnswer(looping)).toBe(true); // exactly 200 → checked, and it loops
+    // Already broken for this turn: no second report, whatever the text is.
+    for (let i = 0; i < 3; i++) expect(on.observeAnswer(looping + looping.repeat(i + 1))).toBe(false);
+  });
 });
 
 describe("Loop Guard sensitivity presets", () => {
   it("MEDIUM is the default: constant, resolved options and the bare guard all agree", () => {
     // The single default this whole feature is built on. Pinned here so a future preset
     // edit (or an accidental flip to "off") cannot change it silently.
-    expect(DEFAULT_LOOP_GUARD_SENSITIVITY).toBe("medium");
     expect(DEFAULT_LOOP_GUARD_OPTIONS).toEqual(resolveLoopGuardOptions("medium"));
     expect(DEFAULT_LOOP_GUARD_OPTIONS.enabled).toBe(true);
     // No override (= undefined) resolves to Medium, NOT to Off and NOT to another level.
@@ -342,8 +466,6 @@ describe("Loop Guard sensitivity presets", () => {
     for (const level of ["low", "medium", "high"] as const) {
       expect(resolveLoopGuardOptions(level).enabled).toBe(true);
     }
-    // The order the UI renders: Off first, then quiet → loud.
-    expect([...LOOP_GUARD_SENSITIVITIES]).toEqual(["off", "low", "medium", "high"]);
   });
 
   it("exposes the presets as COPIES (loopGuardPresets)", () => {
@@ -358,7 +480,7 @@ describe("Loop Guard sensitivity presets", () => {
   });
 
   it("every preset value sits inside its editable range", () => {
-    for (const level of LOOP_GUARD_SENSITIVITIES) {
+    for (const level of ["off", "low", "medium", "high"] as const) {
       const preset = resolveLoopGuardOptions(level);
       for (const r of LOOP_GUARD_FIELD_RANGES) {
         const v = preset[r.key];
@@ -380,6 +502,36 @@ describe("Loop Guard sensitivity presets", () => {
     expect(clampLoopGuardOverrides({ maxNudges: 2.7 })).toEqual({ maxNudges: 3 });
     expect(clampLoopGuardOverrides({ reasoningThreshold: 0.52 })).toEqual({ reasoningThreshold: 0.52 });
     expect(clampLoopGuardOverrides({ maxNudges: Number.NaN })).toBeUndefined();
+  });
+
+  it("drops null and non-finite overrides instead of writing them through", () => {
+    // These arrive from PERSISTED json: null, Infinity and a string are all values a
+    // session file can carry. Each must be dropped, not clamped into the guard.
+    expect(clampLoopGuardOverrides(null)).toBeUndefined();
+    expect(clampLoopGuardOverrides({ maxNudges: null })).toBeUndefined();
+    expect(clampLoopGuardOverrides({ maxNudges: "5" })).toBeUndefined();
+    expect(clampLoopGuardOverrides({ maxNudges: Number.POSITIVE_INFINITY })).toBeUndefined();
+    expect(clampLoopGuardOverrides({ maxNudges: Number.NEGATIVE_INFINITY })).toBeUndefined();
+    // One junk key must not discard its valid neighbours.
+    expect(clampLoopGuardOverrides({ maxNudges: 4, nope: 1 })).toEqual({ maxNudges: 4 });
+  });
+
+  it("declares every numeric parameter exactly once, integer only for counts/tokens", () => {
+    // The table is the ONE source of truth: the panel builds its fields from it and the
+    // host clamps incoming overrides to it. A missing key is an unreachable knob.
+    const ratios = ["reasoningThreshold", "crossTurnSimilarity", "answerThreshold"];
+    const keys = LOOP_GUARD_FIELD_RANGES.map((r) => r.key);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect([...keys].sort()).toEqual(
+      Object.keys(DEFAULT_LOOP_GUARD_OPTIONS)
+        .filter((k) => k !== "enabled" && k !== "guardResponse")
+        .sort(),
+    );
+    for (const r of LOOP_GUARD_FIELD_RANGES) {
+      expect(r.integer).toBe(!ratios.includes(r.key));
+      expect(r.step).toBeGreaterThan(0);
+      expect(r.min).toBeLessThanOrEqual(r.max);
+    }
   });
 
   it("normalizeLoopGuardSensitivity validates persisted values and migrates the old name", () => {

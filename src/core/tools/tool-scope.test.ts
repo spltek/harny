@@ -95,6 +95,13 @@ describe("reading a scope from the outside world", () => {
     expect(normalizeToolScope({ mcp: ["files"], off: [] })?.analyze).toEqual([]);
   });
 
+  it("treats null and junk as 'nothing declared' instead of crashing", () => {
+    // A config value or a column can be null or garbage; neither may throw its way up.
+    expect(normalizeToolScope(null)).toBeUndefined();
+    expect(normalizeToolScope("not json")).toBeUndefined();
+    expect(normalizeToolScope(42)).toBeUndefined();
+  });
+
   it("is STABLE: normalizing twice gives the same list order (no diff churn in the row)", () => {
     const once = normalizeToolScope('{"mcp":["b","a"],"off":["Shell","Shell"]}');
     expect(normalizeToolScope(once)).toEqual(once);
@@ -131,6 +138,33 @@ describe("reconciling a stored scope with what exists now", () => {
     // Losing the empty array would silently re-enable every built-in tool.
     const reconciled = reconcileToolScope(scope(["gone"]), known);
     expect(reconciled).toEqual({ mcp: [], off: [], analyze: [] });
+  });
+
+  it("keeps an Analyze declaration that names ONE of SEVERAL installed servers", () => {
+    // With two servers alive, a declaration about either one must survive: it is per-server,
+    // not "every server or none".
+    const twoServers = { servers: ["files", "docs"], builtins: ["Read"] };
+    expect(reconcileToolScope(scope(["files", "docs"], [], ["mcp__docs__search"]), twoServers)).toBeUndefined();
+    // …and a near-miss prefix is still not a match: `files` must not adopt `filesystem`.
+    expect(reconcileToolScope(scope(["files"], [], ["mcp__filesystem__read"]), known)).toEqual({
+      mcp: ["files"],
+      off: [],
+      analyze: [],
+    });
+  });
+
+  it("matches the sanitized prefix, exactly like the ON list", () => {
+    // A server named `files-extra` is registered as `files_extra`, so its Analyze
+    // declarations carry the SANITIZED name. A raw comparison would drop them all.
+    const dashed = { servers: ["files-extra"] };
+    expect(reconcileToolScope(scope(["files-extra"], [], ["mcp__files_extra__read"]), dashed)).toBeUndefined();
+  });
+
+  it("reconciles a row written before `analyze` existed without inventing one", () => {
+    // The legacy row has no key at all. Nothing is stale, so nothing must be written back —
+    // and the empty analyze list must NOT be mistaken for a change.
+    const legacy = { mcp: ["files"], off: ["Shell"] } as unknown as Parameters<typeof reconcileToolScope>[0];
+    expect(reconcileToolScope(legacy, known)).toBeUndefined();
   });
 });
 

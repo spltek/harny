@@ -5,8 +5,7 @@ import type { LLMProviderFactory } from "../llm/types";
 import { describeToolCall } from "../tools/tool-call-text";
 
 export interface CompactionSettings {
-  enabled: boolean;
-  /** Context fill % of the declared context window that triggers auto-compaction. */
+  /** Context fill % of the USABLE context that triggers auto-compaction. */
   thresholdPercent: number;
   /**
    * Where the rebuilt window should LAND, as a % of the USABLE context (window −
@@ -17,7 +16,6 @@ export interface CompactionSettings {
 }
 
 export const DEFAULT_COMPACTION: CompactionSettings = {
-  enabled: true,
   thresholdPercent: 80,
 };
 
@@ -251,7 +249,8 @@ export function clampTargetPercent(value: number, thresholdPercent: number, floo
   const max = Math.max(0, t - PERCENT_UNIT);
   // 0 is a REAL position — "as low as the structure allows" — and so is everything that
   // cannot free more than it (1 … floor−1, or any value when the floor has no room left).
-  if (v <= 0 || v < floor || floor > max) return 0;
+  // `v < floor` alone also covers 0: the floor is never below PERCENT_UNIT.
+  if (v < floor || floor > max) return 0;
   return Math.min(max, v);
 }
 
@@ -378,19 +377,6 @@ function budgetedCut(visible: ChatMessage[], budgetTokens: number): number {
     acc += estimateTokens(visible[i].content);
   }
   return start;
-}
-
-/**
- * Manual compaction: summarize a FRACTION of the current context. Kept as the
- * entry point of the fraction-based policy (and its tests); the HOST goes through
- * {@link planForTarget} instead, because a landing point is what makes a compaction
- * free the room it needs — not a fixed recent budget.
- */
-export function planManualCompaction(messages: ChatMessage[], keepRecentFraction = 0.6): CompactionPlan {
-  const visible = messages.filter((m) => m.role !== "system" && !m.uiOnly);
-  const tokensBefore = estimateTokens(serializeConversation(visible));
-  if (visible.length <= 2) return { toSummarize: [], kept: visible, tokensBefore };
-  return planCompactionToBudget(messages, Math.max(1, tokensBefore * keepRecentFraction));
 }
 
 export interface CompactedHistory {

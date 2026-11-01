@@ -4,9 +4,9 @@ import type { ToolCall } from "../tools/tool";
  * The kinds of degenerate behaviour the guard knows how to break. Each has its
  * own escalation level, so a recurring loop escalates independently of others.
  */
-export type LoopType = "reasoning" | "empty" | "tool-failure" | "error-streak" | "tool-repeat" | "response";
+type LoopType = "reasoning" | "empty" | "tool-failure" | "error-streak" | "tool-repeat" | "response";
 
-export const LOOP_TYPES: readonly LoopType[] = [
+const LOOP_TYPES: readonly LoopType[] = [
   "reasoning",
   "empty",
   "tool-failure",
@@ -24,9 +24,6 @@ export const LOOP_TYPES: readonly LoopType[] = [
  * with "off" first: switching the guard off is a real choice, not a hidden flag.
  */
 export type LoopGuardSensitivity = "off" | "low" | "medium" | "high";
-
-export const LOOP_GUARD_SENSITIVITIES: readonly LoopGuardSensitivity[] = ["off", "low", "medium", "high"];
-export const DEFAULT_LOOP_GUARD_SENSITIVITY: LoopGuardSensitivity = "medium";
 
 /** The level sessions persisted under the PRE-RENAME name ("normal" → "medium").
  * Kept as a literal so old rows keep loading: see normalizeLoopGuardSensitivity. */
@@ -48,7 +45,14 @@ export interface LoopGuardOptions {
   toolFailureRepeats: number;
   errorStreakTurns: number;
   toolRepeatConsecutive: number;
+  /** Rolling window of recent per-turn tool-call signatures. The consecutive
+   * counter above only sees A/A/A; a cycle like A/B/A/B — two identical WebFetch
+   * calls alternating, the classic sub-agent web loop — never repeats back-to-back
+   * and would slip through. Counting occurrences inside a window catches both
+   * shapes. Signatures include the full arguments, so legitimate repeated *work*
+   * (different files/commands) never matches. */
   toolRepeatWindow: number;
+  /** How many times the same signature may recur in the window before it is a loop. */
   toolRepeatWindowThreshold: number;
   /** Opt-in: also guard the VISIBLE final answer for repetition. */
   guardResponse: boolean;
@@ -165,10 +169,10 @@ export function normalizeLoopGuardSensitivity(value: unknown): LoopGuardSensitiv
 
 /** Every NUMERIC Loop Guard parameter (everything except the flags), i.e. the
  * knobs the UI exposes as editable fields. */
-export type LoopGuardNumericKey = Exclude<keyof LoopGuardOptions, "guardResponse" | "enabled">;
+type LoopGuardNumericKey = Exclude<keyof LoopGuardOptions, "guardResponse" | "enabled">;
 
 /** The editable range of one Loop Guard parameter. */
-export interface LoopGuardFieldRange {
+interface LoopGuardFieldRange {
   key: LoopGuardNumericKey;
   min: number;
   max: number;
@@ -233,7 +237,7 @@ export interface ToolOutcome {
   content: string;
 }
 
-export interface TurnObservation {
+interface TurnObservation {
   content: string;
   thinking: string;
   toolCalls: ToolCall[];
@@ -267,18 +271,6 @@ function repeatedCallNudge(name?: string): string {
     "arguments or a different tool, or conclude. Then write your final report."
   );
 }
-
-/**
- * Rolling window of recent per-turn tool-call signatures. The consecutive
- * counter (`signatureRepeats`) only sees A/A/A; a cycle like A/B/A/B — two
- * identical WebFetch calls alternating, the classic sub-agent web loop — never
- * repeats back-to-back and would slip through. Counting occurrences inside a
- * window catches both shapes. Signatures include the full arguments, so
- * legitimate repeated *work* (different files/commands) never matches.
- */
-export const SIGNATURE_WINDOW = 16;
-/** How many times the same signature may recur in the window before it is a loop. */
-export const SIGNATURE_REPEAT_LIMIT = 3;
 
 /** Deterministic JSON stringify (sorted keys) so identical calls share a key. */
 export function stableArgs(value: unknown): string {

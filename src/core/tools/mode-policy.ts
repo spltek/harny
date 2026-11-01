@@ -16,11 +16,6 @@ export function isAnalyzeMode(mode: ChatMode | undefined): boolean {
   return (mode ?? DEFAULT_CHAT_MODE) === "analyze";
 }
 
-/** True for the full-tool mode (Agent). */
-export function isFullAccessMode(mode: ChatMode | undefined): boolean {
-  return !isAnalyzeMode(mode);
-}
-
 /** Extra filtering for a tool set (e.g. hide the Delegate tool from
  * sub-agents so orchestration cannot nest: depth is capped at 1). */
 interface ToolFilterOptions {
@@ -82,9 +77,62 @@ export const SHELL_READ_ONLY_NOTE =
   "state-changing command. This is a best-effort filter, not a filesystem sandbox. Use Read/Grep/Glob " +
   "for inspection; switch to Build to run or change anything.";
 
-export const ANALYZE_BLOCKED_SHELL_MESSAGE = (command: string): string =>
-  `⛔ Analyze is READ-ONLY: "${command}" is not in the read-only command allowlist and was refused without running. ` +
-  "Use the Read/Grep/Glob tools for inspection, or switch to Build to run it.";
+/**
+ * Why a Shell command was refused in Analyze. Named rather than boolean because a refusal has
+ * to say WHICH rule fired. "not in the read-only command allowlist" for `cat f >> out` teaches
+ * nothing (cat IS allowlisted — the redirection is not), and a mode blamed for the wrong reason
+ * is how an agent reads a refusal as a statement about the SESSION ("Analyze") instead of
+ * about the COMMAND, then keeps planning writes it cannot run.
+ */
+type ReadOnlyRefusal =
+  | { reason: "empty" }
+  | { reason: "redirection" }
+  | { reason: "substitution"; segment: string }
+  | { reason: "unknown-command"; command: string }
+  | { reason: "unsafe-invocation"; command: string };
+
+/** One line saying what the model did wrong, in terms it can act on. */
+function readOnlyRefusalDetail(refusal: ReadOnlyRefusal): string {
+  switch (refusal.reason) {
+    case "empty":
+      return "the command is empty.";
+    case "redirection":
+      return (
+        "it redirects output to a real FILE (`>` / `>>`), which is a write: here the MODE is the " +
+        "reason, not the command."
+      );
+    case "substitution":
+      return (
+        `the segment \`${refusal.segment}\` uses command substitution (\`$(…)\` or backticks), ` +
+        "which can run anything."
+      );
+    case "unknown-command":
+      return (
+        `\`${refusal.command}\` is not in the read-only allowlist: in Analyze only curated read-only ` +
+        "commands run (ls, cat, grep, the git read commands, …)."
+      );
+    case "unsafe-invocation":
+      return (
+        `\`${refusal.command}\` is a read-only command, but THIS invocation can write or execute ` +
+        "(a write/exec flag, or a positional argument that creates something)."
+      );
+  }
+}
+
+/**
+ * What the model is told when the Shell tool refuses to run in Analyze. The first line states the mode
+ * the ENFORCEMENT sees (`enforced mode: analyze`), because the alternative — letting the refusal imply
+ * a mode — is what makes an agent conclude the session changed mode when only the command was refused.
+ */
+export const ANALYZE_BLOCKED_SHELL_MESSAGE = (command: string): string => {
+  const refusal = readOnlyRefusal(command);
+  return (
+    `⛔ Refused without running — enforced mode: ANALYZE (read-only).\n` +
+    `Command: ${command}\n` +
+    (refusal ? `Reason: ${readOnlyRefusalDetail(refusal)}\n` : "") +
+    "Use the Read/Grep/Glob tools for inspection, or switch to Build to run it."
+  );
+};
 
 /**
  * Blank out the CONTENTS of quoted strings (and backslash-escaped characters)
@@ -299,6 +347,26 @@ const SAFE_COMMANDS = new Set([
   "out-string",
 ]);
 
+/** Every command the allowlist KNOWS about, whether or not this invocation is safe. Only used to
+ * word the refusal: "unknown command" and "known command, unsafe invocation" need different fixes. */
+const KNOWN_COMMANDS: ReadonlySet<string> = new Set([
+  ...SAFE_COMMANDS,
+  "git",
+  "find",
+  "fd",
+  "sort",
+  "tree",
+  "rg",
+  "env",
+  "node",
+  "python",
+  "python3",
+  "curl",
+  "npm",
+  "yarn",
+  "pnpm",
+]);
+
 /** `find` actions that execute or write. */
 const FIND_WRITE_ACTIONS = new Set([
   "-exec",
@@ -491,10 +559,27 @@ function isSafeReadSegment(segment: string): boolean {
  * to contain a hostile command.
  */
 export function isSafeReadCommand(command: string): boolean {
+  return readOnlyRefusal(command) === undefined;
+}
+
+/** The single implementation behind {@link isSafeReadCommand}: the first segment that breaks the
+ * allowlist, with the reason. Kept in one place so the check and the refusal message cannot drift
+ * (a message that explains a rule the check does not apply is worse than no message). */
+function readOnlyRefusal(command: string): ReadOnlyRefusal | undefined {
   const cmd = command.trim();
-  if (!cmd) return false;
-  if (hasFileRedirection(cmd)) return false;
+  if (!cmd) return { reason: "empty" };
+  if (hasFileRedirection(cmd)) return { reason: "redirection" };
   const segments = splitSegments(cmd);
-  if (segments.length === 0) return false;
-  return segments.every(isSafeReadSegment);
+  if (segments.length === 0) return { reason: "empty" };
+  for (const segment of segments) {
+    if (isSafeReadSegment(segment)) continue;
+    if (segment.includes("$(") || segment.includes("`") || segment.includes(">(")) {
+      return { reason: "substitution", segment };
+    }
+    const name = tokenize(segment)[0]?.toLowerCase() ?? "";
+    return KNOWN_COMMANDS.has(name)
+      ? { reason: "unsafe-invocation", command: name }
+      : { reason: "unknown-command", command: name || segment };
+  }
+  return undefined;
 }
