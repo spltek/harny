@@ -3824,7 +3824,7 @@ describe("ChatViewProvider all-sessions manager", () => {
   });
 
   it("still scopes NAME uniqueness to the folder (a foreign session is navigation, not a neighbour)", async () => {
-    const { store, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
+    const { store, registry, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
     (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
       {
         id: "b1",
@@ -3837,15 +3837,22 @@ describe("ChatViewProvider all-sessions manager", () => {
       },
     ]);
     const { handler, view } = resolveWith(provider);
+    const before = registry.listOpenIds().length;
     view.webview.postMessage.mockClear();
 
-    // Creating a session named like another folder's is allowed: it prompts, so a
-    // "name taken" alert means the rule leaked into the union.
-    await handler({ type: "createNew", name: "Shared" });
+    // Creating a session named like another folder's is allowed: uniqueness is scoped to
+    // THIS folder, where nobody carries that name. The name arrives from the naming modal
+    // and the message is the one the panel really sends: a hand-made `{type:"createNew"}`
+    // matched no `case` in the dispatcher, so the flow never ran and this test was green
+    // for the wrong reason.
+    state.autoName = "Shared";
+    await handler({ type: "newSession" });
 
     expect(view.webview.postMessage).not.toHaveBeenCalledWith(
       expect.objectContaining({ title: "Name already in use" }),
     );
+    // The point of the assertion above: the session was actually created.
+    expect(registry.listOpenIds().length).toBe(before + 1);
   });
 
   it("the MAIN sessions list shows only the current folder's sessions", async () => {
