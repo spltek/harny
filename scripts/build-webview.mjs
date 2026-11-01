@@ -8,13 +8,18 @@ import { dirname, join } from "node:path";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
+// `WEBVIEW_OUT` lets a TEST rebuild the same bundle next to the committed one and compare the
+// two byte for byte (see src/bundle-fresh.test.ts): `media/view.js` is what the webview actually
+// loads, so a fix that lands only in src/ ships as nothing at all.
+const outfile = process.env.WEBVIEW_OUT ?? join(root, "media/view.js");
+
 await build({
   entryPoints: [join(root, "src/chat/webview/view.ts")],
   bundle: true,
   format: "iife",
   platform: "browser",
   target: ["chrome110"],
-  outfile: join(root, "media/view.js"),
+  outfile,
   minify: true,
   sourcemap: false,
   logLevel: "info",
