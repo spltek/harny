@@ -94,7 +94,7 @@ describe("SessionEngine.send — the run sequence", () => {
   it("runs a message through every step, in order, with the status AFTER the start", async () => {
     const { engine, port, calls } = makeHarness();
 
-    await engine.send({ text: "ciao" }, port);
+    await engine.send({ text: "hello" }, port);
 
     expect(calls).toEqual([
       "prepareAgent",
@@ -127,7 +127,7 @@ describe("SessionEngine.send — the run sequence", () => {
       },
     };
 
-    await engine.send({ text: "ciao" }, spy);
+    await engine.send({ text: "hello" }, spy);
 
     expect(workingAtReport).toBe(false);
   });
@@ -136,7 +136,7 @@ describe("SessionEngine.send — the run sequence", () => {
     const { engine, port, calls } = makeHarness();
 
     await engine.send({ text: "   " }, port); // nothing to send
-    await engine.send({ text: "ciao" }, { ...port, hasModel: () => false }); // no model
+    await engine.send({ text: "hello" }, { ...port, hasModel: () => false }); // no model
 
     expect(calls.filter((c) => c.startsWith("onRunFinished"))).toEqual([]);
   });
@@ -154,7 +154,7 @@ describe("SessionEngine.send — the run sequence", () => {
   it("refuses to run without a model, and runs nothing else", async () => {
     const { engine, port, calls } = makeHarness({ hasModel: false });
 
-    await engine.send({ text: "ciao" }, port);
+    await engine.send({ text: "hello" }, port);
 
     expect(calls).toEqual(["prepareAgent", "rejectMissingModel", "drain"]);
   });
@@ -172,19 +172,19 @@ describe("SessionEngine.send — the run sequence", () => {
       text: "FILE CONTENTS\n\nciao",
       images: ["data:image/png;base64,x"],
       attachments: [{ name: "a.pdf", path: "/a.pdf", size: 3, isImage: false }],
-      displayText: "ciao",
+      displayText: "hello",
       attachmentParts: [],
     };
     const { engine, port, sent } = makeHarness({ prompt });
 
-    await engine.send({ text: "ciao" }, port);
+    await engine.send({ text: "hello" }, port);
 
     expect(sent[0]).toEqual({
       text: "FILE CONTENTS\n\nciao",
       options: {
         images: ["data:image/png;base64,x"],
         attachments: [{ name: "a.pdf", path: "/a.pdf", size: 3, isImage: false }],
-        displayText: "ciao",
+        displayText: "hello",
         attachmentParts: [],
       },
     });
@@ -208,7 +208,7 @@ describe("SessionEngine.send — the run sequence", () => {
   it("reports an error to the host and still refreshes (the transcript is authoritative)", async () => {
     const { engine, port, calls } = makeHarness({ emitError: true });
 
-    await engine.send({ text: "ciao" }, port);
+    await engine.send({ text: "hello" }, port);
 
     expect(calls).toContain("onRunFinished:true");
     expect(calls).toContain("compactAfter"); // the run ended: the fill is evaluated
@@ -255,7 +255,7 @@ describe("SessionEngine.send — the run sequence", () => {
       },
     };
 
-    await expect(engine.send({ text: "ciao" }, boom)).rejects.toThrow("attachments unavailable");
+    await expect(engine.send({ text: "hello" }, boom)).rejects.toThrow("attachments unavailable");
     expect(engine.sending).toBe(false); // another message can be accepted again
   });
 });

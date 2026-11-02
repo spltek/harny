@@ -264,44 +264,44 @@ describe("file tools", () => {
 
     it("tolerates trailing whitespace in old_string (Unicode/whitespace-tolerant match)", () => {
       const p = join(dir, "tol.txt");
-      writeFileSync(p, "linea 2\n");
+      writeFileSync(p, "line 2\n");
       const tool = new StrReplaceTool(nodeFileSystem, cwd);
 
-      const result = tool.execute({ path: p, old_string: "linea 2 ", new_string: "linea DUE" });
+      const result = tool.execute({ path: p, old_string: "line 2 ", new_string: "line TWO" });
 
       expect(result.isError).toBe(false);
-      expect(nodeFileSystem.readText(p)).toBe("linea DUE\n");
+      expect(nodeFileSystem.readText(p)).toBe("line TWO\n");
     });
 
     it("tolerates smart quotes when the old_string is a whole line", () => {
       const p = join(dir, "q.txt");
-      writeFileSync(p, "\u201Cmondo\u201D\n"); // smart quotes around a word, own line
+      writeFileSync(p, "\u201Cworld\u201D\n"); // smart quotes around a word, own line
       const tool = new StrReplaceTool(nodeFileSystem, cwd);
 
-      const result = tool.execute({ path: p, old_string: '"mondo"', new_string: "[mondo]" });
+      const result = tool.execute({ path: p, old_string: '"world"', new_string: "[world]" });
 
       expect(result.isError).toBe(false);
-      expect(nodeFileSystem.readText(p)).toBe("[mondo]\n");
+      expect(nodeFileSystem.readText(p)).toBe("[world]\n");
     });
 
     it("fails EXPLICITLY for partial-line smart-quote differences (never corrupts silently)", () => {
       const p = join(dir, "q2.txt");
-      writeFileSync(p, "Ciao \u201Cmondo\u201D carino\n");
+      writeFileSync(p, "Hello \u201Cworld\u201D nice\n");
       const tool = new StrReplaceTool(nodeFileSystem, cwd);
 
-      const result = tool.execute({ path: p, old_string: '"mondo"', new_string: "[mondo]" });
+      const result = tool.execute({ path: p, old_string: '"world"', new_string: "[world]" });
 
       expect(result.isError).toBe(true);
       expect(result.content).toContain("not found");
-      expect(nodeFileSystem.readText(p)).toBe("Ciao \u201Cmondo\u201D carino\n"); // untouched
+      expect(nodeFileSystem.readText(p)).toBe("Hello \u201Cworld\u201D nice\n"); // untouched
     });
 
     it("preserves a matched line's trailing whitespace on tolerant matches", () => {
       const p = join(dir, "ws.txt");
-      writeFileSync(p, "ｍｏｎｄｏ   \n"); // full-width NFKC→mondo + 3 trailing spaces
+      writeFileSync(p, "ｗｏｒｌｄ   \n"); // full-width NFKC→world + 3 trailing spaces
       const tool = new StrReplaceTool(nodeFileSystem, cwd);
 
-      const result = tool.execute({ path: p, old_string: "mondo", new_string: "X" });
+      const result = tool.execute({ path: p, old_string: "world", new_string: "X" });
 
       expect(result.isError).toBe(false);
       expect(nodeFileSystem.readText(p)).toBe("X   \n");

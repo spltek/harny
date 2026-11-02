@@ -1,12 +1,12 @@
 {
-  // Aggiungi queste righe al tuo settings.json di VS Code (Cmd+Shift+P → "Preferences: Open Settings (JSON)")
+  // Add these lines to your VS Code settings.json (Cmd+Shift+P → "Preferences: Open Settings (JSON)")
 
-  // ─── OpenAI diretto ───
+  // ─── OpenAI, directly ───
   "harny.provider": "openai",
   "harny.apiKey": "sk-your-key-here",
   "harny.model": "gpt-4o",
 
-  // ─── OLLAMA (locale) ───
+  // ─── OLLAMA (local) ───
   // "harny.provider": "openai-compatible",
   // "harny.baseUrl": "http://localhost:11434",
   // "harny.apiKey": "ollama",
@@ -16,13 +16,13 @@
   // "harny.thinkingMode": "bool",    // "bool" = llama.cpp chat_template_kwargs | "effort" = reasoning_effort
   // "harny.thinkingLevel": "medium", // "off" | "low" | "medium" | "high" (overridable per session)
 
-  // ─── LM Studio (locale) ───
+  // ─── LM Studio (local) ───
   // "harny.provider": "openai-compatible",
   // "harny.baseUrl": "http://localhost:1234",
   // "harny.apiKey": "not-needed",
   // "harny.model": "local-model",
 
-  // ─── Anthropic (via proxy compatibile) ───
+  // ─── Anthropic (through a compatible proxy) ───
   // "harny.provider": "openai-compatible",
   // "harny.baseUrl": "https://api.anthropic.com",
   // "harny.apiKey": "sk-ant-...",

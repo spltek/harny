@@ -236,13 +236,13 @@ describe("migration 4 — the transcript goes back in the order it was written",
     // Exactly the shape the old splice wrote: the newer chunk (10:01) hoisted above the older
     // one (09:43), then the checkpoint and the kept tail.
     insert(db, [
-      row(0, "assistant", "nuovo-1", 1_000),
-      row(1, "assistant", "nuovo-2", 1_001),
-      row(2, "user", "primo input della sessione", 900),
-      row(3, "assistant", "vecchio-2", 901),
-      row(4, "user", "Riepilogo delle interazioni passate", 2_000, true),
-      row(5, "assistant", "## Obiettivo", 2_001, true),
-      row(6, "user", "ultima domanda", 2_002),
+      row(0, "assistant", "new-1", 1_000),
+      row(1, "assistant", "new-2", 1_001),
+      row(2, "user", "first input of the session", 900),
+      row(3, "assistant", "old-2", 901),
+      row(4, "user", "Summary of past interactions", 2_000, true),
+      row(5, "assistant", "## Goal", 2_001, true),
+      row(6, "user", "last question", 2_002),
     ]);
     db.exec("PRAGMA user_version = 3");
     db.prepare("UPDATE sessions SET message_count = 7").run();
@@ -252,13 +252,13 @@ describe("migration 4 — the transcript goes back in the order it was written",
     expect(getUserVersion(db)).toBe(4);
     // The session now OPENS on the first user input, and the blocks are chronological.
     expect(contents(db)).toEqual([
-      "primo input della sessione",
-      "vecchio-2",
-      "nuovo-1",
-      "nuovo-2",
-      "Riepilogo delle interazioni passate",
-      "## Obiettivo",
-      "ultima domanda",
+      "first input of the session",
+      "old-2",
+      "new-1",
+      "new-2",
+      "Summary of past interactions",
+      "## Goal",
+      "last question",
     ]);
     // `seq` stays dense from 0 (the store writes by index).
     const seqs = (db.prepare("SELECT seq FROM messages ORDER BY seq").all() as { seq: number }[]).map((r) => r.seq);
@@ -272,8 +272,8 @@ describe("migration 4 — the transcript goes back in the order it was written",
       .prepare(
         "SELECT m.content AS content FROM messages_fts JOIN messages m ON m.rowid = messages_fts.rowid WHERE messages_fts MATCH ?",
       )
-      .get("primo") as { content?: string } | undefined;
-    expect(hit?.content).toBe("primo input della sessione");
+      .get("first") as { content?: string } | undefined;
+    expect(hit?.content).toBe("first input of the session");
   });
 
   it("untangles INTERLEAVED segments (a later cut landed inside an earlier one)", () => {
@@ -284,16 +284,16 @@ describe("migration 4 — the transcript goes back in the order it was written",
     runMigrations(db);
     db.prepare("INSERT INTO sessions(id, name, created_at, updated_at, message_count) VALUES ('s1','S',0,0,4)").run();
     insert(db, [
-      row(0, "user", "nuovo-a", 100),
-      row(1, "assistant", "nuovo-b", 300),
-      row(2, "user", "vecchio-a", 50),
-      row(3, "assistant", "vecchio-b", 200),
+      row(0, "user", "new-a", 100),
+      row(1, "assistant", "new-b", 300),
+      row(2, "user", "old-a", 50),
+      row(3, "assistant", "old-b", 200),
     ]);
     db.exec("PRAGMA user_version = 3");
 
     runMigrations(db);
 
-    expect(contents(db)).toEqual(["vecchio-a", "nuovo-a", "vecchio-b", "nuovo-b"]);
+    expect(contents(db)).toEqual(["old-a", "new-a", "old-b", "new-b"]);
   });
 
   it("leaves a healthy history alone (no rewrite at all)", () => {
@@ -301,16 +301,16 @@ describe("migration 4 — the transcript goes back in the order it was written",
     runMigrations(db);
     db.prepare("INSERT INTO sessions(id, name, created_at, updated_at, message_count) VALUES ('s1','S',0,0,4)").run();
     insert(db, [
-      row(0, "user", "uno", 1),
-      row(1, "assistant", "due", 2),
-      row(2, "user", "tre", 3),
-      row(3, "assistant", "quattro", 4),
+      row(0, "user", "one", 1),
+      row(1, "assistant", "two", 2),
+      row(2, "user", "three", 3),
+      row(3, "assistant", "four", 4),
     ]);
     db.exec("PRAGMA user_version = 3");
 
     runMigrations(db);
 
-    expect(contents(db)).toEqual(["uno", "due", "tre", "quattro"]);
+    expect(contents(db)).toEqual(["one", "two", "three", "four"]);
     expect(tableExists(db, "messages_backup_v4")).toBe(false);
   });
 });

@@ -1,5 +1,5 @@
 {
-  "comment": "REFERENCE ONLY — definizioni del set di tool per agent di Cursor (schema e comportamento), usate come riferimento per gli schemi dei parametri. NON letto a runtime: le definizioni che l'estensione spedisce vivono in src/core/tools/ (una per file, con le loro descrizioni). Questo file NON e' un mirror di src/core/tools/: definisce solo il sottoinsieme del set di Cursor che Harny ha preso a modello, quindi Edit / Skill / Delegate non hanno una definizione qui (vivono solo nel codice). Le due liste sotto sono l'unica parte da tenere allineata.",
+  "comment": "REFERENCE ONLY — the Cursor agent tool set (schema and behaviour), used as the reference for the parameter schemas. NOT read at runtime: the definitions the extension actually ships live in src/core/tools/ (one per file, with their own descriptions). This file is NOT a mirror of src/core/tools/: it defines only the subset of the Cursor set that Harny modelled itself on, so Edit / Skill / Delegate have no definition here (they exist in code alone). The two lists below are the only part to keep in sync.",
   "implemented": [
     "Shell", "Read", "Write", "StrReplace", "Edit", "Delete", "Grep", "Glob",
     "TodoWrite", "WebSearch", "WebFetch", "ReadLints", "Skill", "Delegate"
@@ -9,7 +9,7 @@
     "Task": "Delegate",
     "MCP Tools": "mcp__<server>__<tool>"
   },
-  "plannedNote": "Task e MCP Tools sono stati spediti con un altro nome: Task e' il tool `Delegate` (src/core/tools/delegate-tool.ts), i tool MCP arrivano dinamici da ogni server come `mcp__<server>__<tool>` (src/core/mcp/). La definizione `Task` qui sotto resta come riferimento di schema.",
+  "plannedNote": "Task and MCP Tools shipped under other names: Task is the `Delegate` tool (src/core/tools/delegate-tool.ts), and MCP tools arrive dynamically from each server as `mcp__<server>__<tool>` (src/core/mcp/). The `Task` definition below stays as a schema reference.",
   "tools": [
     {
       "type": "function",

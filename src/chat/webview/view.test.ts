@@ -1339,7 +1339,7 @@ describe("view webview client", () => {
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
     const chips = document.getElementById("attachment-chips") as HTMLDivElement;
     hostMessage({ type: "attachments", files: [{ name: "relazione.pdf", path: "/rel", size: 2048, isImage: false }] });
-    input.value = "bozza per A";
+    input.value = "draft for A";
 
     // Away: A's composition is parked and the box is CLEAN for B.
     hostMessage({
@@ -1364,15 +1364,15 @@ describe("view webview client", () => {
       config: {},
       workingIds: [],
     });
-    expect(input.value).toBe("bozza per A");
+    expect(input.value).toBe("draft for A");
     expect(chips.classList.contains("hidden")).toBe(false);
     expect(chips.textContent).toContain("relazione.pdf");
   });
 
   it("restores the typed prompt after a webview reload (text only)", async () => {
-    setupDom({}, { drafts: { a: "riprendi da qui" } });
+    setupDom({}, { drafts: { a: "resume from here" } });
     await loadView();
-    expect((document.getElementById("user-input") as HTMLTextAreaElement).value).toBe("riprendi da qui");
+    expect((document.getElementById("user-input") as HTMLTextAreaElement).value).toBe("resume from here");
   });
 
   it("sends an attachment-only message (no text typed)", async () => {
@@ -1519,7 +1519,7 @@ describe("view webview client", () => {
       // to the new one — the two beat out of phase, and everything else stays in sync.
       now.mockReturnValue(5_000);
       const prompt = document.getElementById("user-input") as HTMLTextAreaElement;
-      prompt.value = "ciao";
+      prompt.value = "hello";
       prompt.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
       const bar = document.getElementById("working-bar") as HTMLElement;
       // send() -> addWorking() -> setStreaming(true) resets the clock and re-locks what is
@@ -1557,7 +1557,7 @@ describe("view webview client", () => {
       messages: [
         { role: "user", content: "x", timestamp: 1 },
         { role: "assistant", content: "", thinking: "let me think", toolCalls: [], timestamp: 2 },
-        { role: "assistant", content: "fine", timestamp: 3 },
+        { role: "assistant", content: "done", timestamp: 3 },
       ],
     });
     const blocks = document.querySelectorAll(".thinking-block");
@@ -1573,7 +1573,7 @@ describe("view webview client", () => {
     expect(blocks[0].querySelector(".toggle")?.classList.contains("is-open") ?? false).toBe(true);
     // The final textual response is the last message.
     const last = (messagesElLastContent() || "").trim();
-    expect(last).toBe("fine");
+    expect(last).toBe("done");
   });
 
   it("pulses the live streaming bubble with the streaming class and stops it on done", async () => {
@@ -1612,15 +1612,18 @@ describe("view webview client", () => {
     (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
     (document.getElementById("send-btn") as HTMLButtonElement).click();
 
-    hostMessage({ type: "textDelta", content: "Ho tutto per descriverli senza inventare. Scrivo la se" });
+    hostMessage({
+      type: "textDelta",
+      content: "I have everything to describe them without inventing anything. Writing the se",
+    });
     hostMessage({ type: "thinkingDelta", content: "sto pensando a come dirlo meglio" });
-    hostMessage({ type: "textDelta", content: "zione [Unreleased] — copre tutto il ciclo." });
+    hostMessage({ type: "textDelta", content: "ction [Unreleased] — it covers the whole cycle." });
     await new Promise((r) => setTimeout(r, 40)); // let the throttled renderer paint
 
     const answers = [...document.querySelectorAll(".msg.assistant")];
     expect(answers).toHaveLength(1); // ONE answer, not two
     expect(answers[0].textContent).toContain(
-      "Ho tutto per descriverli senza inventare. Scrivo la sezione [Unreleased] — copre tutto il ciclo.",
+      "I have everything to describe them without inventing anything. Writing the section [Unreleased] — it covers the whole cycle.",
     );
     // The reasoning is still there, one line above, collapsible.
     const marker = document.querySelector(".thinking-block") as HTMLElement;
@@ -1634,11 +1637,11 @@ describe("view webview client", () => {
     // A refusal must undo that paint: a message shown as sent that never left, plus a working
     // bar nothing will ever clear, is exactly the hang reported from the field.
     await loadView();
-    (document.getElementById("user-input") as HTMLTextAreaElement).value = "ciao";
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "ping";
     (document.getElementById("send-btn") as HTMLButtonElement).click();
     await new Promise((r) => setTimeout(r, 20));
     const sent = (): boolean =>
-      [...document.querySelectorAll("#messages .msg.user")].some((e) => (e.textContent ?? "").includes("ciao"));
+      [...document.querySelectorAll("#messages .msg.user")].some((e) => (e.textContent ?? "").includes("ping"));
     expect(sent()).toBe(true); // painted before the host answered
     expect(document.getElementById("working-bar")?.classList.contains("hidden")).toBe(false);
 
@@ -1659,7 +1662,7 @@ describe("view webview client", () => {
     (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
     (document.getElementById("send-btn") as HTMLButtonElement).click();
 
-    hostMessage({ type: "textDelta", content: "Risposta." });
+    hostMessage({ type: "textDelta", content: "Answer." });
     hostMessage({ type: "thinkingDelta", content: "." });
     await new Promise((r) => setTimeout(r, 40));
 
@@ -1679,15 +1682,15 @@ describe("view webview client", () => {
     (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
     (document.getElementById("send-btn") as HTMLButtonElement).click();
 
-    hostMessage({ type: "textDelta", content: "Risposta." });
+    hostMessage({ type: "textDelta", content: "Answer." });
     hostMessage({ type: "thinkingDelta", content: "." });
-    hostMessage({ type: "thinkingDelta", content: " Ora controllo la store." });
+    hostMessage({ type: "thinkingDelta", content: " Now I check the store." });
     await new Promise((r) => setTimeout(r, 40));
 
     const block = document.querySelector(".thinking-block") as HTMLElement;
     expect(block).not.toBeNull(); // opened as soon as there is something to read
     expect(block.className).not.toContain("hidden");
-    expect(block.textContent).toContain("Ora controllo la store");
+    expect(block.textContent).toContain("Now I check the store");
   });
 
   it("keeps the reasoning readable: expanding the mid-answer marker shows it", async () => {
@@ -1695,7 +1698,7 @@ describe("view webview client", () => {
     (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
     (document.getElementById("send-btn") as HTMLButtonElement).click();
 
-    hostMessage({ type: "textDelta", content: "prima parte" });
+    hostMessage({ type: "textDelta", content: "first part" });
     hostMessage({ type: "thinkingDelta", content: "il ragionamento di mezzo" });
     await new Promise((r) => setTimeout(r, 40));
 
@@ -1719,13 +1722,13 @@ describe("view webview client", () => {
 
     hostMessage({ type: "thinkingDelta", content: "Devo leggere il file" });
     hostMessage({ type: "textDelta", content: "\n" }); // padding between two segments
-    hostMessage({ type: "thinkingDelta", content: ", poi la store." });
+    hostMessage({ type: "thinkingDelta", content: ", then the store." });
     await new Promise((r) => setTimeout(r, 40));
 
     const blocks = document.querySelectorAll(".thinking-block");
     expect(blocks.length).toBe(1);
     (blocks[0].querySelector(".thinking-header") as HTMLElement).click();
-    expect(blocks[0].querySelector(".thinking-body")?.textContent).toContain("poi la store");
+    expect(blocks[0].querySelector(".thinking-body")?.textContent).toContain("then the store");
   });
 
   it("keeps ONE thinking block when the reasoning RESUMES mid-answer (no second item)", async () => {
@@ -1738,7 +1741,7 @@ describe("view webview client", () => {
     (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
     (document.getElementById("send-btn") as HTMLButtonElement).click();
 
-    hostMessage({ type: "thinkingDelta", content: "Cerco dove e installata la skill. " });
+    hostMessage({ type: "thinkingDelta", content: "I look for where the skill is installed. " });
     hostMessage({ type: "textDelta", content: "Guardo il codice." });
     hostMessage({ type: "thinkingDelta", content: "Forse in ~/.pi/agent/skills. " });
     hostMessage({ type: "textDelta", content: " Rimuovo." });
@@ -1748,7 +1751,7 @@ describe("view webview client", () => {
     expect(blocks.length).toBe(1); // ONE item, not two collapsing later
     (blocks[0].querySelector(".thinking-header") as HTMLElement).click();
     const body = blocks[0].querySelector(".thinking-body")?.textContent ?? "";
-    expect(body).toContain("Cerco dove e installata la skill"); // the first half
+    expect(body).toContain("I look for where the skill is installed"); // the first half
     expect(body).toContain("Forse in ~/.pi/agent/skills"); // the resumed half, same block
 
     // …and merging must not cost the answer its ONE bubble, nor reorder anything.
@@ -1767,16 +1770,16 @@ describe("view webview client", () => {
     (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
     (document.getElementById("send-btn") as HTMLButtonElement).click();
 
-    hostMessage({ type: "thinkingDelta", content: "Prima fase" });
+    hostMessage({ type: "thinkingDelta", content: "First phase" });
     hostMessage({ type: "textDelta", content: "Uso uno strumento." });
     hostMessage({ type: "toolCall", id: "c1", name: "Read", arguments: { path: "a.ts" } });
-    hostMessage({ type: "thinkingDelta", content: "Seconda fase" });
+    hostMessage({ type: "thinkingDelta", content: "Second phase" });
     await new Promise((r) => setTimeout(r, 40));
 
     const blocks = [...document.querySelectorAll(".thinking-block")];
     expect(blocks.length).toBe(2);
-    expect(blocks[1].textContent).toContain("Seconda fase");
-    expect(blocks[0].textContent).not.toContain("Seconda fase");
+    expect(blocks[1].textContent).toContain("Second phase");
+    expect(blocks[0].textContent).not.toContain("Second phase");
   });
 
   it("a delta that carries NO text paints nothing and does not close the reasoning", async () => {
@@ -1803,16 +1806,16 @@ describe("view webview client", () => {
     await loadView();
     (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
     (document.getElementById("send-btn") as HTMLButtonElement).click();
-    hostMessage({ type: "textDelta", content: "prima" });
+    hostMessage({ type: "textDelta", content: "before" });
 
     hostMessage({ type: "compactStart" });
-    hostMessage({ type: "refresh", messages: [], streaming: true, liveAnswer: "prima" });
+    hostMessage({ type: "refresh", messages: [], streaming: true, liveAnswer: "before" });
     const bar = document.getElementById("working-bar") as HTMLElement;
     expect(bar.classList.contains("hidden")).toBe(false);
 
-    hostMessage({ type: "textDelta", content: " e dopo" });
+    hostMessage({ type: "textDelta", content: " and after" });
     await new Promise((r) => setTimeout(r, 40));
-    expect(messagesElLastContent()).toContain("prima e dopo");
+    expect(messagesElLastContent()).toContain("before and after");
   });
 
   it("still gives reasoning its OWN block when it comes BEFORE the answer (the common case)", async () => {
@@ -1822,15 +1825,15 @@ describe("view webview client", () => {
     (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
     (document.getElementById("send-btn") as HTMLButtonElement).click();
 
-    hostMessage({ type: "thinkingDelta", content: "ragiono prima" });
-    hostMessage({ type: "textDelta", content: "la risposta" });
+    hostMessage({ type: "thinkingDelta", content: "I think first" });
+    hostMessage({ type: "textDelta", content: "the answer" });
     await new Promise((r) => setTimeout(r, 40));
 
     const marker = document.querySelector(".thinking-block") as HTMLElement;
     const answer = document.querySelector(".msg.assistant") as HTMLElement;
     expect(marker.textContent).toContain("Thinking");
     expect(marker.textContent).not.toContain("during this answer");
-    expect(answer.textContent).toContain("la risposta");
+    expect(answer.textContent).toContain("the answer");
     // …and the answer is a SEPARATE bubble after it, not merged into the block.
     expect(marker.contains(answer)).toBe(false);
   });
@@ -1859,7 +1862,7 @@ describe("view webview client", () => {
 
   describe("the answer never loses its beginning (reported: text starting mid-word)", () => {
     const FRASE =
-      "Ho tutto per descriverli senza inventare. Scrivo la sezione [Unreleased] — copre tutto il ciclo non rilasciato (16 commit), non solo il mio pezzo:";
+      "I have everything to describe them without inventing anything. Writing the [Unreleased] section — it covers the whole unreleased cycle (16 commits), not just my part:";
     /** The real stream arrives in many small chunks, not in one piece. */
     const chunks = (text: string, size = 8): string[] => {
       const out: string[] = [];
@@ -1893,12 +1896,12 @@ describe("view webview client", () => {
       for (const c of chunks(FRASE)) hostMessage({ type: "textDelta", content: c });
       hostMessage({ type: "toolCall", id: "c1", name: "Shell", arguments: { command: "ls" } });
       hostMessage({ type: "toolResult", toolCallId: "c1", output: "ok", isError: false });
-      hostMessage({ type: "textDelta", content: "Dopo il tool." });
+      hostMessage({ type: "textDelta", content: "After the tool." });
       await frame();
 
       const shown = showAssistant();
       expect(shown).toContain(FRASE);
-      expect(shown).toContain("Dopo il tool.");
+      expect(shown).toContain("After the tool.");
     });
 
     it("does NOT lose the live answer when a transcript REFRESH lands mid-stream", async () => {
@@ -2287,11 +2290,11 @@ describe("view webview client", () => {
         answer: "Lancio tre sub-agent.",
         textAfterTools: false,
         toolCalls: [
-          { id: "d1", name: "Delegate", args: { id: "api", goal: "leggi le API" }, done: false, isError: false },
+          { id: "d1", name: "Delegate", args: { id: "api", goal: "read the API" }, done: false, isError: false },
           {
             id: "d2",
             name: "Delegate",
-            args: { id: "db", goal: "leggi lo schema" },
+            args: { id: "db", goal: "read the schema" },
             done: true,
             isError: false,
             output: "schema letto",
@@ -2530,12 +2533,12 @@ describe("view webview client", () => {
       sessions: [A, B],
       openIds: ["a", "b"],
       activeId: "a",
-      messages: [{ role: "user", content: "vecchia", timestamp: 1 }],
+      messages: [{ role: "user", content: "stale", timestamp: 1 }],
       config: {},
       workingIds: [],
     });
     expect(document.querySelector(".tab.active")?.getAttribute("data-id")).toBe("b");
-    expect(document.getElementById("messages")?.textContent).not.toContain("vecchia");
+    expect(document.getElementById("messages")?.textContent).not.toContain("stale");
   });
 
   it("drops a streamed message addressed to ANOTHER session", async () => {
@@ -3279,7 +3282,7 @@ describe("view webview client", () => {
       type: "attachments",
       files: [{ name: "relazione.pdf", path: "/tmp/relazione.pdf", size: 4096, isImage: false }],
     });
-    (document.getElementById("user-input") as HTMLTextAreaElement).value = "riassumi questo";
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "summarize this";
     // Switching tab is what parks the composition (and persists it).
     hostMessage({
       type: "switchView",
@@ -3318,7 +3321,7 @@ describe("view webview client", () => {
     const chips = document.querySelectorAll(".attach-chip");
     expect(chips).toHaveLength(1);
     expect(chips[0].textContent).toContain("relazione.pdf");
-    expect((document.getElementById("user-input") as HTMLTextAreaElement).value).toBe("riassumi questo");
+    expect((document.getElementById("user-input") as HTMLTextAreaElement).value).toBe("summarize this");
   });
 
   it("a SMALL pasted image keeps its data across a reload (and is sent with it)", async () => {
@@ -3412,7 +3415,7 @@ describe("view webview client", () => {
     expect(chip.textContent).toContain("⚠");
 
     posted.length = 0;
-    (document.getElementById("user-input") as HTMLTextAreaElement).value = "descrivi";
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "describe";
     (document.getElementById("send-btn") as HTMLButtonElement).click();
 
     // …and NOTHING was sent: an empty attachment must never reach the model silently.
@@ -3432,17 +3435,17 @@ describe("view webview client", () => {
   });
 
   it("still restores the TEXT from a state written by an older version (files map absent)", async () => {
-    setupDom({}, { drafts: { a: "draft scritto dalla versione vecchia" } });
+    setupDom({}, { drafts: { a: "draft written by the old version" } });
     await loadView();
 
     expect((document.getElementById("user-input") as HTMLTextAreaElement).value).toBe(
-      "draft scritto dalla versione vecchia",
+      "draft written by the old version",
     );
     expect(document.querySelectorAll(".attach-chip")).toHaveLength(0);
   });
 
   it("a malformed persisted attachment is ignored instead of crashing the panel", async () => {
-    setupDom({}, { draftFiles: { a: [{ name: 42 }, null, { path: "senza-nome" }] } });
+    setupDom({}, { draftFiles: { a: [{ name: 42 }, null, { path: "nameless" }] } });
     await loadView();
 
     expect(document.querySelectorAll(".attach-chip")).toHaveLength(0);
@@ -4228,23 +4231,23 @@ describe("view webview client", () => {
     hostMessage({
       type: "subagentEvent",
       toolCallId: "s1",
-      event: { type: "text_delta", content: "Ho letto i file e " },
+      event: { type: "text_delta", content: "I read the files and " },
     });
     hostMessage({
       type: "subagentEvent",
       toolCallId: "s1",
-      event: { type: "thinking_delta", content: "ora riordino le idee" },
+      event: { type: "thinking_delta", content: "now let me sort out my thoughts" },
     });
     hostMessage({
       type: "subagentEvent",
       toolCallId: "s1",
-      event: { type: "text_delta", content: "concludo che va bene." },
+      event: { type: "text_delta", content: "I conclude it is fine." },
     });
 
     const answers = document.querySelectorAll(".sa-answer");
     expect(answers).toHaveLength(1);
-    expect(answers[0].textContent).toContain("Ho letto i file e concludo che va bene.");
-    expect(document.querySelector(".sa-thinking")?.textContent).toContain("ora riordino le idee");
+    expect(answers[0].textContent).toContain("I read the files and I conclude it is fine.");
+    expect(document.querySelector(".sa-thinking")?.textContent).toContain("now let me sort out my thoughts");
   });
 
   it("sub-agent bubbles are collapsed by default and expand on click", async () => {
@@ -6632,11 +6635,11 @@ describe("view webview client", () => {
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
     input.value = "go";
     (document.getElementById("send-btn") as HTMLButtonElement).click();
-    hostMessage({ type: "textDelta", content: "prima parte " });
-    for (let i = 0; i < 40; i++) hostMessage({ type: "textDelta", content: `parola${i} ` });
+    hostMessage({ type: "textDelta", content: "first part " });
+    for (let i = 0; i < 40; i++) hostMessage({ type: "textDelta", content: `word${i} ` });
     await new Promise((r) => setTimeout(r, 40)); // let the throttled renderer paint
     const bubble = document.querySelector(".msg.assistant.streaming") as HTMLElement;
-    expect(bubble.textContent).toContain("parola0");
+    expect(bubble.textContent).toContain("word0");
 
     // The user drags a selection INSIDE it…
     const sel = window.getSelection()!;
@@ -6658,9 +6661,9 @@ describe("view webview client", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(document.getElementById("messages")!.textContent).toContain("ULTIMO-CIUFFO");
     // …and normal streaming is back to being live.
-    hostMessage({ type: "textDelta", content: "-DOPO" });
+    hostMessage({ type: "textDelta", content: "-AFTER" });
     await new Promise((r) => setTimeout(r, 40));
-    expect(document.getElementById("messages")!.textContent).toContain("-DOPO");
+    expect(document.getElementById("messages")!.textContent).toContain("-AFTER");
   });
 
   it("⌘F / Ctrl+F opens find in the transcript: count, next/prev with wrap, Esc closes", async () => {
@@ -6869,7 +6872,7 @@ describe("view webview client", () => {
 
   it("the highlights follow the transcript as it grows, without moving the view", async () => {
     await loadView();
-    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "uno due", timestamp: 1 }] });
+    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "one two", timestamp: 1 }] });
     const highlights = new Map<string, { size: number }>();
     (window as any).Highlight = class {
       size: number;
@@ -6889,7 +6892,7 @@ describe("view webview client", () => {
       // Both modifiers: the test must open the bar on any host (macOS wants ⌘, Windows/Linux
       // Ctrl) without depending on the UA jsdom happens to report.
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true, ctrlKey: true }));
-      input.value = "due";
+      input.value = "two";
       input.dispatchEvent(new Event("input"));
       await new Promise((r) => setTimeout(r, 150));
       expect(count.textContent).toBe("1/1");
@@ -6901,7 +6904,7 @@ describe("view webview client", () => {
       (document.getElementById("send-btn") as HTMLButtonElement).click(); // a run starts (it may park)
       list.scrollTop = 1000; // now park the reader above the bottom…
       list.dispatchEvent(new Event("scroll"));
-      hostMessage({ type: "textDelta", content: " e ancora due" });
+      hostMessage({ type: "textDelta", content: " and still two" });
       await new Promise((r) => setTimeout(r, 400)); // the rescan debounce
       expect(count.textContent).toBe("1/2");
       expect(highlights.get("harny-find")!.size).toBe(2);
@@ -6917,7 +6920,7 @@ describe("view webview client", () => {
     const bar = document.getElementById("find-bar") as HTMLElement;
     const input = document.getElementById("find-input") as HTMLInputElement;
     const count = document.getElementById("find-count") as HTMLElement;
-    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "uno due", timestamp: 1 }] });
+    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "one two", timestamp: 1 }] });
 
     // Windows: ⌘ (Meta) is the OS key, Ctrl+F is find; and Ctrl+F does NOT open it while… it does.
     Object.defineProperty(window.navigator, "userAgent", {
@@ -6929,7 +6932,7 @@ describe("view webview client", () => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", ctrlKey: true }));
     expect(bar.classList.contains("hidden")).toBe(false);
 
-    input.value = "due";
+    input.value = "two";
     input.dispatchEvent(new Event("input"));
     await new Promise((r) => setTimeout(r, 150));
     expect(count.textContent).toBe("1/1");
@@ -6939,7 +6942,7 @@ describe("view webview client", () => {
     const prompt = document.getElementById("user-input") as HTMLTextAreaElement;
     prompt.value = "go";
     (document.getElementById("send-btn") as HTMLButtonElement).click(); // a run is now working
-    hostMessage({ type: "textDelta", content: " e ancora due" });
+    hostMessage({ type: "textDelta", content: " and still two" });
     await new Promise((r) => setTimeout(r, 40));
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     expect(count.textContent).toMatch(/^[12]\/2$/);
@@ -6947,7 +6950,7 @@ describe("view webview client", () => {
 
   it("right-click on the transcript offers OUR Copy and Select all, on every OS", async () => {
     await loadView();
-    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "testo da copiare", timestamp: 1 }] });
+    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "text to copy", timestamp: 1 }] });
     const menu = document.getElementById("ctx-menu") as HTMLElement;
     const bubble = document.querySelector("#messages .msg") as HTMLElement;
     const sel = window.getSelection()!;
@@ -6970,7 +6973,7 @@ describe("view webview client", () => {
       configurable: true,
     });
     all.click();
-    expect(sel.toString()).toContain("testo da copiare");
+    expect(sel.toString()).toContain("text to copy");
     expect(menu.classList.contains("hidden")).toBe(true); // a choice closes it
 
     bubble.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
@@ -6978,12 +6981,12 @@ describe("view webview client", () => {
     expect(copy2.disabled).toBe(false); // the selection from "Select all" is still there
     copy2.click();
     await new Promise((r) => setTimeout(r, 10));
-    expect(written[0]).toContain("testo da copiare");
+    expect(written[0]).toContain("text to copy");
   });
 
   it("the context menu closes on Esc, on a click elsewhere, and on scroll", async () => {
     await loadView();
-    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "riga", timestamp: 1 }] });
+    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "line", timestamp: 1 }] });
     const menu = document.getElementById("ctx-menu") as HTMLElement;
     const bubble = document.querySelector("#messages .msg") as HTMLElement;
     const open = (): void => {
@@ -7705,8 +7708,8 @@ describe("harness-injected prompts", () => {
 describe("the context-window checkpoint in the transcript", () => {
   // Everything before the pair is out of the window; everything after it is in.
   const PAST = [
-    { role: "user", content: "prima domanda", timestamp: 1 },
-    { role: "assistant", content: "prima risposta", timestamp: 2 },
+    { role: "user", content: "first question", timestamp: 1 },
+    { role: "assistant", content: "first answer", timestamp: 2 },
   ];
   const CHECKPOINT = [
     { role: "user", content: "Summary of past interactions", timestamp: 3, synthetic: true },
@@ -7717,7 +7720,7 @@ describe("the context-window checkpoint in the transcript", () => {
     await loadView();
     hostMessage({
       type: "refresh",
-      messages: [...PAST, ...CHECKPOINT, { role: "user", content: "dopo", timestamp: 5 }],
+      messages: [...PAST, ...CHECKPOINT, { role: "user", content: "after", timestamp: 5 }],
     });
 
     const divider = document.querySelector(".ctx-divider") as HTMLElement;
@@ -7731,7 +7734,7 @@ describe("the context-window checkpoint in the transcript", () => {
     await loadView();
     hostMessage({
       type: "refresh",
-      messages: [...PAST, ...CHECKPOINT, { role: "user", content: "dopo", timestamp: 5 }],
+      messages: [...PAST, ...CHECKPOINT, { role: "user", content: "after", timestamp: 5 }],
     });
 
     const label = document.querySelector(".msg.user.synthetic-summary") as HTMLElement;
@@ -7754,7 +7757,7 @@ describe("the context-window checkpoint in the transcript", () => {
       type: "refresh",
       messages: [
         ...PAST,
-        { role: "user", content: "dopo", timestamp: 5 },
+        { role: "user", content: "after", timestamp: 5 },
         { role: "assistant", content: "ok", timestamp: 6 },
       ],
     });
@@ -7772,14 +7775,14 @@ describe("the context-window checkpoint in the transcript", () => {
       type: "refresh",
       messages: [
         { role: "user", content: "antichissima", timestamp: 1 },
-        { role: "assistant", content: "risposta antica", timestamp: 2 },
+        { role: "assistant", content: "old answer", timestamp: 2 },
         { role: "user", content: "Vecchio riepilogo", timestamp: 3, synthetic: true },
-        { role: "assistant", content: "vecchio stato", timestamp: 4, synthetic: true },
+        { role: "assistant", content: "old state", timestamp: 4, synthetic: true },
         { role: "user", content: "in mezzo", timestamp: 5 },
         { role: "assistant", content: "replica", timestamp: 6 },
         { role: "user", content: "Summary of past interactions", timestamp: 7, synthetic: true },
         { role: "assistant", content: "## Goal\nnew", timestamp: 8, synthetic: true },
-        { role: "user", content: "ultimo", timestamp: 9 },
+        { role: "user", content: "last", timestamp: 9 },
       ],
     });
 
@@ -7799,7 +7802,7 @@ describe("the context-window checkpoint in the transcript", () => {
     await loadView();
     hostMessage({
       type: "refresh",
-      messages: [...PAST, ...CHECKPOINT, { role: "user", content: "dopo", timestamp: 5 }],
+      messages: [...PAST, ...CHECKPOINT, { role: "user", content: "after", timestamp: 5 }],
     });
 
     // The card opens the window, which puts it several screens ABOVE the bottom: the
@@ -10087,15 +10090,15 @@ describe("soft steering + pending bubbles (webview)", () => {
     await loadView();
     // The view never appends a bubble for a queued message: it waits in the
     // pending footer, and the host tells the view when it actually runs.
-    hostMessage({ type: "pending", items: [{ id: "q1", mode: "queue", text: "guarda qui" }] });
+    hostMessage({ type: "pending", items: [{ id: "q1", mode: "queue", text: "look here" }] });
     hostMessage({
       type: "userMessage",
-      content: "guarda qui",
+      content: "look here",
       images: ["data:image/png;base64,iVBORw0KGgo="],
       attachments: [{ name: "relazione.pdf", path: "/tmp/relazione.pdf", size: 42, isImage: false }],
     });
     const last = document.querySelector("#messages .msg.user:last-of-type") as HTMLElement;
-    expect(last.textContent).toContain("guarda qui");
+    expect(last.textContent).toContain("look here");
     expect(last.querySelector(".msg-attachments")).not.toBeNull();
     expect(last.querySelector(".msg-attach-file-name")?.textContent).toBe("relazione.pdf");
   });
@@ -10337,8 +10340,8 @@ describe("Insert-in hint — Queue/Steer (webview)", () => {
 
   it("a keyup swallowed by a system overlay does not leave Steer stuck (macOS ⌘⇧4 / ⌘⇧5)", async () => {
     // The screenshot / screen-recording overlay takes Cmd's keyup for itself, and the VS Code window
-    // is never deactivated — so neither `keyup` nor `blur` ever reaches this page (field report: "lo
-    // stato steer rimane incastrato"). The next ordinary KEY carries the real modifier state, so the
+    // is never deactivated — so neither `keyup` nor `blur` ever reaches this page (field report: "the
+    // steer state stays stuck"). The next ordinary KEY carries the real modifier state, so the
     // pill cannot stay lit until the user happens to tap Ctrl/Cmd again.
     await loadView();
     hostMessage({ type: "status", active: true });
@@ -10984,9 +10987,9 @@ describe("Esc closes the TOP-MOST overlay (LIFO)", () => {
 
 describe("the reading position survives a transcript rebuild", () => {
   const MSGS = [
-    { role: "user", content: "prima domanda", timestamp: 1 },
-    { role: "assistant", content: "prima risposta", timestamp: 2 },
-    { role: "user", content: "seconda domanda", timestamp: 3 },
+    { role: "user", content: "first question", timestamp: 1 },
+    { role: "assistant", content: "first answer", timestamp: 2 },
+    { role: "user", content: "second question", timestamp: 3 },
   ];
 
   const box = () => document.getElementById("messages") as HTMLElement;

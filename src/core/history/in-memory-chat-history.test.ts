@@ -39,14 +39,14 @@ describe("InMemoryChatHistory", () => {
 describe("InMemoryChatHistory — the summary checkpoint sets where the window starts", () => {
   it("conversation() starts AT the checkpoint; the past stays stored and readable", () => {
     const history = new InMemoryChatHistory();
-    history.add(msg({ role: "user", content: "vecchio" }));
-    history.add(msg({ role: "assistant", content: "risposta vecchia" }));
-    history.add(msg({ role: "user", content: "Riepilogo", synthetic: true }));
-    history.add(msg({ role: "assistant", content: "## Obiettivo …", synthetic: true }));
-    history.add(msg({ role: "user", content: "nuovo" }));
+    history.add(msg({ role: "user", content: "old" }));
+    history.add(msg({ role: "assistant", content: "old answer" }));
+    history.add(msg({ role: "user", content: "Summary", synthetic: true }));
+    history.add(msg({ role: "assistant", content: "## Goal …", synthetic: true }));
+    history.add(msg({ role: "user", content: "new" }));
 
     // The window BEGINS at the checkpoint — the past is not sent...
-    expect(history.conversation().map((m) => m.content)).toEqual(["Riepilogo", "## Obiettivo …", "nuovo"]);
+    expect(history.conversation().map((m) => m.content)).toEqual(["Summary", "## Goal …", "new"]);
     // ...but it is still there: not deleted, only out of the window.
     expect(history.all()).toHaveLength(5);
   });
@@ -63,13 +63,13 @@ describe("InMemoryChatHistory — the summary checkpoint sets where the window s
     const history = new InMemoryChatHistory();
     history.add(msg({ role: "user", content: "antichissimo" }));
     history.add(msg({ role: "user", content: "Vecchio riepilogo", synthetic: true }));
-    history.add(msg({ role: "assistant", content: "vecchio stato", synthetic: true }));
+    history.add(msg({ role: "assistant", content: "old state", synthetic: true }));
     history.add(msg({ role: "user", content: "in mezzo" }));
-    history.add(msg({ role: "user", content: "Riepilogo", synthetic: true }));
-    history.add(msg({ role: "assistant", content: "nuovo stato", synthetic: true }));
-    history.add(msg({ role: "user", content: "ultimo" }));
+    history.add(msg({ role: "user", content: "Summary", synthetic: true }));
+    history.add(msg({ role: "assistant", content: "new state", synthetic: true }));
+    history.add(msg({ role: "user", content: "last" }));
 
-    expect(history.conversation().map((m) => m.content)).toEqual(["Riepilogo", "nuovo stato", "ultimo"]);
+    expect(history.conversation().map((m) => m.content)).toEqual(["Summary", "new state", "last"]);
     expect(history.all()).toHaveLength(7);
   });
 
@@ -78,8 +78,8 @@ describe("InMemoryChatHistory — the summary checkpoint sets where the window s
     // With no marker left, the window restarts from what survived — that is
     // "go back to before that compaction", not a leak.
     const history = new InMemoryChatHistory();
-    history.add(msg({ role: "user", content: "prima della compaction" }));
+    history.add(msg({ role: "user", content: "before compaction" }));
 
-    expect(history.conversation().map((m) => m.content)).toEqual(["prima della compaction"]);
+    expect(history.conversation().map((m) => m.content)).toEqual(["before compaction"]);
   });
 });

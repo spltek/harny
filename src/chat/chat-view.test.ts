@@ -686,7 +686,7 @@ describe("ChatViewProvider", () => {
     (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
       {
         id: "s1",
-        name: "Sessione morta",
+        name: "Dead session",
         createdAt: 1,
         updatedAt: 2,
         messageCount: 3,
@@ -1300,13 +1300,13 @@ describe("ChatViewProvider", () => {
     await provider.createNew(); // s1
 
     expect(registry.get("s1")!.model).toBeUndefined(); // new session: no model yet
-    await handler({ type: "send", text: "primo messaggio" });
+    await handler({ type: "send", text: "first message" });
 
     // both entries persist: refresh/switch re-renders from history, and the
     // next "now do it" (after picking a model) still sees this message.
     const msgs = registry.get("s1")!.agent.getMessages();
     expect(msgs.map((m) => m.role)).toEqual(["user", "assistant"]);
-    expect(msgs[0].content).toBe("primo messaggio");
+    expect(msgs[0].content).toBe("first message");
     expect(msgs[1].content).toContain("Select a model");
     expect(view.webview.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: "error", error: expect.stringContaining("Select a model") }),
@@ -4106,14 +4106,14 @@ describe("ChatViewProvider compaction", () => {
   // request small. ──
 
   const EIGHT_TURNS: ChatMessage[] = [
-    { role: "user", content: "prima domanda", timestamp: 1 },
-    { role: "assistant", content: "prima risposta", timestamp: 2 },
-    { role: "user", content: "seconda domanda", timestamp: 3 },
-    { role: "assistant", content: "seconda risposta", timestamp: 4 },
-    { role: "user", content: "terza domanda", timestamp: 5 },
-    { role: "assistant", content: "terza risposta", timestamp: 6 },
-    { role: "user", content: "quarta domanda", timestamp: 7 },
-    { role: "assistant", content: "quarta risposta", timestamp: 8 },
+    { role: "user", content: "first question", timestamp: 1 },
+    { role: "assistant", content: "first answer", timestamp: 2 },
+    { role: "user", content: "second question", timestamp: 3 },
+    { role: "assistant", content: "second answer", timestamp: 4 },
+    { role: "user", content: "third question", timestamp: 5 },
+    { role: "assistant", content: "third answer", timestamp: 6 },
+    { role: "user", content: "fourth question", timestamp: 7 },
+    { role: "assistant", content: "fourth answer", timestamp: 8 },
   ];
 
   it("KEEPS the summarized span in the session, and starts the window at the checkpoint", async () => {
@@ -4132,16 +4132,16 @@ describe("ChatViewProvider compaction", () => {
     const conv = rt.history.conversation();
 
     // The summarized span is still IN the session — nothing was thrown away…
-    expect(all.some((m) => m.content === "prima domanda")).toBe(true);
+    expect(all.some((m) => m.content === "first question")).toBe(true);
     expect(all.length).toBeGreaterThan(conv.length);
     // …the window BEGINS at the checkpoint…
     expect(conv[0].synthetic).toBe(true);
     expect(conv[1].synthetic).toBe(true);
-    expect(conv.some((m) => m.content === "prima domanda")).toBe(false);
+    expect(conv.some((m) => m.content === "first question")).toBe(false);
     // …and what gets PERSISTED is the whole thing, past included.
     const saved = (store.saveMessages as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1] as ChatMessage[];
     expect(saved).toHaveLength(all.length);
-    expect(saved.some((m) => m.content === "prima domanda")).toBe(true);
+    expect(saved.some((m) => m.content === "first question")).toBe(true);
   });
 
   it("a SECOND compaction folds the previous checkpoint in, and keeps the OLDER past", async () => {
@@ -4153,31 +4153,31 @@ describe("ChatViewProvider compaction", () => {
     const rt = registry.get("s1")!;
     rt.contextWindow = 200_000;
     rt.history.replace([
-      { role: "user", content: "antichissima domanda", timestamp: 1 },
-      { role: "assistant", content: "antichissima risposta", timestamp: 2 },
+      { role: "user", content: "ancient question", timestamp: 1 },
+      { role: "assistant", content: "ancient answer", timestamp: 2 },
       { role: "user", content: "Riepilogo", timestamp: 3, synthetic: true },
-      { role: "assistant", content: "vecchio stato", timestamp: 4, synthetic: true },
+      { role: "assistant", content: "old state", timestamp: 4, synthetic: true },
       { role: "user", content: "lavoro 1", timestamp: 5 },
-      { role: "assistant", content: "fatto 1", timestamp: 6 },
+      { role: "assistant", content: "done 1", timestamp: 6 },
       { role: "user", content: "lavoro 2", timestamp: 7 },
-      { role: "assistant", content: "fatto 2", timestamp: 8 },
+      { role: "assistant", content: "done 2", timestamp: 8 },
       { role: "user", content: "lavoro 3", timestamp: 9 },
-      { role: "assistant", content: "fatto 3", timestamp: 10 },
+      { role: "assistant", content: "done 3", timestamp: 10 },
     ]);
 
     await handler({ type: "compact" });
 
     const all = rt.history.all();
     // The past that sat BEFORE the previous checkpoint survives…
-    expect(all.some((m) => m.content === "antichissima domanda")).toBe(true);
+    expect(all.some((m) => m.content === "ancient question")).toBe(true);
     // …the previous pair is ABSORBED, never duplicated…
     expect(all.filter((m) => m.synthetic)).toHaveLength(2);
-    expect(all.some((m) => m.content === "vecchio stato")).toBe(false);
+    expect(all.some((m) => m.content === "old state")).toBe(false);
     // …and the window starts from the NEW checkpoint, the old past still excluded.
     const conv = rt.history.conversation();
     expect(conv[0].synthetic).toBe(true);
     expect(conv[1].content).toContain("new");
-    expect(conv.some((m) => m.content === "antichissima domanda")).toBe(false);
+    expect(conv.some((m) => m.content === "ancient question")).toBe(false);
   });
 
   it("the preserved past is NOT counted: only the active window is measured", async () => {
@@ -4192,7 +4192,7 @@ describe("ChatViewProvider compaction", () => {
       { role: "assistant", content: "Q".repeat(120_000), timestamp: 2 },
       { role: "user", content: "Riepilogo", timestamp: 3, synthetic: true },
       { role: "assistant", content: "## Goal\nx", timestamp: 4, synthetic: true },
-      { role: "user", content: "breve", timestamp: 5 },
+      { role: "user", content: "short", timestamp: 5 },
     ]);
 
     // The SESSION is big…
@@ -4210,26 +4210,26 @@ describe("ChatViewProvider compaction", () => {
     await provider.createNew(); // s1
     const rt = registry.get("s1")!;
     rt.history.replace([
-      { role: "user", content: "passato", timestamp: 1 },
-      { role: "assistant", content: "vecchia risposta", timestamp: 2 },
+      { role: "user", content: "past", timestamp: 1 },
+      { role: "assistant", content: "old answer", timestamp: 2 },
       { role: "user", content: "Riepilogo", timestamp: 3, synthetic: true },
       { role: "assistant", content: "## Goal\nx", timestamp: 4, synthetic: true },
-      { role: "user", content: "domanda 1", timestamp: 5 },
-      { role: "assistant", content: "risposta 1", timestamp: 6 },
-      { role: "user", content: "domanda 2", timestamp: 7 },
-      { role: "assistant", content: "risposta 2", timestamp: 8 },
+      { role: "user", content: "question 1", timestamp: 5 },
+      { role: "assistant", content: "answer 1", timestamp: 6 },
+      { role: "user", content: "question 2", timestamp: 7 },
+      { role: "assistant", content: "answer 2", timestamp: 8 },
     ]);
 
-    // Cut at "domanda 2" (index 6): the checkpoint and the past survive.
+    // Cut at "question 2" (index 6): the checkpoint and the past survive.
     await handler({ type: "truncateAt", index: 6 });
 
     expect(rt.history.conversation().map((m) => m.content)).toEqual([
       "Riepilogo",
       "## Goal\nx",
-      "domanda 1",
-      "risposta 1",
+      "question 1",
+      "answer 1",
     ]);
-    expect(rt.history.all().some((m) => m.content === "passato")).toBe(true);
+    expect(rt.history.all().some((m) => m.content === "past")).toBe(true);
   });
 
   it("a ✂ cut AT the checkpoint removes it: the surviving past becomes the window again", async () => {
@@ -4240,12 +4240,12 @@ describe("ChatViewProvider compaction", () => {
     await provider.createNew(); // s1
     const rt = registry.get("s1")!;
     rt.history.replace([
-      { role: "user", content: "passato", timestamp: 1 },
-      { role: "assistant", content: "vecchia risposta", timestamp: 2 },
+      { role: "user", content: "past", timestamp: 1 },
+      { role: "assistant", content: "old answer", timestamp: 2 },
       { role: "user", content: "Riepilogo", timestamp: 3, synthetic: true },
       { role: "assistant", content: "## Goal\nx", timestamp: 4, synthetic: true },
-      { role: "user", content: "domanda 1", timestamp: 5 },
-      { role: "assistant", content: "risposta 1", timestamp: 6 },
+      { role: "user", content: "question 1", timestamp: 5 },
+      { role: "assistant", content: "answer 1", timestamp: 6 },
     ]);
 
     // Cut at the checkpoint's own label (index 2): the pair and the tail go.
@@ -4253,10 +4253,10 @@ describe("ChatViewProvider compaction", () => {
 
     const all = rt.history.all();
     expect(all.some((m) => m.synthetic)).toBe(false); // the checkpoint is gone
-    expect(all.map((m) => m.content)).toEqual(["passato", "vecchia risposta"]);
+    expect(all.map((m) => m.content)).toEqual(["past", "old answer"]);
     // No marker left ⇒ the window restarts from what survived. That is "go back
     // to BEFORE that compaction", not a leak.
-    expect(rt.history.conversation().map((m) => m.content)).toEqual(["passato", "vecchia risposta"]);
+    expect(rt.history.conversation().map((m) => m.content)).toEqual(["past", "old answer"]);
   });
 
   // ── The fail-safe: a window that SHRINKS under a full session. A compaction
@@ -4299,8 +4299,8 @@ describe("ChatViewProvider compaction", () => {
     const big = 60;
     const history: ChatMessage[] = [];
     for (let i = 0; i < big; i++) {
-      history.push({ role: "user", content: `domanda ${i} ${"x".repeat(8000)}`, timestamp: i * 2 + 1 });
-      history.push({ role: "assistant", content: `risposta ${i} ${"y".repeat(8000)}`, timestamp: i * 2 + 2 });
+      history.push({ role: "user", content: `question ${i} ${"x".repeat(8000)}`, timestamp: i * 2 + 1 });
+      history.push({ role: "assistant", content: `answer ${i} ${"y".repeat(8000)}`, timestamp: i * 2 + 2 });
     }
     rt1.contextWindow = 32_000;
     rt1.history.replace(history);
@@ -4332,8 +4332,8 @@ describe("ChatViewProvider compaction", () => {
     // could read in one summary call.
     const big: ChatMessage[] = [];
     for (let i = 0; i < 60; i++) {
-      big.push({ role: "user", content: `domanda ${i} ${"x".repeat(8000)}`, timestamp: i * 2 + 1 });
-      big.push({ role: "assistant", content: `risposta ${i} ${"y".repeat(8000)}`, timestamp: i * 2 + 2 });
+      big.push({ role: "user", content: `question ${i} ${"x".repeat(8000)}`, timestamp: i * 2 + 1 });
+      big.push({ role: "assistant", content: `answer ${i} ${"y".repeat(8000)}`, timestamp: i * 2 + 2 });
     }
     rt.contextWindow = 1_000_000;
     rt.history.replace(big);
@@ -4354,10 +4354,10 @@ describe("ChatViewProvider compaction", () => {
     // …it fits the small model now…
     expect(estimateContextTokens(conv)).toBeLessThan(32_000);
     // …NOTHING was lost: the very first message is still in the session…
-    expect(rt.history.all().some((m) => m.content.startsWith("domanda 0"))).toBe(true);
+    expect(rt.history.all().some((m) => m.content.startsWith("question 0"))).toBe(true);
     // …and it was persisted whole.
     const saved = (store.saveMessages as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1] as ChatMessage[];
-    expect(saved.some((m) => m.content.startsWith("domanda 0"))).toBe(true);
+    expect(saved.some((m) => m.content.startsWith("question 0"))).toBe(true);
 
     // A SECOND check does NOT move the boundary again: the window is under the
     // threshold now, so the prefix stays put (the cache is not invalidated twice).
@@ -4493,7 +4493,7 @@ describe("ChatViewProvider compaction", () => {
     // measured 4 runs in 5 succeeding on the same input, so the retry is cheap insurance.
     const summarize = vi
       .fn()
-      .mockResolvedValueOnce("Ciao! Come posso aiutarti oggi?")
+      .mockResolvedValueOnce("Hi! How can I help you today?")
       .mockResolvedValueOnce("Summary of past interactions\n---\n## Goal\nok");
     const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
     const { registry, provider } = buildHarness(options);
@@ -5889,13 +5889,13 @@ describe("ChatViewProvider soft steering + queue", () => {
     await handler({
       type: "send",
       mode: "queue",
-      text: "guarda qui",
+      text: "look here",
       attachments: [{ name: "relazione.pdf", path: "/tmp/relazione.pdf", size: 42, isImage: false }],
     });
 
     expect(view.webview.postMessage).toHaveBeenCalledWith({
       type: "userMessage",
-      content: "guarda qui",
+      content: "look here",
       attachments: [{ name: "relazione.pdf", path: "/tmp/relazione.pdf", size: 42, isImage: false }],
       images: ["data:image/png;base64,iVBORw0KGgo="],
     });
@@ -6030,16 +6030,16 @@ describe("ChatViewProvider soft steering + queue", () => {
       { role: "user", content: "g", timestamp: 7 },
       { role: "assistant", content: "h", timestamp: 8 },
     ]);
-    const frase = "Ho tutto per descriverli senza inventare. Scrivo la sezione";
+    const sentence = "I have everything to describe them without inventing anything. Writing the section";
     agent.streaming = true;
-    agent.emit({ type: "text_delta", content: frase }); // the StreamTee accumulates it
+    agent.emit({ type: "text_delta", content: sentence }); // the StreamTee accumulates it
     view.webview.postMessage.mockClear();
 
     const compacted = await provider.compactForOverflow("s1");
 
     expect(compacted).toBe(true);
     const refresh = view.webview.postMessage.mock.calls.map((c) => c[0]).find((m: any) => m?.type === "refresh");
-    expect(refresh).toMatchObject({ streaming: true, liveAnswer: frase });
+    expect(refresh).toMatchObject({ streaming: true, liveAnswer: sentence });
   });
 
   it("does NOT ship a live buffer on a refresh when nothing is running", async () => {

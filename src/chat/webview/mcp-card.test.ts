@@ -138,8 +138,8 @@ describe("the clicks", () => {
   });
 
   it("the pill answers IMMEDIATELY, without waiting for the host round trip", () => {
-    // Field report: "quando spengo l'mcp ci mette tanto a modificare il toggle, anche qualche
-    // secondo". The pill used to repaint only when the host's config push came back — and that push
+    // Field report: "when I turn the mcp off it takes ages to change the toggle, a couple of
+    // seconds even". The pill used to repaint only when the host's config push came back — and that push
     // re-fetches every provider's model list first, so one slow host meant seconds of a switch that
     // looked stuck. The click must move it NOW; the config that follows is what corrects a failed
     // write, not what enables the paint.

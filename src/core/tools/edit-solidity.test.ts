@@ -18,7 +18,7 @@ describe("applyEdits — exact matching", () => {
     expect(applyEdits("start-middle-end", [{ oldText: "end", newText: "E" }]).content).toBe("start-middle-E");
   });
   it("replaces the whole file", () => {
-    expect(applyEdits("tutto", [{ oldText: "tutto", newText: "nulla" }]).content).toBe("nulla");
+    expect(applyEdits("all", [{ oldText: "all", newText: "nothing" }]).content).toBe("nothing");
   });
   it("handles empty file and empty oldText (explicit error)", () => {
     expect(applyEdits("", [{ oldText: "x", newText: "y" }]).failed.length).toBe(1);

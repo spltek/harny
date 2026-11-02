@@ -74,7 +74,8 @@ export class VscodeWorkspacePorts implements WorkspacePorts {
     // heuristic includes "a window that already shows this workspace", which in a machine with two
     // instances (the real one and the Extension Development Host, same profile) brought the OTHER
     // window forward instead of loading the folder in the one the user clicked in. Field report:
-    // "dall'istanza di debug salta in quella principale, forse perché lì la cartella è già aperta".
+    // "from the debug instance it jumps to the main one, probably because the folder is already
+    // open there".
     // Every flow here means ONE thing — this window should now show that folder — so it is said
     // explicitly. It also stops the deprecation warning in the extension host log.
     await commands.executeCommand("vscode.openFolder", Uri.file(folder), { forceReuseWindow: true });

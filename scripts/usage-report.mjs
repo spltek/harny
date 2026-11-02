@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * usage-report — "spendo troppo?" answered with the numbers Harny already stored.
+ * usage-report — "am I spending too much?" answered with the numbers Harny already stored.
  *
  * READ-ONLY by construction: the database is opened with `readOnly: true`, so a report can never
  * become a mutation. It reads `<harny home>/sessions.db` (the same file the extension opens) and

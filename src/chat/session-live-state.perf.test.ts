@@ -99,7 +99,7 @@ describe("SessionLiveState — the price of remembering every session's turn", (
 
     // The projection is what CROSSES to the webview: it must not carry the 3 MB.
     const bytes = JSON.stringify(live.projection() ?? {}).length;
-    console.log(`[live] proiezione dopo 3MB di output: ${(bytes / 1024).toFixed(1)}KB`);
+    console.log(`[live] projection after 3MB of output: ${(bytes / 1024).toFixed(1)}KB`);
     expect(bytes).toBeLessThan(200 * 1024);
   });
 

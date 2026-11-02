@@ -223,8 +223,8 @@ body {
   /* 100%, NOT 100vh. When the panel goes under the floor above, the window
      grows a HORIZONTAL scrollbar and that bar eats ~15px of height; 100vh is
      measured WITHOUT scrollbars, so the body ended up ~15px taller than the
-     area actually drawn and the panel grew a SECOND, vertical bar — the
-     "barra sulla finestra" that used to appear. A percentage always matches
+     area actually drawn and the panel grew a SECOND, vertical bar — the extra
+     bar on the window that used to appear. A percentage always matches
      the viewport the panel is drawn in. */
   height: 100%;
   /* Relative so the modal overlays are laid out against the PANEL CONTENT
@@ -1269,9 +1269,9 @@ body {
   padding: 1px 8px;
   border-bottom: 1px solid var(--border);
 }
-/* ESPERIMENTO (non committato): lo sfondo dei tool come quello del thinking —
-   nessun riquadro, si vede il fondo del pannello. Prima: background var(--tool-bg)
-   (#1a1a1a sul tema scuro, più CHIARO del fondo #111111). */
+/* EXPERIMENT: the tool cards take the thinking one's background — no fill of their own,
+   so the panel's own background shows through (the hairline frame stays). It used to be
+   background var(--tool-bg): #1a1a1a on the dark theme, LIGHTER than the #111111 panel. */
 .msg.tool {
   align-self: flex-start;
   background: transparent;

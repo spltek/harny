@@ -300,7 +300,7 @@ describe("splitSummary — the two blocks a model was asked for", () => {
 describe("isUsableSummary — a reply that is not the document", () => {
   it("accepts the two-block document, and the fallback prompt around a real body", () => {
     expect(isUsableSummary("Summary of past interactions\n---\n## Goal\nx")).toBe(true);
-    expect(isUsableSummary("Riepilogo delle interazioni\n---\n## Fatto\ny")).toBe(true);
+    expect(isUsableSummary("Summary of interactions\n---\n## Done\ny")).toBe(true);
     // No `---`: splitSummary supplies its own prompt, and the BODY is still a document.
     expect(isUsableSummary("## Goal\nx\n## Done\ny")).toBe(true);
   });
@@ -435,7 +435,7 @@ describe("planCompactionToBudget — what is NOT worth summarizing again", () =>
         content: "x".repeat(12_000),
         timestamp: 4 + i,
       })),
-      { role: "assistant", content: "fatto", timestamp: 40 },
+      { role: "assistant", content: "done", timestamp: 40 },
     ];
 
     const plan = planCompactionToBudget(messages, 10_000);
@@ -1141,8 +1141,8 @@ describe("compactor: real-data context accounting", () => {
 function bigHistory(turns: number, size = 4000): ChatMessage[] {
   const out: ChatMessage[] = [];
   for (let i = 0; i < turns; i++) {
-    out.push({ role: "user", content: `domanda ${i}`.padEnd(size, "x"), timestamp: i * 2 + 1 });
-    out.push({ role: "assistant", content: `risposta ${i}`.padEnd(size, "y"), timestamp: i * 2 + 2 });
+    out.push({ role: "user", content: `question ${i}`.padEnd(size, "x"), timestamp: i * 2 + 1 });
+    out.push({ role: "assistant", content: `answer ${i}`.padEnd(size, "y"), timestamp: i * 2 + 2 });
   }
   return out;
 }
