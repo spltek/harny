@@ -253,6 +253,8 @@ body {
   overflow: hidden; /* keep the scrolling list inside the rounded corners */
   flex-shrink: 0;
 }
+/* NO rule under the title: the card is one tone-on-tone surface, so the header is
+   separated from the search row and the list by SPACE, not by an outline line. */
 #session-head {
   display: flex;
   align-items: center;
@@ -261,7 +263,6 @@ body {
   font-weight: 700;
   font-size: var(--fs-md);
   color: var(--fg-strong);
-  border-bottom: 1px solid var(--border);
   cursor: pointer;
   user-select: none;
 }
