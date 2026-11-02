@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.8] - 2026-11-02
+
 ### Fixed
 
 - **⌘C / Ctrl+C copies the transcript every time, not just the first time.** Field report: _"the first ⌘C loads the clipboard, then it keeps the first capture for ever — and the paste ends up in the prompt."_ The panel never had a copy handler: it relied on the browser's own copy, which reads the **focused frame's selection**. That is the transcript only while the DOM selection is alive AND the panel's focus is still there; the caret returns to the prompt after every `done` (and a repaint of the live bubble rebuilds its nodes), and from then on Chromium copies the **textarea's** selection — an empty one — so the clipboard keeps its previous content, which is also why the paste landed in the prompt holding old text. The chord is now owned, exactly like ⌘F: a capture-phase `keydown` reads the selection **at that keystroke**, `preventDefault`s the native path and writes the text itself (`navigator.clipboard`, with `execCommand` as the fallback for a webview where the write is refused). Two consequences are the point of the fix: the same passage can be copied twice and the next one replaces it, and the selection SURVIVES the copy instead of being collapsed by a focus change. It also remembers the last real selection over the transcript as a **cloned range** (`lastSelectionRange`, refreshed on `selectionchange` and on `mouseup`) and falls back to it when the DOM selection is gone — honoured only while its nodes are still on screen, so a rebuild invalidates it instead of resurrecting text that is no longer there. A control carrying its **own** selection (a prompt the user select-all'd) is left to the browser, which is the only one that can see it, and the context menu's Copy now reports from the same source. Four tests pin it: every keystroke replaces the clipboard, a copy still lands after the caret went back to the prompt, a textarea's own selection stays the browser's, and nothing at all happens with no selection.
@@ -1850,7 +1852,8 @@ Completions protocol.
 - **Diagnostics**: per-turn lines in _Output > Harny_, an optional request log
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
-[Unreleased]: https://github.com/spltek/harny/compare/v0.9.7...HEAD
+[Unreleased]: https://github.com/spltek/harny/compare/v0.9.8...HEAD
+[0.9.8]: https://github.com/spltek/harny/compare/v0.9.7...v0.9.8
 [0.9.7]: https://github.com/spltek/harny/compare/v0.9.6...v0.9.7
 [0.9.5]: https://github.com/spltek/harny/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/spltek/harny/compare/v0.9.3...v0.9.4
