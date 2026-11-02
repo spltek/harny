@@ -135,14 +135,16 @@ describe("MCP tools panel, host ⇄ webview ⇄ server", () => {
     panelSave().click();
 
     // 1. THE SESSION carries the decision, as the name a scope holds.
-    const scope = await vi.waitFor(() => {
+    const saved = await vi.waitFor(() => {
       const value = store.summary(sess.id)?.toolScope;
-      // The server stays ON for this session (its `echo` is enabled): only `ping` is off, by name —
-      // and the Analyze list is the session's own (empty here).
-      expect(value).toEqual({ mcp: ["test"], off: ["mcp__test__ping"], analyze: [] });
+      // `ping` is off by name, and the Analyze list is the session's own (empty here). The server
+      // itself is NOT switched on by this save: `mcp` stays empty, because a new session starts with
+      // every server off and "which tools" is not "does this conversation use it" — editing the
+      // tools of a switched-off server used to turn it back on.
+      expect(value).toEqual({ mcp: [], off: ["mcp__test__ping"], analyze: [] });
       return value;
     });
-    void scope;
+    void saved;
     // 2. …and the CONFIG FILE is untouched: no `excludeTools` appeared.
     expect(config.readMcpServers().test.excludeTools).toBeUndefined();
     const raw = JSON.parse(readFileSync(join(dir, "config.json"), "utf8"));
@@ -152,10 +154,21 @@ describe("MCP tools panel, host ⇄ webview ⇄ server", () => {
     // 3. Nothing reconnected: the registry still holds BOTH tools (the scope is what filters the
     //    per-turn list, so a save no longer respawns an npx process).
     expect(manager.getTools().map((t) => t.name)).toEqual(["mcp__test__echo", "mcp__test__ping"]);
-    // 4. The model's per-turn list is filtered by that scope.
-    const defs = toolDefinitionsForMode(manager.getTools(), "agent", {
-      scope: { mcp: ["test"], off: ["mcp__test__ping"], analyze: [] },
+    // 4. The card's switch is the other half of the answer: it is still OFF, and flipping it on is
+    //    what makes the SAVED tool choice reach the model. Waiting for the card's own count first:
+    //    the switch posts the scope it was DRAWN from, so flipping it before the payload lands would
+    //    answer with the old one.
+    await vi.waitFor(() => expect(toolsKey().textContent).toBe("(1/2 tools)"), { timeout: 5000 });
+    const cardSwitch = document.querySelector<HTMLButtonElement>("#mcp-list .harny-switch, .mcp-status .harny-switch")!;
+    expect(cardSwitch.getAttribute("aria-checked")).toBe("false");
+    cardSwitch.click();
+    const used = await vi.waitFor(() => {
+      const value = store.summary(sess.id)?.toolScope;
+      expect(value).toEqual({ mcp: ["test"], off: ["mcp__test__ping"], analyze: [] });
+      return value!;
     });
+    // 5. The model's per-turn list is filtered by that scope.
+    const defs = toolDefinitionsForMode(manager.getTools(), "agent", { scope: used });
     expect(defs.map((d) => d.name)).toEqual(["mcp__test__echo"]);
 
     // The CARD reflects the session (it comes from the same payload the panel reads): waiting for it

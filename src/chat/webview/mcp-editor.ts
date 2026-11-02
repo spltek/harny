@@ -79,6 +79,16 @@ export function parseMcpPairs(text: string): Record<string, string> {
 export function createMcpEditor(deps: McpEditorDeps): McpEditor {
   let servers: Record<string, McpEditorServerLike> = {};
   let selected = "";
+  /**
+   * Has the user moved the Enabled switch in this form?
+   *
+   * Until they do, the checkbox BELONGS to the payload: a background push (the card's name toggle, a
+   * second panel, an edit of the config file) can disable a server while this modal is open, and
+   * saving the stale `true` silently re-enabled it. The report was "if the mcp was disabled it must
+   * stay that way". Typing in any other field is NOT this switch, so it keeps following the payload;
+   * once it is touched, it is the user's and nothing overwrites it.
+   */
+  let enabledTouched = false;
 
   function refreshSelect(): void {
     deps.select.innerHTML = "";
@@ -105,6 +115,7 @@ export function createMcpEditor(deps: McpEditorDeps): McpEditor {
       .map(([k, v]) => `${k}=${v}`)
       .join("\n");
     deps.enabled.checked = s.enabled !== false;
+    enabledTouched = false;
     deps.testResult.textContent = "";
     deps.testResult.className = "mcp-io";
   }
@@ -118,6 +129,7 @@ export function createMcpEditor(deps: McpEditorDeps): McpEditor {
     deps.env.value = "";
     deps.headers.value = "";
     deps.enabled.checked = true;
+    enabledTouched = false;
   }
 
   /** Read the form into a server config (args one per line, env/headers KEY=VALUE). */
@@ -187,6 +199,9 @@ export function createMcpEditor(deps: McpEditorDeps): McpEditor {
     refreshSelect();
     deps.select.value = target;
     loadIntoForm(target);
+  });
+  deps.enabled.addEventListener("change", () => {
+    enabledTouched = true;
   });
   deps.add.addEventListener("click", () => {
     // Same rule as a selection change: the form in front of you is kept before a new entry opens.
@@ -264,8 +279,11 @@ export function createMcpEditor(deps: McpEditorDeps): McpEditor {
         else clearForm();
         deps.modal.classList.remove("hidden");
       } else if (!deps.modal.classList.contains("hidden")) {
-        // A background change (e.g. the card toggle): refresh the open editor list.
+        // A background change (e.g. the card toggle): refresh the open editor list. The switch
+        // follows the payload as long as the user has not touched it (see `enabledTouched`), so a
+        // server disabled behind this modal cannot be switched back on by a plain Save.
         refreshSelect();
+        if (!enabledTouched) deps.enabled.checked = servers[selected]?.enabled !== false;
       }
     },
     error(reason: string): void {

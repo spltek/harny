@@ -102,6 +102,32 @@ describe("opening", () => {
     ui.render({ servers: SERVERS }, false);
     expect(document.getElementById("modal")!.classList.contains("hidden")).toBe(true);
   });
+
+  it("a server disabled behind the open modal stays disabled on save", () => {
+    // The report: "if the mcp was disabled it must stay that way". A background push (the card's name
+    // toggle, a second panel, the config file) can disable a server while this modal is open; the
+    // form used to keep the `enabled: true` it loaded, and a plain Save turned the server back ON.
+    ui.render({ servers: SERVERS }, true);
+    expect(field("enabled").checked).toBe(true);
+
+    ui.render({ servers: { files: { ...SERVERS.files, enabled: false } } }, false);
+    expect(field("enabled").checked).toBe(false);
+
+    click("save");
+    expect(lastPost("saveMcpServers").servers.files.enabled).toBe(false);
+  });
+
+  it("…but a switch the user moved is the user's: no background push overwrites it", () => {
+    ui.render({ servers: SERVERS }, true);
+    field("enabled").checked = false;
+    field("enabled").dispatchEvent(new Event("change"));
+
+    ui.render({ servers: SERVERS }, false); // the payload still says enabled: true
+    expect(field("enabled").checked).toBe(false);
+
+    click("save");
+    expect(lastPost("saveMcpServers").servers.files.enabled).toBe(false);
+  });
 });
 
 describe("the draft", () => {

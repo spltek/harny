@@ -1814,9 +1814,13 @@ export class ChatViewProvider implements WebviewViewProvider {
           ...declared.map((name) => prefix + sanitizeToolNamePart(name)),
         ];
         const mcp = previous.mcp.filter((name) => name !== server);
-        // A server counts as ON as soon as one of its tools is: an empty selection means the
-        // session is not using it at all.
-        if (all.some((name) => wanted.has(name))) mcp.push(server);
+        // WHETHER this session uses the server is the CARD's switch; which of its tools the model
+        // sees is this panel's. So a server that was NOT in the scope stays out of it: it used to be
+        // pushed as soon as one tool was picked, which turned a server the user had switched off
+        // back ON just for editing its tools. The other direction keeps the old meaning of
+        // "expose no tool of this server": a server the session WAS using, left with every tool
+        // off, drops out of the scope.
+        if (previous.mcp.includes(server) && all.some((name) => wanted.has(name))) mcp.push(server);
         rt.toolScope = { mcp, off, analyze };
         this.commitSetting(() => this.sessions.saveSettings(rt.sessionId, { toolScope: rt.toolScope }));
         // The panel's answer: success closes the popover, a failure keeps the draft. It names the

@@ -1954,8 +1954,10 @@ describe("ChatViewProvider", () => {
 
     await handler({ type: "setMcpToolSelection", server: "test", enabled: ["echo"], analyze: ["echo"] });
 
+    // `mcp` stays EMPTY: a new session starts with every server switched off, and picking tools is
+    // not the switch (see the next test).
     expect(registry.get("s1")!.toolScope).toEqual({
-      mcp: ["test"],
+      mcp: [],
       off: ["mcp__test__drop_table"],
       analyze: ["mcp__test__echo"],
     });
@@ -1964,6 +1966,44 @@ describe("ChatViewProvider", () => {
     expect(view.webview.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: "mcpToolSelectionSaved", server: "test", ok: true }),
     );
+  });
+
+  it("a tools save never turns the server ON (or OFF) in the session: that is the card's switch", async () => {
+    // The report: "if the mcp was disabled it must stay that way". The tools panel's Save answers
+    // "which of this server's tools may the model see"; whether the session USES the server is the
+    // card's on/off switch. They used to be one decision — the save pushed the server into the scope
+    // as soon as one tool was picked, so editing the tools of a switched-off server turned it back
+    // ON behind the user's back (and un-ticking the last tool switched a used one OFF).
+    const mcp = {
+      connect: vi.fn(async () => {}),
+      getTools: () => [],
+      getStatuses: () => [
+        { name: "test", ok: true, enabled: true, toolCount: 2, tools: [{ name: "echo" }, { name: "ping" }] },
+      ],
+    } as any;
+    const { provider, registry } = buildHarness({
+      mcp,
+      providers: {
+        getProvider: vi.fn(),
+        saveModelSelection: vi.fn(),
+        readMcpServers: vi.fn(() => ({ test: { command: "node" } })),
+        saveMcpServers: vi.fn(() => true),
+      } as unknown as ProviderCatalog,
+    });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1 — every server starts switched off
+    expect(registry.get("s1")!.toolScope?.mcp).toEqual([]);
+
+    // OFF stays OFF, and the choice of tools is still recorded for when it is switched on.
+    await handler({ type: "setMcpToolSelection", server: "test", enabled: ["echo"], analyze: [] });
+    expect(registry.get("s1")!.toolScope?.mcp).toEqual([]);
+    expect(registry.get("s1")!.toolScope?.off).toEqual(["mcp__test__ping"]);
+
+    // ON stays ON — exposing no tool of a server the session IS using drops it from the scope, which
+    // is the old, deliberate meaning of "None".
+    await handler({ type: "setToolScope", scope: { mcp: ["test"], off: [], analyze: [] } });
+    await handler({ type: "setMcpToolSelection", server: "test", enabled: ["echo"], analyze: [] });
+    expect(registry.get("s1")!.toolScope?.mcp).toEqual(["test"]);
   });
 
   it("a server name that needs SANITIZING round-trips: one spelling, on the host's side", async () => {
@@ -1992,9 +2032,9 @@ describe("ChatViewProvider", () => {
     // The panel wants `write` only.
     await handler({ type: "setMcpToolSelection", server: "my-server", enabled: ["write"] });
 
-    // 1. The SCOPE holds the registered spelling.
+    // 1. The SCOPE holds the registered spelling. (`mcp` is empty: the session was not using it.)
     expect(registry.get("s1")!.toolScope).toEqual({
-      mcp: ["my-server"],
+      mcp: [],
       off: ["mcp__my_server__read_file"],
       analyze: [],
     });
@@ -2286,7 +2326,7 @@ describe("ChatViewProvider", () => {
       analyze: ["a", 7, "  ", "ghost"],
     });
     expect(registry.get("s1")!.toolScope).toEqual({
-      mcp: ["test"],
+      mcp: [], // the session was not using the server, and picking tools is not the switch
       off: ["mcp__test__b"],
       analyze: ["mcp__test__a"],
     });
