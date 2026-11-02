@@ -21,10 +21,11 @@ reports/
 # VS Code extension packaging
 *.vsix
 
-# Environment / secrets (commit only .env.example)
+# Environment / secrets — never committed. There is deliberately no `.env.example`: nothing in
+# this repo reads a `.env` file. The two variables the extension actually honours
+# (`OPENAI_API_KEY`, `HARNY_HOME`) are SHELL env vars, documented in README.
 .env
 .env.*
-!.env.example
 
 # OS / editor cruft
 .DS_Store
