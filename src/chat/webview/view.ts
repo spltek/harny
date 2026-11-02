@@ -368,6 +368,16 @@ let draftTargetIsAuto = compactionTargetIsAuto;
 // ── Streaming session state (chronological, per active chat) ──
 let currentResultEl: HTMLDivElement | null = null;
 let currentThinkingBlock: HTMLDivElement | null = null;
+/**
+ * The thinking block of the CURRENT segment once the answer has started: settled (not pulsing)
+ * but still the block of this segment. The host keeps ONE `thinking` string per segment (it
+ * appends every delta, before AND during the answer — see session-live-state), so the finished
+ * transcript renders ONE block, and the replay path does the same. A second live block would be
+ * a duplicate that disappears at the next repaint: what the panel showed for a moment and what
+ * it shows afterwards must be the same thing. Reasoning that resumes mid-answer therefore
+ * EXTENDS this node (`settleThinkingBlock` keeps it) instead of opening another.
+ */
+let settledThinkingBlock: HTMLDivElement | null = null;
 let currentThinkingText = "";
 /**
  * Reasoning accumulated BEFORE its block exists. A block used to be opened at the first chunk to
@@ -2275,13 +2285,24 @@ function clearStreamingBubble(): void {
   currentResultEl = null;
 }
 
-/** Stop the live thinking block's pulse when it stops being the active one. */
-function clearThinkingBlock(): void {
+/** Stop the live thinking block's pulse and keep it EXTENDABLE (`settledThinkingBlock`):
+ * the answer started, but the model may go back to reasoning before the segment ends — and that
+ * reasoning belongs in the same block, in the same place (see `settledThinkingBlock`). */
+function settleThinkingBlock(): void {
+  if (!currentThinkingBlock) return;
   settlePulse(currentThinkingBlock);
   // A block that never said anything (a stray "." from the provider) is dropped instead of
   // staying in the transcript as an empty "Thought during this answer".
-  if (currentThinkingBlock && !hasMeaningfulThinking(currentThinkingText)) currentThinkingBlock.remove();
+  if (hasMeaningfulThinking(currentThinkingText)) settledThinkingBlock = currentThinkingBlock;
+  else currentThinkingBlock.remove();
   currentThinkingBlock = null;
+}
+
+/** End the segment's thinking block for good (tool boundary, turn end, reset): nothing more may
+ * extend it, so a later reasoning phase opens a block of its own after the tool call. */
+function clearThinkingBlock(): void {
+  settleThinkingBlock();
+  settledThinkingBlock = null;
 }
 
 /** Empty-session greeting. The brand mark is the REAL media/icon.svg (served
@@ -6193,7 +6214,7 @@ window.addEventListener("message", (e) => {
       // must not be enough to settle the reasoning either — closing it there split ONE
       // thought into two blocks, the second completing the sentence of the first (the
       // reported defect: reason, a lone newline, reason again).
-      if (currentThinkingBlock) clearThinkingBlock();
+      if (currentThinkingBlock) settleThinkingBlock();
       const resultEl = ensureResult();
       if (resultEl) {
         // `push`/`paint` scrolls: scrolling HERE would force one extra layout
@@ -6205,7 +6226,21 @@ window.addEventListener("message", (e) => {
     case "thinkingDelta": {
       // Empty thinking chunks must not create an empty thinking block.
       if (!msg.content) break;
-      if (!currentThinkingBlock) {
+      if (!currentThinkingBlock && settledThinkingBlock?.isConnected) {
+        // Reasoning RESUMED while the answer streams: extend the segment's own block (it is
+        // still on screen, just above the bubble) instead of opening a second one that the
+        // next repaint would fold away. The "must say something" rule still applies, or a
+        // stray "." would re-pulse a settled block.
+        pendingThinking += msg.content;
+        if (!hasMeaningfulThinking(pendingThinking)) break;
+        currentThinkingBlock = settledThinkingBlock;
+        settledThinkingBlock = null;
+        currentThinkingBlock.classList.remove("settling"); // re-pulsing, not fading out
+        currentThinkingBlock.classList.add("streaming");
+        phaseLockPulse(currentThinkingBlock);
+        currentThinkingText += pendingThinking;
+        pendingThinking = "";
+      } else if (!currentThinkingBlock) {
         // Buffer until the reasoning SAYS something (see pendingThinking): a lone "." must not
         // leave a section behind — neither now nor after a repaint (appendLiveText applies the
         // same rule, or the guard would only hold until the next switchView).

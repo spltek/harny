@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Reasoning that resumes MID-answer now extends the turn's thinking block instead of opening a second one.** Reported from the field: a `Thinking…` block, then the answer, then a second `Thought during this answer` block right under it — and at the next repaint the two folded back into one. That was the panel contradicting itself: the host keeps **one** `thinking` string per segment (it appends every delta, before AND during the answer), so the finished turn, the replay after a tab switch and the compaction rebuild all render ONE block, while the live view showed two for as long as the run lasted. The block is now the segment's own from the moment it opens: `settleThinkingBlock()` stops its pulse when the answer starts but **keeps the node** (`settledThinkingBlock`), and the next reasoning delta appends to it and re-pulses it instead of creating a sibling — same position (above the bubble), same `Thinking…` label, one item from the first chunk to the last. The rules that already existed are untouched: merging happens **per segment**, so a tool call still closes the block for good (`clearThinkingBlock`) and the reasoning after it opens its own, because extending the old one would file it above the tool output it is about; a stray `.` still cannot re-open a settled block (`hasMeaningfulThinking`); and a rebuild that throws the node away fails the `isConnected` check and falls back to a fresh block. The ratchet hunk moved by the same 21 lines (`stryker/webview.conf.json` 6193-6225) and its anchor now names `settleThinkingBlock`, so the mutation floor kept covering the statements it was measured on. Two tests drive it: a resumed reasoning asserting ONE block holding both halves above ONE answer bubble, and a tool boundary asserting the second phase gets a block of its own.
+
 ## [0.9.7] - 2026-11-02
 
 ### Fixed

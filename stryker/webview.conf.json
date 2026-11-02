@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@stryker-mutator/core/schema/stryker-schema.json",
   "testRunner": "vitest",
-  "mutate": ["src/chat/webview/view.ts:6172-6204"],
+  "mutate": ["src/chat/webview/view.ts:6193-6225"],
   "coverageAnalysis": "perTest",
   "reporters": ["clear-text", "json"],
   "jsonReporter": { "fileName": "reports/mutation.json" },

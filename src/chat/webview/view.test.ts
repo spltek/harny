@@ -1728,6 +1728,57 @@ describe("view webview client", () => {
     expect(blocks[0].querySelector(".thinking-body")?.textContent).toContain("poi la store");
   });
 
+  it("keeps ONE thinking block when the reasoning RESUMES mid-answer (no second item)", async () => {
+    // Reported: a "Thinking…" block, then the answer, then a SECOND "Thought during this
+    // answer" block — and at the next repaint the two folded back into one. The host keeps ONE
+    // `thinking` string per segment (before AND during the answer), so the finished turn and
+    // the replay both render ONE block: the live view must show that same thing from the
+    // start, i.e. the resumed reasoning EXTENDS the block already on screen.
+    await loadView();
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+
+    hostMessage({ type: "thinkingDelta", content: "Cerco dove e installata la skill. " });
+    hostMessage({ type: "textDelta", content: "Guardo il codice." });
+    hostMessage({ type: "thinkingDelta", content: "Forse in ~/.pi/agent/skills. " });
+    hostMessage({ type: "textDelta", content: " Rimuovo." });
+    await new Promise((r) => setTimeout(r, 40));
+
+    const blocks = document.querySelectorAll(".thinking-block");
+    expect(blocks.length).toBe(1); // ONE item, not two collapsing later
+    (blocks[0].querySelector(".thinking-header") as HTMLElement).click();
+    const body = blocks[0].querySelector(".thinking-body")?.textContent ?? "";
+    expect(body).toContain("Cerco dove e installata la skill"); // the first half
+    expect(body).toContain("Forse in ~/.pi/agent/skills"); // the resumed half, same block
+
+    // …and merging must not cost the answer its ONE bubble, nor reorder anything.
+    const answers = [...document.querySelectorAll(".msg.assistant")];
+    expect(answers).toHaveLength(1);
+    expect(answers[0].textContent).toContain("Guardo il codice. Rimuovo.");
+    // The block stays where the reasoning happened: above the answer.
+    expect(blocks[0].compareDocumentPosition(answers[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("…but a TOOL call ends the segment: the reasoning that follows opens its own block", async () => {
+    // Merging is per SEGMENT. A tool call commits the assistant message, so the reasoning that
+    // comes after it is a different thought, in a different place in the story of the run —
+    // extending the old block would file it before the tool output it is about.
+    await loadView();
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+
+    hostMessage({ type: "thinkingDelta", content: "Prima fase" });
+    hostMessage({ type: "textDelta", content: "Uso uno strumento." });
+    hostMessage({ type: "toolCall", id: "c1", name: "Read", arguments: { path: "a.ts" } });
+    hostMessage({ type: "thinkingDelta", content: "Seconda fase" });
+    await new Promise((r) => setTimeout(r, 40));
+
+    const blocks = [...document.querySelectorAll(".thinking-block")];
+    expect(blocks.length).toBe(2);
+    expect(blocks[1].textContent).toContain("Seconda fase");
+    expect(blocks[0].textContent).not.toContain("Seconda fase");
+  });
+
   it("a delta that carries NO text paints nothing and does not close the reasoning", async () => {
     // Providers emit a trailing/leading EMPTY chunk, and a malformed one can omit the field
     // outright: `currentRawText += undefined` would paint the word "undefined", so the guard
