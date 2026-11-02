@@ -11721,3 +11721,139 @@ describe("the lock table (what is inert while a session works)", () => {
     expect(wrong).toEqual([]);
   });
 });
+
+describe("⌘C / Ctrl+C: the OS copy shortcut (webview)", () => {
+  // A webview has no native Copy we can rely on: the browser copies the FOCUSED frame's selection,
+  // and here that frame is the panel — where the caret lives in the prompt as often as in the
+  // transcript. Reported from the field: the first ⌘C loaded the clipboard, every one after it
+  // kept the FIRST capture. The chord is owned now (see `copyableSelection`), and these tests pin
+  // both halves of it: it reads the selection at every keystroke, and it still finds the passage
+  // when the DOM selection has been collapsed by the caret coming back to the prompt.
+  const COPY = { key: "c", metaKey: true, ctrlKey: true };
+
+  /** A clipboard that records what reached it, and the undo for it. */
+  function spyClipboard(): { written: string[]; restore: () => void } {
+    const before = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const written: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (t: string) => void written.push(t) },
+      configurable: true,
+    });
+    return {
+      written,
+      restore: () => {
+        if (before) Object.defineProperty(navigator, "clipboard", before);
+        else Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+      },
+    };
+  }
+
+  /** Select one rendered message, exactly as a drag would, and let the panel notice (jsdom does
+   *  not fire `selectionchange` on its own; every real browser does). */
+  function selectMessage(index: number): string {
+    const bubble = document.querySelectorAll("#messages .msg")[index]!;
+    const range = document.createRange();
+    range.selectNodeContents(bubble);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+    return sel.toString();
+  }
+
+  function pressCopy(target: EventTarget = window): KeyboardEvent {
+    const ev = new KeyboardEvent("keydown", { ...COPY, bubbles: true, cancelable: true });
+    target.dispatchEvent(ev);
+    return ev;
+  }
+
+  const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 10));
+
+  it("copies the selection at EVERY keystroke — the second copy replaces the first", async () => {
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "assistant", content: "first passage", timestamp: 1 },
+        { role: "assistant", content: "second passage", timestamp: 2 },
+      ],
+    });
+    const clip = spyClipboard();
+    try {
+      const first = selectMessage(0);
+      const ev1 = pressCopy();
+      await settle();
+      expect(ev1.defaultPrevented).toBe(true); // the chord is ours, not the host's
+      expect(clip.written).toEqual([first]);
+      // The selection SURVIVES the copy: it can be repeated, and it is still what the user sees.
+      expect(window.getSelection()!.toString()).toBe(first);
+
+      const second = selectMessage(1);
+      expect(second).not.toBe(first);
+      pressCopy();
+      await settle();
+      expect(clip.written).toEqual([first, second]); // NOT stuck on the first capture
+    } finally {
+      clip.restore();
+    }
+  });
+
+  it("still copies the passage when the caret went back to the prompt (selection collapsed)", async () => {
+    // The field bug, exactly: the live DOM selection is gone (a repaint, or the caret returning to
+    // the prompt after a `done`), the focus is in the textarea — and the native copy then copies
+    // the TEXTAREA's (empty) selection, so the clipboard keeps the previous content for ever.
+    await loadView();
+    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "the passage", timestamp: 1 }] });
+    const clip = spyClipboard();
+    try {
+      const passage = selectMessage(0);
+      const prompt = document.getElementById("user-input") as HTMLTextAreaElement;
+      prompt.focus();
+      window.getSelection()!.removeAllRanges(); // Chromium: the textarea owns the selection now
+      expect(window.getSelection()!.isCollapsed).toBe(true);
+
+      const ev = pressCopy(prompt);
+      await settle();
+      // The textarea has NO selection of its own, so the gesture is the transcript's.
+      expect(ev.defaultPrevented).toBe(true);
+      expect(clip.written).toEqual([passage]);
+    } finally {
+      clip.restore();
+    }
+  });
+
+  it("leaves a copy of the PROMPT's own text to the browser", async () => {
+    await loadView();
+    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "the passage", timestamp: 1 }] });
+    selectMessage(0); // a transcript selection is still around, and must not win
+    const clip = spyClipboard();
+    try {
+      const prompt = document.getElementById("user-input") as HTMLTextAreaElement;
+      prompt.value = "typed by the user";
+      prompt.focus();
+      prompt.setSelectionRange(0, 5);
+
+      const ev = pressCopy(prompt);
+      await settle();
+      expect(ev.defaultPrevented).toBe(false); // the browser's copy, as in any text field
+      expect(clip.written).toEqual([]); // we did not put the transcript on the clipboard
+    } finally {
+      clip.restore();
+    }
+  });
+
+  it("does nothing at all when there is no selection anywhere", async () => {
+    await loadView();
+    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "the passage", timestamp: 1 }] });
+    window.getSelection()!.removeAllRanges();
+    const clip = spyClipboard();
+    try {
+      const ev = pressCopy();
+      await settle();
+      expect(ev.defaultPrevented).toBe(false);
+      expect(clip.written).toEqual([]);
+    } finally {
+      clip.restore();
+    }
+  });
+});

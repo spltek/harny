@@ -3036,16 +3036,22 @@ function syncSteerModifier(e: Event): void {
   releaseSteerModifier();
 }
 
-/** True when the user has text selected OUTSIDE a form control — a copy gesture in progress. */
-function hasTextSelection(): boolean {
+/** The selected prose text (UNtrimmed, or "") — a copy gesture in progress. */
+function selectedProseText(): string {
   const sel = window.getSelection?.();
-  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return false;
-  if (!sel.toString().trim()) return false;
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return "";
   // A selection INSIDE the prompt is the textarea's own (select-all before retyping, say): not a
-  // copy gesture on the transcript, so it must not block the Steer indicator.
+  // copy gesture on the transcript, so it must not block the Steer indicator either.
   const anchor = sel.anchorNode;
   const el = anchor instanceof Element ? anchor : (anchor?.parentElement ?? null);
-  return !el?.closest("input, textarea, [contenteditable='true']");
+  if (el?.closest("input, textarea, [contenteditable='true']")) return "";
+  const text = sel.toString();
+  return text.trim() ? text : "";
+}
+
+/** True when the user has text selected OUTSIDE a form control — a copy gesture in progress. */
+function hasTextSelection(): boolean {
+  return selectedProseText() !== "";
 }
 
 /**
@@ -3522,7 +3528,7 @@ function hideCtxMenu(): void {
 
 function showCtxMenu(x: number, y: number): void {
   ctxMenu.innerHTML = "";
-  const selected = !window.getSelection?.()?.isCollapsed && Boolean(window.getSelection?.()?.toString().trim());
+  const selected = copyableSelection().text !== "";
   const copy = document.createElement("button");
   copy.type = "button";
   copy.setAttribute("role", "menuitem");
@@ -3556,10 +3562,78 @@ function showCtxMenu(x: number, y: number): void {
   ctxMenu.style.top = `${Math.max(2, Math.min(y, window.innerHeight - h - 4))}px`;
 }
 
-/** Put the selection on the clipboard. `navigator.clipboard` first (a menu click is a user
- *  gesture, so it is allowed); the legacy path covers a webview where it is unavailable. */
-async function copySelection(): Promise<boolean> {
-  const text = window.getSelection?.()?.toString() ?? "";
+/** Does this element hold its OWN text selection (a textarea's, an input's)?
+ *
+ *  When it does, `⌘C` is the CONTROL's copy and the browser must handle it: the control's
+ *  selection lives inside the widget and is invisible to `window.getSelection()`. */
+function ownsSelection(el: Element | null): boolean {
+  const control = el as HTMLInputElement | HTMLTextAreaElement | null;
+  if (!control) return false;
+  if (typeof control.selectionStart === "number" && typeof control.selectionEnd === "number") {
+    return control.selectionEnd > control.selectionStart;
+  }
+  // A contenteditable (or anything else editable we do not model): its selection is its own.
+  return true;
+}
+
+/**
+ * The last REAL selection the user made over the transcript, remembered as a CLONED range.
+ *
+ * `⌘C` / Ctrl+C must copy what the user selected, and the browser's own copy does that only while
+ * the DOM selection is alive AND the panel's frame owns the focus. Two everyday gestures take
+ * that away: a repaint of the live bubble (the deferred paint lands as soon as the selection is
+ * gone, and a rebuild puts different nodes there), and the caret returning to the prompt (a
+ * `done`, a pending item), after which Chromium copies the TEXTAREA's selection and never looks
+ * at the transcript — an empty one, so the clipboard keeps whatever it held before. Reported from
+ * the field exactly like that: "the first ⌘C loads the clipboard, then it keeps the first capture
+ * for ever". A cloned range is independent of both the selection and the focus, and it is only
+ * honoured while its nodes are still on screen (see `copyableSelection`), so a rebuild invalidates
+ * it instead of resurrecting text that is no longer there.
+ */
+let lastSelectionRange: Range | null = null;
+
+/** Refresh the memory from the live selection. Never CLEARS it: the collapse that a copy or a
+ *  repaint causes is precisely the case the memory exists for. */
+function rememberSelection(): void {
+  const sel = window.getSelection?.();
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+  if (!selectedProseText()) return; // a control's own selection is not the transcript's
+  const range = sel.getRangeAt(0).cloneRange();
+  const inside = messagesEl.contains(range.startContainer) || messagesEl.contains(range.endContainer);
+  lastSelectionRange = inside ? range : null;
+}
+
+document.addEventListener("selectionchange", rememberSelection);
+// A drag ends on `mouseup` even where `selectionchange` is batched to the next frame: the copy
+// happens on a keystroke that can be faster than the event it would be waiting for.
+document.addEventListener("mouseup", rememberSelection);
+
+/** What a copy gesture should put on the clipboard: the live selection, else the remembered one.
+ *
+ *  `allowRemembered` is false while a modal covers the transcript: text inside a dialog must still
+ *  be copyable (the live selection), but a passage left selected BEHIND the dialog is not what the
+ *  keystroke means. */
+function copyableSelection(allowRemembered = true): { text: string; range: Range | null } {
+  const live = window.getSelection?.();
+  const liveRange = live && live.rangeCount > 0 && !live.isCollapsed ? live.getRangeAt(0).cloneRange() : null;
+  const text = selectedProseText();
+  if (text) return { text, range: liveRange };
+  const remembered = lastSelectionRange;
+  if (!remembered || !allowRemembered) return { text: "", range: null };
+  // The nodes it points into are gone (a rebuild, a session switch, a folded block): nothing to
+  // copy, and the memory must not outlive them.
+  if (!messagesEl.contains(remembered.startContainer) || !messagesEl.contains(remembered.endContainer)) {
+    lastSelectionRange = null;
+    return { text: "", range: null };
+  }
+  const rememberedText = remembered.toString();
+  return rememberedText.trim() ? { text: rememberedText, range: remembered } : { text: "", range: null };
+}
+
+/** Put `text` on the clipboard. `navigator.clipboard` first (a click or a keystroke is a user
+ *  gesture, so it is allowed); the legacy path covers a webview where it is unavailable and the
+ *  one where the write is refused because the document is not focused. */
+async function copyText(text: string, range: Range | null): Promise<boolean> {
   if (!text.trim()) return false;
   // `?.` alone would be a lie: with no clipboard API the awaited `undefined` resolves happily and
   // we would report success without copying anything — and never try the legacy path.
@@ -3571,11 +3645,25 @@ async function copySelection(): Promise<boolean> {
       // Permission denied, or a document that is not focused: fall through to the legacy path.
     }
   }
+  // `execCommand("copy")` copies the SELECTION, not a string: when the text being copied is a
+  // remembered range the DOM selection no longer holds, select it first — which also shows the
+  // user exactly what went to the clipboard.
+  const sel = window.getSelection?.();
+  if (sel && range && (sel.isCollapsed || sel.toString() !== text)) {
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
   try {
     return document.execCommand("copy");
   } catch {
     return false;
   }
+}
+
+/** The context menu's Copy: the selection as it stands, or the one it remembers. */
+async function copySelection(): Promise<boolean> {
+  const { text, range } = copyableSelection();
+  return copyText(text, range);
 }
 
 // Any click outside closes the menu; so does Esc (its own listener, below) and a scroll (the
@@ -3601,6 +3689,27 @@ window.addEventListener(
       // there) and never toggles the bar away — Esc is the way out.
       find.focusOrOpen();
       return;
+    }
+    // ⌘C / Ctrl+C: the OS's own copy, OWNED. The native path copies the FOCUSED frame's selection,
+    // which is the prompt's textarea as often as it is the transcript — and an empty textarea
+    // copies nothing, so the clipboard silently kept the previous content (see
+    // `lastSelectionRange`). Copying from here also means the selection is read at THIS keystroke,
+    // every keystroke, so the same passage can be copied again and another one can be copied next.
+    if (primary && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "c") {
+      const el = e.target instanceof Element ? e.target : null;
+      // A control carrying its OWN selection (a prompt the user select-all'd) is the control's
+      // copy: leave it to the browser, which is the only one that can see that selection.
+      if (!ownsSelection(el?.closest("input, textarea, [contenteditable='true']") ?? null)) {
+        const { text, range } = copyableSelection(!anyOverlayVisible());
+        if (text) {
+          e.preventDefault();
+          // Same reason as ⌘F: the chord is ours, not the host's.
+          e.stopPropagation();
+          e.stopImmediatePropagation?.();
+          void copyText(text, range);
+          return;
+        }
+      }
     }
     if (e.key === "Escape") {
       if (find.isOpen()) {
