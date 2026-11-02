@@ -30,7 +30,7 @@ Windows, Linux and macOS.
 ## Versioning
 
 - **`package.json.version`** is the source of truth (semver). The repo is in
-  **pre-1.0** (`0.1.0`): breaking changes are allowed between minor versions.
+  **pre-1.0** (`0.9.7`): breaking changes are allowed between minor versions.
 - A **git tag `vX.Y.Z`** triggers the release workflow. Bump with npm so the
   commit and the tag stay in sync:
   ```bash

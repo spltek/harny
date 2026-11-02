@@ -1,7 +1,15 @@
 {
-  "comment": "REFERENCE ONLY — Roadmap dei tool da implementare in Harny. Definizioni basate sul set di tool per agent di Cursor (schema e comportamento). NON letto a runtime: l'estensione usa le definizioni in src/core/tools/.",
-  "implemented": ["Shell", "Read", "Write", "StrReplace", "Delete", "Grep", "Glob", "TodoWrite", "WebSearch", "WebFetch", "ReadLints"],
-  "planned": ["Task", "AwaitShell", "SetActiveBranch", "GenerateImage", "MCP Tools"],
+  "comment": "REFERENCE ONLY — definizioni del set di tool per agent di Cursor (schema e comportamento), usate come riferimento per gli schemi dei parametri. NON letto a runtime: le definizioni che l'estensione spedisce vivono in src/core/tools/ (una per file, con le loro descrizioni). Questo file NON e' un mirror di src/core/tools/: definisce solo il sottoinsieme del set di Cursor che Harny ha preso a modello, quindi Edit / Skill / Delegate non hanno una definizione qui (vivono solo nel codice). Le due liste sotto sono l'unica parte da tenere allineata.",
+  "implemented": [
+    "Shell", "Read", "Write", "StrReplace", "Edit", "Delete", "Grep", "Glob",
+    "TodoWrite", "WebSearch", "WebFetch", "ReadLints", "Skill", "Delegate"
+  ],
+  "planned": ["AwaitShell", "SetActiveBranch", "GenerateImage"],
+  "renamed": {
+    "Task": "Delegate",
+    "MCP Tools": "mcp__<server>__<tool>"
+  },
+  "plannedNote": "Task e MCP Tools sono stati spediti con un altro nome: Task e' il tool `Delegate` (src/core/tools/delegate-tool.ts), i tool MCP arrivano dinamici da ogni server come `mcp__<server>__<tool>` (src/core/mcp/). La definizione `Task` qui sotto resta come riferimento di schema.",
   "tools": [
     {
       "type": "function",
