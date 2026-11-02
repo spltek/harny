@@ -630,7 +630,16 @@ body {
 #messages-wrap {
   position: relative;
   flex: 1;
-  min-height: 0;
+  /* CHAT FLOOR — the transcript is the ONE box that must never be squeezed
+     away. With a bare `flex-basis: 0` it had no claim on the panel height, so
+     an EXPANDED control stack (plus the open sessions card) could eat the
+     whole viewport and the transcript collapsed to zero: the pending bubbles
+     and "Working…" then landed right on the tab strip. A min-height keeps a
+     readable slice of chat whatever is open below it; the deficit is taken by
+     #status, which SCROLLS. 22vh makes the floor follow the panel (a tiny
+     window still shows the prompt and the metrics instead of being clipped),
+     9rem caps it on a normal-size panel. */
+  min-height: min(9rem, 22vh);
   display: flex;
   flex-direction: column;
 }
@@ -2297,6 +2306,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  /* Never squeezed: the prompt box (and the AI Model row with it) is part of
+     the fixed chrome — when the panel is short it is the cards below that
+     scroll, not the textarea that flattens. */
+  flex-shrink: 0;
   margin: 8px 10px 0;
   border-radius: 8px;
   padding: 8px 10px 6px;
@@ -2558,6 +2571,7 @@ body.drag-over {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   height: 18px;
   margin: 8px 10px 0;
   cursor: pointer;
@@ -2719,7 +2733,15 @@ body.no-workspace #ctl-toggle {
   gap: 8px;
   padding: 8px 10px;
   font-size: var(--fs-md);
+  /* The ONLY body child that yields when the panel is short: #messages-wrap
+     keeps its floor (chat), the prompt and the metrics keep their height, so
+     the control stack is what gives — and it SCROLLS (.ctl-cards), which is
+     exactly the trade the expanded cards are designed for. overflow:hidden is
+     the belt to that brace: a shrunk #status can never paint its cards over
+     the metrics below it. */
+  flex-shrink: 1;
   min-height: 0;
+  overflow: hidden;
 }
 #status .warn {
   color: var(--error);
@@ -3934,6 +3956,8 @@ body.no-workspace #mcp-card {
 #metrics {
   display: flex;
   flex-direction: column;
+  /* Same rule as #input-area: fixed chrome, never squeezed. */
+  flex-shrink: 0;
   gap: 6px;
   border-radius: 8px;
   padding: 8px 10px;

@@ -1318,6 +1318,17 @@ describe("renderViewHtml", () => {
       /\.ctl-cards\s*\{[^}]*max-height:\s*clamp\(6rem, calc\(100vh - 20rem\), 75vh\)[^}]*overflow-y:\s*auto/,
     );
     expect(html).toMatch(/#status\s*\{[^}]*min-height:\s*0/);
+    // CHAT FLOOR: the transcript never collapses to zero, however much of the
+    // stack is open (a zero-height chat put the pending bubbles and "Working…"
+    // right on the tab strip). The squeeze lands on #status, which SCROLLS.
+    expect(html).toMatch(/#messages-wrap\s*\{[^}]*min-height:\s*min\(9rem, 22vh\)/);
+    expect(html).toMatch(/#status\s*\{[^}]*flex-shrink:\s*1;[^}]*overflow:\s*hidden/);
+    // The fixed chrome around it (prompt box, model row, metrics, toggle strip)
+    // never shrinks: on a short panel the cards scroll, the prompt does not flatten.
+    expect(cssRule(html, "#input-area")).toContain("flex-shrink: 0");
+    expect(cssRule(html, "#ctl-toggle")).toContain("flex-shrink: 0");
+    // #metrics has several rules (one per state): pin the base one.
+    expect(html).toMatch(/\n#metrics\s*\{[^}]*flex-shrink:\s*0/);
     // Narrow panel: ONE column, in DOM order (Window, Sampling, Parallel, Loop Guard).
     // Static CSS fallback; the webview then MEASURES the nowrap sensitivity row
     // and sets the exact column count (1 / 2 / 4) so the text never overflows.
