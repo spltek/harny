@@ -2940,6 +2940,16 @@ export class ChatViewProvider implements WebviewViewProvider {
           `${result.deferred.length} older one(s) stay in the transcript, unsummarized — a later compaction can pick them up`,
       );
     }
+    // …and neither must a card that lands INSIDE a turn. It happens only when the window is a
+    // single turn bigger than the keep budget: there is no boundary above it to use, and the
+    // alternative was never compacting at all. It lands at a step boundary (after the results
+    // of a completed step, before the next one), never between a call and its results.
+    if (result.splitTurn) {
+      infoLog(
+        "the window is ONE turn bigger than the target: the card lands inside it, right after a completed step — " +
+          "no turn boundary above it to use (the kept tail continues that same turn)",
+      );
+    }
     infoLog(
       this.tally.recordCompaction({
         spanTokens: estimateTokens(serializeConversation(result.summarized)),
@@ -2953,10 +2963,18 @@ export class ChatViewProvider implements WebviewViewProvider {
         keptCount: result.kept.length,
       }),
     );
-    // The past is KEPT, not dropped: [past][newly summarized][checkpoint][kept].
+    // The past is KEPT, not dropped, and it stays in the order it was written:
+    // [past][deferred][summarized][checkpoint][kept]. `deferred` is the OLDER part of the
+    // span and `summarized` the NEWER one (the most recent chunk that fit the summary
+    // request), so `summarized` must NOT come first: that would hoist a boundary chosen by
+    // a TOKEN budget — possibly mid-turn, in the middle of a thinking block — above the
+    // session's own beginning, and every later compaction copies the head verbatim (it is
+    // `past`), so the transcript would start from that cut forever.
     // The previous checkpoint pair is absorbed into the new summary (carriedState
-    // UPDATES it) and therefore does not appear twice.
-    const newHistory = [...all.slice(0, activeStart), ...result.summarized, ...result.history];
+    // UPDATES it) and therefore does not appear twice: it is the tail of
+    // `result.history`, together with the kept window.
+    const checkpoint = result.history.slice(result.deferred.length);
+    const newHistory = [...all.slice(0, activeStart), ...result.deferred, ...result.summarized, ...checkpoint];
     rt.history.replace(newHistory);
     this.sessions.saveMessages(rt.sessionId, newHistory, { replace: true });
     // Prefer REAL data for the KEPT window (the cumulative `meta.inputTokens`
@@ -3239,6 +3257,11 @@ export class ChatViewProvider implements WebviewViewProvider {
       infoLog(
         `sub-agent summary read the most recent ${result.summarized.length} message(s); ` +
           `${result.deferred.length} older one(s) stay in its history, unsummarized`,
+      );
+    }
+    if (result.splitTurn) {
+      infoLog(
+        "the sub-agent window is ONE turn bigger than the target: the card lands inside it, after a completed step",
       );
     }
     infoLog(

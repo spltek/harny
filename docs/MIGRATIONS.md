@@ -157,17 +157,26 @@ transaction:
 
 ### Destructive migration (possible data loss)
 
-Flag it so a backup is taken first:
+Flag it, and assume there is NO copy of the database to fall back on:
 
 ```ts
 { version: 6, name: "drop legacy column", destructive: true,
   up: (db) => db.exec(`ALTER TABLE sessions DROP COLUMN legacy`) }
 ```
 
-The `backup` hook is passed to `runMigrations`; wire it to copy `sessions.db`
-(after `PRAGMA wal_checkpoint(TRUNCATE)`) before the upgrade. **No destructive
-migration exists today, so the hook is currently unused** — implement the copy the
-first time you add one.
+The flag buys you one thing — a reviewer's attention — because the upgrade runs
+inside ONE transaction: a migration that THROWS is rolled back to the previous
+version byte for byte. What a transaction cannot undo is a migration that
+SUCCEEDS with the wrong intent, so a rewrite has to be inspectable and
+conservative: touch only the rows that need it, keep everything else untouched,
+and never invent data. Migration 4 is the worked example (it reorders a script
+that is out of order and leaves a healthy one alone).
+
+`runMigrations` also accepts a `backup` hook, called with the version being
+upgraded FROM right before a destructive one runs. **Harny passes nothing**, on
+purpose: an install must not accumulate snapshots of itself in `globalStorage`,
+and the in-transaction rollback already covers a failure. The hook is for a
+support script or a test that wants a copy while the database is still clean.
 
 ### A migration that rewrites `messages`
 

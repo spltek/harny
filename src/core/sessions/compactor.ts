@@ -54,6 +54,13 @@ interface CompactionPlan {
   kept: ChatMessage[];
   /** Estimated tokens of the context before compaction (input side). */
   tokensBefore: number;
+  /**
+   * The cut falls INSIDE a turn, because the window is a single turn bigger than the keep
+   * budget and there is no boundary above it to use (see planCompactionToBudget). Every
+   * other case cuts between turns. Travels with the plan so the caller can say so out loud
+   * instead of leaving an unexplained mid-task card in the transcript.
+   */
+  splitTurn: boolean;
 }
 
 /** Rough token estimate: ~4 chars per token. */
@@ -310,7 +317,7 @@ export function planForTarget(messages: ChatMessage[], targetTokens: number, max
 export function planCompactionToBudget(messages: ChatMessage[], keepTokens: number): CompactionPlan {
   const visible = messages.filter((m) => m.role !== "system" && !m.uiOnly);
   const tokensBefore = estimateTokens(serializeConversation(visible));
-  if (visible.length <= 2) return { toSummarize: [], kept: visible, tokensBefore };
+  if (visible.length <= 2) return { toSummarize: [], kept: visible, tokensBefore, splitTurn: false };
   const keepStart = recentStartFor(visible, keepTokens);
   // …but the snap must never make the compaction a NO-OP. One turn bigger than the keep
   // budget (a dozen tool cycles under a single request) starts at the first real message,
@@ -319,20 +326,48 @@ export function planCompactionToBudget(messages: ChatMessage[], keepTokens: numb
   // "nothing to summarize" and fell back to a trim, forever.
   const summarize = (start: number): ChatMessage[] => visible.slice(0, start).filter((m) => !m.synthetic);
   let start = keepStart;
+  let splitTurn = false;
   if (summarize(start).length === 0) {
-    // Honor the budget instead of the group — but WALK BACK over a leading tool message,
-    // so the call that owns those results stays in the kept tail (a kept result without
-    // its call is a malformed request).
+    // The cut has to OPEN A TURN. The compaction is itself a turn — a synthetic question and
+    // its answer, the state document — so what follows it must be a whole turn too: a kept
+    // tail starting inside one (an assistant step whose tool results were summarized away, or
+    // the results of a call left above) reads as the model resuming mid-thought after the
+    // summary card. So walk back to the nearest INPUT, not merely past the tool results.
+    const worthACall = (cut: number): boolean =>
+      estimateTokens(serializeConversation(summarize(cut))) >= SUMMARY_QUALITY_FLOOR;
+    const budgetCut = (): number => {
+      let safe = budgetedCut(visible, keepTokens);
+      // …and never leave a `tool` result on the kept side: its call would be above the cut,
+      // summarized away, i.e. an orphan the provider rejects outright.
+      while (safe > 0 && visible[safe]?.role === "tool") safe--;
+      return safe;
+    };
     let safe = budgetedCut(visible, keepTokens);
-    while (safe > 0 && visible[safe]?.role === "tool") safe--;
-    const candidate = summarize(safe);
+    while (safe > 0 && visible[safe]?.role !== "user") safe--;
+    // The exception, and the only one: when NO input sits above the budget the window is a
+    // single turn (a dozen tool cycles under one request — observed on a real session). There
+    // is no whole turn to summarize, so the choice is a cut inside that turn or no compaction
+    // at all — and "nothing to summarize" every time is the bug this branch exists to fix
+    // (every Compact fell back to a trim, forever). Full turns win wherever a boundary exists.
+    if (!(safe > 0 && worthACall(safe))) {
+      // …but only when it is the turn that does not fit: if the whole window already fits the
+      // keep budget there is nothing to compact at all (the size the caller reacts to lives in
+      // `past`, which is not even sent), and cutting mid-turn would only rewrite the transcript
+      // — a session that just compacted lands here on its very next attempt.
+      safe = tokensBefore <= keepTokens ? 0 : budgetCut();
+    }
     // …and only when there is a span WORTH a model call: one tiny message above the cut is
     // not "something to summarize", and turning a no-op into a request would spend a
     // summary to produce nothing. Below the floor the plan stays empty (the caller skips).
-    if (estimateTokens(serializeConversation(candidate)) >= SUMMARY_QUALITY_FLOOR) start = safe;
+    if (worthACall(safe)) {
+      start = safe;
+      // Said out loud: the card will sit INSIDE a turn, at a step boundary (never between a
+      // call and its results — `budgetCut` walked back over those). The caller logs it.
+      splitTurn = visible[safe]?.role !== "user";
+    }
   }
   const toSummarize = summarize(start);
-  return { toSummarize, kept: visible.slice(start), tokensBefore };
+  return { toSummarize, kept: visible.slice(start), tokensBefore, splitTurn };
 }
 
 /**
@@ -395,28 +430,50 @@ export interface CompactedHistory {
   /** The budgets behind the decision, for the caller's diagnostics. */
   keepBudgetTokens: number;
   summaryBudgetTokens: number;
+  /**
+   * The card landed INSIDE a turn (at a step boundary) because the window was a single turn
+   * bigger than the keep budget. Rare and deliberate — see planCompactionToBudget; the caller
+   * logs it so a mid-task checkpoint in the transcript is never a mystery.
+   */
+  splitTurn: boolean;
 }
 
 /**
- * The NEWEST messages of a span that fit a token budget, walking BACKWARDS.
+ * The NEWEST WHOLE TURNS of a span that fit a token budget, walking BACKWARDS.
  *
  * The work closest to now is the work that matters, and the budget is a hard limit of the
  * request: when the span is bigger than what the model can read in one call, something has
  * to be left out. Leaving out the OLDEST is the choice that keeps the transcript
  * continuous — and nothing is destroyed, because the caller keeps what was left out.
  *
- * Always returns at least the last message: a single huge one is the caller's problem (its
- * request simply fails, and the trim catches it), not a silent empty summary.
+ * A TURN IS ATOMIC (`turnStart`, i.e. from a `user` message to the one before the next):
+ * the cut never lands inside one. What this function returns is the span the summarizer
+ * READS, and the rest becomes `deferred` — the part that stays in the transcript above the
+ * checkpoint. Cutting mid-turn would put the summary's own boundary between an assistant
+ * step and the results it fired: the span handed to the model would open on a `tool`
+ * payload answering a call it cannot see, and `deferred` would end on a call whose results
+ * went into the summary. Both sides must be readable on their own, so the unit here is the
+ * turn, not the message. The compaction ITSELF is a turn as well (the synthetic prompt +
+ * the state document: a question and its answer), which is why what follows it opens on an
+ * input like any other turn does.
+ *
+ * Always returns at least the NEWEST turn, even when that turn alone is over budget: a
+ * single oversized turn is the caller's problem (its request simply fails, and the trim
+ * catches it), not a silent empty summary — and never a reason to halve it.
  */
 export function newestWithin(messages: ChatMessage[], maxTokens: number): ChatMessage[] {
   const budget = Math.max(0, maxTokens);
   let start = messages.length;
   let acc = 0;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const t = estimateTokens(messages[i].content);
-    if (acc + t > budget && start < messages.length) break;
-    start = i;
-    acc += t;
+  let end = messages.length; // exclusive end of the turn being measured
+  while (end > 0) {
+    const from = turnStart(messages, end - 1);
+    let turn = 0;
+    for (let k = from; k < end; k++) turn += estimateTokens(messages[k].content);
+    if (acc + turn > budget && start < messages.length) break;
+    acc += turn;
+    start = from;
+    end = from;
   }
   return messages.slice(start);
 }
@@ -524,6 +581,7 @@ export async function compactHistory(
     summaryTokens: estimateTokens(summary),
     keepBudgetTokens,
     summaryBudgetTokens: summaryBudget,
+    splitTurn: plan.splitTurn,
   };
 }
 

@@ -15,6 +15,8 @@ import { InMemoryChatHistory } from "../core/history/in-memory-chat-history";
 import { ChatViewProvider } from "./chat-view";
 import { Compactor, DEFAULT_COMPACTION, TRIM_LABEL, estimateContextTokens } from "../core/sessions/compactor";
 import type { LLMProviderFactory } from "../core/llm/types";
+import { conversationFaults } from "../core/history/conversation-validity";
+import { infoLog } from "../logger";
 
 const state = vi.hoisted(() => ({
   showInputBox: vi.fn(),
@@ -43,6 +45,7 @@ const state = vi.hoisted(() => ({
   dbVacuumThreshold: undefined as number | undefined,
 }));
 
+vi.mock("../logger", () => ({ infoLog: vi.fn(), debugLog: vi.fn() }));
 vi.mock("vscode", () => ({
   window: {
     showInputBox: state.showInputBox,
@@ -4545,6 +4548,198 @@ describe("ChatViewProvider compaction", () => {
     // ABOVE the new checkpoint, outside the window. Preserved, not summarized, not lost.
     expect(rt.history.all().some((m) => m.content.startsWith("m0 "))).toBe(true);
     expect(conv.some((m) => m.content.startsWith("m0 "))).toBe(false);
+  });
+
+  it("the deferred (OLDER) part stays ABOVE the summarized one: the transcript keeps its order", async () => {
+    // The summary request reads the newest chunk that fits, so `summarized` is NEWER than
+    // `deferred` — and the boundary between them is chosen by a TOKEN budget, which can land
+    // anywhere, even in the middle of a turn. Splicing the span back as
+    // [summarized][deferred] hoisted that cut above the session's own beginning: the
+    // transcript then opened on a dangling thinking block, and every later compaction copied
+    // that head verbatim (it is `past`), so it never healed.
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\ncarried");
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { store, registry, provider } = buildHarness(options);
+    resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 8_000;
+    rt.contextTokens = 7_800;
+    rt.history.replace(
+      Array.from({ length: 12 }, (_, i) => ({
+        role: i % 2 === 0 ? ("user" as const) : ("assistant" as const),
+        content: `m${i} ` + "x".repeat(4_000),
+        timestamp: i + 1,
+      })),
+    );
+
+    await provider.maybeCompactDuringRun("s1");
+
+    const all = rt.history.all();
+    const at = (prefix: string): number => all.findIndex((m) => m.content.startsWith(prefix));
+    // The oldest message is the one the summary could NOT read — and it is the FIRST row…
+    expect(at("m0 ")).toBe(0);
+    // …while the chunk that was summarized sits BELOW it, not above.
+    expect(at("m11 ")).toBeGreaterThan(at("m0 "));
+    expect(at("m0 ")).toBeLessThan(all.findIndex((m) => m.synthetic === true));
+    // What is stored is what the UI will read back: same order, nothing dropped.
+    const saved = (store.saveMessages as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1] as ChatMessage[];
+    expect(saved.map((m) => m.content)).toEqual(all.map((m) => m.content));
+  });
+
+  it("what a compaction leaves behind is COMPLETE TURNS — the card is itself a turn", async () => {
+    // The rule, end to end: a compaction is a turn in its own right (a synthetic question and
+    // the state document that answers it), so the transcript around it must be whole turns.
+    // Three things can go wrong and none of them is visible from a token count:
+    //   • the span the summarizer reads can open mid-turn → `deferred` ends on a call whose
+    //     results went into the summary (a card answering nobody);
+    //   • the KEPT tail can open mid-turn → the model resumes mid-thought after the card;
+    //   • the card itself can land between a call and its results.
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\ncarried");
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 8_000;
+    rt.contextTokens = 7_800;
+    /** One complete turn: request → a step calling TWO tools → both results → the reply. */
+    const turn = (n: number): ChatMessage[] => [
+      { role: "user", content: `turn ${n} ask ` + "q".repeat(1_500), timestamp: n * 10 },
+      {
+        role: "assistant",
+        content: "",
+        timestamp: n * 10 + 1,
+        toolCalls: [
+          { id: `c${n}a`, name: "Read", arguments: { path: "a.ts" } },
+          { id: `c${n}b`, name: "Read", arguments: { path: "b.ts" } },
+        ],
+      },
+      { role: "tool", content: `turn ${n} out-a ` + "a".repeat(1_500), toolCallId: `c${n}a`, timestamp: n * 10 + 2 },
+      { role: "tool", content: `turn ${n} out-b ` + "b".repeat(1_500), toolCallId: `c${n}b`, timestamp: n * 10 + 3 },
+      { role: "assistant", content: `turn ${n} reply ` + "r".repeat(1_500), timestamp: n * 10 + 4 },
+    ];
+    const original = [1, 2, 3, 4, 5, 6].flatMap(turn);
+    rt.history.replace(original);
+
+    /** Every invariant, checked on whatever is in the transcript right now. */
+    const expectWholeTurns = (label: string): void => {
+      const all = rt.history.all();
+      // 1. start to finish, the stored history is a conversation that can be SENT.
+      expect(conversationFaults(all), `${label}: the transcript is sendable`).toEqual([]);
+      // 2. it still opens on the very first message ever written…
+      expect(all[0].content.startsWith("turn 1 ask "), `${label}: the head`).toBe(true);
+      // 3. …and the card is a complete turn: question, then the state document.
+      const card = all.findIndex((m) => m.synthetic === true);
+      expect(card, `${label}: there is a card`).toBeGreaterThan(0);
+      expect(all[card].role, `${label}: the card asks`).toBe("user");
+      expect(all[card + 1].role, `${label}: the card answers`).toBe("assistant");
+      expect(all[card + 1].content).toContain("## Goal");
+      // 4. what follows the card OPENS A TURN — never half of one.
+      if (card + 2 < all.length) expect(all[card + 2].role, `${label}: after the card`).toBe("user");
+      // 5. and what precedes it is whole too (this is `deferred`, permanent history).
+      expect(conversationFaults(all.slice(0, card)), `${label}: above the card`).toEqual([]);
+      // 6. nothing was lost on the way.
+      const kept = all.filter((m) => m.synthetic !== true).map((m) => m.content);
+      expect(kept.sort(), `${label}: nothing dropped`).toEqual(original.map((m) => m.content).sort());
+    };
+
+    await provider.maybeCompactDuringRun("s1");
+    expectWholeTurns("first compaction");
+    expect(summarize).toHaveBeenCalled();
+
+    // More work happens, then a SECOND compaction: the tail that survived becomes `past`
+    // (copied verbatim, never re-summarized), so any artifact left behind would be frozen
+    // there — this is where a bug becomes permanent.
+    const more = [7, 8, 9, 10].flatMap(turn);
+    rt.history.addGroup(more);
+    original.push(...more);
+    rt.contextTokens = 7_800;
+    await provider.maybeCompactDuringRun("s1");
+    expectWholeTurns("second compaction");
+    expect(summarize.mock.calls.length).toBeGreaterThan(1);
+    // The new state document is still ONE turn: the previous card sat inside the window, so it
+    // was folded into the new state instead of being copied down the transcript.
+    expect(rt.history.all().filter((m) => m.synthetic === true)).toHaveLength(2);
+  });
+
+  it("a card that lands INSIDE a single turn says so instead of being a mystery", async () => {
+    // The one exception: the window is a single turn bigger than the keep target (a dozen tool
+    // cycles under one request). There is no turn boundary above it, so the card sits at a STEP
+    // boundary inside the turn — and the log has to name it, otherwise a mid-task checkpoint in
+    // the transcript looks like a bug forever after.
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\ncarried");
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 16_000;
+    rt.contextTokens = 15_200;
+    // ONE turn: a request, then four heavy steps under it, each calling two tools.
+    const step = (n: number): ChatMessage[] => [
+      {
+        role: "assistant",
+        content: "",
+        timestamp: n * 10,
+        toolCalls: [
+          { id: `s${n}a`, name: "Read", arguments: { path: "a.ts" } },
+          { id: `s${n}b`, name: "Grep", arguments: { pattern: "x" } },
+        ],
+      },
+      { role: "tool", content: `step ${n} a ` + "a".repeat(3_600), toolCallId: `s${n}a`, timestamp: n * 10 + 1 },
+      { role: "tool", content: `step ${n} b ` + "b".repeat(3_600), toolCallId: `s${n}b`, timestamp: n * 10 + 2 },
+    ];
+    rt.history.replace([
+      { role: "user", content: "work through the whole parser " + "q".repeat(3_600), timestamp: 1 },
+      ...[1, 2, 3, 4].flatMap(step),
+      { role: "assistant", content: "done with the round", timestamp: 99 },
+    ]);
+
+    await provider.maybeCompactDuringRun("s1");
+
+    const all = rt.history.all();
+    const card = all.findIndex((m) => m.synthetic === true);
+    expect(card).toBeGreaterThan(0);
+    // Inside the turn: the kept tail CONTINUES it (no new request follows the card)…
+    expect(all[card + 2].role).not.toBe("user");
+    // …and nothing is broken: no orphan result, no call left without its results.
+    expect(conversationFaults(all)).toEqual([]);
+    // The line that turns a mystery into a diagnosis.
+    const lines = vi
+      .mocked(infoLog)
+      .mock.calls.map((c) => c.map(String).join(" "))
+      .join("\n");
+    expect(lines).toContain("ONE turn bigger than the target");
+  });
+
+  it("a window that already fits the keep budget is left ALONE (no mid-turn cut, no rewrite)", async () => {
+    // The state a session is in right after a compaction: what is left in the window fits the
+    // keep budget, so there is nothing worth summarizing — the size the caller reacts to lives
+    // in `past`, which is not even sent. Compacting anyway used to cut inside the first turn
+    // (the only way to honor the budget), i.e. the model resumed mid-thought after the card.
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\ncarried");
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 200_000;
+    rt.contextTokens = 190_000;
+    // One card, then a single modest turn: the window fits easily, `past` is what is big.
+    rt.history.replace([
+      { role: "user", content: "Summary of past interactions", timestamp: 1, synthetic: true },
+      { role: "assistant", content: "## Goal\nold state" + "s".repeat(40_000), timestamp: 2, synthetic: true },
+      { role: "user", content: "next request", timestamp: 3 },
+      { role: "assistant", content: "done", timestamp: 4 },
+    ]);
+    const before = rt.history.all();
+
+    await provider.maybeCompactDuringRun("s1");
+
+    // Nothing to summarize → no request, no new card, and not a byte of the transcript moved.
+    expect(summarize).not.toHaveBeenCalled();
+    expect(rt.history.all().map((m) => m.content)).toEqual(before.map((m) => m.content));
   });
 
   it("a summary that FAILS lands on a trim instead of surfacing an error", async () => {

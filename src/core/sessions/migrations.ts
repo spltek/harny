@@ -25,7 +25,11 @@ export interface Migration {
   version: number;
   name: string;
   up: (db: DatabaseSync) => void;
-  /** true = may destroy data → a backup is taken before it runs. */
+  /** true = rewrites or removes stored data (not merely adds). Harny takes NO automatic copy
+   * of the database before such a migration: the upgrade runs in one transaction, so a failure
+   * is already undone, and an install must not accumulate snapshots of itself in
+   * globalStorage. The flag is what a caller COULD act on (the `backup` option below) and what
+   * the review of a new migration has to look at. */
   destructive?: boolean;
 }
 
@@ -101,7 +105,115 @@ const MIGRATIONS: readonly Migration[] = [
     // before this existed, which must keep behaving exactly as it did (see normalizeToolScope).
     up: (db) => db.exec("ALTER TABLE sessions ADD COLUMN tool_scope TEXT; "),
   },
+  {
+    version: 4,
+    name: "transcript in the order it was written",
+    // REPAIRS a session whose compaction used to splice the span back as
+    // [.. summarized .. deferred .. checkpoint ..]: `summarized` is the NEWER part of the span
+    // (the most recent chunk that fit the summary request, cut by a TOKEN budget — possibly in
+    // the middle of a turn) and `deferred` the OLDER one, so writing `summarized` first hoisted
+    // that cut above the session's own beginning and pushed older messages BELOW it. The head
+    // then stayed there forever: every later compaction copies everything above the newest
+    // checkpoint verbatim. NOTHING is dropped — the blocks go back in chronological order.
+    // A history written by the fixed build has no backwards step and is left untouched.
+    destructive: true,
+    up: (db) => reorderSplicedTranscripts(db),
+  },
 ];
+
+/** One `messages` row, as the repair reads and writes it. */
+interface StoredMessageRow {
+  session_id: string;
+  seq: number;
+  role: string;
+  content: string | null;
+  timestamp: number | null;
+  data: string;
+}
+
+/** Is this stored message one of the checkpoint pair's synthetic rows? */
+function isSyntheticRow(data: string): boolean {
+  try {
+    return (JSON.parse(data) as { synthetic?: unknown }).synthetic === true;
+  } catch {
+    return false;
+  }
+}
+
+function rowTimestamp(row: StoredMessageRow): number {
+  const ts = Number(row.timestamp ?? 0);
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+/**
+ * Put one session's stored transcript back in the order it was written, or return `null`
+ * when there is nothing to do (the overwhelmingly common case: a healthy history only ever
+ * moves forward in time).
+ *
+ * The transcript is `[past][checkpoint pair][kept]`. `kept` follows the pair and is in order;
+ * the damage can only be in `past`, which the old splice wrote as a run of
+ * `[summarized][deferred]` segments — each segment internally ordered, each NEWER than the
+ * one printed after it. After a few compactions those segments INTERLEAVE (a later cut lands
+ * inside the span of an earlier one), so no block-level shuffle can untangle them: the past is
+ * simply sorted by the timestamp every message carries, which is exactly the order it was
+ * written in. The sort is STABLE, so messages sharing a millisecond (an assistant step and the
+ * tool results it fired) keep their stored order and stay glued together.
+ *
+ * A history with no backwards step is left ALONE — the repair never reshuffles a healthy
+ * session, and it never drops a row.
+ */
+export function repairSplicedTranscript(rows: StoredMessageRow[]): StoredMessageRow[] | null {
+  let pairAt = -1;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (isSyntheticRow(rows[i].data)) {
+      pairAt = i;
+      break;
+    }
+  }
+  // The pair is TWO messages (the label and the state document) and both are synthetic: the
+  // past ends where the pair BEGINS, not at its last row.
+  while (pairAt > 0 && isSyntheticRow(rows[pairAt - 1].data)) pairAt--;
+  const past = pairAt < 0 ? rows : rows.slice(0, pairAt);
+  const tail = pairAt < 0 ? [] : rows.slice(pairAt);
+  const outOfOrder = past.some((row, i) => i > 0 && rowTimestamp(row) < rowTimestamp(past[i - 1]));
+  if (!outOfOrder) return null;
+  const ordered = past
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => rowTimestamp(a.row) - rowTimestamp(b.row) || a.index - b.index)
+    .map((entry) => entry.row);
+  return [...ordered, ...tail];
+}
+
+/**
+ * Apply {@link repairSplicedTranscript} to every stored session (migration 4).
+ *
+ * The rewrite keeps `seq` dense from 0 and rebuilds the external-content FTS index at the end
+ * (it has no UPDATE trigger — see the rule at the top).
+ *
+ * NO backup table and no snapshot file: an upgrade must not leave copies of the user's database
+ * behind, and it does not need to. Every pending migration already runs inside ONE transaction,
+ * so a failure ROLLBACKs to the previous version byte for byte — the only thing a copy would add
+ * is the OLD order of a transcript that was already out of order (that is the bug being fixed).
+ * Sessions with nothing to repair are not read back, not rewritten and never touched.
+ */
+function reorderSplicedTranscripts(db: DatabaseSync): void {
+  const sessions = db.prepare("SELECT id FROM sessions").all() as { id: string }[];
+  let repaired = 0;
+  for (const { id } of sessions) {
+    const rows = db
+      .prepare("SELECT session_id, seq, role, content, timestamp, data FROM messages WHERE session_id = ? ORDER BY seq")
+      .all(id) as unknown as StoredMessageRow[];
+    const fixed = repairSplicedTranscript(rows);
+    if (!fixed) continue;
+    db.prepare("DELETE FROM messages WHERE session_id = ?").run(id);
+    const insert = db.prepare(
+      "INSERT INTO messages(session_id, seq, role, content, timestamp, data) VALUES (?, ?, ?, ?, ?, ?)",
+    );
+    fixed.forEach((row, index) => insert.run(id, index, row.role, row.content ?? "", row.timestamp ?? 0, row.data));
+    repaired++;
+  }
+  if (repaired > 0) db.exec("INSERT INTO messages_fts(messages_fts) VALUES('rebuild');");
+}
 
 /** The version this build expects after running every migration — DERIVED from the table,
  * never typed twice. Exported for the SUITE only (it asserts a fresh DB lands here): a
@@ -128,8 +240,10 @@ interface MigrationRunResult {
 interface MigrationOptions {
   /** Diagnostic sink (one line per applied migration). */
   log?: (message: string) => void;
-  /** Called ONCE before running pending migrations when at least one is
-   * `destructive` (so the caller can copy the database file first). */
+  /** Called ONCE, with the version being upgraded FROM, when at least one pending migration is
+   * `destructive` — so a caller that wants a snapshot (a test, a support script) can take one
+   * while the database is still untouched. The extension passes nothing: shipped upgrades leave
+   * no copy of the user's database behind. */
   backup?: (fromVersion: number) => void;
 }
 

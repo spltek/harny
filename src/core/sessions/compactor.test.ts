@@ -19,6 +19,7 @@ import {
   minExplicitTargetPercent,
   planCompactionToBudget,
   planForTarget,
+  newestWithin,
   realWindowTokens,
   recentStartFor,
   serializeConversation,
@@ -37,7 +38,7 @@ import {
 import type { LLMProviderFactory } from "../llm/types";
 import type { HarnyConfig } from "../config/types";
 import type { ChatMessage } from "../history/types";
-import { conversationFaults } from "../history/conversation-validity";
+import { conversationFaults, turnStart } from "../history/conversation-validity";
 import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_TOKENS, usableContext } from "../../chat/context-window";
 
 const CONFIG: HarnyConfig = {
@@ -1351,5 +1352,235 @@ describe("trimHistory — move the window WITHOUT a summary (the fail-safe)", ()
     const all: ChatMessage[] = [...PAIR(state), ...bigHistory(10)];
     const trim = trimHistory(all, { budgetTokens: 12_000, summary: state })!;
     expect(carriedState(trim.history)).toBe(state);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Complete turns after a compaction. A compaction is itself a turn (a synthetic
+// question + the state document that answers it), so BOTH things it touches must
+// consist of whole turns: the span the summarizer reads (what is left above the
+// pair becomes `deferred`, a permanent part of the transcript) and the tail kept
+// below it. Half a turn on either side is a card that answers a call nobody can
+// see, or a model resuming mid-thought after the summary.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("newestWithin — the span the summarizer READS is whole turns", () => {
+  /** One complete turn: input → a step calling two tools → both results → the reply. */
+  function toolTurn(n: number, pad = 40): ChatMessage[] {
+    return [
+      u(`turn ${n} ` + "q".repeat(pad)),
+      {
+        role: "assistant",
+        content: "",
+        timestamp: 2,
+        toolCalls: [
+          { id: `c${n}a`, name: "Read", arguments: { path: "a.ts" } },
+          { id: `c${n}b`, name: "Read", arguments: { path: "b.ts" } },
+        ],
+      },
+      { role: "tool", content: "a".repeat(pad), toolCallId: `c${n}a`, timestamp: 3 },
+      { role: "tool", content: "b".repeat(pad), toolCallId: `c${n}b`, timestamp: 4 },
+      a(`done ${n} ` + "r".repeat(pad)),
+    ];
+  }
+  const history = [1, 2, 3, 4, 5, 6].flatMap((n) => toolTurn(n));
+
+  it("returns the WHOLE span when it fits (no cut, no copy)", () => {
+    expect(newestWithin(history, 10_000_000)).toEqual(history);
+  });
+
+  it("a cut lands on an INPUT, and leaves both sides readable on their own", () => {
+    // Exhaustive over the interesting budgets: a span that opens mid-turn would hand the
+    // summarizer a `tool` payload answering a call it cannot see, and leave a call with no
+    // result in `deferred`.
+    let cuts = 0;
+    for (const budget of [1, 20, 60, 100, 160, 240, 400, 700, 1_000, 1_600, 3_000]) {
+      const span = newestWithin(history, budget);
+      const cut = history.length - span.length;
+      expect(span, `budget ${budget}`).toEqual(history.slice(cut)); // a contiguous suffix
+      expect(history[cut].role, `budget ${budget}: the span must OPEN a turn`).toBe("user");
+      expect(conversationFaults(span), `budget ${budget}: the span reads as a whole`).toEqual([]);
+      // `deferred` = everything above the cut: it stays in the transcript, so it must hold no
+      // call whose result went into the summary.
+      expect(conversationFaults(history.slice(0, cut)), `budget ${budget}: deferred is whole`).toEqual([]);
+      cuts++;
+    }
+    expect(cuts).toBeGreaterThan(0);
+  });
+
+  it("keeps at least the NEWEST turn even over budget — never half of it", () => {
+    // A budget that fits nothing still returns a readable unit: the last turn, entire. A
+    // single oversized turn then fails as one request (the caller falls back to the trim),
+    // which is the caller's problem — splitting it is not an option, it is the artifact.
+    const last = newestWithin(history, 0);
+    expect(last).toEqual(history.slice(history.length - 5));
+    expect(last[0].role).toBe("user");
+    expect(last.at(-1)?.role).toBe("assistant");
+  });
+
+  it("does not drift when a turn is a single message", () => {
+    // Nothing to align: with one input per exchange the old per-message walk is the answer.
+    const flat = [u("1"), a("2"), u("3"), a("4"), u("5"), a("6")];
+    expect(newestWithin(flat, 10_000_000)).toEqual(flat);
+    const lastTurn = newestWithin(flat, 1);
+    expect(lastTurn).toEqual([u("5"), a("6")]);
+    expect(conversationFaults(lastTurn)).toEqual([]);
+  });
+
+  it("handles the degenerate sizes", () => {
+    expect(newestWithin([], 1_000)).toEqual([]);
+    expect(newestWithin([u("only")], 1)).toEqual([u("only")]);
+    expect(newestWithin([a("orphan reply")], 1)).toEqual([a("orphan reply")]);
+  });
+
+  it("respects a budget that lands exactly on a boundary (no off-by-one)", () => {
+    // Greedy from the newest: whole turns are added while they fit, so a budget equal to the
+    // last k turns must return exactly those k.
+    const turns = [1, 2, 3, 4, 5, 6].map((n) => toolTurn(n));
+    const cost = (n: number): number => turns[n - 1].reduce((sum, m) => sum + estimateTokens(m.content), 0);
+    for (const k of [1, 2, 3, 6]) {
+      let budget = 0;
+      for (let n = 7 - k; n <= 6; n++) budget += cost(n);
+      const span = newestWithin(history, budget);
+      expect(span.length, `k=${k}`).toBe(k * 5);
+      expect(span[0].role).toBe("user");
+    }
+  });
+});
+
+describe("planCompactionToBudget — the KEPT tail opens a turn (the pair is a turn too)", () => {
+  function toolTurn(n: number, pad = 40): ChatMessage[] {
+    return [
+      u(`turn ${n} ` + "q".repeat(pad)),
+      {
+        role: "assistant",
+        content: "",
+        timestamp: 2,
+        toolCalls: [
+          { id: `c${n}a`, name: "Read", arguments: { path: "a.ts" } },
+          { id: `c${n}b`, name: "Read", arguments: { path: "b.ts" } },
+        ],
+      },
+      { role: "tool", content: "a".repeat(pad), toolCallId: `c${n}a`, timestamp: 3 },
+      { role: "tool", content: "b".repeat(pad), toolCallId: `c${n}b`, timestamp: 4 },
+      a(`done ${n} ` + "r".repeat(pad)),
+    ];
+  }
+  const history = [1, 2, 3, 4, 5, 6].flatMap((n) => toolTurn(n));
+
+  /** The cut is confined to the FIRST turn: there is no boundary above it to use. */
+  function insideFirstTurn(messages: ChatMessage[], kept: ChatMessage[]): boolean {
+    const at = messages.indexOf(kept[0]);
+    return at < 0 || turnStart(messages, at) === 0;
+  }
+
+  it("every keep budget: the pair is followed by a WHOLE turn", () => {
+    let aligned = 0;
+    for (const budget of [1, 40, 100, 200, 400, 800, 1_600, 4_000, 10_000]) {
+      const plan = planCompactionToBudget(history, budget);
+      expect(plan.kept.length).toBeGreaterThan(0);
+      if (insideFirstTurn(history, plan.kept)) {
+        // The documented exception: with the budget cutting inside the FIRST turn there is no
+        // whole turn above the cut, and a summary of nothing is the bug this path exists for.
+        expect(plan.kept[0].role, `budget ${budget}`).not.toBe("tool");
+        continue;
+      }
+      expect(plan.kept[0].role, `budget ${budget}: kept must OPEN a turn`).toBe("user");
+      expect(plan.splitTurn, `budget ${budget}: no exception to report`).toBe(false);
+      expect(conversationFaults(plan.kept), `budget ${budget}: kept is sendable`).toEqual([]);
+      expect(conversationFaults(plan.toSummarize), `budget ${budget}: the span read is whole`).toEqual([]);
+      aligned++;
+    }
+    // The sweep must actually reach the aligned branch on most budgets, or it proves nothing.
+    expect(aligned).toBeGreaterThan(5);
+  });
+
+  it("property: over random histories, a half turn is only ever the FIRST one", () => {
+    // Deterministic generator: a failure is reproducible.
+    let seed = 7;
+    const next = (): number => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    for (let trial = 0; trial < 200; trial++) {
+      const turns = 1 + Math.floor(next() * 6);
+      const messages = Array.from({ length: turns }, (_, i) => toolTurn(i + 1, 10 + Math.floor(next() * 200))).flat();
+      for (const budget of [1, 50, 150, 500, 1_500, 5_000]) {
+        const plan = planCompactionToBudget(messages, budget);
+        if (plan.kept.length === 0) continue;
+        // The flag is a CLAIM about the cut, so it is checked in both directions: a future
+        // refactor that moves the assignment would otherwise leave a log that lies.
+        expect(plan.splitTurn, `trial ${trial} budget ${budget}`).toBe(plan.kept[0].role !== "user");
+        if (insideFirstTurn(messages, plan.kept)) continue;
+        expect(plan.splitTurn, `trial ${trial} budget ${budget}`).toBe(false);
+        expect(plan.kept[0].role, `trial ${trial} budget ${budget}`).toBe("user");
+        expect(conversationFaults(plan.kept), `trial ${trial} budget ${budget}`).toEqual([]);
+        expect(conversationFaults(plan.toSummarize), `trial ${trial} budget ${budget}`).toEqual([]);
+      }
+    }
+  });
+
+  it("property: at EVERY read ceiling, the span and what is deferred are whole turns", () => {
+    // The two boundaries are chosen by two different numbers (the keep TARGET and the read
+    // CEILING); only their combination is what a real run meets. Same generator, both swept.
+    let seed = 11;
+    const next = (): number => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    let checks = 0;
+    for (let trial = 0; trial < 120; trial++) {
+      const turns = 2 + Math.floor(next() * 6);
+      const messages = Array.from({ length: turns }, (_, i) => toolTurn(i + 1, 10 + Math.floor(next() * 300))).flat();
+      for (const budget of [1, 200, 800, 3_000, 12_000]) {
+        const plan = planCompactionToBudget(messages, budget);
+        for (const ceiling of [1, 40, 200, 1_000, 4_000, 20_000]) {
+          const span = newestWithin(plan.toSummarize, ceiling);
+          if (span.length === 0) continue;
+          const cut = plan.toSummarize.length - span.length;
+          const where = `trial ${trial} budget ${budget} ceiling ${ceiling}`;
+          expect(span[0].role, `${where}: the span opens a turn`).toBe("user");
+          expect(conversationFaults(span), `${where}: the span reads as a whole`).toEqual([]);
+          expect(conversationFaults(plan.toSummarize.slice(0, cut)), `${where}: deferred is whole`).toEqual([]);
+          expect(span, `${where}: a contiguous suffix`).toEqual(plan.toSummarize.slice(cut));
+          checks++;
+        }
+      }
+    }
+    expect(checks).toBeGreaterThan(1_000); // the sweep is not vacuous
+  });
+
+  it("a window that IS one turn compacts anyway, and keeps no orphan result", () => {
+    // The exception, spelled out: the real session where every Compact answered "nothing to
+    // summarize, forever". There is no whole turn to keep above the cut, so the pair lands
+    // inside the turn — the ONLY place where that is allowed, because the alternative is not
+    // compacting at all.
+    const oneTurn: ChatMessage[] = [
+      u("Continue the work from the summarized context below."),
+      {
+        role: "assistant",
+        content: "x".repeat(8_000),
+        timestamp: 2,
+        toolCalls: [{ id: "k1", name: "Read", arguments: { path: "a.ts" } }],
+      },
+      { role: "tool", content: "y".repeat(8_000), toolCallId: "k1", timestamp: 3 },
+      {
+        role: "assistant",
+        content: "z".repeat(8_000),
+        timestamp: 4,
+        toolCalls: [{ id: "k2", name: "Read", arguments: { path: "b.ts" } }],
+      },
+      { role: "tool", content: "w".repeat(8_000), toolCallId: "k2", timestamp: 5 },
+      a("done"),
+    ];
+    const plan = planCompactionToBudget(oneTurn, 100);
+    expect(plan.toSummarize.length).toBeGreaterThan(0); // not a no-op
+    expect(plan.kept.length).toBeGreaterThan(0); // the session is never erased
+    expect(plan.kept[0].role).not.toBe("tool"); // never an orphaned result
+    expect(plan.splitTurn).toBe(true); // …and the caller gets to SAY it
+    // The card lands at a STEP boundary: what is summarized never ends with a call whose
+    // results were left below (`toSummarize` would be unreadable, `kept` would open on an
+    // orphan). It is the strongest guarantee available inside a single turn.
+    const last = plan.toSummarize.at(-1);
+    expect(last?.role === "assistant" && (last.toolCalls?.length ?? 0) > 0).toBe(false);
+    // Whatever it keeps must still be sendable on the next request. `conversation_starts_with_role`
+    // is expected HERE and only here: on its own the tail opens on an assistant, and what
+    // supplies the leading input is the pair above it (the state document answering the
+    // synthetic question) — a complete turn, which is the whole point.
+    const faults = conversationFaults(plan.kept).filter((f) => f.kind !== "conversation_starts_with_role");
+    expect(faults).toEqual([]);
   });
 });

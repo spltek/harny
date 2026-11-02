@@ -70,6 +70,9 @@ export class SqliteSessionStore implements SessionStore {
     // Connection pragma (persistent; must run OUTSIDE a transaction).
     this.deps.db.exec("PRAGMA journal_mode = WAL;");
     // Versioned schema migrations (PRAGMA user_version) — see migrations.ts.
+    // NO automatic snapshot file next to `sessions.db`: the pending migrations run in a SINGLE
+    // transaction (a failure ROLLBACKs to the previous version, byte for byte), and an upgrade
+    // must not leave a copy of every user's database behind in globalStorage.
     runMigrations(this.deps.db, { log: deps.log });
   }
 

@@ -1,6 +1,13 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import { runMigrations, applyMigrations, getUserVersion, LATEST_VERSION, type Migration } from "./migrations";
+import {
+  runMigrations,
+  applyMigrations,
+  getUserVersion,
+  LATEST_VERSION,
+  repairSplicedTranscript,
+  type Migration,
+} from "./migrations";
 
 const dbs: DatabaseSync[] = [];
 function makeDb(): DatabaseSync {
@@ -26,9 +33,9 @@ describe("runMigrations — the shipped schema", () => {
 
     const r = runMigrations(db);
 
-    expect(r).toEqual({ from: 0, to: LATEST_VERSION, applied: 3 });
-    expect(LATEST_VERSION).toBe(3);
-    expect(getUserVersion(db)).toBe(3);
+    expect(r).toEqual({ from: 0, to: LATEST_VERSION, applied: 4 });
+    expect(LATEST_VERSION).toBe(4);
+    expect(getUserVersion(db)).toBe(4);
     expect(tableExists(db, "sessions")).toBe(true);
     expect(tableExists(db, "messages")).toBe(true);
     // The FTS index + triggers work.
@@ -52,7 +59,7 @@ describe("runMigrations — the shipped schema", () => {
     const db = makeDb();
     runMigrations(db);
 
-    expect(runMigrations(db)).toEqual({ from: 3, to: 3, applied: 0 });
+    expect(runMigrations(db)).toEqual({ from: 4, to: 4, applied: 0 });
   });
 
   it("STAMPS a pre-versioning database instead of re-running the baseline", () => {
@@ -71,8 +78,8 @@ describe("runMigrations — the shipped schema", () => {
 
     // Stamped to the BASELINE (v1), then the PENDING migrations run: a legacy install must
     // still receive the new columns instead of skipping them.
-    expect(r).toEqual({ from: 1, to: 3, applied: 2 });
-    expect(getUserVersion(db)).toBe(3);
+    expect(r).toEqual({ from: 1, to: LATEST_VERSION, applied: LATEST_VERSION - 1 });
+    expect(getUserVersion(db)).toBe(LATEST_VERSION);
     // Existing data survived (the baseline was NOT re-run / dropped).
     expect(db.prepare("SELECT name FROM sessions WHERE id='s1'").get()).toEqual({ name: "x" });
     expect(logs.some((l) => /pre-versioning/.test(l))).toBe(true);
@@ -197,5 +204,206 @@ describe("applyMigrations — the runner", () => {
     let called = false;
     applyMigrations(db, [m(1, "one", "CREATE TABLE t1 (x)")], { backup: () => (called = true) });
     expect(called).toBe(false);
+  });
+});
+
+describe("migration 4 — the transcript goes back in the order it was written", () => {
+  const row = (seq: number, role: string, content: string, timestamp: number, synthetic = false) => ({
+    session_id: "s1",
+    seq,
+    role,
+    content,
+    timestamp,
+    data: JSON.stringify({ role, content, timestamp, ...(synthetic ? { synthetic: true } : {}) }),
+  });
+
+  const insert = (db: DatabaseSync, rows: ReturnType<typeof row>[]): void => {
+    const stmt = db.prepare(
+      "INSERT INTO messages(session_id, seq, role, content, timestamp, data) VALUES (?, ?, ?, ?, ?, ?)",
+    );
+    for (const r of rows) stmt.run(r.session_id, r.seq, r.role, r.content, r.timestamp, r.data);
+  };
+
+  const contents = (db: DatabaseSync): string[] =>
+    (
+      db.prepare("SELECT content FROM messages WHERE session_id = 's1' ORDER BY seq").all() as { content: string }[]
+    ).map((r) => r.content);
+
+  it("swaps a [newer summarized][older deferred] splice back, and touches nothing else", () => {
+    const db = makeDb();
+    runMigrations(db);
+    db.prepare("INSERT INTO sessions(id, name, created_at, updated_at, message_count) VALUES ('s1','S',0,0,6)").run();
+    // Exactly the shape the old splice wrote: the newer chunk (10:01) hoisted above the older
+    // one (09:43), then the checkpoint and the kept tail.
+    insert(db, [
+      row(0, "assistant", "nuovo-1", 1_000),
+      row(1, "assistant", "nuovo-2", 1_001),
+      row(2, "user", "primo input della sessione", 900),
+      row(3, "assistant", "vecchio-2", 901),
+      row(4, "user", "Riepilogo delle interazioni passate", 2_000, true),
+      row(5, "assistant", "## Obiettivo", 2_001, true),
+      row(6, "user", "ultima domanda", 2_002),
+    ]);
+    db.exec("PRAGMA user_version = 3");
+    db.prepare("UPDATE sessions SET message_count = 7").run();
+
+    runMigrations(db);
+
+    expect(getUserVersion(db)).toBe(4);
+    // The session now OPENS on the first user input, and the blocks are chronological.
+    expect(contents(db)).toEqual([
+      "primo input della sessione",
+      "vecchio-2",
+      "nuovo-1",
+      "nuovo-2",
+      "Riepilogo delle interazioni passate",
+      "## Obiettivo",
+      "ultima domanda",
+    ]);
+    // `seq` stays dense from 0 (the store writes by index).
+    const seqs = (db.prepare("SELECT seq FROM messages ORDER BY seq").all() as { seq: number }[]).map((r) => r.seq);
+    expect(seqs).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    // Nothing was lost, and nothing was LEFT BEHIND: the repair keeps no backup table (the
+    // transaction is the safety net for a failure, and the old order of an already scrambled
+    // transcript is not information worth a copy).
+    expect(tableExists(db, "messages_backup_v4")).toBe(false);
+    // The full-text index follows the rewrite.
+    const hit = db
+      .prepare(
+        "SELECT m.content AS content FROM messages_fts JOIN messages m ON m.rowid = messages_fts.rowid WHERE messages_fts MATCH ?",
+      )
+      .get("primo") as { content?: string } | undefined;
+    expect(hit?.content).toBe("primo input della sessione");
+  });
+
+  it("untangles INTERLEAVED segments (a later cut landed inside an earlier one)", () => {
+    // The real damage after a few compactions: the segments do not merely follow each other,
+    // their time ranges OVERLAP — so no block-level reorder can fix them and the past is
+    // sorted by the timestamp each message carries.
+    const db = makeDb();
+    runMigrations(db);
+    db.prepare("INSERT INTO sessions(id, name, created_at, updated_at, message_count) VALUES ('s1','S',0,0,4)").run();
+    insert(db, [
+      row(0, "user", "nuovo-a", 100),
+      row(1, "assistant", "nuovo-b", 300),
+      row(2, "user", "vecchio-a", 50),
+      row(3, "assistant", "vecchio-b", 200),
+    ]);
+    db.exec("PRAGMA user_version = 3");
+
+    runMigrations(db);
+
+    expect(contents(db)).toEqual(["vecchio-a", "nuovo-a", "vecchio-b", "nuovo-b"]);
+  });
+
+  it("leaves a healthy history alone (no rewrite at all)", () => {
+    const db = makeDb();
+    runMigrations(db);
+    db.prepare("INSERT INTO sessions(id, name, created_at, updated_at, message_count) VALUES ('s1','S',0,0,4)").run();
+    insert(db, [
+      row(0, "user", "uno", 1),
+      row(1, "assistant", "due", 2),
+      row(2, "user", "tre", 3),
+      row(3, "assistant", "quattro", 4),
+    ]);
+    db.exec("PRAGMA user_version = 3");
+
+    runMigrations(db);
+
+    expect(contents(db)).toEqual(["uno", "due", "tre", "quattro"]);
+    expect(tableExists(db, "messages_backup_v4")).toBe(false);
+  });
+});
+
+describe("migration 4 — invariants on RANDOM histories (the guarantees, not one fixture)", () => {
+  // A fixture proves the case we thought of. These prove the PROPERTIES the repair must have for
+  // ANY input, which is what "safe to run on a stranger's database" actually means:
+  //   1. it is a PERMUTATION — no row lost, none duplicated, none invented;
+  //   2. the past it returns is in order (never a step backwards);
+  //   3. the checkpoint pair + kept tail are untouched, in place;
+  //   4. equal timestamps keep their stored order (stability: a tool call stays with its step);
+  //   5. it is IDEMPOTENT — a second run finds nothing to do;
+  //   6. a history with no backwards step is never touched (`null`).
+  it("holds all of them over 300 generated histories", () => {
+    let seed = 42; // deterministic LCG: a failure is reproducible
+    const next = (): number => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+
+    const isSyn = (data: string): boolean => {
+      try {
+        return (JSON.parse(data) as { synthetic?: unknown }).synthetic === true;
+      } catch {
+        return false;
+      }
+    };
+    const syntheticRow = (seq: number, ts: number) => ({
+      session_id: "s1",
+      seq,
+      role: "user",
+      content: `pair-${seq}`,
+      timestamp: ts,
+      data: JSON.stringify({ synthetic: true, timestamp: ts }),
+    });
+    /** Where the untouched tail (pair + kept) begins, exactly as the repair decides it. */
+    const tailStart = (rows: { data: string }[]): number => {
+      let i = rows.length - 1;
+      while (i >= 0 && !isSyn(rows[i].data)) i--;
+      if (i < 0) return rows.length;
+      while (i > 0 && isSyn(rows[i - 1].data)) i--;
+      return i;
+    };
+    const monotonic = (rows: { timestamp: number }[]): boolean =>
+      rows.every((r, i) => i === 0 || r.timestamp >= rows[i - 1].timestamp);
+
+    let repaired = 0;
+    for (let trial = 0; trial < 300; trial++) {
+      const n = 2 + Math.floor(next() * 28);
+      // Few distinct timestamps on purpose: ties are the risky part (they are what keeps a tool
+      // call glued to the assistant step that fired it).
+      const rows = Array.from({ length: n }, (_, i) => {
+        const ts = 1_000 + Math.floor(next() * 12);
+        return next() < 0.08
+          ? syntheticRow(i, ts)
+          : {
+              session_id: "s1",
+              seq: i,
+              role: next() < 0.5 ? "user" : "assistant",
+              content: `m${i}`,
+              timestamp: ts,
+              data: JSON.stringify({ role: "user", timestamp: ts }),
+            };
+      });
+
+      const out = repairSplicedTranscript(rows);
+
+      if (!out) {
+        // "Nothing to do" is only legitimate when the past really is in order.
+        expect(monotonic(rows.slice(0, tailStart(rows))), `trial ${trial}: null but out of order`).toBe(true);
+        continue;
+      }
+      repaired++;
+      const start = tailStart(rows);
+
+      // 1. same rows, no duplicates, nothing invented (compared by identity).
+      expect(out.length).toBe(rows.length);
+      expect([...out].sort((a, b) => a.seq - b.seq).map((r) => r.seq)).toEqual(
+        [...rows].sort((a, b) => a.seq - b.seq).map((r) => r.seq),
+      );
+      // 2. the past is in order.
+      expect(monotonic(out.slice(0, start)), `trial ${trial}: still out of order`).toBe(true);
+      // 3. pair + kept untouched, and still at the end.
+      expect(out.slice(start)).toEqual(rows.slice(start));
+      // 4. stability: equal timestamps keep their stored relative order.
+      const before = new Map(rows.map((r, i) => [r.seq, i]));
+      const pastOut = out.slice(0, start);
+      for (let i = 1; i < pastOut.length; i++) {
+        if (pastOut[i].timestamp === pastOut[i - 1].timestamp) {
+          expect(before.get(pastOut[i].seq)! > before.get(pastOut[i - 1].seq)!, `trial ${trial}: unstable`).toBe(true);
+        }
+      }
+      // 5. idempotent.
+      expect(repairSplicedTranscript(out)).toBe(null);
+    }
+    // The generator must actually produce damaged histories, otherwise this proves nothing.
+    expect(repaired).toBeGreaterThan(200);
   });
 });
