@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.7] - 2026-11-02
+
 ### Fixed
 
 - **The one compaction that cuts inside a turn now SAYS it is doing so.** Every cut opens a turn, with a single deliberate exception: when the window is one turn bigger than the keep budget there is no boundary above it to use, and the alternative was never compacting at all (every Compact fell back to a trim, forever). That exception was silent, which made a card landing in the middle of a task look like a bug rather than a decision. The plan now carries `splitTurn` end to end — `planCompactionToBudget` fills it, `CompactedHistory` passes it on, the compaction hot path logs it (sessions and sub-agents alike) — and the shape it promises is pinned by tests: the span is never cut between a tool call and its results (`toSummarize` never ends on an assistant carrying `toolCalls`, `kept` never opens on an orphan `tool`), so the boundary is always a STEP boundary and both halves stay sendable.
@@ -1840,7 +1842,8 @@ Completions protocol.
 - **Diagnostics**: per-turn lines in _Output > Harny_, an optional request log
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
-[Unreleased]: https://github.com/spltek/harny/compare/v0.9.5...HEAD
+[Unreleased]: https://github.com/spltek/harny/compare/v0.9.7...HEAD
+[0.9.7]: https://github.com/spltek/harny/compare/v0.9.6...v0.9.7
 [0.9.5]: https://github.com/spltek/harny/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/spltek/harny/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/spltek/harny/compare/v0.9.2...v0.9.3

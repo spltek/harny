@@ -2,7 +2,7 @@
   "name": "harny",
   "displayName": "Harny - AI Coding Harness",
   "description": "AI coding harness for VSCodium and VS Code — fast and packed with features, built on a SOLID core. Any OpenAI-compatible endpoint works out of the box.",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "publisher": "spltek",
   "license": "MIT",
   "repository": {
