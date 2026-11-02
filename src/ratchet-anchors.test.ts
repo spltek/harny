@@ -15,6 +15,8 @@ import { join } from "node:path";
  * nothing.
  */
 const ROOT = process.cwd();
+/** The matrices live in `stryker/` — one folder, so the root stays a manifest and not a config dump. */
+const CONFIGS = join(ROOT, "stryker");
 
 /** The statements each measured range must still cover. */
 const ANCHORS: Record<string, string[]> = {
@@ -35,15 +37,15 @@ const ANCHORS: Record<string, string[]> = {
 
 type Hunk = { file: string; start: number; end: number; config: string };
 
-/** Every `<file>:<start>-<end>` entry of every Stryker config in the repo root. */
+/** Every `<file>:<start>-<end>` entry of every Stryker config in `stryker/`. */
 function rangedHunks(): Hunk[] {
   const hunks: Hunk[] = [];
-  for (const name of readdirSync(ROOT).filter((f) => /^stryker.*\.conf\.json$/.test(f))) {
-    const conf = JSON.parse(readFileSync(join(ROOT, name), "utf8")) as { mutate?: string[] };
+  for (const name of readdirSync(CONFIGS).filter((f) => f.endsWith(".conf.json"))) {
+    const conf = JSON.parse(readFileSync(join(CONFIGS, name), "utf8")) as { mutate?: string[] };
     for (const entry of conf.mutate ?? []) {
       const m = /^(.+):(\d+)-(\d+)$/.exec(entry);
       if (!m) continue;
-      hunks.push({ file: m[1], start: Number(m[2]), end: Number(m[3]), config: name });
+      hunks.push({ file: m[1], start: Number(m[2]), end: Number(m[3]), config: join("stryker", name) });
     }
   }
   return hunks;

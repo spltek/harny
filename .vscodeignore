@@ -21,10 +21,18 @@ tsconfig.webview.json
 vitest.config.mts
 .eslintrc.json
 .gitignore
-.env.example
-config.example.jsonc
 *.vsix
 .DS_Store
+
+# Mutation-testing matrices (`npm run mutate:*`): read by Stryker, never by the extension.
+# The globs INSIDE them are cwd-relative (Stryker docs), so the folder move changed no glob —
+# it only stops 8 dev-only JSONs from riding along in the .vsix.
+stryker/**
+
+# Repo examples — the demo MCP server and the config template. They are "copy from the repo",
+# not parts of the extension; this line also covers the former `config.example.jsonc`.
+examples/**
+
 # `vsce` packs the WORKING TREE (not the git index), so tracked DEV files a user never
 # needs ride along: prettier's config is a formatter's, and .git-blame-ignore-revs is for
 # `git blame`. Neither is read at runtime.
