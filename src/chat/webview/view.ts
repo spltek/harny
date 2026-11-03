@@ -6647,6 +6647,34 @@ window.addEventListener("message", (e) => {
       }
       break;
     }
+    case "sessionMeta": {
+      // The host's history write moved a session's `updatedAt`: patch the dates of
+      // that row IN PLACE, exactly like a rename does. No rebuild, so the working
+      // rows and their buttons do not flash, and the order is left alone (re-sorting
+      // rows under the pointer is worse than a stale order — the next real render
+      // sorts). The All-sessions form is NOT patched on purpose: it reads the whole
+      // list from the store when it opens.
+      const meta = Array.isArray(msg.meta) ? (msg.meta as { id: string; createdAt: number; updatedAt: number }[]) : [];
+      for (const m of meta) {
+        // A row exists only for a session this list knows: anything else (another
+        // folder's session, a stale id) has nothing to patch.
+        const known = currentSessions.find((s) => s.id === m?.id);
+        if (!known) continue;
+        known.updatedAt = m.updatedAt;
+        known.createdAt = m.createdAt;
+        const text = "created " + fmtDate(known.createdAt) + " · updated " + fmtDate(known.updatedAt);
+        const title =
+          "Created: " +
+          new Date(known.createdAt).toLocaleString() +
+          " · Updated: " +
+          new Date(known.updatedAt).toLocaleString();
+        for (const el of document.querySelectorAll<HTMLElement>(`.srow[data-id="${known.id}"] .smeta`)) {
+          el.textContent = text;
+          el.title = title;
+        }
+      }
+      break;
+    }
     case "modal": {
       if (msg.kind === "alert") {
         openAlert(msg);

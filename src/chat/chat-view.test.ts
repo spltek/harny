@@ -12,7 +12,7 @@ import { SessionRegistry } from "./session-registry";
 import type { ChatController } from "../core/agent/chat-controller";
 import type { ChatHistory } from "../core/history/chat-history";
 import { InMemoryChatHistory } from "../core/history/in-memory-chat-history";
-import { ChatViewProvider } from "./chat-view";
+import { ChatViewProvider, SESSION_META_COALESCE_MS } from "./chat-view";
 import { Compactor, DEFAULT_COMPACTION, TRIM_LABEL, estimateContextTokens } from "../core/sessions/compactor";
 import type { LLMProviderFactory } from "../core/llm/types";
 import { conversationFaults } from "../core/history/conversation-validity";
@@ -191,8 +191,15 @@ function buildHarness(opts: Record<string, unknown> = {}) {
   state.showInputBox.mockResolvedValue("New Session");
   const store = (opts.store as SessionStore | undefined) ?? makeStore();
   const sessions = new SessionManager(store);
-  const createAgent = vi.fn((h: ChatHistory): ChatController => {
+  /**
+   * The history each session's agent was spawned with: the REAL `PersistentChatHistory`
+   * the registry builds (bound to the store), so a test can WRITE like a turn does and
+   * see what the panel is told.
+   */
+  const histories = new Map<string, ChatHistory>();
+  const createAgent = vi.fn((h: ChatHistory, sessionId?: string): ChatController => {
     const history = h;
+    if (sessionId) histories.set(sessionId, h);
     const handlers: ((e: any) => void)[] = [];
     const agent: any = {
       streaming: false,
@@ -275,7 +282,7 @@ function buildHarness(opts: Record<string, unknown> = {}) {
    */
   const agentConfig = (sessionId: string): Record<string, unknown> =>
     provider.sessionConfigFor(sessionId).get() as unknown as Record<string, unknown>;
-  return { store, sessions, registry, createAgent, provider, agentConfig };
+  return { store, sessions, registry, createAgent, histories, provider, agentConfig };
 }
 
 function resolveWith(provider: ChatViewProvider): { view: any; handler: (msg: any) => Promise<void> } {
@@ -3923,6 +3930,117 @@ describe("ChatViewProvider all-sessions manager", () => {
     const { view } = resolveWith(provider);
     await vi.waitFor(() => expect(view.webview.html).toContain('"name":"Local"'), { timeout: 2000 });
     expect(view.webview.html).not.toContain('"name":"Foreign"');
+  });
+});
+
+describe("ChatViewProvider session row dates (live updated)", () => {
+  const summary = (id: string, updatedAt: number) => ({
+    id,
+    name: id,
+    createdAt: 1,
+    updatedAt,
+    messageCount: 1,
+  });
+
+  it("pushes a row patch when a history write moves updatedAt (coalesced, latest wins)", async () => {
+    const { provider } = buildHarness();
+    const { view } = resolveWith(provider);
+    view.webview.postMessage.mockClear();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      // One turn writes several times (the user message, then a tool batch): the
+      // rows only need the LAST value, so the burst must not become a burst of posts.
+      provider.noteSessionActivity(summary("a", 10));
+      provider.noteSessionActivity(summary("a", 20));
+      provider.noteSessionActivity(summary("b", 30));
+      expect(view.webview.postMessage).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(SESSION_META_COALESCE_MS + 1);
+
+      const patches = view.webview.postMessage.mock.calls
+        .map((c: any[]) => c[0])
+        .filter((m) => m.type === "sessionMeta");
+      expect(patches).toHaveLength(1);
+      expect(patches[0].meta).toEqual([
+        { id: "a", createdAt: 1, updatedAt: 20 },
+        { id: "b", createdAt: 1, updatedAt: 30 },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a REAL history write reaches the list (registry → store → row patch)", async () => {
+    // The whole chain, not the seam: the registry builds the history, the history writes
+    // through the store, the store's summary travels back and the panel is told. This is
+    // the test that fails if the hook is dropped anywhere along the wiring.
+    const { provider, registry, histories } = buildHarness();
+    const { view } = resolveWith(provider);
+    const rt = registry.create("Live");
+    view.webview.postMessage.mockClear();
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      histories.get(rt.sessionId)!.add({ role: "user", content: "hi", timestamp: 5 });
+      vi.advanceTimersByTime(SESSION_META_COALESCE_MS + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const patch = view.webview.postMessage.mock.calls.map((c: any[]) => c[0]).find((m) => m.type === "sessionMeta");
+    expect(patch?.meta).toEqual([{ id: rt.sessionId, createdAt: 1, updatedAt: 2 }]);
+  });
+
+  it("a SECOND burst after the window posts again (the timer is re-armed, not one-shot)", async () => {
+    const { provider } = buildHarness();
+    const { view } = resolveWith(provider);
+    view.webview.postMessage.mockClear();
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      provider.noteSessionActivity(summary("a", 10));
+      vi.advanceTimersByTime(SESSION_META_COALESCE_MS + 1);
+      // A long turn writes again minutes later: that burst must not be swallowed by the
+      // burst that came before it.
+      provider.noteSessionActivity(summary("a", 40));
+      vi.advanceTimersByTime(SESSION_META_COALESCE_MS + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const patches = view.webview.postMessage.mock.calls
+      .map((c: any[]) => c[0])
+      .filter((m) => m.type === "sessionMeta")
+      .map((m) => m.meta[0].updatedAt);
+    expect(patches).toEqual([10, 40]);
+  });
+
+  it("a write with NO view open stays silent (and does not throw)", async () => {
+    const { provider } = buildHarness();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      expect(() => provider.noteSessionActivity(summary("a", 10))).not.toThrow();
+      expect(() => vi.advanceTimersByTime(SESSION_META_COALESCE_MS + 1)).not.toThrow();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("dispose() drops a pending patch instead of posting to a dead webview", async () => {
+    const { provider } = buildHarness();
+    const { view } = resolveWith(provider);
+    view.webview.postMessage.mockClear();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      provider.noteSessionActivity(summary("a", 10));
+      provider.dispose();
+      vi.advanceTimersByTime(SESSION_META_COALESCE_MS + 1);
+      expect(
+        view.webview.postMessage.mock.calls.map((c: any[]) => c[0]).filter((m) => m.type === "sessionMeta"),
+      ).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -149,6 +149,71 @@ describe("SessionRegistry", () => {
   });
 });
 
+describe("SessionRegistry history-write hook", () => {
+  // The session list on screen follows a session's `updatedAt`, and the ONLY thing that
+  // moves it is a history write. The hook is threaded through the registry, so it must
+  // ride along on BOTH ways a runtime is born — a new session AND a loaded one.
+  function buildWithHook() {
+    const store = makeStore();
+    const sessions = new SessionManager(store);
+    const onHistorySaved = vi.fn();
+    const histories = new Map<string, ChatHistory>();
+    const registry = new SessionRegistry({
+      sessions,
+      store,
+      configFor: () => ({ get: () => ({}) as never }),
+      createAgent: vi.fn((h: ChatHistory, id: string) => {
+        histories.set(id, h);
+        return { addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() } as unknown as ChatController;
+      }),
+    });
+    registry.observeHistoryWrites(onHistorySaved);
+    return { store, registry, onHistorySaved, histories };
+  }
+
+  it("reports the write of a NEWLY created session", () => {
+    const { registry, onHistorySaved, histories } = buildWithHook();
+    const rt = registry.create("Live");
+
+    histories.get(rt.sessionId)!.add({ role: "user", content: "hi", timestamp: 1 });
+
+    expect(onHistorySaved).toHaveBeenCalledWith(expect.objectContaining({ id: rt.sessionId, messageCount: 1 }));
+  });
+
+  it("reports the write of a LOADED session (the hook is not only on the create path)", () => {
+    const { registry, onHistorySaved, histories } = buildWithHook();
+    const rt = registry.openOrCreate("s9");
+
+    histories.get(rt.sessionId)!.addGroup([{ role: "assistant", content: "ok", timestamp: 2 }]);
+
+    expect(onHistorySaved).toHaveBeenCalledWith(expect.objectContaining({ id: "s9" }));
+  });
+
+  it("registers LATE and still hears the runtimes that already existed", () => {
+    // The panel is built after the registry (and after any session a gesture opened first):
+    // the hook reads its listener at WRITE time, so registering later must not lose writes.
+    const store = makeStore();
+    const sessions = new SessionManager(store);
+    const histories = new Map<string, ChatHistory>();
+    const registry = new SessionRegistry({
+      sessions,
+      store,
+      configFor: () => ({ get: () => ({}) as never }),
+      createAgent: vi.fn((h: ChatHistory, id: string) => {
+        histories.set(id, h);
+        return { addUserMessage: vi.fn(), setMode: vi.fn(), setDelegation: vi.fn() } as unknown as ChatController;
+      }),
+    });
+    const rt = registry.create("Early");
+
+    const late = vi.fn();
+    registry.observeHistoryWrites(late);
+    histories.get(rt.sessionId)!.add({ role: "user", content: "hi", timestamp: 1 });
+
+    expect(late).toHaveBeenCalledWith(expect.objectContaining({ id: rt.sessionId }));
+  });
+});
+
 describe("SessionRegistry per-session model", () => {
   it("loads the persisted model onto the runtime when opening", () => {
     const store = makeStore();

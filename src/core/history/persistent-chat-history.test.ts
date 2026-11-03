@@ -63,6 +63,31 @@ describe("PersistentChatHistory", () => {
     expect(store.saveMessages).not.toHaveBeenCalled();
   });
 
+  it("reports every write's summary to onSaved (the row dates follow, no extra read)", () => {
+    const store = makeStore();
+    const onSaved = vi.fn();
+    const history = new PersistentChatHistory(store, "sess-1", onSaved);
+
+    history.add(msg({ content: "a" }));
+    history.addGroup([msg({ role: "assistant", content: "ok", timestamp: 2 })]);
+
+    // The summary the STORE returned, messageCount included: nobody re-reads the row.
+    expect(onSaved).toHaveBeenCalledTimes(2);
+    expect(onSaved).toHaveBeenLastCalledWith(expect.objectContaining({ id: "sess-1", updatedAt: 2, messageCount: 2 }));
+  });
+
+  it("still WRITES with no onSaved hook (the hook is optional, the save is not)", () => {
+    const store = makeStore();
+    const history = new PersistentChatHistory(store, "sess-1");
+
+    history.add(msg({ content: "a" }));
+    history.addGroup([msg({ role: "assistant", content: "ok", timestamp: 2 })]);
+
+    // `onSaved?.(saveMessages(...))` would skip the SAVE entirely: an optional call
+    // short-circuits its arguments. The hook must never gate the write.
+    expect(store.saveMessages).toHaveBeenCalledTimes(2);
+  });
+
   it("replace swaps messages without triggering a save", () => {
     const store = makeStore();
     const history = new PersistentChatHistory(store, "sess-1");

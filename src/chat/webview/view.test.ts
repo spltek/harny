@@ -985,6 +985,70 @@ describe("view webview client", () => {
     expect(after).toContain("· updated ");
   });
 
+  it("refreshes a row's dates IN PLACE when the host reports activity (sessionMeta)", async () => {
+    await loadView();
+    const row = document.querySelector(`.srow[data-id="a"]`) as HTMLElement;
+    const meta = row.querySelector(".smeta") as HTMLElement;
+    const before = meta.textContent;
+
+    hostMessage({ type: "sessionMeta", meta: [{ id: "a", createdAt: 1, updatedAt: 1_700_000_000_000 }] });
+
+    // Patched, not rebuilt: the very same element, so the action buttons under the
+    // pointer (and the whole listing) are not thrown away mid-turn.
+    expect(document.querySelector(`.srow[data-id="a"] .smeta`)).toBe(meta);
+    expect(meta.textContent).not.toBe(before);
+    expect(meta.textContent).toContain("created ");
+    expect(meta.textContent).toContain("· updated ");
+    // The tooltip carries the FULL date/time, so it has to move with the text.
+    expect(meta.title).toContain(new Date(1_700_000_000_000).toLocaleString());
+  });
+
+  it("patches ONLY the main list: the All-sessions form is left alone (it reads the store on open)", async () => {
+    await loadView();
+    // Open the form the way the user does, so it holds its own rows.
+    hostMessage({
+      type: "sessionsManager",
+      show: true,
+      sessions: [{ id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 1 }],
+    });
+    const inForm = document.querySelector('.sm-row[data-id="a"] .sm-meta') as HTMLElement | null;
+    expect(inForm).not.toBeNull();
+    const before = inForm!.textContent;
+
+    hostMessage({ type: "sessionMeta", meta: [{ id: "a", createdAt: 1, updatedAt: 1_700_000_000_000 }] });
+
+    // The list follows live; the form keeps what it read when it opened (by design).
+    expect((document.querySelector(`.srow[data-id="a"] .smeta`) as HTMLElement).textContent).toContain("· updated ");
+    expect((document.querySelector('.sm-row[data-id="a"] .sm-meta') as HTMLElement).textContent).toBe(before);
+  });
+
+  it("ignores a patch for a session this list does not know (no crash, nothing touched)", async () => {
+    await loadView();
+    const row = document.querySelector(`.srow[data-id="a"] .smeta`) as HTMLElement;
+    const before = row.textContent;
+
+    // Another folder's session can commit while you look at this one: its id is real but
+    // it has no row here.
+    expect(() =>
+      hostMessage({ type: "sessionMeta", meta: [{ id: "elsewhere", createdAt: 1, updatedAt: 9 }] }),
+    ).not.toThrow();
+    expect(row.textContent).toBe(before);
+  });
+
+  it("keeps the patched dates in the list's memory (a later re-render shows them)", async () => {
+    await loadView();
+    hostMessage({ type: "sessionMeta", meta: [{ id: "a", createdAt: 1, updatedAt: 1_700_000_000_000 }] });
+    const patched = (document.querySelector(`.srow[data-id="a"] .smeta`) as HTMLElement).textContent;
+
+    // Clearing the session search re-renders the list from its in-memory copy: the
+    // patched date must survive, or the next keystroke would resurrect the old one.
+    const search = document.getElementById("session-search") as HTMLInputElement;
+    search.value = "";
+    search.dispatchEvent(new Event("input"));
+
+    expect((document.querySelector(`.srow[data-id="a"] .smeta`) as HTMLElement).textContent).toBe(patched);
+  });
+
   it("renames a session row and tab in place without rebuild", async () => {
     await loadView();
     const row = document.querySelector(".srow") as HTMLElement;

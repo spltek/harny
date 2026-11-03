@@ -128,6 +128,21 @@ const CONFIG_COALESCE_MS = 120;
 const CONTEXT_TOKENS_FLUSH_MS = 400;
 
 /**
+ * Coalescing window for the "this session's row changed" patch (see
+ * `noteSessionActivity`). One turn writes several times (the user message, then
+ * one write per committed tool batch), while the session list is on screen: the
+ * rows only need the LATEST `updatedAt`, so a burst collapses into one message.
+ */
+export const SESSION_META_COALESCE_MS = 200;
+
+/** The dates of ONE session row: what the list shows and what a history write moves. */
+interface SessionMetaPatch {
+  id: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
  * Single side-view (webview view) hosting: a hideable sessions list, a tab bar
  * of the open sessions, and the ACTIVE chat (overlapping tabs — one chat
  * visible at a time). Messages from the webview are routed to the active
@@ -214,6 +229,9 @@ export class ChatViewProvider implements WebviewViewProvider {
   private tokenFlushTimer: ReturnType<typeof setTimeout> | undefined;
   /** The one-shot startup vacuum check (cleared on dispose). */
   private startupVacuumTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Sessions whose new `updatedAt` is waiting for the coalesced row patch. */
+  private readonly sessionMetaPending = new Map<string, SessionMetaPatch>();
+  private sessionMetaTimer: ReturnType<typeof setTimeout> | undefined;
   /** Every "open a folder" flow: the picker and `vscode.openFolder` in ONE place. */
   private readonly workspace: WorkspaceActions;
   /**
@@ -308,6 +326,11 @@ export class ChatViewProvider implements WebviewViewProvider {
       buildContext: (files) => this.attachments.buildContext(files),
       post: (sessionId, items) => this.postPending(sessionId, items),
     });
+    // The panel is the ONLY listener for history writes: a write moves the session's
+    // `updatedAt` and the list on screen follows it. Registered HERE, not in the
+    // composition root, so the live dates cannot be switched off by forgetting a line
+    // (see SessionRegistry.observeHistoryWrites).
+    this.registry.observeHistoryWrites((summary) => this.noteSessionActivity(summary));
   }
 
   setContext(context: ExtensionContext): void {
@@ -408,6 +431,38 @@ export class ChatViewProvider implements WebviewViewProvider {
       .filter((s): s is SessionSummary => !!s)
       .map((s) => ({ ...s, foreign: true }));
     return [...scoped, ...openElsewhere];
+  }
+
+  /**
+   * A session's history was just WRITTEN, so its `updatedAt` moved:
+   * refresh that row's dates on screen.
+   *
+   * Why a dedicated message and not the whole list: the list is a `SELECT *` on
+   * the session table and a turn writes several times, so re-sending it per write
+   * would be pure traffic — and re-rendering the rows would rebuild the action
+   * buttons under the pointer (they flash on every rebuild, see the `status`
+   * handler). The view PATCHES the two dates in place instead.
+   *
+   * Ordering is deliberately NOT touched: `updatedAt` is the list's sort key, but
+   * re-sorting rows while you read them (a background session committing under
+   * your cursor) is worse than a stale order — the next real render sorts.
+   */
+  noteSessionActivity(summary: SessionSummary): void {
+    this.sessionMetaPending.set(summary.id, {
+      id: summary.id,
+      createdAt: summary.createdAt,
+      updatedAt: summary.updatedAt,
+    });
+    if (this.sessionMetaTimer !== undefined) return;
+    this.sessionMetaTimer = setTimeout(() => {
+      this.sessionMetaTimer = undefined;
+      const meta = [...this.sessionMetaPending.values()];
+      this.sessionMetaPending.clear();
+      // No view: nothing on screen to patch (the write itself already happened).
+      if (!this.view) return;
+      this.view.webview.postMessage({ type: "sessionMeta", meta });
+    }, SESSION_META_COALESCE_MS);
+    this.sessionMetaTimer.unref?.();
   }
 
   /** Live data for the manage-sessions form (ALL folders, sorted by the manager). */
@@ -1179,6 +1234,10 @@ export class ChatViewProvider implements WebviewViewProvider {
     if (this.startupVacuumTimer !== undefined) {
       clearTimeout(this.startupVacuumTimer);
       this.startupVacuumTimer = undefined;
+    }
+    if (this.sessionMetaTimer !== undefined) {
+      clearTimeout(this.sessionMetaTimer);
+      this.sessionMetaTimer = undefined;
     }
     // A modal still waiting has nobody left to answer it: resolve it as CANCELLED so the
     // flow that asked (create / rename / delete…) ends instead of hanging on a promise

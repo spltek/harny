@@ -4,7 +4,7 @@ import type { ChatHistory } from "../core/history/chat-history";
 import { PersistentChatHistory } from "../core/history/persistent-chat-history";
 import type { ThinkingLevel } from "../core/config/types";
 import type { LoopGuardOptions, LoopGuardSensitivity } from "../core/agent/loop-guard";
-import type { SessionStore } from "../core/sessions/types";
+import type { SessionStore, SessionSummary } from "../core/sessions/types";
 import type { SessionManager } from "../core/sessions/session-manager";
 import type { ConfigProvider } from "../core/config/types";
 import { SessionEngine } from "./session-engine";
@@ -85,8 +85,34 @@ interface SessionRegistryDeps {
  */
 export class SessionRegistry {
   private open = new Map<string, SessionRuntime>();
+  /** The one listener for history writes (see `observeHistoryWrites`). */
+  private onHistorySaved?: (summary: SessionSummary) => void;
 
   constructor(private deps: SessionRegistryDeps) {}
+
+  /**
+   * Register the listener told about every HISTORY WRITE, with the summary the store just
+   * produced — its `updatedAt` moved, so the session list on screen has to follow it (see
+   * ChatViewProvider.noteSessionActivity).
+   *
+   * Why a setter and not a `deps` field: the panel is the only listener, it is built AFTER
+   * the registry, and a dependency it must remember to wire is a line that can be deleted
+   * in silence (an optional dep is still a valid object without it). The panel registers
+   * itself in its own constructor instead, so the live dates cannot be switched off by
+   * forgetting a line in the composition root.
+   */
+  observeHistoryWrites(fn: (summary: SessionSummary) => void): void {
+    this.onHistorySaved = fn;
+  }
+
+  /**
+   * The hook each history carries. It reads the listener LAZILY: a runtime can be spawned
+   * before (or after) the panel registers, and every write must reach whoever is listening
+   * at that moment.
+   */
+  private historyListener(): (summary: SessionSummary) => void {
+    return (summary) => this.onHistorySaved?.(summary);
+  }
 
   listOpenIds(): string[] {
     return [...this.open.keys()];
@@ -125,7 +151,7 @@ export class SessionRegistry {
     const existing = this.open.get(id);
     if (existing) return existing;
     const loaded = this.deps.sessions.load(id);
-    const history = new PersistentChatHistory(this.deps.store, id);
+    const history = new PersistentChatHistory(this.deps.store, id, this.historyListener());
     history.replace(loaded.messages);
     const rt = this.spawn(id, history);
     rt.model = loaded.summary.model;
@@ -162,7 +188,7 @@ export class SessionRegistry {
   /** Create a brand-new session and open its runtime. */
   create(name?: string): SessionRuntime {
     const summary = this.deps.sessions.create(name);
-    const history = new PersistentChatHistory(this.deps.store, summary.id);
+    const history = new PersistentChatHistory(this.deps.store, summary.id, this.historyListener());
     return this.spawn(summary.id, history);
   }
 
