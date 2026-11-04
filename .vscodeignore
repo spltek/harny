@@ -24,6 +24,11 @@ vitest.config.mts
 *.vsix
 .DS_Store
 
+# Stryker's report lands here (`npm run mutate:*`): 680 KB of mutation JSON that a
+# user never opens. `vsce` packs the WORKING TREE, so without this line the last
+# local mutation run rides along in the .vsix.
+reports/**
+
 # Mutation-testing matrices (`npm run mutate:*`): read by Stryker, never by the extension.
 # The globs INSIDE them are cwd-relative (Stryker docs), so the folder move changed no glob —
 # it only stops 8 dev-only JSONs from riding along in the .vsix.

@@ -55,6 +55,28 @@ describe("package.json manifest", () => {
     expect(typeof support.description).toBe("string");
     expect(support.description.length).toBeGreaterThan(40);
   });
+
+  it("the @types/vscode floor matches engines.vscode (else the .vsix cannot be built)", () => {
+    // `vsce` REFUSES to package when the types are newer than the declared engine — "Either
+    // upgrade engines.vscode or use an older @types/vscode version" — and it started refusing
+    // in vsce 4.1.0, so the mismatch sat in the tree unseen. It is not cosmetic: the types are
+    // the API surface `tsc` lets us use, so types ahead of the engine means code that compiles
+    // here and throws on the VS Code version the manifest promises. Both are pinned to the
+    // SAME minor, and this test is what makes a dependency bump say so in `npm test` instead
+    // of at release time (the engine floor itself is a user-facing contract: raising it stops
+    // updates for everyone below, which a MAJOR release may do and a minor may not).
+    const engine = String(manifest.engines?.vscode ?? "");
+    const types = String(manifest.devDependencies?.["@types/vscode"] ?? "");
+    expect(engine).toMatch(/^\^\d+\.\d+\.\d+$/);
+    expect(types).toMatch(/^\^?\d+\.\d+\.\d+$/);
+    const floor = (v: string) =>
+      v
+        .replace(/^[^\d]*/, "")
+        .split(".")
+        .slice(0, 2)
+        .join(".");
+    expect(floor(types)).toBe(floor(engine));
+  });
 });
 
 const ICON_SVG = join(process.cwd(), "media", "icon.svg");

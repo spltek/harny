@@ -29,6 +29,13 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # The advisory gate that matters: `dependencies` are BUNDLED into dist/extension.js by
+      # esbuild and shipped, devDependencies never leave this runner. Auditing the whole tree
+      # would gate releases on Stryker's and vsce's own dependencies (DoS advisories in glob
+      # helpers) that no user can reach — so this job asks the only question a release has to
+      # answer: does what we SHIP carry a known vulnerability.
+      - name: No known vulnerabilities in what ships
+        run: npm audit --omit=dev --audit-level=moderate
       - run: npm run build
       # This build is NOT a tagged release: stamp a `-dev.<run>` version so it is
       # clearly distinguishable from the versioned release artifacts.
