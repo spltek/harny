@@ -31,13 +31,19 @@ const msg = (role: ChatMessage["role"], content: string, timestamp = 1): ChatMes
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
-  for (const fn of cleanups.splice(0)) fn();
+  // LIFO, and the order is the point: the folder must be removed AFTER the connections are
+  // closed and after the lock-holder child is killed. Windows cannot delete a file that is still
+  // open (`EPERM`), so the naive insertion order — remove, then close — failed four tests here
+  // that had already passed on `windows-latest`.
+  for (const fn of cleanups.splice(0).reverse()) fn();
 });
 
 /** One temp DIR per test: the database file must be shared between the two connections. */
 function makeSharedFile(): string {
   const dir = mkdtempSync(join(tmpdir(), "harny-concurrency-"));
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+  // `maxRetries` retries EPERM/EBUSY with a growing backoff: a child process killed a moment ago
+  // may still be releasing its handle on the file.
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
   return join(dir, "sessions.db");
 }
 

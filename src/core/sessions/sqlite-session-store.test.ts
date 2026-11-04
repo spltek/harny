@@ -579,16 +579,35 @@ describe("SqliteSessionStore — thinkingLevel clear", () => {
  */
 describe("SqliteSessionStore — a write that dies cannot corrupt the session", () => {
   const tmpDirs: string[] = [];
+  // Every connection this block opens on a FILE. They are closed BEFORE the folder is removed,
+  // and that order is not cosmetic: Windows cannot delete a file that is still open (the default
+  // SQLite open is not delete-sharing), so removing first is `EPERM: Permission denied` in
+  // `afterEach` — which fails a test that has ALREADY passed. It did exactly that on
+  // `windows-latest` while macOS and Ubuntu were green.
+  const fileDbs: DatabaseSync[] = [];
+  const openRaw = (file: string): DatabaseSync => {
+    const db = new DatabaseSync(file);
+    dbs.push(db);
+    fileDbs.push(db);
+    return db;
+  };
   const openFile = (name: string): { db: DatabaseSync; store: SqliteSessionStore; file: string } => {
     const dir = mkdtempSync(join(tmpdir(), "harny-store-"));
     tmpDirs.push(dir);
     const file = join(dir, name);
-    const db = new DatabaseSync(file);
-    dbs.push(db);
+    const db = openRaw(file);
     return { db, store: new SqliteSessionStore({ db, fs: fakeFs(), idGen: () => "s1" }), file };
   };
   afterEach(() => {
-    for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+    for (const db of fileDbs.splice(0))
+      try {
+        db.close();
+      } catch {
+        /* already closed by the test */
+      }
+    // `maxRetries` is Node's own Windows remedy: EPERM/EBUSY retried with a growing backoff, for
+    // the case where a handle opened by a test's second connection is still being released.
+    for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   });
 
   it("a save that THROWS mid-loop leaves the file exactly as it was (nothing partial)", () => {
@@ -608,8 +627,7 @@ describe("SqliteSessionStore — a write that dies cannot corrupt the session", 
     // And on DISK: a SECOND connection to the SAME file (the next VS Code window) reads
     // the old session whole, with the old count. This is the assertion an in-memory test
     // cannot make — and the one that means "a crash costs the last write, not the session".
-    const second = new DatabaseSync(first.file);
-    dbs.push(second);
+    const second = openRaw(first.file);
     const reopened = new SqliteSessionStore({ db: second, fs: fakeFs(), idGen: () => "s9" });
     const loaded = reopened.load("s1");
     expect(loaded.messages.map((m) => m.content)).toEqual(["one", "two"]);
@@ -635,8 +653,7 @@ describe("SqliteSessionStore — a write that dies cannot corrupt the session", 
       .run();
     dying.close(); // no COMMIT: SQLite rolls the whole transaction back
 
-    const reopened = new DatabaseSync(file);
-    dbs.push(reopened);
+    const reopened = openRaw(file);
     const store2 = new SqliteSessionStore({ db: reopened, fs: fakeFs(), idGen: () => "s2" });
     const loaded = store2.load("s1");
     expect(loaded.messages.map((m) => m.content)).toEqual(["kept"]);
