@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-02
+
+**The version catches up with how Harny ships.** Nothing in this release is new
+behaviour beyond the fix below; what changes is the promise attached to the
+number. A VS Code extension **auto-updates** — publishing _is_ the update
+mechanism (`docs/RELEASE.md`) — so the pre-1.0 freedom to break things "between
+minor versions" was never real: a `0.9 → 0.10` break would have reached every
+installed user in silence. `1.0.0` does not claim the code is finished, it
+claims the opposite and more useful thing: **fixes stay fixes, minors only add,
+and a break is a major**. The half of that contract that costs real work was
+already built — the schema is versioned through `PRAGMA user_version` with
+tested migrations and golden rules (`docs/MIGRATIONS.md`) — and the half that
+was missing, the rules for the other public surfaces (settings keys, the
+`config.json` shape, command ids, session folders), is now written down in
+the same place the number lives.
+
 ### Fixed
 
 - **A session's `updated` date follows the session while it runs.** Field report: _"the list keeps saying the session was updated hours ago, even though I have been working in it all afternoon."_ The store was never the problem — `saveMessages` bumps `updatedAt` on every write — but the panel is only told about the list when the VIEW changes (a tab switch, a rename, a rebuild), so the row of a session you were actively using froze at whatever it said when the panel was last drawn, and opening the All-sessions form was what finally corrected it. The tempting fix is to re-send and re-render the whole list, which is the wrong one twice over: the list is a `SELECT *` over the session table and one turn writes several times (the user message, then one write per committed tool batch), and re-rendering the rows rebuilds the action buttons under the pointer, which flash. So a write now produces a **row patch**: `PersistentChatHistory` gained the one hook a save has (`onSaved`, called with the summary the store just returned, so nothing re-reads the row), the registry hands every history a listener that reads it **lazily** — a runtime spawned before the panel exists still reports, and one spawned after does too — and the panel (`noteSessionActivity`) coalesces a burst into ONE `sessionMeta` message (200 ms, last value wins per session) that the view applies by patching the two dates **in place** in `.srow[data-id] .smeta`, text and tooltip. Two deliberate non-changes: the rows are **not re-sorted** (`updatedAt` is the list's sort key, but moving rows under a reading user because a background session committed is worse than a stale order — the next real render sorts), and the All-sessions form is **not patched** at all, since it reads the list it needs when it opens. The listener is registered by the panel in its OWN constructor (`registry.observeHistoryWrites`) rather than as an optional dependency of the composition root: an optional dep is still a valid object without it, so that wiring could have been dropped in silence. Pinned layer by layer — seven tests, each checked against a mutant: a real write travelling `registry → history → store → provider → message` (`chat-view.test.ts`), the second burst after the window posting again, the hook on BOTH ways a runtime is born plus a LATE registration, and the client patching the same DOM node in place, ignoring an id it does not know and leaving the form alone (`webview/view.test.ts`) — and the seam itself, which no unit test can see (the message name, the shape of `meta`, the `.srow[data-id] .smeta` selector), is driven end to end over the REAL page in the new `session-list-dates.integration.test.ts`. The Stryker hunk moved with the file and the bundle is rebuilt.
