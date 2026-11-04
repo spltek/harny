@@ -32,10 +32,15 @@ hand**.
 - **`MIGRATIONS`** is an ordered, immutable list. Migration **1 is the frozen
   baseline** (the schema as of the first release). Never edit it.
 - **`runMigrations(db)`** runs once, in `SqliteSessionStore`'s constructor, after
-  the `PRAGMA journal_mode = WAL` connection pragma.
-- **One transaction.** All pending migrations run inside a single `BEGIN …
-  COMMIT`, and `user_version` is set after each. If any migration throws, the
-  **whole upgrade rolls back** (version included).
+  the connection pragmas (`journal_mode = WAL`, then `busy_timeout` — a second
+  window must wait for the lock, not fail on it).
+- **One transaction, and the version is read INSIDE it.** All pending migrations
+  run in a single `BEGIN IMMEDIATE … COMMIT`, and `user_version` is set after
+  each. If any migration throws, the **whole upgrade rolls back** (version
+  included). Two VS Code windows are two hosts activating at the same time on one
+  database, so the version is re-read under the lock: the loser applies nothing
+  and logs `already applied by another window`, instead of re-running a
+  `CREATE TABLE` that now exists — a race that used to kill activation.
 - **Pre-versioning installs.** A database with `user_version = 0` whose schema
   already exists (an install from before this system) is **stamped** to the
   baseline instead of re-running it.
