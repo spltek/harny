@@ -7,12 +7,13 @@ import { CompositeConfigProvider } from "../core/config/composite-config-provide
 import type { ModelListProvider } from "../core/llm/model-list";
 import type { AttachmentService } from "./attachment-service";
 import { SessionManager } from "../core/sessions/session-manager";
+import { SessionConflictError } from "../core/sessions/session-conflict";
 import type { SessionStore } from "../core/sessions/types";
 import { SessionRegistry } from "./session-registry";
 import type { ChatController } from "../core/agent/chat-controller";
 import type { ChatHistory } from "../core/history/chat-history";
 import { InMemoryChatHistory } from "../core/history/in-memory-chat-history";
-import { ChatViewProvider, SESSION_META_COALESCE_MS } from "./chat-view";
+import { ChatViewProvider, SESSION_META_CEILING_MS } from "./chat-view";
 import { Compactor, DEFAULT_COMPACTION, TRIM_LABEL, estimateContextTokens } from "../core/sessions/compactor";
 import type { LLMProviderFactory } from "../core/llm/types";
 import { conversationFaults } from "../core/history/conversation-validity";
@@ -621,6 +622,104 @@ describe("ChatViewProvider", () => {
       provider.resumeSession("gone");
       // The marker is an intent, not a promise that the row still exists.
       expect(registry.isOpen("gone")).toBe(false);
+    });
+
+    it("shows the recovery notice ONCE when a salvaged session is opened", async () => {
+      // A load that had to drop a damaged tail (`session-recovery.ts`) must SAY SO. A
+      // silently shortened transcript is a data loss nobody saw; a notice that repeats
+      // every open is noise. The flag is consumed here, on the panel side.
+      const { store, provider, registry } = buildHarness();
+      (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+        { id: "x", name: "Hurt", createdAt: 1, updatedAt: 2, messageCount: 1 },
+      ]);
+      (store.load as ReturnType<typeof vi.fn>).mockImplementation((id: string) => ({
+        summary: { id, name: "Hurt", createdAt: 1, updatedAt: 2, messageCount: 1 },
+        messages: [{ role: "user", content: "kept", timestamp: 1 }],
+        repaired: { dropped: 3, reason: "invalid_tail" },
+      }));
+      const { view } = resolveWith(provider);
+      provider.resumeSession("x");
+      await vi.waitFor(() => expect(registry.isOpen("x")).toBe(true));
+
+      const notices = () =>
+        view.webview.postMessage.mock.calls
+          .map((c: any[]) => c[0])
+          .filter((m) => m.kind === "alert" && m.title === "Session recovered");
+      await vi.waitFor(() => expect(notices()).toHaveLength(1));
+      expect(notices()[0].message).toContain("3 message(s)");
+      expect(notices()[0].message).toContain("tool call without its results");
+
+      // Re-opening the SAME session is quiet: the salvage already happened once.
+      provider.resumeSession("x");
+      await vi.waitFor(() => expect(registry.isOpen("x")).toBe(true));
+      await new Promise((r) => setTimeout(r, 20));
+      expect(notices()).toHaveLength(1);
+    });
+
+    it("says so when ANOTHER WINDOW took the session (a refused write is not silent)", async () => {
+      // Two windows on one database: the store refuses this window's save rather than deleting the
+      // other window's turns. Refusing in silence would mean "my messages stopped being saved" with
+      // the user none the wiser, so the panel has to say it — once, because the history blocks
+      // itself after the first refusal instead of retrying.
+      const { store, provider, registry } = buildHarness();
+      (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+        { id: "x", name: "Casa", createdAt: 1, updatedAt: 2, messageCount: 1, revision: 5 },
+      ]);
+      (store.load as ReturnType<typeof vi.fn>).mockImplementation((id: string) => ({
+        summary: { id, name: "Casa", createdAt: 1, updatedAt: 2, messageCount: 1, revision: 5 },
+        messages: [{ role: "user", content: "kept", timestamp: 1 }],
+      }));
+      const { view } = resolveWith(provider);
+      provider.resumeSession("x");
+      await vi.waitFor(() => expect(registry.isOpen("x")).toBe(true));
+
+      (store.saveMessages as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        throw new SessionConflictError("x", 7);
+      });
+      // The alert names the session it is talking about: `setTimeout` aside, this is the row the
+      // panel reads the title from.
+      (store.summary as ReturnType<typeof vi.fn>).mockReturnValue({
+        id: "x",
+        name: "Casa",
+        createdAt: 1,
+        updatedAt: 2,
+        messageCount: 1,
+        revision: 7,
+      });
+      registry.get("x")!.history.add({ role: "user", content: "mine", timestamp: 3 });
+
+      const notices = () =>
+        view.webview.postMessage.mock.calls
+          .map((c: any[]) => c[0])
+          .filter((m) => m.kind === "alert" && m.title === "Session changed in another window");
+      await vi.waitFor(() => expect(notices()).toHaveLength(1));
+      const message = notices()[0].message;
+      expect(message).toContain("Casa");
+      expect(message).toContain("NOT written");
+      expect(message).toContain("revision 7");
+      // Nothing is closed on the user's behalf: the messages on screen are the only copy left.
+      expect(registry.isOpen("x")).toBe(true);
+
+      // A second write does not nag: the history is blocked, so it never reaches the store.
+      registry.get("x")!.history.add({ role: "assistant", content: "more", timestamp: 4 });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(notices()).toHaveLength(1);
+      expect((store.saveMessages as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+    });
+
+    it("says nothing when the session loaded CLEAN (the common case)", async () => {
+      const { store, provider } = buildHarness();
+      (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+        { id: "x", name: "Fine", createdAt: 1, updatedAt: 2, messageCount: 1 },
+      ]);
+      const { view } = resolveWith(provider);
+      provider.resumeSession("x");
+      await new Promise((r) => setTimeout(r, 20));
+      expect(
+        view.webview.postMessage.mock.calls
+          .map((c: any[]) => c[0])
+          .filter((m) => m.kind === "alert" && m.title === "Session recovered"),
+      ).toEqual([]);
     });
 
     it("reports HOW MANY folders are open (a multi-root must not be told 'none is open')", async () => {
@@ -2799,6 +2898,13 @@ describe("ChatViewProvider", () => {
       expect.objectContaining({ type: "modal", kind: "alert", alertKind: "confirm", danger: true }),
     );
     expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "refresh", messages: kept }));
+    // The cut re-renders WITH the skill catalog: the payload is built by spreading it in
+    // (`...(withSkills ? { skills } : {})`), so an empty object there is a valid payload
+    // that silently drops it — the mutation run found exactly that surviving.
+    const refreshes = view.webview.postMessage.mock.calls.map((c: any[]) => c[0]).filter((m) => m.type === "refresh");
+    const refresh = refreshes[refreshes.length - 1];
+    expect(refresh).toHaveProperty("skills");
+    expect(Array.isArray(refresh.skills)).toBe(true);
   });
 
   it("truncateAt recomputes AND persists the context tokens from the KEPT messages", async () => {
@@ -3942,7 +4048,7 @@ describe("ChatViewProvider session row dates (live updated)", () => {
     messageCount: 1,
   });
 
-  it("pushes a row patch when a history write moves updatedAt (coalesced, latest wins)", async () => {
+  it("pushes a row patch when a history write moves updatedAt (accumulated, latest wins)", async () => {
     const { provider } = buildHarness();
     const { view } = resolveWith(provider);
     view.webview.postMessage.mockClear();
@@ -3955,7 +4061,8 @@ describe("ChatViewProvider session row dates (live updated)", () => {
       provider.noteSessionActivity(summary("b", 30));
       expect(view.webview.postMessage).not.toHaveBeenCalled();
 
-      vi.advanceTimersByTime(SESSION_META_COALESCE_MS + 1);
+      // The CEILING (a turn that never ends) still publishes: same content, one message.
+      vi.advanceTimersByTime(SESSION_META_CEILING_MS + 1);
 
       const patches = view.webview.postMessage.mock.calls
         .map((c: any[]) => c[0])
@@ -3965,6 +4072,101 @@ describe("ChatViewProvider session row dates (live updated)", () => {
         { id: "a", createdAt: 1, updatedAt: 20 },
         { id: "b", createdAt: 1, updatedAt: 30 },
       ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the TURN END publishes immediately — no waiting for the ceiling", async () => {
+    // The point of the whole design: the turn is what moved `updatedAt`, so the turn
+    // is when the list hears about it. Waiting a minute would show the previous
+    // minute's date on a session that has finished its work.
+    const { provider } = buildHarness();
+    const { view } = resolveWith(provider);
+    view.webview.postMessage.mockClear();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      provider.noteSessionActivity(summary("a", 7));
+      expect(view.webview.postMessage).not.toHaveBeenCalled();
+
+      provider.flushSessionMeta();
+
+      const patches = view.webview.postMessage.mock.calls
+        .map((c: any[]) => c[0])
+        .filter((m) => m.type === "sessionMeta");
+      expect(patches).toHaveLength(1);
+      expect(patches[0].meta).toEqual([{ id: "a", createdAt: 1, updatedAt: 7 }]);
+
+      // The flush DISARMED the ceiling: the same write must not be published twice.
+      vi.advanceTimersByTime(SESSION_META_CEILING_MS * 2);
+      expect(
+        view.webview.postMessage.mock.calls.map((c: any[]) => c[0]).filter((m) => m.type === "sessionMeta"),
+      ).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ONE patch per turn, whatever the number of writes (10 writes, 1 message)", async () => {
+    // The reason D exists: a turn with ten tool batches used to cost ten-ish messages
+    // spread over the turn. The list renders `dd/mm hh:mm`, so all ten were invisible.
+    const { provider } = buildHarness();
+    const { view } = resolveWith(provider);
+    view.webview.postMessage.mockClear();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      for (let i = 1; i <= 10; i++) {
+        provider.noteSessionActivity(summary("a", i * 1_000));
+        // A tool batch every 5 s: all of it inside the ceiling, so nothing leaves early.
+        vi.advanceTimersByTime(5_000);
+      }
+      expect(view.webview.postMessage).not.toHaveBeenCalled();
+
+      provider.flushSessionMeta();
+
+      const patches = view.webview.postMessage.mock.calls
+        .map((c: any[]) => c[0])
+        .filter((m) => m.type === "sessionMeta");
+      expect(patches).toHaveLength(1);
+      expect(patches[0].meta).toEqual([{ id: "a", createdAt: 1, updatedAt: 10_000 }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a flush with nothing pending posts NOTHING (a turn that did not write)", async () => {
+    // `onRunFinished` fires for every started run, including the ones that only
+    // reported an error. An empty flush must stay silent, or the panel would receive
+    // a message per finished turn for no reason at all.
+    const { provider } = buildHarness();
+    const { view } = resolveWith(provider);
+    view.webview.postMessage.mockClear();
+
+    provider.flushSessionMeta();
+
+    expect(view.webview.postMessage.mock.calls.map((c: any[]) => c[0]).filter((m) => m.type === "sessionMeta")).toEqual(
+      [],
+    );
+  });
+
+  it("a FULL list going out drops the pending patch (one message, not two)", async () => {
+    // `refreshSessions` answers with every row and its dates: the patch still pending
+    // is already in that answer. Sending it afterwards would be a second message for
+    // the same pixels — and on a slow turn it would land AFTER the list, i.e. undo the
+    // fresher of the two with the older value.
+    const { provider } = buildHarness();
+    const { view, handler } = resolveWith(provider);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      provider.noteSessionActivity(summary("a", 10));
+      await handler({ type: "refreshSessions" });
+
+      provider.flushSessionMeta();
+      vi.advanceTimersByTime(SESSION_META_CEILING_MS + 1);
+
+      const posted = view.webview.postMessage.mock.calls.map((c: any[]) => c[0]);
+      expect(posted.filter((m) => m.type === "sessions")).toHaveLength(1);
+      expect(posted.filter((m) => m.type === "sessionMeta")).toEqual([]);
     } finally {
       vi.useRealTimers();
     }
@@ -3982,7 +4184,7 @@ describe("ChatViewProvider session row dates (live updated)", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       histories.get(rt.sessionId)!.add({ role: "user", content: "hi", timestamp: 5 });
-      vi.advanceTimersByTime(SESSION_META_COALESCE_MS + 1);
+      vi.advanceTimersByTime(SESSION_META_CEILING_MS + 1);
     } finally {
       vi.useRealTimers();
     }
@@ -3999,11 +4201,11 @@ describe("ChatViewProvider session row dates (live updated)", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       provider.noteSessionActivity(summary("a", 10));
-      vi.advanceTimersByTime(SESSION_META_COALESCE_MS + 1);
+      vi.advanceTimersByTime(SESSION_META_CEILING_MS + 1);
       // A long turn writes again minutes later: that burst must not be swallowed by the
       // burst that came before it.
       provider.noteSessionActivity(summary("a", 40));
-      vi.advanceTimersByTime(SESSION_META_COALESCE_MS + 1);
+      vi.advanceTimersByTime(SESSION_META_CEILING_MS + 1);
     } finally {
       vi.useRealTimers();
     }
@@ -4020,7 +4222,7 @@ describe("ChatViewProvider session row dates (live updated)", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       expect(() => provider.noteSessionActivity(summary("a", 10))).not.toThrow();
-      expect(() => vi.advanceTimersByTime(SESSION_META_COALESCE_MS + 1)).not.toThrow();
+      expect(() => vi.advanceTimersByTime(SESSION_META_CEILING_MS + 1)).not.toThrow();
     } finally {
       vi.useRealTimers();
     }
@@ -4034,13 +4236,37 @@ describe("ChatViewProvider session row dates (live updated)", () => {
     try {
       provider.noteSessionActivity(summary("a", 10));
       provider.dispose();
-      vi.advanceTimersByTime(SESSION_META_COALESCE_MS + 1);
+      vi.advanceTimersByTime(SESSION_META_CEILING_MS + 1);
       expect(
         view.webview.postMessage.mock.calls.map((c: any[]) => c[0]).filter((m) => m.type === "sessionMeta"),
       ).toEqual([]);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("`refreshSessions` re-reads the list, so OPENING the section gets the current order", async () => {
+    // The order is the host's to own (`SessionManager.list()` sorts most recent first):
+    // a live date patch never moves a row, so the rows on screen can be ranked by dates
+    // that have since changed. Opening the section asks again, and the answer is a new
+    // READ of the store — not the array the view already had.
+    const { store, provider } = buildHarness({ currentFolder: () => "/p/a" });
+    const { view, handler } = resolveWith(provider);
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 1, folder: "/p/a" },
+      { id: "b", name: "B", createdAt: 1, updatedAt: 9, messageCount: 1, folder: "/p/a" },
+      { id: "c", name: "C", createdAt: 1, updatedAt: 99, messageCount: 1, folder: "/p/other" },
+    ]);
+    view.webview.postMessage.mockClear();
+
+    await handler({ type: "refreshSessions" });
+
+    expect(store.list).toHaveBeenCalled();
+    const posted = view.webview.postMessage.mock.calls.map((c: any[]) => c[0]).find((m) => m.type === "sessions");
+    // This folder's sessions, most recently touched first — and `c` is NOT here: the main
+    // list is scoped to the workspace folder (only an OPEN session of another folder is
+    // ever appended).
+    expect(posted?.sessions.map((s: { id: string }) => s.id)).toEqual(["b", "a"]);
   });
 });
 
@@ -6161,6 +6387,34 @@ describe("ChatViewProvider soft steering + queue", () => {
       "s1",
       expect.objectContaining({ contextWindow: expect.anything() }),
     );
+  });
+
+  it("compacts with NO panel open (a tree action while the chat view was never resolved)", async () => {
+    // `this.view` is undefined until a panel resolves — and these flows also run from the
+    // Sessions tree, i.e. with the chat view closed or never opened in this window. The
+    // transcript refresh is the one place that has to survive it: posting to
+    // `this.view.webview` throws, and the throw is swallowed by the compaction's own catch
+    // as "overflow compaction failed" — a compaction that reports failure because nobody is
+    // watching. Hence the `?.` (and this test: the mutation run mutated it away).
+    const summarize = vi.fn(async () => "Summary of past interactions\n---\n## Goal\nx");
+    const { provider, registry } = buildHarness({
+      compactor: { summarize } as unknown as Compactor,
+      compaction: DEFAULT_COMPACTION,
+    });
+    await provider.createNew(); // s1 — no resolveWith on purpose
+    const rt = registry.get("s1")!;
+    rt.history.replace([
+      { role: "user", content: "a", timestamp: 1 },
+      { role: "assistant", content: "b", timestamp: 2 },
+      { role: "user", content: "c", timestamp: 3 },
+      { role: "assistant", content: "d", timestamp: 4 },
+      { role: "user", content: "e", timestamp: 5 },
+      { role: "assistant", content: "f", timestamp: 6 },
+      { role: "user", content: "g", timestamp: 7 },
+      { role: "assistant", content: "h", timestamp: 8 },
+    ]);
+
+    expect(await provider.compactForOverflow("s1")).toBe(true);
   });
 
   it("a MID-RUN refresh carries the live answer (a rebuild must not eat it)", async () => {

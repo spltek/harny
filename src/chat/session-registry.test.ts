@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { SessionRegistry } from "./session-registry";
 import { SessionManager } from "../core/sessions/session-manager";
+import { SessionConflictError } from "../core/sessions/session-conflict";
 import type { SessionStore } from "../core/sessions/types";
 import type { ChatController } from "../core/agent/chat-controller";
 import type { ChatHistory } from "../core/history/chat-history";
@@ -54,6 +55,71 @@ function build() {
   });
   return { store, sessions, createAgent, registry };
 }
+
+describe("SessionRegistry — two windows, one session", () => {
+  it("adopts the token of the transcript it LOADED, so the first save is guarded", () => {
+    const { store, registry } = build();
+    (store.load as ReturnType<typeof vi.fn>).mockImplementation((id: string) => ({
+      summary: { id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 1, revision: 7 },
+      messages: [{ role: "user", content: "loaded", timestamp: 1 }],
+    }));
+
+    const rt = registry.openOrCreate("x");
+    rt.history.add({ role: "assistant", content: "answer", timestamp: 2 });
+
+    // 7 came from the load: without it the first write would be unguarded, and a window that
+    // opened a stale copy would `replace` the other window's turns on its very first turn.
+    expect(store.saveMessages).toHaveBeenCalledWith("x", expect.any(Array), { revision: 7 });
+  });
+
+  it("a rebuild (a ✂ cut) carries the token too — it is the one destructive write", () => {
+    const { store, registry } = build();
+    (store.load as ReturnType<typeof vi.fn>).mockImplementation((id: string) => ({
+      summary: { id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 1, revision: 3 },
+      messages: [{ role: "user", content: "loaded", timestamp: 1 }],
+    }));
+
+    const rt = registry.openOrCreate("x");
+    rt.history.rebuild([{ role: "user", content: "kept", timestamp: 1 }]);
+
+    expect(store.saveMessages).toHaveBeenCalledWith("x", [{ role: "user", content: "kept", timestamp: 1 }], {
+      replace: true,
+      revision: 3,
+    });
+  });
+
+  it("reports a REFUSED write once, with the session id, and blocks the history", () => {
+    const { store, registry } = build();
+    (store.load as ReturnType<typeof vi.fn>).mockImplementation((id: string) => ({
+      summary: { id, name: "S", createdAt: 1, updatedAt: 1, messageCount: 1, revision: 1 },
+      messages: [{ role: "user", content: "loaded", timestamp: 1 }],
+    }));
+    (store.saveMessages as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new SessionConflictError("x", 2);
+    });
+    const onConflict = vi.fn();
+    registry.observeWriteConflicts(onConflict);
+
+    const rt = registry.openOrCreate("x");
+    rt.history.add({ role: "assistant", content: "mine", timestamp: 2 });
+    rt.history.add({ role: "user", content: "mine too", timestamp: 3 });
+
+    expect(onConflict).toHaveBeenCalledTimes(1);
+    expect(onConflict.mock.calls[0][0]).toBe("x");
+    expect((onConflict.mock.calls[0][1] as SessionConflictError).storedRevision).toBe(2);
+    // The messages are still there: only the WRITE was refused, never the user's work.
+    expect(rt.history.all().map((m) => m.content)).toEqual(["loaded", "mine", "mine too"]);
+  });
+
+  it("wires no listener before the panel registers one (the refusal is never a crash)", () => {
+    const { store, registry } = build();
+    (store.saveMessages as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new SessionConflictError("x", 1);
+    });
+    const rt = registry.openOrCreate("x");
+    expect(() => rt.history.add({ role: "user", content: "a", timestamp: 2 })).not.toThrow();
+  });
+});
 
 describe("SessionRegistry", () => {
   it("create opens a new runtime session and binds an agent", () => {

@@ -25,6 +25,7 @@ import type { ModelInfo, ModelListProvider } from "../core/llm/model-list";
 import { modelsDevProviderCandidates } from "../core/llm/models-dev";
 import type { SessionManager } from "../core/sessions/session-manager";
 import type { DbVacuumStats, SessionSettingsPatch, SessionSummary } from "../core/sessions/types";
+import type { SessionConflictError } from "../core/sessions/session-conflict";
 import type { SessionRegistry, SessionRuntime } from "./session-registry";
 import { PendingInputQueue, type PendingInput } from "./pending-input-queue";
 import {
@@ -128,12 +129,16 @@ const CONFIG_COALESCE_MS = 120;
 const CONTEXT_TOKENS_FLUSH_MS = 400;
 
 /**
- * Coalescing window for the "this session's row changed" patch (see
- * `noteSessionActivity`). One turn writes several times (the user message, then
- * one write per committed tool batch), while the session list is on screen: the
- * rows only need the LATEST `updatedAt`, so a burst collapses into one message.
+ * CEILING for the "this session's row changed" patch (see `noteSessionActivity`).
+ *
+ * The patch normally leaves when the TURN ENDS (`onRunFinished`), which is the only
+ * moment its content can differ: the list renders dates as `dd/mm hh:mm`, so a value
+ * that moves inside the same minute changes nothing on screen. This is the fallback
+ * for a turn that does not end soon (a long stream, an abort nobody reported): past
+ * it, whatever is pending goes out anyway. One minute is the display's own granularity
+ * — anything finer is a message that cannot change a character.
  */
-export const SESSION_META_COALESCE_MS = 200;
+export const SESSION_META_CEILING_MS = 60_000;
 
 /** The dates of ONE session row: what the list shows and what a history write moves. */
 interface SessionMetaPatch {
@@ -331,6 +336,9 @@ export class ChatViewProvider implements WebviewViewProvider {
     // composition root, so the live dates cannot be switched off by forgetting a line
     // (see SessionRegistry.observeHistoryWrites).
     this.registry.observeHistoryWrites((summary) => this.noteSessionActivity(summary));
+    // ...and the ONLY listener for a REFUSED write: another window owns this session now, and the
+    // user has to be told, because from here the transcript on screen is no longer being saved.
+    this.registry.observeWriteConflicts((sessionId, error) => void this.reportWriteConflict(sessionId, error));
   }
 
   setContext(context: ExtensionContext): void {
@@ -378,7 +386,7 @@ export class ChatViewProvider implements WebviewViewProvider {
   private async openSessionId(id: string): Promise<void> {
     const s = this.sessions.list().find((x) => x.id === id);
     if (s?.folderMissing) return;
-    this.registry.openOrCreate(id);
+    const rt = this.registry.openOrCreate(id);
     await this.setActive(id);
     // Opening can ADD a row to the main list (a session of another folder becomes
     // visible now that it is open), so this is one of the "the list changed" paths
@@ -386,6 +394,59 @@ export class ChatViewProvider implements WebviewViewProvider {
     await this.postSwitchView(true);
     // Silent refresh of the manage form (if open) — no-op for the main list.
     this.pushSessionsManager();
+    // LAST, and only when the load had to salvage a damaged session: a transcript that
+    // came back SHORT must say so once, on the session it happened to, and never again
+    // (the field is cleared here — the trim itself persists at the session's next write).
+    await this.reportRecovery(rt);
+  }
+
+  /**
+   * Tell the user that this window's write to a session was REFUSED because another window changed
+   * it (`session-conflict.ts`).
+   *
+   * What happened is not a crash: the transcript on disk is intact — it is the OTHER window's — and
+   * this window kept its messages in memory instead of overwriting them. But from here this window
+   * no longer saves that session (`PersistentChatHistory` blocks the write rather than retrying,
+   * since a retry would replace exactly what the refusal protected). So the message has to say the
+   * one thing that is true and actionable, and NOTHING may be closed automatically: the messages on
+   * screen are the only copy left, and `closeTab` would destroy them.
+   */
+  private async reportWriteConflict(sessionId: string, error: SessionConflictError): Promise<void> {
+    const name = this.sessions.summary(sessionId)?.name ?? "This session";
+    await this.inPanelAlert({
+      kind: "error",
+      title: "Session changed in another window",
+      message:
+        `${name} was saved by another window while this one was open, so this window's last ` +
+        "messages were NOT written: saving them would have overwritten the other window's turns.\n\n" +
+        `Nothing on disk was damaged (it holds revision ${error.storedRevision}, the other window's ` +
+        "version), and what is on this screen is still here. Copy anything you need from this tab, " +
+        "then close it and reopen the session from the list to keep working on the stored version.",
+    });
+  }
+
+  /**
+   * Tell the user that this session was SALVAGED on load (see `session-recovery.ts`),
+   * once: the flag is consumed, so reopening the session is quiet. The alternative — a
+   * silently shortened transcript — is how a recovery becomes a data loss nobody saw.
+   */
+  private async reportRecovery(rt: SessionRuntime): Promise<void> {
+    const repaired = rt.recovered;
+    if (!repaired) return;
+    rt.recovered = undefined;
+    const what =
+      repaired.reason === "unreadable"
+        ? "part of the stored transcript was unreadable"
+        : "the end of the transcript was incomplete (a tool call without its results)";
+    await this.inPanelAlert({
+      kind: "info",
+      title: "Session recovered",
+      message:
+        `This session was damaged: ${what}.\n\n` +
+        `${repaired.dropped} message(s) at the end of it could not be used and were left out. ` +
+        "Everything before them is intact and you can keep working; the trimmed version replaces " +
+        "the stored one on the next message you send.",
+    });
   }
 
   /**
@@ -445,7 +506,17 @@ export class ChatViewProvider implements WebviewViewProvider {
    *
    * Ordering is deliberately NOT touched: `updatedAt` is the list's sort key, but
    * re-sorting rows while you read them (a background session committing under
-   * your cursor) is worse than a stale order — the next real render sorts.
+   * your cursor) is worse than a stale order — the next real render sorts, and the
+   * user asks for one by OPENING the section (`refreshSessions`, see
+   * `setSessionsExpanded`), which is where the ranks come back current.
+   *
+   * WHEN it leaves is the other half of the design: the patch is normally flushed
+   * by {@link flushSessionMeta} at the END OF THE TURN (`onRunFinished`), not on a
+   * short debounce. A turn writes several times (the user message, then one write
+   * per committed tool batch) while the list renders minutes — so a patch sent per
+   * burst could not change one character more often than once a minute. What is
+   * left here is the accumulation and the CEILING: a turn that does not end (a long
+   * stream, an abort nobody reported) still publishes at `SESSION_META_CEILING_MS`.
    */
   noteSessionActivity(summary: SessionSummary): void {
     this.sessionMetaPending.set(summary.id, {
@@ -456,13 +527,47 @@ export class ChatViewProvider implements WebviewViewProvider {
     if (this.sessionMetaTimer !== undefined) return;
     this.sessionMetaTimer = setTimeout(() => {
       this.sessionMetaTimer = undefined;
-      const meta = [...this.sessionMetaPending.values()];
-      this.sessionMetaPending.clear();
-      // No view: nothing on screen to patch (the write itself already happened).
-      if (!this.view) return;
-      this.view.webview.postMessage({ type: "sessionMeta", meta });
-    }, SESSION_META_COALESCE_MS);
+      this.flushSessionMeta();
+    }, SESSION_META_CEILING_MS);
     this.sessionMetaTimer.unref?.();
+  }
+
+  /**
+   * Publish the row patches accumulated so far, NOW. The second half of the pair
+   * whose first half is {@link noteSessionActivity}: the TURN END is when a session's
+   * `updatedAt` stops moving, so it is when the list is worth telling (see the note
+   * there about the minute granularity of the dates). Called from `onRunFinished`
+   * for EVERY session that ends a turn, background tabs included — their rows are on
+   * the same list, and the write already happened.
+   *
+   * Public for the same reason as its pair: it is the seam the runtime calls, so the
+   * tests can end a turn without running one (no model, no streaming).
+   */
+  flushSessionMeta(): void {
+    if (this.sessionMetaTimer !== undefined) {
+      clearTimeout(this.sessionMetaTimer);
+      this.sessionMetaTimer = undefined;
+    }
+    if (this.sessionMetaPending.size === 0) return;
+    const meta = [...this.sessionMetaPending.values()];
+    this.sessionMetaPending.clear();
+    // No view: nothing on screen to patch (the write itself already happened).
+    if (!this.view) return;
+    this.view.webview.postMessage({ type: "sessionMeta", meta });
+  }
+
+  /**
+   * A FULL list is about to go out, and it carries every date it knows: the pending
+   * patches are already in it, so sending them after would be a second message for
+   * the same pixels. Dropping them is what keeps "one patch per turn" true even when
+   * the turn ends with a tab switch (see `postSwitchView`).
+   */
+  private dropPendingSessionMeta(): void {
+    if (this.sessionMetaTimer !== undefined) {
+      clearTimeout(this.sessionMetaTimer);
+      this.sessionMetaTimer = undefined;
+    }
+    this.sessionMetaPending.clear();
   }
 
   /** Live data for the manage-sessions form (ALL folders, sorted by the manager). */
@@ -770,8 +875,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       danger: true,
     });
     if (!ok) return;
-    rt.history.replace(kept);
-    this.sessions.saveMessages(rt.sessionId, kept, { replace: true });
+    rt.history.rebuild(kept);
     // Per-interaction accounting: providers report only the TOTAL input per
     // turn, never per message, so we ESTIMATE each interaction and, after a cut,
     // keep the tokens of the KEPT messages only — i.e. subtract the removed
@@ -1174,6 +1278,10 @@ export class ChatViewProvider implements WebviewViewProvider {
       // auto-compaction in the send preamble): switching away and back must not
       // make the working bar and the input lock disappear.
       const busy = !!active && active.engine.working;
+      // The list going out below carries fresh dates: the patches still pending are
+      // already in it (see `dropPendingSessionMeta`).
+      const sessions = includeSessions ? this.sessionsForView() : undefined;
+      if (sessions) this.dropPendingSessionMeta();
       this.view.webview.postMessage({
         type: "switchView",
         activeId: this.activeId,
@@ -1182,7 +1290,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         // session table, and on every click it is pure waste (the list only changes
         // when a session is created, branched, renamed or closed — those paths ask
         // for it). `undefined` means "keep what you have".
-        sessions: includeSessions ? this.sessionsForView() : undefined,
+        sessions,
         messages: active ? active.agent.getMessages() : [],
         config,
         configSeq,
@@ -1445,6 +1553,17 @@ export class ChatViewProvider implements WebviewViewProvider {
       case "getAllSessions":
         // show:true — the user clicked the gear: the form opens with this data.
         this.view?.webview.postMessage(this.sessionsManagerPayload(true));
+        break;
+      case "refreshSessions":
+        // The list's section was just OPENED: re-read it so the ORDER is current.
+        // The order is owned here (`SessionManager.list()` sorts most recent first),
+        // but a live date patch never moves a row, so the list on screen can be
+        // ranked by dates that have since changed. One `SELECT *`, and NOT a
+        // `switchView`: the transcript, the config and the live turn are untouched.
+        // It also carries every date, so whatever patch was still pending is now
+        // redundant.
+        this.dropPendingSessionMeta();
+        this.view?.webview.postMessage({ type: "sessions", sessions: this.sessionsForView() });
         break;
       case "openWorkspace":
         // The home screen's CTA: pick a folder and open it as the workspace. No session is
@@ -2536,6 +2655,11 @@ export class ChatViewProvider implements WebviewViewProvider {
         // The turn is over: flush the coalesced metric NOW, so the number on disk is
         // the run's last one even if the panel is never touched again.
         this.flushContextTokens();
+        // Same moment, same reason, for the session list: the turn is what moved
+        // `updatedAt`, and it is not going to move again until the next one. BEFORE
+        // the active-tab guard below, on purpose — a background session's row is on
+        // the same list and its date must follow it too.
+        this.flushSessionMeta();
         // Only touch the view when this session is still the active tab: the user
         // may have switched away while it streamed, and their refresh/status must
         // not clobber the session they are looking at.
@@ -2896,7 +3020,14 @@ export class ChatViewProvider implements WebviewViewProvider {
    */
   private rewriteTranscript(id: string, kept: ChatMessage[]): void {
     const rt = this.registry.get(id);
-    this.sessions.saveMessages(id, kept, { replace: true });
+    if (rt) {
+      rt.history.rebuild(kept);
+    } else {
+      // Closed session: nobody holds its token, so read the one on the row. The gap between this
+      // read and the write is a single statement away — smaller than any conflict it could hide —
+      // and a rebuild is the destructive write, so leaving it unguarded is worse.
+      this.sessions.saveMessages(id, kept, { replace: true, revision: this.sessions.summary(id)?.revision });
+    }
     // Measured on what the MODEL will see: the window opens at the newest
     // checkpoint, which after a rewind IS the summary that was kept.
     const tokens = estimateContextTokens(kept.slice(checkpointStart(kept)).filter((m) => !m.uiOnly));
@@ -3038,8 +3169,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     // `result.history`, together with the kept window.
     const checkpoint = result.history.slice(result.deferred.length);
     const newHistory = [...all.slice(0, activeStart), ...result.deferred, ...result.summarized, ...checkpoint];
-    rt.history.replace(newHistory);
-    this.sessions.saveMessages(rt.sessionId, newHistory, { replace: true });
+    rt.history.rebuild(newHistory);
     // Prefer REAL data for the KEPT window (the cumulative `meta.inputTokens`
     // delta across it): the summary rewrote the prefix, so re-estimating the
     // whole history would no longer match the provider's numbers.
@@ -3079,8 +3209,7 @@ export class ChatViewProvider implements WebviewViewProvider {
   ): boolean {
     const trim = this.trimInto(rt.history.all(), targetTokens);
     if (!trim) return false;
-    rt.history.replace(trim.history);
-    this.sessions.saveMessages(rt.sessionId, trim.history, { replace: true });
+    rt.history.rebuild(trim.history);
     infoLog(this.tally.recordTrim({ ...oversized, moved: trim.moved, budgetTokens: targetTokens }));
     rt.contextTokens = estimateContextTokens(trim.history.slice(trim.windowStart));
     this.sessions.saveSettings(rt.sessionId, { contextTokens: rt.contextTokens });

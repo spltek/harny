@@ -34,6 +34,12 @@ reports/**
 # it only stops 8 dev-only JSONs from riding along in the .vsix.
 stryker/**
 
+# Stryker's sandbox lives here while a run is alive and is removed when it ends properly — a
+# KILLED run (Ctrl-C, a timeout) leaves it behind with broken `node_modules` links inside, and
+# `vsce` then dies on them: packing the working tree must not depend on nobody having interrupted
+# a mutation run.
+.stryker-tmp/**
+
 # Repo examples — the demo MCP server and the config template. They are "copy from the repo",
 # not parts of the extension; this line also covers the former `config.example.jsonc`.
 examples/**

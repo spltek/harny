@@ -10,6 +10,13 @@ export interface SessionSummary {
   updatedAt: number;
   messageCount: number;
   /**
+   * Optimistic-concurrency token for the TRANSCRIPT: bumped by every `saveMessages` inside the
+   * transaction that writes it, and handed back to the next save (see
+   * {@link SessionConflictError}). 0 on a session written before this existed, which is correct —
+   * it had no competing writer by definition.
+   */
+  revision?: number;
+  /**
    * Absolute path of the folder (workspace) this session points to, persisted
    * in the session file. Absent in legacy sessions; the listing layer falls
    * back to the bucket's folder when it can be inferred.
@@ -74,6 +81,13 @@ export interface SessionSummary {
 export interface LoadedSession {
   summary: SessionSummary;
   messages: ChatMessage[];
+  /**
+   * Present ONLY when the stored rows were DAMAGED and the load salvaged a head of them
+   * (see `session-recovery.ts`): how many rows were left out, and why. The panel turns it
+   * into a notice — a shortened transcript must never look like it was always that short.
+   * The rows are still on disk; the next ordinary save is what rewrites them.
+   */
+  repaired?: { dropped: number; reason: "unreadable" | "invalid_tail" };
 }
 
 /** The persistable per-session settings (patched via saveSettings). */
@@ -140,6 +154,14 @@ export const EMPTY_DB_VACUUM_STATS: DbVacuumStats = {
   ratio: 0,
 };
 
+/** Options of {@link SessionStore.saveMessages}. */
+export interface SaveMessagesOptions {
+  /** The history was REBUILT: rewrite the table even if the length did not shrink. */
+  replace?: boolean;
+  /** The optimistic token of the last read/write; a mismatch REFUSES the save. */
+  revision?: number;
+}
+
 /**
  * Persistence for chat sessions. Implementations own the serialization format
  * and storage location; the SessionManager owns the "current session" state.
@@ -165,8 +187,13 @@ export interface SessionStore {
    * case); pass `{ replace: true }` when the history was REBUILT (a ✂ cut or a
    * compaction) so the whole table is rewritten even if the length did not
    * shrink.
+   *
+   * `revision` is the token the last read or write returned. When it no longer matches
+   * the stored one the write is REFUSED with a `SessionConflictError` instead of
+   * replacing rows this caller has never seen (two windows, one database). Omitting it
+   * keeps the old last-writer-wins behaviour, for callers that own the session.
    */
-  saveMessages(id: string, messages: ChatMessage[], options?: { replace?: boolean }): SessionSummary;
+  saveMessages(id: string, messages: ChatMessage[], options?: SaveMessagesOptions): SessionSummary;
   rename(id: string, name: string): SessionSummary;
   remove(id: string): boolean;
   /** Atomically persist any subset of the per-session settings (single write). */

@@ -1,5 +1,8 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { DatabaseSync } from "node:sqlite";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { SqliteSessionStore } from "./sqlite-session-store";
 import type { FileSystem } from "../tools/file-system";
 import type { ChatMessage } from "../history/types";
@@ -41,7 +44,13 @@ function makeStore(opts: { existing?: string[]; currentFolder?: () => string | u
 
 const dbs: DatabaseSync[] = [];
 afterEach(() => {
-  for (const db of dbs.splice(0)) db.close();
+  // A test may CLOSE its connection itself (the crash ones do: that IS the scenario).
+  for (const db of dbs.splice(0))
+    try {
+      db.close();
+    } catch {
+      /* already closed by the test */
+    }
 });
 
 describe("SqliteSessionStore — folderMissing costs ONE stat per DISTINCT folder", () => {
@@ -179,7 +188,11 @@ describe("SqliteSessionStore — sessions & messages", () => {
       displayText: "shown",
       steer: true,
     };
-    store.saveMessages("s1", [rich]);
+    // The RESULT of `c1` is part of the fixture on purpose: a lone assistant with an
+    // unanswered call is a conversation `load()` now repairs (see session-recovery.ts),
+    // and this test is about the FIELDS surviving the round trip, not about that cut.
+    const result: ChatMessage = { role: "tool", content: "file body", timestamp: 43, toolCallId: "c1" } as ChatMessage;
+    store.saveMessages("s1", [rich, result]);
     expect(store.load("s1").messages[0]).toEqual(rich);
   });
 
@@ -551,5 +564,140 @@ describe("SqliteSessionStore — thinkingLevel clear", () => {
 
     store.saveSettings("s1", { thinkingLevel: undefined });
     expect(store.load("s1").summary.thinkingLevel).toBeUndefined();
+  });
+});
+
+/**
+ * INTEGRITY. The two promises this file exists to pin, in order of importance:
+ *
+ *  1. A session is never HALF-written. Every mutation is one transaction, so the file
+ *     holds either the old state or the new one — a process killed between two
+ *     statements loses the LAST write at worst, never a message in the middle. This
+ *     needs a REAL file and a REAL second connection to be worth anything: an
+ *     in-memory database cannot show what survived on disk.
+ *  2. A damaged session still OPENS, shortened and reported — never thrown away.
+ */
+describe("SqliteSessionStore — a write that dies cannot corrupt the session", () => {
+  const tmpDirs: string[] = [];
+  const openFile = (name: string): { db: DatabaseSync; store: SqliteSessionStore; file: string } => {
+    const dir = mkdtempSync(join(tmpdir(), "harny-store-"));
+    tmpDirs.push(dir);
+    const file = join(dir, name);
+    const db = new DatabaseSync(file);
+    dbs.push(db);
+    return { db, store: new SqliteSessionStore({ db, fs: fakeFs(), idGen: () => "s1" }), file };
+  };
+  afterEach(() => {
+    for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("a save that THROWS mid-loop leaves the file exactly as it was (nothing partial)", () => {
+    const first = openFile("sessions.db");
+    first.store.create("Keep me");
+    first.store.saveMessages("s1", [msg("user", "one"), msg("assistant", "two")]);
+    const before = first.db.prepare("SELECT seq, data FROM messages ORDER BY seq").all();
+
+    // The 3rd message cannot be serialized: the INSERTs of #3 cannot even start, and the
+    // two statements already done must be rolled back. `BigInt` is the cheapest way to
+    // make JSON.stringify throw *inside* the transaction, i.e. after real writes.
+    const poisoned = [msg("user", "one"), msg("assistant", "two"), { role: "user", content: "x", timestamp: 10n }];
+    expect(() => first.store.saveMessages("s1", poisoned as unknown as ChatMessage[])).toThrow();
+
+    // Same connection: the transaction is gone.
+    expect(first.db.prepare("SELECT seq, data FROM messages ORDER BY seq").all()).toEqual(before);
+    // And on DISK: a SECOND connection to the SAME file (the next VS Code window) reads
+    // the old session whole, with the old count. This is the assertion an in-memory test
+    // cannot make — and the one that means "a crash costs the last write, not the session".
+    const second = new DatabaseSync(first.file);
+    dbs.push(second);
+    const reopened = new SqliteSessionStore({ db: second, fs: fakeFs(), idGen: () => "s9" });
+    const loaded = reopened.load("s1");
+    expect(loaded.messages.map((m) => m.content)).toEqual(["one", "two"]);
+    expect(loaded.summary.messageCount).toBe(2);
+    expect(loaded.repaired).toBeUndefined();
+  });
+
+  it("a connection that DIES inside a transaction leaves the previous state on disk", () => {
+    const { store, file } = openFile("sessions.db");
+    store.create("Survivor");
+    store.saveMessages("s1", [msg("user", "kept")]);
+    store.close(); // release the file, like the process would
+
+    // A second process starts a destructive transaction and is killed before COMMIT:
+    // the closest thing to the lights going out mid-write.
+    const dying = new DatabaseSync(file);
+    dying.exec("BEGIN");
+    dying.prepare("DELETE FROM messages WHERE session_id = 's1'").run();
+    dying
+      .prepare(
+        "INSERT INTO messages(session_id, seq, role, content, timestamp, data) VALUES ('s1', 0, 'user', '', 0, '\\u0000garbage')",
+      )
+      .run();
+    dying.close(); // no COMMIT: SQLite rolls the whole transaction back
+
+    const reopened = new DatabaseSync(file);
+    dbs.push(reopened);
+    const store2 = new SqliteSessionStore({ db: reopened, fs: fakeFs(), idGen: () => "s2" });
+    const loaded = store2.load("s1");
+    expect(loaded.messages.map((m) => m.content)).toEqual(["kept"]);
+    expect(loaded.repaired).toBeUndefined();
+  });
+
+  it("an ORDINARY save of a sound session reports nothing (no false positives)", () => {
+    const { store } = makeStore();
+    store.create();
+    store.saveMessages("s1", [msg("user", "a"), msg("assistant", "b")]);
+    const loaded = store.load("s1");
+    expect(loaded.messages).toHaveLength(2);
+    expect("repaired" in loaded).toBe(false);
+  });
+});
+
+describe("SqliteSessionStore — load() salvages a damaged session instead of throwing", () => {
+  it("a row that no longer parses costs the TAIL, not the session", () => {
+    const { store, db } = makeStore();
+    store.create();
+    store.saveMessages("s1", [msg("user", "keep me"), msg("assistant", "and me"), msg("user", "me too")]);
+    // A rotted block, a hand edit, a row from a build that stored another shape.
+    db.prepare("UPDATE messages SET data = '{oops' WHERE session_id = 's1' AND seq = 1").run();
+
+    const loaded = store.load("s1");
+    expect(loaded.messages.map((m) => m.content)).toEqual(["keep me"]);
+    expect(loaded.repaired).toEqual({ dropped: 2, reason: "unreadable" });
+    // The count follows what is USABLE: the list must not promise messages it cannot open.
+    expect(loaded.summary.messageCount).toBe(1);
+  });
+
+  it("a dangling tool call is cut, and the session opens", () => {
+    const { store } = makeStore();
+    store.create();
+    store.saveMessages("s1", [
+      msg("user", "ask"),
+      { role: "assistant", content: "", timestamp: 2, toolCalls: [{ id: "t1", name: "read_file", arguments: "{}" }] },
+    ]);
+    const loaded = store.load("s1");
+    expect(loaded.messages.map((m) => m.role)).toEqual(["user"]);
+    expect(loaded.repaired).toEqual({ dropped: 1, reason: "invalid_tail" });
+  });
+
+  it("the repair becomes REAL at the next ordinary save (no destructive statement on load)", () => {
+    // Nothing is written by `load`: the rows stay until the session is used again, and
+    // then the prefix guard notices the history is shorter and REPLACES the table.
+    const { store, db } = makeStore();
+    store.create();
+    store.saveMessages("s1", [msg("user", "keep me"), msg("assistant", "and me")]);
+    db.prepare("UPDATE messages SET data = '{oops' WHERE session_id = 's1' AND seq = 1").run();
+    expect(store.load("s1").messages).toHaveLength(1);
+    // Still damaged on disk: loading is a read.
+    expect((db.prepare("SELECT COUNT(*) AS c FROM messages").get() as { c: number }).c).toBe(2);
+
+    store.saveMessages("s1", [msg("user", "keep me"), msg("user", "next")]);
+
+    const rows = db.prepare("SELECT data FROM messages ORDER BY seq").all() as { data: string }[];
+    expect(rows).toHaveLength(2);
+    expect(JSON.parse(rows[1].data).content).toBe("next");
+    const reloaded = store.load("s1");
+    expect(reloaded.repaired).toBeUndefined();
+    expect(reloaded.messages.map((m) => m.content)).toEqual(["keep me", "next"]);
   });
 });

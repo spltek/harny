@@ -24,7 +24,7 @@ const ANCHORS: Record<string, string[]> = {
     'case "textDelta": {',
     "currentRawText += msg.content;",
     "if (!currentRawText.trim()) break;",
-    "if (currentThinkingBlock) settleThinkingBlock();",
+    "settleThinkingBlock();",
     "const resultEl = ensureResult();",
   ],
   "src/chat/chat-view.ts": [

@@ -3,6 +3,7 @@ import type {
   DbVacuumResult,
   DbVacuumStats,
   LoadedSession,
+  SaveMessagesOptions,
   SessionSettingsPatch,
   SessionStore,
   SessionSummary,
@@ -44,7 +45,7 @@ export class SessionManager {
     return this.store.remove(id);
   }
 
-  saveMessages(id: string, messages: ChatMessage[], options?: { replace?: boolean }): SessionSummary {
+  saveMessages(id: string, messages: ChatMessage[], options?: SaveMessagesOptions): SessionSummary {
     return options ? this.store.saveMessages(id, messages, options) : this.store.saveMessages(id, messages);
   }
 

@@ -45,11 +45,13 @@ const msg = (role: ChatMessage["role"], content: string, timestamp = 1): ChatMes
 /** A message shaped like the real thing: a parallel session carries tool calls and
  * long outputs, which is what actually lands in the row. */
 function heavyMessage(i: number): ChatMessage {
+  // A SOUND conversation (user/assistant alternation, no tool calls): `load()` now salvages
+  // a damaged tail (see `session-recovery.ts`), so a fixture of orphan tool results would
+  // measure the cost of a 1-message session and call it 300.
   return {
-    role: i % 2 === 0 ? "assistant" : "tool",
+    role: i % 2 === 0 ? "user" : "assistant",
     content: `step ${i}: ${"x".repeat(400)}`,
     timestamp: 1_700_000_000_000 + i,
-    toolCallId: i % 2 === 0 ? undefined : `c${i}`,
   };
 }
 

@@ -249,10 +249,19 @@ function setSessionsVisible(visible: boolean): void {
  * Expand/collapse the sessions section, keeping the header arrow in sync. EVERY
  * path that changes the visibility goes through here, so the arrow can never
  * contradict the list (the header click, the empty hero, and picking a session).
+ *
+ * Opening is also when the ORDER is re-evaluated — through the host, which owns it
+ * (`SessionManager.list()` sorts, `sessionsForView()` puts this folder's sessions
+ * first). Live patches move a row's DATES but never its rank, on purpose (re-sorting
+ * under a pointer that is about to click a row is worse than a stale order), so the
+ * order on screen is only as fresh as the last list the host sent. Asking for it here
+ * makes opening the section that "next real render": one `SELECT *`, no transcript
+ * rebuild, and the rows come back sorted by the dates you are about to read.
  */
 function setSessionsExpanded(expanded: boolean): void {
   setSessionsVisible(expanded);
   setFold(sessionHead, expanded);
+  if (expanded) vscode.postMessage({ type: "refreshSessions" });
 }
 /** Matching ids for the MAIN-list search (null = no filter). Scoped to the
  * sessions already shown (the current workspace folder). */
@@ -4201,7 +4210,8 @@ function closeSessionsManager(): void {
 
 /**
  * Rows for the manage form: every session of every folder, most recent first
- * (the host sorts). Red rows = folder unavailable; per-row actions: open the
+ * (the host sorts — `SessionManager.list()`). Red rows = folder unavailable; per-row
+ * actions: open the
  * session's folder in VS Code (changes the working directory) or change the
  * folder pointer / delete. A missing or unset folder offers the picker instead
  * of Open, so the session can be re-pointed.
@@ -6323,7 +6333,10 @@ window.addEventListener("message", (e) => {
       // must not be enough to settle the reasoning either — closing it there split ONE
       // thought into two blocks, the second completing the sentence of the first (the
       // reported defect: reason, a lone newline, reason again).
-      if (currentThinkingBlock) settleThinkingBlock();
+      // No `if (currentThinkingBlock)` here: settling a block that was never opened is the
+      // function's own first line, and a guard repeating it is a branch no test can
+      // distinguish (the mutation run said so: `if (true)` survived).
+      settleThinkingBlock();
       const resultEl = ensureResult();
       if (resultEl) {
         // `push`/`paint` scrolls: scrolling HERE would force one extra layout
@@ -6652,8 +6665,9 @@ window.addEventListener("message", (e) => {
       // that row IN PLACE, exactly like a rename does. No rebuild, so the working
       // rows and their buttons do not flash, and the order is left alone (re-sorting
       // rows under the pointer is worse than a stale order — the next real render
-      // sorts). The All-sessions form is NOT patched on purpose: it reads the whole
-      // list from the store when it opens.
+      // sorts, and opening the section IS that render: see `refreshSessions`). The
+      // All-sessions form is NOT patched on purpose: it reads the whole list from the
+      // store when it opens.
       const meta = Array.isArray(msg.meta) ? (msg.meta as { id: string; createdAt: number; updatedAt: number }[]) : [];
       for (const m of meta) {
         // A row exists only for a session this list knows: anything else (another
@@ -6673,6 +6687,15 @@ window.addEventListener("message", (e) => {
           el.title = title;
         }
       }
+      break;
+    }
+    case "sessions": {
+      // A fresh list because the section was just opened (see setSessionsExpanded):
+      // the ranks are the HOST's (`SessionManager.list()` sorts most recent first,
+      // `sessionsForView()` keeps this folder ahead of sessions open elsewhere), so the
+      // view only has to draw it. Nothing else is touched — this is not a switchView.
+      currentSessions = Array.isArray(msg.sessions) ? (msg.sessions as SessionInfo[]) : [];
+      renderSessions(currentSessions);
       break;
     }
     case "modal": {

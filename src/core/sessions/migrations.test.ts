@@ -33,9 +33,9 @@ describe("runMigrations — the shipped schema", () => {
 
     const r = runMigrations(db);
 
-    expect(r).toEqual({ from: 0, to: LATEST_VERSION, applied: 4 });
-    expect(LATEST_VERSION).toBe(4);
-    expect(getUserVersion(db)).toBe(4);
+    expect(r).toEqual({ from: 0, to: LATEST_VERSION, applied: 5 });
+    expect(LATEST_VERSION).toBe(5);
+    expect(getUserVersion(db)).toBe(5);
     expect(tableExists(db, "sessions")).toBe(true);
     expect(tableExists(db, "messages")).toBe(true);
     // The FTS index + triggers work.
@@ -59,7 +59,7 @@ describe("runMigrations — the shipped schema", () => {
     const db = makeDb();
     runMigrations(db);
 
-    expect(runMigrations(db)).toEqual({ from: 4, to: 4, applied: 0 });
+    expect(runMigrations(db)).toEqual({ from: 5, to: 5, applied: 0 });
   });
 
   it("STAMPS a pre-versioning database instead of re-running the baseline", () => {
@@ -70,6 +70,7 @@ describe("runMigrations — the shipped schema", () => {
     // migration — SQLite 3.35+ can drop one, a pre-versioning install never had it).
     db.exec("ALTER TABLE sessions DROP COLUMN tool_scope");
     db.exec("ALTER TABLE sessions DROP COLUMN compaction_target_percent");
+    db.exec("ALTER TABLE sessions DROP COLUMN revision");
     db.prepare("INSERT INTO sessions(id,name,created_at,updated_at,message_count) VALUES('s1','x',1,1,0)").run();
     db.exec("PRAGMA user_version = 0"); // simulate an install from before versioning
 
@@ -132,6 +133,7 @@ describe("schema contract (drift guard)", () => {
       // ALTER TABLE appends: a column added by a later migration sits at the END.
       "compaction_target_percent",
       "tool_scope",
+      "revision",
     ]);
     expect(columns(db, "messages")).toEqual(["session_id", "seq", "role", "content", "timestamp", "data"]);
     // The full-text index + its sync triggers exist.
@@ -170,6 +172,39 @@ describe("applyMigrations — the runner", () => {
     const r = applyMigrations(db, [m(1, "one", "CREATE TABLE t1 (x)"), m(2, "two", "CREATE TABLE t2 (x)")]);
     expect(r).toEqual({ from: 1, to: 2, applied: 1 });
     expect(tableExists(db, "t2")).toBe(true);
+  });
+
+  it("does NOT re-apply migrations another window already ran (the version is read under the lock)", () => {
+    // Two windows are two extension hosts activating at the same time on ONE database. The loser
+    // must find nothing to do; re-running `CREATE TABLE`/`ALTER TABLE` would throw straight out of
+    // activation, i.e. Harny would fail to start in the second window.
+    //
+    // The race is simulated exactly where it happens: the backup hook runs AFTER the version was
+    // read and BEFORE the transaction, so it can play the other window (which applied v2 and
+    // bumped the version) in between.
+    const db = makeDb();
+    db.exec("CREATE TABLE t1(x)");
+    db.exec("CREATE TABLE t2(y)");
+    db.exec("PRAGMA user_version = 1"); // stale: the window that wrote this is one version behind
+    const migrations = [
+      { version: 1, name: "one", up: (d: DatabaseSync) => d.exec("CREATE TABLE t1(x)") },
+      {
+        version: 2,
+        name: "two",
+        destructive: true,
+        up: (d: DatabaseSync) => d.exec("CREATE TABLE t2(y)"),
+      },
+    ];
+
+    const result = applyMigrations(db, migrations, {
+      backup: () => {
+        // The other window, mid-flight.
+        db.exec("PRAGMA user_version = 2");
+      },
+    });
+
+    expect(result).toEqual({ from: 1, to: 2, applied: 0 });
+    expect(getUserVersion(db)).toBe(2);
   });
 
   it("ROLLS BACK everything (and the version) when a migration throws", () => {
@@ -229,9 +264,21 @@ describe("migration 4 — the transcript goes back in the order it was written",
       db.prepare("SELECT content FROM messages WHERE session_id = 's1' ORDER BY seq").all() as { content: string }[]
     ).map((r) => r.content);
 
+  /**
+   * A database as a v3 build left it: the current schema, then every column a LATER additive
+   * migration put at the END removed again (SQLite 3.35+ can drop one) and the version rewound.
+   * Without the drop, `runMigrations` would re-apply migration 5 to rows that already have the
+   * column — a "duplicate column" that the real upgrade path can never produce.
+   */
+  const asVersion3 = (db: DatabaseSync): void => {
+    runMigrations(db);
+    db.exec("ALTER TABLE sessions DROP COLUMN revision");
+    db.exec("PRAGMA user_version = 3");
+  };
+
   it("swaps a [newer summarized][older deferred] splice back, and touches nothing else", () => {
     const db = makeDb();
-    runMigrations(db);
+    asVersion3(db);
     db.prepare("INSERT INTO sessions(id, name, created_at, updated_at, message_count) VALUES ('s1','S',0,0,6)").run();
     // Exactly the shape the old splice wrote: the newer chunk (10:01) hoisted above the older
     // one (09:43), then the checkpoint and the kept tail.
@@ -244,12 +291,11 @@ describe("migration 4 — the transcript goes back in the order it was written",
       row(5, "assistant", "## Goal", 2_001, true),
       row(6, "user", "last question", 2_002),
     ]);
-    db.exec("PRAGMA user_version = 3");
     db.prepare("UPDATE sessions SET message_count = 7").run();
 
     runMigrations(db);
 
-    expect(getUserVersion(db)).toBe(4);
+    expect(getUserVersion(db)).toBe(5);
     // The session now OPENS on the first user input, and the blocks are chronological.
     expect(contents(db)).toEqual([
       "first input of the session",
@@ -281,7 +327,7 @@ describe("migration 4 — the transcript goes back in the order it was written",
     // their time ranges OVERLAP — so no block-level reorder can fix them and the past is
     // sorted by the timestamp each message carries.
     const db = makeDb();
-    runMigrations(db);
+    asVersion3(db);
     db.prepare("INSERT INTO sessions(id, name, created_at, updated_at, message_count) VALUES ('s1','S',0,0,4)").run();
     insert(db, [
       row(0, "user", "new-a", 100),
@@ -289,7 +335,6 @@ describe("migration 4 — the transcript goes back in the order it was written",
       row(2, "user", "old-a", 50),
       row(3, "assistant", "old-b", 200),
     ]);
-    db.exec("PRAGMA user_version = 3");
 
     runMigrations(db);
 
@@ -298,7 +343,7 @@ describe("migration 4 — the transcript goes back in the order it was written",
 
   it("leaves a healthy history alone (no rewrite at all)", () => {
     const db = makeDb();
-    runMigrations(db);
+    asVersion3(db);
     db.prepare("INSERT INTO sessions(id, name, created_at, updated_at, message_count) VALUES ('s1','S',0,0,4)").run();
     insert(db, [
       row(0, "user", "one", 1),
@@ -306,7 +351,6 @@ describe("migration 4 — the transcript goes back in the order it was written",
       row(2, "user", "three", 3),
       row(3, "assistant", "four", 4),
     ]);
-    db.exec("PRAGMA user_version = 3");
 
     runMigrations(db);
 

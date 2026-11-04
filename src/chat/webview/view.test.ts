@@ -1049,6 +1049,43 @@ describe("view webview client", () => {
     expect((document.querySelector(`.srow[data-id="a"] .smeta`) as HTMLElement).textContent).toBe(patched);
   });
 
+  /** Row ids in the order they are DRAWN (the list's visible order). */
+  const rowIds = () => [...document.querySelectorAll("#sessions .srow")].map((r) => (r as HTMLElement).dataset.id);
+
+  it("asks the host for the list when the section is OPENED (the order is re-evaluated on open)", async () => {
+    // The dates follow live, the RANK does not (that is the point of patching instead of
+    // re-rendering), so the order on screen is only as fresh as the last list the host
+    // sent. Opening the section asks for it again: one SELECT *, no transcript rebuild.
+    await loadView();
+    const head = document.getElementById("session-head") as HTMLElement;
+    posted.length = 0;
+
+    head.click(); // collapse: nothing to re-evaluate, no round trip
+    expect(posted).not.toContainEqual({ type: "refreshSessions" });
+
+    head.click(); // open: re-read
+    expect(posted).toContainEqual({ type: "refreshSessions" });
+  });
+
+  it("draws the fresh order the host sends back, and only the list", async () => {
+    await loadView();
+    expect(rowIds()).toEqual(["a", "b"]); // as the host ranked them
+    const transcript = (document.getElementById("messages") as HTMLElement).innerHTML;
+
+    // The host re-read the store on open and `b` is now the most recently touched.
+    hostMessage({
+      type: "sessions",
+      sessions: [
+        { id: "b", name: "Debug", createdAt: 2, updatedAt: 1_700_000_000_000, messageCount: 1 },
+        { id: "a", name: "Refactor", createdAt: 1, updatedAt: 2, messageCount: 3 },
+      ],
+    });
+
+    expect(rowIds()).toEqual(["b", "a"]);
+    // A list refresh is NOT a switchView: the transcript is left alone.
+    expect((document.getElementById("messages") as HTMLElement).innerHTML).toBe(transcript);
+  });
+
   it("renames a session row and tab in place without rebuild", async () => {
     await loadView();
     const row = document.querySelector(".srow") as HTMLElement;
@@ -1664,6 +1701,21 @@ describe("view webview client", () => {
     expect(final?.textContent).toContain("hello");
     // the pulse fades out rather than snapping: settling class is applied.
     expect(final?.classList.contains("settling")).toBe(true);
+  });
+
+  it("drops a text chunk that arrives with no running turn (nothing to paint into)", async () => {
+    // A chunk can land AFTER the working bar is gone: the turn was stopped or finished and a
+    // delta was already in flight. `ensureResult()` then has nothing to attach a bubble to,
+    // and the chunk must be dropped — the alternative the mutation run kept alive is
+    // `push(null, …)`, which paints into nothing.
+    await loadView();
+    hostMessage({ type: "textDelta", content: "late chunk" });
+    expect(document.querySelectorAll(".msg.assistant")).toHaveLength(0);
+    // …and the page still works afterwards: the next turn paints normally.
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    hostMessage({ type: "textDelta", content: "real" });
+    expect(document.querySelector(".msg.assistant")?.textContent).toContain("real");
   });
 
   it("keeps ONE answer bubble when the model reasons MID-answer (the reported split)", async () => {

@@ -11,6 +11,11 @@ import { bootClient, detachBridge, pageOf, resetBridge, wire } from "./webview-b
  * which here is three untyped strings at once: the message `type`, the shape of `meta`, and
  * the selector the client patches (`.srow[data-id] .smeta`).
  *
+ * The second requirement is the other side of the same coin: because a patch never moves a
+ * row, the ORDER on screen ages — so opening the section asks the host for the list again
+ * (`refreshSessions` → `sessions`). Two message names and a render, which is exactly the
+ * kind of pair a unit test on each side cannot check.
+ *
  * Here the provider runs for real over an in-memory store and the page is the one
  * `renderViewHtml` produces, so a rename of the class or of the message field goes red in
  * this file while both unit suites stay green — which is exactly why it exists.
@@ -59,15 +64,49 @@ describe("the sessions list's dates, host ⇄ webview", () => {
     const element = meta();
     const before = element.textContent;
 
-    // Exactly the pair `PersistentChatHistory.persist()` performs on every write: the store
-    // hands back the summary it just updated, and the host relays it to the panel.
+    // Exactly the pair `PersistentChatHistory.persist()` + the turn's end perform: the
+    // store hands back the summary it just updated, the host accumulates it, and
+    // `onRunFinished` — the moment the turn stops moving `updatedAt` — publishes it.
     const written = store.saveMessages(id, [{ role: "user", content: "hi", timestamp: 1 }]);
     provider.noteSessionActivity(written);
+    provider.flushSessionMeta(); // = the turn ended (see ChatViewProvider.onRunFinished)
 
     await vi.waitFor(() => expect(meta().textContent).not.toBe(before), { timeout: 2000 });
     // Patched, not rebuilt: the row the user is looking at is the SAME node.
     expect(document.querySelector(`.srow[data-id="${id}"] .smeta`)).toBe(element);
     expect(element.textContent).toContain("· updated ");
     expect(element.title).toContain(new Date(written.updatedAt).toLocaleString());
+  });
+
+  it("OPENING the section re-reads the order from the store", async () => {
+    let older = "";
+    let newer = "";
+    const { store, html } = wire({
+      prepare: (s) => {
+        const a = s.create("Older");
+        older = a.id;
+        const b = s.create("Newer");
+        newer = b.id;
+        // Distinct dates: created in the same millisecond the two rows would tie.
+        s.rows.set(older, { ...a, createdAt: 1_600_000_000_000, updatedAt: 1_600_000_000_000 });
+        s.rows.set(newer, { ...b, createdAt: 1_600_000_100_000, updatedAt: 1_600_000_100_000 });
+      },
+    });
+    await bootClient(await pageOf(html));
+    const ids = (): (string | undefined)[] =>
+      [...document.querySelectorAll(".srow")].map((r) => (r as HTMLElement).dataset.id);
+    // Most recently touched first — and that rank is the HOST's, not the page's.
+    expect(ids()).toEqual([newer, older]);
+
+    // The OLDER session was worked on while the list was not looking (another window, or a
+    // patch that moved a date without moving a row): the store knows, the DOM does not.
+    store.rows.set(older, { ...store.rows.get(older)!, updatedAt: 1_600_000_900_000 });
+    expect(ids()).toEqual([newer, older]);
+
+    const head = document.getElementById("session-head") as HTMLElement;
+    head.click(); // collapse
+    head.click(); // open: the client asks, the host re-reads, the rows come back sorted
+
+    await vi.waitFor(() => expect(ids()).toEqual([older, newer]), { timeout: 2000 });
   });
 });

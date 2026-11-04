@@ -1584,3 +1584,473 @@ describe("planCompactionToBudget — the KEPT tail opens a turn (the pair is a t
     expect(faults).toEqual([]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The DECISIONS the outcome-level tests above let through.
+//
+// The mutation pass of this file measured 82.1% against a floor of 83: the plans, the
+// rebuilt histories and the numbers were pinned, but the guards that produce them were
+// not — a comparison, a `?? ""`, the filter that decides what counts as the window.
+// Each test below exists because a mutant SURVIVED there, and it asserts the behaviour
+// the guard is for, in words a reader can check without the mutator. They took the file
+// to 90.4%, and the floor in `stryker/compactor.conf.json` moved up with it.
+//
+// What is left over is NOT untested code, it is code whose mutants cannot be told apart
+// from the original: `Number(v)` on a number, `?.` on a value the types guarantee, a
+// `m[1].trim()` on a group the regex already trimmed. Those are for the pruner, not for
+// another test — see reports/mutation.json before adding one.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** `n` whole turns, `size` ASCII chars per message (~size/4 tokens each). */
+const turnsOf = (n: number, size = 2_000): ChatMessage[] =>
+  Array.from({ length: n }, (_, i) => [u(`p${i} ${"p".repeat(size)}`), a("x".repeat(size))])
+    .flat()
+    .map((m, i) => ({ ...m, timestamp: i + 1 }));
+
+const withUsage = (content: string, inputTokens: number): ChatMessage => ({
+  role: "assistant",
+  content,
+  timestamp: 2,
+  meta: { inputTokens },
+});
+
+/** A row that lost its `content` (the guards are `(m.content ?? "").trim()` for it). */
+const noContent = (extra: Partial<ChatMessage> = {}): ChatMessage =>
+  ({ role: "assistant", content: undefined, timestamp: 9, ...extra }) as unknown as ChatMessage;
+
+describe("estimateTokens — the ASCII boundary is EXCLUSIVE", () => {
+  it("counts a code unit of exactly 128 as WIDE (it is not ASCII)", () => {
+    // 128 is the first non-ASCII code point: four of them cost four tokens, not one. Getting
+    // this backwards puts every Latin-1 / latin-supplement character on the CHEAP side, and
+    // this estimate is what decides when a session compacts — i.e. when a request is refused.
+    expect(estimateTokens(String.fromCharCode(128).repeat(4))).toBe(4);
+    expect(estimateTokens("abcd")).toBe(1);
+    expect(estimateTokens("")).toBe(0);
+  });
+});
+
+describe("serializeConversation — the tool-result cut", () => {
+  const tool = (n: number): ChatMessage => ({ role: "tool", content: "x".repeat(n), toolCallId: "k", timestamp: 3 });
+
+  it("leaves a result that is EXACTLY at the limit untouched (no '( +0 chars)')", () => {
+    expect(serializeConversation([tool(2_000)])).toBe(`[Tool result]: ${"x".repeat(2_000)}`);
+    expect(serializeConversation([tool(2_000)])).not.toContain("(+0 chars)");
+  });
+
+  it("truncates one over it, and says by HOW MUCH", () => {
+    expect(serializeConversation([tool(5_000)])).toBe(`[Tool result]: ${"x".repeat(2_000)}… (+3000 chars)`);
+  });
+});
+
+describe("real usage — the edges of the cumulative counter", () => {
+  it("sees usage on the FIRST message of the window (index 0 is inside [from, to))", () => {
+    const msgs = [withUsage("hi", 1_000), u("next")];
+    expect(realWindowTokens(msgs, 0)).toBe(1_000 + estimateTokens(serializeConversation(msgs)));
+  });
+
+  it("subtracts a baseline that sits at index 0", () => {
+    const msgs = [withUsage("a", 5_000), u("b"), withUsage("c", 6_000)];
+    // From 1: what the FIRST turn spent is other context, so this window is the DELTA.
+    expect(realWindowTokens(msgs, 1)).toBe(1_000 + estimateTokens(serializeConversation(msgs.slice(2))));
+  });
+
+  it("treats a recorded 0 as NO data, not as an empty prompt", () => {
+    const zero = [u("a"), withUsage("zero", 0), u("b")];
+    expect(realWindowTokens(zero)).toBeUndefined();
+    expect(estimateContextTokens(zero)).toBe(estimateTokens(serializeConversation(zero)));
+  });
+
+  it("only an ASSISTANT turn carries a cumulative count (a user row's meta is not usage)", () => {
+    const onUser: ChatMessage[] = [{ role: "user", content: "hi", timestamp: 1, meta: { inputTokens: 5_000 } }];
+    expect(realWindowTokens(onUser)).toBeUndefined();
+  });
+});
+
+describe("trimHistory — what the trimmed transcript SAYS", () => {
+  it("leaves the label and the note in their LITERAL words", () => {
+    const r = trimHistory(turnsOf(6), { budgetTokens: 2_000 })!;
+    const [question, answer] = r.history.slice(r.windowStart, r.windowStart + 2);
+    expect(question.role).toBe("user");
+    expect(question.synthetic).toBe(true);
+    // Compared to the LITERAL text: the label is what the transcript shows and what the logs
+    // match on — a test written against the constant would not notice it becoming empty.
+    expect(question.content).toBe("Earlier interactions moved out of the context window");
+    expect(answer.role).toBe("assistant");
+    expect(answer.content).toContain("no longer in the model's context window");
+    expect(answer.content).toContain("it can be searched");
+    // The note is NOT a state document: the next compaction must not mistake it for one.
+    expect(answer.content).not.toContain("## Goal");
+  });
+
+  it("stamps the answer ONE millisecond after its question", () => {
+    const r = trimHistory(turnsOf(6), { budgetTokens: 2_000 })!;
+    const [question, answer] = r.history.slice(r.windowStart, r.windowStart + 2);
+    expect(answer.timestamp).toBe(question.timestamp + 1);
+  });
+
+  it("carries the previous state document as the answer, trimmed — and the note when it says nothing", () => {
+    const carried = trimHistory(turnsOf(6), { budgetTokens: 2_000, summary: "  ## Goal\nwork  " })!;
+    expect(carried.history[carried.windowStart + 1].content).toBe("## Goal\nwork");
+    // A blank summary is not a state document: falling back to it would leave an empty bubble.
+    const blank = trimHistory(turnsOf(6), { budgetTokens: 2_000, summary: "   \n " })!;
+    expect(blank.history[blank.windowStart + 1].content).toContain("no longer in the model's context window");
+  });
+
+  it("counts only the messages it actually moved (the checkpoint pair is not 'moved')", () => {
+    const pair: ChatMessage[] = [
+      { role: "user", content: "Earlier interactions moved out of the context window", timestamp: 1, synthetic: true },
+      { role: "assistant", content: "## Goal\nold state", timestamp: 2, synthetic: true },
+    ];
+    const history = [...pair, ...turnsOf(6)];
+    const r = trimHistory(history, { budgetTokens: 2_000 })!;
+    expect(r.windowStart).toBeGreaterThan(2);
+    // Two messages above the boundary are the pair that was ALREADY there: they did not move.
+    expect(r.moved).toBe(r.windowStart - 2);
+    expect(r.history.length).toBe(history.length + 2);
+  });
+
+  it("never treats a system message or a uiOnly card as part of the window", () => {
+    const card: ChatMessage = { role: "assistant", content: "s".repeat(50_000), timestamp: 99, uiOnly: true };
+    const history: ChatMessage[] = [...turnsOf(6), card];
+    const r = trimHistory(history, { budgetTokens: 2_000 })!;
+    // The boundary is decided on what the MODEL sees: a card the UI shows and the context
+    // does not is not "kept context", so the trim must land in the same place with or
+    // without it (counting it would move the window for a message that is never sent).
+    const without = trimHistory(turnsOf(6), { budgetTokens: 2_000 })!;
+    expect(r.windowStart).toBe(without.windowStart);
+    expect(r.moved).toBe(without.moved);
+  });
+
+  it("is a no-op when the view sits EXACTLY at the budget (nothing was freed)", () => {
+    const fits = [u("a".repeat(400)), a("b".repeat(400))];
+    expect(trimHistory(fits, { budgetTokens: estimateTokens(serializeConversation(fits)) })).toBeNull();
+  });
+});
+
+describe("buildSummaryMessages — 'only when it says something'", () => {
+  const content = (previousSummary?: string, keptPreview?: string): string =>
+    buildSummaryMessages([u("hi")], previousSummary, undefined, keptPreview)[0].content;
+
+  it("passes the kept preview trimmed, and drops a whitespace-only one", () => {
+    expect(content(undefined, "  the kept tail  ")).toContain("first message that follows):\nthe kept tail\n");
+    expect(content(undefined, "   \n ")).not.toContain("The transcript CONTINUES after this span");
+  });
+
+  it("passes the previous state document trimmed, and drops a whitespace-only one", () => {
+    expect(content("  ## Goal\nwork  ")).toContain("<state>\n## Goal\nwork\n</state>");
+    expect(content("   \n ")).not.toContain("<state>");
+  });
+});
+
+describe("carriedState — the state document of a previous compaction", () => {
+  it("finds it even when it is the FIRST message (index 0 is scanned too)", () => {
+    expect(carriedState([{ role: "assistant", content: "## Goal\nx", timestamp: 1, synthetic: true }])).toBe(
+      "## Goal\nx",
+    );
+  });
+
+  it("returns the document TRIMMED, and skips a whitespace-only answer", () => {
+    const padded = { ...noContent(), content: "  ## Goal\nwork  ", synthetic: true };
+    const blank = { ...noContent(), content: "   \n ", synthetic: true };
+    // A blank answer is not a document: carrying it would REPLACE real state with nothing.
+    expect(carriedState([blank, padded])).toBe("## Goal\nwork");
+    expect(carriedState([padded, blank])).toBe("## Goal\nwork");
+  });
+
+  it("skips a synthetic answer that lost its content instead of crashing on it", () => {
+    // The guard is `(m.content ?? "").trim()`: without it this row is a TypeError in the
+    // middle of a compaction.
+    expect(carriedState([noContent({ synthetic: true })])).toBeUndefined();
+    expect(
+      carriedState([noContent({ synthetic: true }), { ...noContent({ synthetic: true }), content: "## Goal\nreal" }]),
+    ).toBe("## Goal\nreal");
+  });
+});
+
+describe("splitSummary / isUsableSummary — the envelope and its headings", () => {
+  it("falls back to the generic prompt when a side of the separator is EMPTY", () => {
+    const noPrompt = splitSummary("---\n## Goal\nwork");
+    expect(noPrompt.prompt).toMatch(/Continue the work/);
+    expect(noPrompt.response).toContain("## Goal");
+    const noResponse = splitSummary("the prompt\n---\n");
+    expect(noResponse.response.trim().length).toBeGreaterThan(0);
+  });
+
+  it("splits on the separator, one side per message", () => {
+    expect(splitSummary("prompt text\n---\n## Goal\nwork")).toEqual({
+      prompt: "prompt text",
+      response: "## Goal\nwork",
+    });
+  });
+
+  it("does not accept a heading marker written INSIDE a line", () => {
+    expect(isUsableSummary("Some prose mentioning ## Goal inline\nand more prose")).toBe(false);
+  });
+
+  it("accepts several spaces after the hashes, and needs a real character after them", () => {
+    expect(isUsableSummary("##  Goal\nwe did it")).toBe(true);
+    expect(isUsableSummary("##   \nwe did it")).toBe(false);
+  });
+
+  it("a WHITESPACE line under a heading is not the content it is waiting for", () => {
+    // Headings at both ends: the only candidate line is blank, so nothing was written —
+    // accepting `"   "` as content is how an empty document replaced a full one.
+    expect(isUsableSummary("## Goal\n   \n## Facts\n  ")).toBe(false);
+    expect(isUsableSummary("## Goal\nreal work\n")).toBe(true);
+  });
+});
+
+describe("Compactor — the summary request on the wire", () => {
+  /** A factory whose streamed chunks are scripted PER CALL, recording what it was asked. */
+  function chunkFactory(
+    calls: unknown[][],
+    reply = "## Goal\nok",
+  ): {
+    factory: LLMProviderFactory;
+    sent: { messages: { role: string; content: string }[]; tools: unknown }[];
+  } {
+    const sent: { messages: { role: string; content: string }[]; tools: unknown }[] = [];
+    let call = 0;
+    const factory = {
+      create: () => ({
+        protocol: "chat" as const,
+        async *stream(messages: { role: string; content: string }[], _signal?: AbortSignal, tools?: unknown) {
+          sent.push({ messages, tools });
+          const scripted = calls[call++];
+          for (const chunk of scripted ?? []) yield chunk;
+          if (!scripted) yield { type: "text", content: reply };
+        },
+      }),
+    } as unknown as LLMProviderFactory;
+    return { factory, sent };
+  }
+
+  it("advertises NO tools: a summary turn is not an agent turn", async () => {
+    const { factory, sent } = chunkFactory([]);
+    await new Compactor(factory).summarize([u("work")], undefined, undefined, {
+      maxReplyTokens: 8_192,
+      config: CONFIG,
+    });
+    expect(sent[0].tools).toEqual([]);
+  });
+
+  it("takes TEXT only — reasoning, tool calls and usage are not the document", async () => {
+    const { factory } = chunkFactory([
+      [
+        { type: "thinking", content: "REASONING" },
+        { type: "tool_call_start", index: 0, id: "k", name: "Read" },
+        { type: "usage", usage: { inputTokens: 1, outputTokens: 2 } },
+        { type: "text", content: "## Goal\nreal" },
+      ],
+    ]);
+    expect(
+      await new Compactor(factory).summarize([u("work")], undefined, undefined, {
+        maxReplyTokens: 8_192,
+        config: CONFIG,
+      }),
+    ).toBe("## Goal\nreal");
+  });
+
+  it("stops reading a runaway stream past 40k characters", async () => {
+    // Three chunks: the cap is what stops the SECOND one from consuming the third, so the
+    // document can never grow without bound (`out.length > 40000` is a POST-append check).
+    const { factory } = chunkFactory([
+      [
+        { type: "text", content: "x".repeat(40_000) },
+        { type: "text", content: "x".repeat(40_000) },
+        { type: "text", content: "MORE" },
+      ],
+    ]);
+    const out = await new Compactor(factory).summarize([u("work")], undefined, undefined, {
+      maxReplyTokens: 8_192,
+      config: CONFIG,
+    });
+    expect(out.length).toBe(80_000);
+  });
+
+  it("does NOT adopt a 'compressed' summary that is no shorter (never worse)", async () => {
+    const first = "x".repeat(800); // ~200 tokens: over a 100-token budget × the overshoot
+    const squeezed = "y".repeat(800);
+    const { factory, sent } = chunkFactory([[{ type: "text", content: first }], [{ type: "text", content: squeezed }]]);
+    const out = await new Compactor(factory).summarize([u("work")], undefined, undefined, {
+      maxSummaryTokens: 100,
+      maxReplyTokens: 8_192,
+      config: CONFIG,
+    });
+    expect(sent).toHaveLength(2);
+    expect(out).toBe(first);
+    // …and the compression request is ONE user message carrying the old summary as DATA.
+    expect(sent[1].messages).toHaveLength(1);
+    expect(sent[1].messages[0].role).toBe("user");
+    expect(sent[1].messages[0].content).toContain(`<summary>\n${first}\n</summary>`);
+  });
+});
+
+describe("compactHistory — the contract with the summarizer", () => {
+  /** A compactor whose summarizer records its arguments and answers as told. */
+  function stubCompactor(replies: string[]): { compactor: Compactor; calls: unknown[][] } {
+    const calls: unknown[][] = [];
+    let call = 0;
+    const compactor = {
+      async summarize(...args: unknown[]) {
+        calls.push(args);
+        return replies[Math.min(call++, replies.length - 1)];
+      },
+    } as unknown as Compactor;
+    return { compactor, calls };
+  }
+  type Opts = Parameters<typeof compactHistory>[1];
+  const base = (compactor: Compactor): Opts => ({
+    compactor,
+    config: CONFIG,
+    targetTokens: 4_000,
+    maxOutputTokens: 8_192,
+    maxInputTokens: 1_000_000,
+  });
+
+  it("retries ONCE with exactly the same options (the retry is the same request)", async () => {
+    const { compactor, calls } = stubCompactor(["not a document"]);
+    expect(await compactHistory(turnsOf(20), base(compactor))).toBeNull();
+    expect(calls).toHaveLength(2);
+    // Each call got a REAL options object (a `{}` here means the retry runs without the
+    // session's config and turns a transient bad reply into a failed compaction).
+    expect(calls[0][3]).toEqual(calls[1][3]);
+    expect((calls[1][3] as { config?: HarnyConfig }).config).toBe(CONFIG);
+  });
+
+  it("reports the raw reply of a failed compaction — and stays quiet when nobody listens", async () => {
+    const { compactor } = stubCompactor(["User Safety: safe"]);
+    const raw: string[] = [];
+    await compactHistory(turnsOf(20), { ...base(compactor), onUnusableReply: (r) => raw.push(r) });
+    expect(raw).toEqual(["User Safety: safe"]); // ONE report, for the reply that was rejected
+    // No callback: the fallback must still be reached (a throw here would lose the trim too).
+    await expect(compactHistory(turnsOf(20), base(compactor))).resolves.toBeNull();
+  });
+
+  it("summarizes the WHOLE span when the caller declares no input ceiling", async () => {
+    const { compactor, calls } = stubCompactor(["## Goal\nok"]);
+    const msgs = turnsOf(20);
+    const { maxInputTokens: _omitted, ...noCeiling } = base(compactor);
+    await compactHistory(msgs, noCeiling as Opts);
+    const plan = planForTarget(msgs, 4_000, 8_192).plan;
+    expect(calls[0][0]).toEqual(plan.toSummarize);
+  });
+
+  it("previews the first kept message that SAYS something", async () => {
+    const { compactor, calls } = stubCompactor(["## Goal\nok"]);
+    // The kept tail OPENS on a row with no content (the guards are `?? ""` for it) followed
+    // by the only message that says anything: previewing the empty one hides the real tail
+    // from the summarizer, which then re-states work the next turns can already see.
+    const msgs: ChatMessage[] = [
+      ...turnsOf(20),
+      noContent({ role: "user", timestamp: 41 }),
+      a("the real tail " + "x".repeat(12_000)),
+    ];
+    await compactHistory(msgs, base(compactor));
+    const preview = (calls[0][3] as { keptPreview?: string }).keptPreview;
+    expect(preview?.startsWith("the real tail")).toBe(true);
+    // A whitespace-only row is not a preview either (it would be sent as "   ").
+    const whitespace: ChatMessage[] = [
+      ...turnsOf(20),
+      { ...noContent({ role: "user", timestamp: 41 }), content: "   " },
+      a("the real tail " + "x".repeat(12_000)),
+    ];
+    const second = stubCompactor(["## Goal\nok"]);
+    await compactHistory(whitespace, base(second.compactor));
+    const blankPreview = (second.calls[0][3] as { keptPreview?: string }).keptPreview;
+    expect(blankPreview?.startsWith("the real tail")).toBe(true);
+  });
+
+  it("stamps the synthetic answer ONE millisecond after its question", async () => {
+    const { compactor } = stubCompactor(["Summary of past interactions\n---\n## Goal\nwork"]);
+    const out = (await compactHistory(turnsOf(20), base(compactor)))!;
+    const q = out.history.findIndex((m) => m.synthetic);
+    expect(out.history[q].role).toBe("user");
+    // The transcript is ordered by timestamp: the answer must come AFTER its question.
+    expect(out.history[q + 1].timestamp).toBe(out.history[q].timestamp + 1);
+  });
+});
+
+describe("planCompactionToBudget — the cut itself", () => {
+  it("keeps exactly the whole turns that fit the budget", () => {
+    const msgs = turnsOf(6); // 12 messages, ~500 tokens each
+    const plan = planCompactionToBudget(msgs, 1_000);
+    // 1k of budget ≈ the last turn (input + answer): the WALK decides where the tail opens,
+    // and a boundary one message off splits a turn (a call left without its results).
+    expect(plan.kept).toHaveLength(2);
+    expect(plan.kept[0].role).toBe("user");
+    expect(plan.toSummarize).toHaveLength(10);
+    expect(plan.splitTurn).toBe(false);
+  });
+
+  it("never compacts a TWO-message view: there is no older span to move", () => {
+    const plan = planCompactionToBudget([u("x".repeat(4_000)), a("y".repeat(4_000))], 100);
+    // The budget is 100 and the view is ~2000 tokens: a compaction here would summarize the
+    // only turn there is, i.e. erase the session to free room it does not need to free.
+    expect(plan.toSummarize).toEqual([]);
+    expect(plan.kept).toHaveLength(2);
+    expect(plan.splitTurn).toBe(false);
+  });
+});
+
+describe("planForTarget — the SECOND pass is the one that lands", () => {
+  it("plans the tail with the budget the summary leaves, not with the whole target", () => {
+    const msgs = turnsOf(60);
+    const target = 20_000;
+    const { plan, keepBudgetTokens } = planForTarget(msgs, target, 8_192);
+    expect(plan.kept).toHaveLength(planCompactionToBudget(msgs, keepBudgetTokens).kept.length);
+    // …and the two passes DO differ: the naive one keeps the room the summary occupies, so the
+    // rebuilt window lands above the target and compacts again on the very next turn.
+    expect(plan.kept.length).toBeLessThan(planCompactionToBudget(msgs, target).kept.length);
+  });
+});
+
+describe("trimHistory — above an EXISTING checkpoint", () => {
+  const pair: ChatMessage[] = [
+    { role: "user", content: "Earlier interactions moved out of the context window", timestamp: 1, synthetic: true },
+    { role: "assistant", content: "## Goal\nold state", timestamp: 2, synthetic: true },
+  ];
+
+  it("counts from the ACTIVE checkpoint, and the span above it is not 'moved' again", () => {
+    const atStart = trimHistory([...pair, ...turnsOf(6)], { budgetTokens: 2_000 })!;
+    const withOld = trimHistory([u("very old"), a("very old"), ...pair, ...turnsOf(6)], { budgetTokens: 2_000 })!;
+    // The window opens in the same PLACE (the two old messages shift the index by two)…
+    expect(withOld.windowStart).toBe(atStart.windowStart + 2);
+    // …and they are not counted as moved: they were already outside the window.
+    expect(withOld.moved).toBe(atStart.moved);
+  });
+
+  it("is a no-op when the view FITS the budget and a pair is already there", () => {
+    // `recentStartFor` forces progress when everything fits (it jumps to the middle), and on a
+    // trim that would move the boundary — invalidating the prompt cache — for no gain.
+    expect(trimHistory([...pair, ...turnsOf(2)], { budgetTokens: 50_000 })).toBeNull();
+  });
+
+  it("refuses a boundary landing right after the pair (it would free nothing)", () => {
+    const justAfter: ChatMessage[] = [...pair, u("x".repeat(4_000)), a("y".repeat(4_000))];
+    expect(trimHistory(justAfter, { budgetTokens: 100 })).toBeNull();
+  });
+});
+
+describe("the landing % from a JSON value", () => {
+  it("MISSING means AUTO — `undefined`/`null` are not a 0%", () => {
+    expect(toTargetPercent(undefined, 80)).toBe(autoTargetPercent(80));
+    expect(toTargetPercent(null, 80)).toBe(autoTargetPercent(80));
+  });
+});
+
+describe("the summary request's budget arithmetic", () => {
+  it("solves input + the share it asks for inside the room (never over it)", () => {
+    const room = 200_000 - summarizerPromptReserve();
+    const max = maxSummaryInputTokens(200_000, 500); // cap small: the RATIO is what binds
+    // The summary asks for 10% of what it reads, so input × 1.1 must fit the room.
+    expect(max * 1.1).toBeLessThanOrEqual(room);
+    // …and it is not needlessly conservative: the ratio is solved (times the safety margin),
+    // not guessed.
+    expect(max).toBeGreaterThan((room / 1.1) * 0.9 - 2);
+  });
+
+  it("a NaN budget is no budget (no instruction, no 'NaN tokens' in the prompt)", () => {
+    expect(buildSummaryMessages([u("hi")], undefined, Number.NaN)[0].content).not.toContain("Budget:");
+  });
+});

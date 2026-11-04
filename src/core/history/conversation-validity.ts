@@ -39,7 +39,7 @@
  * sit between a call and its results in storage.
  */
 
-type FaultKind =
+export type FaultKind =
   | "missing_tool_results"
   | "orphan_tool_result"
   | "tool_result_without_id"
@@ -49,7 +49,7 @@ type FaultKind =
   | "conversation_starts_with_role"
   | "attachment_outside_user";
 
-interface ConversationFault {
+export interface ConversationFault {
   /** Index in the conversation of the message at fault. */
   index: number;
   kind: FaultKind;

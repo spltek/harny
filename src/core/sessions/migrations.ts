@@ -119,6 +119,22 @@ const MIGRATIONS: readonly Migration[] = [
     destructive: true,
     up: (db) => reorderSplicedTranscripts(db),
   },
+  {
+    version: 5,
+    name: "revision: the token a transcript write must match",
+    // Optimistic concurrency for the ONE thing two windows can destroy: the transcript. Two VS
+    // Code windows are two extension hosts on one `sessions.db`; each holds the history it
+    // loaded, and a host that never saw the other's append used to reach the prefix guard's
+    // `replace` branch — `DELETE FROM messages` — deleting turns it had never read. `revision`
+    // is bumped inside the transaction that writes messages and handed back to the next save; a
+    // mismatch is refused BEFORE any row is touched (see `session-conflict.ts`).
+    //
+    // NOT `destructive`: it only adds a column, and `0` is the honest starting value — a session
+    // written before this existed had no competing writer by definition. It is bumped by
+    // `saveMessages` ALONE: a rename or a settings write changes no message, so it must not
+    // invalidate a token (a false conflict is a save the user never asked to lose).
+    up: (db) => db.exec("ALTER TABLE sessions ADD COLUMN revision INTEGER NOT NULL DEFAULT 0; "),
+  },
 ];
 
 /** One `messages` row, as the repair reads and writes it. */
@@ -281,9 +297,22 @@ export function applyMigrations(
   if (options.backup && pending.some((m) => m.destructive)) options.backup(current);
 
   const from = current;
-  db.exec("BEGIN");
+  // IMMEDIATE: the version must be decided INSIDE the lock, because two VS Code windows are two
+  // extension hosts that activate at the same time on ONE `sessions.db` (VS Code restoring them at
+  // launch is the normal case, not a corner). With DEFERRED both hosts read `user_version`, both
+  // decide the same migrations are pending, and the loser either re-runs them (`table already
+  // exists`, thrown out of activation) or fails upgrading a stale snapshot to a writer.
+  db.exec("BEGIN IMMEDIATE");
   try {
-    for (const m of pending) {
+    const locked = getUserVersion(db);
+    const stillPending = pending.filter((m) => m.version > locked);
+    if (stillPending.length === 0) {
+      // Another window got there first. Not an error: this database is exactly what we wanted.
+      db.exec("COMMIT");
+      if (locked !== from) log(`[db] migrations already applied by another window (v${locked})`);
+      return { from, to: locked, applied: 0 };
+    }
+    for (const m of stillPending) {
       log(`[db] migration v${m.version}: ${m.name}`);
       m.up(db);
       db.exec(`PRAGMA user_version = ${m.version}`);

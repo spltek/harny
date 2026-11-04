@@ -5,6 +5,7 @@ import { PersistentChatHistory } from "../core/history/persistent-chat-history";
 import type { ThinkingLevel } from "../core/config/types";
 import type { LoopGuardOptions, LoopGuardSensitivity } from "../core/agent/loop-guard";
 import type { SessionStore, SessionSummary } from "../core/sessions/types";
+import type { SessionConflictError } from "../core/sessions/session-conflict";
 import type { SessionManager } from "../core/sessions/session-manager";
 import type { ConfigProvider } from "../core/config/types";
 import { SessionEngine } from "./session-engine";
@@ -13,7 +14,12 @@ import { SessionEngine } from "./session-engine";
 export interface SessionRuntime {
   sessionId: string;
   agent: ChatController;
-  history: ChatHistory;
+  /**
+   * Its OWN persistent history. Typed as the concrete class, not `ChatHistory`, because the
+   * transcript TOKEN (see `session-conflict.ts`) lives here: a rebuild from the panel must go
+   * through `history.rebuild`, which is the only writer that can combine `replace` with the token.
+   */
+  history: PersistentChatHistory;
   /** The session's own engine: owns the LIVE state of the in-flight turn and the
    * projection the view is rebuilt from (see `session-engine.ts`). */
   engine: SessionEngine;
@@ -66,6 +72,12 @@ export interface SessionRuntime {
   cachedTokens?: number;
   /** Tokens written into the provider's prompt cache (informational). */
   cachedWriteTokens?: number;
+  /**
+   * Set when the STORED session was damaged and had to be salvaged on load (see
+   * `session-recovery.ts`): how many messages were left out and why. One-shot — the panel
+   * reports it once and clears it, so reopening is quiet. Absent on a sound session.
+   */
+  recovered?: { dropped: number; reason: "unreadable" | "invalid_tail" };
 }
 
 interface SessionRegistryDeps {
@@ -87,6 +99,8 @@ export class SessionRegistry {
   private open = new Map<string, SessionRuntime>();
   /** The one listener for history writes (see `observeHistoryWrites`). */
   private onHistorySaved?: (summary: SessionSummary) => void;
+  /** The one listener for REFUSED writes (see `observeWriteConflicts`). */
+  private onHistoryConflict?: (sessionId: string, error: SessionConflictError) => void;
 
   constructor(private deps: SessionRegistryDeps) {}
 
@@ -112,6 +126,21 @@ export class SessionRegistry {
    */
   private historyListener(): (summary: SessionSummary) => void {
     return (summary) => this.onHistorySaved?.(summary);
+  }
+
+  /**
+   * Register the listener told when a save was REFUSED because another window changed the session
+   * (see `session-conflict.ts`). Same reasoning as `observeHistoryWrites`: a setter, not a `deps`
+   * field, so the panel cannot forget to wire it — an unwired listener would still be a valid
+   * object and the refusal would become a silent "my messages stopped being saved".
+   */
+  observeWriteConflicts(fn: (sessionId: string, error: SessionConflictError) => void): void {
+    this.onHistoryConflict = fn;
+  }
+
+  /** The hook each history carries, resolved lazily like `historyListener`. */
+  private conflictListener(sessionId: string): (error: SessionConflictError) => void {
+    return (error) => this.onHistoryConflict?.(sessionId, error);
   }
 
   listOpenIds(): string[] {
@@ -151,7 +180,13 @@ export class SessionRegistry {
     const existing = this.open.get(id);
     if (existing) return existing;
     const loaded = this.deps.sessions.load(id);
-    const history = new PersistentChatHistory(this.deps.store, id, this.historyListener());
+    // A load that had to drop a damaged tail keeps the count here: the panel shows it
+    // ONCE when the session opens (`ChatViewProvider.reportRecovery`).
+    const recovered = loaded.repaired;
+    const history = new PersistentChatHistory(this.deps.store, id, this.historyListener(), this.conflictListener(id));
+    // The token of the transcript we just read: without it the first save would run unguarded and
+    // a window that loaded a stale copy would `replace` the other one's turns on its FIRST write.
+    history.adopt(loaded.summary);
     history.replace(loaded.messages);
     const rt = this.spawn(id, history);
     rt.model = loaded.summary.model;
@@ -176,6 +211,7 @@ export class SessionRegistry {
     rt.mode = loaded.summary.mode;
     rt.parallel = loaded.summary.parallel;
     rt.toolScope = loaded.summary.toolScope;
+    if (recovered) rt.recovered = recovered;
     // Names that no longer exist are filtered on READ too (see the host's toolScopeFor), so a
     // stale decision can never hide a new tool or resurrect a dead one.
     // Sync the fresh agent immediately (it defaults to analyze / no delegation),
@@ -204,7 +240,7 @@ export class SessionRegistry {
     this.open.delete(id);
   }
 
-  private spawn(id: string, history: ChatHistory): SessionRuntime {
+  private spawn(id: string, history: PersistentChatHistory): SessionRuntime {
     const agent = this.deps.createAgent(history, id, this.deps.configFor(id));
     const rt: SessionRuntime = { sessionId: id, agent, history, engine: new SessionEngine(id, history, agent) };
     this.open.set(id, rt);

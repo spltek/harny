@@ -6,11 +6,14 @@ import { isThinkingLevel } from "../config/types";
 import { clampLoopGuardOverrides, normalizeLoopGuardSensitivity, type LoopGuardOptions } from "../agent/loop-guard";
 import { normalizeToolScope } from "../tools/tool-scope";
 import { runMigrations } from "./migrations";
+import { recoverSession } from "./session-recovery";
+import { SessionConflictError } from "./session-conflict";
 import { noteDbOp } from "./store-metrics";
 import type {
   DbVacuumResult,
   DbVacuumStats,
   LoadedSession,
+  SaveMessagesOptions,
   SessionSettingsPatch,
   SessionStore,
   SessionSummary,
@@ -43,6 +46,16 @@ interface SqliteSessionStoreDeps {
   idGen?: () => string;
   /** Diagnostic sink for schema migrations (Output > Harny). */
   log?: (message: string) => void;
+  /**
+   * How long a WRITE waits for another process's lock before giving up (SQLite `busy_timeout`).
+   *
+   * Node's default is **0**: a second extension host (another VS Code window on the same machine,
+   * same `sessions.db`) hits `database is locked` the instant the first one is mid-transaction, and
+   * the write is simply lost. The two connections live in DIFFERENT processes, so waiting cannot
+   * self-deadlock (within one process, blocking the only thread while the lock holder waits for it
+   * would). Tests pass a small value to measure the wait instead of paying for it.
+   */
+  busyTimeoutMs?: number;
 }
 
 type Row = Record<string, unknown>;
@@ -67,8 +80,11 @@ export class SqliteSessionStore implements SessionStore {
 
   constructor(private deps: SqliteSessionStoreDeps) {
     this.idGen = deps.idGen ?? (() => randomUUID());
-    // Connection pragma (persistent; must run OUTSIDE a transaction).
+    // Connection pragmas (persistent; must run OUTSIDE a transaction).
     this.deps.db.exec("PRAGMA journal_mode = WAL;");
+    // WAL lets a reader and a writer coexist, but ONE writer at a time is still the rule: this is
+    // what turns "another window is saving" from a lost write into a wait (see `busyTimeoutMs`).
+    this.deps.db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.trunc(deps.busyTimeoutMs ?? 5000))};`);
     // Versioned schema migrations (PRAGMA user_version) — see migrations.ts.
     // NO automatic snapshot file next to `sessions.db`: the pending migrations run in a SINGLE
     // transaction (a failure ROLLBACKs to the previous version, byte for byte), and an upgrade
@@ -97,6 +113,10 @@ export class SqliteSessionStore implements SessionStore {
       createdAt: now,
       updatedAt: now,
       messageCount: 0,
+      // The token of a row nobody has written a transcript to yet. Handing it back (instead of
+      // `undefined`) means the FIRST save is guarded too: it would otherwise run unguarded and
+      // replace whatever another window wrote between the create and the first turn.
+      revision: 0,
       ...(folder ? { folder } : {}),
     };
     this.upsertSummary(summary);
@@ -107,8 +127,17 @@ export class SqliteSessionStore implements SessionStore {
     const row = this.deps.db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as Row | undefined;
     const summary = row ? this.rowToSummary(row) : this.emptySummary(id);
     const rows = this.deps.db.prepare("SELECT data FROM messages WHERE session_id = ? ORDER BY seq").all(id) as Row[];
-    const messages = rows.map((r) => JSON.parse(String(r.data)) as ChatMessage);
+    // A stored session can be DAMAGED in two ways a transaction cannot prevent (a
+    // rotted row, a tail from a build that could still break a tool pair): both used
+    // to throw here, or to wedge every later request. `recoverSession` keeps the head
+    // and counts what it left out — the rows stay on disk, and the next ordinary save
+    // rewrites them, so the repair becomes real without a destructive statement.
+    const recovered = recoverSession(rows.map((r) => String(r.data)));
+    const messages = recovered.messages;
     summary.messageCount = messages.length;
+    if (recovered.reason) {
+      return { summary, messages, repaired: { dropped: recovered.dropped, reason: recovered.reason } };
+    }
     return { summary, messages };
   }
 
@@ -131,7 +160,7 @@ export class SqliteSessionStore implements SessionStore {
    * length-only check would silently keep the stale rows. The prefix guard is
    * a safety net for a caller that forgets the flag.
    */
-  saveMessages(id: string, messages: ChatMessage[], options: { replace?: boolean } = {}): SessionSummary {
+  saveMessages(id: string, messages: ChatMessage[], options: SaveMessagesOptions = {}): SessionSummary {
     // Timed because it is SYNCHRONOUS on the single extension-host thread: a slow
     // COMMIT here is a stall for every OTHER streaming session (see store-metrics).
     const startedAt = performance.now();
@@ -142,12 +171,25 @@ export class SqliteSessionStore implements SessionStore {
     }
   }
 
-  private saveMessagesNow(id: string, messages: ChatMessage[], options: { replace?: boolean } = {}): SessionSummary {
+  private saveMessagesNow(id: string, messages: ChatMessage[], options: SaveMessagesOptions = {}): SessionSummary {
+    // Read OUTSIDE the lock: this is the metadata shape (name, model, `folderMissing`'s stat) and
+    // holding a write lock across a filesystem probe would block every other window for a syscall.
     const existing = this.getSummary(id);
-    const storedCount = this.countMessages(id);
-    const replace = options.replace === true || !this.storedMessagesArePrefix(id, messages, storedCount);
-    this.deps.db.exec("BEGIN");
+    // IMMEDIATE, not the default DEFERRED: the lock must be taken BEFORE the reads below, because
+    // what they decide (append or REPLACE) is only correct against a transcript nobody can move.
+    // With DEFERRED the reads run unlocked and the upgrade to a writer can fail afterwards — the
+    // decision is then already made on a snapshot another host has replaced (`BUSY_SNAPSHOT`), and
+    // `replace` deletes rows this caller never saw.
+    this.deps.db.exec("BEGIN IMMEDIATE");
     try {
+      const storedRevision = this.readRevision(id);
+      if (options.revision !== undefined && options.revision !== storedRevision) {
+        // Nothing is written, nothing is rolled back that mattered: refuse, and say what the store
+        // holds so the caller can decide (see `session-conflict.ts`).
+        throw new SessionConflictError(id, storedRevision);
+      }
+      const storedCount = this.countMessages(id);
+      const replace = options.replace === true || !this.storedMessagesArePrefix(id, messages, storedCount);
       if (replace) {
         this.deps.db.prepare("DELETE FROM messages WHERE session_id = ?").run(id);
       }
@@ -161,12 +203,23 @@ export class SqliteSessionStore implements SessionStore {
       }
       const summary = this.carrySummary(id, existing, messages);
       this.upsertSummary(summary);
+      // Bumped in the SAME transaction as the rows it describes, and never decreased: the value is
+      // read here, under the lock, so two hosts cannot compute the same next revision.
+      this.deps.db.prepare("UPDATE sessions SET revision = ? WHERE id = ?").run(storedRevision + 1, id);
+      summary.revision = storedRevision + 1;
       this.deps.db.exec("COMMIT");
       return summary;
     } catch (e) {
       this.deps.db.exec("ROLLBACK");
       throw e;
     }
+  }
+
+  /** The stored transcript token, 0 when the row is gone (a save to a deleted session recreates it). */
+  private readRevision(id: string): number {
+    const row = this.deps.db.prepare("SELECT revision FROM sessions WHERE id = ?").get(id) as Row | undefined;
+    const revision = Number(row?.revision ?? 0);
+    return Number.isFinite(revision) ? revision : 0;
   }
 
   rename(id: string, name: string): SessionSummary {
@@ -179,7 +232,9 @@ export class SqliteSessionStore implements SessionStore {
 
   remove(id: string): boolean {
     const existed = !!this.deps.db.prepare("SELECT 1 FROM sessions WHERE id = ?").get(id);
-    this.deps.db.exec("BEGIN");
+    // IMMEDIATE for the same reason `saveMessages` uses it: the existence check above and the
+    // DELETE below must describe the same database.
+    this.deps.db.exec("BEGIN IMMEDIATE");
     try {
       this.deps.db.prepare("DELETE FROM messages WHERE session_id = ?").run(id);
       this.deps.db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
@@ -372,7 +427,9 @@ export class SqliteSessionStore implements SessionStore {
 
   private emptySummary(id: string): SessionSummary {
     const now = Date.now();
-    return { id, name: "Session", createdAt: now, updatedAt: now, messageCount: 0 };
+    // `revision: 0`: a session that is NOT on disk yet. Its first save creates the row at
+    // revision 0, so handing the token back keeps that save guarded like any other.
+    return { id, name: "Session", createdAt: now, updatedAt: now, messageCount: 0, revision: 0 };
   }
 
   /**
@@ -418,6 +475,11 @@ export class SqliteSessionStore implements SessionStore {
       ...(existing?.loopGuard ? { loopGuard: existing.loopGuard } : {}),
       ...(existing?.loopGuardResponse ? { loopGuardResponse: existing.loopGuardResponse } : {}),
       ...(existing?.loopGuardParams ? { loopGuardParams: existing.loopGuardParams } : {}),
+      // Carried, not bumped: only `saveMessages` moves the transcript token (a rename or a
+      // settings write changes no message, and invalidating a token would refuse a save nobody
+      // asked to lose). Dropping it here would also make `rename`/`saveSettings` hand back a
+      // summary whose token is undefined, i.e. a host that would stop sending one.
+      ...(existing?.revision !== undefined ? { revision: existing.revision } : {}),
       ...extra,
     };
   }
@@ -551,6 +613,7 @@ export class SqliteSessionStore implements SessionStore {
       createdAt: Number(r.created_at ?? 0),
       updatedAt: Number(r.updated_at ?? 0),
       messageCount: Number(r.message_count ?? 0),
+      ...(typeof r.revision === "number" ? { revision: r.revision } : {}),
       ...(folder ? { folder } : {}),
       ...(folder && !this.folderPresent(folder, probe) ? { folderMissing: true } : {}),
       ...(typeof r.model === "string" ? { model: r.model } : {}),
