@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-11-09
+
 ### Changed
 
 - **A session is opened, not its folder — so the buttons say `Open session` and `Change folder & open…`, and the second one now finishes the job.** The row actions were named after their MECHANISM: `Open folder` in fact switched the workspace and then opened the session (a reload, `PendingOpens`, the session there when the window came back), which read as if the folder were the point; `Change folder…` only re-pointed the pointer and opened nothing, so on a session whose folder was gone or unset — the one case where the picker is the ONLY way back in — the user had to click a second time, on a row that had just been re-pointed for them. Both are fixed in one place: `openSessionAt(id, folder)` decides between "open it here" (the `isCurrent` shortcut, no reload, no marker) and "switch the window first", and `changeSessionFolder` now ends with it, so the picker is a DETOUR and never a separate errand (cancelling the picker still changes nothing). The labels follow the outcome (`src/chat/webview/session-folder.ts`, one rule for both surfaces — the home list and the All-sessions form), the pre-picker notice says "Pick a new one. The session opens there." instead of leaving the reload to surprise, and the form's hint no longer tells the user to "open that folder in VS Code". Pinned: a pick that lands on ANOTHER folder opens it there, a pick that lands on THIS folder opens it here with no reload and no `remember` debris, and a broken-folder `Open session` still falls back to the picker and then opens what it re-pointed.
@@ -1897,7 +1899,8 @@ Completions protocol.
 - **Diagnostics**: per-turn lines in _Output > Harny_, an optional request log
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
-[Unreleased]: https://github.com/spltek/harny/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/spltek/harny/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/spltek/harny/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/spltek/harny/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/spltek/harny/compare/v0.9.8...v1.0.0
 [0.9.8]: https://github.com/spltek/harny/compare/v0.9.7...v0.9.8
