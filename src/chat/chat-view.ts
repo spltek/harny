@@ -629,6 +629,14 @@ export class ChatViewProvider implements WebviewViewProvider {
    * drift apart.
    */
   private async openSessionAt(id: string, folder: string): Promise<void> {
+    // The click that got us here was made INSIDE the All-sessions form, and this is that form's last
+    // job: put it away, so the session it opened is what the user is looking at instead of a list on
+    // top of it. Said HERE and not at the click, because only this point knows the open really
+    // happened — a cancelled picker (`Open elsewhere…`, or a broken folder) never reaches it, and
+    // closing the form under someone who just backed out of a folder dialog would take away the only
+    // place to try again. The page ignores the message when the form is not up, so the home list
+    // (same open, no form) is untouched.
+    this.view?.webview.postMessage({ type: "sessionsManagerClose" });
     // The folder is ALREADY this window's workspace: there is nothing to open. Asking anyway costs a
     // reload — and, when the same folder is open in ANOTHER window, made that window come forward
     // instead (see WorkspaceActions.isCurrent). The click means "open that session": do that, here,

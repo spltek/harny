@@ -6759,6 +6759,13 @@ window.addEventListener("message", (e) => {
       renderSessionsManagerData({ sessions: msg.sessions || [], currentFolder: msg.currentFolder, vacuum: msg.vacuum });
       if (msg.show) sessionsModal.classList.remove("hidden");
       break;
+    case "sessionsManagerClose":
+      // The open was LAUNCHED (the host says this only once the gesture really went through — a
+      // cancelled picker never gets here), so the list has done its job and steps aside. It must
+      // never POP the form: the home list opens sessions with the same host path and has no form
+      // to close, so silence when it is not up is the whole contract.
+      if (!sessionsModal.classList.contains("hidden")) closeSessionsManager();
+      break;
     case "compactionPreview":
       // The host's OWN plan for the values currently in the form (same functions the
       // compaction runs): the strip is a fact, not an estimate made up here.

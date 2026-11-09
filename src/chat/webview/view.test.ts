@@ -9498,6 +9498,22 @@ describe("all-sessions manager (gear)", () => {
     expect(modal.classList.contains("hidden")).toBe(true);
   });
 
+  it("the host closes the form once the open is LAUNCHED — and never pops it", async () => {
+    // The click that opened this list ends with a session on screen, so the list steps aside. It is
+    // the HOST that says when: only it knows the open really went through, so a cancelled
+    // `Open elsewhere…` picker (which posts nothing) leaves the form exactly where it is.
+    await loadView();
+    const modal = document.getElementById("sessions-modal") as HTMLDivElement;
+    hostMessage({ type: "sessionsManager", show: true, sessions: [] });
+    expect(modal.classList.contains("hidden")).toBe(false);
+    hostMessage({ type: "sessionsManagerClose" });
+    expect(modal.classList.contains("hidden")).toBe(true);
+    // A close is not an open: away from the form it is silent, because the home list opens sessions
+    // through the same host path and has no form to close.
+    hostMessage({ type: "sessionsManagerClose" });
+    expect(modal.classList.contains("hidden")).toBe(true);
+  });
+
   it("a silent sessionsManager refresh never opens the form — only show:true does", async () => {
     await loadView();
     const modal = document.getElementById("sessions-modal") as HTMLDivElement;

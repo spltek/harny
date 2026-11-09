@@ -4036,6 +4036,9 @@ describe("ChatViewProvider all-sessions manager", () => {
     await handler({ type: "sessionsManagerChangeFolder", id: "x" });
     expect(store.saveSettings).not.toHaveBeenCalled();
     expect(view.webview.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "sessionsManager" }));
+    // …and the form is left ALONE: the close belongs to the open that actually happens, so backing
+    // out of the picker must not take away the list the user is standing on.
+    expect(view.webview.postMessage).not.toHaveBeenCalledWith({ type: "sessionsManagerClose" });
   });
 
   it("sessionsManagerOpenFolder opens the session's folder in VS Code (no picker)", async () => {
@@ -4121,7 +4124,7 @@ describe("ChatViewProvider all-sessions manager", () => {
     (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
       { id: "x", name: "X", createdAt: 1, updatedAt: 2, messageCount: 3, folder: "/home/me/a", folderMissing: false },
     ]);
-    const { handler } = resolveWith(provider);
+    const { handler, view } = resolveWith(provider);
 
     await handler({ type: "sessionsManagerOpenFolder", id: "x" });
 
@@ -4131,6 +4134,9 @@ describe("ChatViewProvider all-sessions manager", () => {
     expect(state.executeCommand).not.toHaveBeenCalledWith("vscode.openFolder", expect.anything(), expect.anything());
     expect(pending.remember).not.toHaveBeenCalled();
     expect(registry.listOpenIds()).toContain("x");
+    // …and the form steps aside: the list's job ended with the open it launched, whether the open
+    // happened here or the window is about to reload for another folder.
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "sessionsManagerClose" });
   });
 
   it("lists an OPEN session of ANOTHER folder too, marked (a tab must never be orphaned)", async () => {
