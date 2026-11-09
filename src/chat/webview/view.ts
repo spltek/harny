@@ -22,7 +22,7 @@ import { clampTemperature, clampTopP, TEMPERATURE_MAX, TEMPERATURE_MIN, TEMPERAT
 // src/chat/icons.ts): this module only names the icon and its size.
 import { icon, toolIcon, fileBadgeIcon } from "../icons";
 import { setFold, toggleMarkup } from "./fold";
-import { folderAction, folderActionLabel } from "./session-folder";
+import { folderAction, folderActionLabel, folderMoveLabel, showsMove } from "./session-folder";
 import { sameFolder } from "../folder-path";
 import { createFind } from "./find";
 import { createMcpCard } from "./mcp-card";
@@ -4279,12 +4279,15 @@ function renderSessionsManager(): void {
     // The rule AND its wording are shared with the home list (see session-folder.ts).
     const action = folderAction(s, smCurrentFolder);
     folderBtn.textContent = folderActionLabel(action);
-    if (action === "open") {
-      folderBtn.title = "Open this session — this window switches to its folder first (it reloads)";
-      folderBtn.addEventListener("click", () => vscode.postMessage({ type: "sessionsManagerOpenFolder", id: s.id }));
-    } else {
+    if (action === "pick") {
       folderBtn.title = "Pick the folder this session should live in — the session opens right after";
       folderBtn.addEventListener("click", () => vscode.postMessage({ type: "sessionsManagerChangeFolder", id: s.id }));
+    } else {
+      folderBtn.title =
+        action === "here"
+          ? "Open this session — it already lives in this folder, so nothing reloads"
+          : "Open this session — this window switches to its folder first (it reloads)";
+      folderBtn.addEventListener("click", () => vscode.postMessage({ type: "sessionsManagerOpenFolder", id: s.id }));
     }
     const del = document.createElement("button");
     del.className = "secondary-ghost del-btn";
@@ -4292,6 +4295,18 @@ function renderSessionsManager(): void {
     del.innerHTML = icon("trash", 13, 'stroke-width="2"');
     del.addEventListener("click", () => vscode.postMessage({ type: "deleteSession", id: s.id }));
     actions.appendChild(folderBtn);
+    if (showsMove(action)) {
+      // A SECOND gesture, and a different one: on a session that already lives HERE the picker is
+      // not how you open it (that is the button above) — it is how you take it to ANOTHER folder.
+      // The pointer moves, the transcript stays where it is, and the session opens where it now
+      // points. It used to be the row's ONLY action, which is why the two had to be separated.
+      const move = document.createElement("button");
+      move.className = "secondary-ghost move-btn";
+      move.textContent = folderMoveLabel();
+      move.title = "Open this session in another folder — picking one re-points it, and it opens there";
+      move.addEventListener("click", () => vscode.postMessage({ type: "sessionsManagerChangeFolder", id: s.id }));
+      actions.appendChild(move);
+    }
     actions.appendChild(del);
 
     row.appendChild(main);

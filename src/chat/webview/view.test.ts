@@ -9305,12 +9305,30 @@ describe("all-sessions manager (gear)", () => {
     // Existing folder that is NOT the open one: Open session (no picker).
     const openBtn = rows[1].querySelector("button.folder-btn") as HTMLButtonElement;
     expect(openBtn.textContent).toBe("Open session");
+    expect(openBtn.title).toContain("switches to its folder first");
     openBtn.click();
     expect(posted.some((m: any) => m.type === "sessionsManagerOpenFolder" && m.id === "b")).toBe(true);
-    // Missing / unset / current folder: Change folder & open… (picker, then the session opens).
-    for (const i of [0, 2, 3]) {
+    // …and no second button: moving it elsewhere can wait until the session is open.
+    expect(rows[1].querySelector("button.move-btn")).toBeNull();
+    // THIS folder: the session opens here, with no picker and no reload…
+    const hereBtn = rows[0].querySelector("button.folder-btn") as HTMLButtonElement;
+    expect(hereBtn.textContent).toBe("Open session");
+    expect(hereBtn.title).toContain("nothing reloads");
+    hereBtn.click();
+    expect(posted.some((m: any) => m.type === "sessionsManagerOpenFolder" && m.id === "x")).toBe(true);
+    // …while the picker is still there, as a SEPARATE action: it is how the session is taken to
+    // another folder (the pointer changes, the transcript stays, and it opens where it points).
+    const moveBtn = rows[0].querySelector("button.move-btn") as HTMLButtonElement;
+    expect(moveBtn.textContent).toBe("Open elsewhere…");
+    expect(moveBtn.title).toContain("another folder");
+    moveBtn.click();
+    expect(posted.some((m: any) => m.type === "sessionsManagerChangeFolder" && m.id === "x")).toBe(true);
+    // Missing / unset folder: the picker is the ONLY action — there is no session to open until
+    // the pointer is repaired, and nothing to move it away from.
+    for (const i of [2, 3]) {
       const btn = rows[i].querySelector("button.folder-btn") as HTMLButtonElement;
       expect(btn.textContent).toBe("Change folder & open…");
+      expect(rows[i].querySelector("button.move-btn")).toBeNull();
     }
     (rows[2].querySelector("button.folder-btn") as HTMLButtonElement).click();
     expect(posted.some((m: any) => m.type === "sessionsManagerChangeFolder" && m.id === "d")).toBe(true);
@@ -9347,7 +9365,8 @@ describe("all-sessions manager (gear)", () => {
     });
     let rows = document.querySelectorAll("#sessions-manager-list .sm-row");
     expect(rows[0].textContent).toContain("this folder");
-    expect((rows[0].querySelector("button.folder-btn") as HTMLButtonElement).textContent).toBe("Change folder & open…");
+    expect((rows[0].querySelector("button.folder-btn") as HTMLButtonElement).textContent).toBe("Open session");
+    expect((rows[0].querySelector("button.move-btn") as HTMLButtonElement).textContent).toBe("Open elsewhere…");
     expect(rows[1].textContent).not.toContain("this folder");
     expect((rows[1].querySelector("button.folder-btn") as HTMLButtonElement).textContent).toBe("Open session");
 

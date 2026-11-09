@@ -4106,6 +4106,33 @@ describe("ChatViewProvider all-sessions manager", () => {
     );
   });
 
+  it("sessionsManagerOpenFolder on the session's OWN folder resumes it here, with no picker", async () => {
+    // The All-sessions row of a session that already lives HERE now has TWO buttons: this message
+    // (open, one click, nothing reloads) and `sessionsManagerChangeFolder` (open it somewhere
+    // else). Before the split, this row's only action was the picker — so opening a session of
+    // the current folder began by choosing that same folder. This is the primary path.
+    const workspace = {
+      pick: vi.fn(async () => undefined as string | undefined),
+      open: vi.fn(async () => undefined),
+      isCurrent: vi.fn(async () => true),
+    };
+    const pending = { remember: vi.fn(async () => {}), take: vi.fn() };
+    const { store, provider, registry } = buildHarness({ workspaceReady: () => true, workspace, pending });
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "x", name: "X", createdAt: 1, updatedAt: 2, messageCount: 3, folder: "/home/me/a", folderMissing: false },
+    ]);
+    const { handler } = resolveWith(provider);
+
+    await handler({ type: "sessionsManagerOpenFolder", id: "x" });
+
+    // No picker, no reload, no marker — and the session really is open in this window.
+    expect(state.showOpenDialog).not.toHaveBeenCalled();
+    expect(workspace.open).not.toHaveBeenCalled();
+    expect(state.executeCommand).not.toHaveBeenCalledWith("vscode.openFolder", expect.anything(), expect.anything());
+    expect(pending.remember).not.toHaveBeenCalled();
+    expect(registry.listOpenIds()).toContain("x");
+  });
+
   it("lists an OPEN session of ANOTHER folder too, marked (a tab must never be orphaned)", async () => {
     // The list is the only navigation surface: hiding an open session from it leaves a
     // tab you cannot get back to once you close it — and an empty list next to an open
