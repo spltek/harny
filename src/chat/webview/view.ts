@@ -1009,8 +1009,8 @@ function renderHomeRow(s: SessionInfo): HTMLDivElement {
   row.setAttribute("role", "button");
   row.title =
     action === "open"
-      ? "Open " + s.folder + " in VS Code (Harny then works in that folder)"
-      : "This session's folder is not available: pick another one for it";
+      ? "Open this session — this window switches to " + s.folder + " first (it reloads)"
+      : "This session's folder is not available: pick another one — the session opens there";
 
   const meta = document.createElement("span");
   meta.className = "smeta";
@@ -4211,10 +4211,9 @@ function closeSessionsManager(): void {
 /**
  * Rows for the manage form: every session of every folder, most recent first
  * (the host sorts — `SessionManager.list()`). Red rows = folder unavailable; per-row
- * actions: open the
- * session's folder in VS Code (changes the working directory) or change the
- * folder pointer / delete. A missing or unset folder offers the picker instead
- * of Open, so the session can be re-pointed.
+ * actions: open the SESSION (this window switches to its folder first) or re-point the
+ * folder pointer / delete. A missing or unset folder offers the picker instead of Open,
+ * so the session can be re-pointed before it is opened.
  */
 function renderSessionsManager(): void {
   const visible = smSearchIds ? smSessions.filter((s) => smSearchIds!.has(s.id)) : smSessions;
@@ -4281,10 +4280,10 @@ function renderSessionsManager(): void {
     const action = folderAction(s, smCurrentFolder);
     folderBtn.textContent = folderActionLabel(action);
     if (action === "open") {
-      folderBtn.title = "Open this folder in VS Code (changes the working directory)";
+      folderBtn.title = "Open this session — this window switches to its folder first (it reloads)";
       folderBtn.addEventListener("click", () => vscode.postMessage({ type: "sessionsManagerOpenFolder", id: s.id }));
     } else {
-      folderBtn.title = "Pick the workspace folder this session points to";
+      folderBtn.title = "Pick the folder this session should live in — the session opens right after";
       folderBtn.addEventListener("click", () => vscode.postMessage({ type: "sessionsManagerChangeFolder", id: s.id }));
     }
     const del = document.createElement("button");

@@ -219,8 +219,14 @@ export class ChatViewProvider implements WebviewViewProvider {
   private readonly tally = new CompactionTally();
   /** Per-session queue of messages typed while the agent works (queue/steer). */
   private readonly pendingQueue: PendingInputQueue;
+  /** The AbortController of each session's IN-FLIGHT compaction: the Stop button cancels the
+   * summarizer through it (a compaction is a model call, so it is work the user can stop). */
+  private readonly compactionAborts = new Map<string, AbortController>();
   /** FIFO queue for in-panel modals (name dialog, alerts, confirms…). */
   private modals: PanelModalQueue;
+  /** Bumped by every `refresh()`: a build that finishes after a NEWER one started must not
+   * install its (older) HTML over the newer page. */
+  private refreshSeq = 0;
   /** True while the shared "compact database" modal is open (avoid re-prompts). */
   private vacuumPromptOpen = false;
 
@@ -317,9 +323,11 @@ export class ChatViewProvider implements WebviewViewProvider {
     this.workspace = options.workspace ?? new WorkspaceActions();
     this.modals = new PanelModalQueue((msg) => this.view?.webview.postMessage(msg));
     this.modalGuard = new ModalStallGuard({
-      // A stall is a modal pending WHILE a rebuild waits behind it. A dialog simply left
-      // open (nothing to redraw) is the user reading, and is none of the guard's business.
-      stalled: () => this.refreshDeferred && this.modals.hasPending(),
+      // A stall is a modal ON SCREEN while a rebuild waits behind it. A dialog simply left
+      // open (nothing to redraw) is the user reading, and is none of the guard's business —
+      // and a request that has not been delivered yet is not on screen at all (it is waiting
+      // for the page, not the page for it: `hasShown`, not `hasPending`).
+      stalled: () => this.refreshDeferred && this.modals.hasShown(),
       recover: () => {
         this.modals.cancelAll();
         this.refreshDeferred = false;
@@ -603,27 +611,50 @@ export class ChatViewProvider implements WebviewViewProvider {
   private async openSessionFolder(id: string): Promise<void> {
     const session = this.sessions.list().find((s) => s.id === id);
     if (!session?.folder || session.folderMissing) {
+      // Nothing points anywhere: repair the pointer first. `changeSessionFolder` FINISHES the
+      // gesture by opening the session it just re-pointed (see below), so the two entry points
+      // never disagree about what the click was for.
       await this.changeSessionFolder(id);
       return;
     }
+    await this.openSessionAt(id, session.folder);
+  }
+
+  /**
+   * Open `id` where it lives: HERE when `folder` is already this window's workspace, otherwise
+   * after the reload that moving the window to that folder costs.
+   *
+   * One implementation for every caller ("Open session", the home list, and the pointer repair
+   * that ends with an open) so the pending-open marker and the `isCurrent` shortcut cannot
+   * drift apart.
+   */
+  private async openSessionAt(id: string, folder: string): Promise<void> {
     // The folder is ALREADY this window's workspace: there is nothing to open. Asking anyway costs a
     // reload — and, when the same folder is open in ANOTHER window, made that window come forward
     // instead (see WorkspaceActions.isCurrent). The click means "open that session": do that, here,
     // now. No marker is left behind either, because no reload has to be survived.
-    if (await this.workspace.isCurrent(session.folder)) {
+    if (await this.workspace.isCurrent(folder)) {
       await this.resumeSession(id);
       return;
     }
     // Remember WHY before the window reloads: the host that would carry the click is the
     // one that goes away (see PendingOpens). The session then opens by itself.
-    await this.options.pending?.remember(session.folder, { kind: "session", sessionId: id });
+    await this.options.pending?.remember(folder, { kind: "session", sessionId: id });
     // Same window (see WorkspaceActions): the extension reloads and re-derives its
     // root from the newly opened folder, so the panel the user is looking at is the
     // one that changes.
-    await this.workspace.open(session.folder);
+    await this.workspace.open(folder);
   }
 
-  /** Change the folder a session points to (pointer-only; the file stays put). */
+  /**
+   * Re-point a session to another folder… and OPEN it there.
+   *
+   * The pointer is never the goal: a session whose folder is missing or unset is one the user
+   * cannot get into, so choosing a folder is how they finish getting into it. Asking only for
+   * the folder left them staring at a row they had to click a second time — with the same
+   * gesture (`openSessionAt`) behind both, "Change folder & open…" is simply what the click
+   * always meant. Cancelling the picker still changes nothing.
+   */
   private async changeSessionFolder(id: string): Promise<void> {
     const session = this.sessions.list().find((s) => s.id === id);
     // A folder that is known but gone cannot be the default: warn the user
@@ -632,7 +663,7 @@ export class ChatViewProvider implements WebviewViewProvider {
       await this.inPanelAlert({
         kind: "info",
         title: "Folder no longer available",
-        message: `The folder this session points to (${session.folder}) no longer exists. Pick a new one.`,
+        message: `The folder this session points to (${session.folder}) no longer exists. Pick a new one. The session opens there.`,
       });
     }
     // Default the picker to the session's folder when it is still available, so
@@ -648,6 +679,9 @@ export class ChatViewProvider implements WebviewViewProvider {
     // Refresh both the form and the main list.
     this.pushSessionsManager();
     void this.postSwitchView();
+    // …then do what the click was for. `folder` is the picked path, so this needs no re-read of
+    // the list (the store write is already done and the cache may still be in flight).
+    await this.openSessionAt(id, folder);
   }
 
   /** True when exactly one workspace folder is open (sessions are bucketed centrally). */
@@ -930,9 +964,11 @@ export class ChatViewProvider implements WebviewViewProvider {
   /** Drains the queue entry and shows the next queued modal, if any. */
   private onPanelModalResponse(id: number, value: unknown): void {
     this.modals.respond(id, value);
-    // A refresh was deferred while this modal was open: apply it now that the
-    // queue is empty (never rebuild the page over a live modal).
-    if (this.refreshDeferred && !this.modals.hasPending()) {
+    // A refresh was deferred while this modal was on screen: apply it now that nothing is
+    // (never rebuild the page over a live modal). `hasShown`, not `hasPending`: the next
+    // request in the queue has not been delivered yet, and the rebuild is what brings the
+    // page that will show it.
+    if (this.refreshDeferred && !this.modals.hasShown()) {
       this.refreshDeferred = false;
       this.refresh();
     }
@@ -1376,11 +1412,11 @@ export class ChatViewProvider implements WebviewViewProvider {
    */
   refresh(): Promise<void> {
     if (!this.view) return Promise.resolve();
-    // A modal is OPEN: DEFER the rebuild. Replacing the page HTML wipes the
+    // A modal is ON SCREEN: DEFER the rebuild. Replacing the page HTML wipes the
     // modal DOM, so it would flash and vanish (e.g. the "Model limits unknown"
     // alert right after a model switch — which writes config.json and triggers
     // this refresh via the config watcher). It runs when the queue drains.
-    if (this.modals.hasPending()) {
+    if (this.modals.hasShown()) {
       this.refreshDeferred = true;
       // Put the deferral on a clock: if the dialog is never answered, the panel must not
       // stay stale for ever (see ModalStallGuard).
@@ -1388,19 +1424,30 @@ export class ChatViewProvider implements WebviewViewProvider {
       return Promise.resolve();
     }
     this.refreshDeferred = false; // this run satisfies any deferred request
+    const seq = ++this.refreshSeq;
     return this.buildHtml().then((html) => {
       if (!this.view) return;
+      // A LATER refresh started while this one was building (buildHtml is async: config,
+      // skills, MCP status — hundreds of ms). Its HTML is the newer truth, so this one must
+      // not install an older page over it; the panel would show state from before the change
+      // that triggered it, and the user's next click would act on it.
+      if (seq !== this.refreshSeq) return;
       // A modal can OPEN while `buildHtml()` runs — it is async (config, skills, MCP status,
       // hundreds of ms), and a timer or a click can land in the middle. Assigning the HTML
       // now would wipe the modal's DOM for good: its answer would never arrive, the queue
       // would stay non-empty, and EVERY later refresh would defer behind it — the panel
       // freezes with a dialog nobody can answer. Defer, exactly like the check above.
-      if (this.modals.hasPending()) {
+      if (this.modals.hasShown()) {
         this.refreshDeferred = true;
         this.modalGuard.arm();
         return;
       }
       this.modalGuard.disarm();
+      // The document is loading: until it says hello (`case "ready"`) a `postMessage` sent to
+      // it lands nowhere. A modal that WAS on screen went away with the page we are replacing,
+      // so it is marked as not shown — and re-posted (same id, same question) by the new
+      // page's `ready`, instead of waiting for an answer to a dialog that no longer exists.
+      this.modals.pageReplaced();
       this.view.webview.html = html;
       // The page has been HANDED to VS Code. Whatever was waiting for it can run — but see the
       // LAST paragraph of `runWhenReady`: this moment is not yet "the page exists".
@@ -1539,6 +1586,17 @@ export class ChatViewProvider implements WebviewViewProvider {
       // up after a slow load is reconciled with whatever happened meanwhile. Cheap by
       // construction — no timer, no retry, one message per page load.
       case "ready":
+        // The document is ALIVE: the only moment a `postMessage` is guaranteed to be heard.
+        // A modal queued while there was no page (or while this one was loading) is shown
+        // NOW — it used to be posted into the void, its promise never resolved, and every
+        // later refresh deferred behind it until the stall guard gave up (a frozen panel).
+        // A brand-new document: it cannot be showing a dialog (the old one went away with
+        // it), so the head is marked as not-shown and shown again right here. This is also
+        // the recovery for a modal posted while the document was still LOADING — the post
+        // landed nowhere, and without this the queue would wait for an answer to a dialog
+        // that was never drawn (and every later refresh would defer behind it).
+        this.modals.pageReplaced();
+        this.modals.flush();
         await this.postSwitchView(true);
         break;
       case "switchTab":
@@ -2347,27 +2405,54 @@ export class ChatViewProvider implements WebviewViewProvider {
     rt.engine.beginCompaction();
     const isActive = this.activeId === rt.sessionId;
     if (isActive) {
-      this.view?.webview.postMessage({ type: "compactStart" });
+      this.view?.webview.postMessage({ type: "compactStart", sessionId: rt.sessionId });
       this.view?.webview.postMessage({ type: "status", active: true, message: "Compacting…" });
     }
+    // Stop has to reach a compaction too. Since `working` includes it, the panel shows the
+    // Stop button while a summary runs, and that button must do what it says: `abort` cancels
+    // the summarizer's request through this controller (the trim/save paths are synchronous,
+    // so an abort can never land mid-write).
+    const own = new AbortController();
+    if (signal) {
+      if (signal.aborted) own.abort();
+      else signal.addEventListener("abort", () => own.abort(), { once: true });
+    }
+    this.compactionAborts.set(rt.sessionId, own);
     let compacted = false;
     try {
-      compacted = await this.performCompaction(rt, signal);
+      compacted = await this.performCompaction(rt, own.signal);
+    } catch (e: unknown) {
+      // A Stop is not a failure to report — the session is simply not compacted. Anything
+      // else is logged: `performCompaction` already degrades to the trim on its own errors,
+      // so reaching here means the WRITE failed (busy store, no disk), which the user must
+      // not see as a silent "compacted" bubble.
+      if (!own.signal.aborted) {
+        infoLog("compaction failed; nothing was rewritten:", e instanceof Error ? e.message : String(e));
+      }
     } finally {
+      this.compactionAborts.delete(rt.sessionId);
       rt.engine.endCompaction();
-      if (isActive) {
+      // `isActive` is RE-READ here, never reused from before the await: a summary outlives a
+      // tab switch (it is a model call), and the captured value painted this session's
+      // transcript into whatever tab the user had moved to.
+      if (this.activeId === rt.sessionId) {
         // Re-render the transcript so the SYNTHETIC user prompt (orange) +
         // assistant response that replaced the summarized span are visible.
         this.refreshTranscript(rt);
         // The card it just rendered is the HEAD of the window, i.e. above the view: the
         // same pointer the automatic path leaves (see addCompactedHint in the webview).
-        this.view?.webview.postMessage({ type: "compactDone", ok: compacted });
-        this.view?.webview.postMessage({ type: "status", active: false });
+        this.view?.webview.postMessage({ type: "compactDone", ok: compacted, sessionId: rt.sessionId });
+        // …but the WORKING status belongs to the RUN, and a run may have started while this
+        // was summarizing: clearing it would erase that run's indicator from the panel.
+        if (!rt.agent.streaming) this.view?.webview.postMessage({ type: "status", active: false });
       }
     }
     // Update the metrics immediately via a lightweight config push (no full
     // HTML rebuild, so the user's input/scroll are preserved).
-    if (isActive) this.pushConfigSoon();
+    if (this.activeId === rt.sessionId) this.pushConfigSoon();
+    // A message typed while the summary ran was PARKED (see SessionEngine.working): deliver
+    // it now. Inside a send this is a no-op — that run drains its own queue at the end.
+    await rt.engine.resume(this.enginePort(rt));
   }
 
   /**
@@ -2388,7 +2473,7 @@ export class ChatViewProvider implements WebviewViewProvider {
   private async compactDuringRun(rt: SessionRuntime, signal?: AbortSignal): Promise<void> {
     rt.engine.beginCompaction();
     const isActive = this.activeId === rt.sessionId;
-    if (isActive) this.view?.webview.postMessage({ type: "compactStart" });
+    if (isActive) this.view?.webview.postMessage({ type: "compactStart", sessionId: rt.sessionId });
     let compacted = false;
     try {
       compacted = await this.performCompaction(rt, signal);
@@ -2396,7 +2481,8 @@ export class ChatViewProvider implements WebviewViewProvider {
       infoLog("mid-run auto-compaction failed; continuing:", e?.message || String(e));
     } finally {
       rt.engine.endCompaction();
-      if (isActive) {
+      // Re-read: the run can end, and the user switch tabs, while the summary is in flight.
+      if (this.activeId === rt.sessionId) {
         // ALIGNED with the manual path (`compactNow`): a compaction has a VISIBLE result —
         // the divider and the summary card — and this path used to leave it for the next
         // unrelated refresh, showing a stand-in bubble in the meantime. The webview is
@@ -2407,10 +2493,10 @@ export class ChatViewProvider implements WebviewViewProvider {
         // run is still in flight. After a rebuild `compactDone` is a no-op for the bubble
         // (the refresh handler already dropped `compactionEl`) — what it still does is
         // leave the pointer to the card where the reader is (see addCompactedHint).
-        this.view?.webview.postMessage({ type: "compactDone", ok: compacted });
+        this.view?.webview.postMessage({ type: "compactDone", ok: compacted, sessionId: rt.sessionId });
       }
     }
-    if (isActive) this.pushConfigSoon();
+    if (this.activeId === rt.sessionId) this.pushConfigSoon();
   }
 
   /**
@@ -2672,6 +2758,10 @@ export class ChatViewProvider implements WebviewViewProvider {
       showQueuedUser: (prompt) => {
         this.view?.webview.postMessage({
           type: "userMessage",
+          // Session-scoped: the view drops a message that names another tab. Without it,
+          // a queued bubble posted while the user was switching tabs appeared in the
+          // transcript of the session they moved TO.
+          sessionId: rt.sessionId,
           content: prompt.displayText ?? prompt.text,
           ...(prompt.attachments ? { attachments: prompt.attachments } : {}),
           ...(prompt.images ? { images: prompt.images } : {}),
@@ -2695,7 +2785,13 @@ export class ChatViewProvider implements WebviewViewProvider {
         if (!hadError) this.refreshTranscript(rt, true);
       },
       clearQueue: () => this.pendingQueue.clear(rt),
-      onInterrupted: () => this.view?.webview.postMessage({ type: "interrupted" }),
+      onInterrupted: () => this.view?.webview.postMessage({ type: "interrupted", sessionId: rt.sessionId }),
+      cancelCompaction: () => {
+        const ctrl = this.compactionAborts.get(rt.sessionId);
+        if (!ctrl) return false;
+        ctrl.abort();
+        return true;
+      },
     };
   }
 
@@ -2711,7 +2807,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     rt.history.add({ role: "user", content: userContent, timestamp: Date.now() });
     const errorMsg = "Select a model for this session first (dropdown in the header).";
     rt.history.add({ role: "assistant", content: `❌ ${errorMsg}`, timestamp: Date.now() });
-    this.view?.webview.postMessage({ type: "error", error: errorMsg });
+    this.view?.webview.postMessage({ type: "error", error: errorMsg, sessionId: rt.sessionId });
   }
 
   /**
@@ -2744,6 +2840,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         this.view?.webview.postMessage({
           type: "error",
           error: `Model \"${cfg.model}\" is text-only and does not support images.`,
+          sessionId: rt.sessionId,
         });
         return;
       }
@@ -2910,6 +3007,24 @@ export class ChatViewProvider implements WebviewViewProvider {
     // offered the other two answers and says why this one is unavailable.
     const rewindEnd = firstCheckpointEnd(messages);
     const answer = await this.askSessionCleanup(existing?.name ?? id, rewindEnd > 0);
+    if (answer !== "empty" && answer !== "rewind" && answer !== "delete") return;
+    // The dialog is HUMAN time — the user reads, decides, maybe walks away — and the session
+    // can start working during it (a background turn finishes, a timer fires, another panel
+    // sends). The guard at the top ran BEFORE that wait: it is asked AGAIN here, because all
+    // three answers destroy a transcript, and doing it under a live run is exactly how a
+    // deleted session came back (the run kept writing and `saveMessages` recreated the row)
+    // and how a rewrite swallowed the turn that had just started.
+    if (this.isWorking(id)) {
+      void this.inPanelAlert({
+        kind: "error",
+        title: "Session is working",
+        message: `"${existing?.name ?? id}" started working while the dialog was open. Stop it first, then try again.`,
+      });
+      return;
+    }
+    // `messages` is the snapshot read BEFORE the dialog: re-read it, so an answer means
+    // "everything up to now" rather than "everything up to when the question was asked".
+    const current = this.transcriptOf(id);
     if (answer === "empty") {
       this.rewriteTranscript(id, []);
       return;
@@ -2919,11 +3034,17 @@ export class ChatViewProvider implements WebviewViewProvider {
       // FIRST summary ends, so the model's window opens on that state document.
       // A rewind that landed at 0 would be an EMPTY wearing another name, so it
       // is refused when there is no checkpoint (the answer is sent disabled).
-      if (rewindEnd > 0) this.rewriteTranscript(id, messages.slice(0, rewindEnd));
+      const end = firstCheckpointEnd(current);
+      if (end > 0) this.rewriteTranscript(id, current.slice(0, end));
       return;
     }
-    if (answer !== "delete") return;
+    // DELETE, in the ONE order that cannot resurrect the row — the same order `closeTab`
+    // uses: detach the live stream and CLOSE the runtime (its history flushes and
+    // unsubscribes; nothing is left able to write) BEFORE the row goes, then drop the queue
+    // so a parked message cannot fire into a session that no longer exists.
+    this.streamTee.detach(id);
     this.registry.close(id);
+    this.pendingQueue.drop(id);
     if (this.activeId === id) {
       this.activeId = undefined;
       if (this.registry.listOpenIds().length > 0) {
@@ -2932,8 +3053,6 @@ export class ChatViewProvider implements WebviewViewProvider {
     }
     this.sessions.remove(id);
     void this.maybeSuggestVacuum();
-    this.streamTee.detach(id);
-    this.pendingQueue.drop(id);
     this.resubscribe();
     await this.postSwitchView();
     // The manage-sessions form (if open) must drop the deleted row too.
@@ -3194,8 +3313,26 @@ export class ChatViewProvider implements WebviewViewProvider {
     // The previous checkpoint pair is absorbed into the new summary (carriedState
     // UPDATES it) and therefore does not appear twice: it is the tail of
     // `result.history`, together with the kept window.
+    // THE INVARIANT: a compaction may REWRITE the window, it may never SHRINK the transcript.
+    // The summary is computed from a snapshot that is now as old as the summarizer call
+    // (seconds). `send` parks a message behind the compaction (`SessionEngine.working`), so
+    // the snapshot normally still IS the history — but the guarantee cannot live in the
+    // caller: if anything reached the history meanwhile, its messages are APPENDED to the
+    // rebuilt window instead of vanishing with the snapshot they were not part of.
+    const grown = appendedSince(rt.history.all(), all);
+    if (!grown) {
+      infoLog("compaction abandoned: the transcript was rewritten while the summary ran");
+      return false;
+    }
     const checkpoint = result.history.slice(result.deferred.length);
     const newHistory = [...all.slice(0, activeStart), ...result.deferred, ...result.summarized, ...checkpoint];
+    // The checkpoint pair keeps its offset INSIDE the rebuilt window; whatever arrived during
+    // the summary follows it, in the order the user wrote it.
+    const pairStart = newHistory.length - result.history.length;
+    if (grown.length > 0) {
+      infoLog(`${grown.length} message(s) arrived during the summary: kept, appended after the rebuilt window`);
+      newHistory.push(...grown);
+    }
     rt.history.rebuild(newHistory);
     // Prefer REAL data for the KEPT window (the cumulative `meta.inputTokens`
     // delta across it): the summary rewrote the prefix, so re-estimating the
@@ -3205,7 +3342,6 @@ export class ChatViewProvider implements WebviewViewProvider {
       keptFrom >= 0 ? (realWindowTokens(messages, keptFrom) ?? estimateTokens(serializeConversation(result.kept))) : 0;
     // The checkpoint is the TAIL of the rebuilt history: the preserved past sits
     // before it, so the pair is no longer at index 0.
-    const pairStart = newHistory.length - result.history.length;
     const next =
       estimateTokens(String(newHistory[pairStart]?.content ?? "")) +
       estimateTokens(String(newHistory[pairStart + 1]?.content ?? "")) +
@@ -4072,6 +4208,12 @@ export class ChatViewProvider implements WebviewViewProvider {
     const live = rt.engine.projection();
     this.view?.webview.postMessage({
       type: "refresh",
+      // WHOSE transcript this is. The view already filters on it (it was the fix for the
+      // "session opened from another folder showed an empty log" bug) — but only messages
+      // that CARRY the id were filtered, and this one did not: a compaction or a run that
+      // finished for session B while the user was reading A rebuilt A's transcript with B's
+      // messages. The id makes the filter complete instead of selective.
+      sessionId: rt.sessionId,
       messages: rt.agent.getMessages(),
       ...(withSkills ? { skills: this.skillCatalog() } : {}),
       // `streaming` is a fact of its own: the RUN is alive. It must NOT depend on there
@@ -4231,4 +4373,21 @@ export class ChatViewProvider implements WebviewViewProvider {
       },
     });
   }
+}
+
+/**
+ * What `history` ADDED to `snapshot`, `[]` when it did not move, `undefined` when it is no
+ * longer the snapshot's extension (a rewind, a cut or another rebuild landed under the
+ * caller).
+ *
+ * Identity, not equality: `ChatHistory.all()` hands out the very objects it stores, so this
+ * asks "is the prefix THE SAME messages" — a question a deep compare cannot answer (two
+ * identical turns are still two turns) and would pay O(n·chars) for. A compaction that
+ * cannot prove where its snapshot ends must rewrite nothing: losing a summary is cheap, and
+ * it retries on the next threshold; losing a turn is not.
+ */
+function appendedSince(history: ChatMessage[], snapshot: ChatMessage[]): ChatMessage[] | undefined {
+  if (history.length < snapshot.length) return undefined;
+  for (let i = 0; i < snapshot.length; i++) if (history[i] !== snapshot[i]) return undefined;
+  return history.slice(snapshot.length);
 }

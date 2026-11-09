@@ -485,7 +485,7 @@ ${VIEW_CSS}
     <div class="sm-card">
       <div class="sm-head">
         <h3>All sessions</h3>
-        <span class="sm-hint">Every folder, most recent first. Red = folder no longer available — set a new folder first. To use a session of another folder, open that folder in VS Code.</span>
+        <span class="sm-hint">Every folder, most recent first. Red = folder no longer available — pick a new folder and the session opens there. Opening a session of another folder switches this window to its folder.</span>
       </div>
       <div class="sm-search">
         <input id="sessions-search" type="search" placeholder="Search sessions" spellcheck="false" autocomplete="off" aria-label="Search sessions" />

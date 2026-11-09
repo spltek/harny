@@ -223,11 +223,35 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   rename(id: string, name: string): SessionSummary {
-    const existing = this.getSummary(id);
-    const summary = this.carrySummary(id, existing, [], { name, updatedAt: Date.now() });
-    summary.messageCount = this.countMessages(id);
-    this.upsertSummary(summary);
-    return summary;
+    // ONE statement, only the columns a rename owns. This used to be
+    // getSummary → carrySummary → upsertSummary, i.e. a full-row rewrite built from a snapshot
+    // read: a settings write landing in between (a metric flush, another window's model change)
+    // put its own OLD `name` back, and the rename silently reverted. `message_count` is
+    // repaired in the same statement — it is what the snapshot used to recompute — and the
+    // row is only CREATED when it is genuinely missing (a rename of a session another window
+    // just deleted must not resurrect it, which is why the upsert is the fallback, not the rule).
+    const updatedAt = Date.now();
+    const changes = this.upsertName(id, name, updatedAt);
+    if (changes === 0) {
+      // No row: keep the historical behaviour of a settings write creating it.
+      const summary = this.carrySummary(id, undefined, [], { name, updatedAt });
+      summary.messageCount = this.countMessages(id);
+      this.upsertSummary(summary);
+      return summary;
+    }
+    return this.getSummary(id) ?? this.carrySummary(id, undefined, [], { name, updatedAt });
+  }
+
+  /** `name` + `updated_at` + a message-count repair, for one row. Returns rows touched. */
+  private upsertName(id: string, name: string, updatedAt: number): number {
+    const r = this.deps.db
+      .prepare(
+        `UPDATE sessions SET name = ?, updated_at = ?,
+           message_count = (SELECT COUNT(*) FROM messages WHERE session_id = sessions.id)
+         WHERE id = ?`,
+      )
+      .run(name, updatedAt, id);
+    return Number(r.changes ?? 0);
   }
 
   remove(id: string): boolean {
@@ -261,11 +285,30 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   private saveSettingsNow(id: string, patch: SessionSettingsPatch): SessionSummary {
-    const existing = this.getSummary(id);
-    const summary = this.carrySummary(id, existing, [], { ...this.normalizePatch(patch), updatedAt: Date.now() });
-    summary.messageCount = this.countMessages(id);
-    this.upsertSummary(summary);
-    return summary;
+    const normalized = this.normalizePatch(patch);
+    // A single UPDATE of the columns the caller NAMED.
+    //
+    // This was `getSummary` → `carrySummary` → `upsertSummary`: a full-row rewrite from a
+    // snapshot, so two writers interleaving (this window's metric flush, another window's
+    // rename/model change — the panel and the manager are separate entry points on the same
+    // row) put each other's OLD values back: the classic lost update. Nothing here reads a row
+    // to write it back, so there is nothing to lose. `revision` is NOT in the column map: it is
+    // the optimistic-lock token of `saveMessages` and no settings write may move it.
+    const assignments = settingAssignments(normalized);
+    const changes = this.deps.db
+      .prepare(`UPDATE sessions SET updated_at = ?${assignments.sets.map((s) => `, ${s}`).join("")} WHERE id = ?`)
+      .run(Date.now(), ...assignments.values, id);
+    if (Number(changes.changes ?? 0) === 0) {
+      // The row does not exist (yet): create it, exactly as before.
+      const summary = this.carrySummary(id, undefined, [], { ...normalized, updatedAt: Date.now() });
+      summary.messageCount = this.countMessages(id);
+      this.upsertSummary(summary);
+      return summary;
+    }
+    // Read the result BACK instead of assembling it from the snapshot: the row now holds the
+    // truth (another window's `name` included), and `message_count` is the column, not a recount
+    // of what this patch happened to know about.
+    return this.getSummary(id) ?? this.carrySummary(id, undefined, [], { ...normalized, updatedAt: Date.now() });
   }
 
   /**
@@ -644,4 +687,52 @@ export class SqliteSessionStore implements SessionStore {
       ...(loopGuardParams ? { loopGuardParams } : {}),
     };
   }
+}
+
+/**
+ * Summary field → column, for the PARTIAL update of a settings patch.
+ * One table on purpose: a setting added to `normalizePatch` without a column here would make
+ * `saveSettings` look like it worked while changing nothing, which is the hardest bug to see.
+ * `revision` is absent by design — it is `saveMessages`' optimistic-lock token, and no settings
+ * write may move it. The `encode` mirrors `upsertSummary` byte for byte (1/NULL instead of
+ * true/false, JSON text instead of objects) so both writers produce the same row contents.
+ */
+const SETTING_COLUMNS: Record<string, { column: string; encode?: (v: unknown) => SQLValue }> = {
+  folder: { column: "folder" },
+  model: { column: "model" },
+  modelProvider: { column: "model_provider" },
+  thinkingLevel: { column: "thinking_level" },
+  contextWindow: { column: "context_window" },
+  compactionThresholdPercent: { column: "compaction_threshold_percent" },
+  compactionTargetPercent: { column: "compaction_target_percent" },
+  contextTokens: { column: "context_tokens" },
+  outputTokens: { column: "output_tokens" },
+  temperature: { column: "temperature" },
+  presencePenalty: { column: "presence_penalty" },
+  frequencyPenalty: { column: "frequency_penalty" },
+  topP: { column: "top_p" },
+  sampler: { column: "sampler" },
+  maxParallelSubAgents: { column: "max_parallel_sub_agents" },
+  mode: { column: "mode" },
+  parallel: { column: "parallel", encode: (v) => (v === true ? 1 : null) },
+  toolScope: { column: "tool_scope", encode: (v) => (v ? JSON.stringify(v) : null) },
+  loopGuard: { column: "loop_guard" },
+  loopGuardResponse: { column: "loop_guard_response", encode: (v) => (v === true ? 1 : null) },
+  loopGuardParams: { column: "loop_guard_params", encode: (v) => (v ? JSON.stringify(v) : null) },
+};
+
+/** What a column can hold (the node:sqlite bindable set, minus the binary we never store). */
+type SQLValue = string | number | null;
+
+/** `column = ?` for every key the patch CARRIES, and for nothing else. */
+function settingAssignments(patch: Partial<SessionSummary>): { sets: string[]; values: SQLValue[] } {
+  const sets: string[] = [];
+  const values: SQLValue[] = [];
+  for (const [key, value] of Object.entries(patch)) {
+    const spec = SETTING_COLUMNS[key];
+    if (!spec) throw new Error(`saveSettings: no column for setting "${key}"`);
+    sets.push(`${spec.column} = ?`);
+    values.push(spec.encode ? spec.encode(value) : ((value as SQLValue | undefined) ?? null));
+  }
+  return { sets, values };
 }

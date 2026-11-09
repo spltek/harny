@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { SessionEngine } from "./session-engine";
+import type { SendIntent } from "./session-engine";
 import type { ChatController } from "../core/agent/chat-controller";
 import type { ChatHistory } from "../core/history/chat-history";
 import type { ChatMessage } from "../core/history/types";
@@ -40,13 +41,86 @@ describe("SessionEngine", () => {
     (agent as { streaming: boolean }).streaming = false;
     expect(engine.working).toBe(false);
 
-    // A compaction is its own fact: it does NOT make the session "working" (a send
-    // is not queued behind it), but callers that care ask `compacting`.
+    // A compaction is a HISTORY REWRITE, not a spectator fact: `performCompaction` rebuilds the
+    // transcript from the snapshot it read BEFORE calling the summarizer, so a send that went
+    // through during that window was appended to the history and then rebuilt away — the
+    // user's turn gone from disk and from the model's window, silently. It therefore holds the
+    // session like a send does (the message is parked and delivered right after: `resume`).
     engine.beginCompaction();
     expect(engine.compacting).toBe(true);
-    expect(engine.working).toBe(false);
+    expect(engine.working).toBe(true);
     engine.endCompaction();
     expect(engine.compacting).toBe(false);
+    expect(engine.working).toBe(false);
+  });
+
+  it("parks a message typed during a compaction and delivers it right after (`resume`)", async () => {
+    const agent = { streaming: false, send: () => Promise.resolve() } as unknown as ChatController;
+    const engine = new SessionEngine("s1", fakeHistory(), agent);
+    const parked: SendIntent[] = [];
+    let dispatched = 0;
+    const port = {
+      prepareAgent: () => {},
+      hasModel: () => true,
+      rejectMissingModel: () => {},
+      preparePrompt: async () => undefined,
+      compactBeforeRun: async () => {},
+      compactAfterRun: async () => {},
+      isDraining: () => false,
+      enqueue: (intent: SendIntent) => parked.push(intent),
+      drain: async (dispatch: (i: SendIntent) => Promise<void>) => {
+        const next = parked.shift();
+        if (next) {
+          dispatched++;
+          await dispatch(next);
+        }
+      },
+      isActive: () => true,
+      showQueuedUser: () => {},
+      onRunStarted: () => {},
+      onError: () => {},
+      onRunFinished: () => {},
+    } as never;
+
+    // The post-run compaction is summarizing: the session is busy, so the message waits.
+    engine.beginCompaction();
+    await engine.send({ text: "and one more thing", mode: "send" } as SendIntent, port);
+    expect(parked.map((i) => i.text)).toEqual(["and one more thing"]);
+    expect(dispatched).toBe(0); // nothing ran: no history rewrite under a live turn
+
+    // The summary is done: the parked message goes through, in order, exactly once.
+    engine.endCompaction();
+    await engine.resume(port);
+    expect(dispatched).toBe(1);
+    expect(parked).toHaveLength(0);
+  });
+
+  it("Stop during a compaction cancels the summary and drops what was parked behind it", async () => {
+    const engine = new SessionEngine("s1", fakeHistory(), fakeAgent(false));
+    let cancelled = 0;
+    let cleared = 0;
+    const port = {
+      clearQueue: () => {
+        cleared++;
+      },
+      onInterrupted: () => {
+        throw new Error("a cancelled COMPACTION is not an interrupted RUN: no red bubble");
+      },
+      cancelCompaction: () => {
+        cancelled++;
+        return true;
+      },
+    } as never;
+
+    // Nothing in flight: Stop is honestly refused (no lying button).
+    expect(await engine.abort(port)).toBe(false);
+    expect(cancelled).toBe(0);
+
+    engine.beginCompaction();
+    expect(await engine.abort(port)).toBe(true);
+    expect(cancelled).toBe(1);
+    expect(cleared).toBe(1); // a message parked behind the compaction must not fire afterwards
+    engine.endCompaction();
   });
 
   it("a HOST stop carries its reason, a user stop keeps today's words", async () => {

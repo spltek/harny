@@ -1,13 +1,18 @@
 /**
- * "Go to this session's FOLDER" — ONE rule, two surfaces.
+ * "Open this session" — ONE rule, two surfaces.
  *
- * Two places offer a per-session way to reach the folder a session belongs to: the
- * All-sessions form (its `.folder-btn`) and the home list shown when no folder is open
- * (its rows ARE that button). They must never disagree about what the gesture does —
- * open a usable folder in VS Code, or ask for one when the pointer is missing or
- * useless — because the difference is a window reload. The rule used to live twice,
- * inside `view.ts`, and the home list is exactly the kind of second surface that would
+ * Two places offer a per-session way to reach where a session lives: the All-sessions form
+ * (its `.folder-btn`) and the home list shown when no folder is open (its rows ARE that
+ * button). They must never disagree about what the gesture does — open the SESSION, which
+ * costs a window reload when the folder is another one, or ask for a folder when the pointer
+ * is missing or useless — because the difference is a window reload. The rule used to live
+ * twice, inside `view.ts`, and the home list is exactly the kind of second surface that would
  * have copied it a third time.
+ *
+ * The label says what the user GETS, not what the machinery does: the host opens the session
+ * and, when its folder is not this window's workspace, switches the workspace first (the
+ * session is already open when the window comes back). It used to be called "Open folder",
+ * which described the reload as if it were the point.
  *
  * Pure on purpose: no DOM, no `vscode`, no globals. That is what makes the rule testable
  * without a page (`session-folder.test.ts`) and what keeps the two surfaces honest.
@@ -23,21 +28,29 @@ interface SessionFolderRef {
   folderMissing?: boolean;
 }
 
-/** What the "go to the folder" affordance must do. */
+/** What the per-session affordance must do. */
 type FolderAction = "open" | "pick";
 
 /**
- * `open` = a usable folder that is NOT the one already open: opening it in VS Code
- * changes the working directory, which is the whole point.
- * `pick` = there is nothing to open (no folder stored, folder gone, or already the
- * current one): the picker is the only useful action, and it also re-points the session.
+ * `open` = a usable folder that is NOT the one already open: the session is opened, and the
+ * window moves to that folder first (a reload) so it can run there.
+ * `pick` = there is nothing to open (no folder stored, folder gone, or already the current
+ * one): the picker re-points the session first and the session is opened right after, so the
+ * click still ends where it was aimed.
  */
 export function folderAction(session: SessionFolderRef, currentFolder?: string): FolderAction {
   const usable = !!session.folder && !session.folderMissing && !sameFolder(session.folder, currentFolder);
   return usable ? "open" : "pick";
 }
 
-/** The label of that affordance — one wording for both surfaces. */
+/**
+ * The label of that affordance — one wording for both surfaces, describing the OUTCOME.
+ *
+ * "Open session" and not "Open folder": what the user asked for is the session, and the
+ * workspace switch is how the host gets there (see `openSessionFolder`). "Change folder & open…"
+ * says the same for a pointer that has to be repaired first — the picker is the DETOUR, the
+ * session is still the destination (the host opens it as soon as the pointer is saved).
+ */
 export function folderActionLabel(action: FolderAction): string {
-  return action === "open" ? "Open folder" : "Change folder…";
+  return action === "open" ? "Open session" : "Change folder & open…";
 }

@@ -148,6 +148,148 @@ describe("SqliteSessionStore — the transcript token (revision)", () => {
   });
 });
 
+describe("SqliteSessionStore — metadata writes on one row lose nothing", () => {
+  /** Two windows open the same session: each has its own summary in memory. */
+  function twoWindows() {
+    const file = makeSharedFile();
+    const a = openHost(file);
+    const b = openHost(file);
+    const s = a.store.create("S");
+    return { file, a: a.store, b: b.store, id: s.id };
+  }
+
+  /** A store opened the way one extension host opens it, where the FIRST `sessions` write waits
+   * for `hook` (which plays the other window's write) before touching the row. That is the exact
+   * window a read-modify-write loses: the delay sits between this host's SNAPSHOT and its WRITE. */
+  function openHostWithPause(file: string, hook: () => void): SqliteSessionStore {
+    const db = new DatabaseSync(file);
+    const STATEMENT_WRITE = /^\s*(UPDATE|INSERT INTO|INSERT OR REPLACE INTO)\s+sessions/i;
+    let fired = false;
+    const wrapped = new Proxy(db, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop, target) as unknown;
+        if (typeof value !== "function") return value;
+        if (prop !== "prepare") return (value as (...a: unknown[]) => unknown).bind(target);
+        return (sql: string) => {
+          const stmt = (value as (s: string) => object).call(target, sql);
+          if (!STATEMENT_WRITE.test(sql)) return stmt;
+          return new Proxy(stmt, {
+            get(sTarget, sProp) {
+              const sValue = Reflect.get(sTarget, sProp, sTarget) as unknown;
+              if (typeof sValue !== "function") return sValue;
+              if (sProp !== "run") return (sValue as (...a: unknown[]) => unknown).bind(sTarget);
+              return (...args: unknown[]) => {
+                if (!fired) {
+                  fired = true;
+                  hook();
+                }
+                return (sValue as (...a: unknown[]) => unknown).apply(sTarget, args);
+              };
+            },
+          });
+        };
+      },
+    });
+    const store = new SqliteSessionStore({
+      db: wrapped as unknown as DatabaseSync,
+      fs,
+      idGen: (() => {
+        let n = 0;
+        return () => `p${++n}`;
+      })(),
+    });
+    cleanups.push(() => {
+      try {
+        db.close();
+      } catch {
+        /* closed by the test */
+      }
+    });
+    return store;
+  }
+
+  it("interleaved settings patches keep BOTH keys (no lost update)", () => {
+    const { a, b, id } = twoWindows();
+
+    // The panel flushes a metric while the manager sets the model — both from their own snapshot
+    // of the row. A read-modify-write would put the other one's OLD value back.
+    b.saveSettings(id, { model: "gpt-x" });
+    a.saveSettings(id, { contextTokens: 1234 });
+
+    const settings = a.load(id).summary;
+    expect(settings.model).toBe("gpt-x");
+    expect(settings.contextTokens).toBe(1234);
+    // …and the value RETURNED is the row, not the patch: B must not be told `model` is unset.
+    expect(b.summary(id)?.model).toBe("gpt-x");
+    expect(b.summary(id)?.contextTokens).toBe(1234);
+  });
+
+  it("a write that lands AFTER the other window updated the row keeps both values", () => {
+    const { file, a, id } = twoWindows();
+    let otherWindow = "";
+    // Host B's first metadata write is paused right before it touches the row. In that window
+    // host A commits a model change. A read-modify-write would now write B's whole stale row
+    // back and silently undo it — the message-count/metrics flush doing it is what broke this.
+    const b = openHostWithPause(file, () => {
+      a.saveSettings(id, { model: "gpt-x" });
+      otherWindow = "model set during B's pause";
+    });
+
+    b.saveSettings(id, { contextTokens: 1234 });
+
+    expect(otherWindow).toBe("model set during B's pause"); // the interleaving really happened
+    const row = a.summary(id);
+    expect(row?.model).toBe("gpt-x"); // A's change survived B's write
+    expect(row?.contextTokens).toBe(1234); // and B's change landed
+  });
+
+  it("a rename that lands after the other window's settings write keeps both", () => {
+    const { file, a, b, id } = twoWindows();
+    let interleaved = false;
+    const paused = openHostWithPause(file, () => {
+      a.saveSettings(id, { model: "gpt-x" });
+      interleaved = true;
+    });
+
+    paused.rename(id, "Renamed while the model changed");
+
+    expect(interleaved).toBe(true);
+    const row = b.summary(id);
+    expect(row?.name).toBe("Renamed while the model changed");
+    expect(row?.model).toBe("gpt-x");
+  });
+
+  it("a rename and a settings write in the other window do not overwrite each other", () => {
+    const { a, b, id } = twoWindows();
+    a.saveSettings(id, { model: "gpt-x" });
+
+    b.rename(id, "Renamed in B");
+
+    // The rename must not carry a stale settings snapshot back over the row…
+    expect(a.summary(id)?.model).toBe("gpt-x");
+    // …and a later settings write must not put the old name back.
+    a.saveSettings(id, { temperature: 0.3 });
+    const after = a.summary(id);
+    expect(after?.name).toBe("Renamed in B");
+    expect(after?.temperature).toBe(0.3);
+    expect(after?.model).toBe("gpt-x");
+  });
+
+  it("a settings write never moves the transcript token (revision)", () => {
+    const { a, b, id } = twoWindows();
+    a.saveMessages(id, [msg("user", "u1")]);
+    const revision = a.load(id).summary.revision;
+
+    b.saveSettings(id, { model: "gpt-x" });
+    b.rename(id, "Renamed");
+
+    // A metadata write that bumped the token would make the OTHER window's next save a false
+    // conflict — i.e. a message the user typed lost for no reason.
+    expect(a.load(id).summary.revision).toBe(revision);
+    expect(() => a.saveMessages(id, [msg("user", "u1"), msg("assistant", "a1", 2)], { revision })).not.toThrow();
+  });
+});
+
 describe("SqliteSessionStore — one writer at a time, across processes", () => {
   /** A second HOST: another process holding the write lock for a moment. */
   const HOLDER = `

@@ -91,6 +91,9 @@ export interface SessionAbortPort {
   clearQueue(): void;
   /** The run was interrupted by the user (red bubble in the transcript). */
   onInterrupted(): void;
+  /** Stop a COMPACTION that is rewriting this session's history. Returns whether there
+   * was one to stop (the summary is a model call: seconds of visible work). */
+  cancelCompaction?(): boolean;
 }
 
 /**
@@ -135,13 +138,22 @@ export class SessionEngine {
   }
 
   /**
-   * Busy = a run is streaming OR a send is being prepared. THE definition: the
-   * tab locks, the session rows, the manager, the switch payload and the live
-   * lines all read this, so they cannot disagree about what "working" means.
-   * (The pending queue drain is the queue's own business and stays in the host.)
+   * Busy = a run is streaming OR a send is being prepared OR the history is being
+   * REWRITTEN by a compaction. THE definition: the tab locks, the session rows, the
+   * manager, the switch payload and the live lines all read this, so they cannot
+   * disagree about what "working" means.
+   *
+   * The compaction was deliberately left out, on the reasoning that "blocking the user's
+   * next message on a summarisation would be the wrong trade". It was not a trade, it was
+   * a loss: `performCompaction` rebuilds the transcript from the snapshot it took BEFORE
+   * calling the summarizer, so a message sent during that window was appended to the
+   * history and then rebuilt away — the user's turn (and the reply already streaming) gone
+   * from disk and from the model's window, silently. A message typed now is PARKED for the
+   * seconds the summary takes and delivered right after (`resume`, plus the drain at the
+   * end of `send`).
    */
   get working(): boolean {
-    return this._sending || this.agent.streaming;
+    return this._sending || this.agent.streaming || this._compacting;
   }
 
   /** A message is being prepared (see `sending`). Always paired with `endSend`. */
@@ -196,7 +208,17 @@ export class SessionEngine {
    * No-op when the session is idle, so a host can call it unconditionally.
    */
   async abort(port: SessionAbortPort, reason?: string): Promise<boolean> {
-    if (!this.agent.streaming) return false;
+    if (!this.agent.streaming) {
+      // Nothing in the STREAM — but the session can still be busy: a compaction is
+      // rewriting the history, and since `working` includes it the panel is showing Stop
+      // for exactly that. A Stop that does nothing is a button that lies, so it cancels the
+      // summary; the queue goes with it, like any other stop (the user asked to stop, a
+      // message parked behind the compaction must not fire afterwards).
+      if (!this._compacting) return false;
+      const cancelled = port.cancelCompaction?.() === true;
+      port.clearQueue();
+      return cancelled;
+    }
     port.clearQueue();
     this.agent.abort();
     this.live.reset();
@@ -208,6 +230,19 @@ export class SessionEngine {
       uiOnly: true,
     });
     return true;
+  }
+
+  /**
+   * Deliver what was parked while the session was rewriting its history.
+   *
+   * `send` drains by itself at the end of a run, so this is for the compactions that are NOT
+   * the tail of a send — the manual Compact button: without it, a message typed during a
+   * manual summary would sit in the pending footer until the user typed something else.
+   * A no-op while the session is busy (the run holding it drains on its own).
+   */
+  async resume(port: SessionSendPort): Promise<void> {
+    if (this.working || port.isDraining()) return;
+    await port.drain((next) => this.dispatchTracked(next, port));
   }
 
   /** One message, with the SEND lock held across its whole async preamble: a second
@@ -234,9 +269,10 @@ export class SessionEngine {
     // The post-response fill comes AFTER the report, in this order on purpose: the
     // compaction posts its own bubble, status and refresh, and the view expects that
     // sequence whole (bubble → status-in → refresh → pointer to the card → release).
-    // It sits outside the SEND lock because the run it belongs to is over: a compaction
-    // already guards itself (`isCompacting` keeps a second one out), and blocking the
-    // user's next message on a summarisation would be the wrong trade.
+    // It sits outside the SEND lock because the run it belongs to is over — but NOT
+    // outside the BUSY gate: `working` includes the compaction, so a message typed
+    // meanwhile is parked instead of being written into a history that is about to be
+    // rebuilt from a pre-summary snapshot. The drain below is what delivers it.
     if (run.started) await port.compactAfterRun();
   }
 

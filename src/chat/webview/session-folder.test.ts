@@ -2,11 +2,12 @@ import { describe, it, expect } from "vitest";
 import { folderAction, folderActionLabel } from "./session-folder";
 
 /**
- * The shared rule behind "go to this session's folder".
+ * The shared rule behind "open this session".
  *
- * It exists because the gesture RELOADS THE WINDOW: telling `open` from `pick` is not a
- * cosmetic label choice, and the two surfaces that use it (the All-sessions form and the
- * home list) must answer identically. Path equality itself is `folder-path.test.ts`.
+ * It exists because the gesture OPENS THE SESSION (and RELOADS THE WINDOW when the session
+ * lives in another folder): telling `open` from `pick` is not a cosmetic label choice, and the
+ * two surfaces that use it (the All-sessions form and the home list) must answer identically.
+ * Path equality itself is `folder-path.test.ts`.
  */
 
 describe("folderAction", () => {
@@ -33,8 +34,10 @@ describe("folderAction", () => {
 
 describe("folderActionLabel", () => {
   it("says what the gesture does, in the same words on both surfaces", () => {
-    expect(folderActionLabel("open")).toBe("Open folder");
-    // The picker also RE-POINTS the session, so "Change" is the honest verb.
-    expect(folderActionLabel("pick")).toBe("Change folder…");
+    // The user asks for SESSION: the workspace switch is how the host gets there.
+    expect(folderActionLabel("open")).toBe("Open session");
+    // The picker re-points the session and the host opens it right after: one gesture, one
+    // outcome, so the label names both halves.
+    expect(folderActionLabel("pick")).toBe("Change folder & open…");
   });
 });

@@ -6,10 +6,25 @@ import type { SessionRuntime } from "./session-registry";
 function fakeRt(id = "s1"): {
   rt: SessionRuntime;
   agent: { streaming: boolean; steer: ReturnType<typeof vi.fn>; cancelSteer: ReturnType<typeof vi.fn> };
+  setCompacting: (v: boolean) => void;
 } {
   const agent = { streaming: true, steer: vi.fn(), cancelSteer: vi.fn() };
-  const rt = { sessionId: id, agent, history: {} } as unknown as SessionRuntime;
-  return { rt, agent };
+  let compacting = false;
+  // The engine owns the ONE busy predicate (streaming OR sending OR compacting), and the queue
+  // asks IT — not `agent.streaming` — whether a send may start.
+  const engine = {
+    get working() {
+      return agent.streaming || compacting;
+    },
+  };
+  const rt = { sessionId: id, agent, engine, history: {} } as unknown as SessionRuntime;
+  return {
+    rt,
+    agent,
+    setCompacting: (v: boolean) => {
+      compacting = v;
+    },
+  };
 }
 
 function makeQueue(buildContext = vi.fn(async () => ({ text: "", images: [], parts: [] }))) {
@@ -129,6 +144,27 @@ describe("PendingInputQueue", () => {
     });
 
     expect(calls).toEqual(["steer-one", "queue-one", "queue-two"]);
+  });
+
+  it("does not dispatch into a compaction (the history is being rewritten)", async () => {
+    const { queue } = makeQueue();
+    const { rt, agent, setCompacting } = fakeRt();
+    const calls: string[] = [];
+    queue.enqueue(rt, { mode: "queue", id: "q1", text: "one" });
+    agent.streaming = false; // the run is over…
+    setCompacting(true); // …but the post-run summary is still rebuilding the history
+
+    await queue.drain(rt, async (item) => {
+      calls.push(item.text);
+    });
+    expect(calls).toEqual([]); // nothing ran under a rewrite in progress
+    expect(queue.items("s1")).toHaveLength(1); // and the message is still there
+
+    setCompacting(false);
+    await queue.drain(rt, async (item) => {
+      calls.push(item.text);
+    });
+    expect(calls).toEqual(["one"]);
   });
 
   it("isDraining is true during a drain and false after", async () => {

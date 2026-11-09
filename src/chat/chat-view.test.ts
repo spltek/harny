@@ -527,8 +527,10 @@ describe("ChatViewProvider", () => {
       ]);
       await handler({ type: "sessionsManagerChangeFolder", id: "s" });
       expect(workspace.pick).toHaveBeenCalledWith(expect.objectContaining({ defaultFolder: "/p/old" }));
-      // Re-pointing a session only ASKS: it must not reload the window.
+      // Re-pointing a session SAVES the pointer…
       expect(store.saveSettings).toHaveBeenCalledWith("s", { folder: "/p/picked" });
+      // …and then opens the session there: the folder is how you reach it, never the goal.
+      expect(workspace.open).toHaveBeenLastCalledWith("/p/picked");
 
       // …and the provider never reached for `vscode` to do any of it.
       expect(state.showOpenDialog).not.toHaveBeenCalled();
@@ -616,7 +618,7 @@ describe("ChatViewProvider", () => {
     });
 
     it("a page that comes up late is told AGAIN what to show (the transcript it missed)", async () => {
-      // The reported bug, end to end: "Open folder" from a session of ANOTHER folder → the
+      // The reported bug, end to end: "Open session" from a session of ANOTHER folder → the
       // window reloads → the tab is there and the existing messages are MISSING. Closing and
       // reopening the view shows them.
       //
@@ -905,6 +907,38 @@ describe("ChatViewProvider", () => {
     // …and NOT a dialog: the refusal is said in the transcript, where the message would have
     // gone (no modal on top of the panel for something the panel can say itself).
     expect(view.webview.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "modal" }));
+  });
+
+  it("a refresh that was SUPERSEDED while building does not install its stale page", async () => {
+    // `buildHtml()` is async (config, skills, MCP status — hundreds of ms), so two refreshes can
+    // overlap, and the one that finishes LAST is not necessarily the newer truth. Installing it
+    // would put state from before the change that triggered the other one on screen, and the
+    // user's next click would act on it.
+    const { provider } = buildHarness();
+    const { view } = resolveWith(provider);
+    const gates: Array<() => void> = [];
+    let n = 0;
+    const spy = vi
+      .spyOn(provider as unknown as { buildHtml: () => Promise<string> }, "buildHtml")
+      .mockImplementation(() => {
+        const k = ++n;
+        return new Promise<string>((resolve) => gates.push(() => resolve(`<html>build ${k}</html>`)));
+      });
+    try {
+      const older = provider.refresh();
+      const newer = provider.refresh();
+      expect(gates).toHaveLength(2);
+
+      gates[1](); // the newer build finishes first…
+      await newer;
+      expect(view.webview.html).toBe("<html>build 2</html>");
+
+      gates[0](); // …so the older one, finishing late, must not undo it.
+      await older;
+      expect(view.webview.html).toBe("<html>build 2</html>");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("a rebuild that lands while a modal OPENED does not wipe it (that froze the panel)", async () => {
@@ -1752,6 +1786,56 @@ describe("ChatViewProvider", () => {
 
     expect(registry.isOpen("s1")).toBe(true);
     expect(store.remove).not.toHaveBeenCalled();
+  });
+
+  it("a turn that starts while the trash dialog is open is NOT deleted (the guard is asked twice)", async () => {
+    // The dialog is human time: a parked message resumes, a timer fires, another panel
+    // sends — and deleting (or rewinding!) a transcript under a live run is how a deleted
+    // session came back with its row recreated by the run that kept writing.
+    const { store, registry, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    state.noAutoAlert = true;
+    try {
+      const p = handler({ type: "deleteSession", id: "s1" });
+      const modal = cleanupModal(view);
+      expect(modal).toBeTruthy();
+      // The trash is answered by hand; everything AFTER it (the explanation) is auto-answered,
+      // and a page waiting behind an unanswered modal defers its rebuilds (#3).
+      state.noAutoAlert = false;
+
+      rt.engine.beginSend(); // the session starts working while the question is on screen
+      // `true` = the Delete answer (the panel's confirm maps to it; `rewind`/`empty` are the
+      // extra actions).
+      await handler({ type: "modalResponse", id: modal.modalId, value: true });
+      await p;
+    } finally {
+      registry.get("s1")?.engine.endSend();
+      state.noAutoAlert = false;
+    }
+
+    expect(store.remove).not.toHaveBeenCalled();
+    expect(store.saveMessages).not.toHaveBeenCalled();
+    expect(registry.isOpen("s1")).toBe(true);
+    // …and the refusal is SAID, not a dead button that appears to have done nothing.
+    const alerts = view.webview.postMessage.mock.calls
+      .map((c: any[]) => c[0] as any)
+      .filter((m) => m.type === "modal" && m.kind === "alert");
+    expect(alerts.some((m) => m.title === "Session is working")).toBe(true);
+  });
+
+  it("names the session on every session-scoped post (a background compaction cannot hit the wrong tab)", async () => {
+    const { provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await handler({ type: "compact" });
+
+    const posts = view.webview.postMessage.mock.calls.map((c: any[]) => c[0] as any);
+    const start = posts.find((m) => m.type === "compactStart");
+    const done = posts.find((m) => m.type === "compactDone");
+    expect(start?.sessionId).toBe("s1");
+    expect(done?.sessionId).toBe("s1");
   });
 
   it("refuses to rename a session that is still working", async () => {
@@ -3526,7 +3610,9 @@ describe("ChatViewProvider", () => {
     (rt.agent as { streaming: boolean }).streaming = true;
     await handler({ type: "abort" });
     expect(rt.agent.abort).toHaveBeenCalled();
-    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "interrupted" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "interrupted", sessionId: "s1" }),
+    );
     // Stored (so it survives a reload and shows in the transcript) but uiOnly, so
     // it is NOT part of the request. This is the fix for a wedged session: an
     // assistant message written here sits between a turn's `tool_calls` and its
@@ -3875,7 +3961,7 @@ describe("ChatViewProvider all-sessions manager", () => {
     });
   });
 
-  it("changeSessionFolder picks a folder, persists it and refreshes the form", async () => {
+  it("changeSessionFolder picks a folder, persists it, refreshes the form and OPENS it there", async () => {
     const { store, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
     state.showOpenDialog.mockResolvedValue([{ fsPath: "/home/me/new" }]);
     const { handler, view } = resolveWith(provider);
@@ -3884,6 +3970,33 @@ describe("ChatViewProvider all-sessions manager", () => {
     expect(view.webview.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: "sessionsManager", currentFolder: "/home/me/a" }),
     );
+    // The pointer was the detour, not the destination: the session is opened where it now lives.
+    expect(state.executeCommand).toHaveBeenCalledWith(
+      "vscode.openFolder",
+      { fsPath: "/home/me/new" },
+      { forceReuseWindow: true },
+    );
+  });
+
+  it("changeSessionFolder followed by a pick into THIS folder opens it here, no reload", async () => {
+    // The pick can land on the folder the window is already in: the shortcut in `openSessionAt`
+    // must still apply, or "change folder & open" would reload for nothing.
+    const pending = { remember: vi.fn(async () => {}), take: vi.fn() };
+    const workspace = {
+      pick: vi.fn(async () => "/p/here" as string | undefined),
+      open: vi.fn(async () => undefined),
+      isCurrent: vi.fn(async () => true),
+    };
+    const { store, provider } = buildHarness({ workspaceReady: () => true, workspace, pending });
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "x", name: "X", createdAt: 1, updatedAt: 2, messageCount: 0, folder: "/p/gone", folderMissing: true },
+    ]);
+    const { handler } = resolveWith(provider);
+    await handler({ type: "sessionsManagerChangeFolder", id: "x" });
+    expect(store.saveSettings).toHaveBeenCalledWith("x", { folder: "/p/here" });
+    expect(workspace.open).not.toHaveBeenCalled();
+    expect(state.executeCommand).not.toHaveBeenCalledWith("vscode.openFolder", expect.anything(), expect.anything());
+    expect(pending.remember).not.toHaveBeenCalled();
   });
 
   it("changeSessionFolder defaults the picker to the session's folder when it still exists", async () => {
@@ -3976,7 +4089,7 @@ describe("ChatViewProvider all-sessions manager", () => {
     expect(state.showOpenDialog).not.toHaveBeenCalled();
   });
 
-  it("sessionsManagerOpenFolder falls back to the picker when the folder is gone", async () => {
+  it("sessionsManagerOpenFolder falls back to the picker when the folder is gone — and opens what it re-pointed", async () => {
     const { store, provider } = buildHarness({ currentFolder: () => "/home/me/a" });
     (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
       { id: "x", name: "X", createdAt: 1, updatedAt: 2, messageCount: 0, folder: "/home/me/gone", folderMissing: true },
@@ -3984,8 +4097,13 @@ describe("ChatViewProvider all-sessions manager", () => {
     state.showOpenDialog.mockResolvedValue([{ fsPath: "/home/me/new" }]);
     const { handler } = resolveWith(provider);
     await handler({ type: "sessionsManagerOpenFolder", id: "x" });
-    expect(state.executeCommand).not.toHaveBeenCalled();
     expect(store.saveSettings).toHaveBeenCalledWith("x", { folder: "/home/me/new" });
+    // One click, one destination: the repair is not a second errand the user has to run.
+    expect(state.executeCommand).toHaveBeenCalledWith(
+      "vscode.openFolder",
+      { fsPath: "/home/me/new" },
+      { forceReuseWindow: true },
+    );
   });
 
   it("lists an OPEN session of ANOTHER folder too, marked (a tab must never be orphaned)", async () => {
@@ -4372,6 +4490,42 @@ describe("ChatViewProvider compaction", () => {
     expect(rt.cachedTokens).toBe(0);
     // final bubble posted (the UI shows completion, no toast needed)
     expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "refresh" }));
+  });
+
+  it("a message that arrives DURING the summary is kept, not rebuilt away", async () => {
+    // The compaction plans from a snapshot that is as old as the summarizer call (seconds of
+    // visible work). Parking the next message in the engine (`working`) is what normally keeps
+    // the two identical, but the guarantee cannot live in a caller: whatever reached the history
+    // meanwhile is APPENDED to the rebuilt window instead of vanishing with the snapshot it was
+    // not part of — the failure this pins was silent, from disk and from the model's window.
+    let release!: (s: string) => void;
+    const summarize = vi.fn(() => new Promise<string>((resolve) => (release = resolve)));
+    const options = { compactor: { summarize } as unknown as Compactor, compaction: DEFAULT_COMPACTION };
+    const { registry, provider } = buildHarness(options);
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const rt = registry.get("s1")!;
+    rt.contextWindow = 200000;
+    rt.contextTokens = 26000; // 13%: past the trigger, so there is something to compact
+    rt.history.replace([
+      { role: "user", content: "let's go", timestamp: 1 },
+      { role: "assistant", content: "ok", timestamp: 2 },
+      { role: "user", content: "then", timestamp: 3 },
+      { role: "assistant", content: "done", timestamp: 4 },
+    ]);
+
+    const running = handler({ type: "compact" });
+    await vi.waitFor(() => expect(summarize).toHaveBeenCalled());
+    // …a message lands while the summarizer is thinking (a steer, another window, a queued send)
+    rt.history.add({ role: "user", content: "typed while it summarized", timestamp: 5 });
+    release("## Goal\nsummarized");
+    await running;
+
+    const conv = registry.get("s1")!.history.conversation();
+    // Kept, and AFTER the rebuilt window (the order the user wrote it in).
+    expect(conv.map((m) => String(m.content)).at(-1)).toContain("typed while it summarized");
+    // …while the compaction itself did happen: the transcript was rebuilt, not abandoned.
+    expect(conv.some((m) => String(m.content).includes("## Goal"))).toBe(true);
   });
 
   it("a SECOND compaction UPDATES the previous state instead of re-deriving it", async () => {
@@ -5430,6 +5584,10 @@ describe("ChatViewProvider compaction", () => {
     (rt.agent as any).send = vi.fn(async () => {
       (rt.agent as any).streaming = true;
       rt.contextTokens = 170000; // 85% of 200000
+      // The turn ENDS with the reply: what follows is the POST-run compaction. Leaving
+      // `streaming` true would model a run that never finishes — and the host now checks it
+      // before releasing the blocking status (a run that started meanwhile keeps it).
+      (rt.agent as any).streaming = false;
     });
 
     await handler({ type: "send", text: "more" });
@@ -5445,7 +5603,9 @@ describe("ChatViewProvider compaction", () => {
     );
     // The trigger posts the same UI sequence as the manual Compact button:
     // bubble in chat + blocking status while it runs, then note + release.
-    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactStart" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "compactStart", sessionId: "s1" }),
+    );
     expect(view.webview.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: "status", active: true, message: "Compacting…" }),
     );
@@ -6032,7 +6192,9 @@ describe("ChatViewProvider compaction", () => {
     });
     await handler({ type: "send", text: "more" });
     expect(registry.get("s1")!.history.conversation()[0].role).toBe("user");
-    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactStart" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "compactStart", sessionId: "s1" }),
+    );
     expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "refresh" }));
   });
 
@@ -6065,7 +6227,9 @@ describe("ChatViewProvider compaction", () => {
     expect(send).toHaveBeenCalled(); // the request still went out afterwards
     // Visible feedback identical to the manual button: bubble, blocking status
     // while running, then note + release.
-    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactStart" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "compactStart", sessionId: "s1" }),
+    );
     expect(view.webview.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: "status", active: true, message: "Compacting…" }),
     );
@@ -6126,10 +6290,14 @@ describe("ChatViewProvider compaction", () => {
     await provider.maybeCompactDuringRun("s1");
 
     expect(registry.get("s1")!.history.conversation()[0].role).toBe("user");
-    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactStart" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "compactStart", sessionId: "s1" }),
+    );
     // Mid-run the transcript IS re-rendered now — the divider and the card have to appear
     // at once — and `ok: true` leaves the pointer to it where the reader is.
-    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactDone", ok: true });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "compactDone", ok: true, sessionId: "s1" }),
+    );
     // The run is still going: NO status message may turn the working bar off.
     expect(view.webview.postMessage).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: "status", active: false }),
@@ -6178,7 +6346,9 @@ describe("ChatViewProvider compaction", () => {
     expect(String(conv[1].content)).toContain("## Goal");
     expect(store.saveSettings as ReturnType<typeof vi.fn>).toHaveBeenCalled();
     // Exactly the button's visible flow: bubble -> block -> note -> release.
-    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactStart" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "compactStart", sessionId: "s1" }),
+    );
     expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "refresh" }));
     expect(view.webview.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: "status", active: true, message: "Compacting…" }),
@@ -6280,7 +6450,9 @@ describe("ChatViewProvider compaction", () => {
 
     const conv = registry.get("s1")!.history.conversation();
     expect(conv[0].role).toBe("user"); // compacted despite no contextWindow
-    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "compactStart" });
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "compactStart", sessionId: "s1" }),
+    );
     expect(view.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "refresh" }));
   });
 });
@@ -6341,6 +6513,7 @@ describe("ChatViewProvider soft steering + queue", () => {
 
     expect(view.webview.postMessage).toHaveBeenCalledWith({
       type: "userMessage",
+      sessionId: "s1",
       content: "look here",
       attachments: [{ name: "relazione.pdf", path: "/tmp/relazione.pdf", size: 42, isImage: false }],
       images: ["data:image/png;base64,iVBORw0KGgo="],

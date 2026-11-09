@@ -173,7 +173,10 @@ export class PendingInputQueue {
     this.draining.add(rt.sessionId);
     try {
       let list = this.bySession.get(rt.sessionId) ?? [];
-      while (!rt.agent.streaming && list.length > 0) {
+      // `working`, not `streaming`: a compaction REWRITES the history from a snapshot taken
+      // before it started, so a send dispatched into it would be appended to a transcript
+      // that is about to be rebuilt from that older copy.
+      while (!rt.engine.working && list.length > 0) {
         // Steers first (they were meant to apply earlier), then queued messages
         // FIFO — matching the UI, where steer bubbles sit above the queue.
         const steerIdx = list.findIndex((p) => p.mode === "steer");
@@ -188,7 +191,7 @@ export class PendingInputQueue {
     }
     // A message that arrived while the last item ran must not be stranded.
     const remaining = this.bySession.get(rt.sessionId) ?? [];
-    if (!rt.agent.streaming && remaining.length > 0) void this.drain(rt, dispatch);
+    if (!rt.engine.working && remaining.length > 0) void this.drain(rt, dispatch);
   }
 
   /** Build the attachment context for the steer DRAFT and hand it to the agent. */

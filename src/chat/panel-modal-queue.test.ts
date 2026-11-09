@@ -54,4 +54,50 @@ describe("PanelModalQueue (FIFO)", () => {
     q.respond(3, true);
     expect(await p3).toBe(true);
   });
+
+  describe("a queue is not a page", () => {
+    it("re-shows a request that a rebuild wiped (`pageReplaced` + `flush`)", async () => {
+      const posted: { modalId?: number; type?: string; title?: string }[] = [];
+      const q = new PanelModalQueue((m) => posted.push(m as { modalId?: number; type?: string; title?: string }));
+
+      const p = q.request({ kind: "alert", title: "Vacuum?", message: "m" });
+      expect(posted.map((m) => m.modalId)).toEqual([1]);
+      expect(q.hasShown()).toBe(true);
+
+      // The HTML is replaced: the dialog went away with the old document, so it is no longer
+      // on screen. The promise stays open (same question, answerable on the new page) — and
+      // until it is re-shown it must NOT block rebuilds, or the panel freezes behind a
+      // dialog nobody can see.
+      q.pageReplaced();
+      expect(q.hasShown()).toBe(false);
+      expect(q.hasPending()).toBe(true);
+
+      q.flush(); // the new document said hello
+      expect(posted.map((m) => m.modalId)).toEqual([1, 1]);
+      expect(q.hasShown()).toBe(true);
+
+      // Flushing again must not draw a third copy.
+      q.flush();
+      expect(posted).toHaveLength(2);
+
+      q.respond(1, true);
+      expect(await p).toBe(true);
+      expect(q.hasPending()).toBe(false);
+    });
+
+    it("only the HEAD is on screen: the ones behind it are pending, not shown", async () => {
+      const posted: { modalId?: number }[] = [];
+      const q = new PanelModalQueue((m) => posted.push(m as { modalId?: number }));
+      const p1 = q.request({ kind: "alert", title: "one", message: "m" });
+      const p2 = q.request({ kind: "alert", title: "two", message: "m" });
+      expect(posted.map((m) => m.modalId)).toEqual([1]);
+      expect(q.hasPending()).toBe(true);
+
+      q.respond(1, true);
+      expect(posted.map((m) => m.modalId)).toEqual([1, 2]);
+      q.respond(2, true);
+      expect(await p1).toBe(true);
+      expect(await p2).toBe(true);
+    });
+  });
 });

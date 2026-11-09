@@ -404,7 +404,7 @@ body {
   color: var(--accent);
   white-space: nowrap;
 }
-/* The home row's rename/delete sit at the END of the name line, after the "Open folder"
+/* The home row's rename/delete sit at the END of the name line, after the "Open session"
    label: they are secondary to the choice, and they must not push the folder path (the one
    fact that identifies WHAT you are choosing) off its own line. */
 .srow.home .srow-actions {

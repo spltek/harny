@@ -7943,6 +7943,30 @@ describe("the context-window checkpoint in the transcript", () => {
     hostMessage({ type: "compactDone", ok: false });
     expect(document.querySelector(".compacted-hint")).toBeNull();
   });
+
+  it("ignores compaction and interruption news from a session that is NOT on screen", async () => {
+    await loadView();
+    hostMessage({ type: "refresh", messages: PAST });
+    const before = document.getElementById("messages")!.innerHTML;
+
+    // Two sessions run at once and the host summarizes each on its own, so news about `b`
+    // arrives while the tab on screen is `a`. The host now names the session on every
+    // session-scoped post; without reading that name these would draw a "Compacting…"
+    // bubble, a card pointer and a red "interrupted" row into SOMEBODY ELSE'S transcript
+    // — and clear its working state, making a live turn look dead.
+    hostMessage({ type: "compactStart", sessionId: "b" });
+    hostMessage({ type: "compactDone", ok: true, sessionId: "b" });
+    hostMessage({ type: "interrupted", sessionId: "b" });
+
+    expect(document.getElementById("messages")!.innerHTML).toBe(before);
+    expect(document.querySelector(".compacted-hint")).toBeNull();
+    expect(document.body.textContent).not.toContain("Processing interrupted");
+
+    // …and the SAME news for the session on screen is still honoured (the guard drops by
+    // identity, it does not mute the channel).
+    hostMessage({ type: "compactDone", ok: true, sessionId: "a" });
+    expect(document.querySelector(".compacted-hint")).toBeTruthy();
+  });
 });
 
 describe("version in the main screen", () => {
@@ -8797,8 +8821,8 @@ describe("empty shell (no open session)", () => {
       });
       await loadView();
       const row = document.querySelector('.srow[data-id="g"]') as HTMLElement;
-      // "Open folder" would reload the window onto a path that does not exist.
-      expect(row.querySelector(".srow-open")?.textContent).toBe("Change folder…");
+      // "Open session" would reload the window onto a path that does not exist.
+      expect(row.querySelector(".srow-open")?.textContent).toBe("Change folder & open…");
       expect((row.querySelector(".srow-folder") as HTMLElement).classList.contains("missing")).toBe(true);
       expect(row.title).toContain("not available");
       row.click();
@@ -9278,15 +9302,15 @@ describe("all-sessions manager (gear)", () => {
     expect(unknownFolder.classList.contains("unset")).toBe(true);
     expect(unknownFolder.classList.contains("missing")).toBe(false);
     expect(unknownFolder.textContent).toContain("folder not set");
-    // Existing folder that is NOT the open one: Open folder (no picker).
+    // Existing folder that is NOT the open one: Open session (no picker).
     const openBtn = rows[1].querySelector("button.folder-btn") as HTMLButtonElement;
-    expect(openBtn.textContent).toBe("Open folder");
+    expect(openBtn.textContent).toBe("Open session");
     openBtn.click();
     expect(posted.some((m: any) => m.type === "sessionsManagerOpenFolder" && m.id === "b")).toBe(true);
-    // Missing / unset / current folder: Change folder… (picker).
+    // Missing / unset / current folder: Change folder & open… (picker, then the session opens).
     for (const i of [0, 2, 3]) {
       const btn = rows[i].querySelector("button.folder-btn") as HTMLButtonElement;
-      expect(btn.textContent).toBe("Change folder…");
+      expect(btn.textContent).toBe("Change folder & open…");
     }
     (rows[2].querySelector("button.folder-btn") as HTMLButtonElement).click();
     expect(posted.some((m: any) => m.type === "sessionsManagerChangeFolder" && m.id === "d")).toBe(true);
@@ -9323,9 +9347,9 @@ describe("all-sessions manager (gear)", () => {
     });
     let rows = document.querySelectorAll("#sessions-manager-list .sm-row");
     expect(rows[0].textContent).toContain("this folder");
-    expect((rows[0].querySelector("button.folder-btn") as HTMLButtonElement).textContent).toBe("Change folder…");
+    expect((rows[0].querySelector("button.folder-btn") as HTMLButtonElement).textContent).toBe("Change folder & open…");
     expect(rows[1].textContent).not.toContain("this folder");
-    expect((rows[1].querySelector("button.folder-btn") as HTMLButtonElement).textContent).toBe("Open folder");
+    expect((rows[1].querySelector("button.folder-btn") as HTMLButtonElement).textContent).toBe("Open session");
 
     // POSIX: case matters, so a case-different path is NOT the current folder.
     hostMessage({
