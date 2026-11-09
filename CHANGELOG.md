@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-11-09
+
 ### Fixed
 
 - **A session opened during a folder change no longer comes up with an EMPTY transcript.** Field report: opening a session that lives in _another_ folder switches the window to it, and the session that opened is then there with its tab — and no messages; closing the view and reopening it brings them back. Two half-failures added up to that, and each one alone is invisible. First, the page could be BUILT before the session was active: the gesture is finished by `resumeSession` as soon as the view OBJECT exists, and `buildHtml` runs before `setActive` completes, so the HTML on screen was drawn from the previous state. Second — and this is the half that kept it empty — the message that would have corrected it was **dropped**: `webview.html = …` only _starts loading a document_, and VS Code delivers a `postMessage` to a document, not to a queue, so the `switchView` carrying the messages landed nowhere and nothing sent it again. The fix is a handshake rather than a retry: the page's script says `{ type: "ready" }` as its **last** statement (`webview/view.ts`, after every listener it registered), and the host answers by re-sending the WHOLE current state — `postSwitchView(true)`, with the session list too, since the HTML may have been built before the opened session became visible in it. Because the answer is built from the truth at that moment and not from a snapshot, it also reconciles the opposite order of events (a page that comes up while the open is still in flight simply receives the `switchView` the open itself posts afterwards), one message per page load, no timers, no retries, nothing to leak. Two deliberate non-changes: `runWhenReady` still runs an action as soon as `this.view` exists — the early drain is the **fallback** for a page that never says hello (an old cached bundle is served cache-busted, but a drain that waits for a message that never comes would freeze the gesture instead of blanking a transcript) — and `refresh()` keeps draining after the HTML is handed over. Pinned in three places, each one checked to fail without the fix: the reported sequence end to end (`resolveWebviewView` → `resumeSession` → `ready` → the **last** `switchView` carries the session's messages, `chat-view.test.ts`), the answer including the session list (a `false` there is the tab-click shape and leaves a row missing), and the client actually sending the hello exactly once (`webview/view.test.ts`). The Stryker hunk moved with the file and the bundle is rebuilt.
@@ -1886,7 +1888,9 @@ Completions protocol.
 - **Diagnostics**: per-turn lines in _Output > Harny_, an optional request log
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
-[Unreleased]: https://github.com/spltek/harny/compare/v0.9.8...HEAD
+[Unreleased]: https://github.com/spltek/harny/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/spltek/harny/compare/v1.0.0...v1.0.1
+[1.0.0]: https://github.com/spltek/harny/compare/v0.9.8...v1.0.0
 [0.9.8]: https://github.com/spltek/harny/compare/v0.9.7...v0.9.8
 [0.9.7]: https://github.com/spltek/harny/compare/v0.9.6...v0.9.7
 [0.9.5]: https://github.com/spltek/harny/compare/v0.9.4...v0.9.5
