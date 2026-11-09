@@ -1402,7 +1402,8 @@ export class ChatViewProvider implements WebviewViewProvider {
       }
       this.modalGuard.disarm();
       this.view.webview.html = html;
-      // The page exists now: whatever was waiting for it can run.
+      // The page has been HANDED to VS Code. Whatever was waiting for it can run — but see the
+      // LAST paragraph of `runWhenReady`: this moment is not yet "the page exists".
       this.drainReadyActions();
     });
   }
@@ -1414,6 +1415,14 @@ export class ChatViewProvider implements WebviewViewProvider {
    * (the panel may not even be visible), and `refresh()` sends the page HTML
    * asynchronously — a `postMessage` before that lands nowhere, so a modal opened that way
    * would simply never appear. Until then the action waits; afterwards it runs at once.
+   *
+   * What "afterwards" means here is `this.view`, and that is DELIBERATELY early: the view
+   * object is set before `refresh()`, so a gesture that arrives during the reload (`pendingOpens`,
+   * `resumeSession`) is not held hostage by an HTML build it does not need. The cost is the gap
+   * this once fell into: `webview.html = …` only STARTS LOADING a document, and a `postMessage`
+   * sent in that window is DROPPED, which is how a session came up with an empty transcript
+   * (`case "ready"`). The drain is kept as it is — it is the FALLBACK for a page that never says
+   * hello — and the page's own hello is what makes the state trustworthy.
    */
   runWhenReady(action: () => void): void {
     if (this.view) {
@@ -1514,6 +1523,24 @@ export class ChatViewProvider implements WebviewViewProvider {
     debugLog("view message:", JSON.stringify(msg)?.slice(0, 120));
     const rt = this.activeRuntime();
     switch (msg.type) {
+      // ── "the page is here" ────────────────────────────────────────────────────────────────────
+      // The one message that makes every OTHER message trustworthy. A gesture that changed the
+      // folder asks for a session on a host that has just been reloaded (`pendingOpens`), and
+      // `runWhenReady` finishes it the moment the view OBJECT exists — which is too early: it is
+      // set before `refresh()`, and `webview.html = …` only STARTS loading a document. A
+      // `postMessage` sent in that window is dropped, not queued.
+      //
+      // That is the reported bug: change folder from a session of ANOTHER folder, and the tab
+      // appeared with an EMPTY transcript — the HTML had been built before the session became
+      // active, and the `switchView` that carried the messages died in a document that did not
+      // exist yet. Closing and reopening the view rebuilt the page and everything was there.
+      // So the page now says it is alive (last line of `webview/view.ts`) and the host answers
+      // with the CURRENT state: a post that landed nowhere is told again, and a page that comes
+      // up after a slow load is reconciled with whatever happened meanwhile. Cheap by
+      // construction — no timer, no retry, one message per page load.
+      case "ready":
+        await this.postSwitchView(true);
+        break;
       case "switchTab":
         if (typeof msg.id === "string") await this.setActive(msg.id);
         break;

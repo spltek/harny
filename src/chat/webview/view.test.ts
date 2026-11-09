@@ -369,6 +369,16 @@ beforeEach(() => {
 });
 
 describe("view webview client", () => {
+  it("says 'ready' once the script has run, so the host knows its posts can land", async () => {
+    // The host cannot infer this from `webview.html = …`: that only STARTS loading a document,
+    // and anything posted before this line is DROPPED. Without this message the host has to
+    // guess, and when it guesses wrong the page comes up with an empty transcript (see the
+    // `resumeSession` regression in chat-view.test.ts).
+    await loadView();
+    const hellos = posted.filter((m: any) => m?.type === "ready");
+    expect(hellos).toEqual([{ type: "ready" }]);
+  });
+
   it("keeps failed providers visible in the model modal, and falls back to 'pick one' when the saved model is gone", async () => {
     await loadView();
     const btn = document.getElementById("model-btn") as HTMLButtonElement;

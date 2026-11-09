@@ -7428,4 +7428,13 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
+// ── "The page is here" ──
+// The LAST thing this script does, and the host depends on it. Assigning `webview.html` only
+// STARTS loading a document, so a `postMessage` sent before this line is not queued: it is
+// DROPPED. That gap is what left a session's transcript empty after a folder change — the host
+// had already posted the `switchView` carrying the messages, into a document that did not exist
+// yet, and nothing ever sent it again (see ChatViewProvider.onMessage, case "ready"). It is sent
+// here, at the end, so every listener above is registered before the host answers.
+vscode.postMessage({ type: "ready" });
+
 export {};

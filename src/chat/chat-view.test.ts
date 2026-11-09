@@ -615,6 +615,68 @@ describe("ChatViewProvider", () => {
       await vi.waitFor(() => expect(registry.isOpen("x")).toBe(true));
     });
 
+    it("a page that comes up late is told AGAIN what to show (the transcript it missed)", async () => {
+      // The reported bug, end to end: "Open folder" from a session of ANOTHER folder → the
+      // window reloads → the tab is there and the existing messages are MISSING. Closing and
+      // reopening the view shows them.
+      //
+      // Two half-failures at once, and the second one is invisible here unless it is asked for
+      // explicitly: the page HTML was built BEFORE the session became active, and the
+      // `switchView` that carried the messages was posted into a document that did not exist
+      // yet — VS Code DROPS it. Nothing sent it again, so the panel stayed empty.
+      //
+      // Now the page announces itself and the host answers with the CURRENT state, whatever
+      // landed nowhere before. This test asserts the answer, because the drop cannot be
+      // simulated: the mock records what the real webview would have thrown away.
+      const { store, provider, registry } = buildHarness();
+      (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+        { id: "x", name: "Casa", createdAt: 1, updatedAt: 2, messageCount: 2, folder: "/p/harny" },
+      ]);
+      (store.load as ReturnType<typeof vi.fn>).mockImplementation((id: string) => ({
+        summary: { id, name: "Casa", createdAt: 1, updatedAt: 2, messageCount: 2, folder: "/p/harny" },
+        messages: [
+          { role: "user", content: "prima", timestamp: 1 },
+          { role: "assistant", content: "seconda", timestamp: 2 },
+        ],
+      }));
+
+      const { handler, view } = resolveWith(provider);
+      // Exactly the reload: the gesture runs while the page is still loading.
+      provider.resumeSession("x");
+      await vi.waitFor(() => expect(registry.isOpen("x")).toBe(true));
+
+      const switches = () =>
+        view.webview.postMessage.mock.calls.map((c: any[]) => c[0]).filter((m: any) => m?.type === "switchView");
+      const before = switches().length;
+
+      // The page finally comes up and says so.
+      await handler({ type: "ready" });
+
+      const after = switches();
+      expect(after.length).toBeGreaterThan(before);
+      const last = after[after.length - 1];
+      expect(last.activeId).toBe("x");
+      expect(last.messages.map((m: any) => m.content)).toEqual(["prima", "seconda"]);
+    });
+
+    it("the answer to a fresh page carries the session LIST too", async () => {
+      // `postSwitchView(false)` means "keep the list you have", which is right for a tab click
+      // and wrong here: this HTML may have been built before the opened session became visible
+      // in the main list, and the row for another folder's session is exactly what the gesture
+      // was for.
+      const { provider } = buildHarness();
+      const { handler, view } = resolveWith(provider);
+      view.webview.postMessage.mockClear();
+
+      await handler({ type: "ready" });
+
+      const sent = view.webview.postMessage.mock.calls
+        .map((c: any[]) => c[0])
+        .filter((m: any) => m?.type === "switchView");
+      expect(sent).toHaveLength(1);
+      expect(sent[0].sessions).toBeDefined();
+    });
+
     it("resumeSession ignores a session that is gone (deleted while the window reloaded)", async () => {
       const { store, provider, registry } = buildHarness();
       (store.summary as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
