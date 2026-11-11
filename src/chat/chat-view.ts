@@ -2134,8 +2134,9 @@ export class ChatViewProvider implements WebviewViewProvider {
       case "setMaxParallelSubAgents": {
         const rt = this.activeRuntime();
         if (!rt) break;
-        // Per-session cap: a number >= 0 (0 = explicitly no cap); anything else
-        // clears the override so the config default (then 4) applies.
+        // Per-session cap: a number >= 0 (0 = explicitly no cap, which the panel shows as a
+        // blank box reading "Off"); anything else clears the override so the config default
+        // (then 4) applies.
         const value =
           typeof msg.value === "number" && Number.isFinite(msg.value) && msg.value >= 0
             ? Math.trunc(msg.value)

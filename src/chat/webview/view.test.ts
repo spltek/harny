@@ -5,7 +5,14 @@ import { vi } from "vitest";
 // so a test that asserts on `title` would only prove the card was left unwired.
 import { tipTextOf } from "./tips";
 
-const posted: unknown[] = [];
+/** Everything the module under test has posted, in order.
+ *
+ * A FRESH array per test, and the sink is BOUND to the one that was current when the module was
+ * imported. That binding is the point: a module instance can leave a throttled post behind (the
+ * sampler writes its slider through `requestAnimationFrame`, jsdom never cancels a queued frame),
+ * and an unbound sink would deliver that stale message into the NEXT test's array — where a
+ * "nothing was sent yet" assertion would then fail for a reason that has nothing to do with it. */
+let posted: unknown[] = [];
 
 /** Config push that turns the "Parallel" toggle ON (sub-agents available). */
 const PARALLEL_ON = {
@@ -94,8 +101,8 @@ function setupDom(initOverrides: Record<string, unknown> = {}, savedState: Recor
         <div id="attachment-chips" class="hidden"></div>
       </div>
     </div>
-    <div id="status">AI Model: <button id="model-btn"><span id="model-btn-label">Select a model</span><span id="model-warn" class="hidden"></span></button><button id="gear-btn">⚙</button><input type="range" id="ctx-range" min="1000" max="2000000" step="1000"><span id="ctx-value"></span><span id="ctx-range-label"></span><input type="range" id="out-range" min="256" max="262144" step="256"><span id="out-value"></span><span id="out-range-label"></span><input id="sampler-temp" type="radio" name="sampler" checked><input id="sampler-topp" type="radio" name="sampler"><input type="range" id="samp-range" min="0" max="2" step="0.1"><span id="samp-value">Auto</span><span id="samp-range-label"></span><button id="samp-auto">Auto</button><input type="range" id="presence-range" min="0" max="2" step="0.1"><span id="presence-value">Auto</span><button id="presence-auto">Auto</button><input type="range" id="freq-range" min="0" max="2" step="0.1"><span id="freq-value">Auto</span><button id="freq-auto">Auto</button></div>
-    <div id="ctl-cards"><input type="range" id="par-range" min="0" max="100" step="1" /><span id="par-value">4</span><button id="lg-reset"></button><div id="lg-head"><div id="lg-toggle" class="sampler-toggle"><input type="radio" name="lg-level" id="lg-off" value="off" /><input type="radio" name="lg-level" id="lg-low" value="low" /><input type="radio" name="lg-level" id="lg-medium" value="medium" checked /><input type="radio" name="lg-level" id="lg-high" value="high" /><input type="checkbox" id="lg-response" /></div><button id="lg-collapse"></button></div><div id="lg-params-field"><div id="lg-fields"></div></div><div id="skills-card" class="hidden"><div id="skills-list"></div></div><div id="mcp-card" class="hidden"><div id="mcp-list"></div><button id="mcp-configure"></button></div></div>
+    <div id="status">AI Model: <button id="model-btn"><span id="model-btn-label">Select a model</span><span id="model-warn" class="hidden"></span></button><button id="gear-btn">⚙</button><input type="range" id="ctx-range" min="1000" max="2000000" step="1000"><input type="text" id="ctx-value"><span id="ctx-range-label"></span><input type="range" id="out-range" min="256" max="262144" step="256"><input type="text" id="out-value"><span id="out-range-label"></span><input id="sampler-temp" type="radio" name="sampler" checked><input id="sampler-topp" type="radio" name="sampler"><input type="range" id="samp-range" min="0" max="2" step="0.1"><input type="text" id="samp-value" placeholder="Auto" /><span id="samp-range-label"></span><button id="samp-auto">Auto</button><input type="range" id="presence-range" min="0" max="2" step="0.1"><input type="text" id="presence-value" placeholder="Auto" /><button id="presence-auto">Auto</button><input type="range" id="freq-range" min="0" max="2" step="0.1"><input type="text" id="freq-value" placeholder="Auto" /><button id="freq-auto">Auto</button></div>
+    <div id="ctl-cards"><input type="range" id="par-range" min="1" max="100" step="1" /><input type="text" id="par-value" placeholder="∞" /><button id="lg-reset"></button><div id="lg-head"><div id="lg-toggle" class="sampler-toggle"><input type="radio" name="lg-level" id="lg-off" value="off" /><input type="radio" name="lg-level" id="lg-low" value="low" /><input type="radio" name="lg-level" id="lg-medium" value="medium" checked /><input type="radio" name="lg-level" id="lg-high" value="high" /><input type="checkbox" id="lg-response" /></div><button id="lg-collapse"></button></div><div id="lg-params-field"><div id="lg-fields"></div></div><div id="skills-card" class="hidden"><div id="skills-list"></div></div><div id="mcp-card" class="hidden"><div id="mcp-list"></div><button id="mcp-configure"></button></div></div>
     <div id="metrics"><input type="radio" name="thinking-level" id="thinking-off" value="off" /><input type="radio" name="thinking-level" id="thinking-low" value="low" /><input type="radio" name="thinking-level" id="thinking-medium" value="medium" /><input type="radio" name="thinking-level" id="thinking-high" value="high" /><span id="met-tokens"></span><span id="met-ctx"></span><span id="met-pct"></span><span id="met-window"></span><span id="met-cache"></span><div id="ctx-bar-wrap"><div id="ctx-bar"></div></div><button id="compact-btn">Compact</button><span id="compact-threshold-label"></span><button id="compact-settings-btn">⚙</button></div>
     <div id="compact-settings-modal" class="hidden">
       <div class="cs-backdrop"></div>
@@ -105,14 +112,14 @@ function setupDom(initOverrides: Record<string, unknown> = {}, savedState: Recor
           <label for="compact-threshold-input">Compaction threshold (%)</label>
           <div class="cs-inline">
             <input id="compact-threshold-input" type="range" min="1" max="100" />
-            <span id="compact-threshold-value" class="cs-val"></span>
+            <input class="num-input" id="compact-threshold-value" type="text" />
           </div>
         </div>
         <div class="cs-field">
           <label for="compact-target-input">Land at (%)</label>
           <div class="cs-inline">
             <input id="compact-target-input" type="range" min="0" max="100" />
-            <span id="compact-target-value" class="cs-val"></span>
+            <input class="num-input" id="compact-target-value" type="text" />
             <button id="compact-target-auto" class="secondary cs-mini" type="button">Auto</button>
           </div>
         </div>
@@ -214,9 +221,9 @@ function setupDom(initOverrides: Record<string, unknown> = {}, savedState: Recor
         <div id="sessions-manager-list"></div>
         <div id="sm-vacuum">
           <input id="sm-vacuum-threshold" type="range" />
-          <span id="sm-vacuum-threshold-val"></span>
+          <input class="num-input" id="sm-vacuum-threshold-val" type="text" />
           <input id="sm-vacuum-min" type="range" />
-          <span id="sm-vacuum-min-val"></span>
+          <input class="num-input" id="sm-vacuum-min-val" type="text" />
           <button id="sm-vacuum-btn">Compact now…</button>
           <div id="sm-vacuum-stats"></div>
         </div>
@@ -248,8 +255,9 @@ function setupDom(initOverrides: Record<string, unknown> = {}, savedState: Recor
     <script id="harny-view-init" type="application/json">${JSON.stringify(init)}</script>
   `;
   persistedState = { ...savedState };
+  const sink = posted; // bound: a stale instance can only write to ITS OWN array
   (globalThis as Record<string, unknown>).acquireVsCodeApi = () => ({
-    postMessage: (m: unknown) => posted.push(m),
+    postMessage: (m: unknown) => sink.push(m),
     getState: () => persistedState,
     setState: (state: unknown) => {
       persistedState = state as Record<string, unknown>;
@@ -312,7 +320,7 @@ async function reloadView(initOverrides: Record<string, unknown> = {}): Promise<
 const MAC_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)";
 
 function setupFixture(initOverrides: Record<string, unknown> = {}, savedState: Record<string, unknown> = {}): void {
-  posted.length = 0;
+  posted = [];
   detachGlobalListeners();
   // THE PLATFORM IS PINNED, and for a real reason.
   //
@@ -334,8 +342,9 @@ async function loadView(): Promise<void> {
   // The module calls `acquireVsCodeApi()` at import time: `setupDom` installs it, and this guard
   // keeps a direct `loadView()` honest even before the fixture has run.
   if (typeof (globalThis as Record<string, unknown>).acquireVsCodeApi !== "function") {
+    const sink = posted;
     (globalThis as Record<string, unknown>).acquireVsCodeApi = () => ({
-      postMessage: (m: unknown) => posted.push(m),
+      postMessage: (m: unknown) => sink.push(m),
       getState: () => persistedState,
       setState: (state: unknown) => {
         persistedState = state as Record<string, unknown>;
@@ -3894,7 +3903,7 @@ describe("view webview client", () => {
     const ok = document.getElementById("alert-ok") as HTMLButtonElement;
     const ranges = [...document.querySelectorAll<HTMLInputElement>("#alert-fields .num-range")];
     const values = (): string[] =>
-      [...document.querySelectorAll("#alert-fields .num-value")].map((e) => e.textContent ?? "");
+      [...document.querySelectorAll<HTMLInputElement>("#alert-fields .num-input")].map((e) => e.value);
     const labels = (): string[] =>
       [...document.querySelectorAll("#alert-fields .alert-field-label")].map((e) => e.textContent ?? "");
 
@@ -5370,37 +5379,72 @@ describe("view webview client", () => {
       config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, maxParallelSubAgents: 6 },
     });
     const range = document.getElementById("par-range") as HTMLInputElement;
-    const label = document.getElementById("par-value") as HTMLElement;
+    const label = document.getElementById("par-value") as HTMLInputElement;
     expect(range.value).toBe("6");
-    expect(range.max).toBe("100");
-    expect(label.textContent).toBe("6");
+    expect(range.min).toBe("1"); // the most restrictive cap is the FIRST stop, not "no limit"
+    expect(range.max).toBe("100"); // the last stop is the sentinel for "no cap", not a cap of 100
+    expect(range.getAttribute("aria-valuetext")).toBe("6 sub-agents");
+    expect(label.value).toBe("6");
     expect(range.disabled).toBe(false);
 
     posted.length = 0;
     range.value = "7";
     range.dispatchEvent(new Event("input"));
-    expect(label.textContent).toBe("7"); // live mirror
+    expect(label.value).toBe("7"); // live mirror
     range.dispatchEvent(new Event("change"));
     const msg = posted.at(-1) as { type: string; value: number };
     expect(msg.type).toBe("setMaxParallelSubAgents");
     expect(msg.value).toBe(7);
   });
 
-  it("Parallel card: 0 means NO cap and shows 'Off'", async () => {
+  it("Parallel card: the LAST stop means NO cap, and shows it as a blank box", async () => {
     await loadView();
     hostMessage({
       type: "config",
       config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, maxParallelSubAgents: 4 },
     });
     const range = document.getElementById("par-range") as HTMLInputElement;
-    const label = document.getElementById("par-value") as HTMLElement;
+    const label = document.getElementById("par-value") as HTMLInputElement;
     posted.length = 0;
-    range.value = "0";
+    // The sentinel is a POSITION, not a cap: dragging one stop past 100 says "no limit" instead of
+    // sitting at the restrictive end of the track, next to a cap of 1.
+    range.value = "100";
     range.dispatchEvent(new Event("input"));
-    expect(label.textContent).toBe("Off");
+    expect(label.value).toBe("");
+    expect(label.placeholder).toBe("∞");
+    expect(range.value).toBe("100"); // the thumb stays on the sentinel
+    expect(range.getAttribute("aria-valuetext")).toBe("No limit"); // never "101 sub-agents"
     range.dispatchEvent(new Event("change"));
     const msg = posted.find((m) => (m as { type?: string }).type === "setMaxParallelSubAgents") as { value: number };
     expect(msg.value).toBe(0);
+  });
+
+  it("Parallel card: a config with NO cap set shows 4, the cap the agent will really use", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000 },
+    });
+    const range = document.getElementById("par-range") as HTMLInputElement;
+    const box = document.getElementById("par-value") as HTMLInputElement;
+    // Absent is not "no limit": the scheduler falls back to 4, so a blank box here used to
+    // promise the opposite of what would happen.
+    expect(box.value).toBe("4");
+    expect(range.value).toBe("4");
+  });
+
+  it("Parallel card: an EXPLICIT 0 still reads Off — absent and unlimited are different", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, maxParallelSubAgents: 0 },
+    });
+    const box = document.getElementById("par-value") as HTMLInputElement;
+    const range = document.getElementById("par-range") as HTMLInputElement;
+    expect(box.value).toBe("");
+    expect(box.placeholder).toBe("∞");
+    expect(range.value).toBe("100"); // the state has ONE visible home on the track: the sentinel
+    expect(range.getAttribute("aria-valuetext")).toBe("No limit");
   });
 
   it("Guardrails card: Loop Guard level radios post setLoopGuard and reflect the config", async () => {
@@ -5483,7 +5527,7 @@ describe("view webview client", () => {
       },
     });
     const nudges = document.getElementById("lgr-maxNudges") as HTMLInputElement;
-    const nudgesVal = document.getElementById("lgv-maxNudges") as HTMLElement;
+    const nudgesVal = document.getElementById("lgv-maxNudges") as HTMLInputElement;
     const theta = document.getElementById("lgr-reasoningThreshold") as HTMLInputElement;
     expect(nudges).toBeTruthy();
     expect(nudges.type).toBe("range");
@@ -5491,16 +5535,16 @@ describe("view webview client", () => {
     expect(nudges.max).toBe("10");
     // Filled from the ACTIVE level's preset (high).
     expect(nudges.value).toBe("3");
-    expect(nudgesVal.textContent).toBe("3");
+    expect(nudgesVal.value).toBe("3");
     expect(theta.value).toBe("0.45");
-    // The value is a read-only LABEL: no editable number box exists.
-    expect(document.getElementById("lgf-maxNudges")).toBeNull();
+    // The value is a NUMBER BOX: the same decision as dragging, typed.
+    expect(nudgesVal.type).toBe("text");
 
     // Dragging a slider mirrors the value live and posts on release.
     posted.length = 0;
     nudges.value = "7";
     nudges.dispatchEvent(new Event("input"));
-    expect(nudgesVal.textContent).toBe("7");
+    expect(nudgesVal.value).toBe("7");
     nudges.dispatchEvent(new Event("change"));
     const msg = posted.at(-1) as { type: string; overrides: Record<string, number> };
     expect(msg.type).toBe("setLoopGuardOverrides");
@@ -5512,7 +5556,7 @@ describe("view webview client", () => {
     low.checked = true;
     low.dispatchEvent(new Event("change"));
     expect(nudges.value).toBe("2");
-    expect(nudgesVal.textContent).toBe("2");
+    expect(nudgesVal.value).toBe("2");
     expect(theta.value).toBe("0.65");
   });
 
@@ -5536,7 +5580,7 @@ describe("view webview client", () => {
     });
     // The saved value wins; a key with no saved value falls back to the preset.
     expect((document.getElementById("lgr-maxNudges") as HTMLInputElement).value).toBe("7");
-    expect((document.getElementById("lgv-maxNudges") as HTMLElement).textContent).toBe("7");
+    expect((document.getElementById("lgv-maxNudges") as HTMLInputElement).value).toBe("7");
     expect((document.getElementById("lgr-reasoningThreshold") as HTMLInputElement).value).toBe("0.5");
   });
 
@@ -5643,7 +5687,7 @@ describe("view webview client", () => {
     });
     await loadView();
     expect((document.getElementById("par-range") as HTMLInputElement).value).toBe("7");
-    expect((document.getElementById("par-value") as HTMLElement).textContent).toBe("7");
+    expect((document.getElementById("par-value") as HTMLInputElement).value).toBe("7");
     expect((document.getElementById("lg-low") as HTMLInputElement).checked).toBe(true);
     expect((document.getElementById("lg-response") as HTMLInputElement).checked).toBe(true);
   });
@@ -6539,13 +6583,20 @@ describe("view webview client", () => {
     // event fires, so the render pass has to paint it (the fill would otherwise sit at 0%).
     expect(par.style.getPropertyValue("--fill")).not.toBe("");
 
+    // The track runs 1..100 with the top stop meaning "no cap", so a cap of 40 is 39/99 of the
+    // way and a cap of 99 is NOT the end: the fill follows the thumb, not the cap's arithmetic.
+    const fill = (): number => parseFloat(par.style.getPropertyValue("--fill"));
     par.value = "40";
     par.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(par.style.getPropertyValue("--fill")).toBe("40%");
+    expect(fill()).toBeCloseTo(39.39, 1);
 
-    par.value = "100";
+    par.value = "99";
     par.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(par.style.getPropertyValue("--fill")).toBe("100%");
+    expect(fill()).toBeCloseTo(98.99, 1);
+
+    par.value = "100"; // the sentinel: the only position that reaches the end
+    par.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(fill()).toBe(100);
   });
 
   it("a PARTIAL config push repaints the fill too (this is what changing the model sends)", async () => {
@@ -6568,10 +6619,10 @@ describe("view webview client", () => {
     // the guard against a styling change quietly killing the control.
     await loadView();
     const range = document.getElementById("ctx-range") as HTMLInputElement;
-    const label = document.getElementById("ctx-value") as HTMLElement;
+    const label = document.getElementById("ctx-value") as HTMLInputElement;
     range.value = "32000";
     range.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(label.textContent).toContain("32");
+    expect(label.value).toContain("32");
     expect(range.style.getPropertyValue("--fill")).not.toBe("");
   });
 
@@ -6615,7 +6666,7 @@ describe("view webview client", () => {
     // Take MANUAL control first: in AUTO the landing point follows the trigger by definition.
     landing.value = "30";
     landing.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(document.getElementById("compact-target-value")?.textContent).toBe("30%");
+    expect((document.getElementById("compact-target-value") as HTMLInputElement).value).toBe("30");
 
     trigger.value = "20";
     trigger.dispatchEvent(new Event("input", { bubbles: true }));
@@ -6629,15 +6680,17 @@ describe("view webview client", () => {
     (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
     const trigger = document.getElementById("compact-threshold-input") as HTMLInputElement;
     const landing = document.getElementById("compact-target-input") as HTMLInputElement;
-    const label = document.getElementById("compact-target-value") as HTMLElement;
+    const box = document.getElementById("compact-target-value") as HTMLInputElement;
+    const note = document.getElementById("compact-note") as HTMLElement;
 
     trigger.value = "40";
     trigger.dispatchEvent(new Event("input", { bubbles: true }));
     landing.value = "90";
     landing.dispatchEvent(new Event("input", { bubbles: true }));
 
-    // The consequence is visible BEFORE saving…
-    expect(label.textContent).toContain("→ saved as 39%");
+    // The consequence is visible BEFORE saving, in the note — the box keeps the number you chose…
+    expect(box.value).toBe("90");
+    expect(note.textContent).toContain("it is saved as 39%");
     posted.length = 0;
     (document.getElementById("compact-settings-save") as HTMLButtonElement).click();
     // …and that is exactly what is stored.
@@ -6691,7 +6744,7 @@ describe("view webview client", () => {
     open();
     const trigger = document.getElementById("compact-threshold-input") as HTMLInputElement;
     const landing = document.getElementById("compact-target-input") as HTMLInputElement;
-    const label = document.getElementById("compact-target-value") as HTMLElement;
+    const box = document.getElementById("compact-target-value") as HTMLInputElement;
 
     trigger.value = "40";
     trigger.dispatchEvent(new Event("input", { bubbles: true }));
@@ -6702,7 +6755,8 @@ describe("view webview client", () => {
     expect(posted).toContainEqual({ type: "setCompactionTarget", value: 39 });
     open();
     expect(landing.value).toBe("39"); // the stored (effective) value, not the 90 you dragged
-    expect(label.textContent).toBe("39%");
+    expect(box.value).toBe("39"); // and the box says the same thing the slider does
+    expect(document.getElementById("compact-note")?.textContent).toBe(""); // no consequence to announce
     expect(document.getElementById("compact-note")?.textContent).toBe(""); // nothing to warn about now
   });
 
@@ -8138,14 +8192,14 @@ describe("in-panel alert modal", () => {
 
 it("updates the context-window slider + label from the host-pushed value", async () => {
   await loadView();
-  const label = document.getElementById("ctx-value") as HTMLElement;
-  expect(label.textContent).toBe("128000");
+  const label = document.getElementById("ctx-value") as HTMLInputElement;
+  expect(label.value).toBe("128000");
   hostMessage({
     type: "config",
     config: { provider: "openai", model: "m", hasKey: true, models: [], providerModels: [], contextWindow: 131072 },
   });
-  // The LABEL keeps the EXACT value; the slider sits on the nearest step.
-  expect(label.textContent).toBe("131072");
+  // The BOX keeps the EXACT value; the slider sits on the nearest step.
+  expect(label.value).toBe("131072");
 });
 
 it("presence/frequency sliders render, post on drag and reset to Auto", async () => {
@@ -8163,18 +8217,20 @@ it("presence/frequency sliders render, post on drag and reset to Auto", async ()
     },
   });
   const p = document.getElementById("presence-range") as HTMLInputElement;
-  const pv = document.getElementById("presence-value") as HTMLElement;
-  const fv = document.getElementById("freq-value") as HTMLElement;
-  expect(pv.textContent).toBe("1.5");
-  expect(fv.textContent).toBe("0.5");
+  const pv = document.getElementById("presence-value") as HTMLInputElement;
+  const fv = document.getElementById("freq-value") as HTMLInputElement;
+  expect(pv.value).toBe("1.5");
+  expect(fv.value).toBe("0.5");
   p.value = "1.6";
   p.dispatchEvent(new Event("input"));
-  expect(pv.textContent).toBe("1.6"); // live mirror
+  expect(pv.value).toBe("1.6"); // live mirror
   p.dispatchEvent(new Event("change"));
   expect(posted).toContainEqual({ type: "setPresencePenalty", value: 1.6 });
   (document.getElementById("freq-auto") as HTMLButtonElement).click();
   expect(posted).toContainEqual({ type: "setFrequencyPenalty", value: null });
-  expect(fv.textContent).toBe("Auto");
+  // Auto = the box is BLANK (the placeholder says Auto) and the button carries the state.
+  expect(fv.value).toBe("");
+  expect((document.getElementById("freq-auto") as HTMLButtonElement).getAttribute("aria-pressed")).toBe("true");
   // Auto SNAPS the slider to the knob's default (0 for a penalty).
   expect((document.getElementById("freq-range") as HTMLInputElement).value).toBe("0");
 });
@@ -8379,7 +8435,8 @@ describe("context metrics line", () => {
     (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
     (document.getElementById("compact-target-auto") as HTMLButtonElement).click();
     expect(target.value).toBe("8");
-    expect(document.getElementById("compact-target-value")?.textContent).toBe("8% (default)");
+    expect((document.getElementById("compact-target-value") as HTMLInputElement).value).toBe("8");
+    expect(document.getElementById("compact-target-auto")?.classList.contains("is-on")).toBe(true);
     (document.getElementById("compact-settings-save") as HTMLButtonElement).click();
     expect(posted).toContainEqual({ type: "setCompactionTarget", value: undefined });
     expect(document.getElementById("compact-threshold-label")?.textContent).toBe("Auto 60% ctx · keep 8%");
@@ -8421,7 +8478,8 @@ describe("context metrics line", () => {
     (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
     expect(threshold.value).toBe("60");
     expect(target.value).toBe("8");
-    expect(document.getElementById("compact-target-value")?.textContent).toBe("8% (default)");
+    expect((document.getElementById("compact-target-value") as HTMLInputElement).value).toBe("8");
+    expect(document.getElementById("compact-target-auto")?.classList.contains("is-on")).toBe(true);
   });
 
   it("the landing slider reaches 0 (minimum) and the Default button restores the derived one", async () => {
@@ -8441,25 +8499,25 @@ describe("context metrics line", () => {
     (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
     const threshold = document.getElementById("compact-threshold-input") as HTMLInputElement;
     const target = document.getElementById("compact-target-input") as HTMLInputElement;
-    const targetValue = document.getElementById("compact-target-value") as HTMLSpanElement;
+    const targetValue = document.getElementById("compact-target-value") as HTMLInputElement;
     // No override in the config: the slider shows the DERIVED default (an eighth of 80) and
     // the label says so — "Auto" belongs to the trigger, not to this knob.
     expect(target.value).toBe("10");
-    expect(targetValue.textContent).toBe("10% (default)");
-    expect(document.getElementById("compact-threshold-value")?.textContent).toBe("80%");
+    expect(targetValue.value).toBe("10"); // the number that will be stored, not a word about it
+    expect((document.getElementById("compact-threshold-value") as HTMLInputElement).value).toBe("80");
 
     // Moving the trigger moves the DEFAULT with it — AUTO is the one mode that follows — but the
     // landing slider's own range never shrinks.
     threshold.value = "50";
     threshold.dispatchEvent(new Event("input"));
     expect(target.value).toBe("6");
-    expect(targetValue.textContent).toBe("6% (default)");
+    expect(targetValue.value).toBe("6"); // the DEFAULT follows the trigger, so the box does too
     expect(target.max).toBe("100");
 
     // 0 is a POSITION, not a mode: it means "only the summary remains".
     target.value = "0";
     target.dispatchEvent(new Event("input"));
-    expect(targetValue.textContent).toBe("0% (min)");
+    expect(targetValue.value).toBe("0"); // 0 IS the minimum: it frees the most
     expect(document.getElementById("compact-target-auto")?.classList.contains("is-on")).toBe(false);
     threshold.value = "90";
     threshold.dispatchEvent(new Event("input"));
@@ -8468,7 +8526,7 @@ describe("context metrics line", () => {
     // Default puts it back on the derived value for the CURRENT trigger (round(90/8) = 11).
     (document.getElementById("compact-target-auto") as HTMLButtonElement).click();
     expect(target.value).toBe("11");
-    expect(targetValue.textContent).toBe("11% (default)");
+    expect(targetValue.value).toBe("11");
     expect(document.getElementById("compact-target-auto")?.classList.contains("is-on")).toBe(true);
   });
 
@@ -8547,7 +8605,7 @@ describe("context metrics line", () => {
     });
     (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
     const target = document.getElementById("compact-target-input") as HTMLInputElement;
-    const value = document.getElementById("compact-target-value") as HTMLSpanElement;
+    const value = document.getElementById("compact-target-value") as HTMLInputElement;
     // The host's plan carries the floor: below it there is nothing left to free.
     hostMessage({
       type: "compactionPreview",
@@ -8573,7 +8631,8 @@ describe("context metrics line", () => {
     target.value = "4";
     target.dispatchEvent(new Event("input"));
     expect(target.value).toBe("4");
-    expect(value.textContent).toContain("→ saved as 0%");
+    expect(value.value).toBe("4"); // the number you chose stays in the box…
+    expect(document.getElementById("compact-note")?.textContent).toContain("saved as 0%");
     posted.length = 0;
     (document.getElementById("compact-settings-save") as HTMLButtonElement).click();
     expect(posted).toContainEqual({ type: "setCompactionTarget", value: 0 });
@@ -8583,7 +8642,8 @@ describe("context metrics line", () => {
     target.value = "8";
     target.dispatchEvent(new Event("input"));
     expect(target.value).toBe("8");
-    expect(value.textContent).toBe("8%");
+    expect(value.value).toBe("8");
+    expect(document.getElementById("compact-note")?.textContent).toBe("");
   });
 
   it("Escape closes the policy card, and the sliders do not post until Save", async () => {
@@ -8618,12 +8678,12 @@ describe("context window slider", () => {
       },
     });
     const range = document.getElementById("ctx-range") as HTMLInputElement;
-    const label = document.getElementById("ctx-value") as HTMLElement;
-    expect(label.textContent).toBe("200000");
+    const label = document.getElementById("ctx-value") as HTMLInputElement;
+    expect(label.value).toBe("200000");
 
     range.value = "300000";
     range.dispatchEvent(new Event("input"));
-    expect(label.textContent).toBe("300000"); // live mirror
+    expect(label.value).toBe("300000"); // live mirror
     range.dispatchEvent(new Event("change"));
     expect(posted).toContainEqual({ type: "setContextWindow", value: 300000 });
   });
@@ -8641,8 +8701,8 @@ describe("output tokens slider", () => {
   it("renders the value from config (default 8192) and posts on drag", async () => {
     await loadView();
     const range = document.getElementById("out-range") as HTMLInputElement;
-    const label = document.getElementById("out-value") as HTMLElement;
-    expect(label.textContent).toBe("8192");
+    const label = document.getElementById("out-value") as HTMLInputElement;
+    expect(label.value).toBe("8192");
 
     hostMessage({
       type: "config",
@@ -8655,11 +8715,11 @@ describe("output tokens slider", () => {
         outputTokens: 32768,
       },
     });
-    expect(label.textContent).toBe("32768");
+    expect(label.value).toBe("32768");
 
     range.value = "20000";
     range.dispatchEvent(new Event("input"));
-    expect(label.textContent).toBe("20000");
+    expect(label.value).toBe("20000");
     range.dispatchEvent(new Event("change"));
     expect(posted).toContainEqual({ type: "setOutputTokens", value: 20000 });
   });
@@ -8677,9 +8737,10 @@ describe("sampler (radio + slider)", () => {
   it("renders the ACTIVE sampler value and posts on drag", async () => {
     await loadView();
     const range = document.getElementById("samp-range") as HTMLInputElement;
-    const label = document.getElementById("samp-value") as HTMLElement;
-    // Temperature by default, no value -> Auto.
-    expect(label.textContent).toBe("Auto");
+    const label = document.getElementById("samp-value") as HTMLInputElement;
+    // Temperature by default, no value -> Auto: a BLANK box with Auto as its placeholder.
+    expect(label.value).toBe("");
+    expect(label.placeholder).toBe("Auto");
     // Auto snaps the slider to the default (1.0).
     expect(range.value).toBe("1");
     expect((document.getElementById("sampler-temp") as HTMLInputElement).checked).toBe(true);
@@ -8688,25 +8749,75 @@ describe("sampler (radio + slider)", () => {
       type: "config",
       config: { provider: "openai", model: "gpt-4o", hasKey: true, models: [], providerModels: [], temperature: 0.7 },
     });
-    expect(label.textContent).toBe("0.7");
+    expect(label.value).toBe("0.7");
 
     range.value = "1.5";
     range.dispatchEvent(new Event("input"));
-    expect(label.textContent).toBe("1.5");
+    expect(label.value).toBe("1.5");
     range.dispatchEvent(new Event("change"));
     expect(posted).toContainEqual({ type: "setSamplerValue", value: 1.5 });
+  });
+
+  it("takes a TYPED value: Enter posts it, and the draft never sent anything", async () => {
+    await loadView();
+    const range = document.getElementById("samp-range") as HTMLInputElement;
+    const label = document.getElementById("samp-value") as HTMLInputElement;
+
+    label.value = "1.3";
+    label.dispatchEvent(new Event("input"));
+    // Typing moves the track (the panel never contradicts itself) but sends nothing.
+    expect(range.value).toBe("1.3");
+    expect(posted.some((m) => (m as { type?: string }).type === "setSamplerValue")).toBe(false);
+
+    label.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", cancelable: true }));
+    expect(posted).toContainEqual({ type: "setSamplerValue", value: 1.3 });
+    expect(label.value).toBe("1.3");
+  });
+
+  it("commits on blur, clamps what the typist cannot, and Escape throws the draft away", async () => {
+    await loadView();
+    const range = document.getElementById("samp-range") as HTMLInputElement;
+    const label = document.getElementById("samp-value") as HTMLInputElement;
+
+    label.value = "9"; // out of the temperature range
+    label.dispatchEvent(new Event("blur"));
+    expect(posted).toContainEqual({ type: "setSamplerValue", value: 2 });
+    expect(label.value).toBe("2");
+    expect(range.value).toBe("2");
+
+    label.value = "0.4";
+    label.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
+    expect(label.value).toBe("2");
+    expect(posted).not.toContainEqual({ type: "setSamplerValue", value: 0.4 });
+  });
+
+  it("clears the box to Auto when the number is emptied — and zero is still a value", async () => {
+    await loadView();
+    const label = document.getElementById("samp-value") as HTMLInputElement;
+    const auto = document.getElementById("samp-auto") as HTMLButtonElement;
+
+    label.value = "0";
+    label.dispatchEvent(new Event("blur"));
+    expect(posted).toContainEqual({ type: "setSamplerValue", value: 0 });
+    expect(auto.classList.contains("is-on")).toBe(false);
+
+    label.value = ""; // blank = Auto, NOT a typed zero
+    label.dispatchEvent(new Event("blur"));
+    expect(posted).toContainEqual({ type: "setSamplerValue", value: null });
+    expect(auto.classList.contains("is-on")).toBe(true);
+    expect(label.value).toBe("");
   });
 
   it("clamps to the ACTIVE scale and the Auto button resets to null", async () => {
     await loadView();
     const range = document.getElementById("samp-range") as HTMLInputElement;
-    const label = document.getElementById("samp-value") as HTMLElement;
+    const label = document.getElementById("samp-value") as HTMLInputElement;
     const auto = document.getElementById("samp-auto") as HTMLButtonElement;
 
     range.value = "2"; // temperature scale cap
     range.dispatchEvent(new Event("change"));
     expect(posted).toContainEqual({ type: "setSamplerValue", value: 2 });
-    expect(label.textContent).toBe("2");
+    expect(label.value).toBe("2");
 
     // Switch to Top-P: the radio posts the mode AND the scale re-adapts
     // IMMEDIATELY (before the host config push), so the whole track is usable.
@@ -8727,12 +8838,12 @@ describe("sampler (radio + slider)", () => {
         topP: 0.9,
       },
     });
-    expect(label.textContent).toBe("0.9");
+    expect(label.value).toBe("0.9");
     expect((document.getElementById("sampler-topp") as HTMLInputElement).checked).toBe(true);
 
     auto.click();
     expect(posted).toContainEqual({ type: "setSamplerValue", value: null });
-    expect(label.textContent).toBe("Auto");
+    expect(label.value).toBe("");
     // Auto SNAPS the slider to the sampler default (1.0).
     expect(range.value).toBe("1");
   });
@@ -11025,19 +11136,19 @@ describe("DB vacuum — sliders, info-only modal, live settings", () => {
   it("sliders update their value labels live and persist on change", async () => {
     await loadView();
     const th = document.getElementById("sm-vacuum-threshold") as HTMLInputElement;
-    const thVal = document.getElementById("sm-vacuum-threshold-val") as HTMLElement;
+    const thVal = document.getElementById("sm-vacuum-threshold-val") as HTMLInputElement;
     const min = document.getElementById("sm-vacuum-min") as HTMLInputElement;
-    const minVal = document.getElementById("sm-vacuum-min-val") as HTMLElement;
+    const minVal = document.getElementById("sm-vacuum-min-val") as HTMLInputElement;
 
     th.value = "42";
     th.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(thVal.textContent).toBe("42%");
+    expect(thVal.value).toBe("42");
     th.dispatchEvent(new Event("change", { bubbles: true }));
     expect(posted).toContainEqual({ type: "setVacuumThreshold", percent: 42 });
 
     min.value = "33";
     min.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(minVal.textContent).toBe("33 MB");
+    expect(minVal.value).toBe("33");
     min.dispatchEvent(new Event("change", { bubbles: true }));
     expect(posted).toContainEqual({ type: "setVacuumMinFreeMB", mb: 33 });
   });
@@ -11046,9 +11157,9 @@ describe("DB vacuum — sliders, info-only modal, live settings", () => {
     await loadView();
     hostMessage({ type: "dbVacuumSettings", threshold: 30, minFreeMB: 40 });
     expect((document.getElementById("sm-vacuum-threshold") as HTMLInputElement).value).toBe("30");
-    expect((document.getElementById("sm-vacuum-threshold-val") as HTMLElement).textContent).toBe("30%");
+    expect((document.getElementById("sm-vacuum-threshold-val") as HTMLInputElement).value).toBe("30");
     expect((document.getElementById("sm-vacuum-min") as HTMLInputElement).value).toBe("40");
-    expect((document.getElementById("sm-vacuum-min-val") as HTMLElement).textContent).toBe("40 MB");
+    expect((document.getElementById("sm-vacuum-min-val") as HTMLInputElement).value).toBe("40");
   });
 
   it("the dbVacuum modal is INFO ONLY (no editable input inside it)", async () => {
@@ -12131,5 +12242,269 @@ describe("⌘C / Ctrl+C: the OS copy shortcut (webview)", () => {
     } finally {
       clip.restore();
     }
+  });
+});
+
+describe("typed numbers: the box beside a slider is the same decision, written", () => {
+  /** Type into a box the way a person does: text first, then the key that means "done". */
+  const type = (box: HTMLInputElement, text: string): void => {
+    box.value = text;
+    box.dispatchEvent(new Event("input"));
+  };
+  const enter = (box: HTMLInputElement): void => {
+    box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", cancelable: true }));
+  };
+
+  it("Window takes 128k, sends nothing while typing, and the track follows", async () => {
+    await loadView();
+    const range = document.getElementById("ctx-range") as HTMLInputElement;
+    const box = document.getElementById("ctx-value") as HTMLInputElement;
+
+    type(box, "128k");
+    // A DRAFT moves the slider (the panel never contradicts itself) but decides nothing.
+    expect(range.value).toBe("128000");
+    expect(posted.some((m) => (m as { type?: string }).type === "setContextWindow")).toBe(false);
+
+    enter(box);
+    expect(posted).toContainEqual({ type: "setContextWindow", value: 128_000 });
+    expect(box.value).toBe("128000"); // the mask's suffix is a way IN, not the stored form
+    expect(range.value).toBe("128000");
+  });
+
+  it("Window clamps what the mask cannot refuse: the cap the model has, not the typed number", async () => {
+    await loadView();
+    const range = document.getElementById("ctx-range") as HTMLInputElement;
+    const box = document.getElementById("ctx-value") as HTMLInputElement;
+    const cap = Number(range.max);
+    type(box, String(cap * 3));
+    enter(box);
+    expect(posted).toContainEqual({ type: "setContextWindow", value: cap });
+    expect(box.value).toBe(String(cap));
+  });
+
+  it("Output tokens types a count and Escape puts the held value back", async () => {
+    await loadView();
+    const range = document.getElementById("out-range") as HTMLInputElement;
+    const box = document.getElementById("out-value") as HTMLInputElement;
+    type(box, "16k");
+    enter(box);
+    expect(posted).toContainEqual({ type: "setOutputTokens", value: 16_000 });
+
+    type(box, "999");
+    box.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
+    expect(box.value).toBe("16000");
+    // Nothing was decided by the abandoned draft.
+    expect(posted.filter((m) => (m as { type?: string }).type === "setOutputTokens")).toHaveLength(1);
+    expect(range.value).toBe("16000");
+  });
+
+  it("Parallel: blank means no cap, a typed 0 lands on 1, and above 99 comes back as 99", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, maxParallelSubAgents: 4 },
+    });
+    const range = document.getElementById("par-range") as HTMLInputElement;
+    const box = document.getElementById("par-value") as HTMLInputElement;
+    expect(box.value).toBe("4");
+
+    posted.length = 0;
+    // A typed 0 is a NUMBER, not the absence of one: it lands on the first stop (the most
+    // restrictive cap). "No cap" has two doors of its own — the blank box and the last stop.
+    type(box, "0");
+    enter(box);
+    expect(posted).toContainEqual({ type: "setMaxParallelSubAgents", value: 1 });
+    expect(box.value).toBe("1");
+    expect(range.value).toBe("1");
+
+    posted.length = 0;
+    type(box, "");
+    enter(box);
+    expect(posted).toContainEqual({ type: "setMaxParallelSubAgents", value: 0 });
+    // 0 is the ABSENCE of a cap: the box goes blank, the placeholder says it with one symbol, and
+    // the thumb parks on the sentinel — the only position that can show it.
+    expect(box.value).toBe("");
+    expect(box.placeholder).toBe("∞");
+    expect(range.value).toBe("100");
+
+    posted.length = 0;
+    type(box, "250");
+    enter(box);
+    expect(posted).toContainEqual({ type: "setMaxParallelSubAgents", value: 99 });
+    expect(box.value).toBe("99");
+  });
+
+  it("Parallel: an emptied box means Off, because blank is what Off looks like", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: { provider: "openai", model: "gpt-4o", hasKey: true, contextWindow: 128000, maxParallelSubAgents: 4 },
+    });
+    const box = document.getElementById("par-value") as HTMLInputElement;
+    posted.length = 0;
+    type(box, "");
+    box.dispatchEvent(new Event("blur"));
+    expect(posted).toContainEqual({ type: "setMaxParallelSubAgents", value: 0 });
+    expect(box.value).toBe("");
+  });
+
+  it("Loop Guard fields take a typed number and post it as an override", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        contextWindow: 128000,
+        loopGuard: "medium",
+        loopGuardRanges: [
+          { key: "maxNudges", min: 1, max: 10, step: 1, integer: true },
+          { key: "reasoningThreshold", min: 0.05, max: 1, step: 0.05, integer: false },
+        ],
+        loopGuardPresets: { medium: { maxNudges: 2, reasoningThreshold: 0.5 } },
+      },
+    });
+    const range = document.getElementById("lgr-maxNudges") as HTMLInputElement;
+    const box = document.getElementById("lgv-maxNudges") as HTMLInputElement;
+    expect(box.value).toBe("2");
+
+    posted.length = 0;
+    type(box, "9");
+    expect(posted.some((m) => (m as { type?: string }).type === "setLoopGuardOverrides")).toBe(false);
+    enter(box);
+    expect(range.value).toBe("9");
+    const msg = posted.at(-1) as { type: string; overrides: Record<string, number> };
+    expect(msg.type).toBe("setLoopGuardOverrides");
+    expect(msg.overrides.maxNudges).toBe(9);
+    expect(msg.overrides.reasoningThreshold).toBe(0.5); // the sibling keeps its own value
+  });
+
+  it("the compaction boxes take a number and keep the '%' out of the value", async () => {
+    await loadView();
+    (document.getElementById("compact-settings-btn") as HTMLButtonElement).click();
+    const thresholdRange = document.getElementById("compact-threshold-input") as HTMLInputElement;
+    const thresholdBox = document.getElementById("compact-threshold-value") as HTMLInputElement;
+    const targetRange = document.getElementById("compact-target-input") as HTMLInputElement;
+    const targetBox = document.getElementById("compact-target-value") as HTMLInputElement;
+
+    // The unit is MARKUP inside the number's area, never part of `.value`: what you type is what
+    // the host parses, and both ways in write the same draft.
+    type(thresholdBox, "90");
+    expect(thresholdRange.value).toBe("90"); // the draft already moves the track
+    enter(thresholdBox);
+    expect(thresholdBox.value).toBe("90"); // the '90%' the row reads is 90 plus the unit
+    // Auto follows the trigger: an eighth of 90.
+    expect(targetRange.value).toBe("11");
+
+    // Typing a landing point LEAVES Auto, exactly like dragging its slider does.
+    type(targetBox, "40");
+    enter(targetBox);
+    expect(targetRange.value).toBe("40");
+    expect(document.getElementById("compact-target-auto")?.classList.contains("is-on")).toBe(false);
+
+    // An emptied box is not an answer: the Default KEY owns the mode, so the number comes back.
+    type(targetBox, "");
+    enter(targetBox);
+    expect(targetBox.value).toBe("40");
+    expect(targetRange.value).toBe("40");
+    // Nothing was posted: this dialog writes on Save, not on a keypress.
+    expect(posted.filter((m) => (m as { type: string }).type === "setCompactionTarget")).toEqual([]);
+  });
+
+  it("the two VACUUM boxes commit the same message their sliders do", async () => {
+    await loadView();
+    hostMessage({ type: "dbVacuumSettings", threshold: 10, minFreeMB: 0 });
+    const thBox = document.getElementById("sm-vacuum-threshold-val") as HTMLInputElement;
+    const minBox = document.getElementById("sm-vacuum-min-val") as HTMLInputElement;
+    expect(thBox.value).toBe("10");
+    expect(minBox.value).toBe("0");
+
+    posted.length = 0;
+    type(thBox, "42");
+    expect(posted.length).toBe(0); // a draft is not a decision
+    enter(thBox);
+    expect(posted).toContainEqual({ type: "setVacuumThreshold", percent: 42 });
+    expect((document.getElementById("sm-vacuum-threshold") as HTMLInputElement).value).toBe("42");
+
+    posted.length = 0;
+    type(minBox, "33");
+    enter(minBox);
+    expect(posted).toContainEqual({ type: "setVacuumMinFreeMB", mb: 33 });
+
+    // The doors to the same value cannot disagree, so the box is bounded like the track: a draft
+    // too big for the domain is legal SHAPE (you may be about to type "1024") and is clamped when
+    // it commits, which is also when it is posted.
+    posted.length = 0;
+    type(minBox, "99999");
+    expect((document.getElementById("sm-vacuum-min") as HTMLInputElement).value).toBe("33"); // draft, not value
+    enter(minBox);
+    expect(minBox.value).toBe("10240");
+    expect(posted).toContainEqual({ type: "setVacuumMinFreeMB", mb: 10240 });
+    type(thBox, "0");
+    expect(thBox.value).toBe("0"); //…0 is writable, and the COMMIT is what lifts it to the domain
+    enter(thBox);
+    expect(posted).toContainEqual({ type: "setVacuumThreshold", percent: 1 });
+  });
+
+  it("Loop Guard fields refuse what the host's domain refuses", async () => {
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        contextWindow: 128000,
+        loopGuard: "medium",
+        loopGuardRanges: [
+          { key: "maxNudges", min: 1, max: 10, step: 1, integer: true },
+          { key: "reasoningThreshold", min: 0.05, max: 1, step: 0.05, integer: false },
+        ],
+        loopGuardPresets: { medium: { maxNudges: 2, reasoningThreshold: 0.5 } },
+      },
+    });
+    const box = document.getElementById("lgv-reasoningThreshold") as HTMLInputElement;
+    type(box, "1.7"); // the threshold stops at 1
+    enter(box);
+    expect(box.value).toBe("1");
+  });
+
+  it("an alert's numbers can be TYPED, and the answer carries what the box shows", async () => {
+    await loadView();
+    hostMessage({
+      type: "modal",
+      kind: "alert",
+      modalId: 31,
+      alertKind: "info",
+      title: "Model limits unknown",
+      message: "set the two values",
+      confirmText: "Apply",
+      fields: [
+        { key: "contextWindow", label: "Context window", min: 1000, max: 2_048_000, step: 1000, value: 128_000 },
+        { key: "outputTokens", label: "Max output tokens", min: 256, max: 512_000, step: 256, value: 16_384 },
+      ],
+    });
+    const boxes = [...document.querySelectorAll<HTMLInputElement>("#alert-fields .num-input")];
+    expect(boxes).toHaveLength(2);
+    expect(boxes.map((b) => b.value)).toEqual(["128000", "16384"]);
+
+    posted.length = 0;
+    // No `k` suffix here: an alert's field carries no unit of its own (a step of 1000 is as likely
+    // to be a percentage), so the mask takes digits and the host's domain, nothing more.
+    type(boxes[0], "200000");
+    enter(boxes[0]);
+    expect(boxes[0].value).toBe("200000");
+    // Still LOCAL: the answer is only posted when the user says so.
+    expect(posted).toEqual([]);
+
+    boxes[1].value = "8192";
+    boxes[1].dispatchEvent(new Event("input"));
+    (document.getElementById("alert-ok") as HTMLButtonElement).click();
+    expect(posted).toContainEqual({
+      type: "modalResponse",
+      id: 31,
+      value: { contextWindow: 200_000, outputTokens: 8192 },
+    });
   });
 });

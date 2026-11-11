@@ -124,9 +124,10 @@
     "mutate:tool-scope": "stryker run stryker/tool-scope.conf.json",
     "mutate:mode-policy": "stryker run stryker/mode-policy.conf.json",
     "mutate:webview": "stryker run stryker/webview.conf.json",
+    "mutate:num-field": "stryker run stryker/num-field.conf.json",
     "mutate:chat-panel": "stryker run stryker/chat-panel.conf.json",
     "mutate:session-recovery": "stryker run stryker/session-recovery.conf.json",
-    "mutate:ratchet": "npm run mutate:compactor && npm run mutate:loop-guard && npm run mutate:overflow && npm run mutate:tool-scope && npm run mutate:mode-policy && npm run mutate:webview && npm run mutate:chat-panel && npm run mutate:session-recovery",
+    "mutate:ratchet": "npm run mutate:compactor && npm run mutate:loop-guard && npm run mutate:overflow && npm run mutate:tool-scope && npm run mutate:mode-policy && npm run mutate:webview && npm run mutate:num-field && npm run mutate:chat-panel && npm run mutate:session-recovery",
     "package": "vsce package --no-dependencies",
     "format": "prettier --write 'src/**/*.ts' 'media/*.css'",
     "format:check": "prettier --check 'src/**/*.ts' 'media/*.css'"

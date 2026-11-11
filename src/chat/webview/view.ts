@@ -28,6 +28,7 @@ import { createFind } from "./find";
 import { createMcpCard } from "./mcp-card";
 import { createMcpToolsPopover } from "./mcp-tools-popover";
 import { createMcpEditor } from "./mcp-editor";
+import { createNumberField, type NumberBounds, type NumberField } from "./num-field";
 // The one hover-explanation mechanism for the whole panel, and the catalog it reads its text
 // from: no prose lives in this file any more (see src/i18n/).
 import { clearTip, installTips, setHelpEnabled, setTip } from "./tips";
@@ -313,20 +314,22 @@ const mmModelsDevWarn = document.getElementById("mm-modelsdev-warn") as HTMLDivE
 const modelSearchInput = document.getElementById("model-search") as HTMLInputElement;
 const thinkingRadios = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="thinking-level"]'));
 const ctxRange = document.getElementById("ctx-range") as HTMLInputElement;
-const ctxValue = document.getElementById("ctx-value") as HTMLSpanElement;
+const ctxValue = document.getElementById("ctx-value") as HTMLInputElement;
 const ctxRangeLabel = document.getElementById("ctx-range-label") as HTMLSpanElement;
 const outRange = document.getElementById("out-range") as HTMLInputElement;
-const outValue = document.getElementById("out-value") as HTMLSpanElement;
+const outValue = document.getElementById("out-value") as HTMLInputElement;
 const outRangeLabel = document.getElementById("out-range-label") as HTMLSpanElement;
 const sampRange = document.getElementById("samp-range") as HTMLInputElement;
 const sampRangeLabel = document.getElementById("samp-range-label") as HTMLSpanElement;
-const sampValue = document.getElementById("samp-value") as HTMLSpanElement;
+const sampValue = document.getElementById("samp-value") as HTMLInputElement;
 const sampAuto = document.getElementById("samp-auto") as HTMLButtonElement;
 const samplerTemp = document.getElementById("sampler-temp") as HTMLInputElement;
 const samplerTopp = document.getElementById("sampler-topp") as HTMLInputElement;
 const presenceRange = document.getElementById("presence-range") as HTMLInputElement;
+const presenceValue = document.getElementById("presence-value") as HTMLInputElement;
 const presenceAuto = document.getElementById("presence-auto") as HTMLButtonElement;
 const freqRange = document.getElementById("freq-range") as HTMLInputElement;
+const freqValue = document.getElementById("freq-value") as HTMLInputElement;
 const freqAuto = document.getElementById("freq-auto") as HTMLButtonElement;
 const metTokens = document.getElementById("met-tokens") as HTMLSpanElement;
 const metCtx = document.getElementById("met-ctx") as HTMLSpanElement;
@@ -345,8 +348,8 @@ const compactTargetInput = document.getElementById("compact-target-input") as HT
 const compactTargetAuto = document.getElementById("compact-target-auto") as HTMLButtonElement;
 const compactPreview = document.getElementById("compact-preview") as HTMLPreElement;
 const compactNote = document.getElementById("compact-note") as HTMLParagraphElement;
-const compactThresholdValue = document.getElementById("compact-threshold-value") as HTMLSpanElement;
-const compactTargetValue = document.getElementById("compact-target-value") as HTMLSpanElement;
+const compactThresholdValue = document.getElementById("compact-threshold-value") as HTMLInputElement;
+const compactTargetValue = document.getElementById("compact-target-value") as HTMLInputElement;
 
 const init = JSON.parse(
   (document.getElementById("harny-view-init") as HTMLScriptElement).textContent ?? "{}",
@@ -3973,13 +3976,13 @@ const alertExtraConfirms = new Map<string, AlertConfirm>();
 
 /**
  * Build the alert's numeric rows. Same markup family as the Window / Output card
- * (`.num-row` + `.num-range` + `.num-value`), so the two never drift apart: the
- * value label keeps the exact number, the slider is the control.
+ * (`.num-row` + `.num-range` + `.num-input`), so the two never drift apart: the
+ * number is the control, the slider is the fast way to its neighbourhood.
  *
- * The label starts from the EXACT value the host sent and is what the answer
- * carries: the range snaps its thumb to the nearest step, so reading the input
- * alone would silently rewrite a detected 32 768 into 33 000 for someone who
- * never touched the control.
+ * The box starts from the EXACT value the host sent and is what the answer carries: the range
+ * snaps its thumb to the nearest step, so reading the input alone would silently rewrite a
+ * detected 32 768 into 33 000 for someone who never touched the control. Typing it is the whole
+ * reason this row exists.
  */
 function renderAlertFields(fields: AlertField[] | undefined): void {
   alertFieldStates.clear();
@@ -4006,17 +4009,38 @@ function renderAlertFields(fields: AlertField[] | undefined): void {
     input.value = String(f.value);
     input.setAttribute("aria-label", f.label);
     if (f.hint) input.title = f.hint;
-    const shown = document.createElement("span");
-    shown.className = "num-value";
+    const shown = document.createElement("input");
+    shown.type = "text";
+    const whole = Number.isInteger(f.step);
+    shown.inputMode = whole ? "numeric" : "decimal";
+    shown.className = "num-input";
+    shown.setAttribute("aria-label", f.label);
+    if (f.hint) shown.title = f.hint;
+    // The answer is LOCAL (nothing is posted until the user confirms), so the commit writes the
+    // draft the confirm reads back — and the box is the truth, exactly as the label was.
     const field = { value: f.value };
-    const show = (): void => {
-      shown.textContent = String(field.value);
-    };
+    const bounds = { min: f.min, max: Math.max(f.min, f.max), step: f.step > 0 ? f.step : 1, integer: whole };
+    const numberField = createNumberField({
+      input: shown,
+      range: input,
+      bounds,
+      // The answer is the BOX, so the draft follows every legal keystroke; the commit only makes
+      // it final (a click on OK blurs the field first, so the value is already the typed one).
+      onDraft: (v) => {
+        if (v === undefined || v < bounds.min || v > bounds.max) return;
+        field.value = whole ? Math.round(v) : v;
+      },
+      commit: (v) => {
+        if (v === null) return;
+        field.value = v;
+        numberField.render(v);
+      },
+    });
     input.addEventListener("input", () => {
       field.value = Number(input.value);
-      show();
+      numberField.render(field.value);
     });
-    show();
+    numberField.render(f.value);
     numRow.append(input, shown);
     row.append(label, numRow);
     alertFields.append(row);
@@ -4151,8 +4175,8 @@ const sessionsSearchInput = document.getElementById("sessions-search") as HTMLIn
 // DB compaction (VACUUM): the All-sessions footer controls + the shared modal.
 const smVacuumThreshold = document.getElementById("sm-vacuum-threshold") as HTMLInputElement;
 const smVacuumMin = document.getElementById("sm-vacuum-min") as HTMLInputElement;
-const smVacuumThresholdVal = document.getElementById("sm-vacuum-threshold-val") as HTMLSpanElement;
-const smVacuumMinVal = document.getElementById("sm-vacuum-min-val") as HTMLSpanElement;
+const smVacuumThresholdVal = document.getElementById("sm-vacuum-threshold-val") as HTMLInputElement;
+const smVacuumMinVal = document.getElementById("sm-vacuum-min-val") as HTMLInputElement;
 const smVacuumBtn = document.getElementById("sm-vacuum-btn") as HTMLButtonElement;
 const smVacuumStats = document.getElementById("sm-vacuum-stats") as HTMLDivElement;
 const dbVacuumModal = document.getElementById("db-vacuum-modal") as HTMLDivElement;
@@ -4214,11 +4238,11 @@ function vacuumStatsHtml(stats: VacuumStats | undefined): string {
 function renderSmVacuum(stats: VacuumStats | undefined, threshold: number, minFreeMB: number): void {
   if (threshold > 0) {
     smVacuumThreshold.value = String(threshold);
-    smVacuumThresholdVal.textContent = threshold + "%";
+    smVacuumThresholdField.render(threshold);
   }
   if (minFreeMB >= 0) {
     smVacuumMin.value = String(minFreeMB);
-    smVacuumMinVal.textContent = minFreeMB + " MB";
+    smVacuumMinField.render(minFreeMB);
   }
   smVacuumStats.innerHTML = vacuumStatsHtml(stats);
 }
@@ -4260,14 +4284,41 @@ dbVacuumRun.addEventListener("click", () => {
 dbVacuumClose.addEventListener("click", () => closeDbVacuumModal());
 dbVacuumModal.querySelector(".dv-backdrop")?.addEventListener("click", () => closeDbVacuumModal());
 smVacuumBtn.addEventListener("click", () => vscode.postMessage({ type: "openVacuumModal" }));
+/** The two VACUUM knobs apply IMMEDIATELY (the panel says so): the slider posts on release, and the
+ *  number box posts on `Enter`/leaving it — the same message, so the two ways in cannot drift. */
+const smVacuumThresholdField: NumberField = createNumberField({
+  input: smVacuumThresholdVal,
+  range: smVacuumThreshold,
+  bounds: { min: 1, max: 100, step: 1, integer: true },
+  commit: (value) => {
+    if (value === null) return;
+    // The commit arrives already clamped by the field's domain: draw THAT, not the draft, so the
+    // box cannot sit on a number the slider and the host would refuse (the echo from the host
+    // confirms the same value).
+    smVacuumThreshold.value = String(value);
+    smVacuumThresholdField.render(value);
+    vscode.postMessage({ type: "setVacuumThreshold", percent: value });
+  },
+});
+const smVacuumMinField: NumberField = createNumberField({
+  input: smVacuumMinVal,
+  range: smVacuumMin,
+  bounds: { min: 0, max: 10240, step: 1, integer: true },
+  commit: (value) => {
+    if (value === null) return;
+    smVacuumMin.value = String(value);
+    smVacuumMinField.render(value);
+    vscode.postMessage({ type: "setVacuumMinFreeMB", mb: value });
+  },
+});
 smVacuumThreshold.addEventListener("input", () => {
-  smVacuumThresholdVal.textContent = smVacuumThreshold.value + "%";
+  smVacuumThresholdField.render(Number(smVacuumThreshold.value));
 });
 smVacuumThreshold.addEventListener("change", () =>
   vscode.postMessage({ type: "setVacuumThreshold", percent: Number(smVacuumThreshold.value) }),
 );
 smVacuumMin.addEventListener("input", () => {
-  smVacuumMinVal.textContent = smVacuumMin.value + " MB";
+  smVacuumMinField.render(Number(smVacuumMin.value));
 });
 smVacuumMin.addEventListener("change", () =>
   vscode.postMessage({ type: "setVacuumMinFreeMB", mb: Number(smVacuumMin.value) }),
@@ -4764,7 +4815,7 @@ providersSaveBtn.addEventListener("click", () => {
 // Both are persisted ON THE SESSION (not the config file): they tune how THIS
 // conversation runs. Undefined loopGuard = the "normal" preset.
 const parRange = document.getElementById("par-range") as HTMLInputElement;
-const parValue = document.getElementById("par-value") as HTMLSpanElement;
+const parValue = document.getElementById("par-value") as HTMLInputElement;
 const lgRadios = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="lg-level"]'));
 const lgResponse = document.getElementById("lg-response") as HTMLInputElement;
 const lgCollapse = document.getElementById("lg-collapse") as HTMLButtonElement;
@@ -4821,24 +4872,66 @@ function applyLgEnabledState(level: LoopGuardLevel, locked: boolean): void {
   lgFieldsEl.classList.toggle("is-off", level === "off");
 }
 
-/** 0 = no cap; 1–100 = the cap. */
-function clampParallel(v: number): number {
+/** The biggest cap. It is one BELOW the track's top on purpose: 100 is not a cap, it is where the
+ *  track says "no cap" — and a cap that means the same as the sentinel next door is a cap nobody
+ *  can describe. The host still validates 0..100 and 4 is the default. */
+const PARALLEL_MAX = 99;
+/** The TRACK's last stop — ONE PAST the domain, and not a cap at all: it means "no cap".
+ *
+ * The scale used to run 0..100 with 0 = no cap, which put the most PERMISSIVE value at the most
+ * restrictive end: the leftmost stop is where a slider says "the least", and it said "the most".
+ * A slider reads less → more, so "no cap" belongs after the biggest cap there is, not before the
+ * smallest. Hence a sentinel POSITION, translated to 0 in exactly one place. */
+const PARALLEL_NO_LIMIT = PARALLEL_MAX + 1;
+
+/** A CAP, 1..99. Zero never comes out of here: it is the WIRE's word for "no cap", not a number
+ *  on the track — and a typed `0` is a number like any other, so it lands on the first stop. */
+function clampParallelCap(v: number): number {
   if (!Number.isFinite(v)) return DEFAULT_PARALLEL;
-  return Math.min(100, Math.max(0, Math.trunc(v)));
+  return Math.min(PARALLEL_MAX, Math.max(1, Math.trunc(v)));
 }
 
-/** "Off" for 0 (no cap), the number otherwise. */
-function parLabel(v: number): string {
-  return v <= 0 ? "Off" : String(v);
+/** Position on the track → cap. The sentinel is the only way a slider can produce a 0. */
+function capFromTrack(pos: number): number {
+  return pos >= PARALLEL_NO_LIMIT ? 0 : clampParallelCap(pos);
+}
+
+/** Put a cap ON SCREEN: the box, the thumb, and what a screen reader hears. No post, because
+ *  rendering host state and answering the user are two different acts. */
+function renderParallel(cap: number): void {
+  const v = cap === 0 ? 0 : clampParallelCap(cap);
+  parField.render(v); // 0 renders as the blank box (`empty: 0`), which is where "no cap" lives
+  parRange.value = String(v === 0 ? PARALLEL_NO_LIMIT : v);
+  // The sentinel is a POSITION, not a cap: read as written it would announce "101 sub-agents".
+  parRange.setAttribute("aria-valuetext", v === 0 ? "No limit" : v + (v === 1 ? " sub-agent" : " sub-agents"));
+}
+
+/**
+ * One clamp, one post, one render: a typed 250 comes back as 99 instead of leaving the number
+ * disagreeing with the track that would have stopped at 99, and `0` (no cap) parks the thumb on
+ * the sentinel — the only position that can show it.
+ */
+function setParallel(cap: number): void {
+  const v = cap === 0 ? 0 : clampParallelCap(cap);
+  renderParallel(v);
+  vscode.postMessage({ type: "setMaxParallelSubAgents", value: v });
 }
 
 function sendParallel(): void {
-  const v = clampParallel(Number(parRange.value));
-  parRange.value = String(v);
-  parValue.textContent = parLabel(v);
-  // 0 = explicitly NO cap; 1–100 = the cap.
-  vscode.postMessage({ type: "setMaxParallelSubAgents", value: v });
+  setParallel(capFromTrack(Number(parRange.value)));
 }
+
+// THE OFF STATE LIVES IN THE PLACEHOLDER: 0 is not "zero agents", it is the ABSENCE of a cap, so
+// the box goes blank and the word the label used to print moves into the placeholder. `empty: 0`
+// is what makes blank MEAN off — without it, an emptied box would be a mistake to be undone. The
+// bounds are the DOMAIN, not the track: 1..99, because a typed number is a cap.
+const parField = createNumberField({
+  input: parValue,
+  range: parRange,
+  bounds: { min: 1, max: PARALLEL_MAX, step: 1, integer: true },
+  empty: 0,
+  commit: (v) => setParallel(v ?? 0),
+});
 
 function sendLoopGuard(): void {
   const level = (lgRadios.find((r) => r.checked)?.value ?? "medium") as LoopGuardLevel;
@@ -4861,6 +4954,8 @@ let lgPresets: Record<string, Record<string, number | boolean>> = {};
 /** The SAVED per-session field values (overlaid on the preset). */
 let lgParams: Record<string, number> = {};
 let lgFieldsBuilt = false;
+/** The typed half of each Loop Guard field, by parameter key (built once, with the fields). */
+const lgFieldMap = new Map<string, NumberField>();
 let lgLastLevel: string | null = null;
 let lgLastSession: string | undefined;
 
@@ -4882,9 +4977,12 @@ function buildLgFields(): void {
     name.textContent = nameText;
     // The range is part of the explanation and comes from the host, so it is interpolated.
     setTip(name, key, { min: r.min, max: r.max });
-    const value = document.createElement("span");
-    value.className = "lg-value";
+    const value = document.createElement("input");
+    value.type = "text";
+    value.inputMode = r.integer ? "numeric" : "decimal";
+    value.className = "num-input lg-value";
     value.id = `lgv-${r.key}`;
+    value.setAttribute("aria-label", nameText);
     // The value explains itself with the SAME card: it is the number the explanation is about.
     setTip(value, key, { min: r.min, max: r.max });
     const range = document.createElement("input");
@@ -4895,9 +4993,24 @@ function buildLgFields(): void {
     range.max = String(r.max);
     range.step = String(r.step);
     range.setAttribute("aria-label", nameText);
-    // Live drag: mirror the value into its label and push (rAF-throttled).
+    // Each field carries its own domain (the host sends min/max/step per parameter), so the box
+    // masks and steps exactly like the track beside it — no table of constants to keep in sync.
+    lgFieldMap.set(
+      r.key,
+      createNumberField({
+        input: value,
+        range,
+        bounds: { min: r.min, max: r.max, step: r.step, integer: r.integer === true },
+        commit: (v) => {
+          if (v === null) return;
+          setLgField(r.key, v);
+          sendLoopGuardOverrides();
+        },
+      }),
+    );
+    // Live drag: mirror the value into its box and push (rAF-throttled).
     range.addEventListener("input", () => {
-      value.textContent = range.value;
+      lgFieldMap.get(r.key)?.render(Number(range.value));
       sendLoopGuardOverridesThrottled();
     });
     range.addEventListener("change", sendLoopGuardOverrides);
@@ -4907,12 +5020,16 @@ function buildLgFields(): void {
   lgFieldsBuilt = true;
 }
 
-/** Set one field (slider position + its read-only value label). */
+/**
+ * Set one field (slider position + its box) WITHOUT sending: a host push is not a decision. The
+ * clamp is the host's own grain, so what the box shows is what the slider would have stopped at.
+ */
 function setLgField(key: string, v: number): void {
+  const r = lgRanges.find((x) => x.key === key);
+  const clamped = r ? clampLgValue(r, v) : v;
   const range = lgRangeInput(key);
-  if (range) range.value = String(v);
-  const value = document.getElementById(`lgv-${key}`);
-  if (value) value.textContent = String(v);
+  if (range) range.value = String(clamped);
+  lgFieldMap.get(key)?.render(clamped);
 }
 
 /** Repopulate every field from the preset of the given level, overlaid with
@@ -5022,9 +5139,10 @@ window.addEventListener("resize", layoutControlColumnsSoon);
 
 function renderControl(config: ConfigState): void {
   const cap = config.maxParallelSubAgents;
-  const capV = typeof cap === "number" && cap > 0 ? clampParallel(cap) : 0;
-  parRange.value = String(capV);
-  parValue.textContent = parLabel(capV);
+  // NO OVERRIDE IS NOT "OFF": the agent runs at the config default and then at
+  // DEFAULT_MAX_PARALLEL_SUB_AGENTS (4), so that is what the box shows. Only an EXPLICIT 0 means
+  // no cap, and only that renders blank, with the thumb parked on the track's sentinel.
+  renderParallel(typeof cap === "number" ? cap : DEFAULT_PARALLEL);
   const level: LoopGuardLevel = normalizeLgLevel(config.loopGuard);
   for (const r of lgRadios) r.checked = r.value === level;
   lgResponse.checked = config.loopGuardResponse === true;
@@ -5244,7 +5362,9 @@ mcpConfigure.addEventListener("click", () => mcpEditor.open());
 
 const sendParallelThrottled = rafThrottle(sendParallel);
 parRange.addEventListener("input", () => {
-  parValue.textContent = parLabel(Number(parRange.value));
+  // The track IS the decision (unlike the box, where typing is a draft): render, then send —
+  // coalesced to one post per frame, because a drag fires `input` far faster than the host reads.
+  renderParallel(capFromTrack(Number(parRange.value)));
   sendParallelThrottled();
 });
 parRange.addEventListener("change", sendParallel);
@@ -5828,30 +5948,48 @@ function rafThrottle(fn: () => void): () => void {
 let currentCtxMax = MAX_CONTEXT_WINDOW;
 let currentOutMax = MAX_OUTPUT_TOKENS;
 
+// TWO DOMAINS, ONE OBJECT EACH: the cap and the grain follow the model, so the keyboard has to read
+// them at keystroke time instead of trusting the constants the markup was built with. `tokens`
+// because `128k` is how a window gets written, `integer` because half a token is not a token.
+const ctxBounds: NumberBounds = {
+  min: MIN_CONTEXT_WINDOW,
+  max: MAX_CONTEXT_WINDOW,
+  step: CONTEXT_SLIDER_STEP,
+  integer: true,
+  tokens: true,
+};
+const outBounds: NumberBounds = {
+  min: MIN_OUTPUT_TOKENS,
+  max: MAX_OUTPUT_TOKENS,
+  step: OUTPUT_SLIDER_STEP,
+  integer: true,
+  tokens: true,
+};
+
 function sendContextWindow(value: number): void {
   const v = clampContextWindow(value, currentCtxMax);
-  ctxRange.value = String(v);
-  ctxValue.textContent = String(v);
+  ctxField.render(v);
   vscode.postMessage({ type: "setContextWindow", value: v });
 }
 
-/** Show a host-pushed window value: the LABEL keeps the exact value while the
+/** Show a host-pushed window value: the NUMBER keeps the exact value while the
  * slider sits on the nearest step (dragging afterwards moves by steps). */
 function renderContextWindow(c: ConfigState): void {
   currentCtxMax = c.maxContextWindow ?? MAX_CONTEXT_WINDOW;
   ctxRange.max = String(currentCtxMax);
   ctxRange.step = String(reachableStep(MIN_CONTEXT_WINDOW, currentCtxMax, CONTEXT_SLIDER_STEP));
+  // The keyboard follows the track: same cap, same grain, so `↑` lands where a notch would.
+  ctxBounds.max = currentCtxMax;
+  ctxBounds.step = Number(ctxRange.step);
   ctxRangeLabel.textContent = `(${formatContext(MIN_CONTEXT_WINDOW)} → ${formatContext(currentCtxMax)})`;
   const v = clampContextWindow(c.contextWindow || DEFAULT_CONTEXT_WINDOW, currentCtxMax);
-  ctxRange.value = String(v);
-  ctxValue.textContent = String(v);
+  ctxField.render(v);
 }
 
 // ── Output-tokens slider (max tokens per response) ──
 function sendOutputTokens(value: number): void {
   const v = clampOutputTokens(value, currentOutMax);
-  outRange.value = String(v);
-  outValue.textContent = String(v);
+  outField.render(v);
   vscode.postMessage({ type: "setOutputTokens", value: v });
 }
 
@@ -5859,11 +5997,33 @@ function renderOutputTokens(c: ConfigState): void {
   currentOutMax = c.maxOutputTokens ?? MAX_OUTPUT_TOKENS;
   outRange.max = String(currentOutMax);
   outRange.step = String(reachableStep(MIN_OUTPUT_TOKENS, currentOutMax, OUTPUT_SLIDER_STEP));
+  outBounds.max = currentOutMax;
+  outBounds.step = Number(outRange.step);
   outRangeLabel.textContent = `(${formatContext(MIN_OUTPUT_TOKENS)} → ${formatContext(currentOutMax)})`;
   const v = clampOutputTokens(c.outputTokens ?? DEFAULT_OUTPUT_TOKENS, currentOutMax);
-  outRange.value = String(v);
-  outValue.textContent = String(v);
+  outField.render(v);
 }
+
+// TYPING A NUMBER IS THE SAME DECISION AS DRAGGING ONE: both end in `send*`, which clamps and
+// renders the value that SURVIVED, so a typed 2 000 000 against a 128k model comes back as 128k
+// instead of leaving the box disagreeing with the track. `empty` is absent on purpose — a window
+// has no Auto state, so an emptied box reverts rather than sending something nobody asked for.
+const ctxField = createNumberField({
+  input: ctxValue,
+  range: ctxRange,
+  bounds: ctxBounds,
+  commit: (v) => {
+    if (v !== null) sendContextWindow(v);
+  },
+});
+const outField = createNumberField({
+  input: outValue,
+  range: outRange,
+  bounds: outBounds,
+  commit: (v) => {
+    if (v !== null) sendOutputTokens(v);
+  },
+});
 
 // ── Sampling controls (Temperature, Presence/Frequency penalty) ──
 // Each is a 0.0→2.0 float stepper with an "Auto" reset: digits + ONE
@@ -5878,37 +6038,45 @@ function createFloatControl(
   clamp: (v: number) => number | undefined = clampTemperature,
   /** The provider's default for this knob: where the slider snaps on Auto. */
   defaultValue = 1,
+  /** The scale the box accepts. A MUTABLE object the caller owns, because the sampler's cap
+   *  follows the selected radio and the field has to read it at keystroke time. */
+  bounds: NumberBounds = { min: TEMPERATURE_MIN, max: TEMPERATURE_MAX, step: TEMPERATURE_STEP },
 ): FloatControl {
   const range = document.getElementById(refs.range) as HTMLInputElement;
-  const label = document.getElementById(refs.value) as HTMLSpanElement;
+  const input = document.getElementById(refs.value) as HTMLInputElement;
   const auto = document.getElementById(refs.auto) as HTMLButtonElement;
 
   // Auto = the value is NOT sent; the slider still snaps to the default so the
-  // control visibly shows what the provider will use.
+  // control visibly shows what the provider will use. The BOX goes blank (the placeholder says
+  // "Auto") and the button lights up: with the word gone from the number, that is where the state
+  // lives — and a blank box nobody explained would read as "not set yet".
   const showAuto = (): void => {
-    label.textContent = "Auto";
+    field.render(null);
     range.value = String(defaultValue);
+    auto.classList.add("is-on");
+    auto.setAttribute("aria-pressed", "true");
   };
 
-  const send = (value: number | null): void => {
-    if (value === null) {
-      showAuto();
-      vscode.postMessage({ type: sendType, value: null });
-      return;
-    }
-    const v = clamp(value);
-    if (v === undefined) {
-      showAuto();
-      vscode.postMessage({ type: sendType, value: null });
-      return;
-    }
-    range.value = String(v);
-    label.textContent = String(v);
-    vscode.postMessage({ type: sendType, value: v });
+  const show = (v: number): void => {
+    field.render(v);
+    auto.classList.remove("is-on");
+    auto.setAttribute("aria-pressed", "false");
   };
+
+  // ONE commit path for slider, box and button: clamp, then show what actually survived. A typed
+  // number can never bypass the clamp the track respects.
+  const send = (value: number | null): void => {
+    const v = value === null ? undefined : clamp(value);
+    if (v === undefined) showAuto();
+    else show(v);
+    vscode.postMessage({ type: sendType, value: v ?? null });
+  };
+  // Typing is a DRAFT (the engine mirrors it onto the track, nothing is sent); the slider drags
+  // and the box's commit both come back here.
+  const field = createNumberField({ input, range, bounds, empty: null, commit: send });
   const sendThrottled = rafThrottle(() => send(Number(range.value)));
   range.addEventListener("input", () => {
-    label.textContent = range.value;
+    show(Number(range.value));
     sendThrottled();
   });
   range.addEventListener("change", () => send(Number(range.value)));
@@ -5916,12 +6084,8 @@ function createFloatControl(
   return {
     render: (value: unknown) => {
       const v = typeof value === "number" && Number.isFinite(value) ? Math.round(value * 10) / 10 : undefined;
-      if (v === undefined) {
-        showAuto();
-        return;
-      }
-      range.value = String(v);
-      label.textContent = String(v);
+      if (v === undefined) showAuto();
+      else show(v);
     },
   };
 }
@@ -5929,10 +6093,14 @@ function createFloatControl(
 // Shared sampler stepper: the scale follows the selected radio (0.0–2.0 when
 // Temperature, 0.0–1.0 when Top-P); switching mode resets the value to Auto.
 const samplerClamp = (v: number): number | undefined => (samplerTopp.checked ? clampTopP(v) : clampTemperature(v));
+/** The sampler's editable domain — ONE object, so the field cannot disagree with the track. */
+const samplerBounds: NumberBounds = { min: TEMPERATURE_MIN, max: TEMPERATURE_MAX, step: TEMPERATURE_STEP };
 const samplerControl = createFloatControl(
   { range: "samp-range", value: "samp-value", auto: "samp-auto" },
   "setSamplerValue",
   samplerClamp,
+  1,
+  samplerBounds,
 );
 
 /**
@@ -5945,6 +6113,8 @@ function applySamplerScale(active: "temperature" | "topP"): void {
   sampRange.min = String(TEMPERATURE_MIN);
   sampRange.max = String(max);
   sampRange.step = String(TEMPERATURE_STEP);
+  // The keyboard follows the track: a typed 1.4 is a temperature, not a Top-P.
+  samplerBounds.max = max;
   sampRangeLabel.textContent = `(${TEMPERATURE_MIN.toFixed(1)} → ${max.toFixed(1)})`;
   // The number under the track follows the radio: it explains whichever parameter is selected, so
   // its card has to move with the selection ("Auto" is an answer to the same question).
@@ -6212,22 +6382,53 @@ function renderCompactionNote(): void {
       `already occupy that much. It is saved as ${effective}% (only the summary remains).`;
 }
 
-/** Keep both value labels in sync (a slider carries no text of its own). */
+/** Keep the number boxes in sync with the drafts (a slider carries no text of its own).
+ *
+ * Just the NUMBER: the unit is markup inside the number's area (`media/view.css`, `.num-slot`), so
+ * "10" and "10%" are the same value written once, and the consequence of a pair that disagrees is
+ * the note under the knobs — `renderCompactionNote` — not an annotation crowding the field. */
 function renderCompactionValues(): void {
-  compactThresholdValue.textContent = draftThresholdPct + "%";
+  compactThresholdField.render(draftThresholdPct);
   renderCompactionNote();
-  if (draftTargetIsAuto) {
-    compactTargetValue.textContent = clampAutoTarget(draftThresholdPct) + "% (default)";
-    return;
-  }
-  const effective = effectiveDraftTarget();
-  // The knobs do not constrain each other any more, so the CONSEQUENCE is stated instead of
-  // happening silently at save time: "62% → saved as 36%".
-  compactTargetValue.textContent =
-    effective === draftTargetPct
-      ? draftTargetPct + "%" + (draftTargetPct === 0 ? " (min)" : "")
-      : draftTargetPct + "% → saved as " + effective + "%";
+  // In AUTO the box shows the number that will be stored (an eighth of the trigger): the Default
+  // key carries the mode, the box carries the value.
+  compactTargetField.render(draftTargetIsAuto ? clampAutoTarget(draftThresholdPct) : draftTargetPct);
 }
+
+/** The trigger box: a number 1..100, the same draft the slider moves. An emptied box is not an
+ *  answer (there is no "trigger at nothing"), so committing one puts the current value back. */
+const compactThresholdField: NumberField = createNumberField({
+  input: compactThresholdValue,
+  range: compactThresholdInput,
+  bounds: { min: 1, max: 100, step: 1, integer: true },
+  commit: (value) => {
+    if (value === null) return;
+    draftThresholdPct = clampCompactionThreshold(String(value));
+    // AUTO is the one case where the landing point DOES follow the trigger — that is what the mode
+    // means (an eighth of it). An EXPLICIT value never moves.
+    if (draftTargetIsAuto) showDraftTarget();
+    renderCompactionValues();
+    sendCompactionPreview();
+  },
+});
+
+/** The landing box: 0..100, holding the number that will be saved — an eighth of the trigger while
+ *  the Default key is on, an explicit choice otherwise. An emptied box is not an answer, so
+ *  committing one puts the current value back: the mode belongs to the Default key. */
+const compactTargetField: NumberField = createNumberField({
+  input: compactTargetValue,
+  range: compactTargetInput,
+  bounds: { min: 0, max: 100, step: 1, integer: true },
+  commit: (value) => {
+    if (value === null) return;
+    draftTargetIsAuto = false;
+    draftTargetPct = Math.max(0, Math.min(100, Math.round(value)));
+    compactTargetAuto.classList.remove("is-on");
+    showDraftTarget();
+    renderCompactionValues();
+    sendCompactionPreview();
+  },
+});
 
 function openCompactionSettings(): void {
   // A FRESH draft from what the host confirmed: the modal always opens on the STORED policy,
@@ -6301,12 +6502,12 @@ compactSettingsSave.addEventListener("click", () => {
 const sendContextThrottled = rafThrottle(() => sendContextWindow(Number(ctxRange.value)));
 const sendOutputThrottled = rafThrottle(() => sendOutputTokens(Number(outRange.value)));
 ctxRange.addEventListener("input", () => {
-  ctxValue.textContent = ctxRange.value;
+  ctxField.render(Number(ctxRange.value));
   sendContextThrottled();
 });
 ctxRange.addEventListener("change", () => sendContextWindow(Number(ctxRange.value)));
 outRange.addEventListener("input", () => {
-  outValue.textContent = outRange.value;
+  outField.render(Number(outRange.value));
   sendOutputThrottled();
 });
 outRange.addEventListener("change", () => sendOutputTokens(Number(outRange.value)));
@@ -6752,9 +6953,9 @@ window.addEventListener("message", (e) => {
       break;
     case "dbVacuumSettings":
       smVacuumThreshold.value = String(msg.threshold);
-      smVacuumThresholdVal.textContent = msg.threshold + "%";
+      smVacuumThresholdField.render(msg.threshold);
       smVacuumMin.value = String(msg.minFreeMB);
-      smVacuumMinVal.textContent = msg.minFreeMB + " MB";
+      smVacuumMinField.render(msg.minFreeMB);
       break;
     case "dbVacuumResult": {
       const r = msg.result as
@@ -7050,16 +7251,23 @@ const LOCKS: readonly LockRule[] = [
   { el: compactSettingsBtn, lock: whenActive },
   // ── the request envelope, fixed for the run ──
   { el: ctxRange, lock: whenActive },
+  { el: ctxValue, lock: whenActive },
   { el: outRange, lock: whenActive },
+  { el: outValue, lock: whenActive },
   { el: sampRange, lock: whenActive },
+  // …and the number beside it: a typed value is the same decision as a dragged one.
+  { el: sampValue, lock: whenActive },
   { el: sampAuto, lock: whenActive },
   { el: samplerTemp, lock: whenActive },
   { el: samplerTopp, lock: whenActive },
   { el: presenceRange, lock: whenActive },
+  { el: presenceValue, lock: whenActive },
   { el: presenceAuto, lock: whenActive },
   { el: freqRange, lock: whenActive },
+  { el: freqValue, lock: whenActive },
   { el: freqAuto, lock: whenActive },
   { el: parRange, lock: whenActive },
+  { el: parValue, lock: whenActive },
   // A model that cannot think AND a live run: the lock is still this table's business.
   ...thinkingRadios.map((r): LockRule => ({ el: r, lock: (s) => s.activeBusy || !thinkingCapable })),
   ...lgRadios.map((r): LockRule => ({ el: r, lock: whenActive })),

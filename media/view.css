@@ -4,6 +4,15 @@
    src/chat/view-css.ts (scripts/gen-view-css.mjs, run before every bundle).
    Formatted by prettier (`npm run format`); the CSS-pinning tests normalise whitespace, so a
    rule can be reflowed without breaking them. */
+/* ⚠ THE TEXT SCALE IS NOT DECLARED ANYWHERE (found 2026-11-11, present since the file was created):
+   this sheet USES `--fs-xs/sm/md/lg/xl` 165 times and declares NONE of them, and no other file does
+   either — checked through the whole history, it was never declared. `font-size: var(--fs-xs)` is
+   therefore INVALID, the declaration is dropped, and every one of those rules silently renders at
+   the inherited 1rem. Nothing breaks visibly (a uniform 1rem is still consistent), which is why it
+   survived: it was caught only when a number box, sized in rem against the scale that never
+   applied, came out narrower than the digits it had to show. Left as-is ON PURPOSE — declaring the
+   scale now would shrink most of the panel in one go and needs a deliberate pass of its own.
+   Until then: size FONT-RELATED boxes in `ch`, never against the scale. */
 * {
   box-sizing: border-box;
   margin: 0;
@@ -3312,13 +3321,86 @@ body.no-workspace #mcp-card {
   flex: 1 1 auto;
   min-width: 0;
 }
-.num-value {
+/* ── THE NUMBER YOU CAN TYPE (src/chat/webview/num-field.ts) ──
+   The same slot the read-only label used to fill (same width, same right-aligned tabular figures),
+   so promoting a value to an input does not move a single pixel of the row. What it gains is an
+   AFFORDANCE and nothing else: `cursor: text`, a hairline under the digits on hover, and the accent
+   plus the panel's input background while focused. No border, no box, no fill at rest — beside a
+   slider, a framed field would read as a second control of equal weight instead of the same number
+   written differently. The focus RING is the panel's shared one (keyboard users get it, a mouse
+   click does not paint it), because the hairline alone is not a focus indicator. */
+.num-input {
   flex: 0 0 auto;
+  /* WIDE ENOUGH FOR THE LONGEST THING A DOMAIN CAN HOLD: "2000000" — seven tabular digits, the
+     largest context window. The width is in `ch` on purpose, so it follows the FONT rather than a
+     hand-tuned rem: the old 3.6rem was measured against a text scale that this sheet never
+     actually declares (see the note on `--fs-*` at the top), so the box came out narrower than
+     the digits it was asked to show and clipped the number it exists to display. ONE width for
+     every site — window, output, sampler, parallel, Loop Guard, dialogs — because they are the
+     same control in different rows. */
+  width: calc(7ch + 12px);
   min-width: 3.6rem;
+  padding: 1px 3px;
   text-align: right;
   font-size: var(--fs-xs);
-  color: var(--fg);
   font-variant-numeric: tabular-nums;
+  color: var(--fg);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid transparent;
+  border-radius: 3px;
+  cursor: text;
+}
+/* A blank box is the Auto state: the placeholder has to be READABLE (opacity 1 — browsers fade it),
+   and quiet enough not to be mistaken for a value. */
+.num-input::placeholder {
+  color: var(--muted-2);
+  opacity: 1;
+}
+.num-input:hover:not(:disabled) {
+  border-bottom-color: var(--overlay-3);
+}
+.num-input:focus {
+  outline: none;
+  border-bottom-color: var(--accent);
+  background: var(--input-bg);
+}
+.num-input:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+.num-input:disabled {
+  opacity: 0.5;
+  cursor: default;
+  border-bottom-color: transparent;
+}
+/* ── THE UNIT BELONGS TO THE NUMBER ──
+   "80" alone is a reading, "80%" is the value — and in these rows the label is a sentence
+   ("Auto-compaction trigger…", "Min reclaimable"), so the unit cannot live there without being
+   read as prose. It rides INSIDE the number's own area instead: same figures, same baseline, a
+   step quieter in colour. It is decoration, NOT content: it never enters `.value`, so it cannot be
+   half-typed, deleted, selected or pasted away, and `num-field`'s mask never sees it. The inner
+   input drops its right padding so the unit sits flush against the digits — no gap to read as
+   "the number, then something else". */
+.num-slot {
+  display: inline-flex;
+  align-items: baseline;
+  flex: 0 0 auto;
+}
+.num-slot > .num-input {
+  padding-right: 0;
+}
+.num-unit {
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-2);
+  user-select: none;
+}
+/* The Auto key, WHILE Auto: the mode lives in the KEY, not in the number — the box keeps showing
+   the value that will be stored, so there is nothing to blank out and nothing to explain twice. */
+.ctx-btn.is-on:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent-line);
 }
 /* Loop Guard card: the sensitivity row wraps inside its half-width card. */
 /* The sensitivity row NEVER wraps: "Include response" always stays on the
@@ -4685,14 +4767,6 @@ body.no-session .empty-hero {
   min-width: 0;
   width: 100%;
 }
-#compact-settings-modal .cs-val {
-  flex: 0 0 auto;
-  min-width: 4.5em;
-  text-align: right;
-  font-size: var(--fs-sm);
-  color: var(--fg);
-  font-variant-numeric: tabular-nums;
-}
 #compact-settings-modal .cs-mini {
   flex: 0 0 auto;
   padding: 2px 8px;
@@ -4976,11 +5050,6 @@ body.no-session .empty-hero {
 .sm-vacuum-slider input[type="range"] {
   /* Sizing only (its grid column); the appearance is the shared range rules'. */
   width: 100%;
-}
-.sm-vacuum-val {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  color: var(--fg);
 }
 .sm-vacuum-stats {
   font-size: var(--fs-sm);

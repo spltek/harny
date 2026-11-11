@@ -31,6 +31,8 @@ const markup = (): string => `
     <button id="locked" disabled data-tip="compact.run">locked</button>
     <button id="nested" data-tip="find.next"><span id="inner">↓</span></button>
     <span id="unknown" data-tip="no.such.key">?</span>
+    <input id="number" type="text" data-tip="param.temperature" />
+    <input id="slider" type="range" data-tip="param.temperature" />
   </div>
   <div id="tip" class="tip hidden" role="tooltip"></div>`;
 
@@ -125,6 +127,18 @@ describe("the shared tooltip card", () => {
     expect(card().textContent).toBe("Close (Esc).");
     el("tip-close").dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: el("plain") }));
     expect(isOpen()).toBe(false);
+  });
+
+  it("does not open on focus in a text field: the focus there means typing", () => {
+    el("number").dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    expect(isOpen()).toBe(false);
+    // Hovering it still explains — the card is how you learn what the field is, before you commit.
+    over(el("number"));
+    vi.advanceTimersByTime(TIP_DELAY_MS);
+    expect(isOpen()).toBe(true);
+    // A slider is not a box you type into: focusing it is still a question.
+    el("slider").dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    expect(isOpen()).toBe(true);
   });
 
   it("gets out of the way on a click, a scroll or Escape", () => {

@@ -249,6 +249,13 @@ export function installTips(doc: Document = document): Cleanup {
     return el.closest(`[${KEY_ATTR}]`) as HTMLElement | null;
   };
 
+  /** A box you TYPE INTO (not a slider, a switch or a radio): focusing it is how you start editing. */
+  const isTypingField = (node: EventTarget | null): boolean => {
+    const el = node as Element | null;
+    if (!el || typeof el.matches !== "function") return false;
+    return el.matches("input:not([type=range]):not([type=checkbox]):not([type=radio]), textarea");
+  };
+
   /** What the pointer is over, even when the control itself cannot report it (disabled). */
   const underPointer = (event: Event): HTMLElement | null => {
     const { clientX, clientY } = event as PointerEvent;
@@ -288,6 +295,10 @@ export function installTips(doc: Document = document): Cleanup {
   const onFocusIn = (event: Event): void => {
     const anchor = anchorFor(event);
     if (!anchor || !mayExplain(anchor)) return;
+    // A TEXT FIELD asks no question when it is focused: the focus is how you START TYPING, and a
+    // card that opened on every click into a number would sit on top of the very row being edited.
+    // Hovering it still explains (`pointerover` is a separate path), so nothing is lost.
+    if (isTypingField(event.target)) return;
     // From the keyboard there is no "passing over": the focus IS the question, so no delay.
     cancel();
     show(anchor);

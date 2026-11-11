@@ -82,7 +82,7 @@
     "param.ctxWindow": "How much of the conversation the model can hold at once — the window compaction keeps clear. Bigger means more room, and more work per turn.",
     "param.frequency": "Penalises a word by HOW OFTEN it already appeared — a stronger brake than presence on repeated words.",
     "param.outputTokens": "The ceiling for ONE reply, not how much the model will write: past it the answer is cut off.",
-    "param.parallel": "How many sub-agents the agent may run at the same time. In Analyze they are read-only, so the cap is real there too.",
+    "param.parallel": "How many sub-agents may run at once: 4 unless you say otherwise, up to 99. The last stop, past 99, and an empty box (∞) both mean NO limit: every delegated sub-agent starts together. In Analyze they are read-only.",
     "param.presence": "Pushes the model away from anything it already wrote — a brake on coming back to the same words.",
     "param.sensitivity": "How eagerly the guard flags a loop: preset thresholds. Off turns detection off entirely.",
     "param.temperature": "Randomness: higher explores more, lower repeats itself more. The sampler sent under this name.",

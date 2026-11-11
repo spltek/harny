@@ -319,14 +319,14 @@ ${VIEW_CSS}
           <label class="field-label" for="ctx-range" data-tip="param.ctxWindow">Context window <span class="range-label" id="ctx-range-label"></span></label>
           <div class="num-row">
             <input type="range" id="ctx-range" class="num-range" min="${MIN_CONTEXT_WINDOW}" max="${MAX_CONTEXT_WINDOW}" step="${CONTEXT_SLIDER_STEP}" aria-label="Context window" />
-            <span class="num-value" id="ctx-value" data-tip="param.ctxWindow">${DEFAULT_CONTEXT_WINDOW}</span>
+            <input class="num-input" id="ctx-value" type="text" inputmode="numeric" aria-label="Context window, type to set it" data-tip="param.ctxWindow" value="${DEFAULT_CONTEXT_WINDOW}" />
           </div>
         </div>
         <div class="field">
           <label class="field-label" for="out-range" data-tip="param.outputTokens">Output tokens <span class="range-label" id="out-range-label"></span></label>
           <div class="num-row">
             <input type="range" id="out-range" class="num-range" min="${MIN_OUTPUT_TOKENS}" max="${MAX_OUTPUT_TOKENS}" step="${OUTPUT_SLIDER_STEP}" aria-label="Output tokens" />
-            <span class="num-value" id="out-value" data-tip="param.outputTokens">${DEFAULT_OUTPUT_TOKENS}</span>
+            <input class="num-input" id="out-value" type="text" inputmode="numeric" aria-label="Output tokens, type to set it" data-tip="param.outputTokens" value="${DEFAULT_OUTPUT_TOKENS}" />
           </div>
         </div>
         <div class="field">
@@ -349,7 +349,7 @@ ${VIEW_CSS}
           </div>
           <div class="num-row">
             <input type="range" id="samp-range" class="num-range" min="0" max="2" step="0.1" aria-label="Sampler value" />
-            <span class="num-value" id="samp-value">Auto</span>
+            <input class="num-input" id="samp-value" type="text" inputmode="decimal" placeholder="Auto" aria-label="Sampler value, type to set it" />
             <button id="samp-auto" class="ctx-btn" data-tip="sampler.auto.samp">Auto</button>
           </div>
         </div>
@@ -357,7 +357,7 @@ ${VIEW_CSS}
           <label class="field-label" for="presence-range" data-tip="param.presence">Presence penalty (0.0 → 2.0)</label>
           <div class="num-row">
             <input type="range" id="presence-range" class="num-range" min="0" max="2" step="0.1" aria-label="Presence penalty" />
-            <span class="num-value" id="presence-value" data-tip="param.presence">Auto</span>
+            <input class="num-input" id="presence-value" type="text" inputmode="decimal" placeholder="Auto" aria-label="Presence penalty, type to set it" data-tip="param.presence" />
             <button id="presence-auto" class="ctx-btn" data-tip="sampler.auto.presence">Auto</button>
           </div>
         </div>
@@ -365,7 +365,7 @@ ${VIEW_CSS}
           <label class="field-label" for="freq-range" data-tip="param.frequency">Frequency penalty (0.0 → 2.0)</label>
           <div class="num-row">
             <input type="range" id="freq-range" class="num-range" min="0" max="2" step="0.1" aria-label="Frequency penalty" />
-            <span class="num-value" id="freq-value" data-tip="param.frequency">Auto</span>
+            <input class="num-input" id="freq-value" type="text" inputmode="decimal" placeholder="Auto" aria-label="Frequency penalty, type to set it" data-tip="param.frequency" />
             <button id="freq-auto" class="ctx-btn" data-tip="sampler.auto.freq">Auto</button>
           </div>
         </div>
@@ -375,8 +375,8 @@ ${VIEW_CSS}
         <div class="field">
           <label class="field-label" for="par-range" data-tip="param.parallel">Max parallel sub-agents</label>
           <div class="num-row">
-            <input type="range" id="par-range" class="num-range" min="0" max="100" step="1" aria-label="Max parallel sub-agents" />
-            <span class="num-value" id="par-value" data-tip="param.parallel">4</span>
+            <input type="range" id="par-range" class="num-range" min="1" max="100" step="1" aria-label="Max parallel sub-agents" aria-valuetext="4 sub-agents" />
+            <input class="num-input" id="par-value" type="text" inputmode="numeric" placeholder="∞" aria-label="Max parallel sub-agents, type to set it, or leave it blank for no limit" data-tip="param.parallel" value="4" />
           </div>
         </div>
       </div>
@@ -449,14 +449,14 @@ ${VIEW_CSS}
         <label for="compact-threshold-input">Auto-compaction trigger: starts when the usable context is this full</label>
         <div class="cs-inline">
           <input id="compact-threshold-input" type="range" min="1" max="100" step="1" />
-          <span id="compact-threshold-value" class="cs-val"></span>
+          <span class="num-slot"><input class="num-input" id="compact-threshold-value" type="text" inputmode="numeric" aria-label="Auto-compaction trigger, percent" value="80" /><span class="num-unit" aria-hidden="true">%</span></span>
         </div>
       </div>
       <div class="cs-field">
         <label for="compact-target-input">Land at: usable context left after a compaction</label>
         <div class="cs-inline">
           <input id="compact-target-input" type="range" min="0" max="100" step="1" />
-          <span id="compact-target-value" class="cs-val"></span>
+          <span class="num-slot"><input class="num-input" id="compact-target-value" type="text" inputmode="numeric" aria-label="Usable context left after a compaction, percent" value="10" /><span class="num-unit" aria-hidden="true">%</span></span>
           <button id="compact-target-auto" class="secondary cs-mini" type="button" data-tip="compact.target-default">Default</button>
         </div>
         <p class="cs-hint">The two knobs are <b>independent</b> — moving one never moves the other. <b>0</b> frees as much as the structure allows: only the last complete turn survives. <b>Default</b> sets an eighth of the trigger (10% with the trigger at 80), so two or three exchanges stay verbatim while it is untouched. The two knobs are free, and the line below says what the pair you picked actually DOES — nothing moves under your finger, and nothing is silently rewritten when you save.</p>
@@ -502,12 +502,12 @@ ${VIEW_CSS}
         <div class="sm-vacuum-slider">
           <label for="sm-vacuum-threshold">Suggest above</label>
           <input id="sm-vacuum-threshold" type="range" min="1" max="100" step="1" />
-          <span id="sm-vacuum-threshold-val" class="sm-vacuum-val"></span>
+          <span class="num-slot"><input class="num-input" id="sm-vacuum-threshold-val" type="text" inputmode="numeric" aria-label="Suggest VACUUM above, percent" value="10" /><span class="num-unit" aria-hidden="true">%</span></span>
         </div>
         <div class="sm-vacuum-slider">
           <label for="sm-vacuum-min">Min reclaimable</label>
           <input id="sm-vacuum-min" type="range" min="0" max="10240" step="1" />
-          <span id="sm-vacuum-min-val" class="sm-vacuum-val"></span>
+          <span class="num-slot"><input class="num-input" id="sm-vacuum-min-val" type="text" inputmode="numeric" aria-label="Min reclaimable, megabytes" value="0" /><span class="num-unit" aria-hidden="true">MB</span></span>
         </div>
         <div id="sm-vacuum-stats" class="sm-vacuum-stats"></div>
       </div>
