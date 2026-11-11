@@ -1427,6 +1427,23 @@ describe("renderViewHtml", () => {
     // …and the ✂ tab that slides up over that header is violet too: an orange tab on a
     // violet card would look like it belongs to another bubble.
     expect(html).toMatch(/\.msg\.user\.synthetic-summary \.truncate-at\s*\{[^}]*background:\s*var\(--summary-msg\)/s);
+    // …and the ⎇ tab on an ERROR bubble is made of that bubble: it INHERITS its red wash and
+    // red edge instead of keeping the neutral `--surface-2`, which read as a black linguetta
+    // stuck on somebody else's bubble. Inheriting (not a repeated rgba) is what keeps the tab
+    // and the bubble from ever drifting apart.
+    expect(html).toMatch(/\:where\(\.msg\.assistant\.error\) \.branch-at\s*\{[^}]*background-color:\s*inherit/s);
+    expect(html).toMatch(/\:where\(\.msg\.assistant\.error\) \.branch-at\s*\{[^}]*border-color:\s*inherit/s);
+    // …and it must carry NO specificity of its own: a plain class here would outrank
+    // `.branch-at:hover:not(:disabled)` and silently kill the accent repaint on hover.
+    expect(html).not.toMatch(/^\.msg\.assistant\.error \.branch-at/m);
+    expect(html).toMatch(/\.branch-at:hover:not\(:disabled\)\s*\{[^}]*background:\s*var\(--accent-surface\)/s);
+    // For that inherited background to be safe the error bubble's surface must be OPAQUE and
+    // come from the PALETTE: the risen tab overlaps the bubble above it, so an inherited alpha
+    // would let that bubble show through. A role per theme also means both themes answer it.
+    expect(html).toMatch(/\.msg\.assistant\.error\s*\{[^}]*background:\s*var\(--error-bg\)/s);
+    expect(html).not.toMatch(/\.msg\.assistant\.error\s*\{[^}]*rgba\(/s);
+    expect(html).toMatch(/--dark-error-bg:\s*#[0-9a-f]{6}/i);
+    expect(html).toMatch(/--light-error-bg:\s*#[0-9a-f]{6}/i);
     expect(html).toMatch(/translateY\(-100%\)/);
     // The AI Model row (label + select + gear) lives INSIDE the ask box, just
     // below the prompt (after #input-main, before the chips row) — no longer

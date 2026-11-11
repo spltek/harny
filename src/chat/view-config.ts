@@ -130,6 +130,11 @@ const PALETTE_DARK = {
   "steer-strong": "#8f2d2d",
   "nudge-fg": "#dbeafe", // text of a harness "Nudge" bubble (light blue on its tint)
   error: "#f44747",
+  // The ERROR bubble's surface: that red as a wash, already COMPOSITED over `--bg` (15% over
+  // #111111), not an alpha tint. It has to be opaque because the ⎇ tab on an error bubble
+  // INHERITS this background (see `.branch-at` in the sheet), and an inherited alpha would let
+  // the bubble ABOVE show through the risen linguetta. Same pixels as the old inline rgba.
+  "error-bg": "#331919",
   // ── Diffs ──
   del: "#e06c75", // removed lines
   "del-bg": "rgba(224, 108, 117, 0.10)",
@@ -224,6 +229,10 @@ const PALETTE_LIGHT: Palette = {
   "steer-strong": "#862929",
   "nudge-fg": "#123a63",
   error: "#c62828",
+  // The SAME dark-error wash over paper: `rgba(244, 71, 71, 0.15)` composited on `--bg`, i.e.
+  // exactly what the bubble painted before this role existed. The light theme never took its
+  // own error hue here, and this pass is about the tab, not about re-tinting the bubble.
+  "error-bg": "#fadfde",
   // ── Diffs ──
   del: "#b3261e",
   "del-bg": "rgba(179, 38, 30, 0.09)",

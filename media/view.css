@@ -1041,6 +1041,19 @@ body {
     border-color 0.12s,
     background-color 0.12s;
 }
+/* …and on an ERROR bubble the tab is made of THAT bubble, because that bubble is not made of
+   `--surface-2`: it carries a red wash and a red edge of its own. The tab INHERITS both
+   instead of restating the tint, so it cannot drift from the bubble it belongs to — and on a
+   red bubble it stops reading as a black linguetta stuck on somebody else's message.
+   That is why `--error-bg` is an OPAQUE, pre-composited value: the risen tab overlaps the
+   bubble above it, so an inherited ALPHA would let that bubble show through the tab.
+   `:where()` so the correction carries ZERO specificity — `.branch-at:hover` is one class
+   deeper than the plain selector, and a real class here would outrank it and silently kill
+   the accent repaint on hover. */
+:where(.msg.assistant.error) .branch-at {
+  background-color: inherit;
+  border-color: inherit;
+}
 /* The ✂ tab sits on an ORANGE user bubble: use the SAME orange as the
    bubble so it reads as a tab made of the same material. */
 .truncate-at {
@@ -1087,7 +1100,7 @@ body {
   background: var(--summary-strong);
 }
 .msg.assistant.error {
-  background: rgba(244, 71, 71, 0.15);
+  background: var(--error-bg);
   border: 1px solid var(--error);
 }
 .msg.assistant.loop {
