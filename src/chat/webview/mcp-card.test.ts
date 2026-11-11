@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createMcpCard, type McpCard, type McpCardDeps } from "./mcp-card";
 import { offToolNames } from "./mcp-tool-flags";
+import { tipTextOf } from "./tips";
 
 /**
  * The MCP card on its own: rows, the SESSION switch, the `(N/M tools)` count and the status line.
@@ -58,7 +59,7 @@ describe("the rows", () => {
     expect(switches().map((s) => s.getAttribute("role"))).toEqual(["switch", "switch"]);
     // A server the config disables is NOT installed here: it cannot be switched on in a session.
     expect(switches().map((s) => s.disabled)).toEqual([false, true]);
-    expect(switches()[1].title).toContain("Not installed");
+    expect(tipTextOf(switches()[1])).toContain("Not installed");
   });
 
   it("the status line says off / error / connected", () => {
@@ -103,7 +104,7 @@ describe("the (N/M tools) count", () => {
       false,
     );
     expect(list.querySelector(".mcp-tools-btn")!.textContent).toBe("(1/2 tools)");
-    expect(list.querySelector(".mcp-tools-btn")!.getAttribute("title")).toContain("1 of 2 tool(s) switched off");
+    expect(tipTextOf(list.querySelector(".mcp-tools-btn") as HTMLElement)).toContain("1 of 2 tool(s) switched off");
   });
 
   it("falls back to the registry's count when the host sent no tool list", () => {
@@ -205,7 +206,7 @@ describe("the clicks", () => {
     ui.render(CONFIG, { mcp: ["a"], off: [] }, false);
     ui.refreshSwitches(true); // the run starts; the DOM is NOT rebuilt
     expect(switches()[0].disabled).toBe(true);
-    expect(switches()[0].title).toContain("Stop the run first");
+    expect(tipTextOf(switches()[0])).toContain("Stop the run first");
     post.mockClear();
     (list.querySelector(".mcp-name") as HTMLElement).click();
     expect(post).not.toHaveBeenCalled(); // the flag is read at CLICK time
@@ -233,7 +234,7 @@ describe("the clicks", () => {
     ui.refreshSwitches(false);
     expect(switches()[0]).toBe(first); // no rebuild
     expect(switches()[0].disabled).toBe(false);
-    expect(switches()[0].title).toContain("Use a in this session");
+    expect(tipTextOf(switches()[0])).toContain("Use a in this session");
   });
 });
 

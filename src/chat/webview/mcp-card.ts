@@ -1,5 +1,6 @@
 import { offToolNames } from "./mcp-tool-flags";
 import { createSwitch, setSwitch, switchIsOn } from "./switch";
+import { setTip } from "./tips";
 
 /**
  * THE MCP CARD — one row per installed server, in the control strip.
@@ -97,11 +98,7 @@ export function createMcpCard(deps: McpCardDeps): McpCard {
       const installed = sw.dataset.installed !== "0";
       sw.disabled = !installed || busy;
       const name = sw.dataset.name ?? "this server";
-      sw.title = !installed
-        ? "Not installed/enabled in the config: turn it on there first"
-        : busy
-          ? "Stop the run first — a mid-run toggle only lands on the next turn"
-          : `Use ${name} in this session (installing it is global, using it is per conversation)`;
+      setTip(sw, !installed ? "mcp.switchNotInstalled" : busy ? "mcp.switchBusy" : "mcp.switchUse", { name });
     }
   }
 
@@ -138,9 +135,8 @@ export function createMcpCard(deps: McpCardDeps): McpCard {
       const sw = createSwitch(`${onInSession ? "Stop using" : "Use"} ${name} in this session`, onInSession);
       /** The pending confirmation of THIS row's last flip (one per row, so a new click supersedes it). */
       let pendingRevert: ReturnType<typeof setTimeout> | undefined;
-      sw.title = enabled
-        ? "Use this server in THIS session (installing it is global, using it is per conversation)"
-        : "Not installed/enabled in the config: turn it on there first";
+      // The switch's card (why it cannot move, or what it does) is set by `refreshSwitches`, which
+      // runs after the rebuild: one authority, so the two can never disagree.
       sw.dataset.name = name;
       sw.dataset.installed = enabled ? "1" : "0";
       sw.disabled = !enabled;
@@ -182,7 +178,7 @@ export function createMcpCard(deps: McpCardDeps): McpCard {
       const nameEl = document.createElement("span");
       nameEl.className = "mcp-name";
       nameEl.textContent = name;
-      nameEl.title = enabled ? "Click to disable this server" : "Click to enable this server";
+      setTip(nameEl, enabled ? "mcp.toggleOff" : "mcp.toggleOn");
       nameEl.addEventListener("click", () => {
         // Not while the session is working: the current run's tool list is already fixed, so a
         // mid-run disable would only take effect on the NEXT turn.
@@ -209,10 +205,7 @@ export function createMcpCard(deps: McpCardDeps): McpCard {
         // `(5/8 tools)` says at a glance that something is off; `(8 tools)` when nothing is, so the
         // common case stays quiet.
         btn.textContent = hidden > 0 ? `(${total - hidden}/${total} tools)` : `(${total} tools)`;
-        btn.title =
-          hidden > 0
-            ? `${hidden} of ${total} tool(s) switched off in this session — click to choose`
-            : "Choose which of this server's tools the model sees";
+        setTip(btn, hidden > 0 ? "mcp.toolsPickSome" : "mcp.toolsPick", hidden > 0 ? { hidden, total } : undefined);
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
           deps.openTools(btn, name, st.tools ?? []);

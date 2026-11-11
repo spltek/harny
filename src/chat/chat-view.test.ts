@@ -2055,6 +2055,34 @@ describe("ChatViewProvider", () => {
     });
   });
 
+  it("setInteractiveHelp lives in the PROCESS, not on disk, and rides back to the next page", async () => {
+    // The switch on the Sessions line: OFF by default, then whatever the user last said.
+    const { store, provider } = buildHarness();
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    const lastConfig = (): any => {
+      const posts = view.webview.postMessage.mock.calls.map((c) => c[0] as any).filter((m) => m.type === "config");
+      return posts[posts.length - 1].config;
+    };
+    await handler({ type: "setModel", model: "gpt-4o", provider: undefined });
+    await vi.waitFor(() => expect(lastConfig().interactiveHelp).toBe(false));
+
+    // NOTHING is written: no per-session settings, no config file, no globalState. The panel is
+    // destroyed every time it is hidden, so the answer has to live in memory here — and nowhere
+    // else, because it is a decision about how this run reads, not a preference to keep.
+    const writes = store.saveSettings.mock.calls.length;
+    await handler({ type: "setInteractiveHelp", on: true });
+    expect(store.saveSettings.mock.calls.length).toBe(writes);
+    // The switch does not re-push anything (the page already applied it optimistically): the flag
+    // travels with the NEXT config, which is what a recreated page reads at boot.
+    await handler({ type: "setModel", model: "gpt-4o", provider: undefined });
+    await vi.waitFor(() => expect(lastConfig().interactiveHelp).toBe(true));
+
+    await handler({ type: "setInteractiveHelp", on: false });
+    await handler({ type: "setModel", model: "gpt-4o", provider: undefined });
+    await vi.waitFor(() => expect(lastConfig().interactiveHelp).toBe(false));
+  });
+
   it("setLoopGuard persists the knobs, applies them to the agent, and undefined clears", async () => {
     const { store, provider, registry } = buildHarness();
     const { handler, view } = resolveWith(provider);

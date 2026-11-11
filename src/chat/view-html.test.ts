@@ -1261,9 +1261,11 @@ describe("renderViewHtml", () => {
     expect(html).toMatch(/id="lg-high" value="high"/);
     expect(html).not.toContain('id="lg-normal"');
     expect(html).not.toContain('value="normal"');
-    // Off must SAY it also drops the tool-call dedup, or "off" would be a half-truth.
+    // Off must SAY it also drops the tool-call dedup, or "off" would be a half-truth. The words
+    // live in the help catalog now (src/i18n/en.help.json), so this checks the WIRING and
+    // tips-contract.test.ts checks the sentence.
     expect(html).toMatch(/id="lg-off"[\s\S]{0,40}\/>Off</);
-    expect(html).toContain("no tool-call deduplication");
+    expect(html).toMatch(/data-tip="lg.level.off"/);
     // Loop Guard OFF dims the parameter block (the sliders stay in place).
     expect(cssRule(html, "#lg-fields.is-off")).toContain("opacity: 0.45");
     expect(html).toContain('id="lg-response"');

@@ -172,6 +172,18 @@ function toLocalPath(input: string): string {
 
 export class ChatViewProvider implements WebviewViewProvider {
   private view: WebviewView | undefined;
+  /**
+   * Interactive help: do the panel's controls explain themselves (the `?` switch on the Sessions
+   * line)? OFF until asked for — a panel that teaches unprompted is a panel that changes shape
+   * under the pointer of someone who already knows it.
+   *
+   * It lives HERE, in the extension's memory, and nowhere else: not in `settings.json` (nothing on
+   * the host reads it, so it would only add a file entry to maintain) and not in the webview either
+   * — VS Code destroys the page every time the panel is hidden, so a flag living in the page would
+   * forget the answer on the next open, which reads as a broken switch. The process forgets it when
+   * the window reloads, and that is the intended lifetime: a decision for THIS session of the panel.
+   */
+  private interactiveHelp = false;
   private context: ExtensionContext | undefined;
   private activeId: string | undefined;
   /** Monotonic id for config pushes: `buildConfig` awaits, so an older push can
@@ -2100,6 +2112,13 @@ export class ChatViewProvider implements WebviewViewProvider {
         break;
       }
 
+      case "setInteractiveHelp": {
+        // Memory only, deliberately: no `saveSettings`, no `globalState`, no config write. The value
+        // comes back to the NEXT page through `buildConfig` (the panel is destroyed when hidden).
+        this.interactiveHelp = msg.on === true;
+        break;
+      }
+
       case "setParallel": {
         if (typeof msg.parallel !== "boolean") break;
         const rt = this.activeRuntime();
@@ -3740,6 +3759,11 @@ export class ChatViewProvider implements WebviewViewProvider {
     workspaceFolderCount: number;
     /** Is the window's folder TRUSTED (Workspace Trust)? False = Restricted Mode (Analyze only). */
     workspaceTrusted: boolean;
+    /**
+     * Interactive help (the `?` switch on the Sessions line): do the panel's controls explain
+     * themselves? UI state, held in memory by the HOST — see `interactiveHelp`.
+     */
+    interactiveHelp: boolean;
     /** The window's root path, EVEN when it no longer exists (the UI names it). */
     workspaceFolder?: string;
     thinkingMode?: "bool" | "effort" | "type" | "reasoning" | "unspecified";
@@ -3893,6 +3917,12 @@ export class ChatViewProvider implements WebviewViewProvider {
       // race the switch view): the view needs it to disable Build, and to know that Analyze was
       // not the user's click.
       workspaceTrusted: this.workspaceTrusted(),
+      // Interactive help is a UI preference that must OUTLIVE the webview but never touch disk:
+      // VS Code destroys the page whenever the panel is hidden, so a module-level flag in the view
+      // would silently flip back on every time the side bar was reopened. It rides with the config
+      // the panel already receives (like `workspaceTrusted`) instead of a message that could race
+      // the switch view.
+      interactiveHelp: this.interactiveHelp,
       ...(rootPath ? { workspaceFolder: rootPath } : {}),
       models: cfg.availableModels ?? [],
       providerModels,

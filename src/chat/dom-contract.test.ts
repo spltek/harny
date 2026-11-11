@@ -32,6 +32,7 @@ const MODULES = [
   "mcp-editor.ts",
   "fold.ts",
   "switch.ts",
+  "tips.ts",
 ];
 const HTML = src("./view-html.ts");
 /**
@@ -231,6 +232,9 @@ const CSS_HOOKS = new Map<string, string>([
     "template-punctuation",
     "string-property",
   ].map((c) => [c, "written by Prism, the highlighter"] as const),
+  // tips.ts owns the help switch: the class lands on <body> through `HELP_CLASS`, so the name never
+  // appears as a literal next to a `classList` call — the scanner cannot see it, a reader can.
+  ["help-on", "written by tips.ts (HELP_CLASS) on <body>: interactive help is ON"],
   // VS Code puts the editor's kind on <body>; the palette follows it (see view-config.ts).
   ...["vscode-dark", "vscode-light", "vscode-high-contrast"].map((c) => [c, "written by VS Code on <body>"] as const),
 ]);

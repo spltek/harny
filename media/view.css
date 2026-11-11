@@ -2169,6 +2169,10 @@ body {
   color: var(--muted-2);
   font-size: var(--fs-xs);
 }
+/* The access chip's class is the RAW access the model asked for (read / write / create) while the
+   label it carries is the MODE that access maps to (Analyze / Build): the same two tones the chat's
+   mode button uses — blue for analyze, amber for build — and `write` and `create` share one rule
+   because they ARE one mode. */
 .subagent-chip.access-read {
   color: var(--info);
   border-color: rgba(97, 175, 239, 0.4);
@@ -3385,13 +3389,51 @@ body.no-workspace #mcp-card {
 .tip.hidden {
   display: none;
 }
-/* The parameter name underlines on hover to advertise the tooltip. */
-.lg-name {
+/* EVERY explanation advertises itself the same way: the NAME of a parameter lights up while the
+   pointer is anywhere on its field, so the card is discoverable without a permanent ⓘ badge on a
+   panel this dense. NO underline: a dotted line under static text read as a link and made the
+   whole panel shimmer on every pass of the pointer. The label is the TARGET — the tooltip belongs
+   to the title of a parameter, not to the slider that sits under it.
+   Gated by `body.help-on` (the Interactive help switch): a lit name ADVERTISES a card, and with the
+   switch off there is no card to advertise. */
+body.help-on .field:hover > .field-label[data-tip],
+body.help-on .field:hover > .sampler-toggle > .sampler-opt[data-tip],
+body.help-on .lg-field:hover .lg-name {
+  color: var(--fg);
+}
+/* `cursor: help` is for INERT text only (a parameter name). On a button it would erase the click
+   affordance, so it is opt-in per element — `data-tip` alone does not imply it. And it is gated by
+   the Interactive help switch: the attribute stays on the element (it is cheap and it is what
+   `tips.ts` decided), the POINTER is what the user asked for. One class on <body> turns every
+   question mark in the panel off at once, which no per-element loop can promise. */
+body.help-on [data-tip][data-tip-cursor="help"] {
   cursor: help;
 }
-.lg-field:hover .lg-name {
-  color: var(--fg);
-  text-decoration: underline dotted;
+/* ── INTERACTIVE HELP: one switch for every explanation in the panel ──
+   The card and the question mark are a LEARNING AID, and a panel this dense does not always want
+   to teach: switched off — which is the DEFAULT, an explanation nobody asked for is noise — nothing
+   invites a detour, nothing changes shape under the pointer, and the interface is exactly what an
+   expert asked for. The switch itself is the ONE element that keeps explaining itself
+   (`data-tip-always`) — an OFF state where nothing answers would be a switch with no way back. It
+   sits BEFORE the + because it governs the PANEL, not the session list under it. Muted when off,
+   accent when on: the state is readable at a glance, like the folds. */
+#session-head .help-toggle {
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  padding: 0;
+  border-radius: 50%;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  line-height: 1;
+  color: var(--muted-2);
+}
+#session-head .help-toggle[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-tint-soft);
+}
+#session-head .help-toggle[aria-pressed="true"]:hover {
+  background: var(--accent-surface);
 }
 /* Loop Guard FIELDS: the preset values exposed as editable sliders, SAVED
    per session (only the sensitivity level and these values are stored). */

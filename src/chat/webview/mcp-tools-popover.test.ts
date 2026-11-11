@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createMcpToolsPopover, type McpToolsPopover } from "./mcp-tools-popover";
+import { tipTextOf } from "./tips";
 
 /**
  * The tools popover on its own: the draft, the two switches per tool, the filter, the counts, the Save
@@ -170,8 +171,8 @@ describe("the Analyze switch", () => {
   it("follows the host's flags: ON for a declaration of THIS session, OFF otherwise", () => {
     ui.show(anchor, "test", TOOLS);
     expect(analyzeStates()).toEqual([true, false]);
-    expect(analyzeSwitches()[0].title).toContain("this conversation declares it read-only");
-    expect(analyzeSwitches()[1].title).toContain("Refused in Analyze");
+    expect(tipTextOf(analyzeSwitches()[0])).toContain("this conversation declares it read-only");
+    expect(tipTextOf(analyzeSwitches()[1])).toContain("Refused in Analyze");
     expect(analyzeSwitches()[1].disabled).toBe(false); // a tool the model can see is editable
   });
 
@@ -182,7 +183,7 @@ describe("the Analyze switch", () => {
     expect(analyzeStates()).toEqual([true]);
     expect(analyzeSwitches()[0].disabled).toBe(true);
     expect(popover.querySelector(".mcp-pop-analyze")!.classList.contains("inherited")).toBe(true);
-    expect(analyzeSwitches()[0].title).toContain("declares every tool of it read-only");
+    expect(tipTextOf(analyzeSwitches()[0])).toContain("declares every tool of it read-only");
   });
 
   it("is INERT for a tool the model cannot see, and says to switch it on first", () => {
@@ -190,7 +191,7 @@ describe("the Analyze switch", () => {
     ui.show(anchor, "test", [{ name: "a", off: true, analyzeFlag: true }]);
     expect(analyzeSwitches()[0].disabled).toBe(true);
     expect(analyzeStates()).toEqual([false]); // a hidden tool does not run in Analyze, whatever it holds
-    expect(analyzeSwitches()[0].title).toContain("switch the tool on first");
+    expect(tipTextOf(analyzeSwitches()[0])).toContain("switch the tool on first");
   });
 
   it("turning the exposure switch off re-derives it: the two controls are one row, one state each", () => {

@@ -3,7 +3,7 @@
   "tsconfigFile": "stryker/no-tsconfig-rewrite.json",
   "testRunner": "vitest",
   "mutate": [
-    "src/chat/webview/view.ts:6335-6370"
+    "src/chat/webview/view.ts:6354-6373"
   ],
   "coverageAnalysis": "perTest",
   "reporters": [

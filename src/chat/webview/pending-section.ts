@@ -1,5 +1,6 @@
 import { needsCollapseControl } from "./pending-fold";
 import { setButtonToggle, setToggle } from "./fold";
+import { setTip } from "./tips";
 
 /**
  * The queue/steer footer: the messages the user typed WHILE the session works.
@@ -121,7 +122,8 @@ export function createPendingSection(deps: PendingSectionDeps): PendingSection {
     if (!toggle) return;
     const label = collapsed ? "Show the whole message" : "Collapse this message";
     setButtonToggle(toggle, !collapsed);
-    toggle.title = label;
+    // The label is the accessible NAME (aria-label) and the card: one string, two consumers.
+    setTip(toggle, collapsed ? "pending.expand" : "pending.collapse");
     toggle.setAttribute("aria-expanded", String(!collapsed));
     toggle.setAttribute("aria-label", label);
   }
@@ -178,10 +180,7 @@ export function createPendingSection(deps: PendingSectionDeps): PendingSection {
     convert.type = "button";
     convert.className = "pending-convert";
     convert.textContent = it.mode === "steer" ? "→ Queued" : "→ Steer";
-    convert.title =
-      it.mode === "steer"
-        ? "Deliver it after the run: it waits in the queue with the other messages"
-        : "Deliver it first: injected into the running loop at its next step";
+    setTip(convert, it.mode === "steer" ? "pending.toQueue" : "pending.toSteer");
     convert.addEventListener("click", () =>
       post({ type: "setPendingMode", id: it.id, mode: it.mode === "steer" ? "queue" : "steer" }),
     );
@@ -190,7 +189,7 @@ export function createPendingSection(deps: PendingSectionDeps): PendingSection {
     cancel.type = "button";
     cancel.className = "pending-cancel";
     cancel.textContent = "×";
-    cancel.title = it.mode === "steer" ? "Cancel this steer" : "Cancel this queued message";
+    setTip(cancel, it.mode === "steer" ? "pending.cancelSteer" : "pending.cancelQueued");
     cancel.addEventListener("click", () => post({ type: "cancelPending", id: it.id }));
 
     // The commands sit TOP-RIGHT (pinned with margin-left: auto, so multi-line text

@@ -1,5 +1,6 @@
 import { analyzeToolNames, offToolNames } from "./mcp-tool-flags";
 import { createSwitch, setSwitch } from "./switch";
+import { setTip } from "./tips";
 
 /**
  * THE MCP TOOLS POPOVER — "which of this server's tools may the model see, and which may run in
@@ -172,15 +173,16 @@ export function createMcpToolsPopover(deps: McpToolsPopoverDeps): McpToolsPopove
         run.disabled = inert || inherited;
         analyzeBox.classList.toggle("on", on);
         analyzeBox.classList.toggle("inherited", inherited);
-        const say = inert
-          ? "Hidden from the model, so there is nothing to allow in Analyze — switch the tool on first"
+        // One reason, two elements that both need it: the pill and the word beside it.
+        const why = inert
+          ? "tools.analyzeInert"
           : inherited
-            ? "The server declares every tool of it read-only: this one runs in Analyze by the SERVER's statement, not this conversation's"
+            ? "tools.analyzeInherited"
             : declared()
-              ? "Runs in Analyze: this conversation declares it read-only. Click to take it back"
-              : "Refused in Analyze: it may modify resources, and an external call cannot be previewed. Click to declare it read-only";
-        analyzeBox.title = say;
-        run.title = say;
+              ? "tools.analyzeOn"
+              : "tools.analyzeOff";
+        setTip(analyzeBox, why);
+        setTip(run, why);
       };
       const flipAnalyze = (): void => {
         if (!draft || off() || inherited) return;
@@ -203,11 +205,9 @@ export function createMcpToolsPopover(deps: McpToolsPopoverDeps): McpToolsPopove
         const on = !off();
         setSwitch(sw, on);
         row.classList.toggle("off", !on);
-        const say = on
-          ? "The model can call this tool in this conversation"
-          : "Hidden: the model does not see this tool in this conversation";
-        row.title = say;
-        sw.title = say;
+        const why = on ? "tools.exposed" : "tools.hidden";
+        setTip(row, why);
+        setTip(sw, why);
       };
       const flip = (): void => {
         if (!draft) return;
@@ -260,6 +260,7 @@ export function createMcpToolsPopover(deps: McpToolsPopoverDeps): McpToolsPopove
     legend.className = "mcp-pop-legend";
     legend.textContent =
       "Left: the model sees the tool · Analyze: it may run read-only · Both for this conversation only";
+    setTip(legend, "tools.legend");
     deps.popover.appendChild(legend);
 
     // Only worth a filter when the list is long enough to scroll: a two-tool server does not need
@@ -289,30 +290,30 @@ export function createMcpToolsPopover(deps: McpToolsPopoverDeps): McpToolsPopove
     statusEl.className = "mcp-pop-status";
     actions.appendChild(statusEl);
 
-    const mini = (label: string, title: string, onClick: () => void, extra = "secondary"): HTMLButtonElement => {
+    const mini = (label: string, tipKey: string, onClick: () => void, extra = "secondary"): HTMLButtonElement => {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = `${extra} mcp-pop-mini`;
       btn.textContent = label;
-      btn.title = title;
+      setTip(btn, tipKey);
       btn.addEventListener("click", onClick);
       return btn;
     };
 
-    const all = mini("All", "Include every tool of this server", () => {
+    const all = mini("All", "tools.all", () => {
       draft?.off.clear();
       renderRows();
       updateHead();
     });
-    const none = mini("None", "Expose no tool of this server", () => {
+    const none = mini("None", "tools.none", () => {
       if (draft) draft.off = new Set(draft.tools.map((t) => t.name));
       renderRows();
       updateHead();
     });
-    const cancel = mini("Cancel", "Discard these changes", () => hide());
+    const cancel = mini("Cancel", "tools.cancel", () => hide());
     saveEl = mini(
       "Save",
-      "Apply to THIS conversation: which tools the model sees, and which run in Analyze",
+      "tools.save",
       () => {
         // Captured once: a call in between resets TS's narrowing on the outer `let`.
         const d = draft;

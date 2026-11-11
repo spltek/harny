@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { bootClient, detachBridge, pageOf, resetBridge, wire } from "./webview-bridge.test-utils";
+import { tipTextOf } from "./webview/tips";
 
 /**
  * The sessions list's dates, END TO END across the seam.
@@ -75,7 +76,7 @@ describe("the sessions list's dates, host ⇄ webview", () => {
     // Patched, not rebuilt: the row the user is looking at is the SAME node.
     expect(document.querySelector(`.srow[data-id="${id}"] .smeta`)).toBe(element);
     expect(element.textContent).toContain("· updated ");
-    expect(element.title).toContain(new Date(written.updatedAt).toLocaleString());
+    expect(tipTextOf(element)).toContain(new Date(written.updatedAt).toLocaleString());
   });
 
   it("OPENING the section re-reads the order from the store", async () => {

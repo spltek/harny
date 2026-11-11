@@ -201,8 +201,9 @@ ${VIEW_CSS}
     <div id="session-head">
       <span class="toggle is-open">${icon("chevronDown", 11, 'class="toggle-chevron"')}</span><span>Sessions</span>
       <span class="spacer"></span>
-      <button id="new-session" title="New session">${icon("plus", 15)}</button>
-      <button id="sessions-gear-btn" class="gear-btn" title="Manage all sessions (every folder)">${icon("gear", 14)}</button>
+      <button id="help-toggle" class="help-toggle" aria-pressed="false" aria-label="Interactive help" data-tip="help.toggle" data-tip-always>?</button>
+      <button id="new-session" data-tip="sessions.new" aria-label="New session">${icon("plus", 15)}</button>
+      <button id="sessions-gear-btn" class="gear-btn" data-tip="sessions.manage" aria-label="Manage sessions">${icon("gear", 14)}</button>
     </div>
     <div id="session-search-row">
       <input id="session-search" type="search" placeholder="Search sessions" spellcheck="false" autocomplete="off" aria-label="Search sessions" />
@@ -229,7 +230,7 @@ ${VIEW_CSS}
        section like the sessions list: the header carries the counts, so a
        collapsed section still says what is waiting. -->
   <div id="pending-section" class="hidden">
-    <div id="pending-head" role="button" tabindex="0" aria-expanded="true" title="Messages typed while the session works">
+    <div id="pending-head" role="button" tabindex="0" aria-expanded="true" data-tip="pending.head">
       <span class="toggle is-open">${icon("chevronDown", 11, 'class="toggle-chevron"')}</span><span id="pending-head-text"></span>
     </div>
     <div id="pending-area" class="hidden"></div>
@@ -241,24 +242,24 @@ ${VIEW_CSS}
        On hover a chevron appears; clicking collapses/expands the Window +
        Sampling cards (#ctl-cards) while the ask card (with the AI Model row
        at its head) and the metrics stay visible. -->
-  <div id="ctl-toggle" title="Toggle the controls below" aria-expanded="false">
+  <div id="ctl-toggle" data-tip="controls.toggle" aria-expanded="false">
     <!-- Insert-in hint: replaces the old Queue/Steer pill. Same height and same
          side of the strip as "Collapse all"/"Follow", but on the LEFT. It is a
          pure INDICATOR (never clickable): "Queue" by default, "Steer" (red pill)
          ONLY while a run is active AND Ctrl/Cmd is held — exactly the rule the
          old pill followed, so the keyboard gesture is unchanged. -->
-    <span id="insert-hint" title="Queue: the next message runs after the current run ends">Insert prompt in <span id="insert-hint-word">Queue</span></span>
+    <span id="insert-hint" data-tip="insert.queue">Insert prompt in <span id="insert-hint-word">Queue</span></span>
     <button id="ctl-toggle-btn" aria-label="Toggle controls">
       ${icon("chevronDown", 15)}
     </button>
     <div id="transcript-actions">
-      <button id="collapse-all" type="button" disabled title="Collapse every expanded section (thinking, tool calls, sub-agents)">Collapse all</button>
-      <button id="autoscroll" type="button" disabled title="Jump to the latest message and follow the stream">Follow</button>
+      <button id="collapse-all" type="button" disabled data-tip="transcript.collapse">Collapse all</button>
+      <button id="autoscroll" type="button" disabled data-tip="transcript.follow">Follow</button>
     </div>
   </div>
   <div id="input-area">
     <div id="input-main">
-      <button id="attach-btn" class="secondary" title="Attach files" aria-label="Attach files">${icon("paperclip", 15)}</button>
+      <button id="attach-btn" class="secondary" data-tip="input.attach" aria-label="Attach files">${icon("paperclip", 15)}</button>
       <textarea id="user-input" rows="1" placeholder="Ask Harny... (Enter to send, Esc to abort)"></textarea>
       <button id="send-btn" aria-label="Send">${icon("play", 15)}</button>
       <button id="abort-btn" class="secondary" disabled aria-label="Abort">${icon("stop", 15)}</button>
@@ -268,7 +269,7 @@ ${VIEW_CSS}
          dropdown anchors to the button and overlays the cards below. -->
     <div class="ctl-card ctl-card-model">
       <div id="mode-select"
-           title="Analyze: read-only · Build: full tool use (create, modify, run)">
+           data-tip="mode.summary">
         <button type="button" id="mode-btn" aria-haspopup="listbox" aria-expanded="false"
                 aria-label="Mode">
           ${icon("search", 12, 'id="mode-btn-icon-analyze"')}
@@ -278,13 +279,13 @@ ${VIEW_CSS}
         </button>
         <div id="mode-menu" class="hidden" role="listbox" aria-label="Mode">
           <button type="button" class="mode-item is-active" data-mode="analyze" role="option" aria-selected="true"
-                  title="Analyze: read-only — inspects but never modifies files">
+                  data-tip="mode.analyze">
             ${icon("search", 12)}
             <span>Analyze</span>
             ${icon("check", 12, 'class="mode-check"')}
           </button>
           <button type="button" class="mode-item" data-mode="agent" role="option" aria-selected="false"
-                  title="Build: full tool use — create, modify and run (files, shell, search)">
+                  data-tip="mode.build">
             ${icon("sparkles", 12)}
             <span>Build</span>
             ${icon("check", 12, 'class="mode-check"')}
@@ -294,17 +295,17 @@ ${VIEW_CSS}
       <!-- Parallel: press/release toggle enabling orchestration (sub-agents)
            for the current mode. Blue when pressed. -->
       <button type="button" id="parallel-btn" aria-pressed="false"
-              title="Parallel: let the agent launch sub-agents (read-only in Analyze)">
+              data-tip="parallel.toggle">
         ${icon("parallel", 14)}
         <span>Parallel</span>
       </button>
       <span class="model-label">AI Model:</span>
-      <button type="button" id="model-btn" class="model-btn" title="Select a model" aria-haspopup="dialog">
+      <button type="button" id="model-btn" class="model-btn" data-tip="model.select" aria-haspopup="dialog">
         <span id="model-btn-label">Select a model</span>
-        <span id="model-warn" class="warn-badge hidden" title="models.dev unreachable — some model limits may be unknown">⚠</span>
+        <span id="model-warn" class="warn-badge hidden" data-tip="model.warn">⚠</span>
         ${icon("chevronDown", 10, 'class="model-btn-chevron"')}
       </button>
-      <button id="gear-btn" class="gear-btn" title="Configure providers & models">${icon("gear", 14)}</button>
+      <button id="gear-btn" class="gear-btn" data-tip="providers.configure" aria-label="Configure providers and models">${icon("gear", 14)}</button>
     </div>
     <div id="attach-row">
       <div id="attachment-chips" class="hidden"></div>
@@ -315,26 +316,26 @@ ${VIEW_CSS}
       <div class="ctl-card">
         <span class="card-title">Window</span>
         <div class="field">
-          <label class="field-label" for="ctx-range">Context window <span class="range-label" id="ctx-range-label"></span></label>
+          <label class="field-label" for="ctx-range" data-tip="param.ctxWindow">Context window <span class="range-label" id="ctx-range-label"></span></label>
           <div class="num-row">
             <input type="range" id="ctx-range" class="num-range" min="${MIN_CONTEXT_WINDOW}" max="${MAX_CONTEXT_WINDOW}" step="${CONTEXT_SLIDER_STEP}" aria-label="Context window" />
-            <span class="num-value" id="ctx-value">${DEFAULT_CONTEXT_WINDOW}</span>
+            <span class="num-value" id="ctx-value" data-tip="param.ctxWindow">${DEFAULT_CONTEXT_WINDOW}</span>
           </div>
         </div>
         <div class="field">
-          <label class="field-label" for="out-range">Output tokens <span class="range-label" id="out-range-label"></span></label>
+          <label class="field-label" for="out-range" data-tip="param.outputTokens">Output tokens <span class="range-label" id="out-range-label"></span></label>
           <div class="num-row">
             <input type="range" id="out-range" class="num-range" min="${MIN_OUTPUT_TOKENS}" max="${MAX_OUTPUT_TOKENS}" step="${OUTPUT_SLIDER_STEP}" aria-label="Output tokens" />
-            <span class="num-value" id="out-value">${DEFAULT_OUTPUT_TOKENS}</span>
+            <span class="num-value" id="out-value" data-tip="param.outputTokens">${DEFAULT_OUTPUT_TOKENS}</span>
           </div>
         </div>
         <div class="field">
-          <span class="field-label">Thinking</span>
+          <span class="field-label" data-tip="param.thinking">Thinking</span>
           <div class="sampler-toggle" id="thinking-toggle" role="radiogroup" aria-label="Thinking level">
-            <label class="sampler-opt" title="No reasoning effort"><input type="radio" name="thinking-level" id="thinking-off" value="off" />Off</label>
-            <label class="sampler-opt" title="Low reasoning effort"><input type="radio" name="thinking-level" id="thinking-low" value="low" />Low</label>
-            <label class="sampler-opt" title="Medium reasoning effort"><input type="radio" name="thinking-level" id="thinking-medium" value="medium" />Medium</label>
-            <label class="sampler-opt" title="High reasoning effort"><input type="radio" name="thinking-level" id="thinking-high" value="high" />High</label>
+            <label class="sampler-opt" data-tip="sampler.thinking.off"><input type="radio" name="thinking-level" id="thinking-off" value="off" />Off</label>
+            <label class="sampler-opt" data-tip="sampler.thinking.low"><input type="radio" name="thinking-level" id="thinking-low" value="low" />Low</label>
+            <label class="sampler-opt" data-tip="sampler.thinking.medium"><input type="radio" name="thinking-level" id="thinking-medium" value="medium" />Medium</label>
+            <label class="sampler-opt" data-tip="sampler.thinking.high"><input type="radio" name="thinking-level" id="thinking-high" value="high" />High</label>
           </div>
         </div>
       </div>
@@ -342,56 +343,56 @@ ${VIEW_CSS}
         <span class="card-title">Sampling</span>
         <div class="field">
           <div class="sampler-toggle" id="sampler-toggle">
-            <label class="sampler-opt"><input type="radio" name="sampler" id="sampler-temp" value="temperature" checked />Temperature</label>
-            <label class="sampler-opt"><input type="radio" name="sampler" id="sampler-topp" value="topP" />Top-P</label>
+            <label class="sampler-opt" data-tip="param.temperature"><input type="radio" name="sampler" id="sampler-temp" value="temperature" checked />Temperature</label>
+            <label class="sampler-opt" data-tip="param.topP"><input type="radio" name="sampler" id="sampler-topp" value="topP" />Top-P</label>
             <span class="range-label" id="samp-range-label"></span>
           </div>
           <div class="num-row">
             <input type="range" id="samp-range" class="num-range" min="0" max="2" step="0.1" aria-label="Sampler value" />
             <span class="num-value" id="samp-value">Auto</span>
-            <button id="samp-auto" class="ctx-btn" title="Reset to Auto (not sent)">Auto</button>
+            <button id="samp-auto" class="ctx-btn" data-tip="sampler.auto.samp">Auto</button>
           </div>
         </div>
         <div class="field">
-          <label class="field-label" for="presence-range">Presence penalty (0.0 → 2.0)</label>
+          <label class="field-label" for="presence-range" data-tip="param.presence">Presence penalty (0.0 → 2.0)</label>
           <div class="num-row">
             <input type="range" id="presence-range" class="num-range" min="0" max="2" step="0.1" aria-label="Presence penalty" />
-            <span class="num-value" id="presence-value">Auto</span>
-            <button id="presence-auto" class="ctx-btn" title="Reset to Auto (not sent)">Auto</button>
+            <span class="num-value" id="presence-value" data-tip="param.presence">Auto</span>
+            <button id="presence-auto" class="ctx-btn" data-tip="sampler.auto.presence">Auto</button>
           </div>
         </div>
         <div class="field">
-          <label class="field-label" for="freq-range">Frequency penalty (0.0 → 2.0)</label>
+          <label class="field-label" for="freq-range" data-tip="param.frequency">Frequency penalty (0.0 → 2.0)</label>
           <div class="num-row">
             <input type="range" id="freq-range" class="num-range" min="0" max="2" step="0.1" aria-label="Frequency penalty" />
-            <span class="num-value" id="freq-value">Auto</span>
-            <button id="freq-auto" class="ctx-btn" title="Reset to Auto (not sent)">Auto</button>
+            <span class="num-value" id="freq-value" data-tip="param.frequency">Auto</span>
+            <button id="freq-auto" class="ctx-btn" data-tip="sampler.auto.freq">Auto</button>
           </div>
         </div>
       </div>
       <div class="ctl-card">
         <span class="card-title">Parallel</span>
         <div class="field">
-          <label class="field-label" for="par-range">Max parallel sub-agents</label>
+          <label class="field-label" for="par-range" data-tip="param.parallel">Max parallel sub-agents</label>
           <div class="num-row">
             <input type="range" id="par-range" class="num-range" min="0" max="100" step="1" aria-label="Max parallel sub-agents" />
-            <span class="num-value" id="par-value">4</span>
+            <span class="num-value" id="par-value" data-tip="param.parallel">4</span>
           </div>
         </div>
       </div>
       <div class="ctl-card" id="lg-card">
         <span class="card-title">Loop Guard</span>
         <div class="field">
-          <span class="field-label">Sensitivity</span>
+          <span class="field-label" data-tip="param.sensitivity">Sensitivity</span>
           <div class="lg-head" id="lg-head">
             <div class="sampler-toggle" id="lg-toggle" role="radiogroup" aria-label="Loop Guard sensitivity">
-              <label class="sampler-opt" title="Off: the Loop Guard does nothing at all — no detection, no nudges, no stop, and no tool-call deduplication (identical calls are re-run)"><input type="radio" name="lg-level" id="lg-off" value="off" />Off</label>
-              <label class="sampler-opt" title="Permissive: only clear, sustained loops are flagged"><input type="radio" name="lg-level" id="lg-low" value="low" />Low</label>
-              <label class="sampler-opt" title="Balanced: the default preset"><input type="radio" name="lg-level" id="lg-medium" value="medium" checked />Medium</label>
-              <label class="sampler-opt" title="Aggressive: flags loops sooner (more nudges, lower thresholds)"><input type="radio" name="lg-level" id="lg-high" value="high" />High</label>
-              <label class="sampler-opt" title="Also apply the Loop Guard to the final answer text (detects the model repeating the same response). Default off."><input type="checkbox" class="harny-switch" id="lg-response" role="switch" />Include response</label>
+              <label class="sampler-opt" data-tip="lg.level.off"><input type="radio" name="lg-level" id="lg-off" value="off" />Off</label>
+              <label class="sampler-opt" data-tip="lg.level.low"><input type="radio" name="lg-level" id="lg-low" value="low" />Low</label>
+              <label class="sampler-opt" data-tip="lg.level.medium"><input type="radio" name="lg-level" id="lg-medium" value="medium" checked />Medium</label>
+              <label class="sampler-opt" data-tip="lg.level.high"><input type="radio" name="lg-level" id="lg-high" value="high" />High</label>
+              <label class="sampler-opt" data-tip="lg.response"><input type="checkbox" class="harny-switch" id="lg-response" role="switch" />Include response</label>
             </div>
-            <button id="lg-collapse" class="lg-collapse" aria-expanded="false" aria-controls="lg-params-field" title="Show the Loop Guard parameters">
+            <button id="lg-collapse" class="lg-collapse" aria-expanded="false" aria-controls="lg-params-field" data-tip="lg.collapse.expanded" aria-label="Loop Guard parameters">
               ${icon("chevronDown", 13)}
             </button>
           </div>
@@ -407,7 +408,7 @@ ${VIEW_CSS}
       <div class="ctl-card ctl-card-wide hidden" id="mcp-card">
         <div class="ctl-inline" style="justify-content: space-between;">
           <span class="card-title">MCP</span>
-          <button id="mcp-configure" class="gear-btn" title="Configure MCP servers" aria-label="Configure MCP servers">${icon("gear", 14)}</button>
+          <button id="mcp-configure" class="gear-btn" data-tip="mcp.configure" aria-label="Configure MCP servers">${icon("gear", 14)}</button>
         </div>
         <div id="mcp-list"></div>
       </div>
@@ -416,14 +417,14 @@ ${VIEW_CSS}
   <div id="metrics">
     <div class="metrics-stats">
       <span class="model-label">Tokens</span>
-      <span class="met" id="met-tokens" title="Input tokens used">0</span>
+      <span class="met" id="met-tokens" data-tip="metrics.tokens">0</span>
       <span class="met-sep">/</span>
-      <span class="met"><span id="met-ctx" title="Usable context: window − response reserve">${DEFAULT_CONTEXT_WINDOW}</span><span class="met-note" id="met-window" title="Window the model declares, BEFORE the reserve is taken out"></span></span>
+      <span class="met"><span id="met-ctx" data-tip="metrics.ctx">${DEFAULT_CONTEXT_WINDOW}</span><span class="met-note" id="met-window" data-tip="metrics.ctx"></span></span>
       <span class="met pct" id="met-pct">(0%)</span>
-      <span class="met" id="met-cache" title="Input tokens served from prompt cache"></span>
-      <button id="compact-btn" title="Summarize the older turns and move them out of the context window. The transcript keeps them, readable and searchable.">Compact</button>
-      <span id="compact-threshold-label" title="Auto-compaction: starts when the usable context is this full · how much of it is kept verbatim after the cut">Auto 80% ctx · keep 10%</span>
-      <button id="compact-settings-btn" class="gear-btn" title="Compaction policy for THIS session: when it starts and where it lands">${icon("gear", 14)}</button>
+      <span class="met" id="met-cache" data-tip="metrics.cache"></span>
+      <button id="compact-btn" data-tip="compact.run">Compact</button>
+      <span id="compact-threshold-label" data-tip="compact.auto-label">Auto 80% ctx · keep 10%</span>
+      <button id="compact-settings-btn" class="gear-btn" data-tip="compact.policy" aria-label="Compaction policy">${icon("gear", 14)}</button>
     </div>
     <div id="ctx-bar-wrap"><div id="ctx-bar"></div></div>
   </div>
@@ -456,7 +457,7 @@ ${VIEW_CSS}
         <div class="cs-inline">
           <input id="compact-target-input" type="range" min="0" max="100" step="1" />
           <span id="compact-target-value" class="cs-val"></span>
-          <button id="compact-target-auto" class="secondary cs-mini" type="button" title="Back to the derived default: an eighth of the trigger">Default</button>
+          <button id="compact-target-auto" class="secondary cs-mini" type="button" data-tip="compact.target-default">Default</button>
         </div>
         <p class="cs-hint">The two knobs are <b>independent</b> — moving one never moves the other. <b>0</b> frees as much as the structure allows: only the last complete turn survives. <b>Default</b> sets an eighth of the trigger (10% with the trigger at 80), so two or three exchanges stay verbatim while it is untouched. The two knobs are free, and the line below says what the pair you picked actually DOES — nothing moves under your finger, and nothing is silently rewritten when you save.</p>
         <p id="compact-note" class="cs-hint cs-note"></p>
@@ -494,7 +495,7 @@ ${VIEW_CSS}
       <div id="sm-vacuum" class="sm-vacuum">
         <div class="sm-vacuum-head">
           <span>Database compaction (VACUUM)</span>
-          <span class="sm-vacuum-live" title="These two sliders are global settings: they are stored as soon as you move them, so this card needs no Save">applies immediately</span>
+          <span class="sm-vacuum-live" data-tip="sessions.vacuum-live">applies immediately</span>
           <span class="spacer"></span>
           <button id="sm-vacuum-btn" class="secondary">VACUUM &amp; optimize indexes…</button>
         </div>
@@ -572,7 +573,7 @@ ${VIEW_CSS}
             <label class="field-label" for="pe-apikey">API Key (optional — leave empty for local hosts)</label>
             <div class="pe-secret">
               <input id="pe-apikey" type="password" spellcheck="false" placeholder="sk-..." autocomplete="off" />
-              <button type="button" id="pe-apikey-reveal" class="pe-eye" title="Hold to show the key" aria-label="Hold to show the API key">
+              <button type="button" id="pe-apikey-reveal" class="pe-eye" data-tip="providers.reveal" aria-label="Hold to show the API key">
                 ${icon("eye", 15)}
               </button>
             </div>
@@ -589,18 +590,18 @@ ${VIEW_CSS}
           </div>
           <div class="field">
             <label class="field-label" for="pe-session-header">Session header (optional)</label>
-            <input id="pe-session-header" type="text" spellcheck="false" placeholder="e.g. x-opencode-session" title="Header carrying this conversation's stable session id (routing + prompt cache, e.g. OpenCode Go)" />
+            <input id="pe-session-header" type="text" spellcheck="false" placeholder="e.g. x-opencode-session" data-tip="providers.session-header" />
           </div>
           <div class="provider-actions">
             <button id="provider-test" class="secondary">Test connection</button>
-            <button id="provider-delete" class="secondary danger" title="Remove this provider">Delete</button>
+            <button id="provider-delete" class="secondary danger" data-tip="providers.delete">Delete</button>
           </div>
           <div id="provider-test-result" class="hidden"></div>
         </div>
       </div>
       <div class="providers-actions">
-        <button id="providers-export" class="secondary" title="Export the providers config to a JSON file">Export models configuration</button>
-        <button id="providers-import" class="secondary" title="Import providers from a JSON file (merged into the current config)">Import models configuration</button>
+        <button id="providers-export" class="secondary" data-tip="providers.export">Export models configuration</button>
+        <button id="providers-import" class="secondary" data-tip="providers.import">Import models configuration</button>
         <button id="providers-cancel" class="secondary">Cancel</button>
         <button id="providers-save">Save</button>
       </div>
@@ -632,7 +633,7 @@ ${VIEW_CSS}
           <div class="field"><label class="field-label" for="mcp-args">Args (one per line)</label><textarea id="mcp-args" rows="3" spellcheck="false"></textarea></div>
           <div class="field"><label class="field-label" for="mcp-env">Env (KEY=VALUE, one per line)</label><textarea id="mcp-env" rows="3" spellcheck="false"></textarea></div>
           <div class="field"><label class="field-label" for="mcp-headers">Headers (KEY=VALUE, one per line — HTTP only)</label><textarea id="mcp-headers" rows="2" spellcheck="false"></textarea></div>
-          <label class="mcp-enabled-row" title="A disabled server keeps its config and its tools stay out of reach: nothing is connected"><input type="checkbox" class="harny-switch" id="mcp-enabled" role="switch" /> Enabled (disabled servers are kept but not connected)</label>
+          <label class="mcp-enabled-row" data-tip="mcp.enabled"><input type="checkbox" class="harny-switch" id="mcp-enabled" role="switch" /> Enabled (disabled servers are kept but not connected)</label>
           <div class="mcp-form-actions">
             <button id="mcp-test" class="secondary" type="button">Test</button>
             <span id="mcp-test-result" class="mcp-io"></span>
@@ -651,14 +652,17 @@ ${VIEW_CSS}
   <div id="find-bar" class="hidden" role="search">
     <input id="find-input" type="search" placeholder="Find in chat" spellcheck="false" aria-label="Find in chat" />
     <span id="find-count" class="find-count" aria-live="polite"></span>
-    <button id="find-prev" type="button" class="secondary" title="Previous match (Shift+Enter)" aria-label="Previous match">↑</button>
-    <button id="find-next" type="button" class="secondary" title="Next match (Enter)" aria-label="Next match">↓</button>
-    <button id="find-close" type="button" class="secondary" title="Close (Esc)" aria-label="Close find">✕</button>
+    <button id="find-prev" type="button" class="secondary" data-tip="find.prev" aria-label="Previous match">↑</button>
+    <button id="find-next" type="button" class="secondary" data-tip="find.next" aria-label="Next match">↓</button>
+    <button id="find-close" type="button" class="secondary" data-tip="find.close" aria-label="Close find">✕</button>
   </div>
   <!-- The transcript's own context menu: deterministic Copy on every OS, and it never depends
        on the host webview injecting one. Right-click on prose only (not on the chrome). -->
   <div id="ctx-menu" class="hidden" role="menu"></div>
-  <!-- Shared hover tooltip: explains a control's parameter on mouse-over. -->
+  <!-- Shared hover tooltip: the ONE card every control speaks through. An element opts in with a
+       data-tip="&lt;catalog key&gt;" attribute (see src/i18n/en.help.json and
+       src/chat/webview/tips.ts); the text is looked up at hover time, so it is translatable and
+       never duplicated in this markup. -->
   <div id="tip" class="tip hidden" role="tooltip"></div>
   <div id="slash-menu" class="hidden" role="listbox" aria-label="Commands"></div>
   <script id="harny-view-init" type="application/json">${jsonInit(deps.state)}</script>

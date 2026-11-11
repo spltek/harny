@@ -28,6 +28,10 @@ import { createFind } from "./find";
 import { createMcpCard } from "./mcp-card";
 import { createMcpToolsPopover } from "./mcp-tools-popover";
 import { createMcpEditor } from "./mcp-editor";
+// The one hover-explanation mechanism for the whole panel, and the catalog it reads its text
+// from: no prose lives in this file any more (see src/i18n/).
+import { clearTip, installTips, setHelpEnabled, setTip } from "./tips";
+import { label } from "../../i18n";
 // The SAME boundary the core uses to decide what the model receives: importing it
 // (it is pure and dependency-free) is what keeps the transcript's marker and the
 // request from ever disagreeing about where the window starts.
@@ -35,7 +39,6 @@ import { checkpointStart } from "../../core/history/conversation-validity";
 import { toolArgTarget } from "../../core/tools/tool-call-text";
 import { EMPTY_TOOL_SCOPE, normalizeToolScope, type ToolScope } from "../../core/tools/tool-scope";
 import { isToolName } from "../../core/tools/unknown-tool";
-import { untrustedModeHint } from "../../core/agent/workspace-trust";
 import type { SessionLiveProjection } from "../session-live-state";
 
 declare function acquireVsCodeApi(): {
@@ -124,6 +127,8 @@ interface ConfigState {
   noModels?: boolean;
   configHome?: string;
   workspaceReady?: boolean;
+  /** Interactive help (the `?` on the Sessions line): held in the HOST's memory, absent = off. */
+  interactiveHelp?: boolean;
   /** Folders open in the window (0 = none, >1 = multi-root: both unusable). */
   workspaceFolderCount?: number;
   /** Is this folder TRUSTED (VS Code Workspace Trust)? False = Restricted Mode: the session runs
@@ -315,6 +320,7 @@ const outValue = document.getElementById("out-value") as HTMLSpanElement;
 const outRangeLabel = document.getElementById("out-range-label") as HTMLSpanElement;
 const sampRange = document.getElementById("samp-range") as HTMLInputElement;
 const sampRangeLabel = document.getElementById("samp-range-label") as HTMLSpanElement;
+const sampValue = document.getElementById("samp-value") as HTMLSpanElement;
 const sampAuto = document.getElementById("samp-auto") as HTMLButtonElement;
 const samplerTemp = document.getElementById("sampler-temp") as HTMLInputElement;
 const samplerTopp = document.getElementById("sampler-topp") as HTMLInputElement;
@@ -893,18 +899,22 @@ function renderSessions(sessions: SessionInfo[]): void {
     // hide what is open): say where it lives instead of pretending it is local.
     if (s.foreign) {
       row.classList.add("foreign");
-      row.title = s.folder ? `Open, from another folder: ${s.folder}` : "Open, created outside a workspace folder";
+      if (s.folder) setTip(row, "sessions.foreignFolder", { folder: s.folder });
+      else setTip(row, "sessions.foreignNoFolder");
     } else if (s.folderMissing) {
       // The workspace itself was deleted on disk (or this session's folder was): opening it
       // is refused by the host, so the click must SAY so instead of doing nothing.
-      row.title = "This session's folder no longer exists — click to pick another one";
+      setTip(row, "sessions.folderGone");
     }
     // Creation + last-modified dates, shown before the name.
     const meta = document.createElement("span");
     meta.className = "smeta";
     meta.textContent = "created " + fmtDate(s.createdAt) + " · updated " + fmtDate(s.updatedAt);
-    meta.title =
-      "Created: " + new Date(s.createdAt).toLocaleString() + " · Updated: " + new Date(s.updatedAt).toLocaleString();
+    // The visible line is SHORT on purpose (it must not wrap): the exact timestamps live in the card.
+    setTip(meta, "sessions.dates", {
+      created: new Date(s.createdAt).toLocaleString(),
+      updated: new Date(s.updatedAt).toLocaleString(),
+    });
     const name = document.createElement("span");
     name.className = "name";
     name.textContent = s.name || "Session";
@@ -933,13 +943,13 @@ function renderSessions(sessions: SessionInfo[]): void {
     const actions = document.createElement("span");
     actions.className = "srow-actions";
     actions.innerHTML =
-      '<button class="branch" title="Branch (copy) this session">' +
+      '<button class="branch" data-tip="sessions.branch" aria-label="Branch this session">' +
       icon("branch", 13) +
       "</button>" +
-      '<button class="rename" title="Rename">' +
+      '<button class="rename" data-tip="sessions.rename" aria-label="Rename this session">' +
       icon("pencil", 13) +
       "</button>" +
-      '<button class="del" title="Delete">' +
+      '<button class="del" data-tip="sessions.delete" aria-label="Delete this session">' +
       icon("trash", 13, 'stroke-width="2"') +
       "</button>";
     const branchBtn = actions.querySelector(".branch") as HTMLButtonElement;
@@ -949,14 +959,14 @@ function renderSessions(sessions: SessionInfo[]): void {
     });
     const del = actions.querySelector(".del") as HTMLButtonElement;
     const renameBtn = actions.querySelector(".rename") as HTMLButtonElement;
-    // A working session cannot be branched/deleted/renamed: enrich the buttons.
+    // A working session cannot be branched/deleted/renamed: the card says WHY it is inert.
     if (workingIds.has(s.id)) {
       del.disabled = true;
-      del.title = "Session is working — stop it before deleting";
+      setTip(del, "sessions.locked.delete");
       renameBtn.disabled = true;
-      renameBtn.title = "Session is working — stop it before renaming";
+      setTip(renameBtn, "sessions.locked.rename");
       branchBtn.disabled = true;
-      branchBtn.title = "Session is working — stop it before branching";
+      setTip(branchBtn, "sessions.locked.branch");
     }
     branchBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -1007,16 +1017,20 @@ function renderHomeRow(s: SessionInfo): HTMLDivElement {
   row.dataset.id = s.id;
   row.tabIndex = 0;
   row.setAttribute("role", "button");
-  row.title =
-    action === "open"
-      ? "Open this session — this window switches to " + s.folder + " first (it reloads)"
-      : "This session's folder is not available: pick another one — the session opens there";
+  setTip(
+    row,
+    action === "open" ? "home.rowOpen" : "home.rowNoFolder",
+    action === "open" ? { folder: s.folder ?? "" } : undefined,
+  );
 
   const meta = document.createElement("span");
   meta.className = "smeta";
   meta.textContent = "created " + fmtDate(s.createdAt) + " · updated " + fmtDate(s.updatedAt);
-  meta.title =
-    "Created: " + new Date(s.createdAt).toLocaleString() + " · Updated: " + new Date(s.updatedAt).toLocaleString();
+  // The visible line is SHORT on purpose (it must not wrap): the exact timestamps live in the card.
+  setTip(meta, "sessions.dates", {
+    created: new Date(s.createdAt).toLocaleString(),
+    updated: new Date(s.updatedAt).toLocaleString(),
+  });
 
   const name = document.createElement("span");
   name.className = "name";
@@ -1029,7 +1043,8 @@ function renderHomeRow(s: SessionInfo): HTMLDivElement {
   const folder = document.createElement("span");
   folder.className = "srow-folder" + (s.folder && s.folderMissing ? " missing" : "");
   folder.textContent = s.folder ?? "(folder not set)";
-  folder.title = s.folderMissing && s.folder ? s.folder + " is no longer available" : (s.folder ?? "");
+  // The path is DATA (a value, not an explanation): the ROW's card says the folder is gone.
+  folder.title = s.folderMissing ? "" : (s.folder ?? "");
 
   const choose = () => vscode.postMessage({ type: "openSessionFolder", id: s.id });
   row.addEventListener("click", choose);
@@ -1049,19 +1064,19 @@ function renderHomeRow(s: SessionInfo): HTMLDivElement {
   const actions = document.createElement("span");
   actions.className = "srow-actions";
   actions.innerHTML =
-    '<button class="rename" title="Rename">' +
+    '<button class="rename" data-tip="sessions.rename" aria-label="Rename this session">' +
     icon("pencil", 13) +
     "</button>" +
-    '<button class="del" title="Delete">' +
+    '<button class="del" data-tip="sessions.delete" aria-label="Delete this session">' +
     icon("trash", 13, 'stroke-width="2"') +
     "</button>";
   const renameBtn = actions.querySelector(".rename") as HTMLButtonElement;
   const delBtn = actions.querySelector(".del") as HTMLButtonElement;
   if (workingIds.has(s.id)) {
     delBtn.disabled = true;
-    delBtn.title = "Session is working — stop it before deleting";
+    setTip(delBtn, "sessions.locked.delete");
     renameBtn.disabled = true;
-    renameBtn.title = "Session is working — stop it before renaming";
+    setTip(renameBtn, "sessions.locked.rename");
   }
   renameBtn.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -1100,9 +1115,9 @@ function renderTabs(sessions: SessionInfo[]): void {
     // but the agent has nowhere to work — say it on the TAB, not only after a failed tool.
     if (s?.folderMissing) {
       tab.classList.add("missing");
-      tab.title = (s.name || "Session") + " — its folder no longer exists";
-    } else {
-      tab.title = s?.name || "Session";
+      // The tab's own label already names the session: the card explains the one thing the label
+      // cannot — why opening it leaves the agent with nowhere to work.
+      setTip(tab, "tabs.folderGone");
     }
     const label = document.createElement("span");
     label.textContent = s?.name || "Session";
@@ -1326,7 +1341,7 @@ function applyTabLocks(): void {
     const close = tab.querySelector<HTMLElement>(".close");
     if (close) {
       close.classList.toggle("disabled", w);
-      close.title = w ? "Session is working — stop it before closing the tab" : "Close tab";
+      setTip(close, w ? "tabs.locked.close" : "tabs.close");
     }
   }
 }
@@ -1442,7 +1457,7 @@ function addCompactedHint(): void {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.textContent = "🧹 Context compacted · the summary is above ↑";
-  btn.title = "Scroll to the summary that now opens the context window";
+  setTip(btn, "marker.summary");
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
     // Exactly ONE card is rendered (older checkpoints are folded into a single row).
@@ -1466,7 +1481,7 @@ const HARNESS_LABEL = "Nudge";
 function addHarnessMessage(content: string): HTMLDivElement {
   const div = document.createElement("div");
   div.className = "msg user harness";
-  div.title = "Inserted by Harny (system) — not typed by you";
+  setTip(div, "marker.system");
   div.innerHTML =
     '<div class="harness-label">' +
     HARNESS_LABEL +
@@ -1551,9 +1566,7 @@ function metaBadge(meta: MsgMeta): HTMLElement | undefined {
     const chip = document.createElement("span");
     chip.className = `meta-mode ${build ? "build" : "analyze"}`;
     chip.textContent = build ? "Build" : "Analyze";
-    chip.title = build
-      ? "This turn ran in Build: tools wrote for real"
-      : "This turn ran in Analyze: read-only, changes were prepared as previews";
+    setTip(chip, build ? "marker.mode.build" : "marker.mode.analyze");
     el.appendChild(chip);
     if (parts.length > 0) el.appendChild(document.createTextNode(" · " + parts.join(" · ")));
   } else {
@@ -1718,7 +1731,7 @@ function messageAttachmentRow(
     const img = document.createElement("img");
     img.src = dataUri;
     img.alt = file.name;
-    img.title = "Click to enlarge";
+    setTip(img, "attach.enlarge");
     img.addEventListener("click", (e) => {
       e.stopPropagation();
       openImageLightbox(dataUri, file.name);
@@ -1996,6 +2009,27 @@ const SYNTHETIC_SUMMARY_ICON = icon("history", 13, 'class="synthetic-icon"');
 /** A small robot glyph for sub-agent bubbles. */
 const SUBAGENT_ICON = icon("subagent", 13, 'class="subagent-icon"');
 
+/** What the sub-agent's chip SAYS: the MODE it runs in, in the same words as the chat's own mode
+ * button. `read` IS the analyze mode (the host maps it that way — file tools run as previews and
+ * Shell is read-only), and both writing accesses run in Build. This is the fix for a chip that
+ * used to print the raw `read`/`write`/`create` of the tool arguments: the panel spent two
+ * vocabularies on one concept, and `write` vs `create` — the same mode, the same colour — read as
+ * two different kinds of sub-agent. The precise access is NOT lost: it is the chip's tooltip, and
+ * the full arguments stay in the bubble's "Task" block. */
+function subAgentModeLabel(access: string): string {
+  if (access === "read") return "Analyze";
+  if (access === "write" || access === "create") return "Build";
+  return access; // an access we do not know: show it, never swallow it
+}
+
+/** The chip's tooltip: the exact permission behind the mode name. */
+function subAgentAccessTitle(access: string): string {
+  if (access === "read") return "read-only: the file tools run as PREVIEWS and Shell is read-only";
+  if (access === "write") return "may MODIFY the resources it was given (and nothing else)";
+  if (access === "create") return "may CREATE files in the resources it was given (and nothing else)";
+  return access;
+}
+
 /** A short, readable label for a sub-agent bubble: its id when that id is
  * descriptive, otherwise the first words of its goal — never a bare "A"/"1". */
 function subAgentLabel(id: string, goal: string): string {
@@ -2047,19 +2081,29 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
       : "") +
     (role ? '<span class="subagent-role">' + escapeHtml(role) + "</span>" : "") +
     '<span class="subagent-status queued">queued…</span>' +
-    '<button class="subagent-abort" type="button" title="Abort this sub-agent" aria-label="Abort this sub-agent">' +
+    '<button class="subagent-abort" type="button" data-tip="subagent.abort" aria-label="Abort this sub-agent">' +
     icon("stop", 10) +
     "</button>" +
     "</div>" +
     '<div class="subagent-body collapsed">' +
     (goal ? '<div class="subagent-goal">' + escapeHtml(goal) + "</div>" : "") +
     '<div class="subagent-meta">' +
-    (access ? '<span class="subagent-chip access-' + escapeHtml(access) + '">' + escapeHtml(access) + "</span>" : "") +
-    (parallel
-      ? '<span class="subagent-chip parallel" title="may run in parallel with other read-only sub-agents">⫽ parallel</span>'
+    (access
+      ? '<span class="subagent-chip access-' +
+        escapeHtml(access) +
+        '" title="' +
+        escapeHtml(subAgentAccessTitle(access)) +
+        '">' +
+        escapeHtml(subAgentModeLabel(access)) +
+        "</span>"
       : "") +
+    (parallel ? '<span class="subagent-chip parallel" data-tip="subagent.parallel">⫽ parallel</span>' : "") +
     (after.length > 0
-      ? '<span class="subagent-chip" title="waits for">after: ' + escapeHtml(after.join(", ")) + "</span>"
+      ? '<span class="subagent-chip" data-tip="subagent.after" data-tip-args="names=' +
+        escapeHtml(encodeURIComponent(after.join(", "))) +
+        '">after: ' +
+        escapeHtml(after.join(", ")) +
+        "</span>"
       : "") +
     resources
       .map((r) => '<span class="subagent-chip res" title="' + escapeHtml(r) + '">' + escapeHtml(r) + "</span>")
@@ -2357,7 +2401,7 @@ function renderWorkspaceShell(): void {
     '<p class="empty-hint">' +
     copy.hint +
     "</p>" +
-    '<button id="home-open-folder" class="empty-cta" title="Choose a folder and open it as the workspace">' +
+    '<button id="home-open-folder" class="empty-cta" data-tip="home.openFolder">' +
     copy.cta +
     "</button>";
   messagesEl.appendChild(hero);
@@ -2441,7 +2485,7 @@ function renderEmptyShell(): void {
     heroMetaLine() +
     "<p>No session is open right now.</p>" +
     '<p class="empty-hint">Pick one from the list above,<br>start a new conversation,<br>or branch an existing session.</p>' +
-    '<button id="empty-new-session" class="empty-cta" title="Create a new session">New session</button>';
+    '<button id="empty-new-session" class="empty-cta" data-tip="home.newSession">New session</button>';
   messagesEl.appendChild(hero);
   hero.querySelector("#empty-new-session")?.addEventListener("click", () => {
     vscode.postMessage({ type: "newSession" });
@@ -2617,7 +2661,7 @@ function renderMessages(msgs: ChatMsg[]): boolean {
 function attachBranchAt(el: HTMLElement, index: number): void {
   const b = document.createElement("button");
   b.className = "branch-at";
-  b.title = "Branch session from this point (up to and including this reply)";
+  setTip(b, "message.branch");
   b.innerHTML = icon("branch", 12);
   b.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -2636,7 +2680,7 @@ function attachBranchAt(el: HTMLElement, index: number): void {
 function attachTruncateAt(el: HTMLElement, index: number): void {
   const b = document.createElement("button");
   b.className = "truncate-at";
-  b.title = "Cut the conversation from here down (removes this message and everything after it)";
+  setTip(b, "message.cut");
   b.innerHTML = icon("scissors", 12);
   b.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -2905,7 +2949,7 @@ function renderAttachmentChips(): void {
       thumb.className = "attach-thumb";
       thumb.src = file.dataUri;
       thumb.alt = file.name;
-      thumb.title = "Click to enlarge";
+      setTip(thumb, "attach.enlarge");
       thumb.addEventListener("click", (e) => {
         e.stopPropagation();
         openImageLightbox(file.dataUri as string, file.name);
@@ -2942,7 +2986,7 @@ function renderAttachmentChips(): void {
     remove.type = "button";
     remove.className = "attach-remove";
     remove.textContent = "\u00d7";
-    remove.title = "Remove attachment";
+    setTip(remove, "attach.remove");
     remove.addEventListener("click", () => {
       attachedFiles.splice(index, 1);
       renderAttachmentChips();
@@ -3003,11 +3047,9 @@ function renderSteerMode(): void {
   // Idle has no meaningful choice: dim the line exactly like the old disabled pill.
   insertHint.classList.toggle("is-idle", !streamingActive);
   insertHintWord.textContent = isSteer ? "Steer" : "Queue";
-  insertHint.title = isSteer
-    ? "Steer: the next message is injected into the running loop"
-    : streamingActive
-      ? "Queue: the next message runs after the current run ends (hold Ctrl/Cmd to Steer)"
-      : "Queue: the next message runs after the current run ends";
+  // Three states, three catalog keys — the sentence never lives in the view, and the hint is a
+  // pure INDICATOR, so the card is the only place it can explain itself.
+  setTip(insertHint, isSteer ? "insert.steer" : streamingActive ? "insert.queueActive" : "insert.queue");
   // Switching Queue <-> Steer is a decision about the run in progress, but this function also
   // runs for the INDICATOR — and holding Ctrl/Cmd (⌘C, a copy!) switches the mode on every key
   // press. It must never move the viewport nor steal focus: it used to call `followAndFocus()`,
@@ -3543,7 +3585,7 @@ function showCtxMenu(x: number, y: number): void {
   copy.setAttribute("role", "menuitem");
   copy.textContent = "Copy";
   copy.disabled = !selected;
-  copy.title = selected ? "Copy the selection" : "Select some text first";
+  setTip(copy, selected ? "copy.selection" : "copy.none");
   copy.addEventListener("click", () => {
     void copySelection();
     hideCtxMenu();
@@ -3800,6 +3842,38 @@ pendingArea.addEventListener("click", updateTranscriptActions);
 // manual reload.
 window.addEventListener("focus", () => vscode.postMessage({ type: "getSkills" }));
 newSessionBtn.addEventListener("click", () => vscode.postMessage({ type: "newSession" }));
+
+/**
+ * INTERACTIVE HELP — the panel's one teaching switch, on the Sessions line.
+ *
+ * OFF by default: every control that has an explanation explains itself (the card on hover and on
+ * keyboard focus, the question-mark pointer on inert text) only once you ask for it. Someone who
+ * already knows the panel should not have it changing shape under the pointer, and an explanation
+ * nobody requested is noise on a surface this dense.
+ *
+ * The switch itself is the one element that always answers (`data-tip-always`), in both states: a
+ * switch that also went mute would be a switch you cannot find your way back from.
+ *
+ * The state lives in the HOST's memory and nowhere else (see `interactiveHelp` in chat-view.ts):
+ * not `setState`, not `settings.json`. VS Code destroys this page whenever the panel is hidden, so
+ * a flag kept here would forget the answer on the next open; the host hands it back in `init`.
+ * The process forgets it on window reload — the intended lifetime of a decision about this panel.
+ */
+const helpToggle = document.getElementById("help-toggle") as HTMLButtonElement;
+/** The switch's state, mirrored in `aria-pressed` for anyone not looking at the colour. */
+let helpOn = false;
+function applyHelp(on: boolean): void {
+  helpOn = on;
+  helpToggle.setAttribute("aria-pressed", String(on));
+  setHelpEnabled(on);
+}
+helpToggle.addEventListener("click", (event) => {
+  // The head collapses the session list on click: this switch governs the PANEL, not that list.
+  event.stopPropagation();
+  applyHelp(!helpOn);
+  vscode.postMessage({ type: "setInteractiveHelp", on: helpOn });
+});
+
 sessionHead.addEventListener("click", () => {
   setSessionsExpanded(sessionsEl.classList.contains("hidden")); // collapsed -> expand
 });
@@ -4251,7 +4325,7 @@ function renderSessionsManager(): void {
     const folderKnown = !!s.folder;
     folder.className = "sm-folder" + (folderKnown && s.folderMissing ? " missing" : folderKnown ? "" : " unset");
     folder.textContent = folderKnown ? s.folder + (s.folderMissing ? " — missing" : "") : "(folder not set)";
-    folder.title = s.folderMissing && s.folder ? s.folder + " is no longer available" : s.folder || "";
+    folder.title = s.folderMissing ? "" : s.folder || "";
     main.appendChild(nameLine);
     main.appendChild(meta);
     main.appendChild(folder);
@@ -4280,18 +4354,15 @@ function renderSessionsManager(): void {
     const action = folderAction(s, smCurrentFolder);
     folderBtn.textContent = folderActionLabel(action);
     if (action === "pick") {
-      folderBtn.title = "Pick the folder this session should live in — the session opens right after";
+      setTip(folderBtn, "sessionEditor.pickFolder");
       folderBtn.addEventListener("click", () => vscode.postMessage({ type: "sessionsManagerChangeFolder", id: s.id }));
     } else {
-      folderBtn.title =
-        action === "here"
-          ? "Open this session — it already lives in this folder, so nothing reloads"
-          : "Open this session — this window switches to its folder first (it reloads)";
+      setTip(folderBtn, action === "here" ? "sessionEditor.openHere" : "sessionEditor.openOther");
       folderBtn.addEventListener("click", () => vscode.postMessage({ type: "sessionsManagerOpenFolder", id: s.id }));
     }
     const del = document.createElement("button");
     del.className = "secondary-ghost del-btn";
-    del.title = "Delete this session";
+    setTip(del, "sessions.delete");
     del.innerHTML = icon("trash", 13, 'stroke-width="2"');
     del.addEventListener("click", () => vscode.postMessage({ type: "deleteSession", id: s.id }));
     actions.appendChild(folderBtn);
@@ -4303,7 +4374,7 @@ function renderSessionsManager(): void {
       const move = document.createElement("button");
       move.className = "secondary-ghost move-btn";
       move.textContent = folderMoveLabel();
-      move.title = "Open this session in another folder — picking one re-points it, and it opens there";
+      setTip(move, "sessionEditor.move");
       move.addEventListener("click", () => vscode.postMessage({ type: "sessionsManagerChangeFolder", id: s.id }));
       actions.appendChild(move);
     }
@@ -4722,7 +4793,6 @@ const mcpAdd = document.getElementById("mcp-add") as HTMLButtonElement;
 const mcpDelete = document.getElementById("mcp-delete") as HTMLButtonElement;
 const mcpSave = document.getElementById("mcp-save") as HTMLButtonElement;
 const mcpCancel = document.getElementById("mcp-cancel") as HTMLButtonElement;
-const tipEl = document.getElementById("tip") as HTMLDivElement;
 
 /** What the ACTIVE session may use, as the host last reported it. The card reads it (the switches
  *  are this session's), and `applyToolScope` is the only writer. */
@@ -4786,20 +4856,6 @@ function sendLoopGuardResponse(): void {
 // so experimenting with the thresholds is throw-away. Picking a sensitivity
 // level resets the fields to that preset (the new baseline).
 type LgRange = { key: string; min: number; max: number; step: number; integer: boolean };
-const LG_LABELS: Record<string, string> = {
-  maxNudges: "Nudges",
-  reasoningThreshold: "Reasoning θ",
-  reasoningMinTokens: "Reasoning tok",
-  crossTurnSimilarity: "Turn sim",
-  crossTurnMinLength: "Turn len",
-  toolFailureRepeats: "Tool fail",
-  errorStreakTurns: "Err streak",
-  toolRepeatConsecutive: "Repeat run",
-  toolRepeatWindow: "Rep window",
-  toolRepeatWindowThreshold: "Rep win thr",
-  answerThreshold: "Answer θ",
-  answerMinTokens: "Answer tok",
-};
 let lgRanges: LgRange[] = [];
 let lgPresets: Record<string, Record<string, number | boolean>> = {};
 /** The SAVED per-session field values (overlaid on the preset). */
@@ -4808,54 +4864,6 @@ let lgFieldsBuilt = false;
 let lgLastLevel: string | null = null;
 let lgLastSession: string | undefined;
 
-/** Show the shared hover tooltip anchored to `el` (below it; flipped above
- * when there is no room at the bottom). */
-function showTip(el: HTMLElement, text: string): void {
-  if (!text) return;
-  tipEl.textContent = text;
-  tipEl.classList.remove("hidden");
-  const r = el.getBoundingClientRect();
-  const t = tipEl.getBoundingClientRect();
-  let top = r.bottom + 6;
-  if (top + t.height > window.innerHeight - 4) top = Math.max(4, r.top - t.height - 6);
-  const left = Math.min(Math.max(4, r.left), Math.max(4, window.innerWidth - t.width - 4));
-  tipEl.style.top = `${top}px`;
-  tipEl.style.left = `${left}px`;
-}
-function hideTip(): void {
-  tipEl.classList.add("hidden");
-}
-/** Attach the shared tooltip to an element (replaces the native title). */
-function attachTip(el: HTMLElement, text: string): void {
-  el.addEventListener("mouseenter", () => showTip(el, text));
-  el.addEventListener("mouseleave", hideTip);
-  el.addEventListener("focus", () => showTip(el, text));
-  el.addEventListener("blur", hideTip);
-}
-// A stale tooltip must not float over unrelated content.
-window.addEventListener("scroll", hideTip, true);
-
-/** One-line explanation for each Loop Guard parameter (the labels stay short). */
-const LG_TIPS: Record<string, string> = {
-  maxNudges: "How many corrective nudges a loop type gets before the guard stops the run. Higher = more patient.",
-  reasoningThreshold:
-    "Within a turn: how repetitive the reasoning must be to be cut (trigram duplication). Lower = flags sooner.",
-  reasoningMinTokens: "Minimum reasoning tokens before the within-turn repetition check runs.",
-  crossTurnSimilarity:
-    "Across turns: how similar two turns' reasoning must be to inject a corrective nudge. Lower = flags sooner.",
-  crossTurnMinLength: "Minimum reasoning characters before the across-turn similarity check runs.",
-  toolFailureRepeats:
-    "How many identical FAILING tool calls are re-run before the recorded failure is returned instead.",
-  errorStreakTurns: "Consecutive turns with tool errors before the host injects a 'change strategy' summary.",
-  toolRepeatConsecutive:
-    "Consecutive identical successful calls that count as a loop (the call is then served from cache).",
-  toolRepeatWindow: "Sliding window (in calls) used to count repeated call signatures.",
-  toolRepeatWindowThreshold: "Repeats of the SAME call inside the window that count as a loop.",
-  answerThreshold:
-    "How repetitive the final answer must be to be flagged (needs 'Include response'). Lower = flags sooner.",
-  answerMinTokens: "Minimum answer tokens before the final-answer repetition check runs.",
-};
-
 /** Build the editable fields once, from the host-provided ranges: each is a
  * slider (the ONLY control) with the value shown as a read-only label. */
 function buildLgFields(): void {
@@ -4863,18 +4871,22 @@ function buildLgFields(): void {
   if (!wrap || lgRanges.length === 0) return;
   wrap.innerHTML = "";
   for (const r of lgRanges) {
-    const label = LG_LABELS[r.key] ?? r.key;
+    // The label NAMES the parameter and the tip EXPLAINS it: one catalog key per field, so a
+    // translation can never leave the two describing different things.
+    const key = `lg.p.${r.key}`;
+    const nameText = label(key) || r.key;
     const cell = document.createElement("label");
     cell.className = "lg-field";
     const name = document.createElement("span");
     name.className = "lg-name";
-    name.textContent = label;
-    // Short label + a hover tooltip that explains the parameter (and its range).
-    const tipText = LG_TIPS[r.key] ?? label;
-    attachTip(name, `${label} — ${tipText} (range ${r.min}–${r.max})`);
+    name.textContent = nameText;
+    // The range is part of the explanation and comes from the host, so it is interpolated.
+    setTip(name, key, { min: r.min, max: r.max });
     const value = document.createElement("span");
     value.className = "lg-value";
     value.id = `lgv-${r.key}`;
+    // The value explains itself with the SAME card: it is the number the explanation is about.
+    setTip(value, key, { min: r.min, max: r.max });
     const range = document.createElement("input");
     range.type = "range";
     range.className = "lg-range";
@@ -4882,7 +4894,7 @@ function buildLgFields(): void {
     range.min = String(r.min);
     range.max = String(r.max);
     range.step = String(r.step);
-    range.setAttribute("aria-label", label);
+    range.setAttribute("aria-label", nameText);
     // Live drag: mirror the value into its label and push (rAF-throttled).
     range.addEventListener("input", () => {
       value.textContent = range.value;
@@ -4968,7 +4980,8 @@ function onLoopGuardLevelChange(): void {
 function setLgParamsCollapsed(collapsed: boolean): void {
   lgParamsField.classList.toggle("hidden", collapsed);
   lgCollapse.setAttribute("aria-expanded", String(!collapsed));
-  lgCollapse.title = collapsed ? "Show the Loop Guard parameters" : "Hide the Loop Guard parameters";
+  // The explanation follows the STATE (what the click will do), by key: one entry per state.
+  setTip(lgCollapse, collapsed ? "lg.collapse.expanded" : "lg.collapse.collapsed");
 }
 setLgParamsCollapsed(true);
 lgCollapse.addEventListener("click", () => {
@@ -5407,13 +5420,14 @@ function applyMode(mode: ChatMode, opts?: { notify?: boolean }): void {
     item.classList.toggle("is-active", on);
     item.setAttribute("aria-selected", String(on));
   }
-  // The Build CHOICE itself says it is unavailable (a disabled button, the reason in its title):
-  // the pill alone would look like the click did nothing.
+  // The Build CHOICE itself says it is unavailable (a disabled button, the reason in its card):
+  // the pill alone would look like the click did nothing. The generic explanation is a catalog key
+  // on each item, so the reason REPLACES it rather than stacking a second tooltip on top.
   for (const item of modeItems) {
+    setTip(item, item.dataset.mode === "agent" ? "mode.build" : "mode.analyze");
     if (item.dataset.mode !== "agent") continue;
     item.disabled = !workspaceTrusted;
-    if (workspaceTrusted) item.removeAttribute("title");
-    else item.title = untrustedModeHint();
+    if (!workspaceTrusted) setTip(item, "mode.untrusted");
   }
   if (opts?.notify) vscode.postMessage({ type: "setMode", mode });
   refreshPolicyHints();
@@ -5501,15 +5515,15 @@ function refreshPolicyHints(): void {
   if (modePending) {
     const wanted = currentMode === "agent" ? "Build" : "Analyze";
     const running = runMode === "agent" ? "Build" : "Analyze";
-    modeBtn.title = `${wanted} — applies to the NEXT run: this one is still ${running}. Stop to stop now.`;
+    setTip(modeBtn, "mode.locked", { wanted, running });
   } else if (runMode !== null) {
     const running = runMode === "agent" ? "Build" : "Analyze";
-    modeBtn.title = `${running} — locked to this run: a switch now applies to the NEXT one. Stop to stop now.`;
+    setTip(modeBtn, "mode.lockedRun", { running });
   } else if (!workspaceTrusted) {
     // No run to explain: the one fact about this pill is that Build is not on offer here.
-    modeBtn.title = untrustedModeHint();
+    setTip(modeBtn, "mode.untrusted");
   } else {
-    modeBtn.removeAttribute("title");
+    setTip(modeBtn, "mode.summary");
   }
   const runParallel = runParallelAtStart;
   const parallelPending = runParallel !== null && parallelOn !== runParallel;
@@ -5517,12 +5531,12 @@ function refreshPolicyHints(): void {
   if (parallelPending) {
     const wanted = parallelOn ? "ON" : "OFF";
     const running = runParallel ? "ON" : "OFF";
-    parallelBtn.title = `Parallel ${wanted} — applies to the NEXT run: this one is still ${running}. Stop to stop now.`;
+    setTip(parallelBtn, "parallel.locked", { wanted, running });
   } else if (runParallel !== null) {
     const running = runParallel ? "ON" : "OFF";
-    parallelBtn.title = `Parallel ${running} — locked to this run: a switch now applies to the NEXT one. Stop to stop now.`;
+    setTip(parallelBtn, "parallel.lockedRun", { running });
   } else {
-    parallelBtn.removeAttribute("title");
+    setTip(parallelBtn, "parallel.toggle");
   }
 }
 
@@ -5624,7 +5638,7 @@ function updateModelButton(c: ConfigState): void {
   }
   modelBtn.classList.toggle("placeholder", !usable);
   const served = current?.provider ? `${current.provider} · ${c.model}` : c.model;
-  modelBtn.title = usable ? `Switch model — current: ${served}` : "Select a model";
+  setTip(modelBtn, usable ? "model.current" : "model.select", { model: served });
   // A soft ⚠ badge when the models.dev fallback is down (limits may be unknown).
   modelWarn.classList.toggle("hidden", !c.modelsDevError);
 }
@@ -5776,14 +5790,13 @@ function renderThinkingSelect(c: ConfigState): void {
   const mode = c.thinkingMode;
   const enabled = mode === "bool" || mode === "effort" || mode === "type" || mode === "reasoning";
   thinkingCapable = enabled;
-  const title = enabled
-    ? "Thinking level / reasoning effort (per session)"
-    : 'This provider/model does not declare thinking control (add "thinking": "bool", "effort" or "type" to its config entry)';
   const level = c.thinkingLevel && ["off", "low", "medium", "high"].includes(c.thinkingLevel) ? c.thinkingLevel : "off";
   for (const r of thinkingRadios) {
     r.disabled = streamingActive || !enabled;
     r.checked = r.value === level;
-    if (r.parentElement) r.parentElement.title = title;
+    // The card sits on the LABEL (the radio itself has no box to hover) and says WHY it is dead
+    // when the provider declares no thinking control.
+    if (r.parentElement) setTip(r.parentElement, enabled ? "thinking.level" : "thinking.unsupported");
   }
 }
 for (const r of thinkingRadios) {
@@ -5933,6 +5946,9 @@ function applySamplerScale(active: "temperature" | "topP"): void {
   sampRange.max = String(max);
   sampRange.step = String(TEMPERATURE_STEP);
   sampRangeLabel.textContent = `(${TEMPERATURE_MIN.toFixed(1)} → ${max.toFixed(1)})`;
+  // The number under the track follows the radio: it explains whichever parameter is selected, so
+  // its card has to move with the selection ("Auto" is an answer to the same question).
+  setTip(sampValue, active === "topP" ? "param.topP" : "param.temperature");
 }
 
 /** Sampler radios: brand the active option; show its value in the shared stepper. */
@@ -5985,19 +6001,24 @@ function renderMetrics(c: ConfigState): void {
   const used = c.contextTokens ?? 0;
   metCtx.textContent = fmtTokens(ctx);
   metTokens.textContent = fmtTokens(used);
-  // Exact counts stay reachable via the tooltip.
-  metTokens.title = String(used);
-  metCtx.title = reserve
-    ? `${fmtTokens(window)} context window − ${fmtTokens(reserve)} reserved for the response = ${fmtTokens(ctx)} usable tokens`
-    : `${window} context window (no response reserve)`;
+  // Exact counts stay reachable through the card (the visible number is rounded).
+  setTip(metTokens, "metrics.tokensExact", { used });
+  setTip(
+    metCtx,
+    reserve ? "metrics.ctx" : "metrics.ctxNoReserve",
+    reserve
+      ? { window: fmtTokens(window), reserve: fmtTokens(reserve), usable: fmtTokens(ctx) }
+      : { window: fmtTokens(window) },
+  );
   // The declared window, attached to the usable value with no connector words:
   // "663.3k / 616k/1M (100%)". Most contracted form that still says where the
   // usable number comes from — without it the footer shows "616k" with no trace
   // of the 1M the model card promises. The full breakdown (and the 384k reserve
   // that explains the gap) stays in the tooltip.
   metWindow.textContent = reserve > 0 ? `/${fmtTokens(window)}` : "";
-  metWindow.title =
-    reserve > 0 ? `${window} context window − ${reserve} reserved for the response = ${ctx} usable tokens` : "";
+  // The same breakdown, with the RAW counts: the note is a contracted echo of the usable value.
+  if (reserve > 0) setTip(metWindow, "metrics.ctx", { window, reserve, usable: ctx });
+  else clearTip(metWindow);
   const pct = ctx > 0 ? Math.max(0, Math.min(100, Math.round((used / ctx) * 100))) : 0;
   metPct.textContent = "(" + pct + "%)";
   metPct.classList.toggle("warn", pct >= 90);
@@ -6013,22 +6034,20 @@ function renderMetrics(c: ConfigState): void {
     const saved = Math.min(100, Math.round((cached / used) * 100));
     const writeTxt = write && write > 0 ? " · write " + fmtTokens(write) : "";
     metCache.textContent = "⚡ cache " + fmtTokens(cached) + " (" + saved + "%)" + writeTxt;
-    metCache.title =
-      "Input tokens served from prompt cache: " +
-      cached +
-      " / " +
-      saved +
-      "%" +
-      (write && write > 0 ? " · written to cache: " + write : "");
+    setTip(metCache, write && write > 0 ? "metrics.cacheReadWrite" : "metrics.cacheRead", {
+      cached,
+      saved,
+      written: write ?? 0,
+    });
     metCache.classList.remove("idle");
   } else if (write && write > 0) {
     // Cache cold but this turn wrote into it: tell that truth instead of "–".
     metCache.textContent = "⚡ write " + fmtTokens(write);
-    metCache.title = "Tokens written into the prompt cache: " + write;
+    setTip(metCache, "metrics.cacheWrite", { written: write });
     metCache.classList.remove("idle");
   } else {
     metCache.textContent = "⚡ cache –";
-    metCache.title = "Cached input tokens not reported by this provider";
+    setTip(metCache, "metrics.cacheUnknown");
     metCache.classList.add("idle");
   }
 }
@@ -6691,14 +6710,13 @@ window.addEventListener("message", (e) => {
         known.updatedAt = m.updatedAt;
         known.createdAt = m.createdAt;
         const text = "created " + fmtDate(known.createdAt) + " · updated " + fmtDate(known.updatedAt);
-        const title =
-          "Created: " +
-          new Date(known.createdAt).toLocaleString() +
-          " · Updated: " +
-          new Date(known.updatedAt).toLocaleString();
+        const args = {
+          created: new Date(known.createdAt).toLocaleString(),
+          updated: new Date(known.updatedAt).toLocaleString(),
+        };
         for (const el of document.querySelectorAll<HTMLElement>(`.srow[data-id="${known.id}"] .smeta`)) {
           el.textContent = text;
-          el.title = title;
+          setTip(el, "sessions.dates", args);
         }
       }
       break;
@@ -6981,9 +6999,12 @@ interface LockRule {
   /** Locked when this is true. Written as a predicate so a compound rule (a model that cannot
    *  think AND a live run) stays on one readable line instead of a special case. */
   lock: (s: LockSnapshot) => boolean;
-  /** The tooltip, given the snapshot and whether the control is locked right now. A tooltip may
-   *  depend on the OTHER axis (the sessions manager says so when other sessions run). */
-  title?: (s: LockSnapshot, locked: boolean) => string;
+  /** The catalog KEY of the card, given the snapshot and whether the control is locked now. A lock
+   *  is a question — "why is this greyed out?" — and the answer belongs in the same card, so the
+   *  rule swaps the key instead of stacking a second (OS) tooltip on top of the first. Controls
+   *  without a rule keep the key their markup carries: a disabled control still explains what it
+   *  DOES, which is often enough. */
+  tip?: (s: LockSnapshot, locked: boolean) => string;
 }
 
 const whenActive = (s: LockSnapshot): boolean => s.activeBusy;
@@ -7009,23 +7030,17 @@ const never = (): boolean => false;
  */
 const LOCKS: readonly LockRule[] = [
   // ── the model, and the manager that edits it ──
-  { el: modelBtn, lock: whenActive }, // its tooltip names the current model (config push)
+  { el: modelBtn, lock: whenActive }, // its card names the current model (config push)
   {
     el: gearBtn,
     lock: whenActive,
-    title: (_s, locked) =>
-      locked
-        ? "Saving is blocked while this session works — the run keeps the model it started with"
-        : "Configure providers & models",
+    tip: (_s, locked) => (locked ? "locked.gear" : "providers.configure"),
   },
   // ── the tool list: saving a server reconnects it and swaps the tools mid-turn ──
   {
     el: mcpConfigure,
     lock: whenActive,
-    title: (_s, locked) =>
-      locked
-        ? "Stop the run first — saving a server reconnects it and swaps the tool list mid-turn"
-        : "Configure MCP servers",
+    tip: (_s, locked) => (locked ? "locked.mcp" : "mcp.configure"),
   },
   // ── a run is born with its mode and its Parallel setting (see Agent.runMode) ──
   { el: modeBtn, lock: whenActive },
@@ -7052,8 +7067,7 @@ const LOCKS: readonly LockRule[] = [
   {
     el: sessionsGearBtn,
     lock: never,
-    title: (s) =>
-      s.anyBusy ? "Manage all sessions (the working ones are locked)" : "Manage all sessions (every folder)",
+    tip: (s) => (s.anyBusy ? "sessions.manageBusy" : "sessions.manage"),
   },
 ];
 
@@ -7065,7 +7079,7 @@ function applyLocks(): void {
     if (!rule.el) continue;
     const locked = rule.lock(snap);
     (rule.el as HTMLButtonElement).disabled = locked;
-    if (rule.title) rule.el.title = rule.title(snap, locked);
+    if (rule.tip) setTip(rule.el, rule.tip(snap, locked));
   }
 }
 
@@ -7448,6 +7462,14 @@ window.addEventListener("keydown", (e) => {
     }
   }
 });
+
+// ── Hover explanations ──
+// One delegated listener serves every control on the page; the text comes from the catalog under
+// src/i18n/, so this file has no prose to review and a translation needs no code change.
+installTips();
+// Interactive help: OFF unless the host says this panel already asked for it (the switch's state
+// lives in the host's memory, because this page is destroyed every time the panel is hidden).
+applyHelp(init.config?.interactiveHelp === true);
 
 // ── "The page is here" ──
 // The LAST thing this script does, and the host depends on it. Assigning `webview.html` only

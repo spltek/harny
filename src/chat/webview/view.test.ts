@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { vi } from "vitest";
+// What the user READS, not the attribute that carries it: every explanation is a catalog key now,
+// so a test that asserts on `title` would only prove the card was left unwired.
+import { tipTextOf } from "./tips";
 
 const posted: unknown[] = [];
 
@@ -49,7 +52,7 @@ function setupDom(initOverrides: Record<string, unknown> = {}, savedState: Recor
     ...initOverrides,
   };
   document.body.innerHTML = `
-    <div id="session-head"><span class="toggle is-open"><svg class="toggle-chevron"></svg></span><span>Sessions</span><span class="spacer"></span><button id="new-session">＋</button><button id="sessions-gear-btn">⚙</button></div>
+    <div id="session-head"><span class="toggle is-open"><svg class="toggle-chevron"></svg></span><span>Sessions</span><span class="spacer"></span><button id="help-toggle" class="help-toggle" aria-pressed="false" data-tip="help.toggle" data-tip-always>?</button><button id="new-session">＋</button><button id="sessions-gear-btn">⚙</button></div>
     <div id="session-search-row"><input id="session-search" type="search" placeholder="Search sessions" /></div>
     <div id="sessions"></div>
     <div id="tabs"></div>
@@ -544,13 +547,13 @@ describe("view webview client", () => {
     expect(analyze.classList.contains("is-active")).toBe(true);
     // The choice says it is unavailable, with the reason in the place the choice is made…
     expect(agent.disabled).toBe(true);
-    expect(agent.title).toContain("Restricted Mode");
-    expect(agent.title).toContain("Trust the folder");
+    expect(tipTextOf(agent)).toContain("Restricted Mode");
+    expect(tipTextOf(agent)).toContain("Trust the folder");
     // …and a click can neither switch nor post (a disabled button fires nothing).
     agent.click();
     expect(posted.some((m: any) => m.type === "setMode")).toBe(false);
     // The pill carries the same reason for whoever never opens the menu.
-    expect(btn.title).toContain("Restricted Mode");
+    expect(tipTextOf(btn)).toContain("Restricted Mode");
   });
 
   it("…and a TRUSTED folder re-enables Build on the same surface (no reload needed)", async () => {
@@ -618,8 +621,8 @@ describe("view webview client", () => {
     hostMessage({ type: "status", active: true });
     const before = posted.length;
     expect(btn.disabled).toBe(true);
-    expect(btn.title).toContain("locked to this run");
-    expect(btn.title).toContain("Parallel ON");
+    expect(tipTextOf(btn)).toContain("locked to this run");
+    expect(tipTextOf(btn)).toContain("Parallel ON");
     btn.dispatchEvent(new MouseEvent("click", { bubbles: true })); // the guard refuses it
     expect(posted.slice(before).some((m) => (m as { type?: string }).type === "setParallel")).toBe(false);
     expect(btn.classList.contains("is-on")).toBe(true);
@@ -627,7 +630,7 @@ describe("view webview client", () => {
     // The run ends: usable again, and no stale tooltip left behind.
     hostMessage({ type: "status", active: false });
     expect(btn.disabled).toBe(false);
-    expect(btn.title).toBe("");
+    expect(tipTextOf(btn)).not.toContain("locked to this run");
     btn.click();
     expect(posted.slice(before)).toContainEqual({ type: "setParallel", parallel: false });
   });
@@ -649,15 +652,16 @@ describe("view webview client", () => {
     expect(menu.classList.contains("hidden")).toBe(true);
 
     expect(btn.disabled).toBe(true);
-    expect(btn.title).toContain("locked to this run");
-    expect(btn.title).toContain("Analyze");
+    expect(tipTextOf(btn)).toContain("locked to this run");
+    expect(tipTextOf(btn)).toContain("Analyze");
     btn.dispatchEvent(new MouseEvent("click", { bubbles: true })); // the guard refuses it
     expect(menu.classList.contains("hidden")).toBe(true); // and the dropdown never opens
     expect(posted.slice(postedAt).some((m) => (m as { type?: string }).type === "setMode")).toBe(false);
 
     hostMessage({ type: "status", active: false });
     expect(btn.disabled).toBe(false);
-    expect(btn.title).toBe("");
+    // The lock's sentence is GONE (not merely hidden): the card falls back to the plain summary.
+    expect(tipTextOf(btn)).not.toContain("locked to this run");
     btn.click();
     expect(menu.classList.contains("hidden")).toBe(false);
     (menu.querySelector('.mode-item[data-mode="agent"]') as HTMLButtonElement).click();
@@ -686,7 +690,7 @@ describe("view webview client", () => {
 
     expect(btn.classList.contains("is-pending")).toBe(true);
     expect(btn.textContent).toContain("Build");
-    expect(btn.title).toContain("still Analyze");
+    expect(tipTextOf(btn)).toContain("still Analyze");
     expect(btn.disabled).toBe(true); // the lock covers a pending choice too
   });
 
@@ -981,7 +985,7 @@ describe("view webview client", () => {
     expect(name).toBeTruthy();
     expect(meta.textContent).toContain("created");
     expect(meta.textContent).toContain("updated");
-    expect(meta.title).toContain("Created:");
+    expect(tipTextOf(meta)).toContain("Created");
   });
 
   it("refreshes the meta dates on rename when timestamps are provided", async () => {
@@ -1010,7 +1014,7 @@ describe("view webview client", () => {
     expect(meta.textContent).toContain("created ");
     expect(meta.textContent).toContain("· updated ");
     // The tooltip carries the FULL date/time, so it has to move with the text.
-    expect(meta.title).toContain(new Date(1_700_000_000_000).toLocaleString());
+    expect(tipTextOf(meta)).toContain(new Date(1_700_000_000_000).toLocaleString());
   });
 
   it("patches ONLY the main list: the All-sessions form is left alone (it reads the store on open)", async () => {
@@ -2584,11 +2588,11 @@ describe("view webview client", () => {
     expect(row.classList.contains("foreign")).toBe(true);
     expect(row.classList.contains("open")).toBe(true);
     // It says WHERE it lives instead of pretending to be local.
-    expect(row.title).toContain("/home/me/b");
+    expect(tipTextOf(row)).toContain("/home/me/b");
     // The folder's own session carries no such mark.
     const local = document.querySelector('.srow[data-id="a"]') as HTMLElement;
     expect(local.classList.contains("foreign")).toBe(false);
-    expect(local.title).toBe("");
+    expect(tipTextOf(local)).toBe("");
   });
 
   it("a row whose folder is GONE asks for a folder instead of doing nothing", async () => {
@@ -2617,7 +2621,7 @@ describe("view webview client", () => {
       workingIds: [],
     });
     const row = document.querySelector('.srow[data-id="a"]') as HTMLElement;
-    expect(row.title).toContain("no longer exists");
+    expect(tipTextOf(row)).toContain("no longer exists");
     // Said IN the row, not only in a tooltip: a row that looks healthy is how you end up
     // clicking a session that cannot open.
     const marker = row.querySelector(".srow-folder") as HTMLElement;
@@ -2626,7 +2630,7 @@ describe("view webview client", () => {
     // …and on the TAB: its transcript still opens, but the agent has nowhere to work.
     const tab = document.querySelector('.tab[data-id="a"]') as HTMLElement;
     expect(tab.classList.contains("missing")).toBe(true);
-    expect(tab.title).toContain("folder no longer exists");
+    expect(tipTextOf(tab)).toContain("folder no longer exists");
     (row.querySelector(".name") as HTMLElement).click();
     expect(posted).toContainEqual({ type: "openSessionFolder", id: "a" });
     expect(posted.some((m: any) => m.type === "openSession")).toBe(false);
@@ -4262,6 +4266,33 @@ describe("view webview client", () => {
     expect(name.getAttribute("title")).toBe(long);
   });
 
+  it("labels BOTH writing accesses Build (one mode, one word) and keeps the raw access in the tooltip", async () => {
+    await loadView();
+    hostMessage(PARALLEL_ON);
+    for (const [id, access] of [
+      ["w1", "write"],
+      ["c1", "create"],
+    ] as const) {
+      hostMessage({
+        type: "toolCall",
+        id,
+        name: "Delegate",
+        arguments: { id, goal: `Touch ${access} target`, access, resources: ["src/a.ts"] },
+      });
+    }
+    const chips = [...document.querySelectorAll(".subagent-chip")].filter(
+      (c) => !c.classList.contains("parallel") && !c.classList.contains("res"),
+    ) as HTMLElement[];
+    // Same label for both — the two would otherwise read as different kinds of sub-agent —
+    // while the CLASS stays the raw access (that is what the colours are keyed on).
+    expect(chips.map((c) => c.textContent)).toEqual(["Build", "Build"]);
+    expect(chips[0].classList.contains("access-write")).toBe(true);
+    expect(chips[1].classList.contains("access-create")).toBe(true);
+    // The distinction is not thrown away: MODIFY vs CREATE is in the tooltip.
+    expect(chips[0].getAttribute("title")).toContain("MODIFY");
+    expect(chips[1].getAttribute("title")).toContain("CREATE");
+  });
+
   it("renders a dedicated sub-agent bubble for Delegate calls with a live status", async () => {
     await loadView();
     hostMessage(PARALLEL_ON);
@@ -4290,6 +4321,11 @@ describe("view webview client", () => {
     // flips to running when the host says it actually started.
     expect(bubble.querySelector(".subagent-status")?.classList.contains("queued")).toBe(true);
     expect(bubble.querySelector(".subagent-chip.access-read")).toBeTruthy();
+    // The chip says the MODE (the panel's own word), not the raw access the model asked for…
+    const accessChip = bubble.querySelector(".subagent-chip.access-read") as HTMLElement;
+    expect(accessChip.textContent).toBe("Analyze");
+    // …and the precise permission behind it is one hover away.
+    expect(accessChip.getAttribute("title")).toContain("read-only");
     expect(bubble.querySelector(".subagent-chip.parallel")).toBeTruthy();
     expect([...bubble.querySelectorAll(".subagent-chip.res")].map((c) => c.textContent)).toEqual(["src/fetch.ts"]);
 
@@ -4891,7 +4927,7 @@ describe("view webview client", () => {
     const label = document.getElementById("model-btn-label") as HTMLElement;
     expect(label.querySelector(".mb-provider")?.textContent).toBe("opencode-go");
     expect(label.textContent).toBe("opencode-go · deepseek-v4-flash · - · out -");
-    expect((document.getElementById("model-btn") as HTMLButtonElement).title).toContain(
+    expect(tipTextOf(document.getElementById("model-btn") as HTMLButtonElement)).toContain(
       "opencode-go · deepseek-v4-flash",
     );
 
@@ -5504,8 +5540,10 @@ describe("view webview client", () => {
     expect((document.getElementById("lgr-reasoningThreshold") as HTMLInputElement).value).toBe("0.5");
   });
 
-  it("Loop Guard parameter names carry a hover tooltip explaining them", async () => {
+  it("Loop Guard parameter names explain themselves in the shared hover card", async () => {
     await loadView();
+    // Interactive help is OFF until asked for: this test is about the card, so it asks first.
+    (document.getElementById("help-toggle") as HTMLButtonElement).click();
     hostMessage({
       type: "config",
       config: {
@@ -5522,14 +5560,24 @@ describe("view webview client", () => {
     const name = document.querySelector(".lg-name") as HTMLElement;
     expect(tip.classList.contains("hidden")).toBe(true);
 
-    name.dispatchEvent(new MouseEvent("mouseenter"));
-    expect(tip.classList.contains("hidden")).toBe(false);
-    expect(tip.textContent).toContain("Nudges — How many corrective nudges");
-    expect(tip.textContent).toContain("before the guard stops the run");
-    expect(tip.textContent).toContain("range 1–10");
+    // The NAME is the short catalog label; the explanation is a KEY on the element, not prose in
+    // the markup — the words live in src/i18n/en.help.json, so a translation never touches DOM.
+    expect(name.textContent).toBe("Nudges");
+    expect(name.getAttribute("data-tip")).toBe("lg.p.maxNudges");
 
-    name.dispatchEvent(new MouseEvent("mouseleave"));
+    // Keyboard: no delay — reaching a control IS the question (the pointer has to rest instead).
+    name.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    expect(tip.classList.contains("hidden")).toBe(false);
+    expect(tip.textContent).toContain("How many corrective nudges a loop type gets");
+    // The RANGE is an argument, resolved at hover time from the ranges the host sends.
+    expect(tip.textContent).toContain("Range 1–10");
+    // Borrowed while the card speaks, handed back when it goes: a screen reader reads the card
+    // once, and the control does not stay permanently described by it.
+    expect(name.getAttribute("aria-describedby")).toBe("tip");
+
+    name.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
     expect(tip.classList.contains("hidden")).toBe(true);
+    expect(name.hasAttribute("aria-describedby")).toBe(false);
   });
 
   it("picks the control columns from the MEASURED sensitivity row", async () => {
@@ -6425,14 +6473,14 @@ describe("view webview client", () => {
 
     hostMessage({ type: "status", active: true });
     expect(sw().disabled).toBe(true);
-    expect(sw().title).toContain("Stop the run first");
+    expect(tipTextOf(sw())).toContain("Stop the run first");
     posted.length = 0;
     sw().click();
     expect(posted.some((m) => (m as { type?: string }).type === "toggleMcpServer")).toBe(false);
 
     hostMessage({ type: "status", active: false });
     expect(sw().disabled).toBe(false);
-    expect(sw().title).toContain("Use a in this session");
+    expect(tipTextOf(sw())).toContain("Use a in this session");
   });
 
   it("the MCP card keeps its rows when nothing changed (they used to be rebuilt under the cursor)", async () => {
@@ -6729,7 +6777,7 @@ describe("view webview client", () => {
     expect(run.getAttribute("aria-checked")).toBe("true");
     // Inherited, so it is locked and says where it comes from.
     expect(run.disabled).toBe(true);
-    expect(run.title).toContain("declares every tool of it read-only");
+    expect(tipTextOf(run)).toContain("declares every tool of it read-only");
   });
 
   it("a tool hidden from the model has an INERT Analyze switch: nothing to allow", async () => {
@@ -6746,7 +6794,7 @@ describe("view webview client", () => {
     sw.click(); // hide it from the model
     expect(run.disabled).toBe(true);
     expect(run.getAttribute("aria-checked")).toBe("false"); // nothing runs: not read-only
-    expect(run.title).toContain("switch the tool on first");
+    expect(tipTextOf(run)).toContain("switch the tool on first");
 
     sw.click(); // show it again: the switch comes back with the SAVED declaration
     expect(run.disabled).toBe(false);
@@ -7580,10 +7628,10 @@ describe("view webview client", () => {
     expect((document.getElementById("compact-btn") as HTMLButtonElement).disabled).toBe(true);
     // …but they are NOT locked in silence: each names the policy the run is using and the way
     // out, so the row can never disagree with the run behind the user's back.
-    expect(modeBtn.title).toContain("locked to this run");
-    expect(modeBtn.title).toContain("Stop");
-    expect(parallelBtn.title).toContain("locked to this run");
-    expect(parallelBtn.title).toContain("Stop");
+    expect(tipTextOf(modeBtn)).toContain("locked to this run");
+    expect(tipTextOf(modeBtn)).toContain("Stop");
+    expect(tipTextOf(parallelBtn)).toContain("locked to this run");
+    expect(tipTextOf(parallelBtn)).toContain("Stop");
 
     // And no click reaches the host while the run is going.
     posted.length = 0;
@@ -7638,8 +7686,8 @@ describe("view webview client", () => {
     expect(btn.textContent).toContain("Build"); // the new session's mode
     expect(btn.classList.contains("is-pending")).toBe(false);
     // Still working — but now on THIS run's policy, so the marker is gone on both counts.
-    expect(btn.title).toContain("locked to this run");
-    expect(btn.title).toContain("Build");
+    expect(tipTextOf(btn)).toContain("locked to this run");
+    expect(tipTextOf(btn)).toContain("Build");
   });
 
   it("disables the tab × of a WORKING session (switching stays allowed)", async () => {
@@ -8213,7 +8261,7 @@ describe("context metrics line", () => {
     // never a number out of nowhere. Most contracted form: no connector words.
     expect(document.getElementById("met-window")?.textContent).toBe("/1M");
     // The breakdown stays reachable: window − reserved = usable.
-    const title = document.getElementById("met-ctx")?.getAttribute("title") ?? "";
+    const title = tipTextOf(document.getElementById("met-ctx") as HTMLElement);
     expect(title).toContain("1M context window");
     expect(title).toContain("384k reserved for the response");
     expect(title).toContain("664.6k usable tokens");
@@ -8238,7 +8286,8 @@ describe("context metrics line", () => {
     });
     const note = document.getElementById("met-window") as HTMLSpanElement;
     expect(note.textContent).toBe("");
-    expect(note.getAttribute("title")).toBe("");
+    // …and no card either: a note that says nothing has nothing to explain.
+    expect(tipTextOf(note)).toBe("");
     // The empty span is hidden by CSS (#met-window:empty).
     expect(document.getElementById("met-ctx")?.textContent).toBe("200k");
     expect(document.getElementById("met-pct")?.textContent).toBe("(25%)");
@@ -8824,7 +8873,7 @@ describe("empty shell (no open session)", () => {
       // "Open session" would reload the window onto a path that does not exist.
       expect(row.querySelector(".srow-open")?.textContent).toBe("Change folder & open…");
       expect((row.querySelector(".srow-folder") as HTMLElement).classList.contains("missing")).toBe(true);
-      expect(row.title).toContain("not available");
+      expect(tipTextOf(row)).toContain("not available");
       row.click();
       // One message either way: the HOST decides (open vs pick) for both surfaces.
       expect(posted).toContainEqual({ type: "openSessionFolder", id: "g" });
@@ -8878,9 +8927,9 @@ describe("empty shell (no open session)", () => {
       const del = row.querySelector(".srow-actions .del") as HTMLButtonElement;
       const rename = row.querySelector(".srow-actions .rename") as HTMLButtonElement;
       expect(del.disabled).toBe(true);
-      expect(del.title).toContain("stop it before deleting");
+      expect(tipTextOf(del)).toContain("stop it before deleting");
       expect(rename.disabled).toBe(true);
-      expect(rename.title).toContain("stop it before renaming");
+      expect(tipTextOf(rename)).toContain("stop it before renaming");
     });
 
     it("names WHY it cannot work: no folder, or more than one", async () => {
@@ -9148,6 +9197,48 @@ describe("main sessions list search", () => {
     expect(arrow.classList.contains("is-open")).toBe(true);
   });
 
+  it("Interactive help: OFF by default, and the switch is the only thing that asks", async () => {
+    await loadView();
+    const toggle = document.getElementById("help-toggle") as HTMLButtonElement;
+    const list = document.getElementById("sessions") as HTMLElement;
+    // OFF unless asked for: an explanation nobody requested is noise on a panel this dense.
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(document.body.classList.contains("help-on")).toBe(false);
+
+    toggle.click();
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(document.body.classList.contains("help-on")).toBe(true);
+    // The switch governs the PANEL, not the list: clicking it must not collapse Sessions.
+    expect(list.classList.contains("hidden")).toBe(false);
+    // The HOST keeps the answer (this page dies whenever the panel is hidden) — but on disk: never.
+    expect(posted).toContainEqual({ type: "setInteractiveHelp", on: true });
+
+    toggle.click();
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(document.body.classList.contains("help-on")).toBe(false);
+    expect(posted).toContainEqual({ type: "setInteractiveHelp", on: false });
+    // Nothing written to the webview state: this is not a preference, it is this run's mood.
+    expect(persistedState.helpEnabled).toBeUndefined();
+  });
+
+  it("…and a page the host says was already asked comes back with help ON", async () => {
+    setupFixture({
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+        interactiveHelp: true,
+      },
+    });
+    await loadView();
+    const toggle = document.getElementById("help-toggle") as HTMLButtonElement;
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(document.body.classList.contains("help-on")).toBe(true);
+  });
+
   it("collapses the sessions section when a session is picked, and the header reopens it", async () => {
     await loadView();
     const list = document.getElementById("sessions") as HTMLElement;
@@ -9305,7 +9396,7 @@ describe("all-sessions manager (gear)", () => {
     // Existing folder that is NOT the open one: Open session (no picker).
     const openBtn = rows[1].querySelector("button.folder-btn") as HTMLButtonElement;
     expect(openBtn.textContent).toBe("Open session");
-    expect(openBtn.title).toContain("switches to its folder first");
+    expect(tipTextOf(openBtn)).toContain("switches to its folder first");
     openBtn.click();
     expect(posted.some((m: any) => m.type === "sessionsManagerOpenFolder" && m.id === "b")).toBe(true);
     // …and no second button: moving it elsewhere can wait until the session is open.
@@ -9313,14 +9404,14 @@ describe("all-sessions manager (gear)", () => {
     // THIS folder: the session opens here, with no picker and no reload…
     const hereBtn = rows[0].querySelector("button.folder-btn") as HTMLButtonElement;
     expect(hereBtn.textContent).toBe("Open session");
-    expect(hereBtn.title).toContain("nothing reloads");
+    expect(tipTextOf(hereBtn)).toContain("nothing reloads");
     hereBtn.click();
     expect(posted.some((m: any) => m.type === "sessionsManagerOpenFolder" && m.id === "x")).toBe(true);
     // …while the picker is still there, as a SEPARATE action: it is how the session is taken to
     // another folder (the pointer changes, the transcript stays, and it opens where it points).
     const moveBtn = rows[0].querySelector("button.move-btn") as HTMLButtonElement;
     expect(moveBtn.textContent).toBe("Open elsewhere…");
-    expect(moveBtn.title).toContain("another folder");
+    expect(tipTextOf(moveBtn)).toContain("another folder");
     moveBtn.click();
     expect(posted.some((m: any) => m.type === "sessionsManagerChangeFolder" && m.id === "x")).toBe(true);
     // Missing / unset folder: the picker is the ONLY action — there is no session to open until
@@ -9412,11 +9503,11 @@ describe("all-sessions manager (gear)", () => {
     input.value = "go";
     (document.getElementById("send-btn") as HTMLButtonElement).click();
     expect(mcpGear.disabled).toBe(true);
-    expect(mcpGear.title).toContain("Stop the run first");
+    expect(tipTextOf(mcpGear)).toContain("Stop the run first");
 
     hostMessage({ type: "status", active: false });
     expect(mcpGear.disabled).toBe(false);
-    expect(mcpGear.title).toBe("Configure MCP servers");
+    expect(tipTextOf(mcpGear)).toContain("Configure MCP servers");
 
     // ANOTHER session works while this one is idle: the MCP editor stays reachable — it is not a
     // per-session control, and a blanket lock would make it unreachable on a busy day.
@@ -9450,21 +9541,21 @@ describe("all-sessions manager (gear)", () => {
     const provGear = document.getElementById("gear-btn") as HTMLButtonElement;
     expect(sessGear.disabled).toBe(false);
     expect(provGear.disabled).toBe(true); // this session streams
-    expect(sessGear.title).toContain("the working ones are locked");
-    expect(provGear.title).toContain("keeps the model it started with");
+    expect(tipTextOf(sessGear)).toContain("the working ones are locked");
+    expect(tipTextOf(provGear)).toContain("keeps the model it started with");
 
     // Nothing working: the titles go back to neutral.
     hostMessage({ type: "status", active: false, workingIds: [] });
-    expect(sessGear.title).toBe("Manage all sessions (every folder)");
-    expect(provGear.title).toBe("Configure providers & models");
+    expect(tipTextOf(sessGear)).toContain("Manage all sessions (every folder)");
+    expect(tipTextOf(provGear)).toContain("Configure providers & models");
 
     // ANOTHER session works while this one is idle: the manager stays usable and the models gear
     // comes back — the case a global lock punished.
     hostMessage({ type: "status", active: false, workingIds: ["b"] });
     expect(sessGear.disabled).toBe(false);
-    expect(sessGear.title).toContain("the working ones are locked");
+    expect(tipTextOf(sessGear)).toContain("the working ones are locked");
     expect(provGear.disabled).toBe(false);
-    expect(provGear.title).toBe("Configure providers & models");
+    expect(tipTextOf(provGear)).toContain("Configure providers & models");
 
     // Row buttons in the manage form stay ENABLED regardless (only the gear locks
     // were ever about the gears — the rows are the host's business).
@@ -9980,10 +10071,10 @@ describe("soft steering + pending bubbles (webview)", () => {
 
     // On a steer: the button OFFERS the queue, and says what that means.
     expect(steer.textContent).toBe("→ Queued");
-    expect(steer.title).toMatch(/after the run/i);
+    expect(tipTextOf(steer)).toMatch(/after the run/i);
     // On a queued message: the button OFFERS the steer, i.e. delivery FIRST.
     expect(queued.textContent).toBe("→ Steer");
-    expect(queued.title).toMatch(/first/i);
+    expect(tipTextOf(queued)).toMatch(/first/i);
     // The row is badge + message + commands, and the FOLD sits with the commands at
     // the END — never in front of the text.
     const row = rows[0];
@@ -10097,7 +10188,7 @@ describe("soft steering + pending bubbles (webview)", () => {
       fold.click();
       expect(row.classList.contains("text-collapsed")).toBe(false);
       expect(fold.classList.contains("is-open")).toBe(true);
-      expect(fold.title).toMatch(/collapse/i);
+      expect(tipTextOf(fold)).toMatch(/collapse/i);
       // It is a disclosure control: its state is announced, not just drawn.
       expect(fold.getAttribute("aria-expanded")).toBe("true");
       expect(fold.getAttribute("aria-label")).toMatch(/collapse/i);
@@ -10105,7 +10196,7 @@ describe("soft steering + pending bubbles (webview)", () => {
       fold.click();
       expect(row.classList.contains("text-collapsed")).toBe(true);
       expect(fold.classList.contains("is-open")).toBe(false);
-      expect(fold.title).toMatch(/whole/i);
+      expect(tipTextOf(fold)).toMatch(/whole/i);
       expect(fold.getAttribute("aria-expanded")).toBe("false");
       expect(fold.getAttribute("aria-label")).toMatch(/whole/i);
     });
@@ -10826,7 +10917,7 @@ describe("per-turn metrics badge — live turnMeta", () => {
     expect(chip).toBeTruthy();
     expect(chip.textContent).toBe("Build");
     expect(chip.classList.contains("build")).toBe(true);
-    expect(chip.title).toContain("wrote for real");
+    expect(tipTextOf(chip)).toContain("wrote for real");
     // The rest of the row follows, and the mode is in the tooltip too.
     expect((document.querySelector(".msg-meta") as HTMLElement).textContent).toContain("gpt-4o");
     expect((document.querySelector(".msg-meta") as HTMLElement).title).toContain("mode: Build");
