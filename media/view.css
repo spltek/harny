@@ -1452,13 +1452,23 @@ body {
    and it is one of this bubble's ACTIONS, so it sits with the other two instead of
    in front of the text. Hidden, its SPACE stays reserved (visibility, not
    display): the commands then land in the same spot on every row. */
+/* ⚠ SPECIFICITY: this rule must beat BOTH `.pending-actions button` (the pill chrome below)
+   and the global `button` (3D key, min-height 1.54rem). It did not, and nothing said so: with
+   `padding: 0 0.4rem` back in force the 12px-wide fold had a ZERO-width content box, and the 11px
+   chevron — a flex item with `flex-shrink: 1` — was shrunk to nothing. What was left on screen was
+   just the bordered rounded box: an empty ring sitting where the fold should be. The two pill rules
+   now exclude `.pending-toggle` (see `.pending-actions button:not(.pending-toggle)`), and
+   `min-height: 0` keeps the global 1.54rem hit area from making a bare chevron as tall as a key. */
 .pending-toggle {
   flex: 0 0 auto;
   width: 12px;
+  min-height: 0;
   padding: 0;
   background: transparent;
   border: none;
+  border-radius: 0;
   box-shadow: none;
+  filter: none;
   color: var(--muted);
   font-size: var(--fs-sm);
   line-height: 1.2;
@@ -1480,7 +1490,9 @@ body {
 .pending-toggle.is-open > .toggle-chevron {
   transform: rotate(0deg);
 }
-.pending-toggle:hover {
+/* Scoped through `.pending-actions` for the same reason as the base rule: the global
+   `button:not(:disabled):hover` is specificity (0,2,1), which outranked plain `.pending-toggle:hover`. */
+.pending-actions .pending-toggle:hover {
   filter: none;
   color: var(--accent);
 }
@@ -1495,7 +1507,10 @@ body {
   display: flex;
   gap: 4px;
 }
-.pending-actions button {
+/* The pill chrome belongs to the two COMMANDS. `.pending-toggle` is a bare chevron and opts out
+   here (`:not`), because a type selector on the right (0,1,1) silently beat its own rule (0,1,0) —
+   see the note on `.pending-toggle`. */
+.pending-actions button:not(.pending-toggle) {
   flex: 0 0 auto;
   min-height: 1.2rem;
   padding: 0 0.4rem;
@@ -1506,7 +1521,7 @@ body {
   font-size: var(--fs-sm);
   white-space: nowrap;
 }
-.pending-actions button:hover {
+.pending-actions button:not(.pending-toggle):hover {
   filter: none;
 }
 .pending-cancel:hover {

@@ -307,6 +307,18 @@ describe("renderViewHtml", () => {
     const foldCss = cssRule(html, ".pending-toggle");
     expect(foldCss).toContain("border: none");
     expect(foldCss).toContain("background: transparent");
+    // …and the DECLARATIONS are only half of it: `.pending-actions button` (0,1,1) outranks
+    // `.pending-toggle` (0,1,0), so the pill chrome came back on the fold whatever this rule said.
+    // The chevron — a flex item in a `width: 12px` box whose 0.4rem paddings left no content — was
+    // shrunk to nothing and the row showed an empty bordered ring instead of the fold. The commands'
+    // pill rules must therefore OPT OUT of the toggle, and the hit area must not be a key's.
+    expect(flat(html)).not.toMatch(/\.pending-actions button\s*[,{]/);
+    expect(cssRule(html, ".pending-actions button:not(.pending-toggle)")).toContain(
+      "border: 1px solid var(--border)",
+    );
+    expect(foldCss).toContain("min-height: 0");
+    expect(foldCss).toContain("padding: 0");
+    expect(cssRule(html, ".pending-actions .pending-toggle:hover")).toContain("color: var(--accent)");
     expect(cssRule(html, ".pending-toggle.hidden")).toContain("visibility: hidden");
     expect(cssRule(html, ".pending-toggle.hidden")).not.toContain("display: none");
     // The SECTION owns the scroll, so a long queue cannot eat the panel…
