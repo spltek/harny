@@ -755,6 +755,63 @@ body {
   min-width: 48px;
   text-align: center;
 }
+/* All four corners are the base bubble's 8px: a prompt is the plain lozenge, told apart by its
+   colour and its side. The mark beside it is the only thing that says who typed it (below), and
+   it hangs OUTSIDE the bubble — so `border-radius` is NOT restated for `.msg.user` anywhere, and
+   `.msg` is the one place that owns the shape. */
+/* ── THE SIGN-OFF: who typed it ──
+   A prompt the user wrote is closed by the person-round mark, hung OUTSIDE the bubble on
+   its right edge (view.ts `userAvatar`). Outside, not inside, because the bubble's width
+   is the message: a mark in the corner would either eat a line of text or push the bubble
+   away from the edge on every single prompt. So the bubble pays for the column with a
+   MARGIN equal to the mark + the gap, and the mark itself is positioned off the bubble's
+   own right edge — no wrapper element, no change to how `#messages` stacks, and no change
+   to the bubble's corners.
+   The mark is EXACTLY as tall as a one-line prompt: 8px of padding above + 8px below + one
+   line box (1.4 × the 16px it inherits). Written as that expression, not as 38px, so it
+   stays true if the type moves — and the gap is the same expression, so the two cannot
+   drift apart.
+   With that diameter the mark is also, by construction, centred on the FIRST line: the line
+   box runs from 8px to 8+1.4em, and the mark from 0 to 16+1.4em — same centre. So a
+   one-line prompt has it exactly level with the bubble, and a four-line one still has it at
+   the top beside the first line, never beside the third. (A `top: 50%` would re-centre it
+   on the bubble and lose that.) An attachment makes the bubble tall for a reason of its own
+   and changes nothing: the first line is still the first line.
+   The `max-width` is where the reserved column has to be PAID FOR, not just added: `.msg`
+   caps a bubble at 92% of `#messages`, and 92% + a 44px margin does not fit once the panel is
+   narrower than ~555px (the 8% left over stops covering the margin). `align-self: flex-end`
+   aligns the MARGIN box, so the shortfall lands on the bubble's LEFT — a long prompt would
+   bleed out of the transcript's left edge by a few pixels and, at the narrowest widths, out
+   of the panel. Same expression on both sides: the column is subtracted from the cap at the
+   same time as it is added to the margin.
+   Only the bubbles the user typed: the nudge and the checkpoint never get the class (view.ts
+   adds it in the prompt path and strips it in the checkpoint path). */
+.msg.user.has-avatar {
+  margin-right: calc(16px + 1.4em + 6px);
+  max-width: calc(92% - (16px + 1.4em + 6px));
+}
+.msg.user > .user-avatar {
+  position: absolute;
+  left: 100%;
+  top: 0;
+  width: calc(16px + 1.4em);
+  height: calc(16px + 1.4em);
+  margin-left: 6px;
+  display: block;
+  /* Quiet on purpose: it is a sign-off, not a badge. Same grey as the metadata under an
+     assistant reply, so the only ORANGE thing in the transcript stays the prompt. */
+  color: var(--muted-2);
+  /* Nothing to click and nothing to select: it sits beside text the user may be dragging. */
+  pointer-events: none;
+  user-select: none;
+}
+/* The artwork is drawn on a 24 grid with a size attribute of its own; here the CSS owns the
+   measure (one bubble tall), so the svg fills the box it was given. */
+.msg.user > .user-avatar > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
 /* The user text is a shrink-to-fit, LEFT-aligned block CENTERED in the bubble:
    a single character sits in the middle of the min-width bubble; as the text
    grows it reaches the bubble edges and stays left-aligned. */
@@ -3484,7 +3541,16 @@ body.no-workspace #mcp-card {
    Positioned by the client; never intercepts the pointer. */
 .tip {
   position: fixed;
-  z-index: 60;
+  /* The card is the TOPMOST thing in the panel, and it has to be: `data-tip` lives on controls
+     INSIDE modals too (the compact card's `Default` button, the sessions list, the providers
+     form), and a modal is `position: absolute` with its own `z-index` — a card below it is not
+     "under" a control, it is behind a semi-transparent veil, i.e. an explanation that silently
+     does not exist. The highest surface is `#alert-modal` at 110, so the card clears the whole
+     ladder (50 providers/mcp, 60 sessions, 70 model/vacuum, 100 compact, 110 alert); the test
+     reads every modal's z-index and fails if a new surface is added above this one. Nothing is
+     lost by being on top: `pointer-events: none` means it can never steal a click from the
+     modal it floats over. */
+  z-index: 120;
   max-width: 21rem;
   background: var(--surface-2);
   color: var(--fg);

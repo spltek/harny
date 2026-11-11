@@ -1,6 +1,9 @@
 {
   "locale": "en",
   "tips": {
+    "alert.ctxUnknown": "Unknown: set the window the server really serves (the file name of a GGUF often says it).",
+    "alert.detected": "Detected for this model: {tokens} tokens. The slider can only lower it.",
+    "alert.outUnknown": "Unknown: the response budget the server accepts. Too high and the request is refused.",
     "attach.enlarge": "Click to enlarge.",
     "attach.remove": "Remove this attachment.",
     "compact.auto-label": "Auto-compaction: starts when the usable context is this full · how much of it is kept verbatim after the cut.",

@@ -129,8 +129,8 @@
     "mutate:session-recovery": "stryker run stryker/session-recovery.conf.json",
     "mutate:ratchet": "npm run mutate:compactor && npm run mutate:loop-guard && npm run mutate:overflow && npm run mutate:tool-scope && npm run mutate:mode-policy && npm run mutate:webview && npm run mutate:num-field && npm run mutate:chat-panel && npm run mutate:session-recovery",
     "package": "vsce package --no-dependencies",
-    "format": "prettier --write 'src/**/*.ts' 'media/*.css'",
-    "format:check": "prettier --check 'src/**/*.ts' 'media/*.css'"
+    "format": "prettier --write 'src/**/*.ts' 'media/*.css' CHANGELOG.md",
+    "format:check": "prettier --check 'src/**/*.ts' 'media/*.css' CHANGELOG.md"
   },
   "devDependencies": {
     "@stryker-mutator/core": "^10.1.1",

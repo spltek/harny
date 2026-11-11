@@ -703,6 +703,48 @@ describe("view webview client", () => {
     expect(btn.disabled).toBe(true); // the lock covers a pending choice too
   });
 
+  it("a Parallel flipped UNDER the panel while it works is marked as PENDING too", async () => {
+    // Same story as the mode above, one pill over: the run was born with Parallel ON, a config
+    // push arrives with it OFF. The run keeps ON (disabling the pill is what makes the change
+    // impossible to see otherwise), so the card must name BOTH halves — what was asked and what
+    // is actually running — instead of the plain toggle sentence.
+    setupDom({
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        mode: "agent",
+        parallel: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
+    });
+    await loadView();
+    const pill = document.getElementById("parallel-btn") as HTMLButtonElement;
+    hostMessage({ type: "status", active: true }); // this run started with Parallel ON
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        mode: "agent",
+        parallel: false,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
+    });
+
+    expect(pill.classList.contains("is-pending")).toBe(true);
+    expect(pill.classList.contains("is-on")).toBe(false); // the pill shows the NEW choice
+    expect(pill.disabled).toBe(true);
+    const card = tipTextOf(pill);
+    expect(card).toContain("OFF"); // what the host now says
+    expect(card).toContain("ON"); // what the running turn is still doing
+  });
+
   it("reflects the host's mode + Parallel on load and does NOT reset them", async () => {
     // The view is recreated on hide/show: it must show the HOST state, never
     // force it back to defaults (that desynced the toggle from the agent).
@@ -961,6 +1003,51 @@ describe("view webview client", () => {
     expect(text.textContent).toBe("hello");
     // The text block is the FIRST child of the bubble (attachments follow it).
     expect(bubble.firstElementChild).toBe(text);
+  });
+
+  it("closes a typed prompt with the person-round sign-off, OUTSIDE the bubble", async () => {
+    await loadView();
+    const bubble = document.querySelector(".msg.user") as HTMLElement;
+    const avatar = bubble.querySelector(":scope > .user-avatar") as HTMLElement;
+    expect(avatar).toBeTruthy();
+    // The mark itself is artwork from the family (the registry, never an inline copy).
+    expect(avatar.querySelector("svg")).toBeTruthy();
+    expect(avatar.innerHTML).toContain('viewBox="0 0 24 24"');
+    // The artwork carries a size, but the CSS owns the MEASURE (one one-line bubble tall) and
+    // stretches the svg to it; the weight is the call site's, thinned from 1.5 to 1 because at
+    // that size the family weight renders 2.4px of ink — a badge, not a hairline.
+    expect(avatar.innerHTML).toMatch(/^<svg stroke-width="1" width="38" height="38" /);
+    expect(avatar.innerHTML).not.toContain('stroke-width="1.5"');
+    // Decoration: no text of its own, and nothing for a screen reader to announce once per
+    // bubble on top of the orange bubble it sits next to.
+    expect(avatar.textContent).toBe("");
+    expect(avatar.getAttribute("aria-hidden")).toBe("true");
+    // The marker class is what buys the column the mark hangs in (see the CSS) — and it buys
+    // it with a MARGIN: the bubble keeps its shape, all four corners at the base 8px.
+    expect(bubble.classList.contains("has-avatar")).toBe(true);
+    expect(bubble.style.borderRadius).toBe("");
+    // It follows the text, so the text keeps its own contract as the bubble's first child.
+    expect(bubble.firstElementChild?.classList.contains("user-text")).toBe(true);
+  });
+
+  it("wears NO sign-off on a bubble the user did not type (nudge and checkpoint)", async () => {
+    await loadView();
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "user", content: "loop guard says stop", timestamp: 1, harness: true },
+        { role: "user", content: "Summary of past interactions", timestamp: 2, synthetic: true },
+        { role: "assistant", content: "## Goal\nDid X", timestamp: 3, synthetic: true },
+      ],
+    });
+    // Neither is a prompt the user wrote: the nudge is the system talking, and the
+    // checkpoint is what a compaction leaves behind (it already wears the history mark).
+    expect(document.querySelector(".msg.user .user-avatar")).toBeNull();
+    expect(document.querySelector(".msg.user.has-avatar")).toBeNull();
+    // …and the reserved margin goes with it: a full-width card keeps the whole width.
+    const summary = document.querySelector(".msg.user.synthetic-summary") as HTMLElement;
+    expect(summary).toBeTruthy();
+    expect(summary.classList.contains("has-avatar")).toBe(false);
   });
 
   it("shows a user bubble with attachments as one LEFT-aligned block", async () => {
@@ -2584,6 +2671,9 @@ describe("view webview client", () => {
           folder: "/home/me/b",
           foreign: true,
         },
+        // A foreign session the host knows NO folder for (a tab restored from a window whose
+        // folder is not in this one): the row still has to say it is not local.
+        { id: "c", name: "Nowhere", createdAt: 1, updatedAt: 2, messageCount: 1, foreign: true },
       ],
       openIds: ["b"],
       activeId: "b",
@@ -2598,6 +2688,14 @@ describe("view webview client", () => {
     expect(row.classList.contains("open")).toBe(true);
     // It says WHERE it lives instead of pretending to be local.
     expect(tipTextOf(row)).toContain("/home/me/b");
+    // With no folder to name, the card says that much and nothing more — no dangling separator,
+    // no empty quotes, no claim about a place it cannot point at.
+    const unknown = document.querySelector('.srow[data-id="c"]') as HTMLElement;
+    expect(unknown.classList.contains("foreign")).toBe(true);
+    const nowhere = tipTextOf(unknown);
+    expect(nowhere.length).toBeGreaterThan(0);
+    expect(nowhere).not.toContain("/home");
+    expect(nowhere).toMatch(/outside a workspace folder/i);
     // The folder's own session carries no such mark.
     const local = document.querySelector('.srow[data-id="a"]') as HTMLElement;
     expect(local.classList.contains("foreign")).toBe(false);
@@ -3880,6 +3978,79 @@ describe("view webview client", () => {
     byText("Empty").click();
     cancel.click();
     expect(posted).toContainEqual({ type: "modalResponse", id: 8, value: false });
+  });
+
+  it("the scale's explanation is a CATALOG KEY that the host's number fills", async () => {
+    // The alert says WHY the range is what it is: detected (and then the slider can only lower it)
+    // or unknown. The NUMBER is data and comes from the host; the SENTENCE is not, and lives in the
+    // catalog with every other explanation — which is what lets these two fields sit above
+    // `#alert-modal` (z-index 110) and still show a card: the card is the topmost layer (120).
+    await loadView();
+    const fields = (hintKey: string, hintArgs?: { tokens: number }) => [
+      {
+        key: "contextWindow",
+        label: "Context window",
+        min: 1000,
+        max: 2_048_000,
+        step: 1000,
+        value: 128_000,
+        hintKey,
+        hintArgs,
+      },
+      {
+        key: "outputTokens",
+        label: "Max output tokens",
+        min: 256,
+        max: 512_000,
+        step: 256,
+        value: 16_384,
+        hintKey: "alert.outUnknown",
+      },
+    ];
+    const open = (payload: unknown[]): void => {
+      hostMessage({
+        type: "modal",
+        kind: "alert",
+        modalId: 22,
+        alertKind: "info",
+        title: "Model limits unknown",
+        message: "set the two values",
+        confirmText: "Apply",
+        fields: payload,
+      });
+    };
+    const targets = (): HTMLElement[] => [
+      ...document.querySelectorAll<HTMLElement>("#alert-fields .num-range"),
+      ...document.querySelectorAll<HTMLElement>("#alert-fields .num-input"),
+    ];
+
+    open(fields("alert.detected", { tokens: 128_000 }));
+    // BOTH controls of a field wear the same explanation: the slider and the box are one control.
+    expect(targets()).toHaveLength(4);
+    expect(targets().map(tipTextOf)).toEqual([
+      "Detected for this model: 128000 tokens. The slider can only lower it.",
+      "Unknown: the response budget the server accepts. Too high and the request is refused.",
+      "Detected for this model: 128000 tokens. The slider can only lower it.",
+      "Unknown: the response budget the server accepts. Too high and the request is refused.",
+    ]);
+
+    // No `title` anywhere: a second copy of the sentence is exactly what the catalog exists to stop.
+    expect(targets().filter((t) => t.hasAttribute("title"))).toEqual([]);
+
+    // The unknown case is its OWN key, not the detected one with the number missing (a `{tokens}`
+    // left in place would be a visible placeholder, and i18n records it as a hole).
+    open(fields("alert.ctxUnknown"));
+    expect(targets().map(tipTextOf)[0]).toBe(
+      "Unknown: set the window the server really serves (the file name of a GGUF often says it).",
+    );
+    // …and a field with NO key shows no card at all, rather than an empty one.
+    open(fields(""));
+    expect(targets().map(tipTextOf)).toEqual([
+      "",
+      "Unknown: the response budget the server accepts. Too high and the request is refused.",
+      "",
+      "Unknown: the response budget the server accepts. Too high and the request is refused.",
+    ]);
   });
 
   it("an alert can ASK for numbers: two sliders, answered as an object", async () => {
@@ -8272,6 +8443,31 @@ describe("context metrics line", () => {
 
     (document.getElementById("compact-btn") as HTMLButtonElement).click();
     expect(posted).toContainEqual({ type: "compact" });
+  });
+
+  it("shows a cache badge that only WRITES (cold cache, this turn filled it)", async () => {
+    // The two numbers are independent: a turn can fill the cache without reading it. Saying
+    // "cache –" there would deny the write, and "cache 0 (0%)" would invent a read.
+    await loadView();
+    hostMessage({
+      type: "config",
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 200000,
+        contextTokens: 100000,
+        cachedWrite: 12000,
+      },
+    });
+    const cache = document.getElementById("met-cache") as HTMLSpanElement;
+    expect(cache.textContent).toContain("write");
+    expect(cache.textContent).toContain("12k");
+    expect(cache.textContent).not.toContain("cache"); // no read to report
+    expect(cache.classList.contains("idle")).toBe(false);
+    expect(tipTextOf(cache).length).toBeGreaterThan(0);
   });
 
   it("flags >= 90% usage as warning", async () => {

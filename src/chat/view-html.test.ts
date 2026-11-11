@@ -88,6 +88,30 @@ describe("renderViewHtml", () => {
     expect(rule).not.toMatch(/\bheight:/);
   });
 
+  it("the explanation card floats ABOVE every modal that can carry a `data-tip`", () => {
+    // The tips batch replaced every `title` with a card, and the card was left at z-index 60 —
+    // below `#compact-settings-modal` (100). That is not "slightly behind": the modal paints a
+    // semi-transparent backdrop over the panel, so the explanation of the `Default` button in
+    // the compact card was ON SCREEN and unreadable, where the old OS tooltip had worked fine.
+    // The pin is the INVARIANT, not the number: read every surface's z-index out of the sheet
+    // and fail if one of them can sit above the card.
+    const html = renderViewHtml({
+      ...base,
+      state: { sessions: [], openIds: [], messages: [], activeId: undefined, config: {} } as never,
+    });
+    const card = Number(/z-index:\s*(\d+)/.exec(cssRule(html, ".tip"))?.[1]);
+    expect(card, "the card declares a z-index").toBeGreaterThan(0);
+    const surfaces = [...flat(html).matchAll(/#([a-z-]+-modal)\s*\{[^}]*z-index:\s*(\d+)/g)].map((m) => ({
+      id: m[1],
+      z: Number(m[2]),
+    }));
+    expect(surfaces.length, "the modal ladder is found in the sheet").toBeGreaterThan(4);
+    const covered = surfaces.filter((s) => s.z >= card);
+    expect(covered, "these modals would hide the card: raise `.tip` above them").toEqual([]);
+    // …and it must not swallow a click meant for the modal underneath.
+    expect(cssRule(html, ".tip")).toContain("pointer-events: none");
+  });
+
   it("a call site may SIZE the slider — it may not repaint it", () => {
     // The sliders are already one control: `input[type="range"]` plus the five engine pseudo-
     // elements, defined once. What was NOT unified was the temptation to restyle at the call site:
@@ -313,9 +337,7 @@ describe("renderViewHtml", () => {
     // shrunk to nothing and the row showed an empty bordered ring instead of the fold. The commands'
     // pill rules must therefore OPT OUT of the toggle, and the hit area must not be a key's.
     expect(flat(html)).not.toMatch(/\.pending-actions button\s*[,{]/);
-    expect(cssRule(html, ".pending-actions button:not(.pending-toggle)")).toContain(
-      "border: 1px solid var(--border)",
-    );
+    expect(cssRule(html, ".pending-actions button:not(.pending-toggle)")).toContain("border: 1px solid var(--border)");
     expect(foldCss).toContain("min-height: 0");
     expect(foldCss).toContain("padding: 0");
     expect(cssRule(html, ".pending-actions .pending-toggle:hover")).toContain("color: var(--accent)");
@@ -529,6 +551,41 @@ describe("renderViewHtml", () => {
     // shrink-to-fit block floats in the middle and the message reads as if it were
     // centred, so the marked bubble gives the text the full width.
     expect(html).toMatch(/\.msg\.user\.has-attachments > \.user-text \{[^}]*display: block/);
+    // ── THE SHAPE: a plain lozenge, like every other bubble ──
+    // The mark hangs OUTSIDE the bubble (below), never cut into its outline: the top-right of a
+    // prompt has no rule of its own ANYWHERE — not as a longhand, not as a four-value shorthand
+    // (that is the `.msg.user {` pin), not on the harness/checkpoint exclusions. One place owns
+    // the shape, and it is `.msg`. (The checkpoint DOES square its bottom corners, to sit flush
+    // on what follows — positive pin, pre-existing, bottom-only.)
+    expect(html).not.toMatch(/\.msg\.user[^{]*\{[^}]*border-top-right-radius/);
+    expect(html).toMatch(/\.msg \{[^}]*border-radius: 8px/);
+    expect(html).not.toMatch(/\.msg\.user \{[^}]*border/);
+    expect(html).toMatch(/\.msg\.user\.synthetic-summary \{[^}]*border-bottom-right-radius: 0/);
+    expect(html).toMatch(/\.msg\.assistant\.synthetic-body \{[^}]*border-top-right-radius: 0/);
+    // ── THE SIGN-OFF (person-round beside a typed prompt) ──
+    // It hangs OUTSIDE the bubble's right edge, and the bubble pays for the column with a
+    // margin: `left: 100%` is what puts it outside, and the margin is the mark plus the gap.
+    // Both are the SAME expression as the mark's own size, so mark, gap and column cannot
+    // drift apart — a wider mark than its margin would sit on the panel's edge.
+    expect(html).toMatch(/\.msg\.user > \.user-avatar \{[^}]*left: 100%/);
+    expect(html).toMatch(/\.msg\.user > \.user-avatar \{[^}]*margin-left: 6px/);
+    expect(html).toMatch(/\.msg\.user\.has-avatar \{[^}]*margin-right: calc\(16px \+ 1\.4em \+ 6px\)/);
+    // …and the column is SUBTRACTED from the 92% cap at the same time: `.msg` caps a bubble at 92%
+    // of `#messages`, and 92% + a 44px margin does not fit below ~555px of panel — the shortfall
+    // would land on the bubble's left, because `align-self: flex-end` aligns the MARGIN box.
+    expect(html).toMatch(/\.msg\.user\.has-avatar \{[^}]*max-width: calc\(92% - \(16px \+ 1\.4em \+ 6px\)\)/);
+    // EXACTLY as tall as a one-line prompt: 8px of padding above + below + one line box. That
+    // is also, by construction, centred on the FIRST line — so a four-line prompt keeps the
+    // mark at the top next to the words instead of floating beside line three. A `top: 50%`
+    // would silently re-centre it on the bubble.
+    expect(html).toMatch(/\.msg\.user > \.user-avatar \{[^}]*top: 0/);
+    expect(html).toMatch(/\.msg\.user > \.user-avatar \{[^}]*width: calc\(16px \+ 1\.4em\)/);
+    expect(html).toMatch(/\.msg\.user > \.user-avatar \{[^}]*height: calc\(16px \+ 1\.4em\)/);
+    expect(html).not.toMatch(/\.msg\.user > \.user-avatar \{[^}]*top: 50%/);
+    // The svg fills the box the CSS measured for it (the artwork cannot own the size).
+    expect(html).toMatch(/\.msg\.user > \.user-avatar > svg \{[^}]*width: 100%/);
+    // Decoration: it never takes a click and never joins a text selection.
+    expect(html).toMatch(/\.msg\.user > \.user-avatar \{[^}]*pointer-events: none/);
     // The preview caption follows the image it belongs to, not the bubble's centring.
     expect(html).toMatch(/\.msg-attach-img \.msg-attach-cap \{[^}]*text-align: left/);
     // Disabled action tabs are hidden even WITHOUT hover (the global

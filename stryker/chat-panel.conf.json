@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@stryker-mutator/core/schema/stryker-schema.json",
   "tsconfigFile": "stryker/no-tsconfig-rewrite.json",
   "testRunner": "vitest",
-  "mutate": ["src/chat/chat-view.ts:4245-4264"],
+  "mutate": ["src/chat/chat-view.ts:4246-4265"],
   "coverageAnalysis": "perTest",
   "reporters": ["clear-text", "json"],
   "jsonReporter": {

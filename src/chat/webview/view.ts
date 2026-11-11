@@ -33,6 +33,7 @@ import { createNumberField, type NumberBounds, type NumberField } from "./num-fi
 // from: no prose lives in this file any more (see src/i18n/).
 import { clearTip, installTips, setHelpEnabled, setTip } from "./tips";
 import { label } from "../../i18n";
+import type { Vars } from "../../i18n";
 // The SAME boundary the core uses to decide what the model receives: importing it
 // (it is pure and dependency-free) is what keeps the transcript's marker and the
 // request from ever disagreeing about where the window starts.
@@ -1497,6 +1498,22 @@ function addHarnessMessage(content: string): HTMLDivElement {
   return div;
 }
 
+/** The person-round mark that CLOSES a prompt the user typed (see
+ * `.msg.user > .user-avatar`): the bubble is the message, the circle beside it is WHO
+ * sent it. Decoration, so it carries no text and takes no clicks — the same mark on
+ * every prompt would be read out by a screen reader once per bubble, and it names
+ * nothing the orange bubble does not already say. Its DIAMETER is the CSS's business (exactly
+ * as tall as a one-line bubble, so the mark and the edge it sits on are the same measure); the
+ * weight is not: 1.5 on the 24 grid would render 2.4px of ink at that size, which reads as
+ * a drawn badge, so the call site asks for 1 — the transcript's own hairline at 38px. */
+function userAvatar(): HTMLSpanElement {
+  const wrap = document.createElement("span");
+  wrap.className = "user-avatar";
+  wrap.setAttribute("aria-hidden", "true");
+  wrap.innerHTML = icon("personRound", 38, 'stroke-width="1"');
+  return wrap;
+}
+
 function addMessage(
   role: string,
   content: string,
@@ -1516,6 +1533,12 @@ function addMessage(
       text.className = "user-text";
       text.textContent = content || "";
       div.appendChild(text);
+      // The sign-off (see userAvatar): the marker class is what lets the CSS buy the
+      // column it sits in — a mark hanging OUTSIDE the bubble would otherwise be clipped
+      // by the panel edge, since the bubble already runs to it. The bubble's own SHAPE is
+      // untouched: all four corners stay the base 8px, no tail pointing at the mark.
+      div.classList.add("has-avatar");
+      div.appendChild(userAvatar());
     } else {
       div.textContent = content || "";
     }
@@ -2640,6 +2663,12 @@ function renderMessages(msgs: ChatMsg[]): boolean {
       if (m.role === "user" && m.synthetic) {
         el.classList.add("synthetic-summary");
         el.insertAdjacentHTML("afterbegin", SYNTHETIC_SUMMARY_ICON);
+        // …and it wears NO sign-off: the checkpoint is written by the compaction, not by
+        // the user, and the history mark already says where it came from. The marker class
+        // goes with it — a full-width card with the bubble's reserved margin would sit off
+        // the panel's right edge for no reason.
+        el.querySelector(":scope > .user-avatar")?.remove();
+        el.classList.remove("has-avatar");
       }
       // The ✂ cut-from-here lives on the USER prompt bubbles: cutting removes
       // the prompt and everything after it, so you can retype a cleaner one.
@@ -3963,8 +3992,12 @@ interface AlertField {
   max: number;
   step: number;
   value: number;
-  /** Tooltip: says WHY the scale is what it is (detected vs unknown). */
-  hint?: string;
+  /** The explanation, as a CATALOG KEY (never prose): says WHY the scale is what it is (detected
+   * vs unknown). `hintArgs` fills its `{placeholders}`. The host is the one that KNOWS the numbers
+   * (it is the side that talked to the provider), but a sentence is not data: it belongs to the
+   * catalog, like every other explanation in the panel. */
+  hintKey?: string;
+  hintArgs?: Vars;
 }
 
 /** Set while the modal is showing the SECOND step: the answer it will post. */
@@ -4008,14 +4041,14 @@ function renderAlertFields(fields: AlertField[] | undefined): void {
     input.step = String(f.step > 0 ? f.step : 1);
     input.value = String(f.value);
     input.setAttribute("aria-label", f.label);
-    if (f.hint) input.title = f.hint;
+    if (f.hintKey) setTip(input, f.hintKey, f.hintArgs);
     const shown = document.createElement("input");
     shown.type = "text";
     const whole = Number.isInteger(f.step);
     shown.inputMode = whole ? "numeric" : "decimal";
     shown.className = "num-input";
     shown.setAttribute("aria-label", f.label);
-    if (f.hint) shown.title = f.hint;
+    if (f.hintKey) setTip(shown, f.hintKey, f.hintArgs);
     // The answer is LOCAL (nothing is posted until the user confirms), so the commit writes the
     // draft the confirm reads back — and the box is the truth, exactly as the label was.
     const field = { value: f.value };

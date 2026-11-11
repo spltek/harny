@@ -49,6 +49,7 @@ import thinking from "../../media/icons/thinking.svg";
 // The four states of a todo: one box, four baffi.
 import subagent from "../../media/icons/subagent.svg";
 import history from "../../media/icons/history.svg";
+import personRound from "../../media/icons/person-round.svg";
 import fileBadge from "../../media/icons/file-badge.svg";
 
 /** Every icon the UI can ask for, keyed by the name the call sites use. */
@@ -86,6 +87,7 @@ const ARTWORK = {
   thinking,
   subagent,
   history,
+  personRound,
   fileBadge,
 };
 

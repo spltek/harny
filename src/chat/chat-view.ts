@@ -4079,9 +4079,11 @@ export class ChatViewProvider implements WebviewViewProvider {
           max: maxCtx,
           step: reachableStep(MIN_CONTEXT_WINDOW, maxCtx, CONTEXT_SLIDER_STEP),
           value: Math.min(rt.contextWindow ?? DEFAULT_CONTEXT_WINDOW, maxCtx),
-          hint: ctx
-            ? `Detected for this model: ${ctx} tokens. The slider can only lower it.`
-            : "Unknown: set the window the server really serves (the file name of a GGUF often says it).",
+          // The sentence is the CATALOG's, the number is the host's: `alert.detected` is shared by
+          // both fields on purpose (it is the same sentence), the two "unknown" ones are not —
+          // a window and a reply ceiling are unknown for different reasons.
+          hintKey: ctx ? "alert.detected" : "alert.ctxUnknown",
+          hintArgs: ctx ? { tokens: ctx } : undefined,
         },
         {
           key: "outputTokens",
@@ -4090,9 +4092,8 @@ export class ChatViewProvider implements WebviewViewProvider {
           max: maxOut,
           step: reachableStep(MIN_OUTPUT_TOKENS, maxOut, OUTPUT_SLIDER_STEP),
           value: Math.min(rt.outputTokens ?? DEFAULT_OUTPUT_TOKENS, maxOut),
-          hint: out
-            ? `Detected for this model: ${out} tokens. The slider can only lower it.`
-            : "Unknown: the response budget the server accepts. Too high and the request is refused.",
+          hintKey: out ? "alert.detected" : "alert.outUnknown",
+          hintArgs: out ? { tokens: out } : undefined,
         },
       ],
     });

@@ -26,7 +26,7 @@ export interface Bundle {
   labels: Record<string, string>;
 }
 
-export type Section = "tips" | "labels";
+type Section = "tips" | "labels";
 /** Values interpolated into `{name}` placeholders. */
 export type Vars = Record<string, string | number>;
 

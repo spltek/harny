@@ -151,6 +151,8 @@ describe("tips: the markup and the catalog cannot drift apart", () => {
       "written",
       "created",
       "updated",
+      // the alert's detected limit (the host reads it off the provider, the catalog writes the words)
+      "tokens",
     ]);
     for (const [key, text] of Object.entries(TIPS)) {
       const vars = [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1]);
@@ -162,6 +164,34 @@ describe("tips: the markup and the catalog cannot drift apart", () => {
       if (key.startsWith("lg.p.")) expect(vars.sort(), `${key}: a range has two ends`).toEqual(["max", "min"]);
       else expect(vars, `${key}: only Loop Guard fields interpolate a range`).not.toContain("min");
     }
+  });
+
+  it("the explanation of an alert slider is a KEY, and the host cannot slip in prose", () => {
+    // The two sliders of the model-limits alert are the only controls that live ABOVE a modal, and
+    // their sentence was the last one written outside the catalog (`AlertField.hint`, painted into
+    // an OS `title`). The number is DATA and stays the host's; the words are the catalog's — which
+    // is also what lets the card (the topmost layer, above `#alert-modal`) explain them at all.
+    const iface = /interface AlertField \{[\s\S]*?\n\}/.exec(VIEW)?.[0] ?? "";
+    expect(iface, "AlertField is not found in the view").toBeTruthy();
+    expect(iface, "a prose `hint` is back: a sentence the catalog cannot see").not.toMatch(/\bhint\??:/);
+    expect(iface).toContain("hintKey?: string");
+    expect(iface).toContain("hintArgs?: Vars");
+    // Every key the HOST sends resolves (the literal scan above reads the view, not the host).
+    const sent = [...SOURCE_TEXT.matchAll(/hintKey:([^,\n]*)/g)].flatMap((m) =>
+      [...m[1].matchAll(/"([\w.]+)"/g)].map((x) => x[1]),
+    );
+    expect(sent.length, "the alert stopped carrying keys").toBeGreaterThan(1);
+    for (const key of sent) {
+      expect(TIPS, `hintKey "${key}" is not in the catalog`).toHaveProperty([key]);
+      // A key that promises `{tokens}` must get one: the host builds it, and a missing argument is
+      // a `{tokens}` printed in the card.
+      const vars = [...TIPS[key].matchAll(/\{(\w+)\}/g)].map((m) => m[1]);
+      if (!vars.length) continue;
+      expect(vars, `${key}: only the detected limit interpolates`).toEqual(["tokens"]);
+      expect(SOURCE_TEXT, `${key} promises {tokens} and no call site supplies it`).toMatch(/tokens: /);
+    }
+    // …and the two "unknown" cases are separate keys: they explain different quantities.
+    expect(new Set(sent).size, "one key cannot say two different things").toBe(3);
   });
 
   it("no element carries both a title and a data-tip (one question, one answer)", () => {
