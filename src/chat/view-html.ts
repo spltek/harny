@@ -248,7 +248,7 @@ ${VIEW_CSS}
          pure INDICATOR (never clickable): "Queue" by default, "Steer" (red pill)
          ONLY while a run is active AND Ctrl/Cmd is held — exactly the rule the
          old pill followed, so the keyboard gesture is unchanged. -->
-    <span id="insert-hint" data-tip="insert.queue">Insert prompt in <span id="insert-hint-word">Queue</span></span>
+    <span id="insert-hint" data-tip="insert.queue">Insert prompt in <span id="insert-hint-word"><span class="mode-pill-sizer" aria-hidden="true"><span>Queue</span><span>Steer</span></span><span class="mode-pill-label">Queue</span></span></span>
     <button id="ctl-toggle-btn" aria-label="Toggle controls">
       ${icon("chevronDown", 15)}
     </button>

@@ -89,18 +89,26 @@ export function createPendingSection(deps: PendingSectionDeps): PendingSection {
 
     const badge = document.createElement("span");
     badge.className = "pending-badge";
-    // ONE WIDTH FOR BOTH LABELS, MEASURED instead of guessed: a hidden copy of the LONGER label
-    // ("Queued") shares the badge's single grid cell (see .pending-badge-sizer), so the pill is
-    // exactly as wide as that label in ANY font, at any zoom, with no number to keep in sync —
-    // converting a message never resizes the badge, so the text never shifts under the pointer.
-    // The sizer carries no ink and no accessible text; the label is the badge's only content.
+    // ONE WIDTH FOR BOTH LABELS, MEASURED instead of guessed: a hidden sizer holds a copy of BOTH
+    // labels — stacked in one grid cell, so it reports the WIDER of them — and shares the badge's
+    // single cell (see .mode-pill-sizer), so the pill is exactly as wide as that label in ANY font,
+    // at any zoom, with no number to keep in sync: converting a message never resizes the badge, so
+    // the text never shifts under the pointer. The `#insert-hint-word` pill of the footer uses the
+    // SAME recipe, which is what makes the two boxes the same width on screen.
     const sizer = document.createElement("span");
-    sizer.className = "pending-badge-sizer";
+    sizer.className = "mode-pill-sizer";
     sizer.setAttribute("aria-hidden", "true");
-    sizer.textContent = "Queued";
+    for (const label of ["Queue", "Steer"]) {
+      const copy = document.createElement("span");
+      copy.textContent = label;
+      sizer.appendChild(copy);
+    }
     const badgeLabel = document.createElement("span");
-    badgeLabel.className = "pending-badge-label";
-    badgeLabel.textContent = it.mode === "steer" ? "Steer" : "Queued";
+    badgeLabel.className = "mode-pill-label";
+    // "Queue", not "Queued": the mode is a NAME, the word the footer hint and this pill both use,
+    // and the one the buttons that CONVERT say ("→ Queue"). A past participle described the state
+    // of a message you had already stopped typing; the label is what the mode IS.
+    badgeLabel.textContent = it.mode === "steer" ? "Steer" : "Queue";
     badge.append(sizer, badgeLabel);
 
     const body = document.createElement("span");
@@ -131,10 +139,26 @@ export function createPendingSection(deps: PendingSectionDeps): PendingSection {
     // mode: they are not two views of the same message, they are delivered at
     // different moments (a steer joins the running loop at its next step and goes
     // first at the end; a queued message waits for the run and keeps FIFO order).
+    // SAME RULER AS THE BADGE: the button carries a hidden sizer holding BOTH directions
+    // ("→ Queue" and "→ Steer", stacked in one grid cell, so it reports the WIDER) and reads out
+    // only its own. Without it a steer row's `→ Queue` was wider than a queued row's `→ Steer`,
+    // so the two commands did not line up down the column — and converting a message resized the
+    // button under the pointer.
     const convert = document.createElement("button");
     convert.type = "button";
     convert.className = "pending-convert";
-    convert.textContent = it.mode === "steer" ? "→ Queued" : "→ Steer";
+    const convertSizer = document.createElement("span");
+    convertSizer.className = "mode-pill-sizer";
+    convertSizer.setAttribute("aria-hidden", "true");
+    for (const label of ["→ Queue", "→ Steer"]) {
+      const copy = document.createElement("span");
+      copy.textContent = label;
+      convertSizer.appendChild(copy);
+    }
+    const convertLabel = document.createElement("span");
+    convertLabel.className = "mode-pill-label";
+    convertLabel.textContent = it.mode === "steer" ? "→ Queue" : "→ Steer";
+    convert.append(convertSizer, convertLabel);
     setTip(convert, it.mode === "steer" ? "pending.toQueue" : "pending.toSteer");
     convert.addEventListener("click", () =>
       post({ type: "setPendingMode", id: it.id, mode: it.mode === "steer" ? "queue" : "steer" }),
@@ -183,11 +207,11 @@ export function createPendingSection(deps: PendingSectionDeps): PendingSection {
       count = ordered.length;
       setExpanded(expanded);
       // The header carries the COUNTS, so a collapsed section still says what is
-      // waiting: "Steer (1) · Queued (2)". The number sits in PARENTHESES so the label reads as a
+      // waiting: "Steer (1) · Queue (2)". The number sits in PARENTHESES so the label reads as a
       // name with a count beside it, not as "Steer 1" (which looks like a bahn number).
       const steers = ordered.filter((it) => it.mode === "steer").length;
       const queued = ordered.length - steers;
-      headText.textContent = [steers > 0 ? `Steer (${steers})` : "", queued > 0 ? `Queued (${queued})` : ""]
+      headText.textContent = [steers > 0 ? `Steer (${steers})` : "", queued > 0 ? `Queue (${queued})` : ""]
         .filter(Boolean)
         .join(" · ");
       area.replaceChildren(...ordered.map(renderRow));

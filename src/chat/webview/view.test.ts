@@ -154,7 +154,7 @@ function setupDom(initOverrides: Record<string, unknown> = {}, savedState: Recor
         <button id="providers-cancel" class="secondary">Cancel</button>
       </div>
     </div>
-    <div id="ctl-toggle"><span id="insert-hint">Insert in <span id="insert-hint-word">Queue</span></span><button id="ctl-toggle-btn"></button><div id="transcript-actions"><button id="collapse-all" disabled></button><button id="autoscroll" disabled></button></div></div>
+    <div id="ctl-toggle"><span id="insert-hint">Insert in <span id="insert-hint-word"><span class="mode-pill-sizer" aria-hidden="true"><span>Queue</span><span>Steer</span></span><span class="mode-pill-label">Queue</span></span></span><button id="ctl-toggle-btn"></button><div id="transcript-actions"><button id="collapse-all" disabled></button><button id="autoscroll" disabled></button></div></div>
     <div id="mcp-modal" class="hidden">
       <div class="mcp-backdrop"></div>
       <select id="mcp-select"></select>
@@ -1282,6 +1282,41 @@ describe("view webview client", () => {
     expect((document.getElementById("samp-auto") as HTMLButtonElement).disabled).toBe(false);
     expect((document.getElementById("sampler-topp") as HTMLInputElement).disabled).toBe(false);
     expect((document.getElementById("user-input") as HTMLTextAreaElement).disabled).toBe(false);
+  });
+
+  it("unlocks when the TURN ends, even if the host's status post never lands", async () => {
+    await loadView();
+    const model = () => document.getElementById("model-btn") as HTMLButtonElement;
+    const row = (id: string) => document.querySelector(`.srow[data-id="${id}"] .del`) as HTMLButtonElement;
+    // A run is in flight: the panel is told so by the status that carries the working set.
+    hostMessage({ type: "status", active: true, workingIds: ["a"] });
+    expect(model().disabled).toBe(true);
+    expect(row("a").disabled).toBe(true);
+    // The turn ENDS with the terminal message alone — `done` normally arrives BEFORE the host's
+    // `status`, which is the post that carries the released set. Between the two the panel used to
+    // stay locked with the Working bar already gone: it knew the stream had stopped, but the set it
+    // reads for every control still listed this session, so nothing was clickable until some other
+    // message happened to arrive. What this message PROVES is that the active session is not working
+    // — so it releases exactly that one, and keeps the rest as the host last said.
+    hostMessage({ type: "done" });
+    expect(model().disabled).toBe(false);
+    expect((document.getElementById("ctx-range") as HTMLInputElement).disabled).toBe(false);
+    expect((document.getElementById("compact-btn") as HTMLButtonElement).disabled).toBe(false);
+    // The row and its buttons follow the same release (a finished session can be renamed/deleted).
+    expect(row("a").disabled).toBe(false);
+  });
+
+  it("a background session keeps its lock when the ACTIVE one stops", async () => {
+    await loadView();
+    const row = (id: string) => document.querySelector(`.srow[data-id="${id}"] .del`) as HTMLButtonElement;
+    hostMessage({ type: "status", active: true, workingIds: ["a", "b"] });
+    expect(row("a").disabled).toBe(true);
+    expect(row("b").disabled).toBe(true);
+    // Ending the visible session releases it and ONLY it: `b` is still running in the background,
+    // and a coarse "unlock everything" would let the user close a session mid-run.
+    hostMessage({ type: "interrupted" });
+    expect(row("a").disabled).toBe(false);
+    expect(row("b").disabled).toBe(true);
   });
 
   it("attaches files via the + button and sends them with the message", async () => {
@@ -10214,7 +10249,7 @@ describe("soft steering + pending bubbles (webview)", () => {
     // Steer group first, queue group below — even though q1 arrived first.
     expect(rows[0].classList.contains("pending-steer")).toBe(true);
     expect(rows[0].textContent).toContain("Steer");
-    expect(rows[1].textContent).toContain("Queued");
+    expect(rows[1].querySelector(".mode-pill-label")?.textContent).toBe("Queue");
 
     (rows[1].querySelector(".pending-cancel") as HTMLButtonElement).click();
     expect(posted).toContainEqual({ type: "cancelPending", id: "q1" });
@@ -10377,11 +10412,20 @@ describe("soft steering + pending bubbles (webview)", () => {
     const queued = rows[1].querySelector(".pending-convert") as HTMLButtonElement;
 
     // On a steer: the button OFFERS the queue, and says what that means.
-    expect(steer.textContent).toBe("→ Queued");
+    expect(steer.querySelector(".mode-pill-label")?.textContent).toBe("→ Queue");
     expect(tipTextOf(steer)).toMatch(/after the run/i);
     // On a queued message: the button OFFERS the steer, i.e. delivery FIRST.
-    expect(queued.textContent).toBe("→ Steer");
+    expect(queued.querySelector(".mode-pill-label")?.textContent).toBe("→ Steer");
     expect(tipTextOf(queued)).toMatch(/first/i);
+    // The TWO commands are ONE width: each carries the badge's ruler (both directions, stacked in
+    // one cell, hidden), so a steer row's "→ Queue" is exactly as wide as a queued row's "→ Steer"
+    // and converting a message cannot resize the button under the pointer.
+    for (const btn of [steer, queued]) {
+      const ruler = btn.querySelector(".mode-pill-sizer");
+      expect([...(ruler?.children ?? [])].map((c) => c.textContent)).toEqual(["→ Queue", "→ Steer"]);
+      expect(ruler?.getAttribute("aria-hidden")).toBe("true");
+      expect(btn.querySelector(".mode-pill-label")).toBeTruthy();
+    }
     // The row is mode mark + badge + message + commands: the MARK LEADS, in the place a tool call
     // wears its own icon, and the commands close it. There is no fold any more (see the module
     // comment in pending-section.ts), so the mark takes the fold's old place instead of following it.
@@ -10393,11 +10437,14 @@ describe("soft steering + pending bubbles (webview)", () => {
     expect(row.querySelector(".pending-mark svg")).toBeTruthy();
     expect(row.querySelector(".pending-mark")?.innerHTML).toContain("m16 8-3-3 3-3");
     expect(rows[1].querySelector(".pending-mark")?.innerHTML).toContain("m16 16-3 3 3 3");
-    // ONE pill width, measured on the LONGER label: every badge carries a hidden copy of "Queued"
-    // and reads out only its own label — converting a message cannot resize it.
-    expect(row.querySelector(".pending-badge-sizer")?.textContent).toBe("Queued");
-    expect(row.querySelector(".pending-badge-label")?.textContent).toBe("Steer");
-    expect(row.querySelector(".pending-badge-sizer")?.getAttribute("aria-hidden")).toBe("true");
+    // ONE pill width, measured on the WIDER of the two labels: every badge carries a hidden sizer
+    // holding BOTH ("Queue" and "Steer") and reads out only its own label — converting a message
+    // cannot resize it, and the footer hint (same sizer, same recipe) is exactly as wide.
+    const sizer = row.querySelector(".pending-badge .mode-pill-sizer");
+    expect([...(sizer?.children ?? [])].map((c) => c.textContent)).toEqual(["Queue", "Steer"]);
+    expect(row.querySelector(".pending-badge .mode-pill-label")?.textContent).toBe("Steer");
+    expect(rows[1].querySelector(".pending-badge .mode-pill-label")?.textContent).toBe("Queue");
+    expect(sizer?.getAttribute("aria-hidden")).toBe("true");
     const actions = row.querySelector(".pending-actions");
     expect(actions?.contains(steer)).toBe(true);
     expect(actions?.children.length).toBe(2);
@@ -10551,7 +10598,7 @@ describe("soft steering + pending bubbles (webview)", () => {
         ],
       });
 
-      expect((document.getElementById("pending-head-text") as HTMLElement).textContent).toBe("Steer (1) · Queued (2)");
+      expect((document.getElementById("pending-head-text") as HTMLElement).textContent).toBe("Steer (1) · Queue (2)");
     });
 
     it("keeps the counts header VISIBLE while the section is collapsed", async () => {
@@ -10573,7 +10620,7 @@ describe("soft steering + pending bubbles (webview)", () => {
 
       expect(section.classList.contains("hidden")).toBe(false); // still there
       expect(head.textContent).toContain("Steer (1)"); // the count sits in parentheses
-      expect(head.textContent).toContain("Queued (1)");
+      expect(head.textContent).toContain("Queue (1)");
       expect(area.classList.contains("hidden")).toBe(true); // only the items fold
     });
 
@@ -10737,12 +10784,21 @@ describe("the test platform is PINNED (otherwise the suite mirrors the host OS)"
 
 describe("Insert-in hint — Queue/Steer (webview)", () => {
   const hint = () => document.getElementById("insert-hint") as HTMLElement;
-  const word = () => document.getElementById("insert-hint-word") as HTMLElement;
+  // The pill, and the LABEL inside it: the pill also holds a hidden sizer (both mode names), so its
+  // textContent is not what the user reads.
+  const pill = () => document.getElementById("insert-hint-word") as HTMLElement;
+  const word = () => pill().querySelector(".mode-pill-label") as HTMLElement;
   const input = () => document.getElementById("user-input") as HTMLTextAreaElement;
 
   it("defaults to Queue and is dim while idle", async () => {
     await loadView();
     expect(word().textContent).toBe("Queue");
+    // The pill measures BOTH mode names, not the one on screen: a hidden sizer shares its grid cell
+    // with the visible label, exactly like a pending badge, so the two boxes are the same width and
+    // switching Queue ⇄ Steer never resizes this one.
+    const sizer = pill().querySelector(".mode-pill-sizer") as HTMLElement;
+    expect([...sizer.children].map((c) => c.textContent)).toEqual(["Queue", "Steer"]);
+    expect(sizer.getAttribute("aria-hidden")).toBe("true");
     // Not a button any more: idleness is the dimmed class, not `disabled`.
     expect(hint().classList.contains("is-idle")).toBe(true);
     expect(hint().classList.contains("is-steer")).toBe(false);

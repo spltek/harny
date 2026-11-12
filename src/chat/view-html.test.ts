@@ -6,6 +6,24 @@ const base = {
   scriptUri: "https://vscode-resource.test/view.js",
 };
 
+/** The declarations of the rule for SELECTOR that ALSO declares DECL.
+ *
+ *  A selector can own more than one rule — a shared recipe (`.a, .b { … }`) plus a per-site
+ *  correction further down — and {@link cssRule} returns the FIRST match, which would make a pin on
+ *  the correction test the recipe. This finds the rule that actually carries the declaration. */
+function cssRuleWith(html: string, selector: string, decl: string): string {
+  const compact = flat(html);
+  const key = selector.replace(/\s+/g, " ").trim();
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const members = new RegExp(`(^|[},])\\s*[^,{}]*${escaped}\\s*[,{]`, "g");
+  for (const m of compact.matchAll(members)) {
+    const open = compact.indexOf("{", m.index + m[0].length - 1);
+    const body = compact.slice(open, compact.indexOf("}", open));
+    if (body.includes(decl)) return body;
+  }
+  return "";
+}
+
 /** The body of one CSS rule, so an assertion cannot match a DIFFERENT rule that
  * happens to share a property (several elements legitimately use ellipsis).
  *
@@ -349,6 +367,15 @@ describe("renderViewHtml", () => {
     expect(cssRule(html, ".pending-msg")).toContain("align-items: flex-start");
     expect(cssRule(html, ".pending-actions")).toContain("margin-left: auto");
     expect(cssRule(html, ".pending-convert:hover")).toContain("var(--accent)");
+    // The convert pill is the second pill of the family: uppercase letters like the badge, and its
+    // width MEASURED by the same ruler (both directions in one cell), so "→ Queue" and "→ Steer"
+    // are the same box and a steer row lines up with a queued one.
+    const convertCss = cssRule(html, ".pending-convert");
+    expect(convertCss).toContain("text-transform: uppercase");
+    expect(convertCss).toContain("display: inline-grid");
+    expect(
+      cssRuleWith(html, ".mode-pill-sizer, .mode-pill-label, .mode-pill-sizer > span", "grid-area: 1 / 1"),
+    ).toContain("grid-area: 1 / 1");
     // The two modes are told apart by TONE, not by hue (the mark keeps the accent).
     expect(flat(html)).toContain(
       ".pending-msg.pending-steer { background: var(--tool-bg); border-color: var(--overlay-3);",
@@ -451,17 +478,27 @@ describe("renderViewHtml", () => {
     // Measured in Chromium: with the inherited default line-height the pill came out
     // 14px against a 16.38px text line, and because the row aligns its children
     // to the top (align-items: flex-start) all of the 3px padding ended up below
-    // it — 3 above, 5.38 below, on the Steer pill and on the Queued one alike.
+    // it — 3 above, 5.38 below, on the Steer pill and on the Queue one alike.
     // Matching the line box is what makes the two gaps equal without centring the
-    // label in a bubble that can grow to four lines.
-    const badge = cssRule(html, ".pending-badge");
+    // label in a bubble that can grow to four lines. The badge owns more than one
+    // rule (the shared pill recipe + this height), so the pin names the declaration.
+    const badge = cssRuleWith(html, ".pending-badge", "line-height:");
     expect(badge).toContain("line-height: calc(var(--fs-md) * 1.4)");
-    expect(badge).toContain("padding: 0 5px"); // no vertical padding: the line IS the height
-    // Steer and Queued are ONE pill of ONE width, and the width is MEASURED, not guessed: a hidden
-    // copy of the longer label shares the visible label's grid cell, so the box is exactly as wide
-    // as "Queued" in whatever font the panel happens to use.
-    expect(cssRule(html, ".pending-badge-label")).toContain("grid-area: 1 / 1");
-    expect(cssRule(html, ".pending-badge-sizer")).toContain("visibility: hidden");
+    expect(badge).not.toMatch(/padding:/); // no vertical padding: the line IS the height
+    // Steer and Queue are ONE pill of ONE width, and the width is MEASURED, not guessed: a hidden
+    // sizer holds BOTH labels stacked in one cell (so it reports the wider one) and shares the
+    // visible label's cell, so the box is as wide as that label in whatever font the panel uses.
+    expect(cssRule(html, ".mode-pill-label")).toContain("grid-area: 1 / 1");
+    expect(cssRuleWith(html, ".mode-pill-sizer", "visibility: hidden")).toContain("display: grid");
+    // The FOOTER pill wears the SAME recipe — this is what makes the two widths equal on screen,
+    // so a copy of the declarations grown locally in either place fails here.
+    const pill = cssRule(html, ".pending-badge, #insert-hint-word");
+    expect(pill).toContain("padding: 0 5px");
+    expect(pill).toContain("letter-spacing: 0.04em");
+    expect(pill).toContain("font-size: var(--fs-sm)");
+    expect(pill).toContain("text-transform: uppercase");
+    expect(pill).toContain("display: inline-grid");
+    expect(cssRuleWith(html, "#insert-hint-word", "height:")).toContain("height: 18px");
     expect(cssRule(html, ".pending-text")).toContain("line-height: 1.4"); // the value the badge mirrors
   });
 
@@ -539,9 +576,11 @@ describe("renderViewHtml", () => {
     expect(html).not.toContain('id="steer-btn"');
     expect(html).toMatch(/id="mode-select"[\s\S]*?<button type="button" id="parallel-btn"/);
     // The indicator lives in the control-stack strip now: LEFT side, same height as
-    // "Collapse all" (right side). "Insert prompt in " + the word in a pill.
+    // "Collapse all" (right side). "Insert prompt in " + the word in a pill. The pill carries a
+    // hidden sizer with BOTH labels (see .mode-pill-sizer) — that is what gives it the width of a
+    // pending badge — so the visible word is the .mode-pill-label inside it.
     expect(html).toMatch(
-      /<div id="ctl-toggle"[^>]*>[\s\S]*?<span id="insert-hint"[^>]*>Insert prompt in <span id="insert-hint-word">Queue<\/span><\/span>/,
+      /<div id="ctl-toggle"[^>]*>[\s\S]*?<span id="insert-hint"[^>]*>Insert prompt in <span id="insert-hint-word"><span class="mode-pill-sizer" aria-hidden="true">[\s\S]*?<\/span><span class="mode-pill-label">Queue<\/span><\/span><\/span>/,
     );
     expect(html).toMatch(/id="insert-hint"[\s\S]*?id="ctl-toggle-btn"[\s\S]*?id="collapse-all"/);
     expect(html).toMatch(/<button id="attach-btn"[\s\S]*?id="user-input"/);
@@ -736,14 +775,16 @@ describe("renderViewHtml", () => {
     expect(strip).toContain("pointer-events: none"); // indicator, never a control
     expect(cssRule(html, "#ctl-toggle")).toContain("position: relative");
     expect(cssRule(html, "#transcript-actions")).toContain("right: 0");
-    // The word lives in a pill, neutral for Queue…
-    const word = cssRule(html, "#insert-hint-word");
-    expect(word).toContain("border-radius: 999px");
+    // The word lives in a pill, neutral for Queue… — the SHARED mode pill (same recipe as the
+    // pending badge, which is what makes the two widths identical: pinned with the badge above).
+    const word = cssRuleWith(html, "#insert-hint-word", "height: 18px");
+    expect(word).toContain("border: 1px solid var(--border)");
+    const recipe = cssRule(html, ".pending-badge, #insert-hint-word");
+    expect(recipe).toContain("border-radius: 999px");
     // The quiet grey is QUEUE, the raised one is STEER — the same pairing, in the same order, as
     // the pending bubbles above (`.pending-badge` / `.pending-msg.pending-steer`).
-    expect(word).toContain("background: var(--tool-bg)");
-    expect(word).toContain("border: 1px solid var(--border)");
-    expect(word).toContain("color: var(--muted)");
+    expect(recipe).toContain("background: var(--tool-bg)");
+    expect(recipe).toContain("color: var(--muted)");
     const steer = cssRule(html, "#insert-hint.is-steer #insert-hint-word");
     expect(steer).toContain("background: var(--surface-2)");
     expect(steer).toContain("border-color: var(--overlay-3)");

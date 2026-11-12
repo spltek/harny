@@ -1476,31 +1476,52 @@ body {
   border-color: var(--overlay-3);
   color: var(--fg);
 }
-.pending-badge {
-  flex: 0 0 auto;
-  font-size: var(--fs-sm);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  /* ONE text line tall: the ROW's line-height x its font-size, the same box the
-     text next to it occupies. The badge used to inherit the default line-height,
-     so it came out 2.38px shorter than that line and — the row aligns children to
-     the top (align-items: flex-start) — all of the 3px padding ended up BELOW it
-     (measured: 3 above, 5.38 below, on both the Steer pill and the Queued one).
-     Matching the box makes the two gaps equal WITHOUT centring the label in a
-     bubble that can grow to several lines. */
-  line-height: calc(var(--fs-md) * 1.4);
-  /* ONE WIDTH FOR BOTH LABELS — and the width is MEASURED, not guessed: the badge is a ONE-CELL
-     grid, and a hidden copy of the longer label ("Queued") shares that cell with the visible one
-     (see .pending-badge-sizer). Both pills are therefore exactly the same box in any font, at any
-     zoom, with no number to keep in sync, and converting a message cannot resize the badge (the
-     text never shifts under the pointer). */
+/* ── THE MODE PILL: one recipe, two homes ────────────────────────────────
+   The badge of a pending bubble and the word of the "Insert prompt in …" hint name the same two
+   delivery modes, one above the other on screen, so they are THE SAME PILL and they are exactly as
+   wide as each other. The width is MEASURED, not guessed: the pill is a ONE-CELL grid whose hidden
+   sizer (see .mode-pill-sizer) holds BOTH labels, so the box is as wide as the wider of the two in
+   any font, at any zoom, with no number to keep in sync — switching Queue ⇄ Steer, or converting a
+   message, cannot resize it, so the text never shifts under the pointer. Every ingredient of that
+   width lives here and nowhere else (padding, letterspacing, weight, transform); only the HEIGHT is
+   per-site, because one sits on a bubble's line box and the other in the 18px footer strip. */
+.pending-badge,
+#insert-hint-word {
   display: inline-grid;
   justify-items: center;
   align-items: center;
   padding: 0 5px;
   border-radius: 999px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   background: var(--tool-bg);
   color: var(--muted);
+}
+/* The sizer and the visible label share the pill's single cell; inside the sizer the two labels
+   share one cell of their own, so it reports the WIDER of them. `visibility: hidden` (not display:
+   none) keeps it in layout: that width is the whole point. */
+.mode-pill-sizer,
+.mode-pill-label,
+.mode-pill-sizer > span {
+  grid-area: 1 / 1;
+}
+.mode-pill-sizer {
+  display: grid;
+  justify-items: center;
+  visibility: hidden;
+}
+.pending-badge {
+  flex: 0 0 auto;
+  /* ONE text line tall: the ROW's line-height x its font-size, the same box the
+     text next to it occupies. The badge used to inherit the default line-height,
+     so it came out 2.38px shorter than that line and — the row aligns children to
+     the top (align-items: flex-start) — all of the 3px padding ended up BELOW it
+     (measured: 3 above, 5.38 below, on both the Steer pill and the Queue one).
+     Matching the box makes the two gaps equal WITHOUT centring the label in a
+     bubble that can grow to several lines. */
+  line-height: calc(var(--fs-md) * 1.4);
 }
 .pending-msg.pending-steer .pending-badge {
   background: var(--surface-2);
@@ -1521,17 +1542,6 @@ body {
 }
 .pending-msg.pending-steer .pending-mark {
   color: var(--accent);
-}
-/* The pill's RULER: it carries the longer label and no ink (invisible, `aria-hidden` in the
-   markup), so it sets the width without ever being read out or selected. */
-.pending-badge-sizer {
-  visibility: hidden;
-}
-/* ONE CELL, two occupants: the label is drawn, the sizer only measures. `grid-area: 1 / 1` on both
-   is what keeps them stacked — without it the ghost would sit BESIDE the label and double the pill. */
-.pending-badge-sizer,
-.pending-badge-label {
-  grid-area: 1 / 1;
 }
 /* The row is badge + content + actions: the text and its attachments share the
    middle column (so the previews land UNDER the text, as in a user bubble) while
@@ -1588,6 +1598,19 @@ body {
 .pending-cancel:hover {
   color: var(--error);
   border-color: var(--error);
+}
+/* The convert pill is the SECOND pill of the family, so it wears the family's letters: uppercase
+   and tracked like the badge beside it, instead of the sentence case that made "→ Queue" read as
+   prose next to "STEER". */
+.pending-convert {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  /* ONE WIDTH FOR BOTH DIRECTIONS: the hidden `.mode-pill-sizer` inside it holds "→ Queue" AND
+     "→ Steer" in a single cell, so the track is as wide as the wider label and a steer row's
+     command lines up exactly with a queued row's — measured, in any font, at any zoom. */
+  display: inline-grid;
+  justify-items: center;
+  align-items: center;
 }
 .pending-convert:hover {
   color: var(--accent);
@@ -2742,21 +2765,15 @@ body.drag-over {
   white-space: nowrap;
   user-select: none;
 }
-/* The word itself, in a pill: the two DELIVERY MODES as two greys — Queue is the quiet one
-   (--tool-bg, the same grey as a Queued badge) and Steer the raised one (--surface-2, its edge a
-   step up at --overlay-3). This is the pending bubbles' pairing repeated here on purpose: the
-   indicator and the row it describes must name the same mode with the same tone. No red and no
-   glow left in either — Steer is not an alarm, it is the same message arriving sooner. */
+/* The word itself: the SHARED mode pill above (identical width to a pending badge, by
+   construction), in the height of this strip. The two DELIVERY MODES are two greys — Queue is the
+   quiet one (--tool-bg, the same grey as a Queue badge) and Steer the raised one (--surface-2, its
+   edge a step up at --overlay-3). This is the pending bubbles' pairing repeated here on purpose:
+   the indicator and the row it describes name the same mode with the same tone. No red and no glow
+   left in either — Steer is not an alarm, it is the same message arriving sooner. */
 #insert-hint-word {
-  display: inline-flex;
-  align-items: center;
   height: 18px;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: var(--tool-bg);
   border: 1px solid var(--border);
-  color: var(--muted);
-  font-weight: 600;
   line-height: 1;
   transition:
     background 0.18s,

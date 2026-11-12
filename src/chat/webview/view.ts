@@ -303,6 +303,9 @@ const parallelBtn = document.getElementById("parallel-btn") as HTMLButtonElement
 const sendBtn = document.getElementById("send-btn") as HTMLButtonElement;
 const insertHint = document.getElementById("insert-hint") as HTMLSpanElement;
 const insertHintWord = document.getElementById("insert-hint-word") as HTMLSpanElement;
+/** The visible label INSIDE the pill: the pill also holds a hidden sizer (the wider of the two
+ *  labels) so the box keeps its width — writing to the pill itself would wipe that sizer. */
+const insertHintLabel = insertHintWord.querySelector(".mode-pill-label") as HTMLSpanElement;
 const abortBtn = document.getElementById("abort-btn") as HTMLButtonElement;
 const attachBtn = document.getElementById("attach-btn") as HTMLButtonElement;
 const attachmentChips = document.getElementById("attachment-chips") as HTMLDivElement;
@@ -1336,6 +1339,21 @@ function endTabDrag(commit: boolean): void {
 
 window.addEventListener("pointerup", () => endTabDrag(true));
 window.addEventListener("pointercancel", () => endTabDrag(false));
+
+/** Paint the busy state of the two lists that read it — the session rows on the left and the tab
+ *  strip — in ONE place, so the `status` handler and the release inside `setStreaming` cannot leave
+ *  a surface (or one of its buttons) showing the turn that just ended. Patching in place is
+ *  deliberate either way: rebuilding the rows re-creates their buttons and they visibly flash on
+ *  every status message while a session works. */
+function applyWorkingRows(): void {
+  for (const row of document.querySelectorAll<HTMLElement>(".srow")) {
+    const w = workingIds.has(row.dataset.id ?? "");
+    row.classList.toggle("is-working", w);
+    for (const b of row.querySelectorAll("button")) b.disabled = w;
+  }
+  // Same lock for the tab × (a working session cannot be closed).
+  applyTabLocks();
+}
 
 /** Disable the × of every WORKING session's tab (switching stays allowed). */
 function applyTabLocks(): void {
@@ -3075,7 +3093,7 @@ function renderSteerMode(): void {
   insertHint.classList.toggle("is-steer", isSteer);
   // Idle has no meaningful choice: dim the line exactly like the old disabled pill.
   insertHint.classList.toggle("is-idle", !streamingActive);
-  insertHintWord.textContent = isSteer ? "Steer" : "Queue";
+  insertHintLabel.textContent = isSteer ? "Steer" : "Queue";
   // Three states, three catalog keys — the sentence never lives in the view, and the hint is a
   // pure INDICATOR, so the card is the only place it can explain itself.
   setTip(insertHint, isSteer ? "insert.steer" : streamingActive ? "insert.queueActive" : "insert.queue");
@@ -5446,11 +5464,28 @@ function followAndFocus(): void {
 
 function setStreaming(active: boolean): void {
   const rising = active && !streamingActive;
+  const falling = !active && streamingActive;
   streamingActive = active;
+  // THE TURN ENDED, so the active session cannot still be in the working set — and this is not
+  // bookkeeping: `workingIds` is what every control in the panel is locked on (see LOCKS /
+  // sessionBusy). A terminal message — `done`, `interrupted`, `denied`, `error` — may arrive BEFORE
+  // the host's `status`, which is the post that normally brings the released set: between the two
+  // the panel knew the stream had stopped while the set still listed this session, so every control
+  // stayed inert with the Working bar already gone, until some other message happened to arrive.
+  // The set is the host's, but the one fact this transition proves is that the ACTIVE session is not
+  // working: drop it here, so the lock cannot outlive the turn it belongs to. Other sessions are
+  // left exactly as the host last said — a coarse "unlock everything" would let the user close a
+  // session that is still running in the background. Beware: only a TRANSITION releases. The first
+  // paint answers `setStreaming(false)` with a set that legitimately lists this session, because a
+  // run was already in flight (a send preamble) when the panel was built.
+  if (falling && activeId) workingIds.delete(activeId);
   // ONE choke point for the locks that follow "this session streams": the optimistic send path
   // (clicking Play) never passes through a `status` message, so calling the lock at that message
   // only left the models gear clickable for a run started from this panel.
   applyWorkingLock();
+  // The rows and tabs read the same set (a working session cannot be closed or deleted): they are
+  // re-patched from the same release, so no surface is left showing the turn that just ended.
+  if (falling) applyWorkingRows();
   // The MCP switches dim the moment a run starts (a mid-run toggle only lands on the next
   // turn) and come back when it stops: the guard is now VISIBLE, not just enforced.
   mcpCardUi.refreshSwitches(active);
@@ -7038,16 +7073,9 @@ window.addEventListener("message", (e) => {
     }
     case "status":
       if (Array.isArray(msg.workingIds)) workingIds = new Set(msg.workingIds as string[]);
-      // Patch the row locks IN PLACE (no full list rebuild): rebuilding the
-      // rows re-creates the action buttons and they visibly flash on every
-      // status message while a session works.
-      for (const row of document.querySelectorAll<HTMLElement>(".srow")) {
-        const w = workingIds.has(row.dataset.id ?? "");
-        row.classList.toggle("is-working", w);
-        for (const b of row.querySelectorAll("button")) b.disabled = w;
-      }
-      // Same lock for the tab × (a working session cannot be closed).
-      applyTabLocks();
+      // The rows and the tab × read this set: patched in one place (applyWorkingRows), the same one
+      // `setStreaming` uses when a turn ends — so no surface can be left showing the previous state.
+      applyWorkingRows();
       // The streaming flag FIRST: the gears below read it, and the models gear is locked with
       // it. Called in the other order, the gear kept the previous state for one status message.
       setStreaming(!!msg.active);
