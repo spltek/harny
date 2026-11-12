@@ -93,8 +93,6 @@
     "param.topP": "Nucleus sampling: keep the likeliest tokens until their probability adds up to this. The other way to steer the same knob.",
     "pending.cancelQueued": "Cancel this queued message.",
     "pending.cancelSteer": "Cancel this steer.",
-    "pending.collapse": "Collapse this message.",
-    "pending.expand": "Show the whole message.",
     "pending.head": "Messages you typed while the session works: queued messages run after this turn, steered ones change it.",
     "pending.toQueue": "Deliver it after the run: it waits in the queue with the other messages.",
     "pending.toSteer": "Deliver it first: injected into the running loop at its next step.",

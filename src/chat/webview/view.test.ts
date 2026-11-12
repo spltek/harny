@@ -10382,13 +10382,25 @@ describe("soft steering + pending bubbles (webview)", () => {
     // On a queued message: the button OFFERS the steer, i.e. delivery FIRST.
     expect(queued.textContent).toBe("→ Steer");
     expect(tipTextOf(queued)).toMatch(/first/i);
-    // The row is badge + message + commands, and the FOLD sits with the commands at
-    // the END — never in front of the text.
+    // The row is mode mark + badge + message + commands: the MARK LEADS, in the place a tool call
+    // wears its own icon, and the commands close it. There is no fold any more (see the module
+    // comment in pending-section.ts), so the mark takes the fold's old place instead of following it.
     const row = rows[0];
-    expect(row.firstElementChild).toBe(row.querySelector(".pending-badge"));
+    expect(row.firstElementChild).toBe(row.querySelector(".pending-mark"));
+    expect(row.children[1]).toBe(row.querySelector(".pending-badge"));
+    // Each mode wears its OWN arrow of the same pair: steer cuts the line, so the arrow reaches
+    // the TOP; a queued message waits at the END, so its arrow leaves the bottom.
+    expect(row.querySelector(".pending-mark svg")).toBeTruthy();
+    expect(row.querySelector(".pending-mark")?.innerHTML).toContain("m16 8-3-3 3-3");
+    expect(rows[1].querySelector(".pending-mark")?.innerHTML).toContain("m16 16-3 3 3 3");
+    // ONE pill width, measured on the LONGER label: every badge carries a hidden copy of "Queued"
+    // and reads out only its own label — converting a message cannot resize it.
+    expect(row.querySelector(".pending-badge-sizer")?.textContent).toBe("Queued");
+    expect(row.querySelector(".pending-badge-label")?.textContent).toBe("Steer");
+    expect(row.querySelector(".pending-badge-sizer")?.getAttribute("aria-hidden")).toBe("true");
     const actions = row.querySelector(".pending-actions");
     expect(actions?.contains(steer)).toBe(true);
-    expect(actions?.contains(row.querySelector(".pending-toggle"))).toBe(true);
+    expect(actions?.children.length).toBe(2);
     // The text is the middle column, so the attachments can sit under it.
     expect(row.querySelector(".pending-main > .pending-text")).toBeTruthy();
   });
@@ -10447,23 +10459,19 @@ describe("soft steering + pending bubbles (webview)", () => {
     expect(extras.textContent).toContain("notes.txt");
     // The paperclip still leads the text (the row says WHAT is attached at a glance).
     expect(row.querySelector(".pending-text")?.textContent).toContain("📎");
-    // There IS something inside, so the fold is offered with no measurement needed —
-    // and the row is still born folded.
-    const fold = row.querySelector(".pending-toggle") as HTMLElement;
-    expect(fold.classList.contains("hidden")).toBe(false);
-    expect(row.classList.contains("text-collapsed")).toBe(true);
+    // Attachments and all: the row shows everything at once — there is no fold to open them.
+    expect(row.classList.contains("text-collapsed")).toBe(false);
+    expect(row.querySelector(".pending-toggle")).toBeNull();
   });
 
   /**
-   * The DECISION ("does this text wrap?") is measured on the rendered element, and
-   * jsdom computes no layout — so its rule lives in a pure module with its own tests
-   * (pending-fold.test.ts). What is tested here is the WIRING: one fold per bubble,
-   * born folded, offered only where a measurement (or the previews) justifies it.
+   * The per-row fold is GONE (see the module comment in pending-section.ts): what a row typed
+   * while the agent works can never be collapsible, so the only fold left is the SECTION header.
+   * These tests hold that door shut — the machinery was measured, re-measured on resize and kept
+   * in sync with a class, and it must not creep back one element at a time.
    */
-  describe("per-bubble fold", () => {
-    const rowsHere = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>("#pending-area .pending-msg")];
-
-    it("is born folded, one line per message, with its own fold next to the commands", async () => {
+  describe("a pending row is always whole", () => {
+    it("has no fold control at all, and is never born collapsed", async () => {
       await loadView();
       hostMessage({
         type: "pending",
@@ -10472,58 +10480,25 @@ describe("soft steering + pending bubbles (webview)", () => {
           { id: "s1", mode: "steer", text: "also short" },
         ],
       });
-      const rows = rowsHere();
+      const rows = [...document.querySelectorAll<HTMLElement>("#pending-area .pending-msg")];
       expect(rows).toHaveLength(2);
-      // Every row starts folded — the one just typed included.
-      expect(rows.every((r) => r.classList.contains("text-collapsed"))).toBe(true);
-      const folds = rows.map((r) => r.querySelector<HTMLButtonElement>(".pending-toggle")!);
-      // jsdom reports no line height: the fold exists but is NOT offered (hidden with
-      // its space reserved — see the CSS contract), and it belongs to the commands.
-      expect(folds.every((f) => f.classList.contains("hidden"))).toBe(true);
-      expect(folds.every((f) => !f.classList.contains("is-open"))).toBe(true);
-      for (const fold of folds) {
-        expect(fold.parentElement?.classList.contains("pending-actions")).toBe(true);
-      }
+      // No chevron, no `text-collapsed` — not even on the row just typed, and not even
+      // when a measurement would have said "two lines" (nothing measures any more).
+      expect(rows.every((r) => r.querySelector(".pending-toggle") === null)).toBe(true);
+      expect(rows.every((r) => !r.classList.contains("text-collapsed"))).toBe(true);
+      expect(document.querySelectorAll("#pending-area button[aria-expanded]")).toHaveLength(0);
     });
 
-    it("opens and folds the bubble, announcing which way it goes", async () => {
+    it("leads with the MARK, then the badge, then the text, then the commands", async () => {
       await loadView();
-      hostMessage({ type: "pending", items: [{ id: "q1", mode: "queue", text: "a rather long message" }] });
-      const row = rowsHere()[0];
-      const fold = row.querySelector(".pending-toggle") as HTMLButtonElement;
-
-      fold.click();
-      expect(row.classList.contains("text-collapsed")).toBe(false);
-      expect(fold.classList.contains("is-open")).toBe(true);
-      expect(tipTextOf(fold)).toMatch(/collapse/i);
-      // It is a disclosure control: its state is announced, not just drawn.
-      expect(fold.getAttribute("aria-expanded")).toBe("true");
-      expect(fold.getAttribute("aria-label")).toMatch(/collapse/i);
-
-      fold.click();
-      expect(row.classList.contains("text-collapsed")).toBe(true);
-      expect(fold.classList.contains("is-open")).toBe(false);
-      expect(tipTextOf(fold)).toMatch(/whole/i);
-      expect(fold.getAttribute("aria-expanded")).toBe("false");
-      expect(fold.getAttribute("aria-label")).toMatch(/whole/i);
-    });
-
-    it("offers the fold when a resize gives the message a second line", async () => {
-      await loadView();
-      hostMessage({ type: "pending", items: [{ id: "q1", mode: "queue", text: "wraps only when narrow" }] });
-      const row = rowsHere()[0];
-      const body = row.querySelector(".pending-text") as HTMLElement;
-      const fold = row.querySelector(".pending-toggle") as HTMLButtonElement;
-      expect(fold.classList.contains("hidden")).toBe(true);
-
-      // jsdom lays nothing out, so the measurement is fed the way a layout engine
-      // would answer it: a real line height, and content taller than one line.
-      body.style.lineHeight = "18px";
-      Object.defineProperty(body, "scrollHeight", { value: 36, configurable: true });
-      window.dispatchEvent(new Event("resize"));
-      await new Promise((r) => requestAnimationFrame(() => r(null)));
-
-      expect(fold.classList.contains("hidden")).toBe(false);
+      hostMessage({ type: "pending", items: [{ id: "q1", mode: "queue", text: "later" }] });
+      const row = document.querySelector<HTMLElement>("#pending-area .pending-msg")!;
+      // The mark now takes the fold's old place: the eye lands on it first, exactly where a tool
+      // call wears its icon.
+      expect(row.children[0]).toBe(row.querySelector(".pending-mark"));
+      expect(row.children[1]).toBe(row.querySelector(".pending-badge"));
+      expect(row.children[2]).toBe(row.querySelector(".pending-main"));
+      expect(row.children[3]).toBe(row.querySelector(".pending-actions"));
     });
   });
 
@@ -11782,23 +11757,19 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
     expect(auto().classList.contains("hidden")).toBe(false);
   });
 
-  it("Collapse all also folds the pending bubbles (and the pill watches them)", async () => {
+  it("a pending bubble is NOT part of Collapse all: it has nothing to close", async () => {
     await loadView();
     hostMessage({ type: "pending", items: [{ id: "q1", mode: "queue", text: "queued while it works" }] });
     const row = document.querySelector("#pending-area .pending-msg") as HTMLElement;
-    const fold = row.querySelector(".pending-toggle") as HTMLButtonElement;
 
-    // Born folded: there is nothing to close yet.
+    // The rows are always whole now, so the pill's count is transcript sections only: a whole
+    // session with nothing to fold leaves it disabled, pending bubbles and all.
+    expect(row.className).not.toContain("text-collapsed");
+    expect(row.querySelector(".pending-toggle")).toBeNull();
     expect(tab().disabled).toBe(true);
 
-    fold.click();
-    expect(row.classList.contains("text-collapsed")).toBe(false);
-    // An OPEN pending bubble is exactly what the pill is for.
-    expect(tab().disabled).toBe(false);
-
     tab().click();
-    expect(row.classList.contains("text-collapsed")).toBe(true);
-    expect(fold.classList.contains("is-open")).toBe(false);
+    expect(row.className).not.toContain("text-collapsed");
     expect(tab().disabled).toBe(true);
   });
 

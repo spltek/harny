@@ -43,6 +43,12 @@ file and one line there — nothing else.
 | Delegate | `subagent` |
 | Thinking | `thinking` |
 
+A pending message (typed while the session works) wears the mark of its DELIVERY MODE,
+not of a tool: `list-start` for **steer** (it cuts the line, so the arrow reaches the top)
+and `list-end` for **queue** (it waits at the end). The two are twins on purpose — same
+three rules of text, same corner, only the arrow differs — so a row reads as one of two
+modes of the same control rather than as two unrelated bubbles.
+
 A name nobody has drawn wears `unknown.svg` (the question badge). It used to be
 the 🔧 emoji inside a `span.tool-emoji`: the only "mark" that was not artwork in
 this folder, drawn differently on every OS, and it said "some tool" where the
@@ -71,7 +77,7 @@ folder, not remembered):
 
 | `stroke-width` | how many | which |
 |---|---|---|
-| **1.5** | 16 | every mark the transcript draws, plus `readlints` |
+| **1.5** | 20 | every mark the transcript draws (`file-badge` template included), plus `readlints` |
 | **2** | 10 | `branch` `eye` `history` `paperclip` `pencil` `scissors` `search`, and the small three `plus` `check` `close` |
 | **2.5** | 1 | `chevron-down` |
 | **1.8** | 1 | `sparkles` — the single in-between value |

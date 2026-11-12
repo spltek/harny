@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Queue: the Lucide `list-end` — verbatim geometry. It is the twin of
+       `list-start`: same three rules of text, same corner, and only the ARROW
+       differs — which is the whole difference between the two delivery modes.
+       A queued message waits for the end of the line, so here the arrow leaves
+       the BOTTOM.
+       Paint on the root (uniform here) and the WEIGHT lowered from 2 to 1.5, like
+       every other mark the transcript draws. No width/height: the caller owns the size. -->
+  <path d="M16 5H3"/>
+  <path d="M16 12H3"/>
+  <path d="M9 19H3"/>
+  <path d="m16 16-3 3 3 3"/>
+  <path d="M21 5v12a2 2 0 0 1-2 2h-6"/>
+</svg>

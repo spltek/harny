@@ -48,6 +48,9 @@ import mcp from "../../media/icons/mcp.svg";
 import thinking from "../../media/icons/thinking.svg";
 // The four states of a todo: one box, four baffi.
 import subagent from "../../media/icons/subagent.svg";
+// The two delivery modes of a pending message: steer cuts the line, queue waits at its end.
+import listStart from "../../media/icons/list-start.svg";
+import listEnd from "../../media/icons/list-end.svg";
 import history from "../../media/icons/history.svg";
 import personRound from "../../media/icons/person-round.svg";
 import fileBadge from "../../media/icons/file-badge.svg";
@@ -86,6 +89,8 @@ const ARTWORK = {
   mcp,
   thinking,
   subagent,
+  listStart,
+  listEnd,
   history,
   personRound,
   fileBadge,

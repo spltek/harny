@@ -1444,17 +1444,36 @@ body {
 .pending-msg {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  /* The MARK sits 5px off the text beside it — the same 5px that separates the fold from the icon
+     in `.tool-header` and `.thinking-header`, so the first two marks of every row in the transcript
+     start on one rhythm. The badge→text gap keeps its 8px (see `.pending-main`), and the commands
+     are pinned right, so this gap never moves them. */
+  gap: 5px;
   min-width: 0;
-  padding: 3px 6px 3px 8px;
+  /* ONE THINKING ROW TALL (experiment): `.thinking-block`'s 1px dashed edge plus
+     `.thinking-header`'s 5px of padding, and the same line box (1rem x 1.4) — so a pending row
+     and a thinking row are the same height and stack as one rhythm in the transcript. */
+  padding: 5px 8px;
   border-radius: 6px;
   font-size: var(--fs-md);
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--muted);
 }
+/* STEER, told apart by TONE and not by hue. Three relationships, and they are the SAME ones the
+   "Insert prompt in" hint uses (see #insert-hint-word), so the two places cannot drift into two
+   different ideas of what steer looks like:
+     - the bubble steps DOWN to the tool bubbles' bath (--tool-bg), and its pill steps UP
+       (--surface-2). That is what makes the steer pill "a little lighter than the Queued one"
+       (--tool-bg inside its --surface-2 bubble) while both stay GREY — and it is also the only
+       way the pill can be visible at all: a --surface-2 pill on a --surface-2 bubble is no pill.
+     - the EDGE steps up from --border to --overlay-3, so a steer row is lighter than a queued one
+       at the frame too, not only in the fill.
+     - the text goes to --fg (from --muted).
+   The one thing that keeps the accent is the MARK (see .pending-msg.pending-steer .pending-mark). */
 .pending-msg.pending-steer {
-  border-color: var(--accent);
+  background: var(--tool-bg);
+  border-color: var(--overlay-3);
   color: var(--fg);
 }
 .pending-badge {
@@ -1470,14 +1489,49 @@ body {
      Matching the box makes the two gaps equal WITHOUT centring the label in a
      bubble that can grow to several lines. */
   line-height: calc(var(--fs-md) * 1.4);
+  /* ONE WIDTH FOR BOTH LABELS — and the width is MEASURED, not guessed: the badge is a ONE-CELL
+     grid, and a hidden copy of the longer label ("Queued") shares that cell with the visible one
+     (see .pending-badge-sizer). Both pills are therefore exactly the same box in any font, at any
+     zoom, with no number to keep in sync, and converting a message cannot resize the badge (the
+     text never shifts under the pointer). */
+  display: inline-grid;
+  justify-items: center;
+  align-items: center;
   padding: 0 5px;
   border-radius: 999px;
   background: var(--tool-bg);
   color: var(--muted);
 }
 .pending-msg.pending-steer .pending-badge {
-  background: var(--accent);
-  color: #fff;
+  background: var(--surface-2);
+  color: var(--fg);
+}
+/* The mark of the MODE (steer cuts the line, queue waits at its end), in the place a tool call
+   wears its own: it LEADS the row, before the pill it makes redundant on purpose. `inline-flex` +
+   one text line of height so the drawing sits on the first line's centre even when the text runs
+   to four — and so the shared 1.25 transform (see the "in testa" rule) can apply at all, since a
+   transform does nothing on a non-replaced inline box. Muted by default; a steer row is the
+   accent one. */
+.pending-mark {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.4em;
+  color: var(--muted-2);
+}
+.pending-msg.pending-steer .pending-mark {
+  color: var(--accent);
+}
+/* The pill's RULER: it carries the longer label and no ink (invisible, `aria-hidden` in the
+   markup), so it sets the width without ever being read out or selected. */
+.pending-badge-sizer {
+  visibility: hidden;
+}
+/* ONE CELL, two occupants: the label is drawn, the sizer only measures. `grid-area: 1 / 1` on both
+   is what keeps them stacked — without it the ghost would sit BESIDE the label and double the pill. */
+.pending-badge-sizer,
+.pending-badge-label {
+  grid-area: 1 / 1;
 }
 /* The row is badge + content + actions: the text and its attachments share the
    middle column (so the previews land UNDER the text, as in a user bubble) while
@@ -1485,15 +1539,16 @@ body {
 .pending-main {
   flex: 1;
   min-width: 0;
+  /* The row's gap is the mark's 5px (see `.pending-msg`); the badge keeps its own 8px of air from
+     the text it labels. */
+  margin-left: 3px;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
-/* ONE LINE while folded: clipped, and faded at the right edge. NOT "nowrap" +
-   ellipsis, which would make the "does it wrap?" measurement impossible (a
-   nowrap box always reports a single line — see pending-fold.ts). Opened, the
-   text is WHOLE: it wraps, keeps the user's own line breaks and the bubble grows
-   as tall as it needs, while the SECTION owns the scroll (#pending-area). */
+/* The text is ALWAYS WHOLE: it wraps, keeps the user's own line breaks, and the row grows as tall
+   as it needs while the SECTION owns the scroll (#pending-area). There is no clamp and no fold any
+   more — see the module comment in pending-section.ts for why the per-row fold was removed. */
 .pending-text {
   flex: 1;
   min-width: 0;
@@ -1501,86 +1556,22 @@ body {
   overflow-wrap: anywhere;
   line-height: 1.4;
 }
-.pending-msg.text-collapsed .pending-text {
-  max-height: 1.4em;
-  overflow: hidden;
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.4rem), transparent);
-  mask-image: linear-gradient(to right, #000 calc(100% - 1.4rem), transparent);
-}
-/* The previews are folded away WITH the text: a closed row is exactly one line,
-   thumbnails included. */
-.pending-msg.text-collapsed .pending-extras {
-  display: none;
-}
 /* The SHARED attachment row (the one user bubbles render), inside a pending row:
    identical content, a hair tighter — the main column already spaces it. */
 .pending-extras .msg-attachments {
   margin-top: 0;
   gap: 6px;
 }
-/* The fold is the same bare chevron as every other toggle in Harny (.tool-toggle),
-   and it is one of this bubble's ACTIONS, so it sits with the other two instead of
-   in front of the text. Hidden, its SPACE stays reserved (visibility, not
-   display): the commands then land in the same spot on every row. */
-/* ⚠ SPECIFICITY: this rule must beat BOTH `.pending-actions button` (the pill chrome below)
-   and the global `button` (3D key, min-height 1.54rem). It did not, and nothing said so: with
-   `padding: 0 0.4rem` back in force the 12px-wide fold had a ZERO-width content box, and the 11px
-   chevron — a flex item with `flex-shrink: 1` — was shrunk to nothing. What was left on screen was
-   just the bordered rounded box: an empty ring sitting where the fold should be. The two pill rules
-   now exclude `.pending-toggle` (see `.pending-actions button:not(.pending-toggle)`), and
-   `min-height: 0` keeps the global 1.54rem hit area from making a bare chevron as tall as a key. */
-.pending-toggle {
-  flex: 0 0 auto;
-  width: 12px;
-  min-height: 0;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  box-shadow: none;
-  filter: none;
-  color: var(--muted);
-  font-size: var(--fs-sm);
-  line-height: 1.2;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-/* The same rotated chevron as every other fold (see the shared rule): pointing right when the
-   message is folded, down when it is whole. */
-.pending-toggle > .toggle-chevron {
-  display: block;
-  transform: rotate(-90deg);
-  transform-origin: center;
-  transition:
-    transform 0.15s ease,
-    color 0.15s ease;
-}
-.pending-toggle.is-open > .toggle-chevron {
-  transform: rotate(0deg);
-}
-/* Scoped through `.pending-actions` for the same reason as the base rule: the global
-   `button:not(:disabled):hover` is specificity (0,2,1), which outranked plain `.pending-toggle:hover`. */
-.pending-actions .pending-toggle:hover {
-  filter: none;
-  color: var(--accent);
-}
-.pending-toggle.hidden {
-  visibility: hidden;
-}
-/* The buttons sit TOP-RIGHT, before the badge/text in DOM terms they follow,
-   pinned with margin-left: auto so multi-line text never moves them. */
+/* The buttons sit TOP-RIGHT, pinned with margin-left: auto so multi-line text never moves them. */
 .pending-actions {
   flex: 0 0 auto;
   margin-left: auto;
   display: flex;
   gap: 4px;
 }
-/* The pill chrome belongs to the two COMMANDS. `.pending-toggle` is a bare chevron and opts out
-   here (`:not`), because a type selector on the right (0,1,1) silently beat its own rule (0,1,0) —
-   see the note on `.pending-toggle`. */
-.pending-actions button:not(.pending-toggle) {
+/* The pill chrome belongs to the two commands, and only to them: there is no bare chevron in this
+   row any more, so no `:not()` guard is needed to keep one from wearing it. */
+.pending-actions button {
   flex: 0 0 auto;
   min-height: 1.2rem;
   padding: 0 0.4rem;
@@ -1591,7 +1582,7 @@ body {
   font-size: var(--fs-sm);
   white-space: nowrap;
 }
-.pending-actions button:not(.pending-toggle):hover {
+.pending-actions button:hover {
   filter: none;
 }
 .pending-cancel:hover {
@@ -1718,7 +1709,8 @@ body {
 .tool-name > svg,
 .thinking-header > svg,
 .subagent-header .subagent-icon,
-.msg.user.synthetic-summary .synthetic-icon {
+.msg.user.synthetic-summary .synthetic-icon,
+.pending-msg .pending-mark {
   transform: scale(1.25);
   transform-origin: center;
 }
@@ -2033,10 +2025,13 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* NOT margin-left: auto — the chip (running… / done / failed) sits right after
-   the goal, so it slides left together with it instead of being pinned to the
-   right edge while the goal is squeezed. */
+/* PINNED RIGHT (experiment): the status chip and the abort button are this row's FIXED marks, so
+   they own the right edge and the goal — the one element allowed to give way — absorbs the slack.
+   The chip used to ride right after the goal and slide left with it, which put "RUNNING…" and
+   "DONE" at a different x on every row of a fan-out: a column of states that could not be read
+   down. */
 .subagent-status {
+  margin-left: auto;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -2747,17 +2742,20 @@ body.drag-over {
   white-space: nowrap;
   user-select: none;
 }
-/* The word itself, in a pill: neutral for Queue, muted red for Steer (the message is
-   then injected into the running loop instead of waiting for it). */
+/* The word itself, in a pill: the two DELIVERY MODES as two greys — Queue is the quiet one
+   (--tool-bg, the same grey as a Queued badge) and Steer the raised one (--surface-2, its edge a
+   step up at --overlay-3). This is the pending bubbles' pairing repeated here on purpose: the
+   indicator and the row it describes must name the same mode with the same tone. No red and no
+   glow left in either — Steer is not an alarm, it is the same message arriving sooner. */
 #insert-hint-word {
   display: inline-flex;
   align-items: center;
   height: 18px;
   padding: 0 8px;
   border-radius: 999px;
-  background: var(--surface-2);
-  border: 1px solid var(--overlay-3);
-  color: var(--fg);
+  background: var(--tool-bg);
+  border: 1px solid var(--border);
+  color: var(--muted);
   font-weight: 600;
   line-height: 1;
   transition:
@@ -2767,12 +2765,9 @@ body.drag-over {
     box-shadow 0.18s;
 }
 #insert-hint.is-steer #insert-hint-word {
-  background: linear-gradient(135deg, var(--steer), var(--steer-strong));
-  border-color: transparent;
-  color: #ffffff;
-  box-shadow:
-    0 1px 2px var(--key-shadow),
-    0 0 12px rgba(178, 59, 59, 0.45);
+  background: var(--surface-2);
+  border-color: var(--overlay-3);
+  color: var(--fg);
 }
 /* Idle (no run in flight): dimmed like the old disabled pill — the choice only means
    something while the agent is working. */

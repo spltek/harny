@@ -1963,12 +1963,12 @@ function revealForMatch(node: Node): void {
 /** Keeps the two transcript action pills in sync. They are NEVER hidden — only
  * `disabled` changes — so the row can never reflow under the cursor. */
 function updateTranscriptActions(): void {
-  // "Collapse all": only meaningful while at least one section — a transcript section
-  // OR an open pending bubble — is expanded.
-  const anyOpen =
-    Array.from(document.querySelectorAll<HTMLElement>(TRANSCRIPT_SECTIONS)).some(
-      (el) => !el.classList.contains("collapsed"),
-    ) || pending.openCount() > 0;
+  // "Collapse all": only meaningful while at least one transcript section is expanded.
+  // The pending bubbles used to fold too and are gone from this count with their fold — they
+  // are always whole now, so they have nothing to close.
+  const anyOpen = Array.from(document.querySelectorAll<HTMLElement>(TRANSCRIPT_SECTIONS)).some(
+    (el) => !el.classList.contains("collapsed"),
+  );
   collapseAllBtn.disabled = !anyOpen;
   // "Autoscroll": only while the user is parked above the bottom. autoScroll is
   // DERIVED from the scroll position (see the scroll listener), so reaching the
@@ -1986,9 +1986,6 @@ function collapseAllSections(): number {
     setFold(body.previousElementSibling, false);
     collapsed += 1;
   });
-  // The pending bubbles fold with them: they are the same gesture ("close what is
-  // open"), and their own module keeps them in sync from there.
-  collapsed += pending.collapseAll();
   return collapsed;
 }
 
@@ -3072,7 +3069,7 @@ function effectiveSendMode(): "queue" | "steer" {
   return streamingActive && steerModifierHeld ? "steer" : "queue";
 }
 
-/** Paint the hint: word + red "Steer" pill + dim when idle. */
+/** Paint the hint: word + the toned "Steer" pill + dim when idle (quiet grey = Queue, raised = Steer). */
 function renderSteerMode(): void {
   const isSteer = effectiveSendMode() === "steer";
   insertHint.classList.toggle("is-steer", isSteer);

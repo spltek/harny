@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Steer: the Lucide `list-start` — verbatim geometry (three rules of text, the
+       arrow that jumps to the top of them). Two things moved and nothing else:
+         - the PAINT to the root, because it is uniform here (`fill`, `stroke`,
+           `stroke-width`, caps, joins) — the rule every file in this folder follows;
+         - the WEIGHT from 2 to 1.5, the weight of the transcript marks it heads a
+           bubble alongside (a 2 at 13px reads as chrome, not as a mark).
+       It is the twin of `list-end` on purpose: same three rules, same corner, and
+       only the ARROW differs — which is the whole difference between the two
+       delivery modes. Steer cuts the line, so the arrow reaches the TOP.
+       No width/height: the caller owns the size. -->
+  <path d="M3 5h6"/>
+  <path d="M3 12h13"/>
+  <path d="M3 19h13"/>
+  <path d="m16 8-3-3 3-3"/>
+  <path d="M21 19V7a2 2 0 0 0-2-2h-6"/>
+</svg>

@@ -109,6 +109,17 @@ describe("icon registry", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("gives each delivery mode its own arrow, on the same three rules", () => {
+    // Steer cuts the line (the arrow reaches the TOP), queue waits at its end (the arrow leaves the
+    // BOTTOM). The two files are twins, so what has to differ is exactly the arrow — and what must
+    // NOT differ is the weight, or one mode would read as chrome and the other as a mark.
+    expect(icon("listStart", 13)).toContain("m16 8-3-3 3-3");
+    expect(icon("listEnd", 13)).toContain("m16 16-3 3 3 3");
+    expect(icon("listStart", 13)).toContain('stroke-width="1.5"');
+    expect(icon("listEnd", 13)).toContain('stroke-width="1.5"');
+    expect(icon("listStart", 13)).not.toContain('width="24"');
+  });
+
   it("gives a tool call its own mark, whatever the spelling", () => {
     // The registry spells tools in TitleCase; the mapping does not care.
     expect(toolIcon("Read")).toBe(icon("read", 13));

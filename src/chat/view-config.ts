@@ -126,8 +126,6 @@ const PALETTE_DARK = {
   "on-warn": "#1a1a1a", // text ON the warn hue
   violet: "#7c5cff", // sub-agents / parallel
   "violet-text": "#a98dff", // their labels
-  steer: "#b23b3b", // the Steer pill gradient
-  "steer-strong": "#8f2d2d",
   "nudge-fg": "#dbeafe", // text of a harness "Nudge" bubble (light blue on its tint)
   error: "#f44747",
   // The ERROR bubble's surface: that red as a wash, already COMPOSITED over `--bg` (15% over
@@ -225,8 +223,6 @@ const PALETTE_LIGHT: Palette = {
   "on-warn": "#1a1a1a",
   violet: "#6847d4",
   "violet-text": "#5a3fc0",
-  steer: "#a03434",
-  "steer-strong": "#862929",
   "nudge-fg": "#123a63",
   error: "#c62828",
   // The SAME dark-error wash over paper: `rgba(244, 71, 71, 0.15)` composited on `--bg`, i.e.

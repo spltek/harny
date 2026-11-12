@@ -43,7 +43,6 @@ describe("renderViewHtml", () => {
     });
     // No swapped glyph anywhere in the page (the Play/Stop keys are CSS-drawn shapes, see their rule).
     expect(html).not.toMatch(/<span[^>]*class="[^"]*toggle[^"]*"[^>]*>\s*[▶▼]/);
-    expect(html).not.toMatch(/<button[^>]*pending-toggle[^>]*>\s*[▶▼]/);
     // The toggle carries the same svg, and the OPEN state is a class on it.
     expect(html).toContain('<span class="toggle is-open"><svg');
     expect(html).toContain('class="toggle-chevron"');
@@ -83,6 +82,9 @@ describe("renderViewHtml", () => {
     expect(rule).toContain(".thinking-header > svg");
     expect(rule).toContain(".subagent-header .subagent-icon");
     expect(rule).toContain(".synthetic-icon");
+    // The mark of a pending message's DELIVERY MODE heads that bubble too (it is the first drawn
+    // thing after the fold), so it is in the same rule and not at a size of its own.
+    expect(rule).toContain(".pending-msg .pending-mark");
     // …and the LAYOUT is untouched: no width/height in that block.
     expect(rule).not.toMatch(/\bwidth:/);
     expect(rule).not.toMatch(/\bheight:/);
@@ -315,34 +317,27 @@ describe("renderViewHtml", () => {
     expect(pendingText).not.toContain("text-overflow: ellipsis");
     expect(pendingText).not.toContain("white-space: nowrap");
     expect(pendingText).toContain("line-height: 1.4;");
-    // …and the FOLDED row is clipped to exactly that one line, in a way that keeps the
-    // measurement possible: `max-height` (NOT `nowrap` + ellipsis, which would report a
-    // single line for ever — see pending-fold.ts) and not `display: none`.
-    const folded = cssRule(html, ".pending-msg.text-collapsed .pending-text");
-    expect(folded).toContain("max-height: 1.4em");
-    expect(folded).toContain("overflow: hidden");
-    expect(folded).toContain("mask-image");
-    expect(folded).not.toContain("nowrap");
-    // The previews fold away WITH the text: a closed row is one line, thumbnails too.
-    expect(cssRule(html, ".pending-msg.text-collapsed .pending-extras")).toContain("display: none");
-    // The fold is a bare chevron like every other toggle in Harny (.tool-toggle), and it
-    // is hidden with its SPACE RESERVED, so the commands sit in the same spot on every
-    // row instead of moving one row to the next.
-    const foldCss = cssRule(html, ".pending-toggle");
-    expect(foldCss).toContain("border: none");
-    expect(foldCss).toContain("background: transparent");
-    // …and the DECLARATIONS are only half of it: `.pending-actions button` (0,1,1) outranks
-    // `.pending-toggle` (0,1,0), so the pill chrome came back on the fold whatever this rule said.
-    // The chevron — a flex item in a `width: 12px` box whose 0.4rem paddings left no content — was
-    // shrunk to nothing and the row showed an empty bordered ring instead of the fold. The commands'
-    // pill rules must therefore OPT OUT of the toggle, and the hit area must not be a key's.
-    expect(flat(html)).not.toMatch(/\.pending-actions button\s*[,{]/);
-    expect(cssRule(html, ".pending-actions button:not(.pending-toggle)")).toContain("border: 1px solid var(--border)");
-    expect(foldCss).toContain("min-height: 0");
-    expect(foldCss).toContain("padding: 0");
-    expect(cssRule(html, ".pending-actions .pending-toggle:hover")).toContain("color: var(--accent)");
-    expect(cssRule(html, ".pending-toggle.hidden")).toContain("visibility: hidden");
-    expect(cssRule(html, ".pending-toggle.hidden")).not.toContain("display: none");
+    // …and NOTHING clips it: the row is always whole. The per-row fold is gone — its state class,
+    // its chevron, its quiet variant, its clamp and its mask are all deleted from the stylesheet,
+    // not merely left unused (see the module comment in pending-section.ts).
+    expect(flat(html)).not.toContain("text-collapsed");
+    expect(flat(html)).not.toContain("pending-toggle");
+    expect(flat(html)).not.toContain("fold-off");
+    expect(flat(html)).not.toContain("mask-image");
+    // The commands are the only buttons in the row, so their pill chrome needs no `:not()` guard
+    // to keep a bare chevron from wearing it (the guard died with the chevron).
+    expect(cssRule(html, ".pending-actions button")).toContain("border: 1px solid var(--border)");
+    // The mode's MARK LEADS the row, where a tool call wears its own icon: it is an "in testa"
+    // mark, so it takes that family's ink — muted on the row, accent only where the row IS a
+    // steer — and one text line tall, so its ink lands on the first line.
+    const markCss = cssRule(html, ".pending-mark");
+    expect(markCss).toContain("flex: 0 0 auto");
+    expect(markCss).toContain("color: var(--muted-2)");
+    expect(markCss).toContain("min-height: 1.4em");
+    // `inline-flex` is not decoration: the shared 1.25 transform does NOTHING on a plain inline
+    // box, and the mark would silently render a quarter smaller than every other head mark.
+    expect(markCss).toContain("display: inline-flex");
+    expect(cssRule(html, ".pending-msg.pending-steer .pending-mark")).toContain("color: var(--accent)");
     // The SECTION owns the scroll, so a long queue cannot eat the panel…
     const section = cssRule(html, "#pending-area");
     expect(section).toContain("max-height: 30vh");
@@ -354,8 +349,18 @@ describe("renderViewHtml", () => {
     expect(cssRule(html, ".pending-msg")).toContain("align-items: flex-start");
     expect(cssRule(html, ".pending-actions")).toContain("margin-left: auto");
     expect(cssRule(html, ".pending-convert:hover")).toContain("var(--accent)");
-    // The steer/queue colors stay as they were (accent vs neutral).
-    expect(flat(html)).toContain(".pending-msg.pending-steer { border-color: var(--accent);");
+    // The two modes are told apart by TONE, not by hue (the mark keeps the accent).
+    expect(flat(html)).toContain(
+      ".pending-msg.pending-steer { background: var(--tool-bg); border-color: var(--overlay-3);",
+    );
+    // The two delivery modes are TWO GREYS, and the order is the point: the steer pill is one step
+    // LIGHTER than the queued one (surface-2 vs tool-bg) and so is its edge (overlay-3 vs border),
+    // while its bubble steps DOWN to make room for that pill. Both are in the pending block and
+    // repeated verbatim by the insert-in hint — the indicator cannot describe a different steer
+    // than the row it describes.
+    expect(flat(html)).toContain(".pending-msg.pending-steer .pending-badge { background: var(--surface-2);");
+    expect(flat(html)).toContain(".pending-badge {");
+    expect(cssRule(html, ".pending-badge")).toContain("background: var(--tool-bg)");
   });
 
   it("makes the queue/steer block a COLLAPSIBLE section, like the sessions list", () => {
@@ -420,9 +425,10 @@ describe("renderViewHtml", () => {
     expect(cssRule(html, ".subagent-header .tool-name")).toContain("flex: 0 0 auto");
     expect(cssRule(html, ".subagent-role")).toContain("flex: 0 0 auto");
     expect(cssRule(html, ".subagent-status")).toContain("flex-shrink: 0");
-    // The status chip (running… / done) FOLLOWS the goal instead of being pinned to
-    // the right edge: as the goal shrinks, the chip slides left with it.
-    expect(cssRule(html, ".subagent-status")).not.toContain("margin-left: auto");
+    // The status chip (running… / done) is PINNED to the right edge — it and the abort button are
+    // the row's fixed marks — and the goal, the only element that may give way, absorbs the slack:
+    // a fan-out then shows its states in one readable column instead of a staircase.
+    expect(cssRule(html, ".subagent-status")).toContain("margin-left: auto");
   });
 
   it("gives the queue/steer badge a box exactly one TEXT LINE tall", () => {
@@ -451,6 +457,11 @@ describe("renderViewHtml", () => {
     const badge = cssRule(html, ".pending-badge");
     expect(badge).toContain("line-height: calc(var(--fs-md) * 1.4)");
     expect(badge).toContain("padding: 0 5px"); // no vertical padding: the line IS the height
+    // Steer and Queued are ONE pill of ONE width, and the width is MEASURED, not guessed: a hidden
+    // copy of the longer label shares the visible label's grid cell, so the box is exactly as wide
+    // as "Queued" in whatever font the panel happens to use.
+    expect(cssRule(html, ".pending-badge-label")).toContain("grid-area: 1 / 1");
+    expect(cssRule(html, ".pending-badge-sizer")).toContain("visibility: hidden");
     expect(cssRule(html, ".pending-text")).toContain("line-height: 1.4"); // the value the badge mirrors
   });
 
@@ -728,12 +739,19 @@ describe("renderViewHtml", () => {
     // The word lives in a pill, neutral for Queue…
     const word = cssRule(html, "#insert-hint-word");
     expect(word).toContain("border-radius: 999px");
-    expect(word).toContain("background: var(--surface-2)");
-    // …and muted red (with its glow) for Steer, the old pill's palette — as ROLES,
-    // so the light theme can darken them instead of glowing on paper.
+    // The quiet grey is QUEUE, the raised one is STEER — the same pairing, in the same order, as
+    // the pending bubbles above (`.pending-badge` / `.pending-msg.pending-steer`).
+    expect(word).toContain("background: var(--tool-bg)");
+    expect(word).toContain("border: 1px solid var(--border)");
+    expect(word).toContain("color: var(--muted)");
     const steer = cssRule(html, "#insert-hint.is-steer #insert-hint-word");
-    expect(steer).toContain("linear-gradient(135deg, var(--steer), var(--steer-strong))");
-    expect(steer).toContain("color: #ffffff");
+    expect(steer).toContain("background: var(--surface-2)");
+    expect(steer).toContain("border-color: var(--overlay-3)");
+    expect(steer).toContain("color: var(--fg)");
+    // NO red, NO glow: steer is not an alarm, and the roles that painted it are gone from the
+    // palette instead of sitting there unused (a dead role with a comment is a lie).
+    expect(flat(html)).not.toContain("var(--steer");
+    expect(steer).not.toContain("box-shadow");
     // Idle dims it, exactly like the disabled pill it replaced.
     expect(cssRule(html, "#insert-hint.is-idle")).toContain("opacity: 0.45");
     // The old pill's rules are GONE, not just unused.

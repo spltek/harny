@@ -1,20 +1,27 @@
-import { needsCollapseControl } from "./pending-fold";
-import { setButtonToggle, setToggle } from "./fold";
+import { setToggle } from "./fold";
+import { icon } from "../icons";
 import { setTip } from "./tips";
 
 /**
  * The queue/steer footer: the messages the user typed WHILE the session works.
  *
- * It owns the whole concern — the collapsible section, its counts, the per-bubble fold
- * and the two commands each bubble offers (convert, cancel) — and owns nothing else:
- * the host is the source of truth for the ITEMS (it re-pushes them on reload) and the
- * only way out of here is the injected `post`, so this module holds no messaging code
- * and no session knowledge (DIP).
+ * It owns the whole concern — the collapsible section, its counts and the two commands
+ * each bubble offers (convert, cancel) — and owns nothing else: the host is the source of
+ * truth for the ITEMS (it re-pushes them on reload) and the only way out of here is the
+ * injected `post`, so this module holds no messaging code and no session knowledge (DIP).
  *
- * A bubble is ONE LINE by default — it is a queued intention, not a document: the whole
- * text travels in its tooltip — and opens on demand, with a fold offered only where
- * there is really more to see. The SECTION is what scrolls, so a long queue can never
- * eat the transcript.
+ * A bubble is ALWAYS WHOLE. It used to be one line with a per-row fold in front of it; the
+ * fold is gone and the row shows the whole message, every time:
+ *   - what you type while an agent works is short by nature — a steering order or a
+ *     correction, not a document. The clamp was paying a chevron on EVERY row (12px of
+ *     leading ink, plus a second one after the badge in the first version) to hide two
+ *     lines that were usually there anyway;
+ *   - and a row you cannot collapse needs no state: no `text-collapsed`, no measurement,
+ *     no ResizeObserver, nothing to re-take when the panel is resized. Four moving parts
+ *     and their delightful edge cases (a row born folded that had nothing to unfold, a
+ *     fold that had to be re-measured while hidden) simply do not exist any more.
+ * ONE fold is left, and it is the one worth having: the section header, because a long
+ * queue is what can eat the transcript — and the section is what scrolls.
  */
 
 /** What the host sends for one pending message. */
@@ -44,12 +51,6 @@ interface PendingSectionDeps {
 interface PendingSection {
   /** Render the items the host just pushed. */
   render(items: PendingViewItem[]): void;
-  /** How many rows are OPEN: the transcript's "Collapse all" is only meaningful while
-   * something is. */
-  openCount(): number;
-  /** Fold every open row (the same "Collapse all"). Returns how many it closed, so the
-   * caller can report the effect instead of reaching into the DOM. */
-  collapseAll(): number;
 }
 
 export function createPendingSection(deps: PendingSectionDeps): PendingSection {
@@ -70,83 +71,45 @@ export function createPendingSection(deps: PendingSectionDeps): PendingSection {
     area.classList.toggle("hidden", !next);
     head.setAttribute("aria-expanded", String(next));
     setToggle(head.querySelector(".toggle"), next);
-    // Nothing can be measured inside a hidden container (it reports no line height),
-    // so the fold decisions are re-taken once the list is on screen again.
-    if (next) remeasureSoon();
   }
 
-  /**
-   * Is there more to this row than its one line? MEASURED, never guessed — the rule
-   * lives in pending-fold.ts. The folded clip keeps `scrollHeight` reporting the FULL
-   * content height, so the answer does not depend on the row being open: that is what
-   * makes stranding impossible (a row that needs opening always offers the fold).
-   * Attachments count as content: they live inside the bubble, so opening it is the
-   * only way to see them.
-   */
-  function needsFold(row: HTMLElement): boolean {
-    const body = row.querySelector<HTMLElement>(".pending-text");
-    const lineHeight = body ? parseFloat(getComputedStyle(body).lineHeight) || 0 : 0;
-    const wraps = needsCollapseControl(lineHeight, body?.scrollHeight ?? 0);
-    return wraps || row.querySelector(".pending-extras .msg-attachments") !== null;
-  }
-
-  /**
-   * Offer the fold WHERE there is something to open, and reserve its place on every
-   * row (see the CSS): the two commands then sit at the same spot on every row, so
-   * they can be hit without aiming.
-   */
-  function syncFolds(): void {
-    for (const row of area.querySelectorAll<HTMLElement>(".pending-msg")) {
-      const toggle = row.querySelector<HTMLButtonElement>(".pending-toggle");
-      if (toggle) toggle.classList.toggle("hidden", !needsFold(row));
-    }
-  }
-
-  /** ONE measurement pass per frame: each pass reads layout for every row, and a
-   * resize gesture fires these events dozens of times per second. Skipped off screen. */
-  let measuring = false;
-  function remeasureSoon(): void {
-    if (measuring) return;
-    measuring = true;
-    requestAnimationFrame(() => {
-      measuring = false;
-      if (section.classList.contains("hidden") || area.classList.contains("hidden")) return;
-      syncFolds();
-    });
-  }
-
-  /** ONE path for a row's fold state: the class, the arrow and the announcement. */
-  function setRowCollapsed(row: HTMLElement, collapsed: boolean): void {
-    row.classList.toggle("text-collapsed", collapsed);
-    const toggle = row.querySelector<HTMLButtonElement>(".pending-toggle");
-    if (!toggle) return;
-    const label = collapsed ? "Show the whole message" : "Collapse this message";
-    setButtonToggle(toggle, !collapsed);
-    // The label is the accessible NAME (aria-label) and the card: one string, two consumers.
-    setTip(toggle, collapsed ? "pending.expand" : "pending.collapse");
-    toggle.setAttribute("aria-expanded", String(!collapsed));
-    toggle.setAttribute("aria-label", label);
-  }
-
-  /** One bubble: the badge, the text (with its attachments) and, at the END, the fold
-   * and the two commands. */
+  /** One bubble: the mode mark, the badge, the text (with its attachments) and, at the END,
+   * the two commands. No fold, by design — see the module comment. */
   function renderRow(it: PendingViewItem): HTMLElement {
     const row = document.createElement("div");
-    // BORN COLLAPSED — every row, the one just typed included: the queue stays one
-    // line per message, whatever was pasted into it.
-    row.className = "pending-msg text-collapsed " + (it.mode === "steer" ? "pending-steer" : "pending-queue");
+    row.className = "pending-msg " + (it.mode === "steer" ? "pending-steer" : "pending-queue");
+
+    // The mark of the MODE, in the place a tool call wears its own: it LEADS the row, before the
+    // pill it makes redundant on purpose. Steer cuts the line (`list-start`, the arrow reaches the
+    // top), queue waits at its end (`list-end`) — the same twin drawings, so the two rows read as
+    // two delivery modes of one control.
+    const mark = document.createElement("span");
+    mark.className = "pending-mark";
+    mark.innerHTML = icon(it.mode === "steer" ? "listStart" : "listEnd", 13);
 
     const badge = document.createElement("span");
     badge.className = "pending-badge";
-    badge.textContent = it.mode === "steer" ? "Steer" : "Queued";
+    // ONE WIDTH FOR BOTH LABELS, MEASURED instead of guessed: a hidden copy of the LONGER label
+    // ("Queued") shares the badge's single grid cell (see .pending-badge-sizer), so the pill is
+    // exactly as wide as that label in ANY font, at any zoom, with no number to keep in sync —
+    // converting a message never resizes the badge, so the text never shifts under the pointer.
+    // The sizer carries no ink and no accessible text; the label is the badge's only content.
+    const sizer = document.createElement("span");
+    sizer.className = "pending-badge-sizer";
+    sizer.setAttribute("aria-hidden", "true");
+    sizer.textContent = "Queued";
+    const badgeLabel = document.createElement("span");
+    badgeLabel.className = "pending-badge-label";
+    badgeLabel.textContent = it.mode === "steer" ? "Steer" : "Queued";
+    badge.append(sizer, badgeLabel);
 
     const body = document.createElement("span");
     body.className = "pending-text";
     // A paperclip prefix whenever at least one file is attached. The names alone
     // used to be swallowed as soon as the message ALSO had text, so the row said
     // nothing about them. Names stay in the tooltip, and become the body when there
-    // is no text at all (as before) — the tooltip carries the WHOLE text of a folded
-    // row too, which is what makes one line enough.
+    // is no text at all (as before). The row shows the whole text now, so the tooltip
+    // is not carrying a hidden half — it still names the files beside the text.
     const files = it.attachments ?? [];
     const names = files.map((a) => a.name).join(", ");
     body.textContent = (files.length > 0 ? "📎 " : "") + (it.text || names || "(empty)");
@@ -163,14 +126,6 @@ export function createPendingSection(deps: PendingSectionDeps): PendingSection {
       renderAttachments(extras, it);
       main.appendChild(extras);
     }
-
-    // The fold is an ACTION on this bubble, so it sits WITH the two commands — never
-    // in front of the text — and looks like every other toggle in Harny: a bare
-    // chevron, no box (see .tool-toggle).
-    const toggle = document.createElement("button");
-    toggle.type = "button";
-    toggle.className = "pending-toggle hidden";
-    toggle.addEventListener("click", () => setRowCollapsed(row, !row.classList.contains("text-collapsed")));
 
     // Convert between the two delivery modes. The label states the EFFECT, not the
     // mode: they are not two views of the same message, they are delivered at
@@ -192,16 +147,15 @@ export function createPendingSection(deps: PendingSectionDeps): PendingSection {
     setTip(cancel, it.mode === "steer" ? "pending.cancelSteer" : "pending.cancelQueued");
     cancel.addEventListener("click", () => post({ type: "cancelPending", id: it.id }));
 
-    // The commands sit TOP-RIGHT (pinned with margin-left: auto, so multi-line text
+    // The commands sit TOP-RIGHT (pinned with margin-left: auto, so a long message
     // never drags them to the middle).
     const actions = document.createElement("span");
     actions.className = "pending-actions";
-    actions.append(toggle, convert, cancel);
+    actions.append(convert, cancel);
 
-    row.append(badge, main, actions);
-    // The row is BORN folded, and it says so on its arrow — set once the parts are IN
-    // the row (the state lives on the row and on its fold together).
-    setRowCollapsed(row, true);
+    // The mark opens the row and the commands close it: nothing between the mark and the text
+    // but the pill, exactly as a tool call is `>` + icon + name.
+    row.append(mark, badge, main, actions);
     return row;
   }
 
@@ -213,14 +167,6 @@ export function createPendingSection(deps: PendingSectionDeps): PendingSection {
     e.preventDefault();
     setExpanded(!expanded);
   });
-  // A width change flips the answer ("does it still fit one line?"), and the panel is
-  // resized far more often than the messages change. A ResizeObserver catches
-  // container-only resizes (dragging the panel edge); the window event covers engines
-  // without it.
-  if (typeof ResizeObserver !== "undefined") {
-    new ResizeObserver(remeasureSoon).observe(area);
-  }
-  window.addEventListener("resize", remeasureSoon);
 
   return {
     render(items: PendingViewItem[]): void {
@@ -245,20 +191,6 @@ export function createPendingSection(deps: PendingSectionDeps): PendingSection {
         .filter(Boolean)
         .join(" · ");
       area.replaceChildren(...ordered.map(renderRow));
-      // Decide AFTER the rows exist which ones actually have something to open.
-      syncFolds();
-    },
-    openCount(): number {
-      return area.querySelectorAll(".pending-msg:not(.text-collapsed)").length;
-    },
-    collapseAll(): number {
-      let folded = 0;
-      for (const row of area.querySelectorAll<HTMLElement>(".pending-msg")) {
-        if (row.classList.contains("text-collapsed")) continue;
-        setRowCollapsed(row, true);
-        folded += 1;
-      }
-      return folded;
     },
   };
 }
