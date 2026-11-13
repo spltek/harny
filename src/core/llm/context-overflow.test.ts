@@ -339,6 +339,26 @@ describe("overflowLimitFromError — formatting, thousands and the 'k' suffix", 
     ).toBe(200000);
   });
 
+  it("reads a body that was serialised without spaces", () => {
+    // Providers re-emit the rejection as compact JSON: `250000tokens>200000maximum`. Every `\s*`
+    // in the Anthropic pattern exists for exactly this shape — the spaces are optional, not dropped.
+    expect(overflowLimitFromError(new Error("prompt is too long: 250000tokens>200000maximum"))).toBe(200000);
+    // The same compacting drops the space before `tokens` in the catch-all family.
+    expect(overflowLimitFromError(new Error("the limit is 4096tokens"))).toBe(4096);
+  });
+
+  it("reads the singular `token` in the Anthropic comparison", () => {
+    // The `s?` is there because gateways rewrite the sentence: `250000 token > 200000 maximum`.
+    // Without it the whole family falls through and the limit is lost.
+    expect(overflowLimitFromError(new Error("prompt is too long: 250000 token > 200000 maximum"))).toBe(200000);
+  });
+
+  it("keeps the space before 'k' in the generic 'limit is N tokens' family", () => {
+    // The last pattern is the catch-all: `limit is 32 k tokens`. Its capture must tolerate the
+    // detached suffix the way every other family does.
+    expect(overflowLimitFromError(new Error("the limit is 32 k tokens"))).toBe(32000);
+  });
+
   it("keeps the SPACE before the 'k' in a Gemini-style limit", () => {
     // Every other pattern tolerates `32 k`; this one used to accept only non-space characters
     // between the number and the suffix, so `32 k` was read as "no limit".
