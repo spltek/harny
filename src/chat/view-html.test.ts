@@ -624,12 +624,12 @@ describe("renderViewHtml", () => {
     // drift apart — a wider mark than its margin would sit on the panel's edge.
     expect(html).toMatch(/\.msg\.user > \.user-avatar \{[^}]*left: 100%/);
     expect(html).toMatch(/\.msg\.user > \.user-avatar \{[^}]*margin-left: 6px/);
-    expect(html).toMatch(/\.msg\.user\.has-avatar \{[^}]*margin-right: calc\(1\.4em \* 15 \/ 11 \+ 6px\)/);
+    expect(html).toMatch(/\.msg\.user\.has-avatar \{[^}]*margin-right: calc\(var\(--mark-w\) \+ 6px\)/);
     // …and the column is SUBTRACTED from the 92% cap at the same time: `.msg` caps a bubble at 92%
     // of `#messages`, and 92% + the column does not fit in a narrow panel (the logo is 11:15 wide,
     // so the column is wider than the bubble's own padding) — the shortfall would land on the
     // bubble's left, because `align-self: flex-end` aligns the MARGIN box.
-    expect(html).toMatch(/\.msg\.user\.has-avatar \{[^}]*max-width: calc\(92% - \(1\.4em \* 15 \/ 11 \+ 6px\)\)/);
+    expect(html).toMatch(/\.msg\.user\.has-avatar \{[^}]*max-width: calc\(92% - \(var\(--mark-w\) \+ 6px\)\)/);
     // As tall as the STRAIGHT PART of the bubble's right edge — the vertical run between the two
     // rounded corners — and not as tall as the bubble. The radius is 8px and so is the padding, so
     // that run starts 8px down and lasts one line box on a one-line prompt: `top: 8px` with
@@ -641,8 +641,14 @@ describe("renderViewHtml", () => {
     // caret), so the file's canvas is 15:11 and the BOX must be the same shape — a square box
     // letterboxes the drawing, which is how the mark ended up sitting a couple of pixels lower
     // than the line it signs.
-    expect(html).toMatch(/\.msg\.user > \.user-avatar \{[^}]*width: calc\(1\.4em \* 15 \/ 11\)/);
-    expect(html).toMatch(/\.msg\.user > \.user-avatar \{[^}]*height: 1\.4em/);
+    expect(html).toMatch(/\.msg\.user > \.user-avatar \{[^}]*width: var\(--mark-w\)/);
+    expect(html).toMatch(/\.msg\.user > \.user-avatar \{[^}]*height: var\(--mark-h\)/);
+    // The measure itself is declared ONCE, on the bubble: the height is one line box and the
+    // width follows the artwork's canvas. `calc(1.4em * 15 / 11)` used to be written three
+    // times (mark, margin, 92% cap), so redrawing at another proportion meant finding all three.
+    expect(html).toMatch(/\.msg\.user \{[^}]*--mark-h: 1\.4em/);
+    expect(html).toMatch(/\.msg\.user \{[^}]*--mark-w: calc\(var\(--mark-h\) \* 15 \/ 11\)/);
+    expect(html).not.toContain("1.4em * 15");
     // …and NOT the whole bubble any more: the 16px of padding is no longer part of the measure.
     expect(html).not.toMatch(/\.msg\.user > \.user-avatar \{[^}]*16px/);
     expect(html).not.toMatch(/\.msg\.user > \.user-avatar \{[^}]*top: 50%/);

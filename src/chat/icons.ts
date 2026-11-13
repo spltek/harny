@@ -196,7 +196,9 @@ export function icon(name: IconName, size = 14, attrs = ""): string {
   // width/height/aria-hidden always belong to the caller; anything else only
   // when the caller actually passes it.
   const overridden = new Set([...attrs.matchAll(/([a-zA-Z-]+)\s*=/g)].map((m) => m[1]));
-  const drop = ["width", "height", "aria-hidden", ...overridden].filter((a) => a !== "width" && a !== "height");
+  // width/height are already gone (line above): what is left to DROP from the artwork is
+  // `aria-hidden` — always the caller's — plus whatever this caller overrides.
+  const drop = ["aria-hidden", ...overridden];
   let kept = open[1].replace(/\s(?:width|height)="[^"]*"/g, "");
   for (const attr of drop) {
     kept = kept.replace(new RegExp(`\\s${attr}="[^"]*"`, "g"), "");

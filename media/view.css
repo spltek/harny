@@ -747,6 +747,13 @@ body {
    message (bubble ≈ 28px) would be narrower than the tab and it would stick
    out to the left. This floor keeps the tab inside the bubble. */
 .msg.user {
+  /* The brand mark's measure, in ONE place: its height is ONE line box (what the bubble's
+     straight edge runs) and its width follows the artwork's own canvas, 15:11 — the file is
+     `media/icons/harny.svg`, viewBox "0 0 24 17.6". Both the mark (below) and the column the
+     bubble has to pay for (`.has-avatar`) read these two, so changing the drawing's proportion
+     is a change HERE and nowhere else. */
+  --mark-h: 1.4em;
+  --mark-w: calc(var(--mark-h) * 15 / 11);
   align-self: flex-end;
   background: var(--user-msg);
   color: #fff;
@@ -797,8 +804,8 @@ body {
    Only the bubbles the user typed: the nudge and the checkpoint never get the class (view.ts
    adds it in the prompt path and strips it in the checkpoint path). */
 .msg.user.has-avatar {
-  margin-right: calc(1.4em * 15 / 11 + 6px);
-  max-width: calc(92% - (1.4em * 15 / 11 + 6px));
+  margin-right: calc(var(--mark-w) + 6px);
+  max-width: calc(92% - (var(--mark-w) + 6px));
 }
 .msg.user > .user-avatar {
   position: absolute;
@@ -806,9 +813,10 @@ body {
   /* Inside the bubble's rounded corner, not at its edge: 8px is the corner radius, which is also
      the bubble's padding — the straight part of the edge starts exactly there. */
   top: 8px;
-  /* 15:11 = the file's own canvas (viewBox 24 × 17.6) = the brand's own proportion. */
-  width: calc(1.4em * 15 / 11);
-  height: 1.4em;
+  /* 15:11 = the file's own canvas (viewBox 24 × 17.6) = the brand's own proportion:
+     both values come from `--mark-h` / `--mark-w` on `.msg.user` above. */
+  width: var(--mark-w);
+  height: var(--mark-h);
   margin-left: 6px;
   display: block;
   /* Nothing to click and nothing to select: it sits beside text the user may be dragging. */

@@ -21,13 +21,6 @@ export function setToggle(el: Element | null | undefined, open: boolean): void {
   el?.classList.toggle("is-open", open);
 }
 
-/** A toggle that is a BUTTON (the per-bubble fold): same chevron, plus the announced state. */
-export function setButtonToggle(button: HTMLButtonElement, open: boolean): void {
-  if (!button.querySelector(".toggle-chevron")) button.innerHTML = icon("chevronDown", 11, 'class="toggle-chevron"');
-  button.classList.toggle("is-open", open);
-  button.setAttribute("aria-expanded", String(open));
-}
-
 /**
  * Sync a FOLD from its header: the chevron and the announced state together.
  *

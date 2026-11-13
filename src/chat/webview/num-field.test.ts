@@ -495,3 +495,105 @@ describe("num-field — the keys it does NOT own, and the edges of the track", (
     expect(range.value).toBe("2");
   });
 });
+
+describe("num-field — the branches the mask can reach that no test was watching", () => {
+  it('reads an empty string as NOT a number, the trap `Number("")` sets', () => {
+    expect(parseNumber("")).toBeUndefined();
+    expect(parseNumber("-")).toBeUndefined();
+    expect(parseNumber(".")).toBeUndefined();
+    expect(parseNumber("-.")).toBeUndefined();
+    // La forma è giusta, il VALORE è infinito: la finitezza è un controllo suo, non del formato.
+    expect(parseNumber("9".repeat(400))).toBeUndefined();
+  });
+
+  it("judges the keystroke at the CARET, not at the end of the box", () => {
+    createNumberField({ input, range: null, bounds: CONTEXT, empty: null, commit: vi.fn() });
+    input.value = "1200";
+    input.setSelectionRange(1, 1); // fra "1" e "2": "15200" sta nel dominio…
+    expect(type("5")).toBe(true);
+    // …mentre una insertion misurata sulla fine del box darebbe "12005200", fuori dal tetto.
+  });
+
+  it("lets a composition through when it arrives WITHOUT data", () => {
+    createNumberField({ input, range: null, bounds: TEMPERATURE, empty: null, commit: vi.fn() });
+    input.value = "0.5";
+    const ev = new InputEvent("beforeinput", { inputType: "insertText", data: null, cancelable: true });
+    expect(input.dispatchEvent(ev)).toBe(true);
+    expect(ev.defaultPrevented).toBe(false);
+  });
+
+  it("moves the caret to the end EXPLICITLY after a clean, and never with nothing to clean", () => {
+    createNumberField({ input, range, bounds: TEMPERATURE, empty: null, commit: vi.fn() });
+    const setSelection = vi.spyOn(input, "setSelectionRange");
+    input.value = "0.7.5";
+    input.dispatchEvent(new Event("input"));
+    expect(input.value).toBe("0.75");
+    // Il setter di `.value` porta già il caret in fondo, quindi qui si pinna l'intenzione: se
+    // questa chiamata sparisce, in un motore che non si comporta così il caret resta a metà.
+    expect(setSelection).toHaveBeenCalledWith(4, 4);
+    setSelection.mockClear();
+    input.dispatchEvent(new Event("input")); // niente da pulire: niente da riposizionare
+    expect(setSelection).not.toHaveBeenCalled();
+  });
+
+  it("calls select() only when there is a number to select", () => {
+    const field = createNumberField({ input, range, bounds: TEMPERATURE, empty: null, commit: vi.fn() });
+    const select = vi.spyOn(input, "select");
+    field.render(0.7);
+    input.focus();
+    expect(select).toHaveBeenCalledTimes(1);
+    input.blur();
+    input.value = "";
+    select.mockClear();
+    input.focus(); // un box vuoto non ha niente da selezionare
+    expect(select).not.toHaveBeenCalled();
+  });
+
+  it("never cancels a legal keystroke", () => {
+    createNumberField({ input, range, bounds: TEMPERATURE, empty: null, commit: vi.fn() });
+    input.value = "0.";
+    const ev = new InputEvent("beforeinput", { data: "5", inputType: "insertText", cancelable: true });
+    input.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(false);
+  });
+
+  it("still reports the draft with no slider to move", () => {
+    const onDraft = vi.fn();
+    createNumberField({ input, bounds: TEMPERATURE, empty: null, commit: vi.fn(), onDraft });
+    input.value = "0.5";
+    input.dispatchEvent(new Event("input"));
+    // Con `range` assente il percorso non deve toccare il DOM dello slider: se lo tocca, lancia
+    // prima di arrivare qui, e questo spy resta muto.
+    expect(onDraft).toHaveBeenLastCalledWith(0.5);
+  });
+
+  it("does not touch the slider while the draft is not a number yet", () => {
+    const onDraft = vi.fn();
+    createNumberField({ input, range, bounds: TEMPERATURE, empty: null, commit: vi.fn(), onDraft }).render(0.7);
+    input.value = "-"; // a shape the mask allows, a value it does not have yet
+    input.dispatchEvent(new Event("input"));
+    expect(onDraft).toHaveBeenLastCalledWith(undefined);
+    expect(range.value).toBe("0.7"); // the track keeps the held value, not a stringified `undefined`
+  });
+
+  it("never throws out of its own listeners: a field with NO draft hook is legal", () => {
+    // jsdom reports an exception thrown inside a listener as an `error` event on the window instead
+    // of failing the test, so the listener is what has to be watched — that is where a missing
+    // optional call would show up in the panel as a dead box, not as a stack trace.
+    const errors: string[] = [];
+    const onError = (e: Event): void => void errors.push(String((e as ErrorEvent).message ?? e.type));
+    window.addEventListener("error", onError);
+    try {
+      const commit = vi.fn();
+      createNumberField({ input, range, bounds: TEMPERATURE, empty: null, commit });
+      input.value = "0.5";
+      input.dispatchEvent(new Event("input")); // a numeric draft, nobody to report it to
+      input.value = "-";
+      input.dispatchEvent(new Event("input")); // not a number yet, still nobody
+      commitWith("Enter");
+    } finally {
+      window.removeEventListener("error", onError);
+    }
+    expect(errors).toEqual([]);
+  });
+});

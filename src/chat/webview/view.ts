@@ -42,6 +42,12 @@ import { toolArgTarget } from "../../core/tools/tool-call-text";
 import { EMPTY_TOOL_SCOPE, normalizeToolScope, type ToolScope } from "../../core/tools/tool-scope";
 import { isToolName } from "../../core/tools/unknown-tool";
 import type { SessionLiveProjection } from "../session-live-state";
+// The two shapes the HOST owns and this panel only reads: the per-turn metrics it persists
+// with every message, and the attachment metadata it stores beside the text. Imported, never
+// re-declared — `core/history/types.ts` has no runtime imports (its only dependency is a
+// `type`), so the bundle gains no host code, and a field added or renamed there is now a
+// compile error HERE instead of a key this side silently ignores.
+import type { MessageAttachment, MessageMeta } from "../../core/history/types";
 
 declare function acquireVsCodeApi(): {
   postMessage(message: unknown): void;
@@ -56,28 +62,13 @@ interface ToolCallView {
   name: string;
   arguments: unknown;
 }
-/** Per-turn metrics captured from the provider stream (real usage + timings). */
-interface MsgMeta {
-  /** Model + named provider that served the turn (a session can switch both). */
-  model?: string;
-  provider?: string;
-  /** The mode the RUN ran under (see MessageMeta.mode): a session can hold Analyze
-   * (previews) and Build (writes) runs side by side. */
-  mode?: "analyze" | "agent";
-  /** Window and output budget vigent in that turn. */
-  contextWindow?: number;
-  maxTokens?: number;
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  cachedTokens?: number;
-  cachedWriteTokens?: number;
-  startedAt?: number;
-  firstTokenAt?: number;
-  endedAt?: number;
-  ttftMs?: number;
-  durationMs?: number;
-}
+/** An attachment as THIS side receives it: the host's persisted metadata, minus `path` (the
+ * bubble shows the file's NAME, never where it lives), plus the data URI the picker hands
+ * over for an image before the transcript is reloaded from disk. Written as a DERIVATION of
+ * `MessageAttachment` and not as a fresh shape, so a field added to the persisted one
+ * arrives here instead of being dropped — which is exactly how the two copies drifted
+ * apart before (this side had gained `dataUri` and lost `path`). */
+type ViewAttachment = Omit<MessageAttachment, "path"> & { path?: string; dataUri?: string };
 interface ChatMsg {
   role: string;
   content: string;
@@ -85,7 +76,7 @@ interface ChatMsg {
   toolCalls?: ToolCallView[];
   toolCallId?: string;
   /** Files attached to a user message (shown as chips / large images). */
-  attachments?: { name: string; size: number; isImage?: boolean; dataUri?: string }[];
+  attachments?: ViewAttachment[];
   /** Inline data URIs of the attached images (persisted; re-rendered on load). */
   images?: string[];
   /** UI text when it differs from the LLM `content` (file contents inlined). */
@@ -100,7 +91,7 @@ interface ChatMsg {
    * CTA after this message. */
   previewPrepared?: boolean;
   /** REAL per-turn usage + timings (assistant messages): shown as a badge. */
-  meta?: MsgMeta;
+  meta?: MessageMeta;
 }
 interface SessionInfo {
   id: string;
@@ -431,13 +422,14 @@ const pendingToolCalls = new Map<string, HTMLDivElement>();
 // ── Pending attachments: files picked via the "+" button and queued for the
 // next send. Per session (they belong to that session's draft) and PERSISTED across a
 // webview reload since this change — see persistCompositions for the size budget. ──
-interface AttachedFile {
-  name: string;
+interface AttachedFile extends ViewAttachment {
+  /** Required HERE, optional in the message shape: the host re-reads the file from disk when
+   * the prompt is finally sent, so a draft without a path would be a draft nobody can send. */
   path: string;
-  size: number;
   isImage: boolean;
-  dataUri?: string;
+  /** Inlined text, read at pick time (the host never re-reads it for the model context). */
   content?: string;
+  /** The file vanished or moved between picking and sending: ask the user to re-pick. */
   needsReattach?: boolean;
 }
 let attachedFiles: AttachedFile[] = [];
@@ -1549,12 +1541,7 @@ function userAvatar(): HTMLSpanElement {
   return wrap;
 }
 
-function addMessage(
-  role: string,
-  content: string,
-  attachments?: { name: string; size: number; isImage?: boolean; dataUri?: string }[],
-  images?: string[],
-): HTMLDivElement {
+function addMessage(role: string, content: string, attachments?: ViewAttachment[], images?: string[]): HTMLDivElement {
   const div = document.createElement("div");
   div.className = "msg " + role;
   if (role === "assistant" || role === "tool") {
@@ -1602,7 +1589,7 @@ function fmtDuration(ms: number): string {
 }
 
 /** Compact per-turn metrics badge (REAL usage + timings) shown under a bubble. */
-function metaBadge(meta: MsgMeta): HTMLElement | undefined {
+function metaBadge(meta: MessageMeta): HTMLElement | undefined {
   const parts: string[] = [];
   // The MODEL alone. The provider is one hover away (`provider:` in the tooltip) and lives in
   // the selector; this row repeats under EVERY turn, already carries mode + tokens + timings,
@@ -1657,7 +1644,7 @@ function metaBadge(meta: MsgMeta): HTMLElement | undefined {
  * live `turnMeta` event: the turn just ended, so the badge is known and can be
  * shown immediately with NO full re-render (no flicker).
  */
-function appendTurnBadge(meta: MsgMeta | undefined): void {
+function appendTurnBadge(meta: MessageMeta | undefined): void {
   if (!meta) return;
   const badge = metaBadge(meta);
   if (!badge) return;
@@ -1742,10 +1729,7 @@ function attachmentIcon(name: string, size = 44): string {
   return fileBadgeIcon(label, color, size);
 }
 
-function messageAttachmentRow(
-  attachments: { name: string; size: number; isImage?: boolean; dataUri?: string }[],
-  images?: string[],
-): HTMLDivElement {
+function messageAttachmentRow(attachments: ViewAttachment[], images?: string[]): HTMLDivElement {
   const row = document.createElement("div");
   row.className = "msg-attachments";
 
@@ -6719,7 +6703,7 @@ window.addEventListener("message", (e) => {
     case "turnMeta":
       // A turn just ended: append its REAL metrics badge at the end of the
       // transcript (no re-render).
-      appendTurnBadge(msg.meta as MsgMeta);
+      appendTurnBadge(msg.meta);
       break;
     case "toolCall": {
       // A tool phase ends the current answer segment: commit pending renders

@@ -111,7 +111,7 @@ export function sanitizeDraft(raw: string, bounds: NumberBounds): string {
       separator = true;
     } else if (ch === "-" && bounds.min < 0 && out === "") {
       out += ch;
-    } else if (bounds.tokens && !suffix && out !== "" && /^[KkMm]$/.test(ch)) {
+    } else if (bounds.tokens && !suffix && out !== "" && "KkMm".includes(ch)) {
       out += ch.toUpperCase();
       suffix = true;
     }
@@ -123,7 +123,9 @@ export function sanitizeDraft(raw: string, bounds: NumberBounds): string {
 export function parseNumber(text: string): number | undefined {
   const clean = text.trim().replace(",", ".");
   const match = /^(-?\d*(?:\.\d*)?)([KkMm]?)$/.exec(clean);
-  if (!match || match[1] === "" || match[1] === "-" || match[1] === ".") return undefined;
+  // `"-"` and `"."` reach this line too: they match the pattern, and the finiteness check below
+  // is what turns them into "not a number yet" (`Number("-")` is NaN). One guard, not three.
+  if (!match || match[1] === "") return undefined;
   const scale = match[2] === "" ? 1 : match[2].toUpperCase() === "K" ? 1e3 : 1e6;
   const n = Number(match[1]) * scale;
   return Number.isFinite(n) ? n : undefined;
@@ -148,10 +150,14 @@ export function createNumberField(options: NumberFieldOptions): NumberField {
   let held: number | null = null;
 
   const render = (value: number | null | undefined): void => {
+    // `Number.isFinite` alone would do the job at runtime but it does not NARROW `value`, and the
+    // cast that would buy the narrowing is exactly the kind of lie this field is careful about.
     held = typeof value === "number" && Number.isFinite(value) ? value : null;
     // A blank box does not drag the slider to `min`: Auto has no number, and the caller puts the
     // track where the provider's default lives. Only a real value moves it from here.
-    if (held === null || (typeof options.empty === "number" && held === options.empty)) {
+    // `held === options.empty` needs no type guard: `empty: null` is Auto, not an off value, and
+    // that case has already returned; `empty: undefined` can never equal a number.
+    if (held === null || held === options.empty) {
       input.value = "";
       return;
     }
@@ -196,7 +202,7 @@ export function createNumberField(options: NumberFieldOptions): NumberField {
   // legal one.
   input.addEventListener("beforeinput", (event) => {
     const e = event as InputEvent;
-    if (e.data === null || e.data === undefined) return; // deletions, drops, compositions
+    if (e.data === null) return; // deletions, drops, compositions: nothing to judge
     if (e.inputType && !e.inputType.startsWith("insert")) return;
     const next = spliced(input, e.data);
     if (!isDraft(next, bounds)) {
@@ -204,9 +210,10 @@ export function createNumberField(options: NumberFieldOptions): NumberField {
       return;
     }
     // The only VALUE rule that survives left-to-right typing: a digit that would overflow the cap
-    // is not "a character of this number" any more, so it does not enter.
-    const over = parseNumber(next);
-    if (over !== undefined && over > bounds.max) event.preventDefault();
+    // is not "a character of this number" any more, so it does not enter. `?? max` says the rest:
+    // an unfinished number cannot overflow anything.
+    const over = parseNumber(next) ?? bounds.max;
+    if (over > bounds.max) event.preventDefault();
   });
 
   // The same rule for the WHOLE string: paste, drag, IME and autofill never arrive one key at a
@@ -218,8 +225,12 @@ export function createNumberField(options: NumberFieldOptions): NumberField {
       caretToEnd();
     }
     const draft = parseNumber(input.value);
-    if (range && draft !== undefined && draft >= bounds.min && draft <= bounds.max) {
-      range.value = String(draft);
+    // `NaN` stands for "not a number yet": every comparison against it is false, so the track
+    // cannot be moved by an unfinished draft and this guard needs no `undefined` test of its own.
+    // (`draft` itself stays untouched: `onDraft` has to keep telling `undefined` from `0`.)
+    const shown = draft ?? Number.NaN;
+    if (range && shown >= bounds.min && shown <= bounds.max) {
+      range.value = String(shown);
     }
     options.onDraft?.(draft);
   });

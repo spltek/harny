@@ -148,11 +148,22 @@ interface SessionMetaPatch {
 }
 
 /**
- * Single side-view (webview view) hosting: a hideable sessions list, a tab bar
- * of the open sessions, and the ACTIVE chat (overlapping tabs — one chat
- * visible at a time). Messages from the webview are routed to the active
- * session's runtime; agent events of the active runtime are forwarded here.
+ * Cache-busting token for a file handed to the panel as a URI (the webview bundle, the brand
+ * mark): its mtime, or "0" when the file is not there.
+ *
+ * Deliberately RE-READ on every render, not memoised: replacing the file has to show up on
+ * the next render, with no rebuild and no window restart — that is the whole point of the
+ * query string, and a cache here would silently take it away. One function because the two
+ * assets ask the same question and want the same silent fallback.
  */
+function assetVersion(fsPath: string): string {
+  try {
+    return String(fs.statSync(fsPath).mtimeMs);
+  } catch {
+    return "0";
+  }
+}
+
 /** Convert a pasted `file://` URI or plain path to a local filesystem path. */
 function toLocalPath(input: string): string {
   const raw = input.trim();
@@ -170,6 +181,12 @@ function toLocalPath(input: string): string {
   return raw;
 }
 
+/**
+ * Single side-view (webview view) hosting: a hideable sessions list, a tab bar
+ * of the open sessions, and the ACTIVE chat (overlapping tabs — one chat
+ * visible at a time). Messages from the webview are routed to the active
+ * session's runtime; agent events of the active runtime are forwarded here.
+ */
 export class ChatViewProvider implements WebviewViewProvider {
   private view: WebviewView | undefined;
   /**
@@ -4363,12 +4380,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     // rebuild even across reloads. The mtime in the query forces a re-fetch.
     const viewPath = Uri.joinPath(this.context!.extensionUri, "media", "view.js");
     const viewUri = this.view!.webview.asWebviewUri(viewPath);
-    let version = "0";
-    try {
-      version = String(fs.statSync(viewPath.fsPath).mtimeMs);
-    } catch {
-      /* file missing: fall back to no version */
-    }
+    const version = assetVersion(viewPath.fsPath);
     // Brand mark: also loaded through asWebviewUri (media/ is already in
     // localResourceRoots) and cache-busted the same way, so replacing the file
     // shows up on the next webview render — no rebuild, no inlined copy in the
@@ -4378,12 +4390,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     // (The activity bar uses the square frame, `harny-app.svg`: same drawing.)
     const logoPath = Uri.joinPath(this.context!.extensionUri, "media", "icons", "harny.svg");
     const logoUri = this.view!.webview.asWebviewUri(logoPath);
-    let logoVersion = "0";
-    try {
-      logoVersion = String(fs.statSync(logoPath.fsPath).mtimeMs);
-    } catch {
-      /* file missing: the hero simply renders without the mark */
-    }
+    const logoVersion = assetVersion(logoPath.fsPath);
     // Publisher credit for the empty hero, read from the manifest rather than
     // hardcoded. It links ONLY when `homepage` is set explicitly: `repository`
     // is deliberately NOT a fallback, because the repo may be private and the
