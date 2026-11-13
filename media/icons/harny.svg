@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 17.6" fill="#d08856" fill-rule="evenodd">
+  <!-- HARNY: the brand mark, whole — the speech bubble with the prompt caret knocked out of it,
+       and beside it the answering caret. This is the sign-off hung OUTSIDE an orange prompt
+       bubble (view.ts `userAvatar`, CSS `.msg.user > .user-avatar`): the person in a round frame
+       it replaced said "a human typed this", which the orange bubble already says; the brand says
+       the same and says WHOSE.
+
+       FILLED, not an outline: the transcript draws every mark as a 1.5 hairline, and a hairline
+       LOGO beside a solid bubble reads as a smaller thing than the bubble — reported, and true,
+       because a stroke drawing is mostly empty space. So the brand keeps its own paint, like the
+       gear, the play triangle and the stop square, which are solid for the same reason.
+
+       The canvas IS the artwork's box, and it is not square — 24 x 17.6, i.e. 15:11, the brand's
+       own proportion. That is deliberate and it is the second thing reported: on a square 24x24
+       canvas this drawing leaves air above and below itself, so the mark sat a couple of pixels
+       LOWER than the bubble it signs and nothing could make it taller without going back to a
+       three-quarters-size bubble. Here the ink touches all four edges, so the CSS gives it a box
+       of exactly 15:11 that is one one-line bubble tall, and the two silhouettes line up: same
+       top edge, same bottom edge. Square is right for a glyph; a picture keeps its own shape.
+
+       Same composition as `media/icon.svg`, not a redrawing: both elements are the brand's own,
+       mapped once onto this canvas. The brand works in thousandths of a unit
+       (`translate(-3.045 1.123) scale(0.024664)` puts it on 24) and its union box is
+       170..1050 x 118..763.33, so it maps ISOTROPICALLY (k = 24/880 = 0.0272727) onto
+       24 x 17.6. The bubble+tail was once cropped out of that box to make the mark fit a square
+       slot; that version read as an unfinished logo — the answering caret is half the mark — and
+       the crop is what forced the too-small bubble. Crop gone, proportion back.
+
+       ONE rule of this folder is bent here, and it is stated in the README: every other file is
+       painted with `currentColor`, because a mark takes the colour of the text it sits in. This
+       is a PICTURE, not a mark: it carries the BRAND tan, literally, and could not take the
+       panel text colour without turning into the colour of a label.
+
+       That tan is the ORIGINAL brand colour. The logo used to be drawn with a gradient from
+       `#DB9462` to `#C67B49`, gently lit from the top left; `#d08856` is that gradient’s
+       MIDPOINT, picked so that one FLAT value can serve both this picture and the prompt bubble
+       beside it — `user-msg` in `src/chat/view-config.ts` holds the very same literal, so the
+       sign-off and the bubble it signs are one colour instead of a near-miss of each other (a
+       gradient cannot fill a bubble, and two tans would read as two mistakes).
+       A literal — a value, NOT a reference to that custom property: this file is also rendered
+       on its own (in the contact sheet as an `<img>`, in the activity bar by VS Code) where no
+       panel variable exists, and a reference that cannot be resolved paints BLACK, not nothing.
+       (The light theme bubble is a shade deeper, `#c67b49` — the old gradient’s dark end,
+       where paper needs the weight; one file cannot follow the theme, and the brand keeps its
+       own hue, exactly as `harny-app.svg` does.)
+
+       The silhouette inherits the paint from the root, where rule 6 puts a paint that is
+       uniform. The caret cannot: it is `fill="none"`, so the root fill never reaches its
+       stroke and the same colour is named there explicitly — which is the drawing anyway, one
+       filled shape and one stroked line, exactly as the brand draws them.
+
+       The prompt caret is the brand's own rounded outline as a SUB-PATH, not a stroke: with
+       `fill-rule: evenodd` it is punched out of the silhouette, so what shows through is the
+       panel behind — the same hole the app icon has. The answering caret IS a stroke, the
+       brand's polyline, so it keeps its round caps at any size.
+
+       No width/height: the caller owns the size, and here the CSS owns the measure too.
+       `icons.test.ts` pins the canvas ratio, the single literal tan (which must equal the
+       palette entry `user-msg`), and that both brand frames carry that same tan. -->
+  <path d="M 1.91 0 H 16.09 Q 18 0 18 1.91 V 12.11 Q 18 14.02 16.09 14.02 H 8.78 L 4.15 17.45 Q 3.44 17.89 3.41 17.02 V 14.02 H 1.91 Q 0 14.02 0 12.11 V 1.91 Q 0 0 1.91 0 Z M 11.66 6.36 L 11.61 6.43 L 11.56 6.5 L 11.53 6.58 L 11.5 6.67 L 11.47 6.75 L 11.46 6.84 L 11.45 6.93 L 11.46 7.01 L 11.47 7.1 L 11.5 7.19 L 11.53 7.27 L 11.56 7.35 L 11.61 7.42 L 11.66 7.49 L 14.23 10.49 L 14.29 10.56 L 14.35 10.61 L 14.42 10.66 L 14.5 10.7 L 14.57 10.74 L 14.65 10.77 L 14.74 10.79 L 14.82 10.8 L 14.91 10.8 L 14.99 10.79 L 15.08 10.78 L 15.16 10.76 L 15.24 10.73 L 15.32 10.69 L 15.39 10.64 L 15.46 10.59 L 15.52 10.53 L 15.58 10.47 L 15.63 10.4 L 15.67 10.32 L 15.7 10.25 L 15.73 10.16 L 15.75 10.08 L 15.76 10 L 15.76 9.91 L 15.76 9.82 L 15.74 9.74 L 15.72 9.66 L 15.69 9.58 L 15.65 9.5 L 15.61 9.43 L 15.55 9.36 L 13.48 6.93 L 15.55 4.49 L 15.61 4.43 L 15.65 4.35 L 15.69 4.28 L 15.72 4.2 L 15.74 4.12 L 15.76 4.03 L 15.76 3.94 L 15.76 3.86 L 15.75 3.77 L 15.73 3.69 L 15.7 3.61 L 15.67 3.53 L 15.63 3.46 L 15.58 3.39 L 15.52 3.32 L 15.46 3.26 L 15.39 3.21 L 15.32 3.17 L 15.24 3.13 L 15.16 3.1 L 15.08 3.07 L 14.99 3.06 L 14.91 3.05 L 14.82 3.06 L 14.74 3.07 L 14.65 3.09 L 14.57 3.11 L 14.5 3.15 L 14.42 3.19 L 14.35 3.24 L 14.29 3.3 L 14.23 3.36 L 11.66 6.36 Z"/>
+  <polyline points="20.07,3.49 23.29,6.87 20.07,10.25" fill="none" stroke="#d08856" stroke-width="1.42" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

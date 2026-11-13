@@ -4370,10 +4370,13 @@ export class ChatViewProvider implements WebviewViewProvider {
       /* file missing: fall back to no version */
     }
     // Brand mark: also loaded through asWebviewUri (media/ is already in
-    // localResourceRoots) and cache-busted the same way, so replacing
-    // media/icon.svg shows up on the next webview render — no rebuild, no
-    // inlined copy in the source to keep in sync.
-    const logoPath = Uri.joinPath(this.context!.extensionUri, "media", "icon.svg");
+    // localResourceRoots) and cache-busted the same way, so replacing the file
+    // shows up on the next webview render — no rebuild, no inlined copy in the
+    // source to keep in sync. It is `harny.svg`, the TIGHT canvas (24 x 17.6):
+    // the panel draws the mark at its own proportion, so every box it lands in
+    // gets the ink exactly, with no air above or below to align by hand.
+    // (The activity bar uses the square frame, `harny-app.svg`: same drawing.)
+    const logoPath = Uri.joinPath(this.context!.extensionUri, "media", "icons", "harny.svg");
     const logoUri = this.view!.webview.asWebviewUri(logoPath);
     let logoVersion = "0";
     try {

@@ -26,8 +26,10 @@ export const FONTS = {
  * SIZE (rem, resolved against the root/editor font set by ROOT_FONT_SIZE).
  */
 export const FAMILIES = {
-  /** Huge — the brand mark on the empty shell (the rem base is the editor font,
-   * so this is ~78px at 13px: a splash mark, not a favicon). */
+  /** Huge — the brand mark on the empty shell. Since the panel loads the TIGHT
+   * canvas (media/icons/harny.svg, 15:11), this is the mark's own HEIGHT and the
+   * width follows it (~78 x 106px at a 13px editor font): a splash mark, not a
+   * favicon. A square box of 6rem used to draw a 52px-tall logo — 6rem of air. */
   logo: { font: "ui", size: "6rem" },
   /** Huge — welcome icon. */
   hero: { font: "ui", size: "2.3rem" },

@@ -2,6 +2,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ICON_NAMES, fileBadgeIcon, icon, toolIcon } from "./icons";
+import { PALETTES } from "./view-config";
+import { JSDOM } from "jsdom";
 import { SKILL_TOOL_NAME } from "../core/tools/skill-tool";
 
 /** Every .ts file under src/ (the walk never enters node_modules). */
@@ -21,6 +23,16 @@ function relative(file: string): string {
     .split(sep)
     .join("/");
 }
+
+/** The brand's two files, each with its canvas: ONE drawing, two frames. They are the
+ * only artwork here that is neither a glyph nor palette-driven, so both rules below
+ * name them explicitly rather than by a loose "is it the brand" guess. */
+const BRAND_CANVAS: Record<string, string> = {
+  // The panel: the sign-off must be exactly one bubble tall, so the ink IS the box.
+  "harny.svg": 'viewBox="0 0 24 17.6"',
+  // VS Code: a views-container icon is painted into a 24x24 slot, so it must be square.
+  "harny-app.svg": 'viewBox="0 0 24 24"',
+};
 
 describe("icon registry", () => {
   it("renders the artwork at the size the caller asks for", () => {
@@ -63,6 +75,35 @@ describe("icon registry", () => {
     expect(badge).toContain("&#60;B");
   });
 
+  it("is WELL-FORMED XML, all of it — an icon that does not parse paints NOTHING", () => {
+    // The artwork is inlined into the panel, the contact sheet and the VSIX as TEXT, so no
+    // compiler ever looked at it: a `<svg>` with one broken token renders as an empty box and
+    // every test that asserts on markup still passes, because it is asserting on a STRING.
+    // (Found the hard way: a long comment explaining the brand colour ended up containing the
+    // custom property's name, i.e. a double dash, which is ILLEGAL inside an XML comment —
+    // the file was invalid and the only symptom would have been a blank logo in the activity
+    // bar and on the marketplace listing.)
+    //
+    // jsdom's XML mode is the parsers VS Code and every previewer use: it THROWS on the error
+    // instead of silently recovering the way HTML does.
+    const dir = join(process.cwd(), "media", "icons");
+    const files = readdirSync(dir).filter((name) => name.endsWith(".svg"));
+    expect(files.length).toBeGreaterThan(0);
+    for (const name of files) {
+      const markup = readFileSync(join(dir, name), "utf8");
+      expect(() => new JSDOM(markup, { contentType: "image/svg+xml" }), name).not.toThrow();
+      // Belt and braces, and a message that names the fix: what fails above is a COMMENT, and
+      // the reason is never obvious ("invalid token" points at a line in the middle of the
+      // prose). A comment body may not contain a double dash — not even inside backticks.
+      for (let at = markup.indexOf("<!--"); at >= 0; at = markup.indexOf("<!--", at)) {
+        const end = markup.indexOf("-->", at + 4);
+        expect(end, `${name}: unterminated comment`).toBeGreaterThan(at);
+        expect(markup.slice(at + 4, end), `${name}: "--" inside a comment is illegal XML`).not.toContain("--");
+        at = end + 3;
+      }
+    }
+  });
+
   it("renders EVERY registered name (no icon can ship as an empty slot)", () => {
     expect(ICON_NAMES.length).toBeGreaterThanOrEqual(20);
     for (const name of ICON_NAMES) {
@@ -89,12 +130,160 @@ describe("icon registry", () => {
     expect(subFolders).toEqual([]);
     for (const file of files) {
       const markup = readFileSync(join(dir, file), "utf8");
-      // The shared canvas is what lets any icon be swapped for another…
-      expect(markup, file).toContain('viewBox="0 0 24 24"');
+      // The shared canvas is what lets any icon be swapped for another — 24x24 for every GLYPH…
+      // …except the brand, which is a PICTURE and needs two frames for two jobs: the panel's
+      // sign-off has to fill exactly one bubble (24 x 17.6 = 15:11, the artwork's own box), while
+      // VS Code paints the activity-bar icon into a square slot and came out blank/tiny when
+      // handed a wide viewBox. Same drawing in both — compared command by command just below —
+      // so the frames are the only difference, which is the point of naming them here.
+      expect(markup, file).toContain(BRAND_CANVAS[file] ?? 'viewBox="0 0 24 24"');
       // …and currentColor is what makes it follow the palette. A template
-      // (the file badge) colours the placeholder instead, at render time.
-      expect(markup.includes("currentColor") || markup.includes("{{COLOR}}"), file).toBe(true);
+      // (the file badge) colours the placeholder instead, at render time. The brand
+      // is NEITHER, and that is the exception: it is a picture, not a glyph — the palette has
+      // no orange-into-orange pair to give it, and the mark beside a prompt must be the same
+      // mark as the icon in the activity bar.
+      const followsPalette = markup.includes("currentColor") || markup.includes("{{COLOR}}");
+      expect(followsPalette || file in BRAND_CANVAS, file).toBe(true);
     }
+  });
+
+  it("paints the brand with its OWN tan — in both frames, and not the bubble's orange", () => {
+    // The brand has always been drawn with a warm tan: a gradient from #DB9462 to #C67B49, lit from
+    // the top left. It is now ONE flat literal, #d08856 — the gradient's midpoint — because the
+    // paint has to be a colour (see Rule 4 below) and because two very close tans read as two
+    // mistakes.
+    //
+    // This is deliberately NOT the prompt bubble's fill. The bubble is the ACCENT (a burnt orange,
+    // `--user-msg`), the mark is the BRAND: the brand keeps the colour it has always had, and the
+    // panel shows both without pretending they are the same paint. The two hexes are pinned
+    // separately, so this test fails if either one drifts into the other — following the palette
+    // was tried, and it turned the logo into a smaller copy of the bubble.
+    //
+    // A LITERAL, not a `var()`: this file is also rendered as a document of its own (an <img> in
+    // the contact sheet, the icon in the activity bar, the base of the marketplace PNG), where no
+    // panel variable exists — and an unresolvable var() paints BLACK, worse than any wrong hue.
+    //
+    // No ids, no paint server, no `url(#…)`: the exception that Rule 4 of media/icons/README.md
+    // used to allow is gone, because the paint is a colour.
+    const brand = "#d08856"; // the old logo gradient, flattened to its midpoint
+    expect(PALETTES.dark["user-msg"]).toBe("#d95f27"); // the bubble stays the burnt orange
+    expect(brand).not.toBe(PALETTES.dark["user-msg"]);
+    const dir = join(process.cwd(), "media", "icons");
+    for (const file of Object.keys(BRAND_CANVAS)) {
+      const markup = readFileSync(join(dir, file), "utf8");
+      // BOTH elements name the paint: the silhouette is filled, the caret is fill="none", so a
+      // fill inherited from the root would never reach its stroke.
+      const fills = markup.match(/fill="(#[0-9a-f]{6})"/g) ?? [];
+      expect(fills.length, file).toBeGreaterThan(0);
+      for (const fill of fills) expect(fill, file).toBe(`fill="${brand}"`);
+      expect(markup, file).toContain(`stroke="${brand}"`);
+      expect(markup, file).not.toMatch(/url\(#|<linearGradient/);
+    }
+    // …and no OTHER file may carry a paint server or an id either: a third would be the
+    // collision the rule is actually about.
+    const others = readdirSync(dir)
+      .filter((name) => name.endsWith(".svg") && !(name in BRAND_CANVAS))
+      .filter((name) => {
+        const markup = readFileSync(join(dir, name), "utf8");
+        return /<linearGradient|url\(#/.test(markup) || /\sid="/.test(markup);
+      });
+    expect(others).toEqual([]);
+  });
+
+  it("keeps the brand mark the SAME drawing in both frames, only remapped", () => {
+    // The brand is ONE artwork delivered twice: media/icons/harny-app.svg is the square frame
+    // (activity bar, view header, marketplace PNG) and media/icons/harny.svg is the tight one,
+    // whose canvas IS the artwork's box so the panel's sign-off fills exactly one bubble. The
+    // frames differ on purpose; the DRAWING must not. Nothing enforced that before — editing one
+    // file alone shipped two different logos with the suite green, because only the paint was
+    // pinned. Pinned here the way a copy is verifiable: command for command, and point by point
+    // as a fraction of the drawing's own bounding box, so a pure scale + translate (the mapping
+    // that produced the second frame) collapses to the same numbers on both sides.
+    const brand = readFileSync(join(process.cwd(), "media", "icons", "harny.svg"), "utf8");
+    const activityBar = readFileSync(join(process.cwd(), "media", "icons", "harny-app.svg"), "utf8");
+
+    /** The outline of one brand file, normalised to its own bounding box. */
+    const outline = (markup: string) => {
+      // `<path` is bare in one file and carries fill attributes in the other: match the tag,
+      // then the first `d` in it, whatever sits between.
+      const path = /<path\b[^>]*?\bd="([^"]+)"/.exec(markup)?.[1] ?? "";
+      const polyline = /<polyline\b[^>]*?\bpoints="([^"]+)"/.exec(markup)?.[1] ?? "";
+      // One entry per command: its letter, then its numbers. H carries x only and V y
+      // only, which is why coordinates are kept per axis instead of paired up.
+      const commands = (path.match(/[A-Za-z][^A-Za-z]*/g) ?? []).map((command) => ({
+        letter: command[0],
+        numbers: command
+          .slice(1)
+          .trim()
+          .split(/[\s,]+/)
+          .filter(Boolean)
+          .map(Number),
+      }));
+      // The caret is a polyline, not a path: three points, treated as M + two lineto's so
+      // it lines up with the other side however each file happens to spell it.
+      const caret = polyline
+        .trim()
+        .split(/[\s,]+/)
+        .filter(Boolean)
+        .map(Number);
+      const xs: number[] = [];
+      const ys: number[] = [];
+      for (const { letter, numbers } of commands) {
+        if (letter === "H") xs.push(...numbers);
+        else if (letter === "V") ys.push(...numbers);
+        else if (letter !== "Z") {
+          for (let i = 0; i < numbers.length; i += 2) {
+            xs.push(numbers[i]);
+            ys.push(numbers[i + 1]);
+          }
+        }
+      }
+      for (let i = 0; i < caret.length; i += 2) {
+        xs.push(caret[i]);
+        ys.push(caret[i + 1]);
+      }
+      const minX = Math.min(...xs);
+      const minY = Math.min(...ys);
+      const width = Math.max(...xs) - minX;
+      const height = Math.max(...ys) - minY;
+      const fit = (value: number, min: number, span: number) => (value - min) / span;
+      return {
+        letters: commands.map((command) => command.letter).join(""),
+        // Same aspect means the copy was scaled ISOTROPICALLY, which is the only mapping
+        // that keeps a bubble round; per-axis normalisation below would hide a stretch.
+        aspect: height / width,
+        // x and y normalised separately, so the two files' different scales cancel out.
+        xs: xs.map((x) => Number(fit(x, minX, width).toFixed(4))),
+        ys: ys.map((y) => Number(fit(y, minY, height).toFixed(4))),
+        caret: caret.length / 2,
+      };
+    };
+
+    const copy = outline(brand);
+    const original = outline(activityBar);
+    expect(copy.letters).toBe(original.letters);
+    expect(copy.letters.length).toBeGreaterThan(50);
+    expect(copy.caret).toBe(original.caret);
+    // Same aspect = the copy was scaled ISOTROPICALLY (a stretch would pass the per-axis
+    // normalisation below), then the absolute proportion, so both files cannot drift together.
+    expect(copy.aspect).toBeCloseTo(original.aspect, 3);
+    // 0.7681 is the drawing's own proportion, measured on the COORDINATES: 656 / 854 in
+    // brand units (x 170..1024, y 118..774). Note it is not 11/15 = 0.7333, the canvas ratio:
+    // that box includes the caret's round caps (+0.71 a side) and stops above the tail's
+    // curve, whose pull lands past the ink (a control point at y 17.89 inside a 17.6 canvas is
+    // legal — the curve itself never gets there). Pinned so the mark cannot be re-proportioned
+    // in BOTH files and still pass.
+    expect(original.aspect).toBeCloseTo(0.768, 3);
+    /** Same points, to within the copy's own precision: it rounds every coordinate to two
+     * decimals, so on a 23-unit canvas a normalised value lands ~2e-4 away. Two decimals of
+     * toBeCloseTo (±0.005) is the loose end of that, and still far tighter than any
+     * redrawing would be. */
+    const sameShape = (actual: number[], expected: number[]) => {
+      expect(actual.length).toBe(expected.length);
+      actual.forEach((value, index) => expect(value).toBeCloseTo(expected[index], 2));
+    };
+    sameShape(copy.xs, original.xs);
+    sameShape(copy.ys, original.ys);
   });
 
   it("keeps ALL icon artwork in media/icons/ (nothing inlined under src/)", () => {
@@ -132,6 +321,37 @@ describe("icon registry", () => {
   it("gives every MCP tool the same plug (there can be any number of them)", () => {
     expect(toolIcon("mcp__filesystem__read_file")).toBe(icon("mcp", 13));
     expect(toolIcon("mcp__git__commit")).toBe(icon("mcp", 13));
+  });
+
+  it("hangs the BRAND mark beside a typed prompt — filled, and no second user glyph", () => {
+    // The sign-off used to be a person in a round frame (a `person-round.svg` of its own). The
+    // brand says the same thing — "a human typed this" — and says WHOSE, so the person went with
+    // its file: one user glyph in the set, not two marks for one meaning.
+    //
+    // It is FILLED, and that is deliberate: drawn as a 1.5 outline it read as a smaller thing
+    // than the bubble it signs (a stroke drawing is mostly empty space). One filled silhouette,
+    // the brand's own, with the prompt caret punched out of it — the hole belongs to the drawing,
+    // so no stroke weight is asked for the bubble at the call site.
+    const mark = icon("harny", 38);
+    expect(mark).toContain('fill-rule="evenodd"');
+    // TWO elements, as the brand draws them: the silhouette (painted once, by the root) and the
+    // answering caret beside it, which is a STROKE — the brand's own polyline, so it keeps its
+    // round caps at any size. Cropping the caret out was tried and reported as a broken logo: it
+    // is half the mark (the bubble asks, the caret answers), and the crop is what forced the
+    // bubble to three quarters of the bubble it signs.
+    // Both elements are painted with the BUBBLE's orange (see the palette test above): the mark
+    // beside a prompt is the same paint as the prompt.
+    expect(mark.match(/fill="#d08856"/g)).toHaveLength(1);
+    expect(mark).toContain('stroke="#d08856"');
+    expect(mark).toContain('stroke-width="1.42"'); // the brand's 52 on its own scale
+    expect(mark).toContain('stroke-linecap="round"');
+    // The ink touches all four edges of the canvas: that is what makes the CSS box (15:11, one
+    // bubble tall) put the mark's top on the bubble's top instead of a few pixels below it.
+    expect(mark).toContain("M 1.91 0"); // the bubble's top-left corner, ON the top edge
+    expect(mark).toContain("Q 0 0 1.91 0"); // …curved from the left edge
+    expect(mark).toContain("Q 3.44 17.89 3.41 17.02"); // the tail, down to the bottom edge
+    expect(mark).toContain("23.29,6.87"); // the answering caret's apex, on the right edge
+    expect(() => readFileSync(join(process.cwd(), "media", "icons", "person-round.svg"), "utf8")).toThrow();
   });
 
   it("keeps Delete on the trash artwork — one file, so they cannot drift", () => {

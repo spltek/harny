@@ -235,7 +235,9 @@ interface InitState {
   pending?: PendingViewItem[];
   /** Extension version (shown in the empty hero). */
   version?: string;
-  /** Cache-busted vscode-webview:// URI of media/icon.svg (hero brand mark). */
+  /** Cache-busted vscode-webview:// URI of media/icons/harny.svg — the brand mark,
+   * on its OWN 15:11 canvas, so a box that names only the height gets the ink
+   * exactly (hero, greeting). */
   logoUri?: string;
   /** Publisher credit for the empty hero (name + optional repository URL). */
   brand?: { name: string; url?: string };
@@ -1516,19 +1518,34 @@ function addHarnessMessage(content: string): HTMLDivElement {
   return div;
 }
 
-/** The person-round mark that CLOSES a prompt the user typed (see
- * `.msg.user > .user-avatar`): the bubble is the message, the circle beside it is WHO
- * sent it. Decoration, so it carries no text and takes no clicks — the same mark on
+/** The brand mark (see `media/icons/harny.svg`) that CLOSES a prompt the user typed (see
+ * `.msg.user > .user-avatar`): the bubble is the message, the mark beside it is WHO
+ * sent it. It replaced a person in a round frame — the person said "a human typed this",
+ * which the orange bubble already says; the brand says the same and says WHOSE.
+ * Decoration, so it carries no text and takes no clicks — the same mark on
  * every prompt would be read out by a screen reader once per bubble, and it names
- * nothing the orange bubble does not already say. Its DIAMETER is the CSS's business (exactly
- * as tall as a one-line bubble, so the mark and the edge it sits on are the same measure); the
- * weight is not: 1.5 on the 24 grid would render 2.4px of ink at that size, which reads as
- * a drawn badge, so the call site asks for 1 — the transcript's own hairline at 38px. */
+ * nothing the orange bubble does not already say. Its MEASURE is the CSS's business: as tall as
+ * the STRAIGHT part of the bubble's edge — one line box, starting under the corner radius, so it
+ * runs from the end of the top rounding to the start of the bottom one — and 15/11 as wide, which
+ * is the artwork's own canvas (the whole logo: the bubble AND the answering caret beside it). The
+ * size handed to `icon()` is therefore only the pre-CSS fallback: the stylesheet fills the box it
+ * measured (`width: 100%`), so the pin here cannot drift from the layout.
+ * Its weight is nobody's: the silhouette is the
+ * one FILLED piece of artwork in the panel (media/icons/harny.svg), because a hairline logo
+ * beside a solid bubble reads as a smaller thing than the bubble it comments on — reported, and
+ * true. The paint is the brand's OWN tan — a literal #d08856, the midpoint of the gradient the
+ * logo has always been drawn with, flattened to one value — carried IN the file, so this mark
+ * cannot drift from the icon in the activity bar (media/icons/harny-app.svg, same drawing). It is
+ * deliberately NOT the bubble's burnt orange (--user-msg): the bubble is the accent, the mark is
+ * the brand. A literal and not a var(): the file also shows up where it is opened on its own —
+ * the contact sheet loads it as an <img> — and there an unresolved var() paints it black. */
 function userAvatar(): HTMLSpanElement {
   const wrap = document.createElement("span");
   wrap.className = "user-avatar";
   wrap.setAttribute("aria-hidden", "true");
-  wrap.innerHTML = icon("personRound", 38, 'stroke-width="1"');
+  // 18px is a fallback for the frame before the stylesheet lands: the CSS sizes the box
+  // (`height: 1.4em`, `width: calc(1.4em * 15 / 11)`) and the svg fills it.
+  wrap.innerHTML = icon("harny", 18);
   return wrap;
 }
 
@@ -2399,7 +2416,7 @@ function clearThinkingBlock(): void {
   settledThinkingBlock = null;
 }
 
-/** Empty-session greeting. The brand mark is the REAL media/icon.svg (served
+/** Empty-session greeting. The brand mark is the REAL media/icons/harny.svg (served
  * through state.logoUri), not an emoji or an inlined copy. */
 function addWelcome(): HTMLDivElement {
   const div = document.createElement("div");

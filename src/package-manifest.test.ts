@@ -79,8 +79,10 @@ describe("package.json manifest", () => {
   });
 });
 
-const ICON_SVG = join(process.cwd(), "media", "icon.svg");
-const svgSource = readFileSync(ICON_SVG, "utf8");
+const BRAND_SVG = join(process.cwd(), "media", "icons", "harny.svg");
+const APP_SVG = join(process.cwd(), "media", "icons", "harny-app.svg");
+const svgSource = readFileSync(BRAND_SVG, "utf8");
+const appSvgSource = readFileSync(APP_SVG, "utf8");
 
 /** Every .ts file under src/ (the walk never enters node_modules). */
 function tsSources(dir: string, out: string[] = []): string[] {
@@ -93,27 +95,62 @@ function tsSources(dir: string, out: string[] = []): string[] {
 }
 
 /**
- * Guards the BRAND ASSETS. Both checks come from real regressions: a non-square
+ * Guards the BRAND ASSETS. Every check comes from a real regression: a non-square
  * viewBox on the activity-bar icon (VS Code renders it in a 24x24 slot, so the
- * mark came out blank/tiny) and an inlined copy of the artwork inside the
- * webview bundle that survived every edit to media/icon.svg.
+ * mark came out blank/tiny), an inlined copy of the artwork inside the webview
+ * bundle that survived every edit to the file, and an artwork folder that is
+ * deliberately kept OUT of the package (it is inlined at build time) — which makes
+ * the brand files the only ones that must be let back in by hand.
+ *
+ * Both frames live in media/icons/ with the rest of the artwork: one drawing, one
+ * folder, and the only difference between the two files is the canvas.
  */
 describe("brand assets", () => {
   it("declares icon paths that exist on disk", () => {
-    expect(manifest.icon).toBe("media/icon.png");
+    expect(manifest.icon).toBe("media/icons/harny.png");
     expect(statSync(join(process.cwd(), manifest.icon)).size).toBeGreaterThan(0);
 
     const containers = (contributes.viewsContainers?.activitybar ?? []) as { icon?: string }[];
-    expect(containers[0]?.icon).toBe("media/icon.svg");
-    expect(statSync(ICON_SVG).size).toBeGreaterThan(0);
+    expect(containers[0]?.icon).toBe("media/icons/harny-app.svg");
+    expect(statSync(APP_SVG).size).toBeGreaterThan(0);
   });
 
-  it("keeps media/icon.svg on a SQUARE 24x24 viewBox", () => {
+  it("keeps the activity-bar icon on a SQUARE 24x24 viewBox", () => {
     // A non-square viewBox letterboxes the mark into the activity-bar slot.
-    expect(svgSource).toMatch(/viewBox="0 0 24 24"/);
+    expect(appSvgSource).toMatch(/viewBox="0 0 24 24"/);
     // An explicit width/height makes some renderers thumbnail it to that exact
     // pixel size and come out blank; VS Code only needs the viewBox.
-    expect(svgSource).not.toMatch(/<svg[^>]*\swidth=/);
+    expect(appSvgSource).not.toMatch(/<svg[^>]*\swidth=/);
+  });
+
+  it("lets the brand frames INTO the package (the folder ships nothing else)", () => {
+    // media/icons/** is excluded because the artwork is INLINED at build time; the brand is the
+    // exception, because the runtime FETCHES it: the activity bar and the marketplace read their
+    // icon off disk, and the panel loads the mark as an <img> through asWebviewUri. Get the order
+    // wrong and the extension installs with a blank activity-bar icon and an empty hero — a
+    // breakage no unit test can see from inside the editor.
+    const lines = readFileSync(join(process.cwd(), ".vscodeignore"), "utf8")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#"));
+    /** gitignore semantics, as far as these patterns go: the LAST matching line wins. */
+    const shipped = (file: string) => {
+      let keep = true;
+      for (const line of lines) {
+        const negated = line.startsWith("!");
+        const pattern = negated ? line.slice(1) : line;
+        const hit = pattern.endsWith("/**") ? file.startsWith(pattern.slice(0, -2)) : file === pattern;
+        if (hit) keep = negated;
+      }
+      return keep;
+    };
+    for (const file of ["media/icons/harny.svg", "media/icons/harny-app.svg", "media/icons/harny.png"]) {
+      expect(shipped(file), file).toBe(true);
+    }
+    // …and the rest of the folder stays out: the bundle carries it, a user never opens it.
+    expect(shipped("media/icons/plus.svg")).toBe(false);
+    expect(shipped("media/icons/README.md")).toBe(false);
+    expect(shipped("media/icons/icon-sheet.html")).toBe(false);
   });
 
   it("only advertises a PUBLIC homepage (the hero credit links to it)", () => {
@@ -126,14 +163,17 @@ describe("brand assets", () => {
   });
 
   it("keeps the brand artwork in ONE place (nothing inlined under src/)", () => {
-    // The hero mark is served from media/icon.svg at runtime (state.logoUri),
-    // so no source file may duplicate the path data.
-    const d = /<path[^>]*\sd="([^"]+)"/.exec(svgSource)?.[1];
-    expect(d).toBeTruthy();
-    const needle = d!.slice(0, 60);
-    const offenders = tsSources(join(process.cwd(), "src"))
-      .filter((file) => readFileSync(file, "utf8").includes(needle))
-      .map((file) => file.replace(process.cwd() + "/", ""));
-    expect(offenders).toEqual([]);
+    // Both frames are served from disk at runtime (state.logoUri for the panel, package.json for
+    // VS Code), so no source file may duplicate either path data — the panel's sign-off is
+    // inlined by the BUILD from the file, never copied into the source.
+    for (const markup of [svgSource, appSvgSource]) {
+      const d = /<path[^>]*\sd="([^"]+)"/.exec(markup)?.[1];
+      expect(d).toBeTruthy();
+      const needle = d!.slice(0, 60);
+      const offenders = tsSources(join(process.cwd(), "src"))
+        .filter((file) => readFileSync(file, "utf8").includes(needle))
+        .map((file) => file.replace(process.cwd() + "/", ""));
+      expect(offenders).toEqual([]);
+    }
   });
 });

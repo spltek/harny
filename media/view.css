@@ -760,53 +760,72 @@ body {
    it hangs OUTSIDE the bubble — so `border-radius` is NOT restated for `.msg.user` anywhere, and
    `.msg` is the one place that owns the shape. */
 /* ── THE SIGN-OFF: who typed it ──
-   A prompt the user wrote is closed by the person-round mark, hung OUTSIDE the bubble on
+   A prompt the user wrote is closed by the brand mark (the Harny bubble, `media/icons/harny.svg`),
+   hung OUTSIDE the bubble on
    its right edge (view.ts `userAvatar`). Outside, not inside, because the bubble's width
    is the message: a mark in the corner would either eat a line of text or push the bubble
    away from the edge on every single prompt. So the bubble pays for the column with a
    MARGIN equal to the mark + the gap, and the mark itself is positioned off the bubble's
    own right edge — no wrapper element, no change to how `#messages` stacks, and no change
    to the bubble's corners.
-   The mark is EXACTLY as tall as a one-line prompt: 8px of padding above + 8px below + one
-   line box (1.4 × the 16px it inherits). Written as that expression, not as 38px, so it
-   stays true if the type moves — and the gap is the same expression, so the two cannot
-   drift apart.
-   With that diameter the mark is also, by construction, centred on the FIRST line: the line
-   box runs from 8px to 8+1.4em, and the mark from 0 to 16+1.4em — same centre. So a
-   one-line prompt has it exactly level with the bubble, and a four-line one still has it at
-   the top beside the first line, never beside the third. (A `top: 50%` would re-centre it
-   on the bubble and lose that.) An attachment makes the bubble tall for a reason of its own
+   The mark is as tall as the STRAIGHT PART of the bubble's right edge — the vertical run between
+   the two rounded corners — and not as tall as the bubble. The corner radius is 8px and the
+   padding is 8px, so that run starts 8px down and ends 8px above the bottom: for a one-line
+   prompt it is exactly ONE LINE BOX (1.4em), which is what the mark measures (`top: 8px`,
+   `height: 1.4em`). Both are written as the facts that make them true (a radius, a line height)
+   instead of as 8px and 18px, so the mark stays inside the straight edge if the type or the
+   radius moves — and the gap is the same expression, so the two cannot drift apart. Being one
+   line box tall, it is also level with the FIRST line by construction: the mark starts where the
+   line box starts, so a one-line prompt has it hugging the bubble's vertical edge and a four-line
+   one still has it beside the first line, never beside the third. (A `top: 50%` would re-centre
+   it on the bubble and lose that.) An attachment makes the bubble tall for a reason of its own
    and changes nothing: the first line is still the first line.
+   Its WIDTH is that height × 15/11, and that is not a taste: the artwork is the whole logo (the
+   bubble AND the answering caret beside it), so the file's canvas is 15:11 — the brand's own
+   proportion — and the ink touches all four edges of it. A square box would leave air above the
+   drawing and the mark would hang a couple of pixels LOWER than the line it signs (reported, and
+   visible); with the box matching the artwork, the two tops and the two bottoms are the same
+   line.
    The `max-width` is where the reserved column has to be PAID FOR, not just added: `.msg`
-   caps a bubble at 92% of `#messages`, and 92% + a 44px margin does not fit once the panel is
-   narrower than ~555px (the 8% left over stops covering the margin). `align-self: flex-end`
-   aligns the MARGIN box, so the shortfall lands on the bubble's LEFT — a long prompt would
-   bleed out of the transcript's left edge by a few pixels and, at the narrowest widths, out
-   of the panel. Same expression on both sides: the column is subtracted from the cap at the
-   same time as it is added to the margin.
+   caps a bubble at 92% of `#messages`, and 92% + the column does not fit once the panel is narrow
+   (the 8% left over stops covering the margin — the logo is 11:15 wide, so the column is wider
+   than the bubble's own padding). `align-self: flex-end` aligns the MARGIN box, so
+   the shortfall lands on the bubble's LEFT — a long prompt would bleed out of the transcript's
+   left edge by a few pixels and, at the narrowest widths, out of the panel. Same expression on
+   both sides: the column is subtracted from the cap at the same time as it is added to the
+   margin.
    Only the bubbles the user typed: the nudge and the checkpoint never get the class (view.ts
    adds it in the prompt path and strips it in the checkpoint path). */
 .msg.user.has-avatar {
-  margin-right: calc(16px + 1.4em + 6px);
-  max-width: calc(92% - (16px + 1.4em + 6px));
+  margin-right: calc(1.4em * 15 / 11 + 6px);
+  max-width: calc(92% - (1.4em * 15 / 11 + 6px));
 }
 .msg.user > .user-avatar {
   position: absolute;
   left: 100%;
-  top: 0;
-  width: calc(16px + 1.4em);
-  height: calc(16px + 1.4em);
+  /* Inside the bubble's rounded corner, not at its edge: 8px is the corner radius, which is also
+     the bubble's padding — the straight part of the edge starts exactly there. */
+  top: 8px;
+  /* 15:11 = the file's own canvas (viewBox 24 × 17.6) = the brand's own proportion. */
+  width: calc(1.4em * 15 / 11);
+  height: 1.4em;
   margin-left: 6px;
   display: block;
-  /* Quiet on purpose: it is a sign-off, not a badge. Same grey as the metadata under an
-     assistant reply, so the only ORANGE thing in the transcript stays the prompt. */
-  color: var(--muted-2);
   /* Nothing to click and nothing to select: it sits beside text the user may be dragging. */
   pointer-events: none;
   user-select: none;
 }
-/* The artwork is drawn on a 24 grid with a size attribute of its own; here the CSS owns the
-   measure (one bubble tall), so the svg fills the box it was given. */
+/* The artwork is FILLED and carries its own paint — the one solid mark in the panel, painted
+   with the brand's ORIGINAL tan, `#d08856` (the midpoint of the gradient the logo was always
+   drawn with, flattened to a single value). It is deliberately NOT the bubble's burnt orange:
+   the bubble is the terracotta accent, the mark is the brand, and the mark keeps the colour it
+   has always had. (A hairline logo beside a solid bubble read as a smaller thing than the
+   bubble, which is why the mark is FILLED.) The colour lives IN `media/icons/harny.svg`, not in
+   this stylesheet — and as a LITERAL, not a custom property: the file is a picture that is also
+   loaded on its own (the contact sheet renders it as an `<img>`, the activity bar as a file),
+   where a panel variable does not exist and an unresolved `var()` would paint it black. With the
+   box at the file's own 15:11 there is nothing to letterbox: the svg fills it edge to edge, which
+   is what makes the mark line up with the bubble. */
 .msg.user > .user-avatar > svg {
   display: block;
   width: 100%;
@@ -1365,13 +1384,19 @@ body {
   text-align: center;
   max-width: 100%;
 }
-/* Brand mark inline in the greeting. The artwork is WIDE (22x16 inside the
-   square 24x24 viewBox), so the box is scaled up to ~1.4em to make the
-   visible mark match the surrounding text height. */
+/* Brand mark inline in the greeting, loaded from media/icons/harny.svg (the
+   tight canvas: the ink IS the box, 15:11). So the CSS names ONE size — the
+   height — and the width follows the viewBox: no ratio to keep in sync here, and
+   nothing to nudge. This used to be a 1.4em SQUARE box with `vertical-align:
+   -0.4em`, i.e. the mark was scaled up to compensate for the air a square canvas
+   puts above and below the drawing, then pushed back down by hand: the box said
+   nothing true about the picture, and the nudge was a guess that showed.
+   1.2em of mark next to the word it signs; the tail hangs 0.2em below the
+   baseline, which is where a bubble's tail belongs. */
 .msg.welcome .welcome-logo {
-  width: 1.4em;
-  height: 1.4em;
-  vertical-align: -0.4em;
+  width: auto;
+  height: 1.2em;
+  vertical-align: -0.2em;
   display: inline-block;
 }
 .working {
@@ -4361,11 +4386,16 @@ body.no-session #session-head {
 .empty-hero .empty-icon {
   font-size: var(--fs-hero);
 }
-/* Brand mark in place of the emoji, loaded from media/icon.svg (see
-   state.logoUri): the artwork lives in ONE file, no inlined duplicate.
-   An <img> can't inherit currentColor, so it shows the SVG's own colors. */
+/* Brand mark in place of the emoji, loaded from media/icons/harny.svg (see
+   state.logoUri): the artwork lives in ONE file, served to the panel — no
+   inlined duplicate. An <img> can't inherit currentColor, so it shows the
+   SVG's own colors.
+   Only the HEIGHT is named: that canvas is 15:11 with the ink touching all four
+   edges, so `width: auto` gives the mark its own proportion back, and
+   --fs-logo measures the mark instead of a square box that held it with air
+   above and below (a 6rem box used to draw a 52px-tall logo). */
 .empty-hero .empty-logo img {
-  width: var(--fs-logo);
+  width: auto;
   height: var(--fs-logo);
   display: block;
 }

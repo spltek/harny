@@ -52,7 +52,11 @@ import subagent from "../../media/icons/subagent.svg";
 import listStart from "../../media/icons/list-start.svg";
 import listEnd from "../../media/icons/list-end.svg";
 import history from "../../media/icons/history.svg";
-import personRound from "../../media/icons/person-round.svg";
+import harny from "../../media/icons/harny.svg";
+// The brand's SQUARE frame — the activity bar and the view header, i.e. the one brand file VS
+// Code paints itself (package.json points at it), never a mark the panel asks for. It rides in
+// the registry so the folder stays ONE flat set and no test has to special-case a file.
+import harnyApp from "../../media/icons/harny-app.svg";
 import fileBadge from "../../media/icons/file-badge.svg";
 
 /** Every icon the UI can ask for, keyed by the name the call sites use. */
@@ -92,7 +96,8 @@ const ARTWORK = {
   listStart,
   listEnd,
   history,
-  personRound,
+  harny,
+  harnyApp,
   fileBadge,
 };
 

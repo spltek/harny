@@ -307,7 +307,12 @@ describe("renderViewHtml", () => {
     // ~31px — a speck in a 500px+ panel. The size now comes from the size
     // families, so the mark and its tuning live in ONE place (view-config.ts).
     expect(html).toContain("--fs-logo: 6rem"); // ~78px at a 13px base
-    expect(flat(html)).toContain(".empty-hero .empty-logo img { width: var(--fs-logo); height: var(--fs-logo)");
+    // Only the HEIGHT is named, and the width is `auto`: the artwork is the WHOLE logo on a 15:11
+    // canvas with its ink touching all four edges, so a square box would hold it with air above
+    // and below (a 6rem box drew a 52px-tall mark) and the hero would sit a few pixels low. Same
+    // rule as the sign-off beside a bubble: the box takes the file's proportion, it does not
+    // impose one.
+    expect(flat(html)).toContain(".empty-hero .empty-logo img { width: auto; height: var(--fs-logo)");
   });
 
   it("lets a pending message be read WHOLE, with its actions pinned top-right", () => {
@@ -612,25 +617,34 @@ describe("renderViewHtml", () => {
     expect(html).not.toMatch(/\.msg\.user \{[^}]*border/);
     expect(html).toMatch(/\.msg\.user\.synthetic-summary \{[^}]*border-bottom-right-radius: 0/);
     expect(html).toMatch(/\.msg\.assistant\.synthetic-body \{[^}]*border-top-right-radius: 0/);
-    // ── THE SIGN-OFF (person-round beside a typed prompt) ──
+    // ── THE SIGN-OFF (the Harny mark beside a typed prompt) ──
     // It hangs OUTSIDE the bubble's right edge, and the bubble pays for the column with a
     // margin: `left: 100%` is what puts it outside, and the margin is the mark plus the gap.
     // Both are the SAME expression as the mark's own size, so mark, gap and column cannot
     // drift apart — a wider mark than its margin would sit on the panel's edge.
     expect(html).toMatch(/\.msg\.user > \.user-avatar \{[^}]*left: 100%/);
     expect(html).toMatch(/\.msg\.user > \.user-avatar \{[^}]*margin-left: 6px/);
-    expect(html).toMatch(/\.msg\.user\.has-avatar \{[^}]*margin-right: calc\(16px \+ 1\.4em \+ 6px\)/);
+    expect(html).toMatch(/\.msg\.user\.has-avatar \{[^}]*margin-right: calc\(1\.4em \* 15 \/ 11 \+ 6px\)/);
     // …and the column is SUBTRACTED from the 92% cap at the same time: `.msg` caps a bubble at 92%
-    // of `#messages`, and 92% + a 44px margin does not fit below ~555px of panel — the shortfall
-    // would land on the bubble's left, because `align-self: flex-end` aligns the MARGIN box.
-    expect(html).toMatch(/\.msg\.user\.has-avatar \{[^}]*max-width: calc\(92% - \(16px \+ 1\.4em \+ 6px\)\)/);
-    // EXACTLY as tall as a one-line prompt: 8px of padding above + below + one line box. That
-    // is also, by construction, centred on the FIRST line — so a four-line prompt keeps the
-    // mark at the top next to the words instead of floating beside line three. A `top: 50%`
-    // would silently re-centre it on the bubble.
-    expect(html).toMatch(/\.msg\.user > \.user-avatar \{[^}]*top: 0/);
-    expect(html).toMatch(/\.msg\.user > \.user-avatar \{[^}]*width: calc\(16px \+ 1\.4em\)/);
-    expect(html).toMatch(/\.msg\.user > \.user-avatar \{[^}]*height: calc\(16px \+ 1\.4em\)/);
+    // of `#messages`, and 92% + the column does not fit in a narrow panel (the logo is 11:15 wide,
+    // so the column is wider than the bubble's own padding) — the shortfall would land on the
+    // bubble's left, because `align-self: flex-end` aligns the MARGIN box.
+    expect(html).toMatch(/\.msg\.user\.has-avatar \{[^}]*max-width: calc\(92% - \(1\.4em \* 15 \/ 11 \+ 6px\)\)/);
+    // As tall as the STRAIGHT PART of the bubble's right edge — the vertical run between the two
+    // rounded corners — and not as tall as the bubble. The radius is 8px and so is the padding, so
+    // that run starts 8px down and lasts one line box on a one-line prompt: `top: 8px` with
+    // `height: 1.4em`. That also keeps the mark level with the FIRST line by construction, so a
+    // four-line prompt keeps it next to the words instead of floating beside line three. A
+    // `top: 50%` would silently re-centre it on the bubble.
+    expect(html).toMatch(/\.msg\.user > \.user-avatar \{[^}]*top: 8px/);
+    // The WIDTH is 15/11 of that height: the artwork is the whole logo (bubble + answering
+    // caret), so the file's canvas is 15:11 and the BOX must be the same shape — a square box
+    // letterboxes the drawing, which is how the mark ended up sitting a couple of pixels lower
+    // than the line it signs.
+    expect(html).toMatch(/\.msg\.user > \.user-avatar \{[^}]*width: calc\(1\.4em \* 15 \/ 11\)/);
+    expect(html).toMatch(/\.msg\.user > \.user-avatar \{[^}]*height: 1\.4em/);
+    // …and NOT the whole bubble any more: the 16px of padding is no longer part of the measure.
+    expect(html).not.toMatch(/\.msg\.user > \.user-avatar \{[^}]*16px/);
     expect(html).not.toMatch(/\.msg\.user > \.user-avatar \{[^}]*top: 50%/);
     // The svg fills the box the CSS measured for it (the artwork cannot own the size).
     expect(html).toMatch(/\.msg\.user > \.user-avatar > svg \{[^}]*width: 100%/);

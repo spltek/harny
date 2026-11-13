@@ -22,8 +22,11 @@
       .sizes { display: flex; align-items: center; gap: 15px; height: 46px; }
       .sizes img { display: block; }
       /* The artwork is currentColor: inside an <img> that resolves to black, so
-         the dark cards flip it — the same trick the panel does with the theme. */
+         the dark cards flip it — the same trick the panel does with the theme.
+         Except the two files that carry their own paint (the brand tan): inverting those
+         would turn them into their complement, so they are shown as they are. */
       .card.dark .sizes img { filter: invert(1) brightness(1.12); }
+      .card.dark .sizes img.native { filter: none; }
       .name { margin-top: 10px; font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; opacity: 0.7; }
       .desc { font-size: 11px; line-height: 1.35; opacity: 0.5; }
       footer { margin-top: 34px; color: #6f6862; font-size: 11px; }
@@ -41,9 +44,18 @@
       24×24 grid — about 0.8 px once drawn at 13 px. The chrome runs at 2: a 1.5 line at 10–11 px is 0.7 px
       and disappears. <code>sparkles</code> is the one 1.8, only <code>chevron-down</code> keeps a 2.5 (a
       chevron has no joins to hold it together), and five marks are SOLID with no stroke at all
-      (<code>gear</code>, <code>play</code>, <code>skill</code>, <code>stop</code>, <code>parallel</code>) —
-      a filled silhouette reads heavier than any line at the same
-      size. Where one drawing has to serve two weights, the call site asks for the one it needs
+      (<code>gear</code>, <code>play</code>, <code>skill</code>, <code>stop</code>,
+      <code>parallel</code>) — a filled silhouette reads heavier than any line at the same size.
+      <code>harny.svg</code> is the sixth silhouette AND the only file carrying its own PAINT, a
+      literal <code>#d08856</code> instead of <code>currentColor</code>: it is a picture, not a
+      glyph, and that tan is the brand's ORIGINAL colour (the old gradient's midpoint, flattened)
+      — deliberately NOT the bubble's <code>user-msg</code>, which stays the burnt accent (see the
+      README). The brand ships in TWO
+      frames, and that is the only reason there are two files of one drawing: <code>harny.svg</code>
+      is not on the shared 24x24 canvas — the whole logo (bubble + answering caret) is 15:11, and
+      the panel gives it a box of exactly that shape — while <code>harny-app.svg</code> is the same
+      drawing INSET in the square the activity bar paints into. Where one drawing has to serve two
+      weights, the call site asks for the one it needs
       (<code>icon("trash", 13, 'stroke-width="2"')</code>, used twice in the session list) instead of
       keeping a second copy of the file.
     </p>
@@ -99,7 +111,8 @@
         ["stop.svg", "Stop", "stop the running turn"],
         ["eye.svg", "Reveal", "hold to show the API key that the field masks"],
         ["history.svg", "Summary", "the synthetic bubble a compaction leaves in place of the turns it dropped"],
-        ["person-round.svg", "User", "a person in a round frame — this family's user glyph; the sign-off beside a prompt the user typed (never on the harness rows)"],
+        ["harny.svg", "Harny", "the brand mark — the WHOLE logo, FILLED with the brand tan #d08856 (bubble + the answering caret beside it), its own colour, not the prompt bubble's, on its own 15:11 canvas; the sign-off beside a prompt the user typed (never on the harness rows), and the mark the panel's greeting and empty hero load as an <img>"],
+        ["harny-app.svg", "Harny (app)", "the same drawing INSET in a square 24x24 canvas — the frame VS Code needs for the activity bar and the view header, and the source the marketplace PNG was drawn from; never drawn in the transcript"],
         ["branch.svg", "Branch", "branch the session — a copy from this point"],
         ["scissors.svg", "Cut", "cut the transcript (compact it now)"],
         ["pencil.svg", "Rename", "rename a session"],
@@ -118,6 +131,17 @@
           img.width = size;
           img.height = size;
           img.alt = size + "px";
+          // The brand is painted IN the file, not with currentColor: keep its colours on the
+          // dark cards too (see the filter rule above). Both of its frames do, so both skip the
+          // inversion.
+          if (file === "harny.svg" || file === "harny-app.svg") {
+            img.className = "native";
+            // …and harny.svg is the one file whose canvas is not square (15:11, the whole
+            // logo), so its box is drawn at that shape — a square one letterboxes it, which
+            // is the bug the panel's own box avoids. harny-app.svg IS the square frame, so
+            // it keeps the shared box: that is the difference between the two, on sight.
+            if (file === "harny.svg") img.width = Math.round((size * 15) / 11);
+          }
           sizes.appendChild(img);
         }
         const label = document.createElement("div");

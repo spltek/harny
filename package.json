@@ -13,7 +13,7 @@
   "bugs": {
     "url": "https://github.com/spltek/harny/issues"
   },
-  "icon": "media/icon.png",
+  "icon": "media/icons/harny.png",
   "galleryBanner": {
     "color": "#111111",
     "theme": "dark"
@@ -62,7 +62,7 @@
         {
           "id": "harny",
           "title": "Harny",
-          "icon": "media/icon.svg",
+          "icon": "media/icons/harny-app.svg",
           "side": "right"
         }
       ]
@@ -73,7 +73,7 @@
           "type": "webview",
           "id": "harny.chatView",
           "name": "Harny Chat",
-          "icon": "media/icon.svg"
+          "icon": "media/icons/harny-app.svg"
         }
       ]
     },

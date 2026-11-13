@@ -1005,19 +1005,37 @@ describe("view webview client", () => {
     expect(bubble.firstElementChild).toBe(text);
   });
 
-  it("closes a typed prompt with the person-round sign-off, OUTSIDE the bubble", async () => {
+  it("closes a typed prompt with the Harny mark, OUTSIDE the bubble", async () => {
     await loadView();
     const bubble = document.querySelector(".msg.user") as HTMLElement;
     const avatar = bubble.querySelector(":scope > .user-avatar") as HTMLElement;
     expect(avatar).toBeTruthy();
-    // The mark itself is artwork from the family (the registry, never an inline copy).
+    // The mark itself is artwork from the family (the registry, never an inline copy): the brand
+    // mark, not a person — the person said "a human typed this", which the orange bubble already
+    // says, and the brand says WHOSE.
     expect(avatar.querySelector("svg")).toBeTruthy();
-    expect(avatar.innerHTML).toContain('viewBox="0 0 24 24"');
-    // The artwork carries a size, but the CSS owns the MEASURE (one one-line bubble tall) and
-    // stretches the svg to it; the weight is the call site's, thinned from 1.5 to 1 because at
-    // that size the family weight renders 2.4px of ink — a badge, not a hairline.
-    expect(avatar.innerHTML).toMatch(/^<svg stroke-width="1" width="38" height="38" /);
-    expect(avatar.innerHTML).not.toContain('stroke-width="1.5"');
+    expect(avatar.innerHTML).toContain('viewBox="0 0 24 17.6"');
+    // The brand's own composition, WHOLE: the bubble asks and the answering caret answers, so both
+    // are in the file and neither is cropped away. The canvas is the artwork's own box (15:11), so
+    // the ink touches every edge: the bubble starts on the top edge and the tail reaches the bottom
+    // — which is what makes the mark sit LEVEL with the bubble instead of a couple of pixels below.
+    expect(avatar.innerHTML).toContain("M 1.91 0");
+    expect(avatar.innerHTML).toContain("23.29,6.87");
+    // …and no filled disc with a person's head and shoulders, which is what it replaced.
+    expect(avatar.innerHTML).not.toContain("circle");
+    // FILLED, in the bubble's own tan (the brand's original colour), with the prompt caret punched
+    // out of the silhouette —
+    // the one solid mark in the panel. Drawn as a hairline it read as a smaller thing than the
+    // bubble it signs, which is exactly what a stroke drawing of a solid logo is.
+    expect(avatar.innerHTML).toContain('fill="#d08856"');
+    expect(avatar.innerHTML).toContain('fill-rule="evenodd"');
+    // The ONE stroke is the answering caret (the brand draws it as a line with round caps), and it
+    // is not asked for at the call site: the weight is the file's own.
+    expect(avatar.innerHTML).toContain('stroke="#d08856"');
+    expect(avatar.innerHTML).toContain('stroke-width="1.42"');
+    // The artwork carries a size, but the CSS owns the MEASURE (the straight run of the bubble's
+    // edge: one line box tall, and 15/11 as wide) and stretches the svg to it.
+    expect(avatar.innerHTML).toMatch(/^<svg width="18" height="18" /);
     // Decoration: no text of its own, and nothing for a screen reader to announce once per
     // bubble on top of the orange bubble it sits next to.
     expect(avatar.textContent).toBe("");

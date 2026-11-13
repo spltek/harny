@@ -12,8 +12,15 @@ node_modules/**
 !dist/**
 
 # Icon artwork is INLINED into the bundles at build time (loader: .svg = text),
-# so the sources of media/icons/ (and its README) never ship.
+# so the sources of media/icons/ (and its README, and the contact sheet) never ship.
+# EXCEPT the brand, which is the one artwork the runtime FETCHES instead of carrying:
+# the activity bar and the marketplace read their icon straight off disk, and the
+# panel loads the mark as an <img> through asWebviewUri. Excluding these three is
+# how an extension ships with a blank activity-bar icon.
 media/icons/**
+!media/icons/harny.svg
+!media/icons/harny-app.svg
+!media/icons/harny.png
 
 # Repo/tooling files not needed at runtime
 tsconfig.json
