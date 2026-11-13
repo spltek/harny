@@ -1,0 +1,734 @@
+{
+  "configs": {
+    "default": {
+      "measured": "2026-11-13",
+      "mutants": 2154,
+      "survivors": [
+        {
+          "file": "src/core/agent/loop-guard.ts",
+          "mutator": "ArrayDeclaration",
+          "replacement": "[\"Stryker was here\"]",
+          "count": 1
+        },
+        {
+          "file": "src/core/agent/loop-guard.ts",
+          "mutator": "ConditionalExpression",
+          "replacement": "false",
+          "count": 9
+        },
+        {
+          "file": "src/core/agent/loop-guard.ts",
+          "mutator": "ConditionalExpression",
+          "replacement": "true",
+          "count": 2
+        },
+        {
+          "file": "src/core/agent/loop-guard.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "n >= max",
+          "count": 1
+        },
+        {
+          "file": "src/core/agent/loop-guard.ts",
+          "mutator": "LogicalOperator",
+          "replacement": "!active && !messages",
+          "count": 1
+        },
+        {
+          "file": "src/core/agent/loop-guard.ts",
+          "mutator": "LogicalOperator",
+          "replacement": "sa.size === 0 && sb.size === 0",
+          "count": 1
+        },
+        {
+          "file": "src/core/agent/loop-guard.ts",
+          "mutator": "OptionalChaining",
+          "replacement": "obs.toolCalls[0].name",
+          "count": 2
+        },
+        {
+          "file": "src/core/agent/loop-guard.ts",
+          "mutator": "Regex",
+          "replacement": "/\\s/",
+          "count": 1
+        },
+        {
+          "file": "src/core/agent/loop-guard.ts",
+          "mutator": "StringLiteral",
+          "replacement": "\"\"",
+          "count": 1
+        },
+        {
+          "file": "src/core/agent/loop-guard.ts",
+          "mutator": "StringLiteral",
+          "replacement": "\"Stryker was here!\"",
+          "count": 2
+        },
+        {
+          "file": "src/core/llm/context-overflow.ts",
+          "mutator": "ConditionalExpression",
+          "replacement": "false",
+          "count": 4
+        },
+        {
+          "file": "src/core/llm/context-overflow.ts",
+          "mutator": "ConditionalExpression",
+          "replacement": "true",
+          "count": 4
+        },
+        {
+          "file": "src/core/llm/context-overflow.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "n >= 0",
+          "count": 1
+        },
+        {
+          "file": "src/core/llm/context-overflow.ts",
+          "mutator": "LogicalOperator",
+          "replacement": "err && \"\"",
+          "count": 1
+        },
+        {
+          "file": "src/core/llm/context-overflow.ts",
+          "mutator": "MethodExpression",
+          "replacement": "parts",
+          "count": 1
+        },
+        {
+          "file": "src/core/llm/context-overflow.ts",
+          "mutator": "Regex",
+          "replacement": "/([\\d.]+)(k?)$/",
+          "count": 1
+        },
+        {
+          "file": "src/core/llm/context-overflow.ts",
+          "mutator": "Regex",
+          "replacement": "/[\\d.,_]\\s*tokens?\\s*>\\s*([\\d.,_]+\\s*k?)\\s*maximum/i",
+          "count": 1
+        },
+        {
+          "file": "src/core/llm/context-overflow.ts",
+          "mutator": "Regex",
+          "replacement": "/^([\\d.]+)(k?)/",
+          "count": 1
+        },
+        {
+          "file": "src/core/llm/context-overflow.ts",
+          "mutator": "StringLiteral",
+          "replacement": "\"\"",
+          "count": 1
+        },
+        {
+          "file": "src/core/llm/context-overflow.ts",
+          "mutator": "StringLiteral",
+          "replacement": "\"Stryker was here!\"",
+          "count": 2
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "ConditionalExpression",
+          "replacement": "false",
+          "count": 10
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "ConditionalExpression",
+          "replacement": "true",
+          "count": 8
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "at < activeStart",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "at <= 0",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "budget >= 0",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "safe <= 0",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "safe >= 0",
+          "count": 3
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "tokensBefore < keepTokens",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "LogicalOperator",
+          "replacement": "safe > 0 || visible[safe]?.role !== \"user\"",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "MethodExpression",
+          "replacement": "all",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "MethodExpression",
+          "replacement": "m[1]",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "MethodExpression",
+          "replacement": "m[2]",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "OptionalChaining",
+          "replacement": "all[activeStart].synthetic",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "OptionalChaining",
+          "replacement": "messages[beforeIdx].meta.inputTokens",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "OptionalChaining",
+          "replacement": "messages[lastIdx].meta.inputTokens",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "OptionalChaining",
+          "replacement": "visible[safe].role",
+          "count": 3
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "Regex",
+          "replacement": "/([\\s\\S]*?)\\r?\\n\\s*-{3,}\\s*\\r?\\n([\\s\\S]*)$/",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "Regex",
+          "replacement": "/^([\\s\\S]*?)\\r?\\n\\s*-{3,}\\s*\\r?\\n([\\s\\S]*)/",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "StringLiteral",
+          "replacement": "\"\"",
+          "count": 4
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "ConditionalExpression",
+          "replacement": "default:",
+          "count": 1
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "ConditionalExpression",
+          "replacement": "false",
+          "count": 6
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "ConditionalExpression",
+          "replacement": "true",
+          "count": 4
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "args.length >= 0",
+          "count": 1
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "i <= text.length",
+          "count": 2
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "opts.exclude.length >= 0",
+          "count": 1
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "MethodExpression",
+          "replacement": "command",
+          "count": 1
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "MethodExpression",
+          "replacement": "s",
+          "count": 1
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "Regex",
+          "replacement": "/(?<![=\\-])>(?!>)(?!\\s*(?:&\\s*(?:\\d+|-)|=\\s*|\\/dev\\/(?:null|stdout|stderr|fd\\/\\d+|tty)\\b|nul\\b))/i",
+          "count": 1
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "Regex",
+          "replacement": "/(?<![=\\-])>+(?!>)(?!\\s*(?:&\\s*(?:\\d+|-)|=\\S*|\\/dev\\/(?:null|stdout|stderr|fd\\/\\d+|tty)\\b|nul\\b))/i",
+          "count": 1
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "Regex",
+          "replacement": "/(?<![=\\-])>+(?!>)(?!\\s*(?:&\\s*(?:\\d+|-)|=\\s|\\/dev\\/(?:null|stdout|stderr|fd\\/\\d+|tty)\\b|nul\\b))/i",
+          "count": 1
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "Regex",
+          "replacement": "/(?<![=\\-])>+(?!>)(?!\\s*(?:&\\s*(?:\\d|-)|=\\s*|\\/dev\\/(?:null|stdout|stderr|fd\\/\\d+|tty)\\b|nul\\b))/i",
+          "count": 1
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "StringLiteral",
+          "replacement": "\"\"",
+          "count": 14
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "StringLiteral",
+          "replacement": "\"Stryker was here!\"",
+          "count": 3
+        },
+        {
+          "file": "src/core/tools/tool-scope.ts",
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "count": 1
+        },
+        {
+          "file": "src/core/tools/tool-scope.ts",
+          "mutator": "ConditionalExpression",
+          "replacement": "false",
+          "count": 2
+        }
+      ]
+    },
+    "session-recovery": {
+      "measured": "2026-11-13",
+      "mutants": 56,
+      "survivors": [
+        {
+          "file": "src/core/sessions/session-recovery.ts",
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "count": 1
+        }
+      ]
+    },
+    "webview": {
+      "measured": "2026-11-13",
+      "mutants": 10,
+      "survivors": []
+    },
+    "chat-panel": {
+      "measured": "2026-11-13",
+      "mutants": 8,
+      "survivors": []
+    },
+    "num-field": {
+      "measured": "2026-11-13",
+      "mutants": 279,
+      "survivors": [
+        {
+          "file": "src/chat/webview/num-field.ts",
+          "mutator": "ConditionalExpression",
+          "replacement": "true",
+          "count": 1
+        }
+      ]
+    },
+    "tool-scope": {
+      "measured": "2026-11-13",
+      "mutants": 103,
+      "survivors": [
+        {
+          "file": "src/core/tools/tool-scope.ts",
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "count": 1
+        },
+        {
+          "file": "src/core/tools/tool-scope.ts",
+          "mutator": "ConditionalExpression",
+          "replacement": "false",
+          "count": 2
+        }
+      ]
+    },
+    "overflow": {
+      "measured": "2026-11-13",
+      "mutants": 203,
+      "survivors": [
+        {
+          "file": "src/core/llm/context-overflow.ts",
+          "mutator": "ConditionalExpression",
+          "replacement": "false",
+          "count": 4
+        },
+        {
+          "file": "src/core/llm/context-overflow.ts",
+          "mutator": "ConditionalExpression",
+          "replacement": "true",
+          "count": 4
+        },
+        {
+          "file": "src/core/llm/context-overflow.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "n >= 0",
+          "count": 1
+        },
+        {
+          "file": "src/core/llm/context-overflow.ts",
+          "mutator": "LogicalOperator",
+          "replacement": "err && \"\"",
+          "count": 1
+        },
+        {
+          "file": "src/core/llm/context-overflow.ts",
+          "mutator": "MethodExpression",
+          "replacement": "parts",
+          "count": 1
+        },
+        {
+          "file": "src/core/llm/context-overflow.ts",
+          "mutator": "Regex",
+          "replacement": "/([\\d.]+)(k?)$/",
+          "count": 1
+        },
+        {
+          "file": "src/core/llm/context-overflow.ts",
+          "mutator": "Regex",
+          "replacement": "/[\\d.,_]\\s*tokens?\\s*>\\s*([\\d.,_]+\\s*k?)\\s*maximum/i",
+          "count": 1
+        },
+        {
+          "file": "src/core/llm/context-overflow.ts",
+          "mutator": "Regex",
+          "replacement": "/^([\\d.]+)(k?)/",
+          "count": 1
+        },
+        {
+          "file": "src/core/llm/context-overflow.ts",
+          "mutator": "StringLiteral",
+          "replacement": "\"\"",
+          "count": 1
+        },
+        {
+          "file": "src/core/llm/context-overflow.ts",
+          "mutator": "StringLiteral",
+          "replacement": "\"Stryker was here!\"",
+          "count": 2
+        }
+      ]
+    },
+    "compactor": {
+      "measured": "2026-11-13",
+      "mutants": 581,
+      "survivors": [
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "ConditionalExpression",
+          "replacement": "false",
+          "count": 10
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "ConditionalExpression",
+          "replacement": "true",
+          "count": 8
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "at < activeStart",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "at <= 0",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "budget >= 0",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "safe <= 0",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "safe >= 0",
+          "count": 3
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "tokensBefore < keepTokens",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "LogicalOperator",
+          "replacement": "safe > 0 || visible[safe]?.role !== \"user\"",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "MethodExpression",
+          "replacement": "all",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "MethodExpression",
+          "replacement": "m[1]",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "MethodExpression",
+          "replacement": "m[2]",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "OptionalChaining",
+          "replacement": "all[activeStart].synthetic",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "OptionalChaining",
+          "replacement": "messages[beforeIdx].meta.inputTokens",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "OptionalChaining",
+          "replacement": "messages[lastIdx].meta.inputTokens",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "OptionalChaining",
+          "replacement": "visible[safe].role",
+          "count": 3
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "Regex",
+          "replacement": "/([\\s\\S]*?)\\r?\\n\\s*-{3,}\\s*\\r?\\n([\\s\\S]*)$/",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "Regex",
+          "replacement": "/^([\\s\\S]*?)\\r?\\n\\s*-{3,}\\s*\\r?\\n([\\s\\S]*)/",
+          "count": 1
+        },
+        {
+          "file": "src/core/sessions/compactor.ts",
+          "mutator": "StringLiteral",
+          "replacement": "\"\"",
+          "count": 4
+        }
+      ]
+    },
+    "loop-guard": {
+      "measured": "2026-11-13",
+      "mutants": 514,
+      "survivors": [
+        {
+          "file": "src/core/agent/loop-guard.ts",
+          "mutator": "ArrayDeclaration",
+          "replacement": "[\"Stryker was here\"]",
+          "count": 1
+        },
+        {
+          "file": "src/core/agent/loop-guard.ts",
+          "mutator": "ConditionalExpression",
+          "replacement": "false",
+          "count": 9
+        },
+        {
+          "file": "src/core/agent/loop-guard.ts",
+          "mutator": "ConditionalExpression",
+          "replacement": "true",
+          "count": 2
+        },
+        {
+          "file": "src/core/agent/loop-guard.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "n >= max",
+          "count": 1
+        },
+        {
+          "file": "src/core/agent/loop-guard.ts",
+          "mutator": "LogicalOperator",
+          "replacement": "!active && !messages",
+          "count": 1
+        },
+        {
+          "file": "src/core/agent/loop-guard.ts",
+          "mutator": "LogicalOperator",
+          "replacement": "sa.size === 0 && sb.size === 0",
+          "count": 1
+        },
+        {
+          "file": "src/core/agent/loop-guard.ts",
+          "mutator": "OptionalChaining",
+          "replacement": "obs.toolCalls[0].name",
+          "count": 2
+        },
+        {
+          "file": "src/core/agent/loop-guard.ts",
+          "mutator": "Regex",
+          "replacement": "/\\s/",
+          "count": 1
+        },
+        {
+          "file": "src/core/agent/loop-guard.ts",
+          "mutator": "StringLiteral",
+          "replacement": "\"\"",
+          "count": 1
+        },
+        {
+          "file": "src/core/agent/loop-guard.ts",
+          "mutator": "StringLiteral",
+          "replacement": "\"Stryker was here!\"",
+          "count": 2
+        }
+      ]
+    },
+    "mode-policy": {
+      "measured": "2026-11-13",
+      "mutants": 753,
+      "survivors": [
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "ConditionalExpression",
+          "replacement": "default:",
+          "count": 1
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "ConditionalExpression",
+          "replacement": "false",
+          "count": 6
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "ConditionalExpression",
+          "replacement": "true",
+          "count": 4
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "args.length >= 0",
+          "count": 1
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "i <= text.length",
+          "count": 2
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "opts.exclude.length >= 0",
+          "count": 1
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "MethodExpression",
+          "replacement": "command",
+          "count": 1
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "MethodExpression",
+          "replacement": "s",
+          "count": 1
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "Regex",
+          "replacement": "/(?<![=\\-])>(?!>)(?!\\s*(?:&\\s*(?:\\d+|-)|=\\s*|\\/dev\\/(?:null|stdout|stderr|fd\\/\\d+|tty)\\b|nul\\b))/i",
+          "count": 1
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "Regex",
+          "replacement": "/(?<![=\\-])>+(?!>)(?!\\s*(?:&\\s*(?:\\d+|-)|=\\S*|\\/dev\\/(?:null|stdout|stderr|fd\\/\\d+|tty)\\b|nul\\b))/i",
+          "count": 1
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "Regex",
+          "replacement": "/(?<![=\\-])>+(?!>)(?!\\s*(?:&\\s*(?:\\d+|-)|=\\s|\\/dev\\/(?:null|stdout|stderr|fd\\/\\d+|tty)\\b|nul\\b))/i",
+          "count": 1
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "Regex",
+          "replacement": "/(?<![=\\-])>+(?!>)(?!\\s*(?:&\\s*(?:\\d|-)|=\\s*|\\/dev\\/(?:null|stdout|stderr|fd\\/\\d+|tty)\\b|nul\\b))/i",
+          "count": 1
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "StringLiteral",
+          "replacement": "\"\"",
+          "count": 14
+        },
+        {
+          "file": "src/core/tools/mode-policy.ts",
+          "mutator": "StringLiteral",
+          "replacement": "\"Stryker was here!\"",
+          "count": 3
+        }
+      ]
+    }
+  }
+}
