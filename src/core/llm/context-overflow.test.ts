@@ -135,6 +135,14 @@ describe("overflowLimitFromError — learn the real window from the rejection", 
     expect(MIN_PLAUSIBLE_LIMIT_TOKENS).toBeGreaterThanOrEqual(256);
   });
 
+  it("survives a body that is not an object at all", () => {
+    // `null` is what a provider SDK hands over when a rejection carries no body. It is NOT a
+    // record: reading `.message` off it throws, and a guard that only asks "is it an object"
+    // would turn a rejection into an exception in the recovery path.
+    expect(overflowLimitFromError(null)).toBeUndefined();
+    expect(isContextOverflowError(null)).toBe(false);
+  });
+
   it("keeps the plausibility floor INCLUSIVE", () => {
     // 256 is the smallest value trusted as a window; 255 is still a stray number.
     const floor = MIN_PLAUSIBLE_LIMIT_TOKENS;
@@ -188,6 +196,12 @@ describe("isContextOverflowError — cross-provider signatures", () => {
       expect(matchedOverflowSignature(new Error(c.message))).toBeTruthy();
     });
   }
+
+  it("accepts a missing apostrophe in `model's`", () => {
+    // Non-native gateways write "the models context length". The optional `'` is what keeps
+    // the family recognised; without it the signature only matches the perfect spelling.
+    expect(isContextOverflowError("This exceeds the models context length")).toBe(true);
+  });
 
   for (const c of NOT_OVERFLOWS) {
     it(`does NOT treat ${c.why} as an overflow`, () => {
@@ -323,6 +337,12 @@ describe("overflowLimitFromError — formatting, thousands and the 'k' suffix", 
     expect(
       overflowLimitFromError({ message: "This endpoint's maximum context length is", body: "200000 tokens" }),
     ).toBe(200000);
+  });
+
+  it("keeps the SPACE before the 'k' in a Gemini-style limit", () => {
+    // Every other pattern tolerates `32 k`; this one used to accept only non-space characters
+    // between the number and the suffix, so `32 k` was read as "no limit".
+    expect(overflowLimitFromError(new Error("maximum number of tokens allowed (32 k)"))).toBe(32000);
   });
 
   it("does NOT mistake a 413 body for a window", () => {
