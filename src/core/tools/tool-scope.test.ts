@@ -119,6 +119,18 @@ describe("reconciling a stored scope with what exists now", () => {
     });
   });
 
+  it("drops a built-in this build no longer ships, even when NOTHING ELSE changed", () => {
+    // `off` is pruned on its own terms: with `mcp` and `analyze` already clean, a scope that still
+    // names a tool the build has removed must be rewritten anyway. Without this case the prune of
+    // `off` was only ever exercised alongside another change, so it could stop working in silence
+    // and the dead name would ride the session forever (reviving if a future build ships it again).
+    expect(reconcileToolScope(scope(["files"], ["Shell", "Removed"]), known)).toEqual({
+      mcp: ["files"],
+      off: ["Shell"],
+      analyze: [],
+    });
+  });
+
   it("drops an Analyze declaration about a server that is gone — it must not revive on reinstall", () => {
     expect(reconcileToolScope(scope(["files"], [], ["mcp__files__read", "mcp__gone__x"]), known)).toEqual({
       mcp: ["files"],
