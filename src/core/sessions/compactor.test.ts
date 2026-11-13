@@ -2054,3 +2054,124 @@ describe("the summary request's budget arithmetic", () => {
     expect(buildSummaryMessages([u("hi")], undefined, Number.NaN)[0].content).not.toContain("Budget:");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The ARITHMETIC boundaries left after the pass above. Same rule as before: each test
+// exists because a mutant survived there, and it asserts the number the guard produces.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("maxSummaryInputTokens — the solution, not merely something that fits", () => {
+  it("returns the ratio's answer to the token, and lets the CAP win when it is smaller", () => {
+    // `room / (1 + share)` is what the provider actually charges (input + the share of it the
+    // summary asks for). A `room * (1 + share)` or `room / (1 − share)` reads as "roughly
+    // right" and is NOT: it hands the summarizer a span that overshoots the window, which is
+    // the one thing this function exists to prevent.
+    const room = 200_000 - summarizerPromptReserve();
+    expect(maxSummaryInputTokens(200_000, 500)).toBe(Math.floor((room / 1.1) * 0.9));
+    // …and when the declared cap is the smaller side, the cap is what binds.
+    expect(maxSummaryInputTokens(200_000, room - 100)).toBe(90);
+  });
+});
+
+describe("the keep budget below ONE message — the window is never erased", () => {
+  // `start < visible.length` is what lets the FIRST step of the walk through: at that point
+  // `start` is still the length, so the "this message does not fit" half of the guard must not
+  // fire. Without it the walk breaks before taking anything, `kept` comes back EMPTY and the
+  // compaction throws the whole session away — the one outcome worse than not compacting.
+  const oneTurn: ChatMessage[] = [
+    u("start " + "s".repeat(400)),
+    {
+      role: "assistant",
+      content: "",
+      timestamp: 2,
+      toolCalls: [{ id: "c1", name: "Read", arguments: { path: "a.ts" } }],
+    } as ChatMessage,
+    { role: "tool", content: "z".repeat(4_000), toolCallId: "c1", timestamp: 3 },
+    a("done " + "d".repeat(40)),
+  ];
+
+  it("keeps the newest message even at budgets of 1 token", () => {
+    for (const budget of [1, 10]) {
+      const plan = planCompactionToBudget(oneTurn, budget);
+      expect(plan.kept.length, `budget ${budget}: the session survives`).toBeGreaterThan(0);
+      expect(plan.toSummarize.length, `budget ${budget}: something is summarized`).toBeGreaterThan(0);
+      // The pair lands INSIDE the turn (there is no boundary above it) and the caller is told.
+      expect(plan.kept[0].role, `budget ${budget}: never an orphan result`).not.toBe("tool");
+      expect(plan.splitTurn, `budget ${budget}: the mid-turn cut is reported`).toBe(true);
+    }
+  });
+
+  it("walks the cut back over EVERY trailing tool result before it commits", () => {
+    // A window that ends with a tool result: `budgetedCut` alone would put the boundary ON the
+    // result, leaving the call above it summarized away — an orphan the provider rejects.
+    const endsWithTool: ChatMessage[] = [
+      ...oneTurn.slice(0, 3),
+      {
+        role: "assistant",
+        content: "",
+        timestamp: 4,
+        toolCalls: [{ id: "c2", name: "Read", arguments: { path: "b.ts" } }],
+      } as ChatMessage,
+      { role: "tool", content: "w".repeat(4_000), toolCallId: "c2", timestamp: 5 },
+    ];
+    const plan = planCompactionToBudget(endsWithTool, 1);
+    expect(plan.kept.length).toBe(2); // the last call AND its result
+    expect(plan.kept[0].role).toBe("assistant");
+    expect((plan.kept[0].toolCalls ?? []).length).toBe(1); // the call the result belongs to
+    expect(plan.splitTurn).toBe(true);
+  });
+});
+
+describe("the overshoot is INCLUSIVE — a summary exactly at the tolerated size is kept", () => {
+  it("does not spend a second call on a summary that lands exactly on budget × 1.15", () => {
+    // `>` not `>=`: the tolerance is a ceiling, and a summary that reaches it exactly has
+    // nothing to gain from a compression pass — which costs a full request.
+    const text = `Summary of past interactions\n---\n${"x".repeat(4600 - 35)}`;
+    const size = estimateTokens(text);
+    expect(size).toBe(1150); // exactly 1000 × 1.15, measured the same way the guard measures
+    const factory = {
+      sent: [] as string[],
+      create: () => ({
+        protocol: "chat" as const,
+        async *stream(messages: { role: string; content: string }[]) {
+          factory.sent.push(messages[messages.length - 1].content);
+          yield { type: "text", content: text };
+        },
+      }),
+    } as unknown as LLMProviderFactory & { sent: string[] };
+    const out = new Compactor(factory).summarize([u("work")], undefined, undefined, {
+      maxSummaryTokens: 1000,
+      maxReplyTokens: 8_192,
+      config: CONFIG,
+    });
+    return out.then((summary) => {
+      expect(factory.sent).toHaveLength(1);
+      expect(summary).toBe(text.trim());
+    });
+  });
+});
+
+describe("the quality floor — a span of EXACTLY 512 tokens is worth a model call", () => {
+  /** A user message whose serialized form costs exactly `target` tokens. */
+  function spanOf(target: number): ChatMessage {
+    let n = target * 4;
+    for (let guard = 0; guard < 5_000; guard++) {
+      const size = estimateTokens(serializeConversation([u("s".repeat(n))]));
+      if (size === target) return u("s".repeat(n));
+      n += size < target ? 1 : -1;
+    }
+    throw new Error("no padding reaches the target");
+  }
+
+  it("compacts, instead of refusing, when the span lands on the floor to the token", () => {
+    // Below the floor the plan stays EMPTY on purpose (a request that produces nothing is
+    // worse than no request); AT it, the span is worth the call. The comparison is `>=`.
+    const head = spanOf(SUMMARY_QUALITY_FLOOR);
+    const oneTurn: ChatMessage[] = [head, a("q".repeat(40)), a("r".repeat(40))];
+    expect(estimateTokens(serializeConversation([head]))).toBe(512);
+    // A budget that forces the cut back to the head message: everything below fits, the head
+    // alone does not — the single-turn case where the fallback picks `budgetedCut`.
+    const plan = planCompactionToBudget(oneTurn, 100);
+    expect(plan.toSummarize).toEqual([head]);
+    expect(plan.splitTurn).toBe(true);
+  });
+});
