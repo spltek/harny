@@ -1328,6 +1328,16 @@ describe("trimHistory — move the window WITHOUT a summary (the fail-safe)", ()
     expect(trimHistory(all, { budgetTokens: 1_000 })).toBeNull();
   });
 
+  it("counts only what a trim COULD MOVE, so a system note never makes a single message look movable", () => {
+    // `visible` is the conversation a trim can move; a `system` note is not part of it. Counting
+    // the note would turn "one message, nothing behind it" into a trim — and the boundary would
+    // land on the note itself, freeing nothing.
+    const sys: ChatMessage = { role: "system", content: "context note", timestamp: 0 };
+    const huge = "x".repeat(400_000);
+    expect(trimHistory([sys, u(huge)], { budgetTokens: 1_000 })).toBeNull();
+    expect(trimHistory([u(huge), sys], { budgetTokens: 1_000 })).toBeNull();
+  });
+
   it("is STICKY in effect: the trimmed window no longer needs anything moved", () => {
     const all = bigHistory(20);
     const first = trimHistory(all, { budgetTokens: 12_000 })!;
