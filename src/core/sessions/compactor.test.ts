@@ -1321,6 +1321,27 @@ describe("trimHistory — move the window WITHOUT a summary (the fail-safe)", ()
     expect(trimHistory(all, { budgetTokens: 1_000_000 })).toBeNull();
   });
 
+  it("treats a budget the view meets EXACTLY as fitting: one token of slack is not a reason to move", () => {
+    // The comparison is `<=`, and the case where it is exact is the one that decides it: with `<`
+    // the trim would "force progress" on a window that already fits, drifting the prefix (and the
+    // prompt cache) for nothing.
+    const all = [u("a".repeat(400)), u("b".repeat(400))];
+    const exact = estimateTokens(serializeConversation(all));
+    expect(trimHistory(all, { budgetTokens: exact })).toBeNull();
+    // …and one token less is genuinely too tight, so the case is not "always null".
+    expect(trimHistory(all, { budgetTokens: exact - 1 })).not.toBeNull();
+  });
+
+  it("refuses a boundary that lands right AFTER the pair, even when the budget says so", () => {
+    // The pair rule is `at <= activeStart + 2`: landing two past it would re-create the same pair
+    // and free nothing. The unit is the rare case that isolates the rule.
+    const all: ChatMessage[] = [...PAIR(), u("a".repeat(400)), u("b".repeat(400))];
+    const budget = estimateTokens(serializeConversation(all.slice(2)));
+    // Precondition: the "recent" suffix opens exactly two past the pair.
+    expect(recentStartFor(all, budget)).toBe(2);
+    expect(trimHistory(all, { budgetTokens: budget })).toBeNull();
+  });
+
   it("cannot fix a SINGLE message bigger than the whole window (an honest limit)", () => {
     // Nothing can be moved out: the one message that does not fit is the newest,
     // and it is the content the model is working on.
