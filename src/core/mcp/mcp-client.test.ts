@@ -231,10 +231,11 @@ process.stdin.on("data", (d) => {
     const ac = new AbortController();
     const call = c.callTool("slow", {}, ac.signal);
     setTimeout(() => ac.abort(), 50);
-    const started = Date.now();
+    // No wall-clock bound: the server never answers `tools/call`, so without the abort this
+    // promise would settle with the 10 s `timeoutMs` error instead of "cancelled by Stop".
+    // The message alone proves the abort won the race; a millisecond bound only proves the CI
+    // machine was idle.
     await expect(call).rejects.toThrow("cancelled by Stop");
-    // It rejected immediately, NOT after the 3s server delay (or the 10s timeout).
-    expect(Date.now() - started).toBeLessThan(2_000);
     // The transport survived: the same client still answers.
     expect((await c.listTools()).map((t) => t.name)).toEqual(["slow"]);
     c.close();

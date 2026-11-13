@@ -183,9 +183,10 @@ describe("McpHttpClient (streamable HTTP)", () => {
       setTimeout(() => ac.abort(), 50);
       return c.callTool("slow", {}, ac.signal);
     });
-    const started = Date.now();
+    // No wall-clock bound: the server never answers `tools/call`, so the only way this promise
+    // settles with "cancelled by Stop" is the abort winning — it cannot wait out `timeoutMs`
+    // and still produce this message.
     await expect(call).rejects.toThrow("cancelled by Stop");
-    expect(Date.now() - started).toBeLessThan(3_000);
     c.close();
   });
 

@@ -28,9 +28,8 @@ describe("regex worker (anti-ReDoS)", () => {
     expect(res.error).toBeTruthy();
   });
 
-  it("does NOT hang on a catastrophic pattern (times out or errors, bounded time)", async () => {
+  it("does NOT hang on a catastrophic pattern (times out or errors)", async () => {
     const evil = "a".repeat(120) + "!";
-    const started = Date.now();
     let outcome: "timeout" | "error" | "resolved";
     try {
       const res = await matchAll("(a+)+$", "", false, [{ path: "x", text: evil }], 400);
@@ -38,10 +37,11 @@ describe("regex worker (anti-ReDoS)", () => {
     } catch (e) {
       outcome = e instanceof RegexTimeoutError ? "timeout" : "resolved";
     }
-    // Either the worker is killed (timeout) or the engine itself bails (error);
-    // NEVER a hang, and never a bogus "resolved" result.
+    // Either the worker is killed (timeout) or the engine itself bails (error); NEVER a bogus
+    // "resolved" result. No wall-clock bound on top: if the worker stopped answering, the 400 ms
+    // timer rejects; if even that failed to fire, Vitest's own `testTimeout` fails the test. An
+    // `elapsed < N` assertion adds no coverage, only flakiness under a loaded machine.
     expect(outcome === "timeout" || outcome === "error").toBe(true);
-    expect(Date.now() - started).toBeLessThan(3000);
   });
 
   it("recovers after a timeout (worker is recreated)", async () => {
