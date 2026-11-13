@@ -667,3 +667,598 @@ describe("Loop Guard OFF — the guard is completely inert", () => {
     expect(g.beforeToolCall(tc, true).mode).toBe("run");
   });
 });
+
+describe("state a new run must not inherit (reset / beginTurn)", () => {
+  /** Exactly 200 characters of the same token: its trigrams all repeat, so it IS a loop. */
+  const looping = "ab ".repeat(67).trim();
+  const eager = {
+    ...DEFAULT_LOOP_GUARD_OPTIONS,
+    reasoningMinTokens: 0,
+    reasoningThreshold: 0.2,
+    guardResponse: true,
+    answerMinTokens: 0,
+    answerThreshold: 0.2,
+  };
+
+  it("reset() wipes EVERY piece of state, not just the levels", () => {
+    const g = new LoopGuard(eager);
+    const read = toolCall("Read", { path: "cached" });
+    const bad = toolCall("Read", { path: "failed" });
+    const flying = toolCall("Read", { path: "inflight" });
+    g.beforeToolCall(read, true);
+    g.afterToolCall(read, false, "body", true);
+    g.beforeToolCall(bad, true);
+    g.afterToolCall(bad, true, "ENOENT", true);
+    g.beforeToolCall(flying, true);
+    expect(g.observeThinking(looping)).toBe(true);
+    expect(g.observeAnswer(looping)).toBe(true);
+    for (let i = 0; i < 2; i++)
+      expect(g.observeTurn({ content: "", thinking: "", toolCalls: [], toolResults: [] }).kind).toBe("react");
+
+    g.reset();
+
+    // No cache, no remembered failure, nothing in flight: every call starts clean.
+    expect(g.beforeToolCall(read, true).mode).toBe("run");
+    expect(g.beforeToolCall(bad, true).mode).toBe("run");
+    expect(g.beforeToolCall(flying, true).mode).toBe("run");
+    // The per-turn flags are back to "not flagged": both detectors fire again.
+    expect(g.observeThinking(looping)).toBe(true);
+    expect(g.observeAnswer(looping)).toBe(true);
+    // …and the escalation restarted, so an empty turn is level ONE again (react, not stop).
+    expect(g.observeTurn({ content: "", thinking: "", toolCalls: [], toolResults: [] }).kind).toBe("react");
+  });
+
+  it("beginTurn() clears the per-turn flags but KEEPS the levels", () => {
+    const g = new LoopGuard(eager);
+    expect(g.observeThinking(looping)).toBe(true);
+    expect(g.observeAnswer(looping)).toBe(true);
+    g.beginTurn();
+    // A new turn re-checks from scratch: the previous turn's verdict is not inherited.
+    expect(g.observeThinking(looping)).toBe(true);
+    expect(g.observeAnswer(looping)).toBe(true);
+    // Levels SURVIVE beginTurn (only reset() clears them): 1 → 2, still a react.
+    expect(g.noteReasoningLoop().level).toBe(1);
+    g.beginTurn();
+    const second = g.noteReasoningLoop();
+    expect(second.kind).toBe("react");
+    expect(second.level).toBe(2);
+  });
+});
+
+describe("mid-stream checks are amortised: one re-check per 200 new characters", () => {
+  const looping = "ab ".repeat(67).trim();
+  const prose =
+    "I need to read the config file to understand the provider setup. Then I will locate the tool registry " +
+    "and check how tools are registered before running anything that touches the disk or the network layer.";
+
+  it("checks at 200 chars, then waits for another 200 before checking again", () => {
+    const g = new LoopGuard({ ...DEFAULT_LOOP_GUARD_OPTIONS, reasoningMinTokens: 0, reasoningThreshold: 0.2 });
+    expect(prose.length).toBeGreaterThanOrEqual(200);
+    const first = prose.slice(0, 200);
+    expect(first.length).toBe(200);
+    // Checked — and clean, so the guard keeps quiet instead of claiming a loop.
+    expect(g.observeThinking(first)).toBe(false);
+    // Only +3 characters: the next check is 200 characters away, so the loop pattern
+    // that just appeared is NOT seen yet (this is what keeps the call cheap).
+    expect(g.observeThinking(first + "ab ")).toBe(false);
+    // Another 200 later the text is mostly the pattern: now it IS flagged.
+    expect(g.observeThinking(first + looping)).toBe(true);
+  });
+});
+
+describe("each type's escalation is reset by a turn where it is not active", () => {
+  const neutral = { content: "an answer", thinking: "", toolCalls: [], toolResults: [] };
+  const emptyTurn = { content: "", thinking: "", toolCalls: [], toolResults: [] };
+
+  it("tool-failure", () => {
+    const g = new LoopGuard();
+    const failing = (path: string) => ({
+      content: "",
+      thinking: "",
+      toolCalls: [toolCall("Read", { path })],
+      toolResults: [outcome("Read", { path }, true, "err")],
+    });
+    expect(g.observeTurn(failing("a")).kind).toBe("continue");
+    expect(g.observeTurn(failing("a")).kind).toBe("react"); // level 1
+    expect(g.observeTurn(failing("a")).kind).toBe("react"); // level 2
+    expect(g.observeTurn(neutral).kind).toBe("continue");
+    expect(g.observeTurn(failing("a")).kind).toBe("continue");
+    // Back to level 1: the run gets its two nudges again, it does not stop straight away.
+    expect(g.observeTurn(failing("a")).kind).toBe("react");
+  });
+
+  it("error-streak", () => {
+    const g = new LoopGuard();
+    const failing = (path: string) => ({
+      content: "",
+      thinking: "",
+      toolCalls: [toolCall("Read", { path })],
+      toolResults: [outcome("Read", { path }, true, "err")],
+    });
+    for (let i = 0; i < 3; i++) expect(g.observeTurn(failing(`a${i}`)).kind).toBe(i < 2 ? "continue" : "react");
+    expect(g.observeTurn(failing("a3")).kind).toBe("react"); // level 2
+    expect(g.observeTurn(neutral).kind).toBe("continue");
+    for (let i = 0; i < 2; i++) expect(g.observeTurn(failing(`b${i}`)).kind).toBe("continue");
+    expect(g.observeTurn(failing("b2")).kind).toBe("react");
+  });
+
+  it("tool-repeat", () => {
+    const g = new LoopGuard();
+    const same = (path: string) => ({
+      content: "",
+      thinking: "",
+      toolCalls: [toolCall("Read", { path })],
+      toolResults: [outcome("Read", { path }, false)],
+    });
+    for (let i = 0; i < 3; i++) expect(g.observeTurn(same("a")).kind).toBe(i < 2 ? "continue" : "react");
+    expect(g.observeTurn(same("a")).kind).toBe("react"); // level 2
+    expect(g.observeTurn(neutral).kind).toBe("continue");
+    for (let i = 0; i < 2; i++) expect(g.observeTurn(same("a")).kind).toBe("continue");
+    expect(g.observeTurn(same("a")).kind).toBe("react");
+  });
+
+  it("reasoning (cross-turn)", () => {
+    const g = new LoopGuard();
+    const text =
+      "I should inspect the configuration module and then look at how providers are created, because the " +
+      "issue could be in the base URL handling or in the model resolution logic of the model factory itself.";
+    const think = (path: string) => ({
+      content: "working",
+      thinking: text,
+      toolCalls: [toolCall("Read", { path })],
+      toolResults: [outcome("Read", { path }, false)],
+    });
+    expect(g.observeTurn(think("a")).kind).toBe("continue");
+    expect(g.observeTurn(think("b")).kind).toBe("react"); // level 1
+    expect(g.observeTurn(think("c")).kind).toBe("react"); // level 2
+    expect(g.observeTurn(neutral).kind).toBe("continue");
+    expect(g.observeTurn(think("d")).kind).toBe("continue"); // no previous reasoning any more
+    const again = g.observeTurn(think("e"));
+    expect(again.kind).toBe("react");
+    if (again.kind === "react") expect(again.level).toBe(1);
+  });
+
+  it("response", () => {
+    const g = new LoopGuard({ ...DEFAULT_LOOP_GUARD_OPTIONS, guardResponse: true });
+    const text = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu ".repeat(30);
+    const looping = { content: text, thinking: "", toolCalls: [], toolResults: [] };
+    expect(g.observeTurn(looping).kind).toBe("react"); // level 1
+    expect(g.observeTurn(looping).kind).toBe("react"); // level 2
+    expect(g.observeTurn(neutral).kind).toBe("continue");
+    const again = g.observeTurn(looping);
+    expect(again.kind).toBe("react");
+    if (again.kind === "react") expect(again.level).toBe(1);
+    // …and the empty-turn detector is a DIFFERENT type: reaching nothing here proves it.
+    expect(g.observeTurn(emptyTurn).kind).toBe("react");
+  });
+});
+
+describe("turn classification, the fine print", () => {
+  it("one success among failures is NOT a failure streak", () => {
+    const g = new LoopGuard();
+    const mixed = (path: string) => ({
+      content: "",
+      thinking: "",
+      toolCalls: [toolCall("Read", { path }), toolCall("Read", { path: `${path}-b` })],
+      toolResults: [outcome("Read", { path }, true, "err"), outcome("Read", { path: `${path}-b` }, false, "ok")],
+    });
+    for (const p of ["a", "b", "c", "d"]) expect(g.observeTurn(mixed(p)).kind).toBe("continue");
+  });
+
+  it("a turn with no tool calls empties the repeat window (a reset is progress)", () => {
+    const g = new LoopGuard(resolveLoopGuardOptions("high")); // window 10, threshold 2
+    const same = {
+      content: "",
+      thinking: "",
+      toolCalls: [toolCall("Read", { path: "a" })],
+      toolResults: [outcome("Read", { path: "a" }, false)],
+    };
+    const spent = { content: "let me think", thinking: "", toolCalls: [], toolResults: [] };
+    expect(g.observeTurn(same).kind).toBe("continue");
+    expect(g.observeTurn(spent).kind).toBe("continue");
+    // The identical call is seen for the FIRST time again: no window carries it over.
+    expect(g.observeTurn(same).kind).toBe("continue");
+  });
+
+  it("a failure streak is broken by a turn that succeeds", () => {
+    const g = new LoopGuard();
+    const failing = (path: string) => ({
+      content: "",
+      thinking: "",
+      toolCalls: [toolCall("Read", { path })],
+      toolResults: [outcome("Read", { path }, true, "err")],
+    });
+    const ok = (path: string) => ({
+      content: "",
+      thinking: "",
+      toolCalls: [toolCall("Read", { path })],
+      toolResults: [outcome("Read", { path }, false, "ok")],
+    });
+    expect(g.observeTurn(failing("a")).kind).toBe("continue");
+    expect(g.observeTurn(ok("b")).kind).toBe("continue");
+    expect(g.observeTurn(failing("c")).kind).toBe("continue");
+  });
+
+  it("whitespace-only content and thinking is still an EMPTY turn", () => {
+    const g = new LoopGuard();
+    const decision = g.observeTurn({ content: "   ", thinking: "\n\t ", toolCalls: [], toolResults: [] });
+    expect(decision.kind).toBe("react");
+    if (decision.kind === "react") {
+      expect(decision.type).toBe("empty");
+      // Whitespace is not "reasoning": the nudge must be the no-reasoning one.
+      expect(decision.nudge).toContain("empty (no text, no tool call)");
+      expect(decision.nudge).not.toContain("produced reasoning");
+    }
+  });
+});
+
+describe("the nudges say what to do (they are the product, not decoration)", () => {
+  const same = {
+    content: "",
+    thinking: "",
+    toolCalls: [toolCall("Shell", { command: "ls" })],
+    toolResults: [outcome("Shell", { command: "ls" }, false)],
+  };
+
+  it("tool-repeat: names the tool and points at the read-only tools", () => {
+    const g = new LoopGuard(resolveLoopGuardOptions("high"));
+    expect(g.observeTurn(same).kind).toBe("continue");
+    const d = g.observeTurn(same);
+    expect(d.kind).toBe("react");
+    if (d.kind === "react") {
+      expect(d.nudge).toContain('You called the SAME tool ("Shell") with identical arguments 3+ times');
+      expect(d.nudge).toContain("STOP repeating it. Change approach NOW");
+      expect(d.nudge).toContain("prefer these over Shell");
+      expect(d.nudge).toContain("Then write your final report.");
+      expect(d.note).toContain("identical successful tool call repeated");
+    }
+  });
+
+  it("the error streak reports the tools and the count", () => {
+    const g = new LoopGuard();
+    const turn = (path: string) => ({
+      content: "",
+      thinking: "",
+      toolCalls: [toolCall("Read", { path })],
+      toolResults: [outcome("Read", { path }, true, "err"), outcome("Write", { path }, true, "err")],
+    });
+    const kinds = ["a", "b", "c"].map((p) => g.observeTurn(turn(p)));
+    expect(kinds.slice(0, 2).map((k) => k.kind)).toEqual(["continue", "continue"]);
+    const d = kinds[2];
+    expect(d.kind).toBe("react");
+    if (d.kind !== "react") return;
+    expect(d.type).toBe("error-streak");
+    expect(d.nudge).toContain("3 turns in a row ended with ALL tools failing (Read, Write)");
+    expect(d.nudge).toContain("try a DIFFERENT approach");
+    expect(d.note).toContain("error streak (3 turns of failures)");
+    // The stop message is the one a user sees in the transcript.
+    expect(g.observeTurn(turn("d")).kind).toBe("react");
+    const stop = g.observeTurn(turn("e"));
+    expect(stop.kind).toBe("stop");
+    if (stop.kind === "stop") expect(stop.message).toContain("consecutive turns of tool errors (Read, Write)");
+  });
+
+  it("reasoning, empty and tool-failure each carry their own sentence", () => {
+    const reasons = new LoopGuard();
+    const first = reasons.noteReasoningLoop();
+    if (first.kind === "react") {
+      expect(first.nudge).toContain("Your reasoning is LOOPING");
+      expect(first.nudge).toContain("STOP reasoning now");
+      expect(first.note).toContain("reasoning loop detected");
+    }
+    reasons.noteReasoningLoop();
+    const stop = reasons.noteReasoningLoop();
+    expect(stop.kind).toBe("stop");
+    if (stop.kind === "stop")
+      expect(stop.message).toContain("Reasoning loop not resolved after repeated interventions.");
+
+    const answers = new LoopGuard({ ...DEFAULT_LOOP_GUARD_OPTIONS, guardResponse: true });
+    const answer = answers.noteAnswerLoop();
+    if (answer.kind === "react") {
+      expect(answer.nudge).toContain("Your final answer is LOOPING");
+      expect(answer.nudge).toContain("STOP repeating it. Finish the answer concisely");
+      expect(answer.note).toContain("response loop detected");
+    }
+    answers.noteAnswerLoop();
+    const answerStop = answers.noteAnswerLoop();
+    if (answerStop.kind === "stop") expect(answerStop.message).toContain("Response loop not resolved");
+
+    const empties = new LoopGuard();
+    const emptyDecision = empties.observeTurn({ content: "", thinking: "", toolCalls: [], toolResults: [] });
+    if (emptyDecision.kind === "react") expect(emptyDecision.note).toContain("empty turn (no text, no tool call)");
+    empties.observeTurn({ content: "", thinking: "", toolCalls: [], toolResults: [] });
+    const emptyStop = empties.observeTurn({ content: "", thinking: "", toolCalls: [], toolResults: [] });
+    if (emptyStop.kind === "stop") expect(emptyStop.message).toContain("kept producing empty turns");
+
+    const failing = new LoopGuard();
+    const failObs = {
+      content: "",
+      thinking: "",
+      toolCalls: [toolCall("Read", { path: "a" })],
+      toolResults: [outcome("Read", { path: "a" }, true, "err")],
+    };
+    failing.observeTurn(failObs);
+    const failReact = failing.observeTurn(failObs);
+    if (failReact.kind === "react") {
+      expect(failReact.nudge).toContain("Re-Read the target, fix the arguments, or use a different tool/approach");
+      expect(failReact.note).toContain("it was not re-run and a corrective was injected");
+    }
+    failing.observeTurn(failObs);
+    const failStop = failing.observeTurn(failObs);
+    if (failStop.kind === "stop") expect(failStop.message).toContain("kept repeating the same failing tool call");
+  });
+});
+
+describe("cross-turn boundaries: strictly longer than the floor, similarity INCLUSIVE", () => {
+  it("exactly at the length floor is NOT judged; one more character is", () => {
+    const g = new LoopGuard(); // crossTurnMinLength 120
+    const exactly = "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor"
+      .repeat(2)
+      .slice(0, 120);
+    expect(exactly.length).toBe(120);
+    const turn = (path: string, thinking: string) => ({
+      content: "progress",
+      thinking,
+      toolCalls: [toolCall("Read", { path })],
+      toolResults: [outcome("Read", { path }, false)],
+    });
+    expect(g.observeTurn(turn("a", exactly)).kind).toBe("continue");
+    // 120 chars: at the floor, not above it → no judgement even though the text is identical.
+    expect(g.observeTurn(turn("b", exactly)).kind).toBe("continue");
+    // 121 chars: identical text, and now it IS judged → a cross-turn reasoning loop.
+    const judged = new LoopGuard();
+    const above = `${exactly}x`;
+    expect(judged.observeTurn(turn("c", above)).kind).toBe("continue");
+    const flagged = judged.observeTurn(turn("d", above));
+    expect(flagged.kind).toBe("react");
+    if (flagged.kind === "react") expect(flagged.type).toBe("reasoning");
+  });
+
+  it("padding with whitespace does not make short thinking long enough", () => {
+    const g = new LoopGuard(); // crossTurnMinLength 120
+    const short = `${"lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor".repeat(2).slice(0, 118)}\n\n`;
+    expect(short.length).toBe(120);
+    const turn = (path: string) => ({
+      content: "progress",
+      thinking: short,
+      toolCalls: [toolCall("Read", { path })],
+      toolResults: [outcome("Read", { path }, false)],
+    });
+    expect(g.observeTurn(turn("a")).kind).toBe("continue");
+    expect(g.observeTurn(turn("b")).kind).toBe("continue");
+  });
+
+  it("a similarity EXACTLY at the threshold already flags the loop", () => {
+    // 17 shared words out of a 20-word union = 0.85 = the medium threshold.
+    const shared = Array.from({ length: 17 }, (_, i) => `common${i}`).join(" ");
+    const a = `${shared} onlya1 onlya2 onlya3`;
+    const b = shared;
+    expect(thinkingSimilarity(a, b)).toBeCloseTo(17 / 20, 5);
+    const g = new LoopGuard({ ...DEFAULT_LOOP_GUARD_OPTIONS, crossTurnSimilarity: thinkingSimilarity(a, b) });
+    const turn = (path: string, thinking: string) => ({
+      content: "progress",
+      thinking,
+      toolCalls: [toolCall("Read", { path })],
+      toolResults: [outcome("Read", { path }, false)],
+    });
+    expect(g.observeTurn(turn("a", a)).kind).toBe("continue");
+    const d = g.observeTurn(turn("b", b));
+    expect(d.kind).toBe("react");
+    if (d.kind === "react") expect(d.type).toBe("reasoning");
+  });
+});
+
+describe("dedup bookkeeping: small payloads, first error wins", () => {
+  it("reports the FIRST failure, not the latest rewrite of it", () => {
+    const g = new LoopGuard();
+    const tc = toolCall("Read", { path: "a" });
+    g.afterToolCall(tc, true, "FIRST-ERROR", true);
+    g.afterToolCall(tc, true, "SECOND-ERROR", true);
+    const d = g.beforeToolCall(tc, true);
+    expect(d.mode).toBe("refuse");
+    if (d.mode === "refuse") expect(d.content).toContain("FIRST-ERROR");
+  });
+
+  it("truncates what it stores, so a huge payload cannot live in the guard", () => {
+    const g = new LoopGuard();
+    const tc = toolCall("Read", { path: "big" });
+    const huge = `${"x".repeat(700)}-TAIL`;
+    g.afterToolCall(tc, true, huge, true);
+    const refused = g.beforeToolCall(tc, true);
+    if (refused.mode === "refuse") expect(refused.content).not.toContain("-TAIL");
+
+    const read = toolCall("Read", { path: "big2" });
+    const body = `${"y".repeat(25_000)}-END`;
+    g.afterToolCall(read, false, body, true);
+    g.beforeToolCall(read, true);
+    const reused = g.beforeToolCall(read, true);
+    if (reused.mode === "reuse") {
+      expect(reused.content).not.toContain("-END");
+      expect(reused.content.length).toBeLessThan(21_000);
+    }
+  });
+});
+
+describe("tokenize / trigramDuplication edge shapes", () => {
+  it("punctuation BETWEEN words separates them (it is replaced, not deleted)", () => {
+    // Deleting the punctuation would fuse "a,b" into one token, and a fused token is
+    // invisible to every similarity check built on top of it.
+    expect(tokenize("a,b")).toEqual(["a", "b"]);
+    expect(tokenize("file.ts")).toEqual(["file", "ts"]);
+  });
+
+  it("too few tokens to form a trigram is zero duplication, not NaN", () => {
+    expect(trigramDuplication("a b")).toBe(0);
+    expect(trigramDuplication("a")).toBe(0);
+    expect(trigramDuplication("")).toBe(0);
+  });
+
+  it("an empty side of similarity is 0, never NaN", () => {
+    expect(thinkingSimilarity("", "")).toBe(0);
+    expect(thinkingSimilarity("a b", "")).toBe(0);
+    expect(thinkingSimilarity("", "a b")).toBe(0);
+  });
+});
+
+describe("the amortisation is what keeps every delta cheap — for BOTH streams", () => {
+  const looping = "ab ".repeat(67).trim();
+  const prose =
+    "I need to read the config file to understand the provider setup. Then I will locate the tool registry " +
+    "and check how tools are registered before running anything that touches the disk or the network layer.";
+  const eager = {
+    ...DEFAULT_LOOP_GUARD_OPTIONS,
+    guardResponse: true,
+    reasoningMinTokens: 0,
+    reasoningThreshold: 0.2,
+    answerMinTokens: 0,
+    answerThreshold: 0.2,
+  };
+
+  it("a delta SHORTER than 200 chars is never inspected, even when it is pure loop", () => {
+    const g = new LoopGuard(eager);
+    const head = prose.slice(0, 200);
+    expect(g.observeThinking(head)).toBe(false); // checked: clean
+    // +150 characters of an obvious pattern: the text as a whole is now ~40% duplicated,
+    // but only 150 characters arrived, so the guard must NOT look yet.
+    expect(g.observeThinking(head + looping.slice(0, 150))).toBe(false);
+    // +200 arrived: now it looks, and the loop is there.
+    expect(g.observeThinking(head + looping)).toBe(true);
+  });
+
+  it("the answer stream is amortised the same way", () => {
+    const g = new LoopGuard(eager);
+    const head = prose.slice(0, 200);
+    expect(g.observeAnswer(head)).toBe(false); // clean
+    expect(g.observeAnswer(head + looping.slice(0, 150))).toBe(false); // not inspected
+    expect(g.observeAnswer(head + looping)).toBe(true);
+  });
+
+  it("a long but varied answer is not a loop", () => {
+    const g = new LoopGuard(eager);
+    const varied = `${prose} ${prose.split(" ").reverse().join(" ")} ${prose.replace(/e/g, "a")}`;
+    expect(varied.length).toBeGreaterThan(400);
+    expect(g.observeAnswer(varied)).toBe(false);
+  });
+});
+
+describe("the observeTurn branches carry their own sentences", () => {
+  const answer = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu ".repeat(30);
+
+  it("response: react with the answer nudge, then stop with the answer stop", () => {
+    const g = new LoopGuard({ ...DEFAULT_LOOP_GUARD_OPTIONS, guardResponse: true });
+    const obs = { content: answer, thinking: "", toolCalls: [], toolResults: [] };
+    const first = g.observeTurn(obs);
+    expect(first.kind).toBe("react");
+    if (first.kind === "react") {
+      expect(first.nudge).toContain("Your previous answer repeated itself. Do NOT repeat it");
+      expect(first.note).toContain("response loop detected in the answer");
+    }
+    g.observeTurn(obs);
+    const stop = g.observeTurn(obs);
+    expect(stop.kind).toBe("stop");
+    if (stop.kind === "stop") expect(stop.message).toContain("kept repeating the same answer");
+  });
+
+  it("cross-turn reasoning: react with the previous-turn nudge, then stop", () => {
+    const g = new LoopGuard();
+    const text =
+      "I should inspect the configuration module and then look at how providers are created, because the " +
+      "issue could be in the base URL handling or in the model resolution logic of the model factory itself.";
+    const turn = (path: string) => ({
+      content: "working",
+      thinking: text,
+      toolCalls: [toolCall("Read", { path })],
+      toolResults: [outcome("Read", { path }, false)],
+    });
+    expect(g.observeTurn(turn("a")).kind).toBe("continue");
+    const first = g.observeTurn(turn("b"));
+    expect(first.kind).toBe("react");
+    if (first.kind === "react") {
+      expect(first.nudge).toContain("Your reasoning is repeating the SAME content as the previous turn");
+      expect(first.nudge).toContain("next tool or write your final answer");
+      expect(first.note).toContain("cross-turn reasoning loop");
+    }
+    expect(g.observeTurn(turn("c")).kind).toBe("react");
+    const stop = g.observeTurn(turn("d"));
+    expect(stop.kind).toBe("stop");
+    if (stop.kind === "stop") expect(stop.message).toContain("kept repeating the same reasoning across turns");
+  });
+});
+
+describe("the repeat WINDOW is exactly toolRepeatWindow entries", () => {
+  // Only the frequency check can fire here: consecutiveness is set out of reach, so
+  // what these two sequences pin is the WINDOW, not the consecutive counter.
+  const wide = { ...DEFAULT_LOOP_GUARD_OPTIONS, toolRepeatConsecutive: 99 };
+  const turn = (path: string) => ({
+    content: "",
+    thinking: "",
+    toolCalls: [toolCall("Read", { path })],
+    toolResults: [outcome("Read", { path }, false)],
+  });
+
+  it("an occurrence older than the window is FORGOTTEN", () => {
+    const g = new LoopGuard(wide); // window 16, window threshold 3
+    expect(g.observeTurn(turn("a")).kind).toBe("continue"); // the old occurrence
+    for (let i = 0; i < 14; i++) expect(g.observeTurn(turn(`b${i}`)).kind).toBe("continue");
+    expect(g.observeTurn(turn("a")).kind).toBe("continue"); // 2nd — inside
+    // The first "a" has slid out: only two of them are in the window, so no loop yet.
+    expect(g.observeTurn(turn("a")).kind).toBe("continue");
+  });
+
+  it("an occurrence still INSIDE the window counts", () => {
+    const g = new LoopGuard(wide);
+    expect(g.observeTurn(turn("a")).kind).toBe("continue"); // 15 turns back — still inside
+    for (let i = 0; i < 13; i++) expect(g.observeTurn(turn(`b${i}`)).kind).toBe("continue");
+    expect(g.observeTurn(turn("a")).kind).toBe("continue"); // 2nd
+    const third = g.observeTurn(turn("a")); // 3rd, and all three are in the 16-entry window
+    expect(third.kind).toBe("react");
+    if (third.kind === "react") expect(third.type).toBe("tool-repeat");
+  });
+});
+
+describe("a disabled guard records nothing", () => {
+  it("state collected while OFF does not come back when it is switched ON", () => {
+    const g = new LoopGuard(resolveLoopGuardOptions("off"));
+    const tc = toolCall("Read", { path: "a" });
+    for (let i = 0; i < 3; i++) {
+      expect(g.beforeToolCall(tc, true).mode).toBe("run");
+      g.afterToolCall(tc, true, "ENOENT", true);
+    }
+    g.setOptions(resolveLoopGuardOptions("medium"));
+    // Nothing was kept from the disabled phase: this is a FIRST call, not a repeat.
+    expect(g.beforeToolCall(tc, true).mode).toBe("run");
+  });
+});
+
+describe("whitespace padding cannot smuggle thinking past the length floor", () => {
+  it("121 raw characters that trim to 118 are still too short", () => {
+    const g = new LoopGuard(); // crossTurnMinLength 120
+    const short = `${"lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor".repeat(2).slice(0, 118)}\n\n\n`;
+    expect(short.length).toBe(121);
+    const turn = (path: string) => ({
+      content: "progress",
+      thinking: short,
+      toolCalls: [toolCall("Read", { path })],
+      toolResults: [outcome("Read", { path }, false)],
+    });
+    expect(g.observeTurn(turn("a")).kind).toBe("continue");
+    expect(g.observeTurn(turn("b")).kind).toBe("continue");
+  });
+});
+
+describe("tool-repeat: the stop message names the call", () => {
+  it("reports the tool and the fact that the arguments did not change", () => {
+    const g = new LoopGuard(resolveLoopGuardOptions("high")); // maxNudges 3
+    const same = {
+      content: "",
+      thinking: "",
+      toolCalls: [toolCall("Shell", { command: "ls" })],
+      toolResults: [outcome("Shell", { command: "ls" }, false)],
+    };
+    expect(g.observeTurn(same).kind).toBe("continue");
+    for (let i = 0; i < 3; i++) expect(g.observeTurn(same).kind).toBe("react");
+    const stop = g.observeTurn(same);
+    expect(stop.kind).toBe("stop");
+    if (stop.kind === "stop") expect(stop.message).toContain('The model called "Shell" with identical arguments');
+  });
+});
