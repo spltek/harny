@@ -238,3 +238,103 @@ describe("isRequestRejection / providerErrorStatus — the status leg", () => {
     expect(label("Please reduce the length of the messages.")).toBe("Groq/OpenRouter/llama.cpp");
   });
 });
+
+/**
+ * The dev log names the family that matched, so the label is part of the contract —
+ * and asserting it is also what keeps the families apart. Several texts match more
+ * than one pattern (OpenAI's own message matches two), the FIRST one wins by order,
+ * and without a label assertion a whole signature could be deleted unnoticed.
+ */
+const LABELS: Array<[text: string, label: string]> = [
+  ['{"error":{"code":"context_length_exceeded"}}', "OpenAI error code"],
+  ["This endpoint's maximum context length is 200000 tokens", "OpenAI-compatible"],
+  ["Please reduce the length of the conversation.", "Groq/OpenRouter/llama.cpp"],
+  ["prompt is too long: 250123 tokens > 200000 maximum", "Anthropic-style"],
+  // Gemini's first phrasing, WITHOUT the "exceeds the maximum number of tokens"
+  // that the second signature would catch: this is the one that names the family.
+  ["The input token count (9000) exceeds the limit.", "Gemini"],
+  ["The request exceeds the maximum number of tokens.", "Gemini"],
+  ["the request exceeds the available context size", "llama.cpp"],
+  ["input length exceeds the context length", "Ollama"],
+  ["Context window exceeded", "local servers"],
+  // "exceed", not "exceeds": the singular is written by the older gateways.
+  ["This would exceed the model's context length.", "generic"],
+  // ... and with no possessive at all.
+  ["This would exceed the context length.", "generic"],
+  ["Too many tokens", "Mistral/Cohere"],
+  ["input too long for this model", "generic gateway"],
+];
+
+describe("matchedOverflowSignature — one label per family", () => {
+  for (const [text, label] of LABELS) {
+    it(`calls it ${label}: ${text.slice(0, 48)}`, () => {
+      expect(matchedOverflowSignature(new Error(text))).toBe(label);
+      expect(isContextOverflowError(new Error(text))).toBe(true);
+    });
+  }
+});
+
+/**
+ * The bodies are JSON produced by somebody else's serializer: pretty-printed ones
+ * put a space before the colon, some wrap long strings, and a JSON string carries
+ * its own newlines. None of that changes what the provider means.
+ */
+describe("providerErrorStatus — the status sits in differently formatted JSON", () => {
+  it("reads it with and without the spaces a pretty-printer leaves", () => {
+    expect(providerErrorStatus(new Error('{"status" : 400}'))).toBe(400);
+    expect(providerErrorStatus(new Error('{"status":400}'))).toBe(400);
+    expect(providerErrorStatus(new Error("OpenAI API error\n413: {…}"))).toBe(413);
+  });
+});
+
+/**
+ * Same story for the limit: the number arrives with a newline in front of it, with
+ * the suffixed form the short messages use ("128k"), or with a space before the k.
+ * Each of those is a different branch of the same expression, so each gets a case.
+ */
+describe("overflowLimitFromError — formatting, thousands and the 'k' suffix", () => {
+  const cases: Array<[text: string, expected: number]> = [
+    ["This model's maximum context length is 128k tokens", 128000],
+    ["This model's maximum context length is 128 k tokens", 128000],
+    ["the model only supports 32k", 32000],
+    ["The engine's maximum model length is 8k", 8000],
+    ["the limit is 4096 token", 4096],
+    // Hand-written messages drop a space here and there, or put one where nobody
+    // expects it ("128 k"). Each of these is a different quantifier in the pattern.
+    ["The engine's maximum model length is 8 k", 8000],
+    ["the model only supports 32 k", 32000],
+    ["context length exceeded:135000>128000", 128000],
+    ["context length exceeded: 135000 > 128 k", 128000],
+    ["prompt is too long: 250123 tokens>200000 maximum", 200000],
+    ["prompt is too long: 250123 tokens > 200 k maximum", 200000],
+    ["context length exceeded:  135000 >\n  128000", 128000],
+    ["prompt is too long: 250123 tokens  >  200000 maximum", 200000],
+  ];
+  for (const [text, expected] of cases) {
+    it(`reads ${JSON.stringify(text).slice(0, 60)}`, () => {
+      expect(overflowLimitFromError(new Error(text))).toBe(expected);
+    });
+  }
+
+  it("joins the parts of a wrapped error WITH a separator", () => {
+    // A provider that puts the sentence in `message` and the number in `body` is a
+    // real shape (the SDK builds them separately). Joined without a space, "is" and
+    // "200000" become one word and the limit is lost.
+    expect(
+      overflowLimitFromError({ message: "This endpoint's maximum context length is", body: "200000 tokens" }),
+    ).toBe(200000);
+  });
+
+  it("does NOT mistake a 413 body for a window", () => {
+    // Nothing here is a number the provider calls a maximum: the guess would come
+    // from "431" (a status) or "200000" (our own message length).
+    expect(overflowLimitFromError(new Error("OpenAI API error 413: payload 200000 bytes"))).toBeUndefined();
+  });
+
+  it("refuses a number too large to be a count", () => {
+    // `Number("9".repeat(400))` is Infinity: finite-ness is what keeps it out, and
+    // the plausibility floor alone would wave it through.
+    const absurd = `maximum context length is ${"9".repeat(400)} tokens`;
+    expect(overflowLimitFromError(new Error(absurd))).toBeUndefined();
+  });
+});
