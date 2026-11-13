@@ -907,6 +907,52 @@ describe("the shapes a mutation run showed nobody had typed yet", () => {
     expect(isSafeReadCommand('cat "a\\"b"')).toBe(true);
   });
 
+  it("an ESCAPED flag is still the flag: the allowlist cannot be talked out of a write", () => {
+    // Inside double quotes a backslash escapes the next character, so `"\-delete"` is the word
+    // `-delete` — the same `find` action, and the same refusal. In HARD quotes the backslash is
+    // literal, so `'\-delete'` is a DIFFERENT word and the allowlist is right to let it through.
+    expect(isSafeReadCommand("find . -delete")).toBe(false);
+    expect(isSafeReadCommand('find . "\\-delete"')).toBe(false);
+    expect(isSafeReadCommand("find . '\\-delete'")).toBe(true);
+  });
+
+  it("a doubled space does not invent an EMPTY argument (which reads as a positional)", () => {
+    // An empty word is not a flag, and in `git branch` a positional is a CREATE. Whitespace is
+    // not a word of its own.
+    expect(isSafeReadCommand("git branch  --all")).toBe(true);
+  });
+
+  it("`git tag` with no argument LISTS; with one it CREATES", () => {
+    // `git tag -l` was pinned, the bare form was not: `rest.length === 0` is the arm that says
+    // the command with NO arguments is the read.
+    expect(isSafeReadCommand("git tag")).toBe(true);
+    expect(isSafeReadCommand("git tag v1.0.0")).toBe(false);
+  });
+
+  it("a read flag that takes NO value cannot swallow the positional after it", () => {
+    // `--all` is a read flag but NOT an optional-value one: the skip is only for `-l`/`--list`.
+    // Widening it to every read flag lets `git branch --all feature` (a CREATE) read as a list.
+    expect(isSafeReadCommand("git branch --all")).toBe(true);
+    expect(isSafeReadCommand("git branch --all feature")).toBe(false);
+  });
+
+  it("curl's write flags are matched as WHOLE words, anchored at BOTH ends", () => {
+    // `--output-dir` only redirects where `-O` writes: on its own it writes nothing.
+    expect(isSafeReadCommand("curl --output-dir /tmp -s https://x")).toBe(true);
+    // …and a header VALUE that merely CONTAINS `--output=` is not the flag either: without the
+    // leading anchor any argument carrying that substring would read as a local write.
+    expect(isSafeReadCommand("curl -H 'X-Note: --output=/tmp/x' https://x")).toBe(true);
+  });
+
+  it("a command that is NOT refused still gets no INVENTED reason line", () => {
+    // The Reason line is conditional: when there is nothing to explain, the message must not
+    // grow a blank or placeholder line where the reason would be.
+    const msg = ANALYZE_BLOCKED_SHELL_MESSAGE("cat a.txt");
+    expect(msg).not.toContain("Reason:");
+    expect(msg).not.toContain("Stryker");
+    expect(msg).toContain("⛔ Refused without running — enforced mode: ANALYZE (read-only).");
+  });
+
   it("a separator with a trailing space leaves no empty segment behind", () => {
     expect(isSafeReadCommand("cat a; ")).toBe(true);
     expect(isSafeReadCommand("cat a; rm -rf x ")).toBe(false);
