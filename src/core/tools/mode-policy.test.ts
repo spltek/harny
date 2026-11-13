@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ANALYZE_BLOCKED_SHELL_MESSAGE,
+  DEFAULT_CHAT_MODE,
   FILE_PREVIEW_NOTE,
   SHELL_READ_ONLY_NOTE,
   analyzeRefusalMessage,
@@ -512,5 +513,402 @@ describe("a session's scope composes with the mode's own exclusion", () => {
 
   it("no scope at all changes nothing (backwards compatible)", () => {
     expect(toolsForMode(all, "agent").map((t) => t.name)).toEqual(all.map((t) => t.name));
+  });
+});
+
+describe("the shell parser: quoting, redirection, segments, tokens", () => {
+  // The allowlist decision is only as good as the SPLIT that feeds it: every rule below is a case
+  // where the shell and a naive `split()` disagree, so each one is a way to smuggle a command past
+  // the filter or to refuse a harmless read.
+  const allowed = [
+    // A redirection inside quotes is TEXT, whichever quote: `grep 'a>b'` writes nothing.
+    ["grep 'a>b' file", "single-quoted redirection is an argument"],
+    ['grep "a>b" file', "double-quoted redirection is an argument"],
+    ["grep 'a|b' file", "single-quoted pipe is an argument"],
+    ['grep "a;b" file', "double-quoted semicolon is an argument"],
+    ['grep "a&b" file', "double-quoted ampersand is an argument"],
+    // An escaped operator is a literal: `\>` never redirects, `\|` never pipes.
+    ["echo a\\>b", "escaped > is not a redirection"],
+    ["cat a\\|b", "escaped | is not a separator"],
+    ["cat a\\;b", "escaped ; is not a separator"],
+    // `=>` and `->` are arrows in source code being grepped, not redirects.
+    ["echo a=>b", "=> is an arrow"],
+    ["echo a->b", "-> is an arrow"],
+    // fd duplications and sinks: a write to a device nobody reads is still not a FILE.
+    ["ls > /dev/fd/9", "fd/N sink"],
+    ["ls > /dev/stdout", "stdout sink"],
+    ["ls > /dev/stderr", "stderr sink"],
+    ["ls > NUL", "Windows NUL sink, case-insensitively"],
+    // separators that stay inside one safe pipeline
+    ["cat a && ls", "&& of two reads"],
+    ["cat a || ls", "|| of two reads"],
+    ["cat a & ls", "background & of two reads"],
+    ["ls 2>&1 & cat file", "the & of 2>&1 is not a separator, the trailing one is"],
+    ["git\tstatus", "a TAB separates words too"],
+    ['git "status"', "a quoted COMMAND NAME still parses to git"],
+    ["git 'status'", "so does a hard-quoted one"],
+    ["git  status", "runs of spaces do not produce empty tokens"],
+  ];
+  for (const [cmd, why] of allowed) {
+    it(`allows \`${cmd}\` — ${why}`, () => {
+      expect(isSafeReadCommand(cmd)).toBe(true);
+    });
+  }
+
+  const refused = [
+    // append / device / bare redirects
+    ["echo x >> out", "append to a file"],
+    ["echo x >/tmp/f", "no space needed"],
+    ["ls > /dev/nullx", "`null` needs its word boundary: /dev/nullx is a file"],
+    ["ls > null", "`nul` needs its word boundary, and this is not the Windows sink"],
+    ["ls >| out", "clobber redirect"],
+    ["cat a <> rw", "read-write redirect"],
+    // single quotes make a backslash a LITERAL, so it cannot escape the closing quote
+    ["grep 'a\\' f > out", "the > after the closed quote is a real write"],
+    // In HARD quotes a backslash is literal, so it cannot escape the closing `'`: the `;` after it
+    // still starts a new command. Reading it as an escape swallows the rest of the line.
+    ["cat 'a\\'; rm -rf x", "hard quotes do not escape their own delimiter"],
+    ['cat "a b" ; rm -rf x', "every character of a quoted word is not an escape"],
+    // separators at top level: one unsafe segment refuses the line
+    ["cat a; rm b", "; starts a second command"],
+    ["cat a\nrm b", "a newline is a separator"],
+    ["cat a | tee out", "the second segment writes"],
+    ["cat a | python -c x", "the second segment is an interpreter"],
+  ];
+  for (const [cmd, why] of refused) {
+    it(`refuses \`${cmd}\` — ${why}`, () => {
+      expect(isSafeReadCommand(cmd)).toBe(false);
+    });
+  }
+
+  it("names the segment that used substitution, and only for that reason", () => {
+    // `$(` and backticks survive `stripQuoted` only OUTSIDE quotes: inside them they are text.
+    const reason = (cmd: string): string => ANALYZE_BLOCKED_SHELL_MESSAGE(cmd).split("Reason: ")[1].split("\n")[0];
+    expect(reason('echo "$(rm -rf x)"')).toContain("command substitution");
+    expect(reason("echo `rm -rf x`")).toContain("command substitution");
+    expect(reason('grep "$(x)" file')).toContain("command substitution");
+    // `<(` feeds a command the output of another: a READ in this direction, but the shell still
+    // RUNS `rm -rf x`, so the allowlist cannot let it through on the strength of `cat`.
+    expect(isSafeReadCommand("cat <(rm -rf x)")).toBe(false);
+    expect(reason("cat <(rm -rf x)")).toContain("command substitution");
+    expect(isSafeReadCommand("cat >(rm -rf x)")).toBe(false);
+    expect(isSafeReadCommand("cat /dev/fd/9")).toBe(true); // the harmless sibling: no command
+    // …and quoted substitution is just text as far as the SPLIT is concerned — refused because
+    // `$(…)` inside double quotes still RUNS in a real shell, so it must not be allowed.
+    expect(isSafeReadCommand("echo '$(rm -rf x)'")).toBe(false);
+  });
+});
+
+describe("git: the dangerous flags, the value flags and the optional pattern", () => {
+  // GIT_DANGEROUS_FLAGS: each of these turns a READ subcommand into a write or an exec. They are
+  // one test per flag because they are one regex ALTERNATIVE per flag.
+  const dangerous = [
+    "git log --output=patch.diff",
+    "git diff --output patch.diff",
+    "git log --ext-diff",
+    "git diff --textconv",
+    "git log --open-files-in-pager=less",
+    "git log --open-files-in-pager",
+    "git log -O orderfile",
+    "git log --filters",
+    "git diff --filter=blob:none",
+  ];
+  for (const cmd of dangerous) {
+    it(`refuses \`${cmd}\``, () => {
+      expect(isSafeReadCommand(cmd)).toBe(false);
+    });
+  }
+
+  it("lets the same flags through when they are NOT the dangerous form", () => {
+    // The regexes anchor: `--output` without `=` or end is a different (harmless) token, and a
+    // file called `ext-diff` as an argument is not the flag.
+    for (const cmd of ["git log --output-format=x", "git log --ext-diffx", "git log --filterx"]) {
+      expect(isSafeReadCommand(cmd), cmd).toBe(true);
+    }
+    // The same for the flags whose dangerous form ends the token: an argument that merely STARTS
+    // with the name is a different flag, and the `^` that makes that true is worth pinning.
+    for (const cmd of ["git log --textconvx", "git log -Order", "git log --filtersx"]) {
+      expect(isSafeReadCommand(cmd), cmd).toBe(true);
+    }
+  });
+
+  it("skips the VALUE of a value-flag, so the value is not read as a positional", () => {
+    // `--sort name` and `--sort=name` both read. The `=` form is matched by GIT_FLAG_WITH_VALUE,
+    // the separate form by the value set — two different mechanisms, one behaviour.
+    for (const cmd of [
+      "git branch --sort name",
+      "git branch --sort=-committerdate",
+      "git branch --contains abc123",
+      "git branch --contains=abc123",
+      "git tag --sort name",
+      "git tag --points-at HEAD",
+      "git tag --points-at=HEAD",
+      "git branch --merged=main",
+      "git branch --list=feat*",
+    ]) {
+      expect(isSafeReadCommand(cmd), cmd).toBe(true);
+    }
+  });
+
+  it("reads `git config` only when it is asked for something", () => {
+    for (const cmd of [
+      "git config --get user.name",
+      "git config --get-all remote.origin.url",
+      "git config --get-regexp user",
+      "git config --list",
+      "git config -l",
+      "git config --global --get user.name",
+    ]) {
+      expect(isSafeReadCommand(cmd), cmd).toBe(true);
+    }
+    // A bare `git config` LISTS in modern git, but the form that WRITES is one token away, so the
+    // allowlist asks for the flag explicitly.
+    for (const cmd of ["git config", "git config user.name x", "git config --unset user.name"]) {
+      expect(isSafeReadCommand(cmd), cmd).toBe(false);
+    }
+  });
+
+  it("`git remote` reads with no argument, with -v, or with a read verb", () => {
+    for (const cmd of ["git remote", "git remote -v", "git remote --verbose", "git remote show origin"]) {
+      expect(isSafeReadCommand(cmd), cmd).toBe(true);
+    }
+    for (const cmd of ["git remote add origin url", "git remote prune origin"]) {
+      expect(isSafeReadCommand(cmd), cmd).toBe(false);
+    }
+  });
+
+  it("`git symbolic-ref` is a READ until it is handed a new value", () => {
+    expect(isSafeReadCommand("git symbolic-ref")).toBe(true);
+    expect(isSafeReadCommand("git symbolic-ref HEAD")).toBe(true);
+    expect(isSafeReadCommand("git symbolic-ref HEAD refs/heads/main")).toBe(false);
+  });
+
+  it("`git stash`, `worktree` and `submodule` read only in their listing form", () => {
+    for (const cmd of ["git stash list", "git stash show", "git worktree list", "git submodule status"]) {
+      expect(isSafeReadCommand(cmd), cmd).toBe(true);
+    }
+    for (const cmd of ["git stash pop", "git worktree add ../x", "git submodule add url"]) {
+      expect(isSafeReadCommand(cmd), cmd).toBe(false);
+    }
+  });
+
+  it("`find`/`fd` refuse their write and exec actions, one entry each", () => {
+    for (const action of ["-ok", "-fprintf /tmp/x %p", "-fls /tmp/x"]) {
+      expect(isSafeReadCommand(`find . -name '*.ts' ${action}`), action).toBe(false);
+    }
+    for (const action of ["-exec rm {} ;", "-execdir rm {} ;"]) {
+      expect(isSafeReadCommand(`find . ${action}`), action).toBe(false);
+    }
+    // The read-only actions of the same commands stay allowed.
+    expect(isSafeReadCommand("find . -name '*.ts' -print")).toBe(true);
+    expect(isSafeReadCommand("fd -e ts")).toBe(true);
+  });
+});
+
+describe("the allowlist: one entry, one read", () => {
+  it("every package-manager READ subcommand reads, and the others do not", () => {
+    for (const sub of ["list", "ls", "view", "info", "search", "outdated", "audit", "why", "explain"]) {
+      for (const pm of ["npm", "yarn", "pnpm"]) {
+        expect(isSafeReadCommand(`${pm} ${sub} react`), `${pm} ${sub}`).toBe(true);
+      }
+    }
+    for (const cmd of ["npm install react", "npm", "yarn add react", "pnpm dlx x"]) {
+      expect(isSafeReadCommand(cmd), cmd).toBe(false);
+    }
+  });
+
+  it("`sort`/`tree` refuse the output flag in both spellings", () => {
+    expect(isSafeReadCommand("sort -o out.txt in.txt")).toBe(false);
+    expect(isSafeReadCommand("sort --output=out.txt in.txt")).toBe(false);
+    expect(isSafeReadCommand("tree --output=out.txt")).toBe(false);
+    expect(isSafeReadCommand("sort in.txt")).toBe(true);
+    expect(isSafeReadCommand("tree src")).toBe(true);
+  });
+
+  it("`rg --pre` refuses the preprocessor in both spellings", () => {
+    expect(isSafeReadCommand("rg --pre 'sh -c x' foo")).toBe(false);
+    expect(isSafeReadCommand("rg --pre='sh -c x' foo")).toBe(false);
+    expect(isSafeReadCommand("rg --pretty foo")).toBe(true);
+  });
+
+  it("`curl` refuses every flag that writes locally or uploads", () => {
+    for (const flag of [
+      "-o out.json",
+      "--output out.json",
+      "--output=out.json",
+      "-O",
+      "--remote-name",
+      "-T f",
+      "--upload-file f",
+    ]) {
+      expect(isSafeReadCommand(`curl ${flag} https://x`), flag).toBe(false);
+    }
+    expect(isSafeReadCommand("curl -s https://x")).toBe(true);
+  });
+
+  it("`env` LISTS with assignments and EXECUTES with a command", () => {
+    expect(isSafeReadCommand("env")).toBe(true);
+    expect(isSafeReadCommand("env -i")).toBe(true);
+    expect(isSafeReadCommand("env FOO=1 BAR=2")).toBe(true);
+    expect(isSafeReadCommand("env rm -rf x")).toBe(false);
+    expect(isSafeReadCommand("env FOO=1 rm -rf x")).toBe(false);
+  });
+
+  it("an interpreter is allowed only for its VERSION", () => {
+    for (const flag of ["--version", "-V", "-v"]) {
+      for (const bin of ["node", "python", "python3"]) {
+        expect(isSafeReadCommand(`${bin} ${flag}`), `${bin} ${flag}`).toBe(true);
+      }
+    }
+    for (const cmd of ["node", "node -e 'x'", "python", "python3 script.py"]) {
+      expect(isSafeReadCommand(cmd), cmd).toBe(false);
+    }
+  });
+
+  it("the default chat mode is the read-only one", () => {
+    expect(DEFAULT_CHAT_MODE).toBe("analyze");
+  });
+});
+
+describe("the text the MODEL reads", () => {
+  // These notes are the contract the agent works from: if a clause goes, the agent plans writes in
+  // Analyze and calls them refusals. Each sentence is pinned separately because each one is a rule.
+  it("the Shell note keeps every clause it promises", () => {
+    for (const clause of [
+      "READ-ONLY MODE (allowlist, NOT a sandbox)",
+      "file inspection (ls, cat, head, tail, wc, diff, file, stat, tree)",
+      "git READ commands (status, log, diff, show, blame, branch -l, tag -l, remote -v, stash list, …)",
+      "package info (npm list/outdated/audit)",
+      "EVERYTHING ELSE is refused, including scripts, interpreters (python -c, node -e, sh x.sh) and any",
+      "state-changing command. This is a best-effort filter, not a filesystem sandbox.",
+      "for inspection; switch to Build to run or change anything.",
+    ]) {
+      expect(SHELL_READ_ONLY_NOTE, clause).toContain(clause);
+    }
+  });
+
+  it("the preview note says PREPARE, not write — in that order", () => {
+    expect(FILE_PREVIEW_NOTE).toContain("PREVIEW MODE (Analyze): this tool does NOT write.");
+    expect(FILE_PREVIEW_NOTE).toContain("and returns the resulting diff as a PROPOSAL for the user to review");
+    expect(FILE_PREVIEW_NOTE).toContain("user must switch to Build mode — never claim the change was applied.");
+  });
+
+  it("each refusal reason ends its sentence, so a truncation is visible", () => {
+    const reason = (cmd: string): string => ANALYZE_BLOCKED_SHELL_MESSAGE(cmd).split("Reason: ")[1];
+    expect(reason("cat a > b")).toContain(
+      "it redirects output to a real FILE (`>` / `>>`), which is a write: here the MODE is the reason, not the command.",
+    );
+    expect(reason('echo "$(x)"')).toContain("which can run anything.");
+    expect(reason("docker ps")).toContain("commands run (ls, cat, grep, the git read commands, …).");
+    expect(reason("find . -delete")).toContain("(a write/exec flag, or a positional argument that creates something).");
+    expect(reason("   ").split("\n")[0]).toBe("the command is empty.");
+  });
+});
+
+describe("the separator, the token and the flag: the cases that only LOOK equivalent", () => {
+  it("splits on a separator that follows a CLOSED quote", () => {
+    // The quote state is per-segment bookkeeping: if it fails to RESET, everything after the first
+    // quoted word is swallowed into the same segment and its second command rides along.
+    for (const cmd of ['cat "a"; rm -rf x', "cat 'a'; rm -rf x", 'cat "a" && rm -rf x', 'cat "a" | rm -rf x']) {
+      expect(isSafeReadCommand(cmd), cmd).toBe(false);
+    }
+    expect(isSafeReadCommand("rm -rf x; cat a")).toBe(false); // the UNSAFE one is first
+    expect(isSafeReadCommand("rm -rf x & cat a")).toBe(false);
+  });
+
+  it("a trailing separator or a trailing space adds no segment, and does not smuggle one", () => {
+    expect(isSafeReadCommand("cat a;")).toBe(true); // nothing after the `;`
+    expect(isSafeReadCommand("env FOO=1 ")).toBe(true); // a trailing space is not an argument
+    expect(isSafeReadCommand(" ; ")).toBe(false); // …but a line of only separators is empty
+    expect(isSafeReadCommand('""')).toBe(false); // quotes with no word: no command to check
+    expect(isSafeReadCommand("''")).toBe(false);
+  });
+
+  it("a quoted flag is ONE argument, so quoting it disarms it", () => {
+    // `rg "--pre sh"` passes a single argv of `--pre sh`, which is not the `--pre` option: the
+    // tokenizer must therefore not split a quoted word, or it invents a flag nobody typed.
+    expect(isSafeReadCommand('rg "--pre sh" foo')).toBe(true);
+    expect(isSafeReadCommand('rg "--pre\\ sh" foo')).toBe(true); // the escaped space is the same word
+    expect(isSafeReadCommand("rg --pre sh foo")).toBe(false); // unquoted, it IS the option
+    expect(isSafeReadCommand("rg --pre\\ sh foo")).toBe(true);
+  });
+
+  it("a redirect BEFORE a later quote is still a redirect", () => {
+    // Blanking the quoted text must not reset what came before it: the `>` is already there.
+    expect(isSafeReadCommand('cat > /tmp/x "name"')).toBe(false);
+    expect(isSafeReadCommand("cat > /tmp/x 'unterminated")).toBe(false);
+    expect(isSafeReadCommand('grep "a>b" > /tmp/x')).toBe(false);
+  });
+
+  it("the flag regexes are ANCHORED to the token boundary they mean", () => {
+    // Unanchored, a filename would read as a flag and the flag check would lie about the command.
+    expect(isSafeReadCommand("sort a-o.txt")).toBe(true); // `-o` inside a NAME is not the flag
+    expect(isSafeReadCommand("sort -o out.txt in.txt")).toBe(false);
+    expect(isSafeReadCommand("env 1FOO=1")).toBe(false); // an assignment starts with a LETTER
+    expect(isSafeReadCommand("env FOO=1")).toBe(true);
+    expect(isSafeReadCommand("node --version x")).toBe(false); // EVERY argument must be the flag
+    expect(isSafeReadCommand("git branch --foo=--sort=x")).toBe(false); // the flag starts the token
+  });
+});
+
+describe("the shapes a mutation run showed nobody had typed yet", () => {
+  it("the sink exemption is read from the END of the redirect, not the first `>`", () => {
+    // `>>/dev/null` appends to the void. The regex must swallow the WHOLE run of `>` before it
+    // looks for the sink, or it reads `/dev/null` as the target of a second redirect.
+    expect(isSafeReadCommand("echo x >>/dev/null")).toBe(true);
+    expect(isSafeReadCommand("echo x >> out")).toBe(false);
+    // fd duplications allow spaces around the number: `2>& 1` is still a duplication.
+    expect(isSafeReadCommand("ls 2>& 1")).toBe(true);
+    // …and a two-digit descriptor is a descriptor, not a 1 followed by junk.
+    expect(isSafeReadCommand("ls > /dev/fd/10")).toBe(true);
+  });
+
+  it("a narrow flag stays narrow: `--grep=--ext-diff` SEARCHES for the flag's name", () => {
+    // Every dangerous git flag is anchored, and `--grep` takes arbitrary text as its value. When
+    // the anchor is dropped the value reads as the flag and a plain search is refused.
+    for (const cmd of [
+      "git log --grep=--ext-diff",
+      "git log --grep=--textconv",
+      "git log --grep=--filters",
+      "git log --grep=-O",
+      "git log --grep=--output=x",
+    ]) {
+      // …`--output` too: it is the TOKEN that decides, and this token is `--grep=…`.
+      expect(isSafeReadCommand(cmd), cmd).toBe(true);
+    }
+    expect(isSafeReadCommand("git log --ext-diff")).toBe(false);
+    expect(isSafeReadCommand("git log --output=x")).toBe(false);
+  });
+
+  it("curl's write flags are WHOLE arguments", () => {
+    // `-o` / `--output` are matched with both anchors: a header VALUE that happens to end in
+    // `-o` is not the flag, and `--output-format` (a read) is not `--output`.
+    expect(isSafeReadCommand("curl -H 'X-Tag: a-o' https://x")).toBe(true);
+    expect(isSafeReadCommand("curl --output=out.json https://x")).toBe(false);
+    expect(isSafeReadCommand("curl -o out.json https://x")).toBe(false);
+  });
+
+  it("the refusal keeps its last line, and the empty cases keep their reason", () => {
+    // The closing line is what tells the agent what to do instead; a message that has it glued to
+    // the reason is still readable, but the newline is part of the format the tests pin.
+    expect(ANALYZE_BLOCKED_SHELL_MESSAGE("cat a > b")).toContain(
+      "not the command.\nUse the Read/Grep/Glob tools for inspection, or switch to Build to run it.",
+    );
+    // A line of only separators is EMPTY: it must say so rather than return a reason-less refusal.
+    expect(ANALYZE_BLOCKED_SHELL_MESSAGE(" ; ")).toContain("Reason: the command is empty.");
+    // A segment with no command at all names the segment, not a blank or an invented name.
+    expect(ANALYZE_BLOCKED_SHELL_MESSAGE('""')).toContain('`""` is not in the read-only allowlist');
+  });
+
+  it("an escaped quote does not swallow the separator that follows the quoted word", () => {
+    // `"a\"b"` is ONE word: the `\"` continues it, so the `;` after the closing quote still splits
+    // the line. Treating every character inside quotes as escaped loses that boundary.
+    expect(isSafeReadCommand('cat "a\\"b" ; rm -rf x')).toBe(false);
+    expect(isSafeReadCommand('cat "a\\"b"')).toBe(true);
+  });
+
+  it("a separator with a trailing space leaves no empty segment behind", () => {
+    expect(isSafeReadCommand("cat a; ")).toBe(true);
+    expect(isSafeReadCommand("cat a; rm -rf x ")).toBe(false);
   });
 });

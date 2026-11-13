@@ -185,7 +185,9 @@ function stripQuoted(text: string): string {
  */
 function hasFileRedirection(command: string): boolean {
   const bare = stripQuoted(command);
-  const redirect = /(?<![=\-])>+(?!\s*(?:&\s*(?:\d+|-)|=\s*|\/dev\/(?:null|stdout|stderr|fd\/\d+|tty)\b|nul\b))/i;
+  // `(?!>)` pins the check to the END of the run of `>`: without it `>+` is free to backtrack to a
+  // shorter run and read the second `>` of `>>/dev/null` as a redirect into `/dev/null`.
+  const redirect = /(?<![=\-])>+(?!>)(?!\s*(?:&\s*(?:\d+|-)|=\s*|\/dev\/(?:null|stdout|stderr|fd\/\d+|tty)\b|nul\b))/i;
   return redirect.test(bare);
 }
 
@@ -510,11 +512,16 @@ function isSafeGit(args: string[]): boolean {
   }
 }
 
+/** Command/process substitution runs a command INSIDE what looks like an allowlisted one
+ * (`echo "$(rm -rf x)"`, `cat <(rm -rf x)`, `cat >(…)`): refused outright. `<(` hides better than
+ * its siblings because it reads as input, but the shell still RUNS its contents. */
+function hasSubstitution(segment: string): boolean {
+  return ["$(", "`", ">(", "<("].some((mark) => segment.includes(mark));
+}
+
 /** True when one top-level segment is a known read-only command. */
 function isSafeReadSegment(segment: string): boolean {
-  // Command/process substitution can smuggle an arbitrary command
-  // (`echo "$(rm -rf x)"`, `cat >(...)`): refused outright.
-  if (segment.includes("$(") || segment.includes("`") || segment.includes(">(")) return false;
+  if (hasSubstitution(segment)) return false;
   const tokens = tokenize(segment);
   const cmd = tokens[0]?.toLowerCase();
   const args = tokens.slice(1);
@@ -583,7 +590,7 @@ function readOnlyRefusal(command: string): ReadOnlyRefusal | undefined {
   if (segments.length === 0) return { reason: "empty" };
   for (const segment of segments) {
     if (isSafeReadSegment(segment)) continue;
-    if (segment.includes("$(") || segment.includes("`") || segment.includes(">(")) {
+    if (hasSubstitution(segment)) {
       return { reason: "substitution", segment };
     }
     const name = tokenize(segment)[0]?.toLowerCase() ?? "";
