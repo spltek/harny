@@ -1992,6 +1992,18 @@ describe("compactHistory — the contract with the summarizer", () => {
     expect(blankPreview?.startsWith("the real tail")).toBe(true);
   });
 
+  it("previews NOTHING when the kept tail says nothing at all", async () => {
+    // A kept tail of one row with no content (a `uiOnly` banner lost its text, or the last row is
+    // an empty assistant step): `find` answers undefined. The preview is optional — the compaction
+    // must still run, and it must not crash the whole turn on `undefined.content`.
+    const { compactor, calls } = stubCompactor(["## Goal\nok"]);
+    await compactHistory([...turnsOf(20), noContent({ role: "user", timestamp: 41 })], {
+      ...base(compactor),
+      targetTokens: 200,
+    });
+    expect(calls[0][3]).toHaveProperty("keptPreview", undefined);
+  });
+
   it("stamps the synthetic answer ONE millisecond after its question", async () => {
     const { compactor } = stubCompactor(["Summary of past interactions\n---\n## Goal\nwork"]);
     const out = (await compactHistory(turnsOf(20), base(compactor)))!;
@@ -2012,6 +2024,17 @@ describe("planCompactionToBudget — the cut itself", () => {
     expect(plan.kept[0].role).toBe("user");
     expect(plan.toSummarize).toHaveLength(10);
     expect(plan.splitTurn).toBe(false);
+  });
+
+  it("counts a message that lands EXACTLY on the keep budget as kept", () => {
+    // The walk stops when it would OVERSHOOT the budget, not when it reaches it: a message whose
+    // cost lands on the budget exactly still fits, so it stays verbatim. `>=` would push it into
+    // the span — one whole turn summarized for nothing, paid again in the summary.
+    const visible = [u("one"), a("two"), u("three"), u("four")];
+    const budget = estimateTokens("three") + estimateTokens("four");
+    const plan = planCompactionToBudget(visible, budget);
+    expect(plan.kept).toHaveLength(2);
+    expect(plan.kept[0].content).toBe("three");
   });
 
   it("never compacts a TWO-message view: there is no older span to move", () => {
