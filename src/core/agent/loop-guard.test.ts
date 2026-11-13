@@ -15,6 +15,7 @@ import {
   LOOP_GUARD_FIELD_RANGES,
   DEFAULT_LOOP_GUARD_OPTIONS,
   type ToolOutcome,
+  type LoopDecision,
 } from "./loop-guard";
 import type { ToolCall } from "../tools/tool";
 
@@ -44,6 +45,15 @@ describe("stableArgs / callSignature", () => {
     expect(stableArgs("x")).toBe('"x"');
     expect(stableArgs([1, "a"])).toBe('[1,"a"]');
     expect(stableArgs({ b: null, a: [1] })).toBe('{"a":[1],"b":null}');
+  });
+
+  it("serialises a value JSON cannot represent without colliding with undefined", () => {
+    // `JSON.stringify` returns the VALUE `undefined` (not the string) for a function or a symbol.
+    // Without the fallback the key would read "undefined" and collide with a genuine `undefined`
+    // argument — a collision refuses a legitimate call as a repeat.
+    expect(stableArgs(() => 1)).toBe("null");
+    expect(stableArgs(Symbol("s"))).toBe("null");
+    expect(stableArgs(() => 1)).not.toBe(stableArgs(undefined));
   });
 
   it("never lets two DIFFERENT argument sets collide", () => {
@@ -912,6 +922,28 @@ describe("the nudges say what to do (they are the product, not decoration)", () 
       expect(d.nudge).toContain("Then write your final report.");
       expect(d.note).toContain("identical successful tool call repeated");
     }
+  });
+
+  it("tool-repeat: a call that lost its name still names something", () => {
+    // A ToolCall without `name` is malformed, not impossible (a provider stream cut short).
+    // The nudge and the stop message are what the user and the transcript read: `("")` would
+    // be a lie about the payload, `("?")` says "we do not know", which is the truth.
+    const nameless = { ...toolCall("Shell", { command: "ls" }), name: undefined as unknown as string };
+    const same = {
+      content: "",
+      thinking: "",
+      toolCalls: [nameless],
+      toolResults: [outcome("Shell", { command: "ls" }, false)],
+    };
+    const g = new LoopGuard(resolveLoopGuardOptions("high"));
+    // The `stop` line only surfaces when the escalation is exhausted, so walk the ladder.
+    const seen: LoopDecision[] = [];
+    for (let i = 0; i < 20 && !seen.some((x) => x.kind === "stop"); i++) seen.push(g.observeTurn(same));
+    const react = seen.find((x) => x.kind === "react");
+    expect(react?.kind === "react" ? react.type : undefined).toBe("tool-repeat");
+    if (react?.kind === "react") expect(react.nudge).toContain('You called the SAME tool ("?")');
+    const stop = seen.find((x) => x.kind === "stop");
+    expect(stop?.kind === "stop" ? stop.message : undefined).toContain('The model called "?"');
   });
 
   it("the error streak reports the tools and the count", () => {
