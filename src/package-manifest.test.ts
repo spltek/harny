@@ -201,9 +201,9 @@ describe("brand assets", () => {
 
 /**
  * Guards what does NOT leave the working tree. `vsce` packs the WORKING TREE and not the git
- * index, so a file can reach the user — or the Marketplace page — through no code change at all.
- * The list is a defect that reached a release: 1.1.0 shipped the internal review, 62 KB of
- * Italian design notes, and the panel rendered them as if they were docs for the user.
+ * index, so a file can reach the user through no code change at all. The list is a defect that
+ * reached a release: 1.1.0 shipped the internal review, 62 KB of Italian design notes, and the
+ * file landed in the extension folder of everyone who installed it.
  *
  * The review itself is not guarded here as an EXCLUDED path — it was moved out of the repo, one
  * folder up, and no ignore line mentions it: an ignore entry still names the file and hides a
