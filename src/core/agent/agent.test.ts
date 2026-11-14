@@ -339,7 +339,7 @@ describe("Agent", () => {
     );
     const agent = new Agent({ config, llmFactory: factory, tools, history, events, systemPrompt });
 
-    await agent.send("cosa vedi?", { images: ["data:image/png;base64,AAAA"] });
+    await agent.send("what do you see?", { images: ["data:image/png;base64,AAAA"] });
 
     const userMessage = received[0][1]; // [0] is the system message
     expect(userMessage.images).toEqual(["data:image/png;base64,AAAA"]);
@@ -4167,7 +4167,7 @@ describe("Agent soft steering — fragility", () => {
     const images = ["data:image/png;base64,iVBORw0KGgo="];
     agent.onEvent((e) => {
       if (e.type === "tool_result") {
-        agent.steer("s1", "guarda qui", { images, attachments, displayText: "guarda qui" });
+        agent.steer("s1", "look here", { images, attachments, displayText: "look here" });
       }
     });
 

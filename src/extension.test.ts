@@ -238,7 +238,7 @@ describe("extension activate (smoke)", () => {
     // FIRST host: the session exists in this workspace.
     const first = makeContext();
     const sessions = await activate(first.context as never);
-    const created = sessions.create("Casa");
+    const created = sessions.create("Home");
     sessions.saveSettings(created.id, { folder: home });
     first.dispose(); // the window reloads on the folder the user chose
 

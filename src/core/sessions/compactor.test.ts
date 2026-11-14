@@ -499,7 +499,7 @@ describe("estimateTokens — the same rule for every provider, widened for non-A
   });
 
   it("costs more for accented text than for the same ASCII text", () => {
-    expect(estimateTokens("città perché".repeat(10))).toBeGreaterThan(estimateTokens("citta perche".repeat(10)));
+    expect(estimateTokens("café résumé".repeat(10))).toBeGreaterThan(estimateTokens("cafe resume".repeat(10)));
   });
 
   it("never UNDERestimates versus the ASCII-only rule", () => {

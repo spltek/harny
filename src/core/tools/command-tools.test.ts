@@ -268,12 +268,12 @@ describe("GrepTool (pure Node, cross-platform)", () => {
   });
 
   it("filters files by glob", async () => {
-    const fs = memFs({ "/w/a.txt": "riga\n", "/w/b.ts": "riga\n" });
+    const fs = memFs({ "/w/a.txt": "line\n", "/w/b.ts": "line\n" });
     const tool = new GrepTool(fs, cwd);
 
-    const result = await tool.execute({ pattern: "riga", path: "/w", glob: "*.txt" });
+    const result = await tool.execute({ pattern: "line", path: "/w", glob: "*.txt" });
 
-    expect(result.content).toContain("/w/a.txt:1:riga");
+    expect(result.content).toContain("/w/a.txt:1:line");
     expect(result.content).not.toContain("b.ts");
   });
 

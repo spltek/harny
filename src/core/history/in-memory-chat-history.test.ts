@@ -62,7 +62,7 @@ describe("InMemoryChatHistory — the summary checkpoint sets where the window s
   it("the NEWEST checkpoint wins (older ones are folded into it)", () => {
     const history = new InMemoryChatHistory();
     history.add(msg({ role: "user", content: "antichissimo" }));
-    history.add(msg({ role: "user", content: "Vecchio riepilogo", synthetic: true }));
+    history.add(msg({ role: "user", content: "Old summary", synthetic: true }));
     history.add(msg({ role: "assistant", content: "old state", synthetic: true }));
     history.add(msg({ role: "user", content: "in mezzo" }));
     history.add(msg({ role: "user", content: "Summary", synthetic: true }));

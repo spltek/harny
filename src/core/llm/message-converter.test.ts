@@ -11,13 +11,13 @@ describe("toOpenAIMessages", () => {
   it("builds multimodal content parts when images are present", () => {
     const msg: LLMMessage = {
       role: "user",
-      content: "cosa vedi?",
+      content: "what do you see?",
       images: ["data:image/png;base64,AAAA", "data:image/jpeg;base64,BBBB"],
     };
     const out = toOpenAIMessages([msg]);
 
     expect(out[0].content).toEqual([
-      { type: "text", text: "cosa vedi?" },
+      { type: "text", text: "what do you see?" },
       { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
       { type: "image_url", image_url: { url: "data:image/jpeg;base64,BBBB" } },
     ]);

@@ -502,16 +502,16 @@ describe("num-field — the branches the mask can reach that no test was watchin
     expect(parseNumber("-")).toBeUndefined();
     expect(parseNumber(".")).toBeUndefined();
     expect(parseNumber("-.")).toBeUndefined();
-    // La forma è giusta, il VALORE è infinito: la finitezza è un controllo suo, non del formato.
+    // The shape is right, the VALUE is infinite: finiteness is its own check, not the format's.
     expect(parseNumber("9".repeat(400))).toBeUndefined();
   });
 
   it("judges the keystroke at the CARET, not at the end of the box", () => {
     createNumberField({ input, range: null, bounds: CONTEXT, empty: null, commit: vi.fn() });
     input.value = "1200";
-    input.setSelectionRange(1, 1); // fra "1" e "2": "15200" sta nel dominio…
+    input.setSelectionRange(1, 1); // between "1" and "2": "15200" is inside the domain…
     expect(type("5")).toBe(true);
-    // …mentre una insertion misurata sulla fine del box darebbe "12005200", fuori dal tetto.
+    // …while an insertion measured at the end of the box would give "12005200", over the cap.
   });
 
   it("lets a composition through when it arrives WITHOUT data", () => {
@@ -528,11 +528,11 @@ describe("num-field — the branches the mask can reach that no test was watchin
     input.value = "0.7.5";
     input.dispatchEvent(new Event("input"));
     expect(input.value).toBe("0.75");
-    // Il setter di `.value` porta già il caret in fondo, quindi qui si pinna l'intenzione: se
-    // questa chiamata sparisce, in un motore che non si comporta così il caret resta a metà.
+    // The `.value` setter already takes the caret to the end, so this pins the intent: if
+    // this call disappears, in an engine that does not behave like this the caret stays halfway.
     expect(setSelection).toHaveBeenCalledWith(4, 4);
     setSelection.mockClear();
-    input.dispatchEvent(new Event("input")); // niente da pulire: niente da riposizionare
+    input.dispatchEvent(new Event("input")); // nothing to clean: nothing to reposition
     expect(setSelection).not.toHaveBeenCalled();
   });
 
@@ -545,7 +545,7 @@ describe("num-field — the branches the mask can reach that no test was watchin
     input.blur();
     input.value = "";
     select.mockClear();
-    input.focus(); // un box vuoto non ha niente da selezionare
+    input.focus(); // an empty box has nothing to select
     expect(select).not.toHaveBeenCalled();
   });
 
@@ -562,8 +562,8 @@ describe("num-field — the branches the mask can reach that no test was watchin
     createNumberField({ input, bounds: TEMPERATURE, empty: null, commit: vi.fn(), onDraft });
     input.value = "0.5";
     input.dispatchEvent(new Event("input"));
-    // Con `range` assente il percorso non deve toccare il DOM dello slider: se lo tocca, lancia
-    // prima di arrivare qui, e questo spy resta muto.
+    // With no `range` the path must not touch the slider's DOM: if it does, it throws
+    // before getting here, and this spy stays silent.
     expect(onDraft).toHaveBeenLastCalledWith(0.5);
   });
 

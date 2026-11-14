@@ -136,7 +136,7 @@ describe("StreamTee", () => {
     a.emit({
       type: "steer_applied",
       ids: ["s1"],
-      content: "guarda qui",
+      content: "look here",
       images: ["data:image/png;base64,iVBORw0KGgo="],
       attachments,
     });
@@ -144,7 +144,7 @@ describe("StreamTee", () => {
     expect(deps.onPost).toHaveBeenCalledWith({
       type: "steerApplied",
       ids: ["s1"],
-      content: "guarda qui",
+      content: "look here",
       images: ["data:image/png;base64,iVBORw0KGgo="],
       attachments,
       sessionId: "a",

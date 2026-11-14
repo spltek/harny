@@ -80,7 +80,7 @@ describe("SessionLiveState", () => {
     const after = new SessionLiveState();
     after.apply({ type: "tool_call", toolCall: { id: "c1", name: "Read", arguments: {} } });
     after.apply({ type: "tool_result", toolResult: { toolCallId: "c1", output: "ok", isError: false } });
-    after.apply({ type: "text_delta", content: "Ecco cosa ho letto." });
+    after.apply({ type: "text_delta", content: "Here is what I read." });
     expect(after.projection()?.textAfterTools).toBe(true); // text came after
   });
 
