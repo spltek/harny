@@ -4404,10 +4404,17 @@ export class ChatViewProvider implements WebviewViewProvider {
   }
 
   private async buildHtml(): Promise<string> {
+    const config = await this.buildConfig();
+    // Read the ACTIVE SESSION only once the await is over. `buildConfig()` yields — config, skills,
+    // MCP status: hundreds of ms on a big workspace — and sessions open and close inside that gap
+    // (the window reloads for a session in another folder and `resumeSession` lands mid-build).
+    // Reading `active`/its messages BEFORE the await and `activeId` after built the page from two
+    // different moments: the tab active with an EMPTY transcript, up for seconds on a big session,
+    // with nothing on screen saying it was loading. Whatever this page claims, it claims about one
+    // instant — the moment the HTML exists.
     const active = this.activeRuntime();
     const messages = active ? active.agent.getMessages() : [];
     const live = active?.engine.projection();
-    const config = await this.buildConfig();
     // Cache-bust the webview bundle: VS Code caches webview resources strongly,
     // so a plain asWebviewUri may keep serving an OLD media/view.js after a
     // rebuild even across reloads. The mtime in the query forces a re-fetch.

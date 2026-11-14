@@ -286,6 +286,19 @@ function buildHarness(opts: Record<string, unknown> = {}) {
   return { store, sessions, registry, createAgent, histories, provider, agentConfig };
 }
 
+/**
+ * The state the page is BORN with: the `harny-view-init` JSON the webview renders from.
+ *
+ * Assert on this rather than on `toContain("some message")`: the HTML also carries the CSS, whose
+ * comments use ordinary English (one of them says "checked through the whole history"), so a
+ * substring match on a message body can pass on prose that has nothing to do with the transcript.
+ */
+function initOf(html: string): any {
+  const raw = html.match(/id="harny-view-init" type="application\/json">([\s\S]*?)<\/script>/);
+  if (!raw) throw new Error("no harny-view-init in the page");
+  return JSON.parse(raw[1] as string);
+}
+
 function resolveWith(provider: ChatViewProvider): { view: any; handler: (msg: any) => Promise<void> } {
   const { view } = makeView();
   provider.resolveWebviewView(view, {} as any, {});
@@ -936,6 +949,83 @@ describe("ChatViewProvider", () => {
       gates[0](); // …so the older one, finishing late, must not undo it.
       await older;
       expect(view.webview.html).toBe("<html>build 2</html>");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("a session OPENED while the page is being built is not built as an EMPTY transcript", async () => {
+    // The wall this was found on: a big session opened from ANOTHER folder (the window reloaded for
+    // it) came up BLANK for seconds and filled in afterwards, with nothing on screen saying it was
+    // loading. `buildHtml` awaits `buildConfig` (config, skills, MCP — hundreds of ms on a big
+    // workspace) and the pending open (`resumeSession`) lands INSIDE that await. `active` and its
+    // messages were read BEFORE the await, `activeId` AFTER: the page was assembled from two
+    // different moments, so it came out with the tab active and the transcript empty.
+    const { store, provider } = buildHarness();
+    const summary = { id: "s1", name: "Big", createdAt: 1, updatedAt: 2, messageCount: 1 };
+    (store.summary as unknown as ReturnType<typeof vi.fn>).mockReturnValue(summary);
+    (store.list as unknown as ReturnType<typeof vi.fn>).mockReturnValue([summary]);
+    (store.load as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      summary,
+      messages: [{ role: "user", content: "the whole history", timestamp: 1 }],
+    });
+    const { view } = resolveWith(provider);
+
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const buildConfig = provider as unknown as { buildConfig: () => Promise<unknown> };
+    const real = buildConfig.buildConfig.bind(provider);
+    const spy = vi.spyOn(buildConfig, "buildConfig").mockImplementationOnce(async () => {
+      await held;
+      return real();
+    });
+    try {
+      const page = provider.refresh();
+      // The open lands HERE, mid-build — the reload's own gesture, arriving while the window is
+      // still coming up.
+      provider.openSession("s1");
+      release();
+      await page;
+
+      expect(initOf(view.webview.html).activeId).toBe("s1");
+      expect(initOf(view.webview.html).messages).toHaveLength(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("a session CLOSED while the page is being built leaves no transcript of it behind", async () => {
+    // The same split, other way round: `active` was captured before the await, so a tab closed
+    // during the build still had its messages baked into a page that no longer owned them.
+    const { store, provider } = buildHarness();
+    const summary = { id: "s1", name: "Big", createdAt: 1, updatedAt: 2, messageCount: 1 };
+    (store.summary as unknown as ReturnType<typeof vi.fn>).mockReturnValue(summary);
+    (store.list as unknown as ReturnType<typeof vi.fn>).mockReturnValue([summary]);
+    (store.load as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      summary,
+      messages: [{ role: "user", content: "the whole history", timestamp: 1 }],
+    });
+    const { view } = resolveWith(provider);
+    provider.openSession("s1");
+    await vi.waitFor(() => expect(provider.hasActiveSession()).toBe(true));
+
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const buildConfig = provider as unknown as { buildConfig: () => Promise<unknown> };
+    const real = buildConfig.buildConfig.bind(provider);
+    const spy = vi.spyOn(buildConfig, "buildConfig").mockImplementationOnce(async () => {
+      await held;
+      return real();
+    });
+    try {
+      const page = provider.refresh();
+      await provider.closeTab("s1");
+      release();
+      await page;
+
+      const init = initOf(view.webview.html);
+      expect(init.activeId).toBeUndefined();
+      expect(init.messages).toHaveLength(0);
     } finally {
       spy.mockRestore();
     }
