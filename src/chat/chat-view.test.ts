@@ -5879,6 +5879,64 @@ describe("ChatViewProvider compaction", () => {
     expect(pushedConfig()!.contextWindow).toBe(1_048_576);
   });
 
+  it("a SLOW host no longer holds the page back: it is drawn on the paint deadline, the list lands after", async () => {
+    // After a window reload — which is how a session in ANOTHER folder is opened — every host
+    // cache is cold, so the first config build asked every provider for its model list and waited
+    // for the SLOWEST one (up to the 5 s abort). Both the first paint AND the `switchView` that
+    // carries the transcript ride that build, so the panel sat EMPTY for seconds and then
+    // everything appeared at once, session included. No drawing path may wait for the network.
+    vi.useFakeTimers();
+    try {
+      let release!: (models: { id: string }[]) => void;
+      const held = new Promise<{ id: string }[]>((r) => (release = r));
+      const { provider } = buildHarness({
+        config: { ...CONFIG, hostModelProviders: ["p"] },
+        providerEntry: { name: "p", baseUrl: "http://slow/v1", apiKey: "k", models: [] },
+        fetchModelInfos: () => held,
+      });
+      const { view } = resolveWith(provider);
+      // Nothing to draw yet: the build is inside the network.
+      expect(view.webview.html).toBe("");
+
+      await vi.advanceTimersByTimeAsync(300);
+      expect(view.webview.html).toContain('id="harny-view-init"');
+
+      // The list the host was going to give us still arrives — as a push, after the paint.
+      release([{ id: "live-model" }]);
+      await vi.advanceTimersByTimeAsync(10);
+      const posts = (view.webview.postMessage as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0] as any);
+      const cfg = posts.filter((m) => m?.type === "config").at(-1)?.config;
+      expect(cfg.providerModels).toContainEqual(expect.objectContaining({ provider: "p", model: "live-model" }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a host still answering at the deadline is not a FAILED host, and its declared models stand in", async () => {
+    vi.useFakeTimers();
+    try {
+      const never = new Promise<{ id: string }[]>(() => undefined);
+      const { provider } = buildHarness({
+        config: {
+          ...CONFIG,
+          providerModels: [{ provider: "p", model: "declared" }],
+          hostModelProviders: ["p"],
+        },
+        providerEntry: { name: "p", baseUrl: "http://slow/v1", apiKey: "k", models: [{ id: "declared" }] },
+        fetchModelInfos: () => never,
+      });
+      const { view } = resolveWith(provider);
+      await vi.advanceTimersByTimeAsync(300);
+
+      const cfg = initOf(view.webview.html).config;
+      // Silent, not red: nothing answered yet, so nothing failed.
+      expect(cfg.hostModelErrors).toEqual([]);
+      expect(cfg.providerModels).toContainEqual(expect.objectContaining({ provider: "p", model: "declared" }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("adopts the host-reported context window when a model is selected", async () => {
     const { store, registry, provider } = buildHarness({
       providerEntry: { name: "openrouter", baseUrl: "http://x/v1", models: [] },

@@ -226,6 +226,11 @@ export class ChatViewProvider implements WebviewViewProvider {
    * tab switch. */
   private switchSeq = 0;
   private hostCache = new Map<string, { at: number; models: ModelInfo[]; error?: string }>();
+  /**
+   * The push armed when a config build ran out of paint time while the hosts were still
+   * answering. ONE at a time: two builds that both hit the deadline must not double-push.
+   */
+  private hostsLandedPush?: Promise<void>;
   /** models.dev context windows resolved for hosts that do NOT report one
    * (e.g. opencode-go), keyed by `provider|model`. Filled in the background so
    * the model LIST shows the same window that selecting the model adopts. */
@@ -246,6 +251,19 @@ export class ChatViewProvider implements WebviewViewProvider {
   // started after the panel) shows up on the next open. Kept short because the
   // fetch itself is bounded by HOST_MODEL_TIMEOUT_MS anyway.
   private static readonly HOST_CACHE_TTL = 5_000;
+  /**
+   * How long a build may wait for the providers' LIVE model lists before the panel draws itself.
+   *
+   * After a window reload — which is how a session in ANOTHER folder gets opened — every host
+   * cache is cold, so the first config build asked every provider for its model list, in
+   * parallel, and waited for the SLOWEST one — up to the 5 s abort of `HOST_MODEL_TIMEOUT_MS`, and
+   * longer than that if an unreachable host sits inside a proxy that accepts the connection and
+   * `switchView` that carries the transcript both ride that build, so the panel sat EMPTY for
+   * seconds and then everything landed at once, session included. No drawing path may wait for
+   * the network: the lists arrive afterwards as a `config` push (a chat does not need prices to
+   * be drawn), and the deadline is short enough to be a paint.
+   */
+  private static readonly HOST_PAINT_DEADLINE_MS = 250;
   /**
    * How long a FAILED model fetch is remembered.
    *
@@ -3877,17 +3895,25 @@ export class ChatViewProvider implements WebviewViewProvider {
     const fetched = new Map<string, ModelInfo[]>();
     const hostModelErrors: { provider: string; error: string }[] = [];
     if (allNames.length > 0) {
-      const results = await Promise.allSettled(allNames.map((name) => this.fetchHostModels(name)));
-      allNames.forEach((name, i) => {
-        const r = results[i];
-        if (r.status === "fulfilled") fetched.set(name, r.value);
-        else {
-          hostModelErrors.push({
-            provider: name,
-            error: r.reason instanceof Error ? r.reason.message : String(r.reason),
-          });
-        }
-      });
+      const settled = await this.hostModelsForPaint(allNames);
+      if (settled) {
+        allNames.forEach((name, i) => {
+          const r = settled[i];
+          if (r.status === "fulfilled") fetched.set(name, r.value);
+          else {
+            hostModelErrors.push({
+              provider: name,
+              error: r.reason instanceof Error ? r.reason.message : String(r.reason),
+            });
+          }
+        });
+      } else {
+        // The deadline is up and the fetches are still in flight: draw with the last list we
+        // know (a stale cache entry counts) or what the config declares. NOT an error and NOT a
+        // missing model: nothing was answered yet, and a red row now would be a lie that the
+        // next push corrects.
+        for (const name of allNames) fetched.set(name, this.knownHostModels(name, declared));
+      }
     }
 
     // Dropdown lists come from the fetched hosts ONLY (no stale declared
@@ -4242,6 +4268,52 @@ export class ChatViewProvider implements WebviewViewProvider {
       }
       if (resolved > 0) void this.pushConfig();
     })();
+  }
+
+  /**
+   * The settled host fetches, or `null` once the paint deadline is up.
+   *
+   * On `null` the fetches keep running (they are the same promises `fetchHostModels` caches) and
+   * a `config` push follows when they land, so the live lists still reach the dropdown — just
+   * after the panel is on screen instead of before. A build that reaches the deadline twice does
+   * not arm a second push.
+   */
+  private async hostModelsForPaint(names: string[]): Promise<PromiseSettledResult<ModelInfo[]>[] | null> {
+    const all = Promise.allSettled(names.map((name) => this.fetchHostModels(name)));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), ChatViewProvider.HOST_PAINT_DEADLINE_MS);
+      // A pending deadline must never keep the extension host (or a test run) alive.
+      (timer as unknown as { unref?: () => void }).unref?.();
+    });
+    const settled = await Promise.race([all, deadline]);
+    if (timer) clearTimeout(timer);
+    if (settled) return settled;
+    if (!this.hostsLandedPush) {
+      this.hostsLandedPush = all.then(() => {
+        this.hostsLandedPush = undefined;
+        return this.pushConfig();
+      });
+      void this.hostsLandedPush.catch(() => undefined);
+    }
+    return null;
+  }
+
+  /**
+   * The best list known for a provider WITHOUT asking it: a cache entry — stale or not — else the
+   * models the config declares for that provider. This is what a page built inside the paint
+   * deadline shows instead of waiting for the network.
+   */
+  private knownHostModels(
+    name: string,
+    declared: { provider: string; model: string; contextLength?: number; maxOutputTokens?: number }[],
+  ): ModelInfo[] {
+    const entry = this.providers.getProvider(name);
+    const cached = entry?.baseUrl ? this.hostCache.get(`${name}|${entry.baseUrl}|${entry.apiKey ?? ""}`) : undefined;
+    if (cached && !cached.error && cached.models.length > 0) return cached.models;
+    return declared
+      .filter((p) => p.provider === name)
+      .map((p) => ({ id: p.model, ...(p.contextLength ? { contextLength: p.contextLength } : {}) }));
   }
 
   private async fetchHostModels(name: string): Promise<ModelInfo[]> {
