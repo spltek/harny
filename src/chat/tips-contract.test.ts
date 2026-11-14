@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import bundle from "../i18n/en.help.json";
 import { tip } from "../i18n";
 import { untrustedModeHint } from "../core/agent/workspace-trust";
@@ -60,7 +60,20 @@ function sources(dir: string): string[] {
   return out;
 }
 
-const SRC = sources(join(process.cwd(), "src"));
+/**
+ * The same list, with POSIX separators.
+ *
+ * Everything downstream compares SUFFIXES (`endsWith("webview/tips.ts")`), and on Windows `join()`
+ * separates with `\`: the suffix matched nothing there, so the very module that decides the cursor
+ * was reported as an offender that writes it — green on macOS and Linux, red on the one OS where a
+ * POSIX-joined string is not a path. `readFileSync` takes either separator, so the normalisation
+ * costs nothing and makes the filters separator-free.
+ */
+function posixSources(dir: string): string[] {
+  return sources(dir).map((p) => p.split(sep).join("/"));
+}
+
+const SRC = posixSources(join(process.cwd(), "src"));
 const SOURCE_TEXT = SRC.map((f) => readFileSync(f, "utf8")).join("\n");
 
 /** Every HTML tag the markup writes, with the attributes that belong to THAT element. */
@@ -335,6 +348,23 @@ describe("tips: the markup and the catalog cannot drift apart", () => {
     expect(readFileSync(join(process.cwd(), "src/chat/webview/tips.ts"), "utf8")).toContain(
       'el.setAttribute(CURSOR_ATTR, "help")',
     );
+  });
+
+  it("the source walk hands out POSIX paths, so the suffix filters work on every OS", () => {
+    // The filters above exclude by SUFFIX (`webview/tips.ts`, `view-css.ts`). On Windows `join()`
+    // separates with a backslash, the suffix matched nothing, and the check failed on
+    // windows-latest only — the OS nobody runs on a laptop. This pins the invariant instead of the
+    // symptom: portable paths, and both excluded modules still findable by the suffix in use.
+    expect(
+      SRC.filter((f) => f.includes("\\")),
+      "a source path with a Windows separator: the suffix filters go blind",
+    ).toEqual([]);
+    for (const suffix of ["webview/tips.ts", "view-css.ts"]) {
+      expect(
+        SRC.some((f) => f.endsWith(suffix)),
+        `${suffix} must be reachable by the suffix the filters use`,
+      ).toBe(true);
+    }
   });
 
   it("interactive help is ONE switch, and exactly ONE element outlives it", () => {
