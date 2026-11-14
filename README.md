@@ -2,6 +2,8 @@
 
 > **Your AI coding agent, inside VSCodium and VS Code.** Bring your own model — local or cloud.
 
+<img src="docs/images/harny_wall.jpg" alt="harny screenshot" width="100%" />
+
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![VSCodium](https://img.shields.io/badge/VSCodium-1.101%2B-blue?logo=vscodium)
 ![VS Code](https://img.shields.io/badge/VS%20Code-1.101%2B-blue)
