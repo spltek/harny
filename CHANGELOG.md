@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-14
+
+### Fixed
+
+- **The extension no longer carries a document that is not for you: `REVIEW.md`, 62 KB of design notes in Italian, is out of the package and out of the repository.** `vsce` packs the **working tree** and not the git index, and the file was tracked — so 1.1.0 delivered it into the extension folder of everyone who installed, next to `readme.md`, where it reads as documentation for something that does not exist. The notes are the maintainer's, written between releases: they now live **one folder above the repository**, and no ignore line names them anywhere — an ignore entry still names the file and hides a leak (`git add -f`, a copy under another name) instead of preventing it. What stands in its place is a test: the file must not exist in the working tree, and since both packers read the same disk, its absence is the whole guard. It was removed from the **history** as well (`git filter-repo`), so no clone can bring it back. Pin: the packed `.vsix` carries 11 entries (the manifest and `[Content_Types].xml`, `package.json`, changelog, readme, LICENSE, `dist/extension.js`, `media/view.js`, the three icons), and `src/package-manifest.test.ts` asserts that absence together with its positive half — the runtime paths must still be **inside**, or an `.vscodeignore` that excluded everything would pass every "nothing leaks" check and publish an extension with no code.
+
+### Changed
+
+- **Every mutation `break` floor now sits one mutant above the loss it has to catch, instead of "the score minus about 0,05".** A fixed 0,05 margin means one mutant in a file of 2000 and a **twentieth** of one in a file of 100 — and on the small matrices it was not even the loss it claimed to catch: `webview` holds 10 mutants, so the first survivor is worth 10 points and a 95 % floor left five mutants of slack; `chat-panel` holds 9, `session-recovery` 56. Each of the ten configs now carries the smallest 2-decimal value **strictly above** `score - one mutant` (Stryker fails when `score < break`, so the post-loss score itself would still pass): default 94,35 → 94,34, compactor 92,68 → 92,60, loop-guard 95,81 → 95,72, overflow 91,38 → 91,14, tool-scope 97 → 96,12, mode-policy 94,88 → 94,83, webview 95 → 90,01, chat-panel 93,75 → 88,89, num-field 99,46 → 99,29, session-recovery 98 → 96,43. Each number comes from a real run of that config; `high` stays the measured score and `low` follows `break`. The percentage remains the **alarm** and not the gate: `scripts/mutation-gate.mjs` is what fails a run on a NEW survivor, because a percentage also moves for reasons that are not regressions (a different mutant count, a shifted line range).
+
 ## [1.1.0] - 2026-11-14
 
 ### Added
@@ -1936,7 +1946,8 @@ Completions protocol.
 - **Diagnostics**: per-turn lines in _Output > Harny_, an optional request log
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
-[Unreleased]: https://github.com/spltek/harny/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/spltek/harny/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/spltek/harny/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/spltek/harny/compare/v1.0.3...v1.1.0
 [1.0.3]: https://github.com/spltek/harny/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/spltek/harny/compare/v1.0.1...v1.0.2
