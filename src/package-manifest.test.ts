@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -84,6 +84,42 @@ const APP_SVG = join(process.cwd(), "media", "icons", "harny-app.svg");
 const svgSource = readFileSync(BRAND_SVG, "utf8");
 const appSvgSource = readFileSync(APP_SVG, "utf8");
 
+/** One ignore file's patterns, read the way gitignore reads them (comments and blanks dropped). */
+function ignoreMatcher(ignoreFile: string): (file: string) => boolean {
+  const lines = readFileSync(join(process.cwd(), ignoreFile), "utf8")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"));
+  /** `*` stays inside one path segment, `**` crosses them, and a pattern without a slash
+   *  matches at any depth (that is how `*.vsix` catches the artifact in the root). */
+  const glob = (pattern: string): RegExp => {
+    let re = "";
+    for (let i = 0; i < pattern.length; i++) {
+      const ch = pattern[i];
+      if (ch === "*" && pattern[i + 1] === "*") {
+        re += ".*";
+        i++;
+        if (pattern[i + 1] === "/") i++;
+      } else if (ch === "*") re += "[^/]*";
+      else if (ch === "?") re += "[^/]";
+      else re += ch.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    }
+    return new RegExp(`^${pattern.includes("/") ? "" : "(?:.*/)?"}${re}$`);
+  };
+  /** gitignore semantics, as far as these patterns go: the LAST matching line wins. */
+  return (file: string) => {
+    let keep = true;
+    for (const line of lines) {
+      const negated = line.startsWith("!");
+      if (glob(negated ? line.slice(1) : line).test(file)) keep = negated;
+    }
+    return keep;
+  };
+}
+
+/** What a `.vsix` built from this working tree would carry. */
+const ships = ignoreMatcher(".vscodeignore");
+
 /** Every .ts file under src/ (the walk never enters node_modules). */
 function tsSources(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -129,28 +165,13 @@ describe("brand assets", () => {
     // icon off disk, and the panel loads the mark as an <img> through asWebviewUri. Get the order
     // wrong and the extension installs with a blank activity-bar icon and an empty hero — a
     // breakage no unit test can see from inside the editor.
-    const lines = readFileSync(join(process.cwd(), ".vscodeignore"), "utf8")
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line && !line.startsWith("#"));
-    /** gitignore semantics, as far as these patterns go: the LAST matching line wins. */
-    const shipped = (file: string) => {
-      let keep = true;
-      for (const line of lines) {
-        const negated = line.startsWith("!");
-        const pattern = negated ? line.slice(1) : line;
-        const hit = pattern.endsWith("/**") ? file.startsWith(pattern.slice(0, -2)) : file === pattern;
-        if (hit) keep = negated;
-      }
-      return keep;
-    };
     for (const file of ["media/icons/harny.svg", "media/icons/harny-app.svg", "media/icons/harny.png"]) {
-      expect(shipped(file), file).toBe(true);
+      expect(ships(file), file).toBe(true);
     }
     // …and the rest of the folder stays out: the bundle carries it, a user never opens it.
-    expect(shipped("media/icons/plus.svg")).toBe(false);
-    expect(shipped("media/icons/README.md")).toBe(false);
-    expect(shipped("media/icons/icon-sheet.html")).toBe(false);
+    expect(ships("media/icons/plus.svg")).toBe(false);
+    expect(ships("media/icons/README.md")).toBe(false);
+    expect(ships("media/icons/icon-sheet.html")).toBe(false);
   });
 
   it("only advertises a PUBLIC homepage (the hero credit links to it)", () => {
@@ -174,6 +195,45 @@ describe("brand assets", () => {
         .filter((file) => readFileSync(file, "utf8").includes(needle))
         .map((file) => file.replace(process.cwd() + "/", ""));
       expect(offenders).toEqual([]);
+    }
+  });
+});
+
+/**
+ * Guards what does NOT leave the working tree. `vsce` packs the WORKING TREE and not the git
+ * index, so a file can reach the user — or the Marketplace page — through no code change at all.
+ * The list is a defect that reached a release: 1.1.0 shipped the internal review, 62 KB of
+ * Italian design notes, and the panel rendered them as if they were docs for the user.
+ *
+ * The review itself is not guarded here as an EXCLUDED path — it was moved out of the repo, one
+ * folder up, and no ignore line mentions it: an ignore entry still names the file and hides a
+ * leak (`git add -f`, a copy under another name) instead of preventing it. One assert stands in
+ * for all of that: the file must not exist in this tree, or a packer can reach it again.
+ */
+describe("what leaves the working tree", () => {
+  it("keeps the internal review out of reach: it lives one folder UP from the repo", () => {
+    expect(existsSync(join(process.cwd(), "REVIEW.md"))).toBe(false);
+  });
+
+  it("still ships the runtime, and still drops the dev-only tree", () => {
+    // The positive half is what keeps the negative half honest: an `.vscodeignore` that
+    // excluded everything would pass the checks above and ship an extension with no code.
+    for (const file of ["dist/extension.js", "package.json", "media/view.js", "media/icons/harny.svg"]) {
+      expect(ships(file), file).toBe(true);
+    }
+    for (const file of [
+      "src/chat/view.ts",
+      "scripts/mutation-gate.mjs",
+      "stryker/default.conf.json",
+      "docs/RELEASE.md",
+      "reports/mutation.json",
+      "media/view.css",
+      "prettier.config.mjs",
+      ".stryker-tmp/sandbox-x/package.json",
+      "examples/mcp-server/index.mjs",
+      "harny-1.1.0.vsix",
+    ]) {
+      expect(ships(file), file).toBe(false);
     }
   });
 });
