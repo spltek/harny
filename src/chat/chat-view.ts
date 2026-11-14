@@ -140,6 +140,19 @@ const CONTEXT_TOKENS_FLUSH_MS = 400;
  */
 export const SESSION_META_CEILING_MS = 60_000;
 
+/**
+ * How long the panel gets to PAINT the switch veil before a folder change tears the window down.
+ *
+ * Opening a session that lives in another folder is the one switch whose entire cost is a window
+ * reload: the host that would carry any later message is the one going away, so the announcement
+ * has to be on screen BEFORE the reload starts, not sent and hoped for. The veil is drawn by the
+ * webview (a separate process) after an IPC hop plus a paint, so "postMessage then reload" is a
+ * race the reload always wins — from the home list the row just sat there looking final for the
+ * seconds a folder switch takes, and the click read as ignored. 250 ms is the price; the reload it
+ * precedes costs seconds.
+ */
+const SWITCH_VEIL_PAINT_MS = 250;
+
 /** The dates of ONE session row: what the list shows and what a history write moves. */
 interface SessionMetaPatch {
   id: string;
@@ -676,11 +689,31 @@ export class ChatViewProvider implements WebviewViewProvider {
     }
     // Remember WHY before the window reloads: the host that would carry the click is the
     // one that goes away (see PendingOpens). The session then opens by itself.
+    //
+    // …but say it FIRST, and give the veil a paint before the reload starts. This is the one
+    // switch the panel cannot narrate afterwards (see SWITCH_VEIL_PAINT_MS): the home list has no
+    // active tab to fall back on, so without this the row simply sat there until the window came
+    // back. `instant` because the 0,12 s fade-in the veil normally uses exists to HIDE a fast
+    // switch — here the switch is a reload, and the wait is the whole story.
+    const name = this.sessions.list().find((s) => s.id === id)?.name;
+    this.view?.webview.postMessage({ type: "switching", id, name, instant: true });
+    await this.waitForVeilToPaint();
     await this.options.pending?.remember(folder, { kind: "session", sessionId: id });
     // Same window (see WorkspaceActions): the extension reloads and re-derives its
     // root from the newly opened folder, so the panel the user is looking at is the
     // one that changes.
     await this.workspace.open(folder);
+  }
+
+  /**
+   * Let the panel paint the switch veil before a reload makes everything the panel says obsolete.
+   * The webview cannot tell us "painted" (it has no channel back for drawing, and adding one just
+   * for this would age badly), so this is a fixed, short wait — and it is skipped entirely when no
+   * panel is on screen, where there is nothing to paint and the reload can start at once.
+   */
+  private async waitForVeilToPaint(): Promise<void> {
+    if (!this.view) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, SWITCH_VEIL_PAINT_MS));
   }
 
   /**

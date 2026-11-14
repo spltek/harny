@@ -1378,10 +1378,15 @@ let switchVeilTimer: ReturnType<typeof setTimeout> | undefined;
  *
  * `name` is optional on purpose: a switch started by the host (a row, the manager,
  * a branch) may name a session the strip has not listed yet.
+ *
+ * `instant` is for the one switch that ENDS in a window reload (a session living in
+ * another folder): there the fade-in delay would be a race the reload wins, so the veil
+ * has to be opaque on the very next paint instead. See `SWITCH_VEIL_PAINT_MS` in the host.
  */
-function showSwitchVeil(name?: string): void {
+function showSwitchVeil(name?: string, instant = false): void {
   const label = switchVeil?.querySelector<HTMLElement>(".switch-label");
   if (label) label.textContent = name ? `Opening “${name}”…` : "Opening session…";
+  switchVeil?.classList.toggle("instant", instant);
   switchVeil?.classList.add("visible");
   if (switchVeilTimer !== undefined) clearTimeout(switchVeilTimer);
   switchVeilTimer = setTimeout(hideSwitchVeil, SWITCH_VEIL_TIMEOUT_MS);
@@ -1390,6 +1395,7 @@ function showSwitchVeil(name?: string): void {
 /** Take the veil down: the state it was waiting for has arrived (or never will). */
 function hideSwitchVeil(): void {
   switchVeil?.classList.remove("visible");
+  switchVeil?.classList.remove("instant");
   if (switchVeilTimer !== undefined) {
     clearTimeout(switchVeilTimer);
     switchVeilTimer = undefined;
@@ -7086,8 +7092,18 @@ window.addEventListener("message", (e) => {
     case "switching":
       // The host is loading/activating a session right now. The name is resolved from
       // the list we ALREADY have (the tab's own title): asking the host for it would
-      // add a `SELECT *` to the very click we are trying to make feel fast.
-      showSwitchVeil(typeof msg.id === "string" ? currentSessions.find((s) => s.id === msg.id)?.name : undefined);
+      // add a `SELECT *` to the very click we are trying to make feel fast. An explicit
+      // `name` wins over the lookup — the home list can open a session the strip has
+      // not got a tab (or a tab TITLE) for, and "Opening session…" is a worse answer
+      // than the name the user just clicked.
+      showSwitchVeil(
+        typeof msg.name === "string"
+          ? msg.name
+          : typeof msg.id === "string"
+            ? currentSessions.find((s) => s.id === msg.id)?.name
+            : undefined,
+        msg.instant === true,
+      );
       break;
     case "switchView": {
       // Incremental tab switch WITHOUT reloading the page: the streaming state

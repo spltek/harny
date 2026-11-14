@@ -691,6 +691,14 @@ body {
   opacity: 1;
   transition-delay: 0.12s;
 }
+/* The one switch that ends in a WINDOW RELOAD (a session in another folder, view.ts
+   showSwitchVeil(name, true)): the fade-in delay exists to hide a fast switch, and there is no
+   such thing here — the reload that follows costs seconds, and it tears the page down, so the veil
+   has to be opaque on the very NEXT paint. Without this the delay was a race the reload always
+   won, and the click read as ignored (see SWITCH_VEIL_PAINT_MS in chat-view.ts). */
+#switch-veil.instant {
+  transition: none;
+}
 .switch-card {
   display: flex;
   align-items: center;

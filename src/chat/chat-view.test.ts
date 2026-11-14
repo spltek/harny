@@ -4165,6 +4165,86 @@ describe("ChatViewProvider all-sessions manager", () => {
     // …and the form steps aside: the list's job ended with the open it launched, whether the open
     // happened here or the window is about to reload for another folder.
     expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "sessionsManagerClose" });
+    // The veil here is the switch's OWN one (setActive), not the home screen's: nothing reloads, so
+    // there is no race to win and no reason to force it opaque.
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "switching", id: "x" });
+  });
+
+  it("a session opened from the HOME list puts the veil up BEFORE the window reloads", async () => {
+    // No folder is open: a session row here is a workspace CHANGE, so the host that took the click is
+    // the one the reload takes away — nothing it posts afterwards can be read, and the panel that
+    // comes back is a NEW page that never saw the click. Posted-and-hoped-for was therefore a race
+    // the reload always won: the row sat there looking final for the seconds a folder switch costs.
+    const workspace = {
+      pick: vi.fn(async () => undefined as string | undefined),
+      open: vi.fn(async () => undefined),
+      isCurrent: vi.fn(async () => false),
+    };
+    const pending = { remember: vi.fn(async () => {}), take: vi.fn() };
+    const { store, provider } = buildHarness({
+      currentFolder: () => undefined,
+      workspaceReady: () => false,
+      workspace,
+      pending,
+    });
+    (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
+      {
+        id: "x",
+        name: "Payments",
+        createdAt: 1,
+        updatedAt: 2,
+        messageCount: 3,
+        folder: "/p/pay",
+        folderMissing: false,
+      },
+    ]);
+    const { handler, view } = resolveWith(provider);
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const click = handler({ type: "openSessionFolder", id: "x" });
+      // The click itself is a chain of awaits (`isCurrent` answers asynchronously): let the
+      // microtasks drain, but NOT the paint timer — that is the wait under test.
+      await vi.advanceTimersByTimeAsync(0);
+      // Named, and INSTANT: the 0,12 s fade-in exists to hide a fast switch, and this one is a
+      // reload with nothing to hide.
+      expect(view.webview.postMessage).toHaveBeenCalledWith({
+        type: "switching",
+        id: "x",
+        name: "Payments",
+        instant: true,
+      });
+      // …and the reload WAITS for that paint instead of racing it.
+      expect(workspace.open).not.toHaveBeenCalled();
+      expect(pending.remember).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(251);
+      await click;
+
+      expect(workspace.open).toHaveBeenCalledWith("/p/pay");
+      expect(pending.remember).toHaveBeenCalledWith("/p/pay", { kind: "session", sessionId: "x" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("with no panel on screen the reload does not wait for a paint that cannot happen", async () => {
+    // The wait is for the WEBVIEW, so a host whose panel was never resolved (a reload started before
+    // the sidebar was opened) must not pay 250 ms for an announcement nobody can see.
+    const { provider } = buildHarness();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const painter = provider as unknown as { waitForVeilToPaint: () => Promise<void> };
+      let settled = false;
+      void painter.waitForVeilToPaint().then(() => {
+        settled = true;
+      });
+      await Promise.resolve();
+      expect(settled).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("lists an OPEN session of ANOTHER folder too, marked (a tab must never be orphaned)", async () => {

@@ -954,6 +954,41 @@ describe("view webview client", () => {
     expect(label()).toBe("Opening session…");
   });
 
+  it("a switch that ends in a window reload is NAMED by the host and shown instantly", async () => {
+    // The home list opens a session that lives in another folder: the window reloads, so this veil is
+    // the only thing the user sees during the seconds it takes — and the page it was drawn on is
+    // about to be destroyed. Two consequences the webview has to honour: the label comes from the
+    // message (the strip may have no tab title to look up), and the fade-in DELAY — whose whole job
+    // is to hide a fast switch — must be skipped, or the reload wins the race and nothing is shown.
+    await loadView();
+    const veil = () => document.getElementById("switch-veil") as HTMLElement;
+    const label = () => veil().querySelector(".switch-label")?.textContent;
+
+    hostMessage({ type: "switching", id: "zzz", name: "Payments", instant: true });
+    expect(label()).toBe("Opening “Payments”…");
+    expect(veil().classList.contains("visible")).toBe(true);
+    expect(veil().classList.contains("instant")).toBe(true);
+
+    // The state landed after all (the folder was already this one): the veil goes, and with it the
+    // no-animation flag — a leftover `instant` would kill the fade of every later switch on the page.
+    hostMessage({
+      type: "switchView",
+      activeId: "b",
+      openIds: ["a", "b"],
+      messages: [],
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
+    });
+    expect(veil().classList.contains("visible")).toBe(false);
+    expect(veil().classList.contains("instant")).toBe(false);
+  });
+
   it("a switch that never completes takes the veil down on its own", async () => {
     await loadView();
     const veil = () => document.getElementById("switch-veil") as HTMLElement;
