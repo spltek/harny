@@ -9,7 +9,7 @@ import {
   settle,
   wire,
   type MemoryStore,
-} from "./webview-bridge.test-utils";
+} from "../../tests/helpers/webview-bridge.test-utils";
 
 /**
  * The 🗑 flow, END TO END across the seam.

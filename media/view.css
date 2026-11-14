@@ -1,7 +1,7 @@
 /* Harny — the panel's stylesheet.
    Extracted from view-html.ts, where it lived inside a template literal one stray backtick away
    from a syntax error. It is inlined into the page through the generated module
-   src/chat/view-css.ts (scripts/gen-view-css.mjs, run before every bundle).
+   src/chat/view-css.ts (build/scripts/gen-view-css.mjs, run before every bundle).
    Formatted by prettier (`npm run format`); the CSS-pinning tests normalise whitespace, so a
    rule can be reflowed without breaking them. */
 /* ⚠ THE TEXT SCALE IS NOT DECLARED ANYWHERE (found 2026-11-11, present since the file was created):

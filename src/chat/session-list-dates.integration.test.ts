@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { bootClient, detachBridge, pageOf, resetBridge, wire } from "./webview-bridge.test-utils";
+import { bootClient, detachBridge, pageOf, resetBridge, wire } from "../../tests/helpers/webview-bridge.test-utils";
 import { tipTextOf } from "./webview/tips";
 
 /**

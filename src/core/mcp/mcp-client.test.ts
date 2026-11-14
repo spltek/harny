@@ -41,11 +41,11 @@ describe("formatMcpContent", () => {
   });
 });
 
-describe("examples/mcp-hello — the shipped no-install server", () => {
+describe("tests/mcp-hello — the shipped no-install server", () => {
   // This is the server a user is told to try when npm/npx is broken on their machine
   // (see the file's own header). Running it HERE is what keeps that promise honest: the
   // example cannot rot without a test going red.
-  const script = fileURLToPath(new URL("../../../examples/mcp-hello/server.js", import.meta.url));
+  const script = fileURLToPath(new URL("../../../tests/mcp-hello/server.js", import.meta.url));
 
   it("answers initialize, lists its tools and runs one", async () => {
     const c = new McpStdioClient({ command: process.execPath, args: [script] });

@@ -1629,7 +1629,7 @@ describe("planCompactionToBudget — the KEPT tail opens a turn (the pair is a t
 // What is left over is NOT untested code, it is code whose mutants cannot be told apart
 // from the original: `Number(v)` on a number, `?.` on a value the types guarantee, a
 // `m[1].trim()` on a group the regex already trimmed. Those are for the pruner, not for
-// another test — see reports/mutation.json before adding one.
+// another test — see .cache/mutation/mutation.json before adding one.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** `n` whole turns, `size` ASCII chars per message (~size/4 tokens each). */

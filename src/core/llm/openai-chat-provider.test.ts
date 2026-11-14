@@ -7,7 +7,7 @@ import {
   requiresReasoningPassBack,
   resetMaxCompletionTokensCache,
 } from "./openai-chat-provider";
-import { FakeHttpClient, sseResponse } from "./http-client.test-utils";
+import { FakeHttpClient, sseResponse } from "../../../tests/helpers/http-client.test-utils";
 import type { HttpResponse } from "./http-client";
 import type { HarnyConfig } from "../config/types";
 import type { ToolDefinition } from "../tools/tool";

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MODAL_STALL_MS } from "./modal-stall-guard";
-import { memoryStore } from "./webview-bridge.test-utils";
+import { memoryStore } from "../../tests/helpers/webview-bridge.test-utils";
 import type { ConfigProvider, HarnyConfig, ProviderCatalog } from "../core/config/types";
 import { MemoryOverrideConfigProvider } from "../core/config/memory-override-config-provider";
 import { CompositeConfigProvider } from "../core/config/composite-config-provider";

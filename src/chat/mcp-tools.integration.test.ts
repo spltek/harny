@@ -7,7 +7,7 @@ import { McpManager } from "../core/mcp/mcp-manager";
 import { toolDefinitionsForMode } from "../core/tools/mode-policy";
 import { HarnyFileConfigProvider } from "../core/config/harny-file-config-provider";
 import { nodeFileSystem } from "../core/tools/file-system";
-import { bootClient, detachBridge, pageOf, resetBridge, wire } from "./webview-bridge.test-utils";
+import { bootClient, detachBridge, pageOf, resetBridge, wire } from "../../tests/helpers/webview-bridge.test-utils";
 
 /**
  * The MCP **tools panel**, END TO END — and this one goes all the way down.

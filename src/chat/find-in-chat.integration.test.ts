@@ -27,7 +27,7 @@ vi.mock("vscode", () => ({
   languages: { getDiagnostics: () => [] },
 }));
 
-import { bootClient, detachBridge, pageOf, resetBridge, wire } from "./webview-bridge.test-utils";
+import { bootClient, detachBridge, pageOf, resetBridge, wire } from "../../tests/helpers/webview-bridge.test-utils";
 
 const bar = () => document.getElementById("find-bar") as HTMLElement;
 const findInput = () => document.getElementById("find-input") as HTMLInputElement;

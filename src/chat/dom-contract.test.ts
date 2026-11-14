@@ -79,7 +79,7 @@ function selectorClasses(): Set<string> {
       }
     }
   };
-  walk(new URL("../", here));
+  walk(new URL("..", here));
   return out;
 }
 
@@ -179,7 +179,7 @@ function producedClasses(): { names: Set<string>; prefixes: Set<string> } {
       }
     }
   };
-  walk(new URL("../", here));
+  walk(new URL("..", here));
   return { names, prefixes };
 }
 
@@ -258,7 +258,7 @@ describe("the DOM contract between the modules and view-html", () => {
   it("every module that writes DOM is in the list (a new module cannot slip past the check)", () => {
     // Any file here that assigns a className must be listed above: a sixth module would otherwise
     // write classes nobody checks.
-    const files = readdirSync(new URL("./webview/", import.meta.url))
+    const files = readdirSync(new URL("./webview", import.meta.url))
       .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && !f.endsWith(".d.ts"))
       .filter((f) => /className\s*=|classList\.(?:add|toggle)/.test(webview(f)))
       .sort();

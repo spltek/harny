@@ -1,0 +1,25 @@
+{
+  "$schema": "../../node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "tsconfigFile": "tests/mutation/no-tsconfig-rewrite.json",
+  "testRunner": "vitest",
+  "vitest": { "configFile": "tests/vitest.config.mts" },
+  "tempDirName": ".cache/stryker-tmp",
+  "mutate": [
+    "src/core/agent/loop-guard.ts"
+  ],
+  "coverageAnalysis": "perTest",
+  "reporters": [
+    "clear-text",
+    "json"
+  ],
+  "jsonReporter": {
+    "fileName": ".cache/mutation/mutation.json"
+  },
+  "concurrency": 4,
+  "timeoutMS": 60000,
+  "thresholds": {
+    "high": 95.91,
+    "low": 95.72,
+    "break": 95.72
+  }
+}

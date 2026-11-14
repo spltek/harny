@@ -1,12 +1,18 @@
 # Sources & tooling — the shipped runtime is the bundled dist/extension.js
 src/**
-scripts/**
-coverage/**
+tests/**
+build/**
+.cache/**
 docs/**
 .github/**
 .vscode/**
 node_modules/**
 **/*.ts
+
+# README / presentation media is TRACKED in `docs/images/` and NEVER shipped: a 733 KB wallpaper
+# is presentation, not runtime, and every install would carry it forever. `docs/**` above already
+# excludes it — do NOT add a `!docs/images/…` exception, that turns a wallpaper back into payload.
+# The full folder is pinned by a test, not by this comment (package-manifest.test.ts).
 
 # Keep the built host bundle (excluded above by nothing, but be explicit)
 !dist/**
@@ -25,31 +31,20 @@ media/icons/**
 # Repo/tooling files not needed at runtime
 tsconfig.json
 tsconfig.webview.json
-vitest.config.mts
 .eslintrc.json
 .gitignore
 *.vsix
 .DS_Store
 
-# Stryker's report lands here (`npm run mutate:*`): 680 KB of mutation JSON that a
-# user never opens. `vsce` packs the WORKING TREE, so without this line the last
-# local mutation run rides along in the .vsix.
-reports/**
+# Generated reports (the mutation JSON, Stryker's sandbox) and the coverage tree are all
+# covered by `.cache/**` above — one line, and a stale run cannot ride along in the .vsix.
 
-# Mutation-testing matrices (`npm run mutate:*`): read by Stryker, never by the extension.
-# The globs INSIDE them are cwd-relative (Stryker docs), so the folder move changed no glob —
-# it only stops 8 dev-only JSONs from riding along in the .vsix.
-stryker/**
 
-# Stryker's sandbox lives here while a run is alive and is removed when it ends properly — a
-# KILLED run (Ctrl-C, a timeout) leaves it behind with broken `node_modules` links inside, and
-# `vsce` then dies on them: packing the working tree must not depend on nobody having interrupted
-# a mutation run.
-.stryker-tmp/**
 
-# Repo examples — the demo MCP server and the config template. They are "copy from the repo",
-# not parts of the extension; this line also covers the former `config.example.jsonc`.
-examples/**
+
+# The repo examples are gone from the root and split by what they ARE: the config template is
+# documentation (`docs/config.example.jsonc`), the demo MCP server is a test fixture the suite
+# SPAWNS (`tests/mcp-hello/server.js`). Both trees are excluded above, so neither ships.
 
 # `vsce` packs the WORKING TREE (not the git index), so tracked DEV files a user never
 # needs ride along: prettier's config is a formatter's, and .git-blame-ignore-revs is for

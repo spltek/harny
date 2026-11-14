@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { SubAgentRunner, SUBAGENT_REPORT_MARKER, lastAssistantReport, toSubAgentEvent } from "./subagent";
 import { DEFAULT_LOOP_GUARD_OPTIONS } from "./loop-guard";
 import type { LoopGuardOptions } from "./loop-guard";
-import { StaticConfigProvider } from "../config/static-config-provider.test-utils";
+import { StaticConfigProvider } from "../../../tests/helpers/static-config-provider.test-utils";
 import { ToolRegistry } from "../tools/tool-registry";
 import type { Tool, ToolResult } from "../tools/tool";
 import type { HarnyConfig } from "../config/types";

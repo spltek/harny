@@ -3,7 +3,7 @@ import { Agent } from "./agent";
 import { DefaultSystemPromptBuilder } from "./system-prompt";
 import { InMemoryEventBus } from "../events/in-memory-event-bus";
 import { InMemoryChatHistory } from "../history/in-memory-chat-history";
-import { StaticConfigProvider } from "../config/static-config-provider.test-utils";
+import { StaticConfigProvider } from "../../../tests/helpers/static-config-provider.test-utils";
 import { ToolRegistry } from "../tools/tool-registry";
 import type { HarnyConfig } from "../config/types";
 import type { ChatMessage } from "../history/types";

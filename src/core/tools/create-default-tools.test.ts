@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createDefaultTools } from "./create-default-tools";
 import { SkillRegistry } from "../skills/skill-registry";
-import { FakeHttpClient } from "../llm/http-client.test-utils";
+import { FakeHttpClient } from "../../../tests/helpers/http-client.test-utils";
 import type { CommandRunner } from "./command-runner";
 import type { DiagnosticsProvider } from "./diagnostics-provider";
 import type { FileSystem } from "./file-system";

@@ -9,7 +9,7 @@
  * palette).
  *
  * The files are inlined at BUILD time, never fetched at runtime:
- *   - esbuild   → `loader: { ".svg": "text" }` (scripts/build-*.mjs, dev.mjs)
+ *   - esbuild   → `loader: { ".svg": "text" }` (build/scripts/build-*.mjs, dev.mjs)
  *   - vitest    → the svg-as-text plugin in vitest.config.mts
  * So the bundles carry plain strings: no `asWebviewUri`, no CSP change, no
  * async load, and the jsdom tests see exactly the markup the panel renders.

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { DefaultLlmProviderFactory } from "./llm-provider-factory";
 import { OpenAIChatProvider } from "./openai-chat-provider";
-import { FakeHttpClient } from "./http-client.test-utils";
+import { FakeHttpClient } from "../../../tests/helpers/http-client.test-utils";
 import type { HarnyConfig } from "../config/types";
 
 const base: HarnyConfig = {

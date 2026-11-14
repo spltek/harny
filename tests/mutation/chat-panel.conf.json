@@ -1,0 +1,20 @@
+{
+  "$schema": "../../node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "tsconfigFile": "tests/mutation/no-tsconfig-rewrite.json",
+  "testRunner": "vitest",
+  "vitest": { "configFile": "tests/vitest.config.mts" },
+  "tempDirName": ".cache/stryker-tmp",
+  "mutate": ["src/chat/chat-view.ts:4304-4323"],
+  "coverageAnalysis": "perTest",
+  "reporters": ["clear-text", "json"],
+  "jsonReporter": {
+    "fileName": ".cache/mutation/mutation.json"
+  },
+  "concurrency": 4,
+  "timeoutMS": 60000,
+  "thresholds": {
+    "high": 100,
+    "low": 88.89,
+    "break": 88.89
+  }
+}

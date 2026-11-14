@@ -6,7 +6,7 @@ import { VIEW_CSS } from "./view-css";
 
 /**
  * The stylesheet lives in `media/view.css` (a real file: formatted, lintable, diffable) and
- * reaches the panel through a GENERATED module (`scripts/gen-view-css.mjs`). A generated file
+ * reaches the panel through a GENERATED module (`build/scripts/gen-view-css.mjs`). A generated file
  * that nobody checks is a file that silently goes stale — so this pins the two together.
  *
  * The bugs this design removes: the sheet used to be a template literal inside `view-html.ts`,
