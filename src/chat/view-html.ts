@@ -76,6 +76,20 @@ export interface ViewState {
     text: string;
     attachments?: { name: string; size: number; isImage?: boolean; dataUri?: string }[];
   }[];
+  /**
+   * The page was drawn BEFORE the network answered (the first paint after a reload).
+   *
+   * A reload is how a session in another folder is opened, and a cold host cache means the
+   * config build pays every provider's model-list fetch — up to the 5 s abort. Until that
+   * lands the panel is a blank area with nothing happening on it, which reads as a broken
+   * extension. This page is drawn without those fetches and carries the veil already up:
+   * the rest arrives through the `ready` handshake, and the `switchView` it produces takes
+   * the veil down. It cannot be done with a second `webview.html`: assigning a page REPLACES
+   * the document, so the veil would go away with it.
+   */
+  veil?: boolean;
+  /** Which session the veil names, when the host already knows it. */
+  veilName?: string;
 }
 
 interface ViewHtmlDeps {

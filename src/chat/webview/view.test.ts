@@ -954,6 +954,48 @@ describe("view webview client", () => {
     expect(label()).toBe("Opening session…");
   });
 
+  it("picking the session already on screen does not reload it: no veil, no openSession", async () => {
+    await loadView();
+    const veil = () => document.getElementById("switch-veil") as HTMLElement;
+    const list = document.getElementById("sessions") as HTMLElement;
+
+    // `a` IS the active session: choosing it again is a request to get the list out of the way,
+    // not to open anything — it used to veil the transcript and ask the host to rebuild it.
+    (document.querySelectorAll("#sessions .srow .name")[0] as HTMLElement).click();
+    expect(posted.some((m: any) => m?.type === "openSession")).toBe(false);
+    expect(veil().classList.contains("visible")).toBe(false);
+    // The gesture still ENDS here: the list collapses either way.
+    expect(list.classList.contains("hidden")).toBe(true);
+  });
+
+  it("a page drawn BEFORE the network says so in its state: the veil is up at boot, named", async () => {
+    // The host hands the first page over without asking the providers for their model lists — that
+    // fetch is what used to leave the panel blank after a reload — and marks the page so: see
+    // `ViewState.veil`. The veil must be up BEFORE the `ready` hello, or the blank window returns.
+    setupDom({ veil: true, veilName: "Refactor" });
+    await loadView();
+    const veil = () => document.getElementById("switch-veil") as HTMLElement;
+    expect(veil().classList.contains("visible")).toBe(true);
+    expect(veil().querySelector(".switch-label")?.textContent).toBe("Opening “Refactor”…");
+
+    // The state it was waiting for is on screen: nothing left to announce.
+    hostMessage({
+      type: "switchView",
+      activeId: "a",
+      openIds: ["a", "b"],
+      messages: [{ role: "user", content: "hello", timestamp: 1 }],
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [{ provider: "openai", model: "gpt-4o" }],
+        contextWindow: 128000,
+      },
+    });
+    expect(veil().classList.contains("visible")).toBe(false);
+  });
+
   it("a switch that never completes takes the veil down on its own", async () => {
     await loadView();
     const veil = () => document.getElementById("switch-veil") as HTMLElement;
@@ -1978,7 +2020,7 @@ describe("view webview client", () => {
     (document.getElementById("send-btn") as HTMLButtonElement).click();
 
     hostMessage({ type: "textDelta", content: "first part" });
-    hostMessage({ type: "thinkingDelta", content: "il ragionamento di mezzo" });
+    hostMessage({ type: "thinkingDelta", content: "the reasoning in the middle" });
     await new Promise((r) => setTimeout(r, 40));
 
     const marker = document.querySelector(".thinking-block") as HTMLElement;
@@ -1987,7 +2029,7 @@ describe("view webview client", () => {
     expect(body.classList.contains("collapsed")).toBe(true); // quiet by default
     header.click();
     expect(body.classList.contains("collapsed")).toBe(false);
-    expect(body.textContent).toContain("il ragionamento di mezzo");
+    expect(body.textContent).toContain("the reasoning in the middle");
   });
 
   it("a padding chunk does NOT split one reasoning into two blocks (the second continuing the first)", async () => {
@@ -1999,7 +2041,7 @@ describe("view webview client", () => {
     (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
     (document.getElementById("send-btn") as HTMLButtonElement).click();
 
-    hostMessage({ type: "thinkingDelta", content: "Devo leggere il file" });
+    hostMessage({ type: "thinkingDelta", content: "I have to read the file" });
     hostMessage({ type: "textDelta", content: "\n" }); // padding between two segments
     hostMessage({ type: "thinkingDelta", content: ", then the store." });
     await new Promise((r) => setTimeout(r, 40));
@@ -2021,9 +2063,9 @@ describe("view webview client", () => {
     (document.getElementById("send-btn") as HTMLButtonElement).click();
 
     hostMessage({ type: "thinkingDelta", content: "I look for where the skill is installed. " });
-    hostMessage({ type: "textDelta", content: "Guardo il codice." });
+    hostMessage({ type: "textDelta", content: "Looking at the code." });
     hostMessage({ type: "thinkingDelta", content: "Forse in ~/.pi/agent/skills. " });
-    hostMessage({ type: "textDelta", content: " Rimuovo." });
+    hostMessage({ type: "textDelta", content: " Removing." });
     await new Promise((r) => setTimeout(r, 40));
 
     const blocks = document.querySelectorAll(".thinking-block");
@@ -2036,7 +2078,7 @@ describe("view webview client", () => {
     // …and merging must not cost the answer its ONE bubble, nor reorder anything.
     const answers = [...document.querySelectorAll(".msg.assistant")];
     expect(answers).toHaveLength(1);
-    expect(answers[0].textContent).toContain("Guardo il codice. Rimuovo.");
+    expect(answers[0].textContent).toContain("Looking at the code. Removing.");
     // The block stays where the reasoning happened: above the answer.
     expect(blocks[0].compareDocumentPosition(answers[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
@@ -2626,10 +2668,10 @@ describe("view webview client", () => {
       workingIds: ["a"],
       streaming: true,
       liveThinking: "",
-      liveAnswer: "Ecco cosa ho letto.",
+      liveAnswer: "Here is what I read.",
       liveTurn: {
         thinking: "",
-        answer: "Ecco cosa ho letto.",
+        answer: "Here is what I read.",
         textAfterTools: true,
         toolCalls: [{ id: "c1", name: "Read", args: { path: "a.ts" }, done: true, isError: false, output: "body" }],
         subAgents: {},
@@ -2639,7 +2681,7 @@ describe("view webview client", () => {
 
     const all = [...document.querySelectorAll("#messages > *")];
     const toolIdx = all.findIndex((el) => el.classList.contains("tool"));
-    const textIdx = all.findIndex((el) => (el.textContent || "").includes("Ecco cosa ho letto."));
+    const textIdx = all.findIndex((el) => (el.textContent || "").includes("Here is what I read."));
     expect(toolIdx).toBeGreaterThan(-1);
     expect(textIdx).toBeGreaterThan(toolIdx);
   });
@@ -3649,7 +3691,7 @@ describe("view webview client", () => {
       workingIds: [],
       streaming: false,
     });
-    (document.getElementById("user-input") as HTMLTextAreaElement).value = "che cos'è?";
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "what's this?";
     (document.getElementById("send-btn") as HTMLButtonElement).click();
 
     const send = posted.find((m) => (m as { type?: string }).type === "send") as
@@ -8007,8 +8049,9 @@ describe("view webview client", () => {
     expect(posted).toContainEqual({ type: "closeTab", id: "a" });
 
     const rows = document.querySelectorAll(".srow");
-    (rows[0].querySelector(".name") as HTMLSpanElement).click();
-    expect(posted).toContainEqual({ type: "openSession", id: "a" });
+    // A row for a session that is open but NOT on screen still switches to it…
+    (rows[1].querySelector(".name") as HTMLSpanElement).click();
+    expect(posted).toContainEqual({ type: "openSession", id: "b" });
     const btns = rows[0].querySelectorAll("button");
     (btns[0] as HTMLButtonElement).click();
     expect(posted).toContainEqual({ type: "branchSession", id: "a" });
@@ -8228,7 +8271,7 @@ describe("the context-window checkpoint in the transcript", () => {
       messages: [
         { role: "user", content: "antichissima", timestamp: 1 },
         { role: "assistant", content: "old answer", timestamp: 2 },
-        { role: "user", content: "Vecchio riepilogo", timestamp: 3, synthetic: true },
+        { role: "user", content: "Old summary", timestamp: 3, synthetic: true },
         { role: "assistant", content: "old state", timestamp: 4, synthetic: true },
         { role: "user", content: "in mezzo", timestamp: 5 },
         { role: "assistant", content: "replica", timestamp: 6 },
@@ -9173,7 +9216,7 @@ describe("empty shell (no open session)", () => {
     };
     /** Two sessions of two DIFFERENT workspaces, most recent first. */
     const TWO_FOLDERS = [
-      { id: "a", name: "Casa", createdAt: 1, updatedAt: 9, messageCount: 25, folder: "/p/harny" },
+      { id: "a", name: "Home", createdAt: 1, updatedAt: 9, messageCount: 25, folder: "/p/harny" },
       { id: "b", name: "Test", createdAt: 2, updatedAt: 8, messageCount: 6, folder: "/p/test" },
     ];
 
@@ -9389,7 +9432,7 @@ describe("empty shell (no open session)", () => {
       hostMessage({
         type: "switchView",
         switchSeq: 1,
-        sessions: [{ id: "a", name: "Casa", createdAt: 1, updatedAt: 9, messageCount: 25, folder: "/p/harny" }],
+        sessions: [{ id: "a", name: "Home", createdAt: 1, updatedAt: 9, messageCount: 25, folder: "/p/harny" }],
         openIds: [],
         activeId: undefined,
         messages: [],
@@ -9606,10 +9649,10 @@ describe("main sessions list search", () => {
     const arrow = document.querySelector("#session-head .toggle") as HTMLElement;
     expect(list.classList.contains("hidden")).toBe(false);
 
-    (document.querySelector("#sessions .srow .name") as HTMLElement).click();
+    (document.querySelectorAll("#sessions .srow .name")[1] as HTMLElement).click();
 
     // The click still opens the session…
-    expect(posted).toContainEqual({ type: "openSession", id: "a" });
+    expect(posted).toContainEqual({ type: "openSession", id: "b" });
     // …and the list gets out of the way, search field and arrow included.
     expect(list.classList.contains("hidden")).toBe(true);
     expect(searchRow.classList.contains("hidden")).toBe(true);

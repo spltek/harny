@@ -292,6 +292,19 @@ function resolveWith(provider: ChatViewProvider): { view: any; handler: (msg: an
   return { view, handler: view.webview.onDidReceiveMessage.mock.calls[0][0] as (m: any) => Promise<void> };
 }
 
+/** The state the page was DRAWN with, read back out of the HTML the host assigned. */
+function initOf(html: string): {
+  messages: { role?: string }[];
+  activeId?: string;
+  veil?: boolean;
+  veilName?: string;
+  config: { providerModels?: { provider: string; model: string }[]; hostModelErrors?: { provider: string }[] };
+} {
+  const m = /<script id="harny-view-init" type="application\/json">([\s\S]*?)<\/script>/.exec(html);
+  if (!m) throw new Error("the page carries no harny-view-init state");
+  return JSON.parse(m[1]);
+}
+
 /**
  * The prerequisites EVERY test in this file shares, in ONE place: the vscode mocks cleared and the
  * state they read reset to its defaults.
@@ -451,7 +464,7 @@ describe("ChatViewProvider", () => {
       (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
         {
           id: "x",
-          name: "Casa",
+          name: "Home",
           createdAt: 1,
           updatedAt: 2,
           messageCount: 3,
@@ -476,7 +489,7 @@ describe("ChatViewProvider", () => {
       (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
         {
           id: "x",
-          name: "Casa",
+          name: "Home",
           createdAt: 1,
           updatedAt: 2,
           messageCount: 3,
@@ -550,7 +563,7 @@ describe("ChatViewProvider", () => {
       (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
         {
           id: "x",
-          name: "Casa",
+          name: "Home",
           createdAt: 1,
           updatedAt: 2,
           messageCount: 3,
@@ -606,7 +619,7 @@ describe("ChatViewProvider", () => {
     it("resumeSession finishes the gesture — as soon as the panel can show it", async () => {
       const { store, provider, registry } = buildHarness();
       (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
-        { id: "x", name: "Casa", createdAt: 1, updatedAt: 2, messageCount: 3, folder: "/p/harny" },
+        { id: "x", name: "Home", createdAt: 1, updatedAt: 2, messageCount: 3, folder: "/p/harny" },
       ]);
       // The reload finished, the panel did not exist yet: the action must WAIT, or its
       // `switchView` would be posted into a page that is not there.
@@ -632,13 +645,13 @@ describe("ChatViewProvider", () => {
       // simulated: the mock records what the real webview would have thrown away.
       const { store, provider, registry } = buildHarness();
       (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
-        { id: "x", name: "Casa", createdAt: 1, updatedAt: 2, messageCount: 2, folder: "/p/harny" },
+        { id: "x", name: "Home", createdAt: 1, updatedAt: 2, messageCount: 2, folder: "/p/harny" },
       ]);
       (store.load as ReturnType<typeof vi.fn>).mockImplementation((id: string) => ({
-        summary: { id, name: "Casa", createdAt: 1, updatedAt: 2, messageCount: 2, folder: "/p/harny" },
+        summary: { id, name: "Home", createdAt: 1, updatedAt: 2, messageCount: 2, folder: "/p/harny" },
         messages: [
-          { role: "user", content: "prima", timestamp: 1 },
-          { role: "assistant", content: "seconda", timestamp: 2 },
+          { role: "user", content: "first", timestamp: 1 },
+          { role: "assistant", content: "second", timestamp: 2 },
         ],
       }));
 
@@ -658,7 +671,7 @@ describe("ChatViewProvider", () => {
       expect(after.length).toBeGreaterThan(before);
       const last = after[after.length - 1];
       expect(last.activeId).toBe("x");
-      expect(last.messages.map((m: any) => m.content)).toEqual(["prima", "seconda"]);
+      expect(last.messages.map((m: any) => m.content)).toEqual(["first", "second"]);
     });
 
     it("the answer to a fresh page carries the session LIST too", async () => {
@@ -727,10 +740,10 @@ describe("ChatViewProvider", () => {
       // itself after the first refusal instead of retrying.
       const { store, provider, registry } = buildHarness();
       (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
-        { id: "x", name: "Casa", createdAt: 1, updatedAt: 2, messageCount: 1, revision: 5 },
+        { id: "x", name: "Home", createdAt: 1, updatedAt: 2, messageCount: 1, revision: 5 },
       ]);
       (store.load as ReturnType<typeof vi.fn>).mockImplementation((id: string) => ({
-        summary: { id, name: "Casa", createdAt: 1, updatedAt: 2, messageCount: 1, revision: 5 },
+        summary: { id, name: "Home", createdAt: 1, updatedAt: 2, messageCount: 1, revision: 5 },
         messages: [{ role: "user", content: "kept", timestamp: 1 }],
       }));
       const { view } = resolveWith(provider);
@@ -744,7 +757,7 @@ describe("ChatViewProvider", () => {
       // panel reads the title from.
       (store.summary as ReturnType<typeof vi.fn>).mockReturnValue({
         id: "x",
-        name: "Casa",
+        name: "Home",
         createdAt: 1,
         updatedAt: 2,
         messageCount: 1,
@@ -758,7 +771,7 @@ describe("ChatViewProvider", () => {
           .filter((m) => m.kind === "alert" && m.title === "Session changed in another window");
       await vi.waitFor(() => expect(notices()).toHaveLength(1));
       const message = notices()[0].message;
-      expect(message).toContain("Casa");
+      expect(message).toContain("Home");
       expect(message).toContain("NOT written");
       expect(message).toContain("revision 7");
       // Nothing is closed on the user's behalf: the messages on screen are the only copy left.
@@ -836,7 +849,7 @@ describe("ChatViewProvider", () => {
     it("a deferred action that throws neither breaks the page nor the actions after it", async () => {
       const { store, provider, registry } = buildHarness();
       (store.list as ReturnType<typeof vi.fn>).mockReturnValue([
-        { id: "x", name: "Casa", createdAt: 1, updatedAt: 2, messageCount: 3, folder: "/p/harny" },
+        { id: "x", name: "Home", createdAt: 1, updatedAt: 2, messageCount: 3, folder: "/p/harny" },
       ]);
       provider.runWhenReady(() => {
         throw new Error("boom");
@@ -961,7 +974,7 @@ describe("ChatViewProvider", () => {
 
       // …and answering it lets the deferred rebuild through: the panel comes back to life.
       const modalPost = view.webview.postMessage.mock.calls.map((c) => c[0] as any).find((m) => m.type === "modal");
-      await handler({ type: "modalResponse", id: modalPost.modalId, value: "Casa" });
+      await handler({ type: "modalResponse", id: modalPost.modalId, value: "Home" });
       await answered;
       expect(view.webview.html).not.toBe(before);
     } finally {
@@ -1244,9 +1257,17 @@ describe("ChatViewProvider", () => {
     // The attachment build and the pre-request auto-compaction run BEFORE
     // `agent.streaming` flips: coming back to such a session must still show the
     // working bar and the locked input, not an idle transcript.
-    const { registry, provider } = buildHarness();
+    const { registry, provider, store } = buildHarness();
     const { handler, view } = resolveWith(provider);
     await provider.createNew(); // s1
+    // A second OPEN tab: switching to the tab that is ALREADY on screen is a no-op now (see
+    // `isShowing`), so the switch below has to come from somewhere else.
+    const other = store.create("Other");
+    provider.openSession(other.id);
+    await vi.waitFor(() => expect(registry.listOpenIds()).toContain(other.id));
+    // `openSession` is fire-and-forget: its tail (another `switchView`, the manager push) must land
+    // BEFORE the clear, or it would show up as the last message of the switch under test.
+    await new Promise((r) => setTimeout(r, 30));
     registry.get("s1")!.engine.beginSend();
     view.webview.postMessage.mockClear();
 
@@ -1759,11 +1780,17 @@ describe("ChatViewProvider", () => {
   });
 
   it("reports a session as BUSY (workingIds) while its send preamble runs", async () => {
-    const { registry, provider } = buildHarness();
+    const { registry, provider, store } = buildHarness();
     const { view } = resolveWith(provider);
     await provider.createNew(); // s1
+    // A second OPEN tab, so `setActive("s1")` below is a switch and not the no-op guard.
+    const other = store.create("Other");
+    provider.openSession(other.id);
+    await vi.waitFor(() => expect(registry.listOpenIds()).toContain(other.id));
+    await new Promise((r) => setTimeout(r, 30)); // let the other open's tail finish (see above)
     registry.get("s1")!.engine.beginSend();
     try {
+      view.webview.postMessage.mockClear();
       await provider.setActive("s1");
       const last = view.webview.postMessage.mock.calls.slice(-1)[0][0];
       expect(last.type).toBe("switchView");
@@ -4816,13 +4843,13 @@ describe("ChatViewProvider compaction", () => {
     rt.history.replace([
       { role: "user", content: "ancient question", timestamp: 1 },
       { role: "assistant", content: "ancient answer", timestamp: 2 },
-      { role: "user", content: "Riepilogo", timestamp: 3, synthetic: true },
+      { role: "user", content: "Summary", timestamp: 3, synthetic: true },
       { role: "assistant", content: "old state", timestamp: 4, synthetic: true },
-      { role: "user", content: "lavoro 1", timestamp: 5 },
+      { role: "user", content: "work 1", timestamp: 5 },
       { role: "assistant", content: "done 1", timestamp: 6 },
-      { role: "user", content: "lavoro 2", timestamp: 7 },
+      { role: "user", content: "work 2", timestamp: 7 },
       { role: "assistant", content: "done 2", timestamp: 8 },
-      { role: "user", content: "lavoro 3", timestamp: 9 },
+      { role: "user", content: "work 3", timestamp: 9 },
       { role: "assistant", content: "done 3", timestamp: 10 },
     ]);
 
@@ -4851,7 +4878,7 @@ describe("ChatViewProvider compaction", () => {
     rt.history.replace([
       { role: "user", content: "P".repeat(120_000), timestamp: 1 },
       { role: "assistant", content: "Q".repeat(120_000), timestamp: 2 },
-      { role: "user", content: "Riepilogo", timestamp: 3, synthetic: true },
+      { role: "user", content: "Summary", timestamp: 3, synthetic: true },
       { role: "assistant", content: "## Goal\nx", timestamp: 4, synthetic: true },
       { role: "user", content: "short", timestamp: 5 },
     ]);
@@ -4873,7 +4900,7 @@ describe("ChatViewProvider compaction", () => {
     rt.history.replace([
       { role: "user", content: "past", timestamp: 1 },
       { role: "assistant", content: "old answer", timestamp: 2 },
-      { role: "user", content: "Riepilogo", timestamp: 3, synthetic: true },
+      { role: "user", content: "Summary", timestamp: 3, synthetic: true },
       { role: "assistant", content: "## Goal\nx", timestamp: 4, synthetic: true },
       { role: "user", content: "question 1", timestamp: 5 },
       { role: "assistant", content: "answer 1", timestamp: 6 },
@@ -4885,7 +4912,7 @@ describe("ChatViewProvider compaction", () => {
     await handler({ type: "truncateAt", index: 6 });
 
     expect(rt.history.conversation().map((m) => m.content)).toEqual([
-      "Riepilogo",
+      "Summary",
       "## Goal\nx",
       "question 1",
       "answer 1",
@@ -4903,7 +4930,7 @@ describe("ChatViewProvider compaction", () => {
     rt.history.replace([
       { role: "user", content: "past", timestamp: 1 },
       { role: "assistant", content: "old answer", timestamp: 2 },
-      { role: "user", content: "Riepilogo", timestamp: 3, synthetic: true },
+      { role: "user", content: "Summary", timestamp: 3, synthetic: true },
       { role: "assistant", content: "## Goal\nx", timestamp: 4, synthetic: true },
       { role: "user", content: "question 1", timestamp: 5 },
       { role: "assistant", content: "answer 1", timestamp: 6 },
@@ -5962,7 +5989,11 @@ describe("ChatViewProvider compaction", () => {
       fetchModelInfos: async () => [{ id: "kimi-k3" }], // host reports NO context
       modelsDev: { getLimits },
     });
-    const { view } = resolveWith(provider);
+    const { view, handler } = resolveWith(provider);
+    // The first paint is drawn WITHOUT the network (it skips the host-model fetches and raises
+    // the veil — see `ViewState.veil`), so the lists this test is about arrive with the page's
+    // `ready` handshake, exactly as they do in the panel.
+    await handler({ type: "ready" });
 
     // Background enrichment resolves it and pushes an updated config; the list
     // entry then carries the contextLength (so it shows in the model modal).
@@ -6957,8 +6988,13 @@ describe("ChatViewProvider soft steering + queue", () => {
   });
 
   it("includes the pending list in switchView so a tab switch restores it", async () => {
-    const { handler, view, rt } = await setupStreaming();
+    const { handler, view, provider, store, registry } = await setupStreaming();
     await handler({ type: "send", mode: "queue", id: "q1", text: "later" });
+    // A second OPEN tab: switching to the tab you are ALREADY on is a no-op now.
+    const other = store.create("Other");
+    provider.openSession(other.id);
+    await vi.waitFor(() => expect(registry.listOpenIds()).toContain(other.id));
+    await new Promise((r) => setTimeout(r, 30)); // let the other open's tail finish (see above)
     view.webview.postMessage.mockClear();
 
     await handler({ type: "switchTab", id: "s1" });
@@ -7310,7 +7346,10 @@ describe("ChatViewProvider models.dev unreachable warning", () => {
 
   it("does NOT flag it when the catalog is reachable (limits resolved)", async () => {
     const { provider } = harness(true, { context: 1000, output: 100 });
-    const { view } = resolveWith(provider);
+    const { view, handler } = resolveWith(provider);
+    // The live lists come with the `ready` handshake, not with the first paint: that page is
+    // drawn before the network on purpose (see `buildHtml`).
+    await handler({ type: "ready" });
     await vi.waitFor(() => {
       const configs = view.webview.postMessage.mock.calls
         .map((c: unknown[]) => c[0] as { type?: string; config?: { modelsDevError?: boolean } })
@@ -7438,5 +7477,121 @@ describe("ChatViewProvider config-change + enrichment robustness", () => {
     await new Promise((r) => setTimeout(r, 30));
     // No crash: the HTML was still produced (the enrichment is best-effort).
     expect(view.webview.html).toContain('id="sessions"');
+  });
+});
+
+describe("ChatViewProvider first paint", () => {
+  it("hands the page over without waiting for a host that never answers, with the veil up", async () => {
+    const { provider } = buildHarness({
+      config: { ...CONFIG, hostModelProviders: ["slow"] },
+      providerEntry: { name: "slow", baseUrl: "http://slow.example/v1", apiKey: "k", models: [] },
+      // Connected, then silent — the proxy case that costs the full 5 s abort. This promise NEVER
+      // settles: a build that awaited it would leave `webview.html` empty and the waitFor below
+      // would time out. That is the whole point of the first paint.
+      fetchModelInfos: () => new Promise(() => undefined),
+    });
+    const { view } = resolveWith(provider);
+
+    await vi.waitFor(() => expect(view.webview.html).toContain('id="harny-view-init"'), { timeout: 800 });
+    const init = initOf(view.webview.html);
+    // The page says, in its own state, that the rest is still coming: the client puts the veil up
+    // before it says hello, and the `switchView` that answers takes it down.
+    expect(init.veil).toBe(true);
+    // …and it is honest about what it does NOT have: no live list, no error either — the hosts
+    // were not asked yet, so nothing can be red.
+    expect(init.config.providerModels).toEqual([]);
+    expect(init.config.hostModelErrors ?? []).toEqual([]);
+  });
+
+  it("the ready handshake delivers what the first paint skipped", async () => {
+    const { provider } = buildHarness({
+      config: { ...CONFIG, hostModelProviders: ["live"] },
+      providerEntry: { name: "live", baseUrl: "http://live.example/v1", apiKey: "k", models: [] },
+      fetchModelInfos: async () => [{ id: "live-model" }],
+    });
+    const { view, handler } = resolveWith(provider);
+    await vi.waitFor(() => expect(view.webview.html).toContain('id="harny-view-init"'));
+    expect(initOf(view.webview.html).config.providerModels).toEqual([]);
+
+    await handler({ type: "ready" });
+
+    const switches = view.webview.postMessage.mock.calls
+      .map((c: unknown[]) => c[0] as { type?: string; config?: { providerModels?: { model: string }[] } })
+      .filter((m) => m?.type === "switchView");
+    expect(switches.at(-1)?.config?.providerModels?.map((m) => m.model)).toContain("live-model");
+  });
+
+  it("a LATER refresh is a full build: the veil belongs to the first paint only", async () => {
+    const { provider } = buildHarness({
+      config: { ...CONFIG, hostModelProviders: ["live"] },
+      providerEntry: { name: "live", baseUrl: "http://live.example/v1", apiKey: "k", models: [] },
+      fetchModelInfos: async () => [{ id: "live-model" }],
+    });
+    const { view } = resolveWith(provider);
+    await vi.waitFor(() => expect(view.webview.html).toContain('id="harny-view-init"'));
+    expect(initOf(view.webview.html).veil).toBe(true);
+
+    // Any host-side refresh now replaces the page (a reload is how it has always worked): it asks
+    // the hosts, and it does NOT raise the veil again — a veil on every rebuild would flash on
+    // every setting change.
+    await provider.refresh();
+    const init = initOf(view.webview.html);
+    expect(init.veil).toBeUndefined();
+    expect(init.config.providerModels?.map((m) => m.model)).toContain("live-model");
+  });
+});
+
+describe("Re-picking the session already on screen", () => {
+  it("does not rebuild it: no `switching`, no `switchView`, and no new page", async () => {
+    const { provider } = buildHarness();
+    const { view } = resolveWith(provider);
+    await provider.createNew(); // s1, active and on screen
+    const html = view.webview.html;
+    view.webview.postMessage.mockClear();
+
+    provider.openSession("s1");
+    await new Promise((r) => setTimeout(r, 20));
+
+    const posts = (view.webview.postMessage.mock.calls as unknown[][]).map((c) => c[0] as { type?: string });
+    // `switching` is what raises the veil in the view: re-opening the session you are reading used
+    // to put a spinner over the log and then rebuild it under the spinner.
+    expect(posts.some((m) => m?.type === "switching")).toBe(false);
+    expect(posts.some((m) => m?.type === "switchView")).toBe(false);
+    // And it is not a reload either: the page on screen is the same one.
+    expect(view.webview.html).toBe(html);
+  });
+
+  it("`setActive` on the active tab is a no-op, while another OPEN tab still switches", async () => {
+    const { provider } = buildHarness();
+    const { view } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await provider.createNew(); // s2, active
+    view.webview.postMessage.mockClear();
+
+    await provider.setActive("s2");
+    expect(view.webview.postMessage).not.toHaveBeenCalled();
+
+    // The guard is about the session ALREADY showing, not about refusing switches: s1 is open and
+    // must come back on screen with its own transcript.
+    await provider.setActive("s1");
+    const posts = (view.webview.postMessage.mock.calls as unknown[][]).map(
+      (c) => c[0] as { type?: string; id?: string },
+    );
+    expect(posts).toContainEqual({ type: "switching", id: "s1" });
+    expect(posts.some((m) => m?.type === "switchView")).toBe(true);
+  });
+
+  it("opens it again once its runtime is GONE (a closed tab is not 'showing')", async () => {
+    const { provider, registry } = buildHarness();
+    const { view } = resolveWith(provider);
+    await provider.createNew(); // s1, active
+    await provider.closeTab("s1");
+    expect(registry.get("s1")).toBeUndefined();
+    view.webview.postMessage.mockClear();
+
+    provider.openSession("s1");
+    await vi.waitFor(() => expect(registry.get("s1")).toBeDefined());
+    const posts = (view.webview.postMessage.mock.calls as unknown[][]).map((c) => c[0] as { type?: string });
+    expect(posts.some((m) => m?.type === "switchView")).toBe(true);
   });
 });

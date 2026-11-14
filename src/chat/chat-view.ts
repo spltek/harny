@@ -213,6 +213,11 @@ export class ChatViewProvider implements WebviewViewProvider {
    * tab switch. */
   private switchSeq = 0;
   private hostCache = new Map<string, { at: number; models: ModelInfo[]; error?: string }>();
+  /**
+   * Has a page been handed to the webview yet? The FIRST one is drawn without the network
+   * (`buildHtml({ firstPaint: true })`); everything after it is a full build.
+   */
+  private painted = false;
   /** models.dev context windows resolved for hosts that do NOT report one
    * (e.g. opencode-go), keyed by `provider|model`. Filled in the background so
    * the model LIST shows the same window that selecting the model adopts. */
@@ -423,6 +428,12 @@ export class ChatViewProvider implements WebviewViewProvider {
   private async openSessionId(id: string): Promise<void> {
     const s = this.sessions.list().find((x) => x.id === id);
     if (s?.folderMissing) return;
+    // The click landed on the session that is ALREADY open and on screen: `open` is not a verb
+    // that applies to it. Re-entering used to re-read the messages, rebuild the transcript and
+    // re-post the list — and `setActive` posted `switching` first, so the veil came up over the
+    // log the user was reading and then the log was rebuilt under it, for a click whose only
+    // effect should have been the list collapsing.
+    if (this.isShowing(id)) return;
     const rt = this.registry.openOrCreate(id);
     await this.setActive(id);
     // Opening can ADD a row to the main list (a session of another folder becomes
@@ -1139,12 +1150,28 @@ export class ChatViewProvider implements WebviewViewProvider {
   }
 
   /**
+   * Is this session already open AND the one on screen? Then a gesture that asks to open or switch
+   * to it has nothing left to do: `openSession` would re-read the messages, rebuild the transcript
+   * and re-post the list, and `setActive` posts `switching` — which raises the veil over the very
+   * log the user is reading — followed by a full `switchView`. The click is not a request to
+   * reload anything. A session whose runtime is gone (closed, deleted) is NOT showing, whatever
+   * `activeId` still says.
+   */
+  private isShowing(id: string): boolean {
+    return this.activeId === id && this.registry.get(id) !== undefined;
+  }
+
+  /**
    * Switch the ACTIVE tab. This is an INCREMENTAL update (switchView message),
    * NOT a full HTML reload: the webview keeps its streaming state, so a
    * session that is still working relocks and keeps streaming when you return
    * to it.
    */
   async setActive(id: string, sessionsChanged = false): Promise<void> {
+    // Already the active tab: there is nothing to switch TO (see `isShowing`). Everything below
+    // is news for the view — `switching` (the veil), the re-subscription, a rebuilt config — and
+    // none of it is news the second time.
+    if (this.isShowing(id)) return;
     // Tell the view AT ONCE that a switch is in flight. The state itself cannot
     // follow before `buildConfig` answers (and a host busy with a running turn can
     // take a while), and until it does the OLD transcript sits there looking final —
@@ -1462,7 +1489,11 @@ export class ChatViewProvider implements WebviewViewProvider {
     }
     this.refreshDeferred = false; // this run satisfies any deferred request
     const seq = ++this.refreshSeq;
-    return this.buildHtml().then((html) => {
+    // The FIRST page is drawn WITHOUT the network (see `buildHtml`): after a reload the panel
+    // used to be a blank area until every provider had answered, because the host-model fetches
+    // are part of the config build and the HTML waits for it. Every later refresh is a full one.
+    const firstPaint = !this.painted;
+    return this.buildHtml({ firstPaint }).then((html) => {
       if (!this.view) return;
       // A LATER refresh started while this one was building (buildHtml is async: config,
       // skills, MCP status — hundreds of ms). Its HTML is the newer truth, so this one must
@@ -1480,6 +1511,7 @@ export class ChatViewProvider implements WebviewViewProvider {
         return;
       }
       this.modalGuard.disarm();
+      this.painted = true;
       // The document is loading: until it says hello (`case "ready"`) a `postMessage` sent to
       // it lands nowhere. A modal that WAS on screen went away with the page we are replacing,
       // so it is marked as not shown — and re-posted (same id, same question) by the new
@@ -3759,7 +3791,15 @@ export class ChatViewProvider implements WebviewViewProvider {
     return typeof cfgCap === "number" && cfgCap > 0 ? cfgCap : DEFAULT_MAX_PARALLEL_SUB_AGENTS;
   }
 
-  private async buildConfig(): Promise<{
+  /**
+   * @param opts.fetchHosts `false` draws the page WITHOUT asking the providers for their live
+   * model lists. That fetch is the only network wait in here, and it is the slow part of a cold
+   * start: after a window reload every host cache is empty and the build waits for the SLOWEST
+   * provider (up to the 5 s abort). The first paint passes `false` and lets the lists arrive
+   * with the `ready` handshake instead — see `ViewState.veil`. Everything else (settings, skills,
+   * MCP status, limits catalog) is local and stays exactly as it is.
+   */
+  private async buildConfig(opts: { fetchHosts?: boolean } = {}): Promise<{
     provider: string;
     activeProvider?: string;
     model: string;
@@ -3843,7 +3883,7 @@ export class ChatViewProvider implements WebviewViewProvider {
     const allNames = [...new Set([...hostProviders, ...declared.map((p) => p.provider)])];
     const fetched = new Map<string, ModelInfo[]>();
     const hostModelErrors: { provider: string; error: string }[] = [];
-    if (allNames.length > 0) {
+    if (opts.fetchHosts !== false && allNames.length > 0) {
       const results = await Promise.allSettled(allNames.map((name) => this.fetchHostModels(name)));
       allNames.forEach((name, i) => {
         const r = results[i];
@@ -4370,11 +4410,21 @@ export class ChatViewProvider implements WebviewViewProvider {
     return mode === "dark" || mode === "light" ? mode : "auto";
   }
 
-  private async buildHtml(): Promise<string> {
+  /**
+   * The page HTML.
+   *
+   * @param opts.firstPaint The FIRST page after a reload: it skips the host-model fetches (see
+   * `buildConfig`) and raises the veil, so the panel and its transcript are on screen at once
+   * instead of an empty area for the seconds the network takes. What is still missing — the live
+   * model lists, a session the reload is about to open — arrives through the `ready` handshake,
+   * which posts `switchView` and takes the veil down. A second `webview.html` is NOT an option:
+   * it REPLACES the document, and the veil would go away with it.
+   */
+  private async buildHtml(opts: { firstPaint?: boolean } = {}): Promise<string> {
     const active = this.activeRuntime();
     const messages = active ? active.agent.getMessages() : [];
     const live = active?.engine.projection();
-    const config = await this.buildConfig();
+    const config = await this.buildConfig({ fetchHosts: !opts.firstPaint });
     // Cache-bust the webview bundle: VS Code caches webview resources strongly,
     // so a plain asWebviewUri may keep serving an OLD media/view.js after a
     // rebuild even across reloads. The mtime in the query forces a re-fetch.
@@ -4420,6 +4470,15 @@ export class ChatViewProvider implements WebviewViewProvider {
         liveThinking: live?.thinking ?? "",
         liveAnswer: live?.answer ?? "",
         ...(live ? { liveTurn: live } : {}),
+        ...(opts.firstPaint
+          ? {
+              veil: true,
+              // Name what is opening, when the host already knows: a reload that is about to
+              // open a session (a row clicked on the home list) has no active runtime yet, so
+              // this is undefined there and the veil says "Opening session…".
+              ...(active ? { veilName: this.sessionsForView().find((s) => s.id === active.sessionId)?.name } : {}),
+            }
+          : {}),
       },
     });
   }

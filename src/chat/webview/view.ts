@@ -224,6 +224,18 @@ interface InitState {
   compacting?: boolean;
   /** Queue/steer messages typed while working (host re-pushes on reload). */
   pending?: PendingViewItem[];
+  /**
+   * This page was drawn before the network answered: put the veil up NOW.
+   *
+   * The host skips the host-model fetches for the first paint after a reload (they are the
+   * slow part: every provider, up to a 5 s abort each) and sends this page immediately, so
+   * the transcript shows at once instead of a blank area, and the veil says what is still
+   * coming. `switchView` — which the `ready` handshake produces — takes it down; the veil's
+   * own safety timeout covers a host that never answers.
+   */
+  veil?: boolean;
+  /** Which session the veil names, when the host already knows it. */
+  veilName?: string;
   /** Extension version (shown in the empty hero). */
   version?: string;
   /** Cache-busted vscode-webview:// URI of media/icons/harny.svg — the brand mark,
@@ -929,11 +941,17 @@ function renderSessions(sessions: SessionInfo[]): void {
         vscode.postMessage({ type: "openSessionFolder", id: s.id });
         return;
       }
-      // Same veil as a tab click — opening can take longer still (the messages come
-      // off disk) and the list collapses right after, so the transcript is what
-      // stays on screen: it must say that something is happening.
-      showSwitchVeil(s.name);
-      vscode.postMessage({ type: "openSession", id: s.id });
+      // The row of the session ALREADY on screen: choosing it again must not reload anything.
+      // This used to veil the transcript and ask the host to open it again — a spinner over the
+      // log, and a full rebuild of it, for a click that only meant "get out of the way". A row
+      // for a session that is open but NOT showing still has to switch to it.
+      if (s.id !== activeId) {
+        // Same veil as a tab click — opening can take longer still (the messages come
+        // off disk) and the list collapses right after, so the transcript is what
+        // stays on screen: it must say that something is happening.
+        showSwitchVeil(s.name);
+        vscode.postMessage({ type: "openSession", id: s.id });
+      }
       // Picking a session ENDS the gesture: the list collapses so the transcript
       // gets the space back. The header is one click away to reopen it, and an
       // EMPTY session expands it again on its own (the hero points at the list).
@@ -3110,8 +3128,8 @@ function renderSteerMode(): void {
  *
  * A `keyup` is not guaranteed to arrive here: on macOS ⌘⇧4 / ⌘⇧5 (screenshot, screen recording)
  * take Cmd's keyup for the system overlay, and the VS Code window is never deactivated — so `blur`
- * does not fire either — leaving the pill on "Steer" until the next Ctrl/Cmd press (reported: "lo
- * stato steer rimane incastrato"). It is not cosmetic: `effectiveSendMode()` reads the same flag,
+ * does not fire either — leaving the pill on "Steer" until the next Ctrl/Cmd press (reported: "every now
+ * and then the steer state gets stuck"). It is not cosmetic: `effectiveSendMode()` reads the same flag,
  * so the next plain ⏎ would have STEERED instead of queued.
  *
  * The state is therefore re-derived from any event that carries the truth, the way a browser
@@ -7745,6 +7763,12 @@ applyHelp(init.config?.interactiveHelp === true);
 // had already posted the `switchView` carrying the messages, into a document that did not exist
 // yet, and nothing ever sent it again (see ChatViewProvider.onMessage, case "ready"). It is sent
 // here, at the end, so every listener above is registered before the host answers.
+//
+// The veil goes up BEFORE that hello: a page drawn without the network (the first paint after a
+// reload) says so in its state, and this is the last moment it can be shown without a flash —
+// the `switchView` that answers `ready` takes it down, and its 0,12 s fade-in delay means a
+// build that lands quickly never shows it at all.
+if (init.veil) showSwitchVeil(init.veilName);
 vscode.postMessage({ type: "ready" });
 
 export {};
