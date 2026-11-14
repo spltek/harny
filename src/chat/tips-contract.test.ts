@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import bundle from "../i18n/en.help.json";
 import { tip } from "../i18n";
 import { untrustedModeHint } from "../core/agent/workspace-trust";
@@ -49,13 +49,21 @@ const TIPS = CATALOG.tips;
  */
 const DYNAMIC_TITLE_IDS: string[] = [];
 
-/** Every `.ts` under `src/` that can name a catalog key (tests excluded: they quote copy). */
+/**
+ * Every `.ts` under `src/` that can name a catalog key (tests excluded: they quote copy).
+ *
+ * The paths are POSIX, on every OS: this list is compared by SUFFIX (`webview/tips.ts`,
+ * `view-css.ts`) and a Windows path separates with `\`, so the suffix never matched and the module
+ * that DECIDES the cursor was reported as an offender that writes the attribute — green on macOS and
+ * Linux, red only on the Windows runner, which is the one place a POSIX-joined string is not a path.
+ * `readFileSync` takes either separator, so normalising here costs nothing.
+ */
 function sources(dir: string): string[] {
   const out: string[] = [];
   for (const name of readdirSync(dir)) {
     const path = join(dir, name);
     if (statSync(path).isDirectory()) out.push(...sources(path));
-    else if (name.endsWith(".ts") && !name.endsWith(".test.ts")) out.push(path);
+    else if (name.endsWith(".ts") && !name.endsWith(".test.ts")) out.push(path.split(sep).join("/"));
   }
   return out;
 }
@@ -335,6 +343,17 @@ describe("tips: the markup and the catalog cannot drift apart", () => {
     expect(readFileSync(join(process.cwd(), "src/chat/webview/tips.ts"), "utf8")).toContain(
       'el.setAttribute(CURSOR_ATTR, "help")',
     );
+  });
+
+  it("the source list is comparable by SUFFIX, on Windows too", () => {
+    // The rule above is a string comparison (`webview/tips.ts`, `view-css.ts`), and this suite runs on
+    // three OSes: a backslash-separated path silently matches nothing, so the filters would quietly
+    // stop excluding anything and the assertions would pass or fail for the wrong reason. Pinned
+    // here because CI, not a laptop, is where the difference shows (the Windows runner is the one
+    // place this failed: green everywhere else).
+    expect(SRC.filter((f) => f.includes("\\"))).toEqual([]);
+    expect(SRC.some((f) => f.endsWith("webview/tips.ts"))).toBe(true);
+    expect(SRC.some((f) => f.endsWith("view-css.ts"))).toBe(true);
   });
 
   it("interactive help is ONE switch, and exactly ONE element outlives it", () => {
