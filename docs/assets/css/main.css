@@ -324,6 +324,12 @@ pre code {
   background: linear-gradient(90deg, var(--cyan), var(--tan));
   box-shadow: 0 0 10px rgba(95, 230, 245, 0.7);
 }
+/* The repo sits next to the one button that leaves the page: icon-only and SQUARE, so the two
+   buttons in that corner do not read as a menu. Hidden below 1010px by `.nav .btn--sm` with the
+   rest of the bar — the hero CTA carries the same link there. */
+.nav__gh {
+  padding: 0.55rem 0.6rem;
+}
 
 .brand {
   display: flex;
@@ -1146,6 +1152,160 @@ main {
   to {
     transform: translateX(-50%);
   }
+}
+
+/* ---------- 08b. SHOWREEL ---------- */
+/* A facade, not an iframe: the player is about a megabyte of third-party JS and a cookie set
+   before anyone consented, while a click is what the visitor actually asked for. The poster is an
+   ordinary <a> to YouTube, so with JS off the same click still works — it just opens a tab. */
+.reel {
+  position: relative;
+  max-width: var(--max);
+  margin: 0 auto;
+  padding: clamp(3.6rem, 8vw, 6rem) var(--pad) 0;
+}
+.reel__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.2rem clamp(1rem, 4vw, 3rem);
+  margin-bottom: clamp(1.2rem, 2.5vw, 1.9rem);
+}
+.reel__kicker {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.9rem;
+  font-family: var(--f-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--tan);
+}
+.reel__kicker span {
+  color: var(--cyan);
+}
+.reel__title {
+  margin: 0;
+  font-family: var(--f-display);
+  font-size: clamp(1.5rem, 3.6vw, 2.5rem);
+  line-height: 1.06;
+  letter-spacing: -0.01em;
+  color: var(--text-hi);
+}
+.reel__note {
+  max-width: 34ch;
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.65;
+  color: var(--dim);
+}
+.reel__note b {
+  color: var(--text);
+  font-weight: 600;
+}
+.reel__frame {
+  position: relative;
+  margin: 0;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  background: linear-gradient(150deg, rgba(6, 26, 38, 0.9), rgba(1, 8, 15, 0.95));
+  overflow: hidden;
+  box-shadow: 0 40px 120px -60px rgba(95, 230, 245, 0.45);
+  transition: border-color 0.4s, box-shadow 0.4s;
+}
+.reel__frame:hover {
+  border-color: var(--cyan-3);
+  box-shadow: 0 46px 130px -58px rgba(95, 230, 245, 0.65);
+}
+.reel__play {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+}
+.reel__poster {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover; /* maxres is already 16:9; cover keeps an odd frame from letterboxing */
+  filter: saturate(0.82) brightness(0.6);
+  transform: scale(1.01);
+  transition: filter 0.5s, transform 0.7s var(--ease);
+}
+.reel__play:hover .reel__poster,
+.reel__play:focus-visible .reel__poster {
+  filter: saturate(1) brightness(0.76);
+  transform: scale(1.045);
+}
+.reel__btn {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.85rem 1.6rem;
+  border: 1px solid rgba(95, 230, 245, 0.5);
+  border-radius: 999px;
+  background: rgba(1, 8, 15, 0.72);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  color: var(--text-hi);
+  font-family: var(--f-mono);
+  font-size: 0.76rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  box-shadow: var(--glow-cyan);
+  transition: transform 0.35s var(--ease), border-color 0.35s, background 0.35s;
+}
+.reel__btn svg {
+  width: 17px;
+  height: 17px;
+  color: var(--cyan);
+}
+.reel__play:hover .reel__btn,
+.reel__play:focus-visible .reel__btn {
+  transform: translate(-50%, -50%) scale(1.06);
+  border-color: var(--cyan);
+  background: rgba(6, 26, 38, 0.86);
+}
+.reel__cap {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem clamp(0.9rem, 2vw, 1.3rem);
+  border-top: 1px solid var(--line);
+  font-family: var(--f-mono);
+  font-size: 0.7rem;
+  color: var(--faint);
+}
+.reel__cap a {
+  color: var(--dim);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: color 0.3s, border-color 0.3s;
+}
+.reel__cap a:hover {
+  color: var(--cyan);
+  border-bottom-color: var(--cyan-3);
+}
+.reel__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tan);
+  box-shadow: var(--glow-tan);
+}
+/* the player that replaces the poster on click */
+.reel__embed {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  background: #000;
 }
 
 /* ---------- 09. SECTION SHELL ---------- */

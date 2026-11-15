@@ -419,7 +419,40 @@
     });
   }
 
-  /* --------------------------------------------------------- 12 misc niceties */
+  /* --------------------------------------------------- 12 showreel (facade) */
+  // The poster is already a link to YouTube, so this module only upgrades the click: it swaps the
+  // thumbnail for the player in place instead of opening a tab. If this never runs, nothing breaks.
+  const reel = $(".reel__frame");
+  if (reel) {
+    const play = $(".reel__play", reel);
+    const id = reel.dataset.video;
+    // YouTube refuses to play when there is no referrer to validate, and it says so with
+    // "Error 153 — Video player configuration error". A file:// page has no referrer at all and
+    // the policy cannot invent one, so on local double-click previews we keep the plain link
+    // (the <a> is already a valid destination) instead of mounting a player that cannot work.
+    // Verified: same iframe loads fine over http(s), including localhost — only file:// fails.
+    const canEmbed = /^https?:$/.test(window.location.protocol);
+    if (play && id && canEmbed) {
+      play.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        const frame = document.createElement("iframe");
+        frame.className = "reel__embed";
+        // youtube-nocookie: no tracking cookies until the visitor actually presses play
+        frame.src = `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0`;
+        frame.title = reel.dataset.title || "Harny demo";
+        frame.allow =
+          "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
+        // setAttribute, not the property: not every engine reflects referrerPolicy back to the attr,
+        // and without the attribute this is exactly the request that triggers error 153.
+        frame.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
+        frame.allowFullscreen = true;
+        play.replaceWith(frame);
+        frame.focus();
+      });
+    }
+  }
+
+  /* --------------------------------------------------------- 13 misc niceties */
   // marquee: duplicate the row so the loop is seamless at any width
   const marquee = $("#marquee");
   if (marquee) {
