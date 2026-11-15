@@ -1,0 +1,927 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Harny — AI Coding Agent inside VSCodium &amp; VS Code</title>
+    <meta
+      name="description"
+      content="Harny is a full AI coding agent that lives in your Activity Bar. Preview in Analyze, apply in Build, bring your own model — cloud or local. One protocol: OpenAI Chat Completions."
+    />
+    <meta name="theme-color" content="#00050a" />
+    <meta property="og:title" content="Harny — AI Coding Agent" />
+    <meta
+      property="og:description"
+      content="Preview, then apply. Bring your own model. Real parallelism. Never locked out."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://spltek.github.io/harny/assets/img/harny_wall.jpg" />
+    <link
+      rel="preload"
+      href="assets/fonts/chakra-petch-700.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="preload" href="assets/fonts/inter-var.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="assets/fonts/fonts.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 17.6'%3E%3Crect width='24' height='17.6' fill='%2300050a'/%3E%3Cpath fill='%23d08856' d='M 1.91 0 H 16.09 Q 18 0 18 1.91 V 12.11 Q 18 14.02 16.09 14.02 H 8.78 L 4.15 17.45 Q 3.44 17.89 3.41 17.02 V 14.02 H 1.91 Q 0 14.02 0 12.11 V 1.91 Q 0 0 1.91 0 Z'/%3E%3Cpath d='M 20.07 3.49 L 23.29 6.87 L 20.07 10.25' fill='none' stroke='%23d08856' stroke-width='1.42' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="assets/css/main.css" />
+    <noscript>
+      <style>
+        .line,
+        [data-reveal] {
+          opacity: 1 !important;
+          transform: none !important;
+        }
+        .nav__links {
+          position: static !important;
+          transform: none !important;
+          flex-direction: row !important;
+          background: none !important;
+        }
+        .nav__burger {
+          display: none !important;
+        }
+      </style>
+    </noscript>
+  </head>
+  <body>
+    <!-- ============ ATMOSPHERE ============ -->
+    <canvas id="backdrop" aria-hidden="true"></canvas>
+    <div class="atmos" aria-hidden="true">
+      <div class="atmos__wall"></div>
+      <div class="atmos__vignette"></div>
+      <div class="atmos__scan"></div>
+      <div class="atmos__grain"></div>
+      <div class="atmos__spot" id="spot"></div>
+    </div>
+    <div class="scroll-rail" aria-hidden="true"><span id="scrollRailFill"></span></div>
+
+    <a class="skip" href="#why">Skip to content</a>
+
+    <!-- ============ NAV ============ -->
+    <header class="nav" id="nav">
+      <div class="nav__inner">
+        <a class="brand" href="#top" aria-label="Harny — home">
+          <svg class="brand__mark" viewBox="0 0 24 17.6" aria-hidden="true">
+            <path
+              d="M 1.91 0 H 16.09 Q 18 0 18 1.91 V 12.11 Q 18 14.02 16.09 14.02 H 8.78 L 4.15 17.45 Q 3.44 17.89 3.41 17.02 V 14.02 H 1.91 Q 0 14.02 0 12.11 V 1.91 Q 0 0 1.91 0 Z M 11.66 6.36 L 11.61 6.43 L 11.56 6.5 L 11.53 6.58 L 11.5 6.67 L 11.47 6.75 L 11.46 6.84 L 11.45 6.93 L 11.46 7.01 L 11.47 7.1 L 11.5 7.19 L 11.53 7.27 L 11.56 7.35 L 11.61 7.42 L 11.66 7.49 L 14.23 10.49 L 14.29 10.56 L 14.35 10.61 L 14.42 10.66 L 14.5 10.7 L 14.57 10.74 L 14.65 10.77 L 14.74 10.79 L 14.82 10.8 L 14.91 10.8 L 14.99 10.79 L 15.08 10.78 L 15.16 10.76 L 15.24 10.73 L 15.32 10.69 L 15.39 10.64 L 15.46 10.59 L 15.52 10.53 L 15.58 10.47 L 15.63 10.4 L 15.67 10.32 L 15.7 10.25 L 15.73 10.16 L 15.75 10.08 L 15.76 10 L 15.76 9.91 L 15.76 9.82 L 15.74 9.74 L 15.72 9.66 L 15.69 9.58 L 15.65 9.5 L 15.61 9.43 L 15.55 9.36 L 13.48 6.93 L 15.55 4.49 L 15.61 4.43 L 15.65 4.35 L 15.69 4.28 L 15.72 4.2 L 15.74 4.12 L 15.76 4.03 L 15.76 3.94 L 15.76 3.86 L 15.75 3.77 L 15.73 3.69 L 15.7 3.61 L 15.67 3.53 L 15.63 3.46 L 15.58 3.39 L 15.52 3.32 L 15.46 3.26 L 15.39 3.21 L 15.32 3.17 L 15.24 3.13 L 15.16 3.1 L 15.08 3.07 L 14.99 3.06 L 14.91 3.05 L 14.82 3.06 L 14.74 3.07 L 14.65 3.09 L 14.57 3.11 L 14.5 3.15 L 14.42 3.19 L 14.35 3.24 L 14.29 3.3 L 14.23 3.36 L 11.66 6.36 Z"
+            />
+            <polyline
+              points="20.07,3.49 23.29,6.87 20.07,10.25"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.42"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <span class="brand__word">HARNY</span>
+          <span class="brand__tag">LLM AI HARNESS</span>
+        </a>
+
+        <nav class="nav__links" aria-label="Sections">
+          <a href="#why">Why</a>
+          <a href="#modes">Modes</a>
+          <a href="#parallel">Parallel</a>
+          <a href="#context">Context</a>
+          <a href="#tools">Tools</a>
+          <a href="#providers">Providers</a>
+          <a href="#install">Install</a>
+        </nav>
+
+        <a class="btn btn--sm btn--brand" href="#install">
+          <span>Get Harny</span>
+        </a>
+
+        <button class="nav__burger" id="burger" aria-label="Open menu" aria-expanded="false">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+      <div class="nav__progress" id="navProgress"></div>
+    </header>
+
+    <!-- ============ HERO ============ -->
+    <main id="top">
+      <section class="hero">
+        <div class="hud hud--tl" aria-hidden="true">
+          <span class="hud__dot"></span> SYS.HARNY_CORE // ONLINE
+        </div>
+        <div class="hud hud--tr" aria-hidden="true">DEVELOPED BY SPLTEK</div>
+        <div class="hud hud--bl" aria-hidden="true">CORR_HARVESTER · ACTIVE</div>
+        <div class="hud hud--br" aria-hidden="true"><span id="hudClock">--:--:--</span> LOCAL</div>
+
+        <div class="hero__grid">
+          <div class="hero__copy">
+            <p class="eyebrow">
+              <span class="tick"></span>SPLTEK · LLM AI HARNESS
+            </p>
+
+            <h1 class="wordmark" data-glitch="HARNY">HARNY</h1>
+            <p class="hero__sub">AI CODING AGENT</p>
+
+            <p class="hero__lede">
+              A full agent that lives in your <strong>Activity Bar</strong>. It reads your project, edits files,
+              runs commands, searches the web and keeps one persistent conversation per folder — with tool calling
+              and live streaming.
+            </p>
+            <p class="hero__lede hero__lede--dim">
+              Bring your own model. Cloud, or a model on your laptop. One protocol: the
+              <code>OpenAI Chat Completions</code> API.
+            </p>
+
+            <div class="hero__cta">
+              <a
+                class="btn btn--brand"
+                href="https://open-vsx.org/extension/spltek/harny"
+                target="_blank"
+                rel="noopener"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" class="btn__icon">
+                  <path
+                    d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+                Install from Open VSX
+              </a>
+              <a
+                class="btn btn--ghost"
+                href="https://marketplace.visualstudio.com/items?itemName=spltek.harny"
+                target="_blank"
+                rel="noopener"
+                >VS Code Marketplace</a
+              >
+            </div>
+
+            <dl class="hero__stats">
+              <div><dt>Tools</dt><dd data-count="14">14</dd></div>
+              <div><dt>Providers</dt><dd data-count="8">8</dd></div>
+              <div><dt>Unit tests</dt><dd data-count="2400" data-suffix="+">2400+</dd></div>
+              <div><dt>License</dt><dd>MIT</dd></div>
+            </dl>
+          </div>
+
+          <!-- ---------- CONSOLE ---------- -->
+          <div class="console-wrap reveal" data-reveal>
+            <div class="orbits" aria-hidden="true">
+              <svg viewBox="0 0 400 400" class="orbits__svg">
+                <circle cx="200" cy="200" r="196" class="ring ring--a" />
+                <circle cx="200" cy="200" r="170" class="ring ring--b" />
+                <circle cx="200" cy="200" r="140" class="ring ring--c" />
+                <g class="orbits__spin">
+                  <circle cx="200" cy="200" r="196" class="ring-dash" />
+                  <circle cx="4" cy="200" r="2.4" class="node" />
+                  <circle cx="396" cy="200" r="2.4" class="node" />
+                </g>
+                <g class="orbits__spin orbits__spin--rev">
+                  <circle cx="200" cy="30" r="2" class="node node--tan" />
+                  <circle cx="200" cy="370" r="2" class="node node--tan" />
+                </g>
+              </svg>
+            </div>
+
+            <div class="console" id="console">
+              <div class="console__bar">
+                <div class="console__dots" aria-hidden="true"><i></i><i></i><i></i></div>
+                <div class="console__title">
+                  <svg class="console__mark" viewBox="0 0 24 17.6" aria-hidden="true">
+                    <path
+                      d="M 1.91 0 H 16.09 Q 18 0 18 1.91 V 12.11 Q 18 14.02 16.09 14.02 H 8.78 L 4.15 17.45 Q 3.44 17.89 3.41 17.02 V 14.02 H 1.91 Q 0 14.02 0 12.11 V 1.91 Q 0 0 1.91 0 Z"
+                    />
+                  </svg>
+                  harny — src/llm/http.ts
+                </div>
+                <div class="console__pills">
+                  <button class="pill pill--mode is-on" data-mode-pill="analyze" type="button">Analyze</button>
+                  <button class="pill pill--mode" data-mode-pill="build" type="button">Build</button>
+                </div>
+              </div>
+
+              <div class="console__body" id="term" aria-live="polite">
+                <div class="line">
+                  <span class="ln-prompt">&gt;</span>
+                  <span class="ln-text">add retry with backoff to src/llm/http.ts and cover it</span>
+                </div>
+                <div class="line line--sys">
+                  <span class="ln-arrow">▌</span>
+                  <span class="ln-text"
+                    >session opened · <b>Analyze</b> · model <b>gpt-4.1</b> · window 128k</span
+                  >
+                </div>
+                <div class="line line--tool" data-line>
+                  <span class="ln-check">✓</span>
+                  <span class="ln-text">Read <em>src/llm/http.ts</em> <span class="ln-meta">118 lines</span></span>
+                </div>
+                <div class="line line--tool" data-line>
+                  <span class="ln-check">✓</span>
+                  <span class="ln-text">Grep <em>"fetch("</em> <span class="ln-meta">3 hits</span></span>
+                </div>
+                <div class="line line--tool" data-line>
+                  <span class="ln-check">◇</span>
+                  <span class="ln-text"
+                    >Write <em>src/llm/http.ts</em> <span class="ln-meta">dry-run · nothing written</span></span
+                  >
+                </div>
+                <div class="diff-mini" data-line>
+                  <div class="diff-mini__head">
+                    <span>src/llm/http.ts</span>
+                    <span class="diff-mini__count"><b>+18</b> <i>−2</i></span>
+                  </div>
+                  <pre class="diff-mini__body"><code><span class="d-hunk">@@ -42,6 +42,24 @@ export class HttpClient</span>
+<span class="d-ctx">   async request(url: string, init: RequestInit) {</span>
+<span class="d-del">-    return fetch(url, init)</span>
+<span class="d-add">+    for (let attempt = 0; ; attempt++) {</span>
+<span class="d-add">+      const res = await fetch(url, init)</span>
+<span class="d-add">+      if (res.ok || !isRetryable(res.status)) return res</span>
+<span class="d-add">+      if (attempt >= this.maxRetries) return res</span>
+<span class="d-add">+      await sleep(Math.min(2000, 250 * 2 ** attempt))</span>
+<span class="d-add">+    }</span>
+<span class="d-ctx">   }</span></code></pre>
+                </div>
+                <div class="line line--nudge" data-line>
+                  <span class="ln-badge">NUDGE</span>
+                  <span class="ln-text">identical read-only call served from cache</span>
+                </div>
+                <div class="line line--prompt" data-line>
+                  <span class="ln-prompt">&gt;</span>
+                  <span class="ln-text"
+                    >apply<span class="caret" aria-hidden="true"></span></span
+                  >
+                </div>
+                <div class="line line--metrics" data-line>
+                  <span class="ln-chip ln-chip--mode" id="metricMode">Build</span>
+                  <span class="ln-chip">gpt-4.1</span>
+                  <span class="ln-chip">6.9k in</span>
+                  <span class="ln-chip">74 out</span>
+                  <span class="ln-chip">⚡ 800</span>
+                  <span class="ln-chip">2.3s</span>
+                  <span class="ln-chip">ttft 676ms</span>
+                </div>
+              </div>
+
+              <div class="console__foot">
+                <span class="key"><kbd>Enter</kbd> queue</span>
+                <span class="key"><kbd>⌘</kbd><kbd>↵</kbd> steer</span>
+                <span class="key"><kbd>Esc</kbd> stop</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <a class="scroll-cue" href="#why" aria-label="Scroll to features">
+          <span></span>
+        </a>
+      </section>
+
+      <!-- ============ PROTOCOL MARQUEE ============ -->
+      <section class="marquee" aria-label="Supported providers">
+        <div class="marquee__track" id="marquee">
+          <div class="marquee__row">
+            <span>OPENAI</span><i>◆</i><span>ANTHROPIC</span><i>◆</i><span>OPENROUTER</span><i>◆</i>
+            <span>OLLAMA</span><i>◆</i><span>LM STUDIO</span><i>◆</i><span>LLAMA.CPP</span><i>◆</i>
+            <span>MLX</span><i>◆</i><span>OPENCODE GO</span><i>◆</i>
+            <span class="marquee__hl">/v1/chat/completions</span><i>◆</i>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 01 WHY ============ -->
+      <section class="sect" id="why">
+        <div class="sect__head">
+          <p class="sect__idx">01 <span>/</span> WHY HARNY</p>
+          <h2 class="sect__title">Built like a tool,<br /><span class="grad">not a demo.</span></h2>
+          <p class="sect__lede">
+            Every design decision in Harny answers a failure mode of agents that write into your repo without
+            asking. Here is what that buys you.
+          </p>
+        </div>
+
+        <div class="cards">
+          <article class="card card--wide reveal" data-reveal>
+            <div class="card__icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7h16M4 12h9M4 17h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                <circle cx="18.5" cy="12" r="2.2" fill="none" stroke="currentColor" stroke-width="1.6" />
+              </svg>
+            </div>
+            <h3>Two stages: preview, then apply</h3>
+            <p>
+              In <b class="t-cyan">Analyze</b>, every file-modifying tool runs in <em>dry-run</em> — it returns the
+              exact diff and writes nothing. You see what would change before anything is touched. Switch to
+              <b class="t-tan">Build</b> when you are happy.
+            </p>
+            <p class="card__foot"><span class="tag">safety</span><span class="tag">diffs</span></p>
+          </article>
+
+          <article class="card reveal" data-reveal>
+            <div class="card__icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6" />
+                <path d="M8 20h8M12 16v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+              </svg>
+            </div>
+            <h3>Bring your own model</h3>
+            <p>
+              OpenAI, Anthropic, OpenRouter, or a model on your own machine with Ollama, LM Studio or llama.cpp.
+              One dropdown, per session.
+            </p>
+          </article>
+
+          <article class="card reveal" data-reveal>
+            <div class="card__icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="6" cy="6" r="2.4" fill="none" stroke="currentColor" stroke-width="1.6" />
+                <circle cx="18" cy="9" r="2.4" fill="none" stroke="currentColor" stroke-width="1.6" />
+                <circle cx="9" cy="18" r="2.4" fill="none" stroke="currentColor" stroke-width="1.6" />
+                <path d="M8 7l7.5 1.4M16.6 11.2 10.6 16" stroke="currentColor" stroke-width="1.6" />
+              </svg>
+            </div>
+            <h3>Real parallelism</h3>
+            <p>
+              Turn on <b class="t-cyan">Parallel</b> and the agent becomes an orchestrator: it splits the task into
+              independent sub-tasks and runs them as sub-agents — each with its own stream and its own stop button.
+            </p>
+          </article>
+
+          <article class="card reveal" data-reveal>
+            <div class="card__icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="5" width="18" height="14" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.6" />
+                <path d="M7.5 10.5h5M7.5 14h9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+              </svg>
+            </div>
+            <h3>You are never locked out</h3>
+            <p>
+              Keep typing while it works. <kbd>Enter</kbd> queues, <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>↵</kbd> steers
+              mid-flight. <kbd>Esc</kbd> stops everything.
+            </p>
+          </article>
+
+          <article class="card reveal" data-reveal>
+            <div class="card__icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M4 16V8m4 8V5m4 11v-6m4 6V7m4 9v-4"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                />
+              </svg>
+            </div>
+            <h3>Long sessions keep working</h3>
+            <p>
+              When the context fills, Harny compacts at <em>turn boundaries</em>, keeps the recent part verbatim and
+              carries the state of the work forward.
+            </p>
+          </article>
+
+          <article class="card reveal" data-reveal>
+            <div class="card__icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 4c-4.4 0-8 2.6-8 5.8 0 1.8 1 3.4 2.6 4.5L6 19l4-1.7c.6.1 1.3.2 2 .2 4.4 0 8-2.6 8-5.8S16.4 4 12 4Z"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                />
+              </svg>
+            </div>
+            <h3>Nothing is hidden</h3>
+            <p>
+              Every turn shows real token usage and timings. Every tool call shows its input, its output and its
+              diff. Reasoning streams as it happens.
+            </p>
+          </article>
+
+          <article class="card card--wide card--violet reveal" data-reveal>
+            <div class="card__icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <ellipse cx="12" cy="6" rx="7.5" ry="2.6" fill="none" stroke="currentColor" stroke-width="1.6" />
+                <path d="M4.5 6v12c0 1.4 3.4 2.6 7.5 2.6s7.5-1.2 7.5-2.6V6" fill="none" stroke="currentColor" stroke-width="1.6" />
+                <path d="M4.5 12c0 1.4 3.4 2.6 7.5 2.6s7.5-1.2 7.5-2.6" fill="none" stroke="currentColor" stroke-width="1.6" />
+              </svg>
+            </div>
+            <h3>Your history lives outside your project</h3>
+            <p>
+              Sessions are stored in a central SQLite database — not in your repo. Agent tools can never read or
+              corrupt transcripts, and cleaning your project never deletes your chat history.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <!-- ============ 02 MODES ============ -->
+      <section class="sect sect--split" id="modes">
+        <div class="sect__head sect__head--left">
+          <p class="sect__idx">02 <span>/</span> ANALYZE &amp; BUILD</p>
+          <h2 class="sect__title">Look before<br /><span class="grad">you leap.</span></h2>
+          <p class="sect__lede">
+            A run is born with its mode and keeps it to its last tool result. The pills explain why instead of
+            swallowing the click — <b>Stop</b> is the way to interrupt.
+          </p>
+
+          <ul class="ticks">
+            <li>New sessions start in <b class="t-cyan">Analyze</b> — your first run is a preview, not a surprise.</li>
+            <li>Only the <em>write</em> is withheld: reads, greps and searches still run.</li>
+            <li>When previews are ready, the host asks once whether to switch to Build.</li>
+            <li>Mode and Parallel are locked while a run is going.</li>
+          </ul>
+
+          <div class="switch" role="tablist" aria-label="Mode">
+            <button class="switch__btn is-active" data-mode="analyze" role="tab" aria-selected="true">Analyze</button>
+            <button class="switch__btn" data-mode="build" role="tab" aria-selected="false">Build</button>
+            <span class="switch__glider" aria-hidden="true"></span>
+          </div>
+        </div>
+
+        <div class="panel reveal" data-reveal>
+          <div class="panel__bar">
+            <span class="panel__dot"></span>
+            <span id="modeLabel">MODE · ANALYZE (READ-ONLY PREVIEW)</span>
+            <span class="panel__spacer"></span>
+            <span class="panel__file">src/tools/write.ts</span>
+          </div>
+          <div class="panel__body">
+            <div class="toolcard">
+              <div class="toolcard__head">
+                <span class="toolcard__name" id="toolName">Write</span>
+                <span class="toolcard__target">src/llm/retry.ts</span>
+                <span class="toolcard__counts"><b>+24</b> <i>−0</i></span>
+              </div>
+              <div class="toolcard__tabs">
+                <span>Input</span><span>Output</span><span class="is-on">Diff</span>
+              </div>
+              <pre class="code"><code id="modeDiff"><span class="d-hunk">@@ -0,0 +1,24 @@</span>
+<span class="d-add">+import { sleep } from "./sleep"</span>
+<span class="d-add">+</span>
+<span class="d-add">+export interface RetryOptions {</span>
+<span class="d-add">+  maxRetries?: number</span>
+<span class="d-add">+  baseDelayMs?: number</span>
+<span class="d-add">+}</span>
+<span class="d-add">+</span>
+<span class="d-add">+export const isRetryable = (status: number) =&gt;</span>
+<span class="d-add">+  status === 429 || status &gt;= 500</span>
+<span class="d-add">+</span>
+<span class="d-add">+export async function withRetry&lt;T&gt;(</span>
+<span class="d-add">+  run: () =&gt; Promise&lt;T&gt;,</span>
+<span class="d-add">+  { maxRetries = 4, baseDelayMs = 250 }: RetryOptions = {},</span>
+<span class="d-add">+): Promise&lt;T&gt; {</span>
+<span class="d-add">+  for (let attempt = 0; ; attempt++) {</span>
+<span class="d-add">+    try {</span>
+<span class="d-add">+      return await run()</span>
+<span class="d-add">+    } catch (e) {</span>
+<span class="d-add">+      if (attempt &gt;= maxRetries) throw e</span>
+<span class="d-add">+      await sleep(Math.min(2000, baseDelayMs * 2 ** attempt))</span>
+<span class="d-add">+    }</span>
+<span class="d-add">+  }</span>
+<span class="d-add">+}</span></code></pre>
+            </div>
+
+            <div class="verdict" id="verdict">
+              <span class="verdict__badge">DRY RUN</span>
+              <p>
+                <b>Nothing was written.</b> The exact diff is returned so you can review it. Switch to Build to
+                apply.
+              </p>
+            </div>
+          </div>
+          <div class="panel__foot">
+            <span class="mono-sm">mode is per session · locked while a run is going</span>
+            <span class="metric-chip">Analyze · 6.2k in · 41 out</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 03 PARALLEL ============ -->
+      <section class="sect" id="parallel">
+        <div class="sect__head">
+          <p class="sect__idx">03 <span>/</span> PARALLEL</p>
+          <h2 class="sect__title">One orchestrator.<br /><span class="grad">Many hands.</span></h2>
+          <p class="sect__lede">
+            Disjoint files run in parallel. Overlapping writers — or a writer and a reader of the same resource — are
+            serialized automatically, because every <code>Delegate</code> declares its resources honestly.
+          </p>
+        </div>
+
+        <div class="orch reveal" data-reveal>
+          <div class="orch__core">
+            <div class="orch__ring"></div>
+            <div class="orch__label">
+              <span class="orch__kicker">ORCHESTRATOR</span>
+              <b>Delegate ×3</b>
+              <span class="mono-sm">depth cap 1 · concurrency capped</span>
+            </div>
+          </div>
+
+          <div class="orch__agents">
+            <article class="agent" data-agent="a">
+              <header>
+                <span class="agent__wave" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+                <b>agent · tests</b>
+                <span class="agent__state" data-state>streaming</span>
+              </header>
+              <p class="agent__goal">Write vitest coverage for <em>src/sessions/compactor.ts</em></p>
+              <div class="agent__tools"><span>Read</span><span>Write</span><span>Shell</span></div>
+              <footer><span class="agent__bar"><i></i></span><button class="agent__stop" type="button">Stop this</button></footer>
+            </article>
+
+            <article class="agent" data-agent="b">
+              <header>
+                <span class="agent__wave" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+                <b>agent · docs</b>
+                <span class="agent__state" data-state>streaming</span>
+              </header>
+              <p class="agent__goal">Update <em>README.md</em> compaction section + table</p>
+              <div class="agent__tools"><span>Read</span><span>Edit</span></div>
+              <footer><span class="agent__bar"><i></i></span><button class="agent__stop" type="button">Stop this</button></footer>
+            </article>
+
+            <article class="agent" data-agent="c">
+              <header>
+                <span class="agent__wave" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+                <b>agent · types</b>
+                <span class="agent__state" data-state>queued</span>
+              </header>
+              <p class="agent__goal">Fix <em>tsconfig</em> strict errors in <em>src/core/llm</em></p>
+              <div class="agent__tools"><span>Read</span><span>Edit</span><span>Shell</span></div>
+              <footer><span class="agent__bar"><i></i></span><button class="agent__stop" type="button">Stop this</button></footer>
+            </article>
+          </div>
+
+          <ul class="orch__notes">
+            <li><b>Stop</b> aborts the whole run. <b>⏹</b> stops one bubble — running or queued behind the cap.</li>
+            <li>A stopped sub-agent reports <code>aborted</code>, so the orchestrator never treats it as done.</li>
+            <li>Sub-agents inherit the loop guard, the tool budget <em>and</em> the skills catalog.</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- ============ 04 CONTEXT ============ -->
+      <section class="sect" id="context">
+        <div class="sect__head">
+          <p class="sect__idx">04 <span>/</span> LONG SESSIONS</p>
+          <h2 class="sect__title">The window is a ceiling.<br /><span class="grad">Not a cliff.</span></h2>
+          <p class="sect__lede">
+            The context window is visible in the transcript: a divider marks where the context begins, and the
+            checkpoint is one card with its summary attached.
+          </p>
+        </div>
+
+        <div class="ctx reveal" data-reveal>
+          <div class="ctx__meter">
+            <div class="ctx__labels">
+              <span class="mono-sm">CONTEXT FILL</span>
+              <span class="mono-sm" id="ctxPct">82%</span>
+            </div>
+            <div class="ctx__track">
+              <div class="ctx__seg ctx__seg--sum" title="schematic summary"></div>
+              <div class="ctx__seg ctx__seg--verbatim" title="recent turns, verbatim"></div>
+              <div class="ctx__seg ctx__seg--free" title="headroom"></div>
+              <div class="ctx__marker" id="ctxMarker"><span>✦ checkpoint</span></div>
+            </div>
+            <div class="ctx__legend">
+              <span><i class="sw sw--sum"></i>summary in window</span>
+              <span><i class="sw sw--verb"></i>kept verbatim</span>
+              <span><i class="sw sw--free"></i>usable headroom</span>
+            </div>
+          </div>
+
+          <div class="ctx__grid">
+            <div class="ctx__card">
+              <h4>Turn boundaries</h4>
+              <p>
+                The cut falls between complete turns — your input → the final answer, everything in between — and
+                inside one only when that turn alone exceeds the budget.
+              </p>
+            </div>
+            <div class="ctx__card">
+              <h4>Land at 10%</h4>
+              <p>
+                The trigger defaults to 80% of the usable context; the most recent <em>share</em> stays verbatim.
+                Two independent knobs, one honest preview of the plan.
+              </p>
+            </div>
+            <div class="ctx__card">
+              <h4>State carried forward</h4>
+              <p>
+                A later compaction <em>updates</em> the previous summary instead of summarizing a summary — a fact is
+                not lost per generation.
+              </p>
+            </div>
+            <div class="ctx__card">
+              <h4>Masked, never rewritten</h4>
+              <p>
+                Old tool outputs go as one-line stubs that name the tool. The transcript, the store and any branch
+                keep everything.
+              </p>
+            </div>
+            <div class="ctx__card">
+              <h4>Rejection is data</h4>
+              <p>
+                A context-length error triggers one compaction and a retry — and the limit the provider states is
+                adopted as the session window.
+              </p>
+            </div>
+            <div class="ctx__card">
+              <h4>Wire rules first</h4>
+              <p>
+                Eight rules are checked before the wire. A violation is refused <em>by name</em>, instead of poisoning
+                every later request.
+              </p>
+            </div>
+          </div>
+
+          <div class="bubbles">
+            <div class="bubble bubble--user">
+              <span class="bubble__tag">YOU</span>
+              Add a retry helper and wire it into the HTTP client.
+            </div>
+            <div class="bubble bubble--checkpoint">
+              <span class="bubble__tag">✦ CHECKPOINT</span>
+              <ul class="sch">
+                <li><b>Done:</b> <code>withRetry()</code> in <code>src/llm/retry.ts</code>, exported.</li>
+                <li><b>Open:</b> call sites — <code>http.ts:42</code>, <code>models.ts:88</code>.</li>
+                <li><b>Next:</b> run <code>npm test</code>, expect 2 failures.</li>
+                <li><b>Facts:</b> cap <code>2000ms</code>; retry on <code>429</code> and <code>5xx</code>.</li>
+              </ul>
+            </div>
+            <div class="bubble bubble--note">18 messages above · kept in the session, out of the context window</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 05 TOOLS ============ -->
+      <section class="sect" id="tools">
+        <div class="sect__head">
+          <p class="sect__idx">05 <span>/</span> THE HARNESS</p>
+          <h2 class="sect__title">Fourteen tools.<br /><span class="grad">Zero magic.</span></h2>
+          <p class="sect__lede">
+            Every tool is a class in its own file behind a small interface. Adding one is registering it — the agent
+            and the providers never change. MCP servers arrive as <code>mcp__&lt;server&gt;__&lt;tool&gt;</code>.
+          </p>
+        </div>
+
+        <div class="tools">
+          <span class="tool"><b>Read</b><i>files</i></span>
+          <span class="tool"><b>Write</b><i>files</i></span>
+          <span class="tool"><b>StrReplace</b><i>edits</i></span>
+          <span class="tool"><b>Edit</b><i>edits</i></span>
+          <span class="tool"><b>Delete</b><i>files</i></span>
+          <span class="tool"><b>Shell</b><i>commands</i></span>
+          <span class="tool"><b>Grep</b><i>search</i></span>
+          <span class="tool"><b>Glob</b><i>search</i></span>
+          <span class="tool"><b>Skill</b><i>skills</i></span>
+          <span class="tool"><b>TodoWrite</b><i>plan</i></span>
+          <span class="tool"><b>WebSearch</b><i>web</i></span>
+          <span class="tool"><b>WebFetch</b><i>web</i></span>
+          <span class="tool"><b>ReadLints</b><i>diag</i></span>
+          <span class="tool tool--accent"><b>Delegate</b><i>parallel</i></span>
+        </div>
+
+        <div class="keys reveal" data-reveal>
+          <div class="keys__col">
+            <h3>The keys that save the run</h3>
+            <div class="krow"><kbd>Enter</kbd><span>Queues the message — it runs when this one ends.</span></div>
+            <div class="krow"><kbd>⌘</kbd><kbd>↵</kbd><span>Steers it into the run now, at the next turn boundary.</span></div>
+            <div class="krow"><kbd>Esc</kbd><span>Stops everything. Esc closes find, never the run.</span></div>
+            <div class="krow"><kbd>⌘</kbd><kbd>F</kbd><span>Find in the chat — case-insensitive, opens folded cards.</span></div>
+          </div>
+          <div class="keys__col">
+            <h3>Guarded, not just stopped</h3>
+            <p class="keys__p">
+              Degenerate loops are <em>broken</em>: reasoning loops, empty turns, repeated failing calls and error
+              streaks get a light-blue <b class="t-nudge">Nudge</b> in the transcript saying what was detected and
+              what Harny did.
+            </p>
+            <div class="lop">
+              <div><span>Off</span><b>inert</b></div>
+              <div><span>Low</span><b>quiet</b></div>
+              <div class="is-on"><span>Medium</span><b>default</b></div>
+              <div><span>High</span><b>loudest</b></div>
+            </div>
+            <p class="mono-sm">12 tunable parameters · persisted per session</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 06 PROVIDERS ============ -->
+      <section class="sect" id="providers">
+        <div class="sect__head sect__head--left">
+          <p class="sect__idx">06 <span>/</span> ONE PROTOCOL</p>
+          <h2 class="sect__title">Speak one protocol.<br /><span class="grad">Talk to anything.</span></h2>
+          <p class="sect__lede">
+            Harny is openai-compatible by design, so anything that implements <code>/v1/chat/completions</code> works.
+            Model lists can be declared by hand or discovered from the server — including each model's real context
+            window.
+          </p>
+        </div>
+
+        <div class="proto reveal" data-reveal>
+          <div class="proto__left">
+            <div class="proto__node proto__node--agent">
+              <span class="k">HARNY</span>
+              <b>Agent loop</b>
+              <span class="mono-sm">tools · streaming · compaction</span>
+            </div>
+          </div>
+          <div class="proto__wire" aria-hidden="true">
+            <span class="proto__packet"></span>
+            <span class="proto__code">POST /v1/chat/completions</span>
+          </div>
+          <div class="proto__right">
+            <ul class="prov">
+              <li><b>OpenAI</b><span>reasoning_effort</span></li>
+              <li><b>Anthropic</b><span>OpenAI-compatible endpoint</span></li>
+              <li><b>OpenRouter</b><span>reasoning · enabled</span></li>
+              <li><b>Ollama</b><span>local · no key</span></li>
+              <li><b>LM Studio</b><span>local server</span></li>
+              <li><b>llama.cpp / MLX</b><span>jinja · enable_thinking</span></li>
+              <li><b>OpenCode Go</b><span>thinking · on / off</span></li>
+              <li class="prov--any"><b>Anything else</b><span>any host speaking the protocol</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <p class="proto__note">
+          Switch models from one dropdown, <em>per session</em>. Keys live in Harny's own data folder — never in your
+          project.
+        </p>
+      </section>
+
+      <!-- ============ 07 UNDER THE HOOD ============ -->
+      <section class="sect" id="architecture">
+        <div class="sect__head">
+          <p class="sect__idx">07 <span>/</span> UNDER THE HOOD</p>
+          <h2 class="sect__title">SOLID first.<br /><span class="grad">Testable to the core.</span></h2>
+          <p class="sect__lede">
+            The core layer has <strong>zero VS Code imports</strong> — every collaborator is created in the composition
+            root and injected through constructors. Which is why the suite has 2400+ unit tests.
+          </p>
+        </div>
+
+        <div class="arch">
+          <pre class="tree reveal" data-reveal><code><span class="t-cm"># composition root</span>
+<span class="t-dir">src/</span>
+├─ <span class="t-file">extension.ts</span>          <span class="t-cm"># wires every dependency</span>
+├─ <span class="t-dir">core/</span>                 <span class="t-cm"># VS Code-free domain layer</span>
+│  ├─ <span class="t-dir">config/</span>  <span class="t-dir">events/</span>  <span class="t-dir">history/</span>
+│  ├─ <span class="t-dir">llm/</span>     <span class="t-cm"># provider, SSE, context-overflow</span>
+│  ├─ <span class="t-dir">agent/</span>   <span class="t-cm"># loop, LoopGuard, orchestration</span>
+│  ├─ <span class="t-dir">sessions/</span><span class="t-cm"># sqlite + FTS5, Compactor</span>
+│  ├─ <span class="t-dir">skills/</span>  <span class="t-dir">mcp/</span>    <span class="t-dir">storage/</span>
+│  └─ <span class="t-dir">tools/</span>   <span class="t-cm"># 14 tools, one file each</span>
+├─ <span class="t-dir">chat/</span>                 <span class="t-cm"># webview provider + client</span>
+└─ <span class="t-file">logger.ts</span>
+<span class="t-dir">tests/</span>                    <span class="t-cm"># vitest, guards, mutation matrices</span></code></pre>
+
+          <div class="arch__side">
+            <div class="arch__stat">
+              <b data-count="2400" data-suffix="+">2400+</b>
+              <span>unit tests</span>
+            </div>
+            <div class="arch__stat">
+              <b>8</b>
+              <span>wire rules checked pre-flight</span>
+            </div>
+            <div class="arch__stat">
+              <b>10</b>
+              <span>mutation matrices</span>
+            </div>
+            <ul class="ticks ticks--tight">
+              <li>Versioned schema, migrations on open (<code>PRAGMA user_version</code>).</li>
+              <li>Atomic turn groups — a malformed conversation never reaches the provider.</li>
+              <li><code>HARNY_DEBUG=1</code> writes a full request log.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 08 INSTALL ============ -->
+      <section class="sect sect--install" id="install">
+        <div class="sect__head">
+          <p class="sect__idx">08 <span>/</span> INSTALL</p>
+          <h2 class="sect__title">Two minutes to<br /><span class="grad">first diff.</span></h2>
+        </div>
+
+        <div class="install">
+          <a
+            class="icard"
+            href="https://open-vsx.org/extension/spltek/harny"
+            target="_blank"
+            rel="noopener"
+          >
+            <span class="icard__k">OPEN VSX</span>
+            <b>VSCodium · Cursor<br />Windsurf · Theia</b>
+            <span class="icard__go"
+              >open-vsx.org/extension/spltek/harny
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7 17 17 7M9 7h8v8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+              </svg>
+            </span>
+          </a>
+          <a
+            class="icard icard--alt"
+            href="https://marketplace.visualstudio.com/items?itemName=spltek.harny"
+            target="_blank"
+            rel="noopener"
+          >
+            <span class="icard__k">VS CODE MARKETPLACE</span>
+            <b>Visual Studio Code</b>
+            <span class="icard__go"
+              >spltek.harny
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7 17 17 7M9 7h8v8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+              </svg>
+            </span>
+          </a>
+        </div>
+
+        <div class="cli">
+          <div class="cli__bar"><span>or install the .vsix by hand</span></div>
+          <div class="cli__row">
+            <code id="cliCmd">code --install-extension spltek.harny-&lt;version&gt;.vsix</code>
+            <button class="copy" id="copyBtn" type="button" aria-label="Copy command">copy</button>
+          </div>
+        </div>
+
+        <ol class="steps">
+          <li>
+            <span class="steps__n">01</span>
+            <div>
+              <b>Install and click the Harny icon</b>
+              <p>It sits in the Activity Bar. Sessions are per workspace.</p>
+            </div>
+          </li>
+          <li>
+            <span class="steps__n">02</span>
+            <div>
+              <b>Open exactly one folder</b>
+              <p>Or let the panel do it: with no folder open it lists every workspace's sessions.</p>
+            </div>
+          </li>
+          <li>
+            <span class="steps__n">03</span>
+            <div>
+              <b>Add a provider</b>
+              <p>The gear at the right end of the AI Model row → <em>+ New</em> → paste your key → Test connection.</p>
+            </div>
+          </li>
+          <li>
+            <span class="steps__n">04</span>
+            <div>
+              <b>Type a request, press Enter</b>
+              <p>New sessions start in Analyze, so your first run is a preview, not a surprise.</p>
+            </div>
+          </li>
+        </ol>
+
+        <div class="reqs">
+          <span>VS Code extension API <b>1.101+</b></span>
+          <span>VSCodium <b>1.101+</b></span>
+          <span>Node <b>22.5+</b> for <code>node:sqlite</code></span>
+          <span>License <b>MIT</b></span>
+        </div>
+      </section>
+    </main>
+
+    <!-- ============ FOOTER ============ -->
+    <footer class="foot">
+      <div class="foot__brand">
+        <svg class="foot__mark" viewBox="0 0 24 17.6" aria-hidden="true">
+          <path
+            d="M 1.91 0 H 16.09 Q 18 0 18 1.91 V 12.11 Q 18 14.02 16.09 14.02 H 8.78 L 4.15 17.45 Q 3.44 17.89 3.41 17.02 V 14.02 H 1.91 Q 0 14.02 0 12.11 V 1.91 Q 0 0 1.91 0 Z"
+          />
+          <polyline points="20.07,3.49 23.29,6.87 20.07,10.25" fill="none" stroke="currentColor" stroke-width="1.42" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <div>
+          <b class="foot__word">HARNY</b>
+          <p>Your AI coding agent, inside VSCodium and VS Code.<br />Bring your own model — local or cloud.</p>
+        </div>
+      </div>
+
+      <nav class="foot__links" aria-label="Footer">
+        <a href="https://github.com/spltek/harny" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://open-vsx.org/extension/spltek/harny" target="_blank" rel="noopener">Open VSX</a>
+        <a href="https://marketplace.visualstudio.com/items?itemName=spltek.harny" target="_blank" rel="noopener">Marketplace</a>
+        <a href="https://github.com/spltek/harny/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
+        <a href="https://github.com/spltek/harny/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+      </nav>
+
+      <div class="foot__sig">
+        <span class="hud__dot"></span> DEVELOPED BY <b>SPLTEK</b>
+      </div>
+    </footer>
+
+    <script src="assets/js/backdrop.js" defer></script>
+    <script src="assets/js/main.js" defer></script>
+  </body>
+</html>

@@ -63,7 +63,7 @@ host ⇄ webview message protocol, internal APIs — is free to move in any rele
 ### How each public surface keeps it
 
 - **Stored sessions** — never edited in place by hand: every change is a
-  **migration** (`docs/MIGRATIONS.md`, versioned through `PRAGMA user_version`).
+  **migration** (`documentation/MIGRATIONS.md`, versioned through `PRAGMA user_version`).
   A downgrade is not supported, so a destructive step needs its own section in
   that document and a note in the changelog.
 - **Settings keys** — a key is an API. **Never rename one**: add the new key,

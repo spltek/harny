@@ -237,7 +237,11 @@ describe("what leaves the working tree", () => {
       "src/chat/view.ts",
       "build/scripts/mutation-gate.mjs",
       "tests/mutation/default.conf.json",
-      "docs/RELEASE.md",
+      "documentation/RELEASE.md",
+      // The Pages site rides along in the working tree too: `vsce` packs the TREE, so the
+      // 400 KB of index.html + assets/ would land in every install unless `docs/**` holds.
+      "docs/index.html",
+      "docs/assets/css/main.css",
       ".cache/mutation/mutation.json",
       "media/view.css",
       "prettier.config.mjs",
@@ -250,9 +254,11 @@ describe("what leaves the working tree", () => {
   });
 
   it("keeps README media TRACKED but OUT of the package", () => {
-    // `docs/images/` is the home for presentation art: a wallpaper, a screenshot, a GIF. It is in
-    // the repo on purpose (GitHub renders the README from the repo) and out of the .vsix on
-    // purpose (a 733 KB wallpaper is presentation, not runtime — nobody should install it).
+    // `docs/images/` is the home for presentation art: a wallpaper, a screenshot, a GIF. It sits in
+    // the PUBLISHED Pages folder but it is not part of the site (`docs/assets/` is), so it is the
+    // exclude that matters: in the repo on purpose (GitHub renders the README from the repo) and out
+    // of the .vsix on purpose (a 733 KB wallpaper is presentation, not runtime — nobody should
+    // install it).
     // The whole FOLDER is asserted, not a list of names: the next screenshot is covered the
     // moment it lands, with nobody to remember a line here.
     const dir = join(process.cwd(), "docs", "images");

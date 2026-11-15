@@ -4,15 +4,22 @@ tests/**
 build/**
 .cache/**
 docs/**
+documentation/**
 .github/**
 .vscode/**
 node_modules/**
 **/*.ts
 
-# README / presentation media is TRACKED in `docs/images/` and NEVER shipped: a 733 KB wallpaper
-# is presentation, not runtime, and every install would carry it forever. `docs/**` above already
-# excludes it — do NOT add a `!docs/images/…` exception, that turns a wallpaper back into payload.
-# The full folder is pinned by a test, not by this comment (package-manifest.test.ts).
+# `docs/` is what GitHub Pages PUBLISHES (the site: index.html + assets/, plus `docs/images/`
+# where the README's presentation art lives). `documentation/` is the reference material
+# (RELEASE.md, MIGRATIONS.md, REFERENCE_TOOLS.json, config.example.jsonc) — for the repo, not
+# for the site. Neither is runtime, so both trees are excluded.
+
+# README / presentation media is TRACKED in `docs/images/` and NEVER shipped: a 733 KB
+# wallpaper is presentation, not runtime, and every install would carry it forever. The excludes
+# above already cover it — do NOT add a `!docs/images/…` exception, that turns a
+# wallpaper back into payload. The full folder is pinned by a test, not by this comment
+# (package-manifest.test.ts).
 
 # Keep the built host bundle (excluded above by nothing, but be explicit)
 !dist/**
@@ -43,7 +50,7 @@ tsconfig.webview.json
 
 
 # The repo examples are gone from the root and split by what they ARE: the config template is
-# documentation (`docs/config.example.jsonc`), the demo MCP server is a test fixture the suite
+# documentation (`documentation/config.example.jsonc`), the demo MCP server is a test fixture the suite
 # SPAWNS (`tests/mcp-hello/server.js`). Both trees are excluded above, so neither ships.
 
 # `vsce` packs the WORKING TREE (not the git index), so tracked DEV files a user never

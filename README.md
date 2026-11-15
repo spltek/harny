@@ -356,7 +356,7 @@ just want to use Harny, you can stop reading here.
 **Sessions**
 - **Persistent per-workspace sessions** in a single SQLite database (`<home>/sessions.db`), one agent per session, single right-side view with tabs
 - Stored **outside the project folder**, so the agent tools can never read or modify transcripts, and repo cleanups never delete chat history. The panel shows only the current folder's sessions
-- **Schema migrations**: the schema is **versioned** (`PRAGMA user_version`) and upgraded **automatically on open** through an ordered, immutable migration list — see **[docs/MIGRATIONS.md](docs/MIGRATIONS.md)**
+- **Schema migrations**: the schema is **versioned** (`PRAGMA user_version`) and upgraded **automatically on open** through an ordered, immutable migration list — see **[documentation/MIGRATIONS.md](documentation/MIGRATIONS.md)**
 - **Sessions area** (hideable by clicking the header): each row shows creation/last-modified dates above the name, with ✎ rename, 🗑 delete and **+ New session**. The 🗑 asks **once**, with three answers: **Delete** (the session goes, settings included), **Rewind** (keeps everything up to the session's **first compaction summary** and drops what came after it — the state of the work survives, the tail does not) or **Empty** (the session and its settings stay, the whole transcript goes). Rewind is offered **disabled** on a session that never compacted: there is no summary to rewind to
 - **All-folders manager** (⚙): lists every session across all workspace folders, most recent first, each with its folder. The current folder's row carries a **"this folder"** tag; a folder that no longer exists renders **red ("— missing")**; a session with no folder shows **"(folder not set)"**. Per-row **Open session** (the window switches to the session's folder first), **Change folder & open…** (re-points a session whose folder is gone or unset, then opens it) and **Delete**. Folder matching is **cross-platform** (normalized separators, case-insensitive Windows drive paths)
 - **Tab bar** with all open sessions, laid out one after another; chats are **stacked**, only the selected one visible
@@ -472,7 +472,8 @@ harny/
 │   ├── guards/                   #   repo invariants: shipped vs excluded files, fresh bundle, workflows
 │   ├── mutation/                 #   the 10 Stryker matrices (npm run mutate:*) + the survivors baseline
 │   └── mcp-hello/                #   demo MCP server (copy-from-repo, never shipped)
-├── docs/                         # RELEASE.md, MIGRATIONS.md, REFERENCE_TOOLS.json, config.example.jsonc, images/
+├── docs/                         # the PUBLISHED GitHub Pages site (index.html + assets/) + images/
+├── documentation/                # RELEASE.md, MIGRATIONS.md, REFERENCE_TOOLS.json, config.example.jsonc
 └── package.json
 ```
 
@@ -505,7 +506,7 @@ module, and every class a module writes is either styled in the markup or select
 
 Harny reads configuration from **three sources**, in this order:
 
-> **Use the panel.** Everything here has a form in the panel unless stated otherwise, and a save from it is **lossless** — the keys it does not manage survive, so the file and the UI cannot fight. Open the file only to script a machine, to read where a value ended up, or to set the one field without a control (the server-WIDE `analyze` on an MCP server — the per-tool version is the shield in the tools panel); `docs/config.example.jsonc` in the repo is then a starting point. Two kinds live there, and the difference is worth knowing: the **Providers & Models** editor and the **DB** gear (in the sessions manager) write the **GLOBAL** config — the same `config.json` / `harny.*` settings described below, so the setup you do once stays done — while the **AI Model row**, the sliders, **Guardrails** and the **Compaction** gear are **per session** (each session keeps its own). The three sources below are the global ones, read at startup, and the only way to set what has no control at all (`harny.autoOpen`, for instance).
+> **Use the panel.** Everything here has a form in the panel unless stated otherwise, and a save from it is **lossless** — the keys it does not manage survive, so the file and the UI cannot fight. Open the file only to script a machine, to read where a value ended up, or to set the one field without a control (the server-WIDE `analyze` on an MCP server — the per-tool version is the shield in the tools panel); `documentation/config.example.jsonc` in the repo is then a starting point. Two kinds live there, and the difference is worth knowing: the **Providers & Models** editor and the **DB** gear (in the sessions manager) write the **GLOBAL** config — the same `config.json` / `harny.*` settings described below, so the setup you do once stays done — while the **AI Model row**, the sliders, **Guardrails** and the **Compaction** gear are **per session** (each session keeps its own). The three sources below are the global ones, read at startup, and the only way to set what has no control at all (`harny.autoOpen`, for instance).
 
 1. **`config.json`** in the extension data folder (`context.globalStorageUri`, or `HARNY_HOME`) — dedicated, **not** in the working folder
 2. **VS Code settings** (`harny.*`) — User or Workspace settings
@@ -648,7 +649,7 @@ npm install        # installs the local @vscode/vsce dev dependency
 npm run package    # → harny-<version>.vsix
 ```
 
-Releases are cut from a `vX.Y.Z` git tag: the workflow typechecks, tests, builds, packages, creates the GitHub Release and publishes to **Open VSX** via **trusted publishing** (OIDC, no token — so VSCodium and compatible editors auto-update). The VS Code Marketplace step is **opt-in** and skips unless `VSCE_PAT` is configured. The full guide — versioning, publishers/trusted publishing, pre-releases, troubleshooting — is in **[docs/RELEASE.md](docs/RELEASE.md)**; notable changes are tracked in [CHANGELOG.md](CHANGELOG.md).
+Releases are cut from a `vX.Y.Z` git tag: the workflow typechecks, tests, builds, packages, creates the GitHub Release and publishes to **Open VSX** via **trusted publishing** (OIDC, no token — so VSCodium and compatible editors auto-update). The VS Code Marketplace step is **opt-in** and skips unless `VSCE_PAT` is configured. The full guide — versioning, publishers/trusted publishing, pre-releases, troubleshooting — is in **[documentation/RELEASE.md](documentation/RELEASE.md)**; notable changes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

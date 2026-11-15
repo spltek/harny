@@ -18,7 +18,7 @@ import type { DatabaseSync } from "node:sqlite";
  *    `INSERT INTO messages_fts(messages_fts) VALUES('rebuild');`
  *
  * Step-by-step guide (add a field, table rebuilds, backfills, destructive
- * migrations, testing): docs/MIGRATIONS.md.
+ * migrations, testing): documentation/MIGRATIONS.md.
  */
 export interface Migration {
   /** Strictly increasing (1, 2, 3 …). Never reused or reordered. */
