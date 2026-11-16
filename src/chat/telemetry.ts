@@ -1,19 +1,20 @@
+import { monitorEventLoopDelay } from "node:perf_hooks";
 import { debugLog } from "../logger";
 import { dbMetrics, resetDbMetrics } from "../core/sessions/store-metrics";
 
-/** Sampling period of the event-loop probe. */
-const TICK_MS = 50;
-/** How often a line is emitted (only when something moved). */
+/** Resolution of the event-loop histogram (ms): a stall shorter than this is not distinguishable
+ *  from a healthy loop. Same 50 ms granularity the 20 Hz JS probe had — at 1/600th of the cost. */
+export const RESOLUTION_MS = 50;
+/** How often a line is emitted (only when something moved). This is ALSO the only timer telemetry
+ *  owns: the probe itself runs in native code and never calls back into JavaScript. */
 const REPORT_EVERY_MS = 30_000;
-/** Ring of loop-delay samples kept for the percentiles. */
-const RING = 240;
 /** A lag above this counts as "the host was busy" and forces a report. */
 const BUSY_LAG_MS = 25;
 
-interface TelemetrySnapshot {
-  /** Event-loop delay: the drift of a 50 ms timer. The single most honest signal
-   * that the host is saturated (and in a single-threaded host, EVERYTHING shares
-   * that thread: streaming, SQLite writes, tool spawns). */
+export interface TelemetrySnapshot {
+  /** Event-loop delay: how LATE a timer fired, in ms. The single most honest signal that the host
+   *  is saturated (and in a single-threaded host, EVERYTHING shares that thread: streaming, SQLite
+   *  writes, tool spawns). */
   loopAvgMs: number;
   loopP95Ms: number;
   loopMaxMs: number;
@@ -22,28 +23,75 @@ interface TelemetrySnapshot {
   postBytes: number;
 }
 
+/** The lag numbers as the class needs them. An interface, not a direct call, because a native
+ *  histogram cannot be advanced by a fake clock: a test that owns this seam is deterministic,
+ *  while a test driving `setInterval` would measure the machine it runs on. */
+export interface LagProbe {
+  start(): void;
+  stop(): void;
+  /** Mean, p95 and worst delay since the last `reset`, in MILLISECONDS. */
+  read(): { avgMs: number; p95Ms: number; maxMs: number };
+  reset(): void;
+}
+
 /**
- * Cheap, always-on measurement of the two walls that matter when several sessions
- * run at once: the event loop (shared by every session) and the webview channel.
- * It never decides anything: it prints ONE line every 30 s through `debugLog`,
- * which is gated by `HARNY_DEBUG`, so with the flag off the cost is a timer tick
- * and two counters.
+ * The real probe: `perf_hooks.monitorEventLoopDelay` keeps the histogram in native code.
+ *
+ * It replaces a `setInterval(tick, 50)` that woke the host **20 times a second, forever**, to find
+ * out whether the host was busy — a measurement that perturbs what it measures and that a sleeping
+ * extension host can never escape while a panel is open. The histogram is sampled by a native timer
+ * with no JavaScript callback, so a healthy loop costs nothing at all, and the p95/max (the numbers
+ * that actually identify saturation) are read only when a line is about to be printed.
+ */
+export class NativeLagProbe implements LagProbe {
+  private histogram: ReturnType<typeof monitorEventLoopDelay> | undefined;
+
+  start(): void {
+    if (this.histogram) return;
+    this.histogram = monitorEventLoopDelay({ resolution: RESOLUTION_MS });
+    this.histogram.enable();
+  }
+
+  stop(): void {
+    this.histogram?.disable();
+    this.histogram = undefined;
+  }
+
+  read(): { avgMs: number; p95Ms: number; maxMs: number } {
+    const h = this.histogram;
+    if (!h) return { avgMs: 0, p95Ms: 0, maxMs: 0 };
+    // The histogram counts NANOSECONDS; the log speaks milliseconds.
+    return { avgMs: h.mean / 1e6, p95Ms: h.percentile(95) / 1e6, maxMs: h.max / 1e6 };
+  }
+
+  reset(): void {
+    this.histogram?.reset();
+  }
+}
+
+/**
+ * Cheap, always-on measurement of the two walls that matter when several sessions run at once: the
+ * event loop (shared by every session) and the webview channel.
+ *
+ * It never decides anything: it prints ONE line every 30 s through `debugLog`, which is gated by
+ * `HARNY_DEBUG`, so with the flag off the cost is two counters — and ONE timer wake-up per window.
  */
 export class Telemetry {
-  private readonly lags: number[] = [];
   private posts = 0;
   private postBytes = 0;
-  private lastTick = 0;
-  private lastReport = 0;
   private timer: ReturnType<typeof setInterval> | undefined;
+  private readonly probe: LagProbe;
 
-  /** Begin sampling (idempotent). The interval is UNREF'd: telemetry must never
-   * keep the extension host alive on its own. */
+  constructor(deps: { probe?: LagProbe } = {}) {
+    this.probe = deps.probe ?? new NativeLagProbe();
+  }
+
+  /** Begin sampling (idempotent). The interval is UNREF'd: telemetry must never keep the extension
+   *  host alive on its own. */
   start(): void {
     if (this.timer) return;
-    this.lastTick = Date.now();
-    this.lastReport = this.lastTick;
-    this.timer = setInterval(() => this.tick(), TICK_MS);
+    this.probe.start();
+    this.timer = setInterval(() => this.report(), REPORT_EVERY_MS);
     this.timer.unref?.();
   }
 
@@ -51,44 +99,43 @@ export class Telemetry {
     if (!this.timer) return;
     clearInterval(this.timer);
     this.timer = undefined;
+    this.probe.stop();
   }
 
-  /** Count one message posted to the webview. The size is APPROXIMATE on purpose:
-   * a JSON.stringify per token would cost more than the traffic it measures. */
+  /** Count one message posted to the webview. The size is APPROXIMATE on purpose: a JSON.stringify
+   *  per token would cost more than the traffic it measures. */
   notePost(message: unknown): void {
     this.posts++;
     const content = (message as { content?: unknown } | null)?.content;
     this.postBytes += typeof content === "string" ? content.length + 64 : 96;
   }
 
-  /** Current window, already rounded for the log. */
+  /** Current window, already rounded for the log. Reading the probe does NOT reset it: only the
+   *  end of a window does. */
   snapshot(): TelemetrySnapshot {
-    const sorted = [...this.lags].sort((a, b) => a - b);
-    const avg = this.lags.reduce((sum, v) => sum + v, 0) / Math.max(1, this.lags.length);
+    const { avgMs, p95Ms, maxMs } = this.probe.read();
     return {
-      loopAvgMs: round1(avg),
-      loopP95Ms: round1(sorted.length > 0 ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))] : 0),
-      loopMaxMs: round1(sorted.length > 0 ? sorted[sorted.length - 1] : 0),
+      loopAvgMs: round1(avgMs),
+      loopP95Ms: round1(p95Ms),
+      loopMaxMs: round1(maxMs),
       posts: this.posts,
       postBytes: this.postBytes,
     };
   }
 
-  private tick(): void {
-    const now = Date.now();
-    const lag = Math.max(0, now - this.lastTick - TICK_MS);
-    this.lastTick = now;
-    this.lags.push(lag);
-    if (this.lags.length > RING) this.lags.shift();
-    if (now - this.lastReport < REPORT_EVERY_MS) return;
-    this.lastReport = now;
-    const busy = this.posts > 0 || this.lags.some((l) => l >= BUSY_LAG_MS);
-    // An idle host prints nothing: the line exists to catch saturation, not to
-    // prove the timer runs.
-    if (busy) debugLog("[telemetry]", JSON.stringify({ ...this.snapshot(), db: dbMetrics() }));
+  /** Close one window: log it if anything moved, then start the next one from zero.
+   *
+   *  Public so a test drives the clock instead of waiting 30 s — and so that the rule ("an idle
+   *  host prints nothing; a busy one prints once") is asserted on behaviour, not on a timer. */
+  report(): void {
+    const snap = this.snapshot();
+    // An idle host prints nothing: the line exists to catch saturation, not to prove the probe runs.
+    if (this.posts > 0 || snap.loopMaxMs >= BUSY_LAG_MS) {
+      debugLog("[telemetry]", JSON.stringify({ ...snap, db: dbMetrics() }));
+    }
     this.posts = 0;
     this.postBytes = 0;
-    this.lags.length = 0;
+    this.probe.reset();
     resetDbMetrics();
   }
 }

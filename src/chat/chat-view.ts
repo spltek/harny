@@ -265,7 +265,8 @@ export class ChatViewProvider implements WebviewViewProvider {
   private vacuumPromptOpen = false;
 
   /** Event-loop + webview-traffic probe (see telemetry.ts). It prints one line every
-   * 30 s through the env-gated debug log, so it costs nothing with the flag off. */
+   * 30 s through the env-gated debug log, so it costs nothing with the flag off: the lag
+   * histogram is sampled in native code, and the only timer here is the 30 s report. */
   private readonly telemetry = new Telemetry();
   /** Coalesced config push in flight (see pushConfigSoon). */
   private configSoonTimer: ReturnType<typeof setTimeout> | undefined;
