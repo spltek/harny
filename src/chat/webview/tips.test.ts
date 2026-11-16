@@ -141,8 +141,8 @@ describe("the shared tooltip card", () => {
     expect(isOpen()).toBe(true);
   });
 
-  it("gets out of the way on a click, a scroll or Escape", () => {
-    for (const dismiss of ["pointerdown", "scroll", "keydown"] as const) {
+  it("gets out of the way on a click or Escape", () => {
+    for (const dismiss of ["pointerdown", "keydown"] as const) {
       over(el("tip-close"));
       vi.advanceTimersByTime(TIP_DELAY_MS);
       expect(isOpen(), `${dismiss}: the card must be open before the dismissal`).toBe(true);
@@ -150,6 +150,29 @@ describe("the shared tooltip card", () => {
       else el("tip-close").dispatchEvent(new Event(dismiss, { bubbles: true }));
       expect(isOpen(), `${dismiss} must close the card`).toBe(false);
     }
+  });
+
+  it("survives a scroll that does not move its anchor, and closes when the anchor is gone", () => {
+    stubRect(el("tip-close"), 40, 100, 24, 24);
+    over(el("tip-close"));
+    vi.advanceTimersByTime(TIP_DELAY_MS);
+    expect(isOpen()).toBe(true);
+
+    // The transcript scrolls itself while it streams: the anchor (a toolbar button) has not moved,
+    // so nothing moved under the pointer and the card has no reason to go anywhere.
+    el("tip-close").dispatchEvent(new Event("scroll", { bubbles: true }));
+    expect(isOpen()).toBe(true);
+
+    // The anchor DOES move — a scroll of its own container: the card follows it instead of dying.
+    stubRect(el("tip-close"), 240, 100, 24, 24);
+    el("tip-close").dispatchEvent(new Event("scroll", { bubbles: true }));
+    expect(isOpen()).toBe(true);
+    expect(card().style.top).toBe(`${240 + 24 + TIP_GAP}px`);
+
+    // …and once it is scrolled out of the viewport there is nothing left to describe.
+    stubRect(el("tip-close"), -400, 100, 24, 24);
+    el("tip-close").dispatchEvent(new Event("scroll", { bubbles: true }));
+    expect(isOpen()).toBe(false);
   });
 
   it("keeps Escape and other keys apart", () => {

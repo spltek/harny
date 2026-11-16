@@ -601,6 +601,15 @@ describe("renderViewHtml", () => {
       /<div id="ctl-toggle"[^>]*>[\s\S]*?<span id="insert-hint"[^>]*>Insert prompt in <span id="insert-hint-word"><span class="mode-pill-sizer" aria-hidden="true">[\s\S]*?<\/span><span class="mode-pill-label">Queue<\/span><\/span><\/span>/,
     );
     expect(html).toMatch(/id="insert-hint"[\s\S]*?id="ctl-toggle-btn"[\s\S]*?id="collapse-all"/);
+    // "Focus" is the THIRD pill of the same strip, and the only one that is a MODE rather than an
+    // action: it ships enabled (nothing to disable) and declares its state with aria-pressed, which
+    // is what its CSS paints. Order matters — it sits leftmost, next to "Collapse all".
+    expect(html).toMatch(
+      /<button id="focus-mode" type="button" aria-pressed="false" data-tip="transcript\.focus">Focus<\/button>/,
+    );
+    expect(html).toMatch(/id="focus-mode"[\s\S]*?id="collapse-all"[\s\S]*?id="autoscroll"/);
+    expect(html).not.toMatch(/<button id="focus-mode"[^>]*disabled/);
+    expect(html).toMatch(/#transcript-actions > button\[aria-pressed="true"\] \{[^}]*color: var\(--accent\)/);
     expect(html).toMatch(/<button id="attach-btn"[\s\S]*?id="user-input"/);
     // It shows a PAPERCLIP glyph (attachment), not a bare "+".
     expect(html).toMatch(/<button id="attach-btn"[^>]*>\s*<svg[\s\S]*?<\/svg>\s*<\/button>/);

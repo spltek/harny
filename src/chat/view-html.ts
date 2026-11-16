@@ -267,6 +267,11 @@ ${VIEW_CSS}
       ${icon("chevronDown", 15)}
     </button>
     <div id="transcript-actions">
+      <!-- "Focus": the only MODE of the three (the other two fire once and disable themselves),
+           so its state rides on aria-pressed instead of on disabled, and the button is never
+           disabled. Armed, it opens the section the agent is working in and folds the one the
+           run has left behind (see the Focus block in webview/view.ts). -->
+      <button id="focus-mode" type="button" aria-pressed="false" data-tip="transcript.focus">Focus</button>
       <button id="collapse-all" type="button" disabled data-tip="transcript.collapse">Collapse all</button>
       <button id="autoscroll" type="button" disabled data-tip="transcript.follow">Follow</button>
     </div>

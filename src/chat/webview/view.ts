@@ -296,6 +296,7 @@ let slashItems: { cmd: string; description: string }[] = [];
 let slashIndex = 0;
 const ctlToggle = document.getElementById("ctl-toggle") as HTMLDivElement;
 const collapseAllBtn = document.getElementById("collapse-all") as HTMLButtonElement;
+const focusModeBtn = document.getElementById("focus-mode") as HTMLButtonElement;
 const autoscrollBtn = document.getElementById("autoscroll") as HTMLButtonElement;
 const modeSelectEl = document.getElementById("mode-select") as HTMLDivElement;
 const modeBtn = document.getElementById("mode-btn") as HTMLButtonElement;
@@ -1848,6 +1849,11 @@ function addThinkingBlock(
   if (opts?.pulse !== false) {
     block.classList.add("streaming");
     phaseLockPulse(block);
+    // A LIVE block, and the only kind Focus may open: the reasoning phase starting IS the agent
+    // working in it. History replays through `pulse: false` and must stay folded — a re-render is
+    // not the agent working anywhere, and a `refresh` (compaction, panel reload, tab switch)
+    // would otherwise re-open half the transcript.
+    focusOn(block);
   }
   return block;
 }
@@ -1877,6 +1883,8 @@ function makeThinkingBlock(
     const b = block.querySelector(".thinking-body");
     const header = block.querySelector(".thinking-header");
     if (!b || !header) return;
+    // The reader is driving this fold now: Focus lets go of it for good (see the Focus block).
+    markFocusManual(b);
     const collapsed = b.classList.toggle("collapsed");
     setFold(header, !collapsed);
   });
@@ -1953,6 +1961,8 @@ function wireCollapsible(div: HTMLElement): void {
     const details = div.querySelector(".tool-details");
     const tog = div.querySelector(".tool-toggle");
     if (!details || !tog) return;
+    // Same rule as the thinking header: a hand-opened (or hand-closed) card is the reader's.
+    markFocusManual(details);
     const collapsed = details.classList.toggle("collapsed");
     setFold(div.querySelector(".tool-header"), !collapsed);
   });
@@ -2019,11 +2029,151 @@ function collapseAllSections(): number {
   let collapsed = 0;
   document.querySelectorAll<HTMLElement>(TRANSCRIPT_SECTIONS).forEach((body) => {
     if (body.classList.contains("collapsed")) return;
+    // Only the ones this action actually closed are taken away from Focus: a section the reader
+    // folds stays folded even while the agent works inside it, while the NEXT one is new to Focus
+    // and behaves normally. Marking the already-collapsed ones instead would disarm the mode for
+    // every section of the transcript the moment the pill is pressed once.
+    markFocusManual(body);
     body.classList.add("collapsed");
     setFold(body.previousElementSibling, false);
     collapsed += 1;
   });
   return collapsed;
+}
+
+// ── Focus ────────────────────────────────────────────────────
+/**
+ * FOCUS: reading a run as it happens, without a click per step.
+ *
+ * Sections are born folded, so following a run by hand is one click per thought and one per tool
+ * — the work this mode removes. Armed, the transcript opens the section the agent starts working
+ * in and folds the one it LEFT BEHIND. Left behind, not finished: folding a tool card the moment
+ * its result lands shuts it in the one instant it is worth reading, so the fold waits for the
+ * NEXT activation — one step later.
+ *
+ * Three rules keep the mode from fighting the reader:
+ *  - ONE at a time. Parallel calls activate two bubbles in the same turn, and "everything active
+ *    is open" is the wall of cards this mode exists to avoid: the newest wins, the previous folds.
+ *  - A MANUAL toggle wins for that section, for good. The header click and "Collapse all" mark
+ *    it, and Focus then neither opens nor closes it, however active it is — while the next
+ *    section born carries no mark and behaves normally, exactly as the mode is described.
+ *  - SOME BODIES ARE NOT ITS BUSINESS: sub-agent bubbles (their log is opened by hand, on
+ *    purpose — `focusTargetOf` names them out), the pending bubbles (always whole) and the
+ *    answer (no fold at all).
+ *
+ * Cost: `focusOn` runs once per STEP of a run — a section born, or a settled one waking up — and
+ * never per delta. The per-delta path only runs `focusOff`, whose first line bails out with one
+ * comparison whenever Focus holds nothing open, so a run with the mode off (the default) pays a
+ * single branch per delta and nothing else: no queries, no layout, no paint.
+ */
+
+/** The fold Focus may open for `el`, or null when Focus has no business there. */
+function focusTargetOf(el: HTMLElement | null): HTMLElement | null {
+  if (!el) return null;
+  // Sub-agent bubbles wear `.msg.tool` too (a `Delegate` call IS a tool call): their body is the
+  // reader's to open, so they are named out BEFORE the selector can pick them up.
+  if (el.classList.contains("subagent")) return null;
+  if (!el.matches(".thinking-block, .msg.tool")) return null;
+  return el.querySelector<HTMLElement>(".thinking-body, .tool-details");
+}
+
+/** The ONE fold Focus opened itself, and therefore the only one it may close again. */
+let focusOpened: HTMLElement | null = null;
+/** Armed or not. A MODE, so the pill is never `disabled`: `aria-pressed` carries the state. */
+let focusMode = false;
+
+/** Fold `body` exactly as its own header would: body class, arrow and announced state together. */
+function setBodyFold(body: HTMLElement, open: boolean): void {
+  if (open === !body.classList.contains("collapsed")) return;
+  body.classList.toggle("collapsed", !open);
+  setFold(body.previousElementSibling, open);
+}
+
+/** The reader took this fold over by hand: from now on Focus keeps its hands off it. */
+function markFocusManual(body: Element | null): void {
+  if (!(body instanceof HTMLElement)) return;
+  body.dataset.focusManual = "1";
+  // Releasing it here is what lets `focusOn` skip the manual check on the PREVIOUS body: the
+  // tracked one is never a manual one.
+  if (focusOpened === body) focusOpened = null;
+}
+
+/** "The agent works HERE now": open this section and fold the one it has left behind. */
+function focusOn(el: HTMLElement | null): void {
+  if (!focusMode) return;
+  const body = focusTargetOf(el);
+  // A section the reader has taken over stays where the reader put it — including the one that
+  // is active right now (the "Collapse all" case: it closes, and it stays closed).
+  if (!body || body.dataset.focusManual === "1") return;
+  const previous = focusOpened;
+  focusOpened = body;
+  let changed = false;
+  if (previous && previous !== body && previous.isConnected && !previous.classList.contains("collapsed")) {
+    // `isConnected`: a rebuild (compaction, tab switch) throws the old bodies away and this
+    // reference survives it — folding a detached node would be work thrown away.
+    setBodyFold(previous, false);
+    changed = true;
+  }
+  if (body.classList.contains("collapsed")) {
+    setBodyFold(body, true);
+    changed = true;
+  }
+  // Once per activation, not per fold: the pills' state is a query over every section.
+  if (changed) updateTranscriptActions();
+}
+
+/** `el` stopped being the place the agent works in: fold what Focus opened for it, forget it. */
+function focusOff(el: HTMLElement | null): void {
+  // The per-delta path lives on this line: with nothing of its own open, Focus costs one compare.
+  if (!focusOpened) return;
+  const body = focusTargetOf(el);
+  if (!body || focusOpened !== body) return;
+  const open = !body.classList.contains("collapsed");
+  focusOpened = null;
+  if (!open) return;
+  setBodyFold(body, false);
+  updateTranscriptActions();
+}
+
+/** The run is over, or the transcript is being rebuilt: fold what Focus left open, forget it. */
+function focusRelease(): void {
+  const body = focusOpened;
+  focusOpened = null;
+  if (!body || !body.isConnected || body.classList.contains("collapsed")) return;
+  setBodyFold(body, false);
+  updateTranscriptActions();
+}
+
+/** The tool bubble still running, if any — the section Focus opens when it is armed mid-run. */
+function liveToolEl(): HTMLElement | null {
+  // Only the ones still pending: a call whose result already arrived is not where the agent is,
+  // so arming Focus then opens nothing instead of the last card of the previous step.
+  const live = Array.from(pendingToolCalls.values()).filter(
+    (el) => el.isConnected && el.classList.contains("tool-call-pending"),
+  );
+  return live.length > 0 ? live[live.length - 1] : null;
+}
+
+/**
+ * Arm or disarm the mode. Turning it OFF closes what it has open — a mode that leaves its own
+ * effect behind is a state nobody can reason about — and turning it ON mid-run opens the section
+ * that is live right now instead of waiting for the next step.
+ */
+function setFocusMode(on: boolean): void {
+  const changed = focusMode !== on;
+  focusMode = on;
+  focusModeBtn.setAttribute("aria-pressed", String(on));
+  if (changed) {
+    // A preference, like the control stack: it survives a webview reload.
+    const prev = vscode.getState() as Record<string, unknown> | undefined;
+    vscode.setState({ ...(prev ?? {}), focusMode: on });
+  }
+  if (!on) {
+    focusRelease();
+    return;
+  }
+  // Reasoning first (it is the live phase), otherwise the tool that is still running.
+  focusOn(currentThinkingBlock ?? liveToolEl());
 }
 
 /** Update a sub-agent bubble's status chip. */
@@ -2407,6 +2557,10 @@ function clearStreamingBubble(): void {
  * reasoning belongs in the same block, in the same place (see `settledThinkingBlock`). */
 function settleThinkingBlock(): void {
   if (!currentThinkingBlock) return;
+  // The reasoning is over — the answer streams now, or the next step starts. Focus folds the
+  // block it opened here: `focusOff` is a no-op unless the tracked body is this one, so a block
+  // the reader took over, or one that was never Focus's, is left exactly as it is.
+  focusOff(currentThinkingBlock);
   settlePulse(currentThinkingBlock);
   // A block that never said anything (a stray "." from the provider) is dropped instead of
   // staying in the transcript as an empty "Thought during this answer".
@@ -2792,6 +2946,9 @@ function resetStreamState(): void {
   // in: keeping the entries would only grow a map of detached nodes across every
   // rebuild (a replay re-registers the ones that still matter).
   subAgentToolEls.clear();
+  // Focus: what it left open belonged to a run — or to a transcript — that is over. Whatever
+  // still matters is re-opened by the next activation, or by the replay of a run that continues.
+  focusRelease();
 }
 
 function formatArgs(args: unknown): string {
@@ -3888,6 +4045,13 @@ collapseAllBtn.addEventListener("click", (e) => {
   // and the reading position would jump. Re-anchor only when the user was
   // already following the bottom — the same rule as the streaming auto-scroll.
   if (autoScroll) messagesEl.scrollTop = messagesEl.scrollHeight;
+});
+// "Focus": a MODE, not an action — it arms and stays armed, so the whole strip must not toggle
+// the control stack here either. The mode itself (what it opens, what it lets go of) is in the
+// Focus block above; this only flips the flag and repaints the pill.
+focusModeBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  setFocusMode(!focusMode);
 });
 // "Autoscroll": jump back to the latest message. There is NO separate
 // autoscroll state to switch on — the scroll listener above re-derives it from
@@ -6706,6 +6870,9 @@ window.addEventListener("message", (e) => {
         currentThinkingBlock.classList.remove("settling"); // re-pulsing, not fading out
         currentThinkingBlock.classList.add("streaming");
         phaseLockPulse(currentThinkingBlock);
+        // Reasoning resumed in the block that settled a moment ago ("Thought during this
+        // answer"): it is the live section again, so Focus re-opens what it had folded.
+        focusOn(currentThinkingBlock);
         currentThinkingText += pendingThinking;
         pendingThinking = "";
       } else if (!currentThinkingBlock) {
@@ -6762,6 +6929,10 @@ window.addEventListener("message", (e) => {
       const toolEl = msg.name === "Delegate" ? addSubAgentCall(msg.arguments) : addToolCall(msg.name, msg.arguments);
       pendingToolCalls.set(msg.id, toolEl);
       toolEl.dataset.toolCallId = msg.id;
+      // Focus: this bubble is where the agent works now, so it opens and the previous one folds
+      // (one step late, so a tool's output is still readable when it lands). No name test here:
+      // a sub-agent bubble is excluded inside `focusTargetOf`, in one place instead of two.
+      focusOn(toolEl);
       setWorkingPhase(msg.name);
       clearThinkingBlock();
       currentThinkingText = "";
@@ -7719,6 +7890,10 @@ function replayLiveTurn(lt: SessionLiveProjection | undefined): void {
     flushSubAgentMd(el);
     setSubAgentStatus(el, sa.status);
   }
+  // A rebuild is not an ACTIVATION, so nothing opens on its own here — but a run that CONTINUES
+  // must not be left with nothing on screen: Focus re-opens the tool it is still inside. Only
+  // that one: the calls already done are the transcript's business, not the mode's.
+  if (focusMode) focusOn(liveToolEl());
 }
 
 // ── Session-name modal (in-panel name prompt) ──
@@ -7756,6 +7931,10 @@ if (savedDraftFiles) {
 const collapsedDefault = savedCollapsed ?? true;
 document.body.classList.toggle("controls-collapsed", collapsedDefault);
 ctlToggle.setAttribute("aria-expanded", String(!collapsedDefault));
+// Focus is a MODE, not a one-shot action: it is restored like the collapsed stack above, and
+// BEFORE the first transcript render — so the first live section of a run that resumes with the
+// panel reopening (a reload mid-stream) opens exactly as it would have without the reload.
+if ((vscode.getState() as { focusMode?: boolean } | undefined)?.focusMode) setFocusMode(true);
 // The HOST is authoritative for mode + Parallel: the panel reflects
 // `init.config` and must NOT reset them to defaults on load. The webview is
 // recreated whenever the view is hidden/shown (no retainContextWhenHidden), so

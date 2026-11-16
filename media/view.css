@@ -2815,6 +2815,16 @@ body.drag-over {
   transform: none;
   box-shadow: none;
 }
+/* "Focus" is the only MODE among these pills — the other two fire once and disable themselves,
+   so this one carries its state instead, in the accent rather than in a `disabled` look. It is
+   painted with the hover recipe held steady on purpose (same accent text, edge and wash): armed
+   reads as armed from the corner of the eye, and hovering it cannot change what it says. No
+   transition and no pulse here — a pill that breathes while you read is a distraction. */
+#transcript-actions > button[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-surface);
+}
 /* Insert-in hint: the LEFT slot of this same strip, mirroring #transcript-actions on
    the right. It replaces the old Queue/Steer pill that lived in the model row:
    "Insert prompt in Queue" / "Insert prompt in Steer". A pure INDICATOR — never clickable — so it

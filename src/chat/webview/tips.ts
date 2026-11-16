@@ -315,6 +315,32 @@ export function installTips(doc: Document = document): Cleanup {
     hide();
   };
 
+  /** Off the viewport (or gone from the document): the card describes something nobody can see. */
+  const anchorGone = (anchor: HTMLElement): boolean => {
+    if (!anchor.isConnected) return true;
+    const a = anchor.getBoundingClientRect();
+    const width = win?.innerWidth ?? 0;
+    const height = win?.innerHeight ?? 0;
+    return a.bottom < TIP_EDGE || a.top > height - TIP_EDGE || a.right < TIP_EDGE || a.left > width - TIP_EDGE;
+  };
+
+  /**
+   * A scroll is not the user moving on. The transcript streams and scrolls ITSELF, sixty times a
+   * second: dismissing on any scroll meant the card had to survive the feed to be read, and over
+   * a live run it never did. The card follows its anchor instead, and closes only when the anchor
+   * has left the viewport — which is what the old rule was really about, a card floating over
+   * content it no longer describes. A still anchor (the transcript toolbar, above the scroller)
+   * means a still card: nothing moved under the pointer.
+   */
+  const onScroll = (): void => {
+    if (!shown) return;
+    if (anchorGone(shown)) {
+      dismiss();
+      return;
+    }
+    place(shown);
+  };
+
   const onKeyDown = (event: Event): void => {
     if ((event as KeyboardEvent).key === "Escape") dismiss();
   };
@@ -323,10 +349,11 @@ export function installTips(doc: Document = document): Cleanup {
   doc.addEventListener("pointerout", onOut, true);
   doc.addEventListener("focusin", onFocusIn, true);
   doc.addEventListener("focusout", onFocusOut, true);
-  // The click answers the question; a scroll or an Escape means the user moved on. A card that
-  // outlives its trigger floats over content it does not describe.
+  // The click answers the question, and an Escape means the user moved on. A card that outlives
+  // its trigger floats over content it does not describe — but "outlives" is about the ANCHOR
+  // (see `onScroll`), not about the transcript scrolling underneath it.
   doc.addEventListener("pointerdown", dismiss, true);
-  doc.addEventListener("scroll", dismiss, true);
+  doc.addEventListener("scroll", onScroll, true);
   doc.addEventListener("keydown", onKeyDown);
   win?.addEventListener("resize", dismiss);
 
@@ -337,7 +364,7 @@ export function installTips(doc: Document = document): Cleanup {
     doc.removeEventListener("focusin", onFocusIn, true);
     doc.removeEventListener("focusout", onFocusOut, true);
     doc.removeEventListener("pointerdown", dismiss, true);
-    doc.removeEventListener("scroll", dismiss, true);
+    doc.removeEventListener("scroll", onScroll, true);
     doc.removeEventListener("keydown", onKeyDown);
     win?.removeEventListener("resize", dismiss);
     // Only clear the slot if it is still OURS: a re-install may already own it.

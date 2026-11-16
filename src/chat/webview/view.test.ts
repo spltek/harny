@@ -154,7 +154,7 @@ function setupDom(initOverrides: Record<string, unknown> = {}, savedState: Recor
         <button id="providers-cancel" class="secondary">Cancel</button>
       </div>
     </div>
-    <div id="ctl-toggle"><span id="insert-hint">Insert in <span id="insert-hint-word"><span class="mode-pill-sizer" aria-hidden="true"><span>Queue</span><span>Steer</span></span><span class="mode-pill-label">Queue</span></span></span><button id="ctl-toggle-btn"></button><div id="transcript-actions"><button id="collapse-all" disabled></button><button id="autoscroll" disabled></button></div></div>
+    <div id="ctl-toggle"><span id="insert-hint">Insert in <span id="insert-hint-word"><span class="mode-pill-sizer" aria-hidden="true"><span>Queue</span><span>Steer</span></span><span class="mode-pill-label">Queue</span></span></span><button id="ctl-toggle-btn"></button><div id="transcript-actions"><button id="focus-mode" aria-pressed="false"></button><button id="collapse-all" disabled></button><button id="autoscroll" disabled></button></div></div>
     <div id="mcp-modal" class="hidden">
       <div class="mcp-backdrop"></div>
       <select id="mcp-select"></select>
@@ -12093,15 +12093,16 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
 
   const emitScroll = () => (document.getElementById("messages") as HTMLElement).dispatchEvent(new Event("scroll"));
 
-  it("ships both pills present, and disabled is the only thing that changes", async () => {
+  it("ships all three pills present, and disabled is the only thing that changes", async () => {
     await withAllSections();
     // One of each kind, all created collapsed.
     expect(document.querySelector(".thinking-body.collapsed")).not.toBeNull();
     expect(document.querySelector(".msg.tool:not(.subagent) .tool-details.collapsed")).not.toBeNull();
     expect(document.querySelector(".subagent-body.collapsed")).not.toBeNull();
-    // Both live in the right-aligned group, both disabled, neither hidden: the
-    // row must never reflow, so visibility is never toggled.
-    expect(document.querySelectorAll("#transcript-actions > button").length).toBe(2);
+    // All three live in the right-aligned group, none hidden: the row must never reflow, so
+    // visibility is never toggled. "Focus" is a MODE, so it is never disabled either — its state
+    // rides on aria-pressed (its own tests are in the Focus block below).
+    expect(document.querySelectorAll("#transcript-actions > button").length).toBe(3);
     expect(tab().disabled).toBe(true);
     expect(auto().disabled).toBe(true);
     expect(tab().classList.contains("hidden")).toBe(false);
@@ -12242,7 +12243,267 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
   });
 });
 
-// ── Streaming paint coalescing (the "frozen panel" regression) ──
+// ── Focus (the section the agent is working in) ──
+// The mode exists because sections are born folded: following a run by hand is one click per
+// thought and one per tool. Armed, the transcript opens the section the agent STARTS working in
+// and folds the one it LEFT BEHIND — one step later, so a tool's output is still readable in the
+// instant it lands. What these pin, in order: the pill's own contract, the step-to-step handover,
+// the three things the mode must NOT do (sub-agent logs, manual folds, history replays), and the
+// cost — arming it mid-run must open what is live NOW, without waiting for the next step.
+describe("Focus: the transcript follows the run", () => {
+  const focusBtn = () => document.getElementById("focus-mode") as HTMLButtonElement;
+  const collapseAll = () => document.getElementById("collapse-all") as HTMLButtonElement;
+  const bodies = () =>
+    Array.from(document.querySelectorAll<HTMLElement>(".thinking-body, .tool-details, .subagent-body"));
+  const toolBodies = () => Array.from(document.querySelectorAll<HTMLElement>(".msg.tool:not(.subagent) .tool-details"));
+  const thinkingBody = () => document.querySelector<HTMLElement>(".thinking-body");
+  const isOpen = (el: Element | null): boolean => !!el && !el.classList.contains("collapsed");
+  const anyOpen = () => bodies().some(isOpen);
+
+  /** A run that has just started: the gesture the user makes before anything arrives. */
+  async function startRun(): Promise<void> {
+    await loadView();
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+  }
+
+  it("arms from the pill, stays armed, and is never disabled", async () => {
+    await loadView();
+    expect(focusBtn().getAttribute("aria-pressed")).toBe("false");
+    expect(focusBtn().disabled).toBe(false); // a MODE has nothing to disable
+
+    focusBtn().click();
+    expect(focusBtn().getAttribute("aria-pressed")).toBe("true");
+    expect(focusBtn().disabled).toBe(false);
+
+    focusBtn().click();
+    expect(focusBtn().getAttribute("aria-pressed")).toBe("false");
+    // The strip toggles the control stack: the pill must never let its click through.
+    expect(document.body.classList.contains("controls-collapsed")).toBe(true);
+  });
+
+  it("survives a reload, because it is a mode", async () => {
+    setupFixture({}, { focusMode: true });
+    await loadView();
+    expect(focusBtn().getAttribute("aria-pressed")).toBe("true");
+    expect(persistedState.focusMode).toBe(true);
+  });
+
+  it("opens the section the agent starts in, and folds the one it left behind", async () => {
+    await startRun();
+    focusBtn().click();
+
+    hostMessage({ type: "thinkingDelta", content: "I have to read the store first" });
+    expect(isOpen(thinkingBody())).toBe(true);
+
+    // The tool is where the work is now: it opens, the reasoning folds.
+    hostMessage({ type: "toolCall", id: "t1", name: "Read", arguments: { path: "a.ts" } });
+    expect(isOpen(toolBodies()[0])).toBe(true);
+    expect(isOpen(thinkingBody())).toBe(false);
+
+    // …and the output is NOT taken away when it lands: the fold waits for the next step, which is
+    // the whole reason the rule is "left behind", not "finished".
+    hostMessage({ type: "toolResult", toolCallId: "t1", output: "the file body", isError: false });
+    expect(isOpen(toolBodies()[0])).toBe(true);
+
+    // The next step is what closes it.
+    hostMessage({ type: "toolCall", id: "t2", name: "Grep", arguments: { pattern: "x" } });
+    expect(isOpen(toolBodies()[0])).toBe(false);
+    expect(isOpen(toolBodies()[1])).toBe(true);
+  });
+
+  it("keeps ONE open at a time, even with parallel calls", async () => {
+    await startRun();
+    focusBtn().click();
+
+    hostMessage({ type: "toolCall", id: "p1", name: "Read", arguments: { path: "a.ts" } });
+    hostMessage({ type: "toolCall", id: "p2", name: "Grep", arguments: { pattern: "x" } });
+
+    // Two calls running at once must not build the wall of cards the mode exists to avoid.
+    expect(bodies().filter(isOpen).length).toBe(1);
+    expect(isOpen(toolBodies()[1])).toBe(true);
+  });
+
+  it("closes what it left open when the run ends — the answer is the only thing left open", async () => {
+    await startRun();
+    focusBtn().click();
+    hostMessage({ type: "thinkingDelta", content: "I need the file first." });
+    hostMessage({ type: "toolCall", id: "t1", name: "Read", arguments: { path: "a.ts" } });
+    hostMessage({ type: "toolResult", toolCallId: "t1", output: "body", isError: false });
+    hostMessage({ type: "textDelta", content: "The file says hi." });
+    // Still open here: the fold waits for the NEXT step, so the output is readable as it lands.
+    expect(anyOpen()).toBe(true);
+
+    hostMessage({ type: "done" });
+    // A turn now ends on the ANSWER, which has no fold of its own: it is open by nature, so the
+    // transcript comes to rest with that — and nothing else — on screen. Without the release the
+    // last tool card would stay open UNDER the answer, in a run that is already finished.
+    expect(anyOpen()).toBe(false);
+    expect(document.querySelector(".msg.assistant")?.textContent).toContain("The file says hi.");
+  });
+
+  it("closes what it opened when it is disarmed, so the mode leaves no state behind", async () => {
+    await startRun();
+    focusBtn().click();
+    hostMessage({ type: "thinkingDelta", content: "reasoning about the store" });
+    expect(isOpen(thinkingBody())).toBe(true);
+
+    focusBtn().click();
+    expect(anyOpen()).toBe(false);
+  });
+
+  it("opens what is live RIGHT NOW when armed mid-run", async () => {
+    await startRun();
+    hostMessage({ type: "toolCall", id: "t1", name: "Read", arguments: { path: "a.ts" } });
+    expect(anyOpen()).toBe(false); // disarmed: everything is folded, as it always was
+
+    focusBtn().click();
+
+    // No waiting for the next step: the running tool is the section the agent is inside.
+    expect(isOpen(toolBodies()[0])).toBe(true);
+
+    // A call whose result already landed is NOT where the agent is: arming again opens nothing,
+    // instead of resurrecting the last card of the step before.
+    hostMessage({ type: "toolResult", toolCallId: "t1", output: "the file body", isError: false });
+    focusBtn().click();
+    expect(anyOpen()).toBe(false);
+    focusBtn().click();
+    expect(anyOpen()).toBe(false);
+  });
+
+  it("never opens a sub-agent log: that one is opened by hand", async () => {
+    await loadView();
+    hostMessage(PARALLEL_ON);
+    focusBtn().click();
+
+    hostMessage({
+      type: "toolCall",
+      id: "s1",
+      name: "Delegate",
+      arguments: { id: "A", goal: "g", access: "read", resources: ["a.ts"] },
+    });
+
+    const log = document.querySelector(".subagent-body");
+    expect(log).not.toBeNull(); // the bubble is there…
+    expect(isOpen(log)).toBe(false); // …and stays closed, armed or not
+  });
+
+  it("lets go of a section the reader toggles by hand — in both directions", async () => {
+    await startRun();
+    focusBtn().click();
+    hostMessage({ type: "thinkingDelta", content: "reasoning about the store" });
+    expect(isOpen(thinkingBody())).toBe(true);
+
+    // Folded by hand: it stays folded even while the agent is still inside it, and the next step
+    // does not resurrect it either.
+    (document.querySelector(".thinking-header") as HTMLElement).click();
+    expect(isOpen(thinkingBody())).toBe(false);
+    hostMessage({ type: "toolCall", id: "t1", name: "Read", arguments: { path: "a.ts" } });
+    expect(isOpen(thinkingBody())).toBe(false);
+    expect(isOpen(toolBodies()[0])).toBe(true);
+
+    // The other way round: a section the reader OPENED by hand is not folded behind their back.
+    (document.querySelector(".thinking-header") as HTMLElement).click();
+    hostMessage({ type: "toolCall", id: "t2", name: "Grep", arguments: { pattern: "x" } });
+    expect(isOpen(thinkingBody())).toBe(true);
+  });
+
+  it("Collapse all closes the live section and Focus leaves it closed", async () => {
+    await startRun();
+    focusBtn().click();
+    hostMessage({ type: "thinkingDelta", content: "reasoning about the store" });
+    expect(isOpen(thinkingBody())).toBe(true);
+
+    collapseAll().click();
+    expect(anyOpen()).toBe(false);
+
+    // The reader closed it, so it stays closed — but the NEXT section is new to the mode and
+    // behaves normally: that is exactly the handover the mode promises.
+    hostMessage({ type: "toolCall", id: "t1", name: "Read", arguments: { path: "a.ts" } });
+    expect(isOpen(thinkingBody())).toBe(false);
+    expect(isOpen(toolBodies()[0])).toBe(true);
+  });
+
+  it("a rebuild of a run that CONTINUES re-opens the tool it is still inside", async () => {
+    await startRun();
+    focusBtn().click();
+    hostMessage({ type: "toolCall", id: "t1", name: "Read", arguments: { path: "a.ts" } });
+    expect(isOpen(toolBodies()[0])).toBe(true);
+
+    // The host rebuilds the transcript mid-run (compaction, panel reload). The turn is not in the
+    // history yet, so the bubbles come back from `liveTurn` — one done, one still running.
+    hostMessage({
+      type: "switchView",
+      sessions: [{ id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 1 }],
+      openIds: ["a"],
+      activeId: "a",
+      messages: [{ role: "user", content: "go", timestamp: 1 }],
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
+      workingIds: ["a"],
+      streaming: true,
+      liveThinking: "",
+      liveAnswer: "",
+      liveTurn: {
+        thinking: "",
+        answer: "",
+        textAfterTools: false,
+        toolCalls: [
+          { id: "t0", name: "Grep", args: { pattern: "x" }, done: true, isError: false, output: "hit" },
+          { id: "t1", name: "Read", args: { path: "a.ts" }, done: false, isError: false },
+        ],
+        subAgents: {},
+      },
+    });
+
+    const rebuilt = toolBodies();
+    expect(rebuilt).toHaveLength(2);
+    // The rebuild is not an activation — but a run that continues must not be left with nothing
+    // open, so the call it is inside comes back open and the finished one stays folded.
+    expect(isOpen(rebuilt[0])).toBe(false);
+    expect(isOpen(rebuilt[1])).toBe(true);
+  });
+
+  it("a rebuild is not an activation: history comes back folded", async () => {
+    await startRun();
+    focusBtn().click();
+    hostMessage({ type: "thinkingDelta", content: "reasoning about the store" });
+    expect(isOpen(thinkingBody())).toBe(true);
+
+    hostMessage({
+      type: "switchView",
+      sessions: [{ id: "a", name: "S", createdAt: 1, updatedAt: 2, messageCount: 1 }],
+      openIds: ["a"],
+      activeId: "a",
+      messages: [
+        { role: "user", content: "go", timestamp: 1 },
+        { role: "assistant", content: "done", thinking: "old reasoning", timestamp: 2 },
+      ],
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
+      workingIds: [],
+    });
+
+    // The replay carries the reasoning of that turn, and the mode must not open it: a re-render
+    // is not the agent working anywhere. (A stale reference surviving the rebuild would also fold
+    // a detached node — this is the same guard, seen from the other side.)
+    expect(thinkingBody()).not.toBeNull();
+    expect(anyOpen()).toBe(false);
+  });
+});
+
 // Symptom: the panel went unresponsive when the window was resized during a run
 // with parallel sub-agents. Two causes, both pinned here:
 //  1. every sub-agent delta re-rendered its WHOLE log as markdown on the spot

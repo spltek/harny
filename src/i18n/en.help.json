@@ -147,6 +147,7 @@
     "tools.none": "Expose no tool of this server.",
     "tools.save": "Apply to this conversation: which tools the model sees, and which run in Analyze.",
     "transcript.collapse": "Fold every expanded section — thinking, tool calls, sub-agents — back to one line.",
+    "transcript.focus": "Arm Focus: the section the agent is working in opens as it starts and folds when the run moves on. A section you toggle by hand is yours — Focus never touches it again.",
     "transcript.follow": "Jump to the newest message and keep following the stream as it arrives."
   },
   "labels": {
