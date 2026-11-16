@@ -7073,8 +7073,22 @@ window.addEventListener("message", (e) => {
           }
         | undefined;
       if (r) {
-        dbVacuumStatsEl.innerHTML =
-          vacuumStatsHtml(r.before) + "<div>↓ after the VACUUM</div>" + vacuumStatsHtml(r.after);
+        // A pass that wrote NOTHING has no "after" to show: printing the same numbers twice under
+        // "↓ after the VACUUM" invented a second stage that never happened — and it made the click
+        // that had already reached the plateau look like the FIRST HALF of a two-click job.
+        const wrote = r.vacuumed || r.copied === true;
+        dbVacuumStatsEl.innerHTML = wrote
+          ? vacuumStatsHtml(r.before) + "<div>↓ after the VACUUM</div>" + vacuumStatsHtml(r.after)
+          : vacuumStatsHtml(r.after);
+        // A `busy` checkpoint owes something only when a VACUUM actually rebuilt pages; a pass that
+        // wrote nothing owes nothing, whatever the other connection is doing.
+        const queued = !!r.walCheckpointBusy && !r.vacuumed && (r.pendingMaintenance ?? "compact") !== "none";
+        const copyOwed = r.vacuumed && (r.pendingMaintenance ?? (r.walCheckpointBusy ? "copy" : "none")) === "copy";
+        // 0 free pages IS the plateau, and no pass can go below it: the run that empties the free
+        // list is the LAST one, so the button must say so instead of asking for a second click that
+        // can only write nothing. (Reported from the field: "always two VACUUM & optimize to reach
+        // the plateau" — the second click was the panel admitting what the first had already done.)
+        const atPlateau = !r.error && !queued && !copyOwed && r.after.pageCount > 0 && r.after.freePages === 0;
         // Say what HAPPENED, not what we hoped: a failed VACUUM used to be reported as
         // "nothing to reclaim", which sent the user to click again on a database that had not
         // been touched — and made the click that finally worked look like the only one that did.
@@ -7096,12 +7110,15 @@ window.addEventListener("message", (e) => {
               ? `Vacuumed & optimized in ${(r.durationMs / 1000).toFixed(1)}s.` +
                 // A stale webview can outlive the host that sent `pendingMaintenance`: `busy` after a
                 // VACUUM always means the copy is owed, so the field is a refinement, not a need.
-                ((r.pendingMaintenance ?? (r.walCheckpointBusy ? "copy" : "none")) === "copy"
+                (copyOwed
                   ? " The pages are compacted, but sessions.db keeps its old size until the other" +
                     " connection stops reading it: the compacted pages are already rebuilt, and they" +
                     " are COPIED into the file as soon as it is free (no second VACUUM is needed or" +
                     " wanted — repeating it is what used to grow the file)."
-                  : "")
+                  : atPlateau
+                    ? " And this is the plateau: 0 free pages left, so there is nothing more to reclaim" +
+                      " and no second pass to run."
+                    : "")
               : r.copied
                 ? `Finished: the pages compacted earlier were copied into sessions.db — the file went` +
                   ` from ${vacuumFootprint(r.before)} to ${vacuumFootprint(r.after)}.`
@@ -7112,6 +7129,9 @@ window.addEventListener("message", (e) => {
                   `Nothing to reclaim: ${r.after.freePages} free of ${r.after.pageCount} pages and the` +
                   ` indexes already optimal — the file is ${vacuumFootprint(r.after)}, nothing was written.`;
         smVacuumStats.innerHTML = vacuumStatsHtml(r.after);
+        dbVacuumRun.disabled = atPlateau;
+        dbVacuumRun.textContent = atPlateau ? "Nothing left to reclaim" : "VACUUM & optimize again";
+        break;
       }
       dbVacuumRun.disabled = false;
       dbVacuumRun.textContent = "VACUUM & optimize again";

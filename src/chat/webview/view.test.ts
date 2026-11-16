@@ -11408,7 +11408,7 @@ describe("DB vacuum modal (webview)", () => {
     expect(posted).toContainEqual({ type: "modalResponse", id: 7, value: true });
   });
 
-  it("Compact now posts runVacuum and shows the before → after result", async () => {
+  it("Compact now posts runVacuum, shows the before → after result, and SAYS it is the plateau", async () => {
     await loadView();
     hostMessage({ type: "modal", modalId: 7, kind: "dbVacuum", stats });
     (document.getElementById("db-vacuum-run") as HTMLButtonElement).click();
@@ -11423,8 +11423,62 @@ describe("DB vacuum modal (webview)", () => {
         durationMs: 1200,
       },
     });
-    expect((document.getElementById("db-vacuum-msg") as HTMLElement).textContent).toContain("1.2s");
-    expect((document.getElementById("db-vacuum-run") as HTMLButtonElement).textContent).toBe("VACUUM & optimize again");
+    const msg = (document.getElementById("db-vacuum-msg") as HTMLElement).textContent ?? "";
+    expect(msg).toContain("1.2s");
+    // Reported from the field: "always two VACUUM & optimize to reach the plateau". The SECOND
+    // click was the panel admitting what the FIRST had already done — the run that empties the
+    // free list is the last one, so this pass has to say it, and the button must stop asking.
+    expect(msg).toContain("plateau");
+    expect(msg).toContain("no second pass");
+    const run = document.getElementById("db-vacuum-run") as HTMLButtonElement;
+    expect(run.disabled).toBe(true);
+    expect(run.textContent).toBe("Nothing left to reclaim");
+  });
+
+  it("a pass that wrote NOTHING shows ONE block, with no invented 'after'", async () => {
+    await loadView();
+    hostMessage({ type: "modal", modalId: 7, kind: "dbVacuum", stats });
+    hostMessage({
+      type: "dbVacuumResult",
+      result: {
+        vacuumed: false,
+        before: { ...stats, freePages: 0, bytesFree: 0, ratio: 0, bytesOnDisk: 9_000_000, walBytes: 0 },
+        after: { ...stats, freePages: 0, bytesFree: 0, ratio: 0, bytesOnDisk: 9_000_000, walBytes: 0 },
+        durationMs: 0,
+        pendingMaintenance: "none",
+      },
+    });
+    const shown = (document.getElementById("db-vacuum-stats") as HTMLElement).textContent ?? "";
+    // Nothing was written, so there is no second state: the arrow and the duplicated numbers made
+    // a no-op look like half of a two-click job, which is exactly what the user then kept doing.
+    expect(shown).not.toContain("↓ after the VACUUM");
+    // One block, one "on disk" line: the same numbers printed twice was the "after" that was not.
+    expect(shown.match(/on disk/g)?.length).toBe(1);
+    const run = document.getElementById("db-vacuum-run") as HTMLButtonElement;
+    expect(run.disabled).toBe(true);
+    expect(run.textContent).toBe("Nothing left to reclaim");
+  });
+
+  it("a QUEUED pass keeps the button usable: the debt is real, only the moment was not ours", async () => {
+    await loadView();
+    hostMessage({ type: "modal", modalId: 7, kind: "dbVacuum", stats });
+    hostMessage({
+      type: "dbVacuumResult",
+      result: {
+        vacuumed: false,
+        before: stats,
+        after: stats,
+        durationMs: 3,
+        walCheckpointBusy: true,
+        pendingMaintenance: "compact",
+      },
+    });
+    // The other reader can leave between the click and the next one: unlike the plateau, this is
+    // a state that CAN change by itself, so the button is not the panel's to disable.
+    const run = document.getElementById("db-vacuum-run") as HTMLButtonElement;
+    expect(run.disabled).toBe(false);
+    expect(run.textContent).toBe("VACUUM & optimize again");
+    expect((document.getElementById("db-vacuum-stats") as HTMLElement).textContent).not.toContain("↓ after the VACUUM");
   });
 
   it("a compaction that FAILED says so — it never claims there was nothing to reclaim", async () => {
