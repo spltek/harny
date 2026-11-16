@@ -7,6 +7,19 @@ import { SqliteSessionStore } from "./sqlite-session-store";
 import type { FileSystem } from "../tools/file-system";
 import type { ChatMessage } from "../history/types";
 
+/**
+ * A `describe` for the tests that write REAL megabytes to a real file: `fill()` puts 2000 messages
+ * of 2 KB on disk and deletes them, deliberately just under the WAL auto-checkpoint threshold, so
+ * it cannot be made cheaper without changing what those tests prove.
+ *
+ * WHY 20 s AND NOT THE 5 s DEFAULT: 5 s is a macOS/Linux number. This file runs in 1.9 s here and
+ * took 28.6 s on `windows-latest`, where its worst test alone costs 3.6 s (Defender + NTFS on
+ * every page) and `dbVacuumStats carries the footprint` timed out on `main` while its neighbours
+ * sat at 1.2–2.6 s — the ceiling was inside that runner's own noise. The assertions are untouched:
+ * this is slack for the IO, not a licence to hang. A real hang still fails, at 20 s.
+ */
+const describeRealFileIo = (name: string, fn: () => void) => describe(name, { timeout: 20_000 }, fn);
+
 /** In-memory fake filesystem: only `exists` matters (folderMissing). */
 function fakeFs(existing: string[] = []): FileSystem {
   const set = new Set(existing);
@@ -574,7 +587,7 @@ describe("SqliteSessionStore — vacuum also optimizes the indexes", () => {
   });
 });
 
-describe("SqliteSessionStore — a compaction that does not reach the FILE says so", () => {
+describeRealFileIo("SqliteSessionStore — a compaction that does not reach the FILE says so", () => {
   // WHY THIS BLOCK EXISTS: the tests above run on `:memory:`, where `journal_mode = WAL` is a
   // no-op and VACUUM truncates the database on the spot. In PRODUCTION the pages a VACUUM
   // rebuilds live in `sessions.db-wal` until a checkpoint copies them back — and a checkpoint
@@ -708,7 +721,7 @@ describe("SqliteSessionStore — a compaction that does not reach the FILE says 
   });
 });
 
-describe("SqliteSessionStore — the compaction it owes is STATE, not a retry", () => {
+describeRealFileIo("SqliteSessionStore — the compaction it owes is STATE, not a retry", () => {
   // WHY: `busy` belongs to ANOTHER connection's read snapshot, so no amount of polling can know
   // when it lets go — N attempts would be a stopwatch over an event we cannot see. So the debt is
   // remembered (`compact` = the whole pass, `copy` = pages a VACUUM already rebuilt) and paid at the
