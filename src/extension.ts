@@ -170,6 +170,9 @@ export async function activate(context: ExtensionContext) {
   try {
     store = new SqliteSessionStore({
       db,
+      // Where the file is, so the compaction report can show the size the user SEES in Finder
+      // beside the page counters (they diverge while the WAL is not checkpointed).
+      dbPath: join(resolved.home, "sessions.db"),
       fs: nodeFileSystem,
       currentFolder: () => root,
       log: (m) => infoLog(m),

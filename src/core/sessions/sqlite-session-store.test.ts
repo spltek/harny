@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SqliteSessionStore } from "./sqlite-session-store";
@@ -517,6 +517,10 @@ describe("SqliteSessionStore — vacuum force", () => {
     store.saveMessages("s1", [msg("user", "a")]);
     const r = store.maintain({ freeRatioThreshold: 0 });
     expect(r.vacuumed).toBe(true);
+    // `:memory:` has no WAL to hand anything back to: nothing is ever owed, nothing to settle.
+    expect(r.pendingMaintenance).toBe("none");
+    expect(store.pendingMaintenance()).toBe("none");
+    expect(store.settlePending()).toBeUndefined();
   });
 });
 
@@ -534,6 +538,307 @@ describe("SqliteSessionStore — vacuum also optimizes the indexes", () => {
     store.create(); // s2
     store.saveMessages("s2", [msg("user", "hello again")]);
     expect(store.search("hello").some((h) => h.sessionId === "s2")).toBe(true);
+  });
+});
+
+describe("SqliteSessionStore — a compaction that does not reach the FILE says so", () => {
+  // WHY THIS BLOCK EXISTS: the tests above run on `:memory:`, where `journal_mode = WAL` is a
+  // no-op and VACUUM truncates the database on the spot. In PRODUCTION the pages a VACUUM
+  // rebuilds live in `sessions.db-wal` until a checkpoint copies them back — and a checkpoint
+  // that cannot run reports `busy` instead of throwing, while `exec()` throws the row away. So
+  // a run that HAD compacted could report "nothing to reclaim" and leave the file its old size,
+  // and the run after it (the second click) looked like the only one that did anything.
+  const dirs: string[] = [];
+  const dbs: DatabaseSync[] = [];
+  /** sessions.db + its -wal: the whole footprint, which is what "did it empty" means. */
+  const footprint = (file: string): number =>
+    statSync(file).size + (existsSync(`${file}-wal`) ? statSync(`${file}-wal`).size : 0);
+  const openFile = (): { store: SqliteSessionStore; file: string } => {
+    const dir = mkdtempSync(join(tmpdir(), "harny-vacuum-"));
+    dirs.push(dir);
+    const file = join(dir, "sessions.db");
+    const db = new DatabaseSync(file);
+    dbs.push(db);
+    const fs = {
+      ...fakeFs(),
+      exists: (p: string) => existsSync(p),
+      size: (p: string) => statSync(p).size,
+    } as unknown as FileSystem;
+    // 50 ms of busy_timeout: the point of the second test is that a BUSY checkpoint is
+    // REPORTED, not that it is waited out.
+    const store = new SqliteSessionStore({ db, fs, dbPath: file, busyTimeoutMs: 50, idGen: () => "s1" });
+    return { store, file };
+  };
+  afterEach(() => {
+    for (const db of dbs.splice(0))
+      try {
+        db.close();
+      } catch {
+        /* already closed by the test */
+      }
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  });
+  const fill = (store: SqliteSessionStore): void => {
+    store.create("big");
+    store.saveMessages(
+      "s1",
+      Array.from({ length: 2000 }, (_, i) => msg("user", "x".repeat(2000) + i)),
+    );
+    store.remove("s1"); // every page becomes free
+  };
+
+  it("ONE maintain() empties the file, not just the page counters", () => {
+    const { store, file } = openFile();
+    fill(store);
+    const before = footprint(file);
+
+    const r = store.maintain({ freeRatioThreshold: 0 });
+
+    expect(r.vacuumed).toBe(true);
+    expect(r.after.freePages).toBe(0);
+    // No reader on the file: the checkpoint at the end CAN run, and it must — first call.
+    expect(r.walCheckpointBusy).toBeUndefined();
+    expect(footprint(file)).toBeLessThan(before);
+    // The report carries the number the user reads in Finder, not only the logical one.
+    expect(r.after.bytesOnDisk).toBe(statSync(file).size);
+  });
+
+  it("a reader pins the file: the first run cannot know, every run AFTER it writes NOTHING", () => {
+    const { store, file } = openFile();
+    fill(store);
+    const before = footprint(file);
+
+    // A second connection holding a read snapshot: the next VS Code window on the same file.
+    // WAL lets the VACUUM run, but no checkpoint can copy PAST the reader's mark — so the
+    // rebuilt pages pile up in the `-wal`: measured, each pass took the FILE of a 19 MB database
+    // from 100 to 120 to 140 MB while the page counters said "compacted" all along.
+    const reader = new DatabaseSync(file);
+    dbs.push(reader);
+    reader.exec("BEGIN; SELECT count(*) FROM messages;");
+
+    // 1st run: the WAL is empty and a checkpoint on an empty WAL answers `ok 0/0` — nothing
+    // distinguishes it from a free file, so the VACUUM happens (it cannot be avoided) and what
+    // it produced stays in the WAL. It must at least SAY that much.
+    const first = store.maintain({ freeRatioThreshold: 0 });
+    expect(first.vacuumed).toBe(true);
+    expect(first.walCheckpointBusy).toBe(true); // pages compacted, file NOT rewritten
+    expect(first.error).toBeUndefined();
+    const afterFirst = footprint(file);
+
+    // 2nd run with the reader still there: the un-truncatable WAL is now visible (`busy`, pages
+    // copied 0), and THIS is the click that used to add another full copy of the database.
+    const second = store.maintain({ freeRatioThreshold: 0 });
+    expect(second.vacuumed).toBe(false);
+    expect(second.walCheckpointBusy).toBe(true);
+    expect(second.after.freePages).toBe(second.before.freePages); // nothing was touched
+    expect(footprint(file)).toBe(afterFirst); // and nothing was ADDED: clicking again is not worse
+
+    reader.exec("COMMIT"); // the reader is gone
+    // The run that finally reaches the file — and it does everything in ONE pass, drain included.
+    const third = store.maintain({ freeRatioThreshold: 0 });
+    expect(third.walCheckpointBusy).toBeUndefined();
+    expect(third.after.freePages).toBe(0);
+    expect(footprint(file)).toBeLessThan(before);
+  });
+});
+
+describe("SqliteSessionStore — the compaction it owes is STATE, not a retry", () => {
+  // WHY: `busy` belongs to ANOTHER connection's read snapshot, so no amount of polling can know
+  // when it lets go — N attempts would be a stopwatch over an event we cannot see. So the debt is
+  // remembered (`compact` = the whole pass, `copy` = pages a VACUUM already rebuilt) and paid at the
+  // first OBSERVATION of a free WAL: a write, a click, the end of a turn.
+  //
+  // Measured on the real store: after a pinned VACUUM, ONE `wal_checkpoint(TRUNCATE)` took the file
+  // from 32 MB to 5 MB, while a SECOND VACUUM (16 ms, same pages) only re-appended 5 MB to the WAL
+  // — which is exactly how "click again" grew the file instead of emptying it.
+  const dirs: string[] = [];
+  /** sessions.db + its -wal: the whole footprint, which is what "did it empty" means. */
+  const footprint = (file: string): number =>
+    statSync(file).size + (existsSync(`${file}-wal`) ? statSync(`${file}-wal`).size : 0);
+  const fileFs = () =>
+    ({
+      ...fakeFs(),
+      exists: (p: string) => existsSync(p),
+      size: (p: string) => statSync(p).size,
+    }) as unknown as FileSystem;
+  const openFile = (
+    dbFor?: (real: DatabaseSync) => DatabaseSync,
+  ): { store: SqliteSessionStore; file: string; db: DatabaseSync } => {
+    const dir = mkdtempSync(join(tmpdir(), "harny-pending-"));
+    dirs.push(dir);
+    const file = join(dir, "sessions.db");
+    const real = new DatabaseSync(file);
+    dbs.push(real);
+    let n = 0;
+    // 50 ms of busy_timeout: `busy` must be REPORTED here, not waited out.
+    const store = new SqliteSessionStore({
+      db: dbFor ? dbFor(real) : real,
+      fs: fileFs(),
+      dbPath: file,
+      busyTimeoutMs: 50,
+      idGen: () => `s${++n}`,
+    });
+    return { store, file, db: real };
+  };
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  });
+  /** A big session, then deleted: every page is free, so a VACUUM is worth real megabytes. */
+  const fill = (store: SqliteSessionStore): void => {
+    const id = store.create("big").id;
+    store.saveMessages(
+      id,
+      Array.from({ length: 1200 }, (_, i) => msg("user", "x".repeat(2000) + i)),
+    );
+    store.remove(id);
+  };
+  /** The other VS Code window on the same sessions.db: a live read snapshot. */
+  const readSnapshot = (file: string): DatabaseSync => {
+    const reader = new DatabaseSync(file);
+    dbs.push(reader);
+    reader.exec("BEGIN; SELECT count(*) FROM messages;");
+    return reader;
+  };
+  /**
+   * A fill leaves the WAL full (below the 1000-page auto-checkpoint threshold), and a reader that
+   * starts at the CURRENT end still forbids the RESET: `busy` would then be true at the drain, and
+   * the first-click blind spot (an EMPTY WAL answers `ok 0/0`) would never be reproduced. So the
+   * WAL is emptied with nobody reading, exactly as SQLite's own auto-checkpoint would have.
+   */
+  const emptyWal = (db: DatabaseSync): void => {
+    db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+  };
+
+  it("a REFUSED pass owes `compact`, and settlePending() pays it — no second click", () => {
+    const { store, file } = openFile();
+    fill(store);
+    const reader = readSnapshot(file);
+    // Frames written AFTER the snapshot: this is what makes the drain ITSELF busy (with an empty
+    // WAL there is nothing to drain and nothing to detect — that is the first-click blind spot).
+    const keep = store.create("while-reading").id;
+    store.saveMessages(keep, [msg("user", "hello")]);
+    const before = footprint(file);
+
+    const r = store.maintain({ freeRatioThreshold: 0 });
+    expect(r.vacuumed).toBe(false);
+    expect(r.walCheckpointBusy).toBe(true);
+    expect(r.pendingMaintenance).toBe("compact");
+    expect(store.pendingMaintenance()).toBe("compact");
+    expect(footprint(file)).toBe(before); // refused on purpose: not one byte was written
+
+    reader.exec("COMMIT"); // the reader is done
+    const settled = store.settlePending();
+    expect(settled?.vacuumed).toBe(true);
+    expect(settled?.pendingMaintenance).toBe("none");
+    expect(footprint(file)).toBeLessThan(before);
+    expect(store.pendingMaintenance()).toBe("none");
+  });
+
+  it("a PINNED VACUUM owes a COPY: settling moves bytes and rewrites NO page", () => {
+    const { store, file, db } = openFile();
+    fill(store);
+    emptyWal(db);
+    const before = footprint(file);
+    const reader = readSnapshot(file); // its snapshot predates the VACUUM's frames, so they are pinned
+
+    const r = store.maintain({ freeRatioThreshold: 0 });
+    // This is the FIRST-CLICK case: the drain has nothing to drain (`ok 0/0`), so nothing warns
+    // that the reader is there — the VACUUM runs, and only the trailing checkpoint can tell.
+    expect(r.vacuumed).toBe(true);
+    expect(r.walCheckpointBusy).toBe(true);
+    expect(r.pendingMaintenance).toBe("copy");
+    const pagesPinned = store.dbVacuumStats().pageCount;
+    const pinned = footprint(file);
+
+    reader.exec("COMMIT");
+    const settled = store.settlePending();
+    // NOT a second VACUUM: `vacuumed` stays false and the page count does not move — the pages were
+    // already rebuilt, only their copy into sessions.db was missing.
+    expect(settled).toMatchObject({ vacuumed: false, copied: true, pendingMaintenance: "none" });
+    expect(store.dbVacuumStats().pageCount).toBe(pagesPinned);
+    expect(footprint(file)).toBeLessThan(before);
+    expect(footprint(file)).toBeLessThan(pinned);
+    expect(store.pendingMaintenance()).toBe("none");
+  });
+
+  it("an ordinary SAVE pays the debt — no click at all", () => {
+    const { store, file, db } = openFile();
+    fill(store);
+    emptyWal(db);
+    const reader = readSnapshot(file);
+    store.maintain({ freeRatioThreshold: 0 });
+    expect(store.pendingMaintenance()).toBe("copy");
+    reader.exec("COMMIT");
+    const pinned = footprint(file);
+
+    // A save is one of the moments the database is naturally quiet: the copy rides along.
+    const id = store.create("next").id;
+    store.saveMessages(id, [msg("user", "a later turn")]);
+
+    expect(store.pendingMaintenance()).toBe("none");
+    expect(footprint(file)).toBeLessThan(pinned);
+    expect(store.load(id)?.messages).toHaveLength(1); // and the save was not a casualty
+  });
+
+  it("while the reader stays, settling six times adds NOTHING and loses nothing", () => {
+    const { store, file, db } = openFile();
+    fill(store);
+    const keep = store.create("keep").id;
+    store.saveMessages(
+      keep,
+      Array.from({ length: 5 }, (_, i) => msg("user", `m${i}`)),
+    );
+    emptyWal(db);
+    const reader = readSnapshot(file);
+    store.maintain({ freeRatioThreshold: 0 });
+    expect(store.pendingMaintenance()).toBe("copy");
+    const pinned = footprint(file);
+
+    for (let i = 0; i < 6; i++) {
+      const s = store.settlePending();
+      expect(s?.walCheckpointBusy).toBe(true);
+      expect(s?.pendingMaintenance).toBe("copy");
+      expect(footprint(file)).toBe(pinned); // no pile-up: this is what used to grow 100→120→140 MB
+    }
+    // The debt did not cost any data: the survivor is still all there, exactly once.
+    expect(store.load(keep)?.messages.map((m) => m.content)).toEqual(["m0", "m1", "m2", "m3", "m4"]);
+
+    reader.exec("COMMIT");
+    expect(store.settlePending()?.pendingMaintenance).toBe("none");
+    expect(footprint(file)).toBeLessThan(pinned);
+  });
+
+  it("nothing owed: settlePending() does nothing at all", () => {
+    const { store, file } = openFile();
+    fill(store);
+    const before = footprint(file);
+    expect(store.pendingMaintenance()).toBe("none");
+    expect(store.settlePending()).toBeUndefined();
+    expect(footprint(file)).toBe(before);
+  });
+
+  it("a VACUUM that FAILS for a real reason is not a debt (retrying would fail the same way)", () => {
+    const { store, file, db } = openFile(
+      (real) =>
+        ({
+          exec: (sql: string) => {
+            if (sql.trim().toUpperCase().startsWith("VACUUM")) throw new Error("disk I/O error");
+            return real.exec(sql);
+          },
+          prepare: (sql: string) => real.prepare(sql),
+        }) as unknown as DatabaseSync,
+    );
+    fill(store);
+    emptyWal(db);
+    const reader = readSnapshot(file); // makes the trailing checkpoint busy as well
+
+    const r = store.maintain({ freeRatioThreshold: 0 });
+    expect(r.error).toBe("disk I/O error");
+    expect(r.vacuumed).toBe(false);
+    // busy AND failing: the failure wins — this must not become an automatic retry loop.
+    expect(r.pendingMaintenance).toBe("none");
+    reader.exec("COMMIT");
+    expect(store.settlePending()).toBeUndefined();
   });
 });
 

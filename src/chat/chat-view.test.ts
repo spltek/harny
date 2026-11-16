@@ -7080,6 +7080,52 @@ describe("ChatViewProvider DB vacuum suggestion", () => {
     );
   });
 
+  it("pays a compaction the store still owes at the next quiet moment — nobody clicks twice", async () => {
+    const store = makeStore();
+    // The store refused a pass earlier because another window was reading: the debt is now
+    // OBSERVABLE, and a delete (or the end of a turn) is the quiet moment that pays it.
+    const pendingMaintenance = vi.fn(() => "copy" as const);
+    const settlePending = vi.fn(() => ({
+      vacuumed: false,
+      before: stats(0),
+      after: stats(0),
+      durationMs: 3,
+      copied: true,
+    }));
+    Object.assign(store, { pendingMaintenance, settlePending });
+    const { provider } = buildHarness({ store });
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew();
+    (store.dbVacuumStats as any).mockReturnValue(stats(0)); // nothing to suggest: only the debt moves
+
+    await handler({ type: "deleteSession", id: "s1" });
+
+    expect(settlePending).toHaveBeenCalled();
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "dbVacuumResult", result: expect.objectContaining({ copied: true }) }),
+    );
+  });
+
+  it("does NOT pay it over a live turn: a VACUUM is synchronous and would freeze every session", async () => {
+    const store = makeStore();
+    const pendingMaintenance = vi.fn(() => "compact" as const);
+    const settlePending = vi.fn(() => undefined);
+    Object.assign(store, { pendingMaintenance, settlePending });
+    const { registry, provider } = buildHarness({ store });
+    const { handler } = resolveWith(provider);
+    await provider.createNew(); // s1
+    await provider.createNew(); // s2
+    await handler({ type: "setModel", model: "m", provider: "p" });
+    (registry.get("s2")!.agent as any).streaming = true; // the OTHER session keeps working
+    (store.dbVacuumStats as any).mockReturnValue(stats(0));
+
+    // A quiet moment for s1, but the database is NOT quiet: s2 is mid-turn.
+    await handler({ type: "deleteSession", id: "s1" });
+
+    expect(pendingMaintenance).toHaveBeenCalled(); // the debt was consulted…
+    expect(settlePending).not.toHaveBeenCalled(); // …and left alone until the turn ends
+  });
+
   it("setVacuumThreshold persists the global VS Code setting", async () => {
     const { provider } = buildHarness();
     const { handler } = resolveWith(provider);

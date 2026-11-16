@@ -4281,6 +4281,9 @@ interface VacuumStats {
   bytesFree: number;
   bytesTotal: number;
   ratio: number;
+  /** Real size on disk, when the host knows where the database lives. */
+  bytesOnDisk?: number;
+  walBytes?: number;
 }
 
 /** Human bytes: 1234567 -> "1.2 MB". */
@@ -4291,14 +4294,29 @@ function fmtBytes(n: number): string {
   return n + " B";
 }
 
+/** The file the user sees in Finder: `sessions.db` plus what no checkpoint has copied back yet. */
+function vacuumFootprint(stats: VacuumStats | undefined): string {
+  if (!stats) return "?";
+  return fmtBytes((stats.bytesOnDisk ?? stats.bytesTotal) + (stats.walBytes ?? 0));
+}
+
 /** The free/total numbers shown in BOTH the footer and the modal. */
 function vacuumStatsHtml(stats: VacuumStats | undefined): string {
   if (!stats || !stats.pageCount) return "<div>Database not available.</div>";
   const pct = Math.round(stats.ratio * 100);
   const cls = pct > 0 ? ' class="warn"' : "";
+  // The pages are the LOGICAL size; the file is what the user checks in Finder, and in WAL
+  // mode the two diverge until a checkpoint copies the rebuilt pages back into `sessions.db`.
+  const disk =
+    typeof stats.bytesOnDisk === "number" && stats.bytesOnDisk > 0
+      ? `<div>${fmtBytes(stats.bytesOnDisk + (stats.walBytes ?? 0))} on disk` +
+        (stats.walBytes ? ` (${fmtBytes(stats.walBytes)} in the WAL)` : "") +
+        `</div>`
+      : "";
   return (
     `<div><b${cls}>${fmtBytes(stats.bytesFree)}</b> reclaimable of <b>${fmtBytes(stats.bytesTotal)}</b> (${pct}%)</div>` +
-    `<div>${stats.freePages} free pages of ${stats.pageCount} total</div>`
+    `<div>${stats.freePages} free pages of ${stats.pageCount} total</div>` +
+    disk
   );
 }
 
@@ -7043,13 +7061,47 @@ window.addEventListener("message", (e) => {
       break;
     case "dbVacuumResult": {
       const r = msg.result as
-        { vacuumed: boolean; before: VacuumStats; after: VacuumStats; durationMs: number } | undefined;
+        | {
+            vacuumed: boolean;
+            before: VacuumStats;
+            after: VacuumStats;
+            durationMs: number;
+            error?: string;
+            walCheckpointBusy?: boolean;
+            pendingMaintenance?: "none" | "compact" | "copy";
+            copied?: boolean;
+          }
+        | undefined;
       if (r) {
         dbVacuumStatsEl.innerHTML =
           vacuumStatsHtml(r.before) + "<div>↓ after the VACUUM</div>" + vacuumStatsHtml(r.after);
-        dbVacuumMsg.textContent = r.vacuumed
-          ? `Vacuumed & optimized in ${(r.durationMs / 1000).toFixed(1)}s.`
-          : "Nothing to reclaim: the database was already compact and the indexes optimal.";
+        // Say what HAPPENED, not what we hoped: a failed VACUUM used to be reported as
+        // "nothing to reclaim", which sent the user to click again on a database that had not
+        // been touched — and made the click that finally worked look like the only one that did.
+        dbVacuumMsg.textContent = r.error
+          ? `Compaction FAILED: ${r.error} — the database was left as it was.`
+          : r.walCheckpointBusy && !r.vacuumed
+            ? // Nothing was written on purpose: with another connection reading the file, a VACUUM
+              // only piles rebuilt pages into a `-wal` nobody can truncate (it GROWS the file).
+              // The request is not lost, though: the store keeps it queued and pays it at the next
+              // quiet moment, so there is nothing to click again.
+              "Another connection is reading sessions.db, so nothing was written back to the file." +
+              " The compaction is QUEUED: it runs by itself as soon as that reader is done — no" +
+              " need to click again (and clicking again would only queue it once more)."
+            : r.vacuumed
+              ? `Vacuumed & optimized in ${(r.durationMs / 1000).toFixed(1)}s.` +
+                // A stale webview can outlive the host that sent `pendingMaintenance`: `busy` after a
+                // VACUUM always means the copy is owed, so the field is a refinement, not a need.
+                ((r.pendingMaintenance ?? (r.walCheckpointBusy ? "copy" : "none")) === "copy"
+                  ? " The pages are compacted, but sessions.db keeps its old size until the other" +
+                    " connection stops reading it: the compacted pages are already rebuilt, and they" +
+                    " are COPIED into the file as soon as it is free (no second VACUUM is needed or" +
+                    " wanted — repeating it is what used to grow the file)."
+                  : "")
+              : r.copied
+                ? `Finished: the pages compacted earlier were copied into sessions.db — the file went` +
+                  ` from ${vacuumFootprint(r.before)} to ${vacuumFootprint(r.after)}.`
+                : "Nothing to reclaim: the database was already compact and the indexes optimal.";
         smVacuumStats.innerHTML = vacuumStatsHtml(r.after);
       }
       dbVacuumRun.disabled = false;

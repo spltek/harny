@@ -134,7 +134,34 @@ export interface DbVacuumStats {
   bytesTotal: number;
   /** freePages / pageCount (0..1). */
   ratio: number;
+  /**
+   * The REAL size of `sessions.db` when the store knows where the file is.
+   *
+   * The page counters answer "how much is reclaimable"; only this one answers "did it
+   * empty", which is the number a user reads in Finder. They DIVERGE in WAL mode, where
+   * a VACUUM's rebuilt pages live in the `-wal` file until a checkpoint copies them back.
+   */
+  bytesOnDisk?: number;
+  /** Size of `sessions.db-wal` (0 when there is none). */
+  walBytes?: number;
 }
+
+/**
+ * What is still owed to the file after a compaction attempt.
+ *
+ *  · `none`    — nothing outstanding.
+ *  · `compact` — the request could not even start (another connection was reading, so a VACUUM
+ *                would only have piled rebuilt pages into a `-wal` nobody could truncate).
+ *                The whole pass is still to do.
+ *  · `copy`    — the VACUUM DID run: the compacted image is sitting in the `-wal` waiting for a
+ *                checkpoint. Nothing is left to compact, only to COPY — microseconds, no new
+ *                pages, and repeating the VACUUM instead is what used to grow the file.
+ *
+ * The point of naming the debt is that it is discharged by the first OBSERVATION of a free WAL
+ * (a write, a click, the end of a turn), never by a stopwatch: `busy` is a fact another process
+ * owns, and polling it N times would be guessing at an event we cannot see.
+ */
+export type PendingMaintenance = "none" | "compact" | "copy";
 
 /** Result of a compaction attempt (before/after for the result message). */
 export interface DbVacuumResult {
@@ -142,6 +169,35 @@ export interface DbVacuumResult {
   before: DbVacuumStats;
   after: DbVacuumStats;
   durationMs: number;
+  /**
+   * Why the VACUUM did NOT take effect (another window holding the lock, a full disk…).
+   *
+   * It used to be swallowed, and the UI reported a failed compaction as "nothing to
+   * reclaim" — which sent the user to click again on a database nobody had touched.
+   */
+  error?: string;
+  /**
+   * The WAL checkpoint could not run: another connection is reading this file, so nothing the
+   * call did could reach `sessions.db`. `busy` is REPORTED, never thrown.
+   *
+   * With `vacuumed: false` it means the run REFUSED to compact on purpose — a VACUUM there only
+   * piles rebuilt pages into a `-wal` nobody can truncate, growing the file with every click.
+   * With `vacuumed: true` it means the pages ARE compacted but a reader appeared before the
+   * trailing checkpoint: the file keeps its old size until the next connection stops reading it.
+   */
+  walCheckpointBusy?: boolean;
+  /**
+   * What is still owed to the file: `none`, a whole `compact`, or just the `copy` of pages the
+   * VACUUM already rebuilt into the `-wal`. The store keeps it as its own state and reports it
+   * here, so the panel can say "it will finish by itself" instead of "click again".
+   */
+  pendingMaintenance?: PendingMaintenance;
+  /**
+   * Pages a PREVIOUS VACUUM had rebuilt were copied back into the file by this call. `vacuumed`
+   * stays false — not one page was rewritten — but the file DID shrink, and answering "nothing to
+   * reclaim" would be a lie in the other direction.
+   */
+  copied?: boolean;
 }
 
 /** Empty stats (store without the optional maintenance support). */
@@ -204,7 +260,18 @@ export interface SessionStore {
   dbVacuumStats?(): DbVacuumStats;
   /**
    * OPTIONAL best-effort maintenance: VACUUM when free pages dominate (a
-   * `freeRatioThreshold` of 0 FORCES it), then truncate the WAL. Never throws.
+   * `freeRatioThreshold` of 0 FORCES it), then truncate the WAL. Never throws — a
+   * failure comes back in `error`, and a compact refused because another connection is
+   * reading the file comes back in `walCheckpointBusy` (with `vacuumed: false`).
    */
   maintain?(options?: { freeRatioThreshold?: number }): DbVacuumResult;
+  /**
+   * OPTIONAL: discharge whatever `maintain()` left owed — a refused compaction (`compact`) or the
+   * copy of pages already rebuilt (`copy`). Returns `undefined` when nothing was owed, so a caller
+   * can poll it on every write path for free. A `compact` branch runs a full synchronous VACUUM:
+   * callers that are not idle-gated must use `pendingMaintenance()` first.
+   */
+  settlePending?(): DbVacuumResult | undefined;
+  /** OPTIONAL: the debt alone (`none` when the store does not track one). */
+  pendingMaintenance?(): PendingMaintenance;
 }

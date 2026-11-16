@@ -3,6 +3,7 @@ import type {
   DbVacuumResult,
   DbVacuumStats,
   LoadedSession,
+  PendingMaintenance,
   SaveMessagesOptions,
   SessionSettingsPatch,
   SessionStore,
@@ -77,5 +78,18 @@ export class SessionManager {
   /** Cheap DB-size stats for the vacuum UI (empty when unsupported). */
   dbVacuumStats(): DbVacuumStats {
     return this.store.dbVacuumStats?.() ?? EMPTY_DB_VACUUM_STATS;
+  }
+
+  /**
+   * Discharge a compaction the store left owing — a refused pass (`compact`) or the copy of pages
+   * a VACUUM already rebuilt (`copy`). `undefined` when nothing was owed.
+   */
+  settlePending(): DbVacuumResult | undefined {
+    return this.store.settlePending?.();
+  }
+
+  /** What the file is still owed (`none` when the store does not track it). */
+  pendingMaintenance(): PendingMaintenance {
+    return this.store.pendingMaintenance?.() ?? "none";
   }
 }

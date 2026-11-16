@@ -13,6 +13,7 @@ import type {
   DbVacuumResult,
   DbVacuumStats,
   LoadedSession,
+  PendingMaintenance,
   SaveMessagesOptions,
   SessionSettingsPatch,
   SessionStore,
@@ -39,6 +40,11 @@ function toMaxParallelSubAgents(value: unknown): number | undefined {
 interface SqliteSessionStoreDeps {
   /** An already-open SQLite database (production: `<home>/sessions.db`). */
   db: DatabaseSync;
+  /**
+   * Where that database lives, when known: lets the maintenance report the REAL size on
+   * disk (`sessions.db` + `-wal`) beside the page counters. Absent in the in-memory tests.
+   */
+  dbPath?: string;
   /** Used only to annotate `folderMissing` at list time (a folder that is gone). */
   fs: FileSystem;
   /** The current workspace root: stamped on new sessions (per-folder bucketing). */
@@ -77,6 +83,15 @@ type Row = Record<string, unknown>;
  */
 export class SqliteSessionStore implements SessionStore {
   private readonly idGen: () => string;
+  /**
+   * What the file is still owed after a compaction attempt — see `PendingMaintenance`.
+   *
+   * Kept as STATE, not as a retry: a `busy` checkpoint means another connection owns a read
+   * snapshot, and no amount of polling can know when it lets go. The debt is discharged by the
+   * first observation of a free WAL (any write here, a click, the end of a turn), which costs a
+   * PRAGMA and — for `copy` — moves bytes without rewriting one page.
+   */
+  private pending: PendingMaintenance = "none";
 
   constructor(private deps: SqliteSessionStoreDeps) {
     this.idGen = deps.idGen ?? (() => randomUUID());
@@ -168,6 +183,9 @@ export class SqliteSessionStore implements SessionStore {
       return this.saveMessagesNow(id, messages, options);
     } finally {
       noteDbOp("saveMessages", performance.now() - startedAt);
+      // A pending COPY (pages a VACUUM rebuilt that the `-wal` could not hand back) is discharged
+      // by the first write that finds the file free: the user does not have to click again for it.
+      this.drainCopiedIfPending();
     }
   }
 
@@ -267,6 +285,8 @@ export class SqliteSessionStore implements SessionStore {
       this.deps.db.exec("ROLLBACK");
       throw e;
     }
+    // A delete frees pages: if a compaction was left owing its copy, this is as good a moment as any.
+    this.drainCopiedIfPending();
     return existed;
   }
 
@@ -281,6 +301,7 @@ export class SqliteSessionStore implements SessionStore {
       return this.saveSettingsNow(id, patch);
     } finally {
       noteDbOp("saveSettings", performance.now() - startedAt);
+      this.drainCopiedIfPending();
     }
   }
 
@@ -388,47 +409,224 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   /**
-   * Best-effort maintenance: VACUUM when the free-page ratio reaches the
-   * threshold (0 = force), then OPTIMIZE the indexes and truncate the WAL.
+   * Best-effort maintenance: drain the WAL, VACUUM when the free-page ratio reaches the
+   * threshold (0 = force), then OPTIMIZE the indexes and checkpoint again.
    * Index work is kept here because VACUUM does NOT merge FTS5 segments:
    *  · `PRAGMA optimize` refreshes the query-planner statistics when useful;
    *  · the FTS5 `optimize` command merges the full-text segments accumulated
    *    by many inserts/deletes (smaller + faster full-text search).
-   * Returns before/after stats for the UI. NEVER throws.
+   * Returns before/after stats for the UI. NEVER throws — but nothing is silent either.
+   *
+   * THE ONE THING IT REFUSES: compacting a database another connection is READING. The page
+   * counters would drop to zero anyway (the VACUUM really does rebuild the file), and until a
+   * checkpoint can copy it back those rebuilt pages just sit in `sessions.db-wal`:
+   * measured on a 78 MB database with a reader holding a snapshot, logical size 78 → 19 MB
+   * while the file stayed at 156 MB, and every further VACUUM appended ANOTHER full copy of
+   * the database to the WAL it could not truncate — 100 → 120 → 140 MB. So "click again" did
+   * not just fail to help, it made the file bigger. Writing nothing is the honest move: the
+   * next call, reader gone, takes the same file from 140 MB to 19 MB in a single pass.
+   *
+   * The reader is only VISIBLE from the second click, though: the drain below can only report
+   * `busy` when there is something to drain, and on the first click the WAL is empty — the
+   * checkpoint answers `ok 0/0` and nothing distinguishes it from a free file. That first
+   * VACUUM is unavoidable; it is the repetition that gets refused, and the repetition is what
+   * used to pile up copies.
+   *
+   * WHAT IS OWED IS REMEMBERED (see `PendingMaintenance`). A refusal is not a dead end and a
+   * pinned VACUUM is not a failed one: the request stays queued as `compact`, or the rebuilt
+   * pages wait in the `-wal` as `copy` until any write finds the file free. Measured: after a
+   * pinned VACUUM, one bare `wal_checkpoint(TRUNCATE)` took the file from 32 MB to 5 MB where a
+   * second VACUUM (16 ms, same pages) only re-appended 5 MB to the WAL and changed nothing.
+   * The debt is settled by an OBSERVATION, never by a stopwatch: `busy` belongs to another
+   * process, and retrying N times would be guessing at an event nobody here can see.
    */
   maintain(options: { freeRatioThreshold?: number } = {}): DbVacuumResult {
     const threshold = options.freeRatioThreshold ?? 0.2;
-    const before = this.dbVacuumStats();
     const startedAt = Date.now();
-    // 1) Optimize the INDEXES FIRST: merging FTS5 segments and refreshing the
+    // 0) The REAL state at the moment of the click: the size the user sees in Finder, before
+    //    anything moves. Measured first, or the drain below would hide what was reclaimed.
+    const before = this.statsWithFootprint();
+    // 1) Drain and truncate the WAL, and BELIEVE the answer: `busy` means another connection
+    //    holds a read snapshot, so no rebuilt page can reach `sessions.db` — and a VACUUM now
+    //    would only append another copy of the database to a `-wal` nobody can truncate.
+    //    (`busy` with an EMPTY WAL is impossible: the first click cannot know, the next one can.)
+    const drained = this.checkpoint();
+    if (drained.busy) {
+      // The whole pass is still owed to the file: remember it, so nobody has to remember to click
+      // again (see `settlePending`).
+      this.pending = "compact";
+      const stats = { vacuumed: false, before, after: before, durationMs: Date.now() - startedAt };
+      this.deps.log?.(
+        `maintain: skipped, the WAL checkpoint is BUSY (another connection is reading ${this.deps.dbPath ?? "the database"}) — nothing was written, compaction left PENDING`,
+      );
+      return { ...stats, walCheckpointBusy: true, pendingMaintenance: "compact" };
+    }
+    // 2) Optimize the INDEXES FIRST: merging FTS5 segments and refreshing the
     //    planner stats FREES/REWRITES pages, so the VACUUM below reclaims them
     //    too (doing it after the VACUUM would leave new holes behind).
     try {
       this.deps.db.exec("PRAGMA optimize");
-    } catch {
-      /* best effort */
+    } catch (e) {
+      this.deps.log?.(`maintain: PRAGMA optimize failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     try {
       this.deps.db.exec("INSERT INTO messages_fts(messages_fts) VALUES('optimize')");
-    } catch {
-      /* best effort (no FTS table / already optimal) */
+    } catch (e) {
+      this.deps.log?.(`maintain: FTS5 optimize failed: ${e instanceof Error ? e.message : String(e)}`);
     }
-    // 2) Page compaction, when the free-page ratio reaches the threshold.
+    // 3) Page compaction, when the free-page ratio reaches the threshold. One pass is all it
+    //    takes: a VACUUM that commits rebuilds the file from scratch, so the free list is 0
+    //    afterwards — verified, not assumed (a second pass changes no page counter at all).
     let vacuumed = false;
-    try {
-      if (before.pageCount > 0 && before.ratio >= threshold) {
+    let error: string | undefined;
+    if (before.pageCount > 0 && before.ratio >= threshold) {
+      try {
         this.deps.db.exec("VACUUM");
         vacuumed = true;
+      } catch (e) {
+        error = e instanceof Error ? e.message : String(e);
       }
-    } catch {
-      /* best effort: leave the DB as is */
     }
+    // 4) Copy the rebuilt pages back into `sessions.db` and truncate the `-wal`. A reader that
+    //    appeared meanwhile reports `busy` WITHOUT throwing: say it, so "the pages are compact
+    //    but the file is not" stops being a mystery.
+    const checkpoint = this.checkpoint();
+    const after = this.statsWithFootprint();
+    // A VACUUM that ran but could not be copied back leaves a debt that is a COPY, not another
+    // VACUUM: the rebuilt pages are already in the `-wal`, and repeating the compaction is exactly
+    // what used to append one more full copy per click. A real failure (full disk…) is not a debt
+    // — retrying it automatically would only fail again.
+    this.pending = checkpoint.busy && !error ? "copy" : "none";
+    this.deps.log?.(
+      `maintain: vacuumed=${vacuumed}, free pages ${before.freePages}->${after.freePages}, ` +
+        `file ${before.bytesOnDisk ?? "?"}->${after.bytesOnDisk ?? "?"} bytes on disk, ` +
+        `checkpoint ${checkpoint.busy ? "BUSY" : `ok (${checkpoint.checkpointed}/${checkpoint.log})`}` +
+        `, pending=${this.pending}` +
+        (error ? `, error: ${error}` : ""),
+    );
+    return {
+      vacuumed,
+      before,
+      after,
+      durationMs: Date.now() - startedAt,
+      ...(error ? { error } : {}),
+      ...(checkpoint.busy ? { walCheckpointBusy: true } : {}),
+      pendingMaintenance: this.pending,
+    };
+  }
+
+  /** What the file is still owed after a compaction attempt (`none` when nothing is). */
+  pendingMaintenance(): PendingMaintenance {
+    return this.pending;
+  }
+
+  /**
+   * Discharge what `maintain()` left owed, if the file allows it now.
+   *
+   * `undefined` when nothing was owed — so any write path can call it on every save for free.
+   * The `compact` branch runs a full synchronous VACUUM: only an idle-gated caller may reach it
+   * (`chat-view` checks `dbBusy()` first); the write paths below go through `drainCopiedPages`,
+   * which can only move bytes.
+   */
+  settlePending(): DbVacuumResult | undefined {
+    if (this.pending === "none") return undefined;
+    if (this.pending === "copy") return this.drainCopiedPages();
+    // An explicit request outranks the free-page threshold: the user already decided.
+    return this.maintain({ freeRatioThreshold: 0 });
+  }
+
+  /**
+   * The cheap half of `settlePending`: copy the pages a previous VACUUM already rebuilt into the
+   * `-wal` back into `sessions.db` and truncate it. No VACUUM, so no page is rewritten and the file
+   * cannot grow — which is why every write path can afford to try it.
+   *
+   * Still pinned: nothing changes and the debt stays.
+   */
+  private drainCopiedPages(): DbVacuumResult {
+    const startedAt = Date.now();
+    const before = this.statsWithFootprint();
+    const checkpoint = this.checkpoint();
+    const after = this.statsWithFootprint();
+    if (checkpoint.busy) {
+      this.deps.log?.(
+        `settle: the copy is still BUSY (another connection is reading ${this.deps.dbPath ?? "the database"}) — the debt stays`,
+      );
+      return {
+        vacuumed: false,
+        before,
+        after,
+        durationMs: Date.now() - startedAt,
+        walCheckpointBusy: true,
+        pendingMaintenance: "copy",
+      };
+    }
+    this.pending = "none";
+    this.deps.log?.(
+      `settle: copied the compacted pages into ${this.deps.dbPath ?? "the database"} — ` +
+        `${before.bytesOnDisk ?? "?"}->${after.bytesOnDisk ?? "?"} bytes on disk`,
+    );
+    return {
+      vacuumed: false,
+      before,
+      after,
+      durationMs: Date.now() - startedAt,
+      pendingMaintenance: "none",
+      copied: true,
+    };
+  }
+
+  /**
+   * Called from the write paths. Only the `copy` debt is discharged here: it touches bytes, not
+   * pages, and must never run a VACUUM inside a save (it would freeze the host mid-turn).
+   */
+  private drainCopiedIfPending(): void {
+    if (this.pending !== "copy") return;
     try {
-      this.deps.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      this.drainCopiedPages();
     } catch {
-      /* best effort (no WAL for :memory:) */
+      /* best effort: a failed copy is not a failed save, and the debt stays for the next one */
     }
-    return { vacuumed, before, after: this.dbVacuumStats(), durationMs: Date.now() - startedAt };
+  }
+
+  /**
+   * `PRAGMA wal_checkpoint(TRUNCATE)`, reporting what actually happened.
+   *
+   * It answers `busy` instead of throwing when it cannot copy the WAL back, and `exec()`
+   * throws the row away — which is exactly how "the pages are compacted but the file is
+   * still huge" stayed invisible. `:memory:` has no WAL: there is nothing to report.
+   */
+  private checkpoint(): { busy: boolean; log: number; checkpointed: number } {
+    try {
+      const row = this.deps.db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as Row | undefined;
+      return {
+        busy: Number(row?.busy ?? 0) !== 0,
+        log: Number(row?.log ?? 0),
+        checkpointed: Number(row?.checkpointed ?? 0),
+      };
+    } catch {
+      return { busy: false, log: 0, checkpointed: 0 };
+    }
+  }
+
+  /**
+   * The header stats plus the REAL footprint on disk (`sessions.db` + its `-wal`), when the
+   * store knows the path. The page counters say "how much is reclaimable", these say "did it
+   * empty" — and only the second one is what the user sees in Finder.
+   */
+  private statsWithFootprint(): DbVacuumStats {
+    const stats = this.dbVacuumStats();
+    const path = this.deps.dbPath;
+    if (!path) return stats;
+    try {
+      const wal = `${path}-wal`;
+      return {
+        ...stats,
+        bytesOnDisk: this.deps.fs.size(path),
+        walBytes: this.deps.fs.exists(wal) ? this.deps.fs.size(wal) : 0,
+      };
+    } catch {
+      return stats; // best effort: a vanished file is not a failed compaction
+    }
   }
 
   // ── internals ──────────────────────────────────────────────────────────

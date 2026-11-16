@@ -106,4 +106,19 @@ describe("SessionManager — optional DB maintenance", () => {
     expect(r.after).toEqual(EMPTY_DB_VACUUM_STATS);
     expect(r.durationMs).toBe(0);
   });
+
+  it("reports no debt and settles nothing when the store does not track one", () => {
+    const manager = new SessionManager(makeStore());
+    expect(manager.pendingMaintenance()).toBe("none");
+    expect(manager.settlePending()).toBeUndefined();
+  });
+
+  it("passes the debt through, so the panel can tell 'queued' from 'done'", () => {
+    const result = { vacuumed: false, before: EMPTY_DB_VACUUM_STATS, after: EMPTY_DB_VACUUM_STATS, durationMs: 1 };
+    const settlePending = vi.fn(() => result);
+    const manager = new SessionManager({ ...makeStore(), pendingMaintenance: () => "copy", settlePending });
+    expect(manager.pendingMaintenance()).toBe("copy");
+    expect(manager.settlePending()).toBe(result);
+    expect(settlePending).toHaveBeenCalledTimes(1);
+  });
 });

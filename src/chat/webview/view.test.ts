@@ -11402,6 +11402,114 @@ describe("DB vacuum modal (webview)", () => {
     expect((document.getElementById("db-vacuum-run") as HTMLButtonElement).textContent).toBe("VACUUM & optimize again");
   });
 
+  it("a compaction that FAILED says so — it never claims there was nothing to reclaim", async () => {
+    await loadView();
+    hostMessage({ type: "modal", modalId: 7, kind: "dbVacuum", stats });
+    hostMessage({
+      type: "dbVacuumResult",
+      result: { vacuumed: false, before: stats, after: stats, durationMs: 5, error: "database is locked" },
+    });
+    const msg = (document.getElementById("db-vacuum-msg") as HTMLElement).textContent ?? "";
+    expect(msg).toContain("database is locked");
+    // The old wording ("nothing to reclaim") sent the user to click again on a database that
+    // nobody had touched — and made the click that finally worked look like the only one that did.
+    expect(msg).not.toContain("Nothing to reclaim");
+    expect((document.getElementById("db-vacuum-run") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("a VACUUM whose checkpoint could not run says the FILE has not moved yet (and shows both sizes)", async () => {
+    await loadView();
+    hostMessage({ type: "modal", modalId: 7, kind: "dbVacuum", stats });
+    hostMessage({
+      type: "dbVacuumResult",
+      result: {
+        vacuumed: true,
+        before: { ...stats, bytesOnDisk: 5_000_000, walBytes: 3_000_000 },
+        after: { ...stats, freePages: 0, bytesFree: 0, ratio: 0, bytesOnDisk: 2_000_000, walBytes: 1_000_000 },
+        durationMs: 2000,
+        walCheckpointBusy: true,
+      },
+    });
+    const msg = (document.getElementById("db-vacuum-msg") as HTMLElement).textContent ?? "";
+    expect(msg).toContain("2.0s");
+    expect(msg).toContain("keeps its old size");
+    // The logical pages and the real file are two different numbers: both are on screen, so
+    // "compacted but the file is still huge" stops being a mystery.
+    const shown = (document.getElementById("db-vacuum-stats") as HTMLElement).textContent ?? "";
+    expect(shown).toContain("on disk");
+    expect(shown).toContain("in the WAL");
+  });
+
+  it("a compaction with another connection READING the file writes nothing, and says it is QUEUED", async () => {
+    await loadView();
+    hostMessage({ type: "modal", modalId: 7, kind: "dbVacuum", stats });
+    hostMessage({
+      type: "dbVacuumResult",
+      result: {
+        vacuumed: false,
+        before: stats,
+        after: stats,
+        durationMs: 3,
+        walCheckpointBusy: true,
+        pendingMaintenance: "compact",
+      },
+    });
+    const msg = (document.getElementById("db-vacuum-msg") as HTMLElement).textContent ?? "";
+    expect(msg).toContain("Another connection is reading");
+    // The request is not lost, so telling the user to click again would be the bug itself: the
+    // store keeps it owed and pays it at the first quiet moment.
+    expect(msg).toContain("QUEUED");
+    expect(msg).toContain("by itself");
+    expect(msg).not.toContain("Close the other");
+    // Not a failure (nothing threw) and not "nothing to reclaim" (there WAS space to reclaim).
+    expect(msg).not.toContain("FAILED");
+    expect(msg).not.toContain("Nothing to reclaim");
+  });
+
+  it("compacted but pinned: says the pages are done and only the COPY is missing", async () => {
+    await loadView();
+    hostMessage({ type: "modal", modalId: 7, kind: "dbVacuum", stats });
+    hostMessage({
+      type: "dbVacuumResult",
+      result: {
+        vacuumed: true,
+        before: stats,
+        after: { ...stats, freePages: 0, bytesFree: 0, ratio: 0 },
+        durationMs: 900,
+        walCheckpointBusy: true,
+        pendingMaintenance: "copy",
+      },
+    });
+    const msg = (document.getElementById("db-vacuum-msg") as HTMLElement).textContent ?? "";
+    expect(msg).toContain("0.9s");
+    expect(msg).toContain("COPIED");
+    // A second VACUUM is the one thing that must NOT be suggested: it rewrites every page for
+    // nothing and re-appends a copy to a WAL nobody can truncate.
+    expect(msg).toContain("no second VACUUM");
+    expect(msg).not.toContain("Nothing to reclaim");
+  });
+
+  it("the settled copy reports what it moved, instead of 'nothing to reclaim'", async () => {
+    await loadView();
+    hostMessage({ type: "modal", modalId: 7, kind: "dbVacuum", stats });
+    hostMessage({
+      type: "dbVacuumResult",
+      result: {
+        vacuumed: false,
+        copied: true,
+        before: { ...stats, bytesOnDisk: 7_340_032, walBytes: 1_048_576 },
+        after: { ...stats, freePages: 0, bytesFree: 0, ratio: 0, bytesOnDisk: 2_097_152, walBytes: 0 },
+        durationMs: 4,
+        pendingMaintenance: "none",
+      },
+    });
+    const msg = (document.getElementById("db-vacuum-msg") as HTMLElement).textContent ?? "";
+    expect(msg).toContain("Finished");
+    expect(msg).toContain("8.0 MB"); // 5 + 3: what the user saw in Finder before
+    expect(msg).toContain("2.0 MB"); // and after
+    expect(msg).not.toContain("Nothing to reclaim");
+  });
+
   it("the All-Sessions footer renders the stats + both settings and posts the manual open", async () => {
     await loadView();
     hostMessage({

@@ -1272,6 +1272,23 @@ export class ChatViewProvider implements WebviewViewProvider {
     return this.workingIds().length > 0 || this.registry.listOpenIds().some((id) => this.pendingQueue.isDraining(id));
   }
 
+  /**
+   * Discharge a compaction the store left owing: a pass refused because another connection was
+   * reading, or the copy of pages a VACUUM already rebuilt into the `-wal`.
+   *
+   * Called at the moments the database naturally goes quiet (end of a turn, a delete, the panel
+   * coming up), never by a timer: `busy` belongs to another window's read snapshot and no amount
+   * of polling can know when it lets go. Still busy? Nothing happens and the debt stays.
+   */
+  private settleDbPending(): void {
+    if (this.sessions.pendingMaintenance() === "none") return;
+    // A VACUUM is SYNCHRONOUS on this thread: over a live turn it would freeze every session.
+    if (this.dbBusy()) return;
+    const result = this.sessions.settlePending();
+    if (!result) return;
+    this.view?.webview.postMessage({ type: "dbVacuumResult", result });
+  }
+
   /** Suggested-compaction threshold (free-page %), from the VS Code setting. */
   private vacuumThresholdPercent(): number {
     const v = workspace.getConfiguration("harny").get<number>("dbVacuumThresholdPercent");
@@ -1290,6 +1307,10 @@ export class ChatViewProvider implements WebviewViewProvider {
    * nothing is shown below the threshold. Skipped while a prompt is already up.
    */
   private async maybeSuggestVacuum(): Promise<void> {
+    // Before deciding anything: pay what a previous compaction left owing. The request is the
+    // user's, only the moment was ours to choose, so it is honoured here instead of asking for a
+    // second click.
+    this.settleDbPending();
     if (this.vacuumPromptOpen || !this.view) return;
     const stats = this.sessions.dbVacuumStats();
     if (stats.pageCount === 0) return;
