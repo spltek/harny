@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **"Focus" now reads as LIT instead of as hovered: the armed pill wears the panel's ON light — the accent gradient and the soft halo that "Build" and "Parallel" already wear — where both states used to be the same pixels.** It carried its state with the very recipe the hover paints (accent text, accent edge, accent wash), so a Focus you had just switched on and a Focus the pointer happened to rest on were indistinguishable, and the state that matters — a mode that is armed — was the quieter of the two readings. ON now takes the light the two other modes in the panel already take: `linear-gradient(135deg, var(--accent), var(--accent-strong))`, white on top, and `0 0 12px var(--accent-glow)` around the pill, matching `#mode-btn.is-agent` (Build) and the shape `#parallel-btn.is-on` (Parallel) uses in its own hue. Hover is untouched and stays a flat wash, so "on" is a light and "hover" is a tint; when the two meet, the halo **deepens** (`0 0 16px var(--accent-glow-strong)`, the same move Parallel makes on hover) instead of washing the state away under the pointer. No transition and no pulse: a pill that breathes while you read is a distraction. Measured in a headless render, not assumed — rest, hover, on and on+hover resolve to four different computed looks in both palettes — and the markup suite pins the two halves, including that the hover rule cannot repaint an armed pill.
+
 ## [1.2.0] - 2026-11-16
 
 ### Added

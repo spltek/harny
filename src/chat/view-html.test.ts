@@ -609,7 +609,23 @@ describe("renderViewHtml", () => {
     );
     expect(html).toMatch(/id="focus-mode"[\s\S]*?id="collapse-all"[\s\S]*?id="autoscroll"/);
     expect(html).not.toMatch(/<button id="focus-mode"[^>]*disabled/);
-    expect(html).toMatch(/#transcript-actions > button\[aria-pressed="true"\] \{[^}]*color: var\(--accent\)/);
+    // ARMED must not look HOVERED: the two used to be the same pixels (armed was painted with the
+    // hover recipe held steady — accent text, accent edge, accent wash), so a pill you had just
+    // switched on was indistinguishable from one the pointer rested on. ON wears the panel's LIT
+    // recipe instead, the one "Build" and "Parallel" wear: accent gradient, white, halo.
+    const armed = cssRule(html, '#transcript-actions > button[aria-pressed="true"]');
+    expect(armed).toContain("background: linear-gradient(135deg, var(--accent), var(--accent-strong))");
+    expect(armed).toContain("color: #ffffff");
+    expect(armed).toContain("0 0 12px var(--accent-glow)");
+    const hovered = cssRule(html, "#transcript-actions > button:not(:disabled):hover");
+    expect(hovered).toContain("background: var(--accent-surface)");
+    expect(armed).not.toBe(hovered);
+    // …and the hover half may not take the light away under the pointer: it DEEPENS it (the same
+    // move `Parallel` makes) instead of washing back to the unarmed look.
+    const armedHover = cssRule(html, '#transcript-actions > button[aria-pressed="true"]:not(:disabled):hover');
+    expect(armedHover).toContain("linear-gradient(135deg, var(--accent), var(--accent-strong))");
+    expect(armedHover).toContain("0 0 16px var(--accent-glow-strong)");
+    expect(armedHover).not.toContain("accent-surface");
     expect(html).toMatch(/<button id="attach-btn"[\s\S]*?id="user-input"/);
     // It shows a PAPERCLIP glyph (attachment), not a bare "+".
     expect(html).toMatch(/<button id="attach-btn"[^>]*>\s*<svg[\s\S]*?<\/svg>\s*<\/button>/);

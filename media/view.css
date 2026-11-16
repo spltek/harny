@@ -2816,14 +2816,33 @@ body.drag-over {
   box-shadow: none;
 }
 /* "Focus" is the only MODE among these pills — the other two fire once and disable themselves,
-   so this one carries its state instead, in the accent rather than in a `disabled` look. It is
-   painted with the hover recipe held steady on purpose (same accent text, edge and wash): armed
-   reads as armed from the corner of the eye, and hovering it cannot change what it says. No
-   transition and no pulse here — a pill that breathes while you read is a distraction. */
+   so this one carries its state in `aria-pressed`. That state may NOT be confused with hover: the
+   armed pill used to be painted with the hover recipe held steady (same accent text, same edge,
+   same wash), so a lit Focus and a pointed-at one were the same pixels and the pill you had just
+   switched on looked like the pill the pointer happened to rest on. ON now wears the panel's
+   LIT recipe — the one "Build" (`#mode-btn.is-agent`) and `Parallel` (`#parallel-btn.is-on`)
+   already wear: the saturated accent gradient, white on top, and a soft halo around the pill.
+   Hover stays a flat wash, so "on" is a light and "hover" is a tint: two different things at a
+   glance, and the halo is what carries the state when the two do meet. No transition and no
+   pulse here — a pill that breathes while you read is a distraction. */
 #transcript-actions > button[aria-pressed="true"] {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: var(--accent-surface);
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  border-color: transparent;
+  color: #ffffff;
+  box-shadow:
+    0 1px 2px var(--key-shadow),
+    0 0 12px var(--accent-glow);
+}
+/* …and hovering an armed pill may not wash it back to the unarmed hover look, or the state would
+   vanish under the pointer: the light DEEPENS instead (same move `Parallel` makes on hover), so a
+   lit switch keeps saying what it says and says it louder. */
+#transcript-actions > button[aria-pressed="true"]:not(:disabled):hover {
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  border-color: transparent;
+  color: #ffffff;
+  box-shadow:
+    0 1px 3px var(--key-shadow),
+    0 0 16px var(--accent-glow-strong);
 }
 /* Insert-in hint: the LEFT slot of this same strip, mirroring #transcript-actions on
    the right. It replaces the old Queue/Steer pill that lived in the model row:
