@@ -330,10 +330,17 @@ pre code {
   box-shadow: 0 0 10px rgba(95, 230, 245, 0.7);
 }
 /* The repo sits next to the one button that leaves the page: icon-only and SQUARE, so the two
-   buttons in that corner do not read as a menu. Hidden below 1010px by `.nav .btn--sm` with the
+   buttons in that corner do not read as a menu. Hidden below 1300px by `.nav .btn--sm` with the
    rest of the bar — the hero CTA carries the same link there. */
 .nav__gh {
   padding: 0.55rem 0.6rem;
+  /* Neither trailing button may absorb a shortfall by clipping its own label: a misfit has to be
+     an overflow somebody can see, not a "GET H…" nobody notices until the screenshot. */
+  flex: none;
+}
+/* …and the same for the CTA beside it, which is the one that used to give way. */
+.nav .btn--sm {
+  flex: none;
 }
 
 .brand {
@@ -380,11 +387,13 @@ pre code {
 .nav__links a {
   position: relative;
   font-family: var(--f-mono);
-  font-size: 0.72rem;
-  letter-spacing: 0.13em;
+  /* Compact on purpose: eleven uppercase links plus two buttons have to share ONE row, and the
+     row used to lose the argument by ~40px at 1440 — the CTA shrank and clipped its own label. */
+  font-size: 0.7rem;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--dim);
-  padding: 0.45rem 0.7rem;
+  padding: 0.45rem 0.5rem;
   border-radius: 5px;
   transition: color 0.25s, background 0.25s;
 }
@@ -2173,6 +2182,215 @@ main {
   font-weight: 600;
 }
 
+/* ---------- 12d. GUARD · MCP · SKILLS ---------- */
+/* Three sections that each need one thing the shared components do not have: the guard needs a
+   TRANSCRIPT (a nudge only reads as a nudge next to the thinking it cut), MCP needs its config
+   block, and skills need the `/` menu. Everything else on this page — chips, cards, presets — is
+   reused as-is: a new section should cost new MARKUP, not a new look. */
+.keys__link {
+  margin: 0.9rem 0 0;
+  font-family: var(--f-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+}
+.keys__link a {
+  color: var(--cyan);
+  text-decoration: none;
+  border-bottom: 1px solid var(--cyan-3);
+  transition: color 0.3s, border-color 0.3s;
+}
+.keys__link a:hover {
+  color: var(--text-hi);
+  border-bottom-color: var(--cyan);
+}
+.guard__demo {
+  margin-top: clamp(1.4rem, 3vw, 2.2rem);
+  max-width: 78ch;
+}
+/* the thinking that got cut: dashed, mono, deliberately *not* pretty */
+.bubble--thinking {
+  background: rgba(169, 139, 240, 0.05);
+  border: 1px dashed rgba(169, 139, 240, 0.32);
+  color: var(--dim);
+  font-family: var(--f-mono);
+  font-size: 0.74rem;
+}
+.bubble--thinking .bubble__tag {
+  color: var(--violet);
+}
+/* the nudge carries the accent of the panel's own Nudge bubble, so the two read as one thing */
+.bubble--nudge {
+  background: rgba(143, 208, 255, 0.09);
+  border: 1px solid rgba(143, 208, 255, 0.42);
+  color: var(--text-hi);
+  margin-left: 1.4rem;
+  box-shadow: 0 0 30px -14px rgba(143, 208, 255, 0.7);
+}
+.bubble--nudge .bubble__tag,
+.bubble--nudge b {
+  color: var(--nudge);
+}
+.bubble--act {
+  background: rgba(95, 230, 245, 0.06);
+  border: 1px solid rgba(95, 230, 245, 0.26);
+  color: var(--dim);
+  margin-left: 2.8rem;
+  font-family: var(--f-mono);
+  font-size: 0.74rem;
+}
+.bubble--act .bubble__tag {
+  color: var(--cyan);
+}
+.guard__grid {
+  display: grid;
+  gap: clamp(1.4rem, 3vw, 2rem);
+  margin-top: clamp(1.6rem, 3.4vw, 2.6rem);
+}
+.guard__cap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 0 0.7rem;
+  font-family: var(--f-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.guard__cap span {
+  color: var(--cyan);
+}
+/* Knob chips: these names are long (`toolRepeatWindowThreshold` is 24 monospace characters), so the
+   range sits UNDER the name instead of beside it, and a name may break rather than push the whole
+   page sideways on a phone — which is exactly what happened at 390px: four chips poked out by up to
+   47px and the document gained a horizontal scrollbar. */
+.guard__grid .tools {
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+}
+.guard__grid .tool {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+}
+.guard__grid .tool b {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+/* one ▸ list for the three new sections (the alternatives are `.orch__notes` and `.savings__facts`,
+   both named after their section — a shared shape should not borrow another section's name) */
+.notes {
+  display: grid;
+  gap: 0.55rem;
+  max-width: 78ch;
+  margin: clamp(1.4rem, 3vw, 2rem) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.notes li {
+  position: relative;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+  line-height: 1.65;
+  color: var(--dim);
+}
+.notes li::before {
+  content: "▸";
+  position: absolute;
+  left: 0;
+  color: var(--cyan-3);
+}
+.notes b {
+  color: var(--text);
+  font-weight: 600;
+}
+/* the MCP config block: `pre.tree` already owns the dark plate and the mono face */
+.mcp-json {
+  margin-top: clamp(1.4rem, 3vw, 2rem);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+.skills-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  gap: clamp(1.4rem, 3vw, 2.4rem);
+  align-items: start;
+  margin-top: clamp(1.4rem, 3vw, 2.2rem);
+}
+/* the `/` menu, as the panel draws it: first token only, keyboard driven */
+.slash {
+  margin: 0;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  background: linear-gradient(170deg, rgba(6, 26, 38, 0.8), rgba(1, 8, 15, 0.94));
+  overflow: hidden;
+  box-shadow: 0 30px 80px -60px rgba(95, 230, 245, 0.5);
+}
+.slash__head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 0.95rem;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--f-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+}
+.slash__prompt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border: 1px solid var(--cyan-3);
+  border-radius: 5px;
+  color: var(--cyan);
+  font-size: 0.9rem;
+  line-height: 1;
+  box-shadow: inset 0 0 12px rgba(95, 230, 245, 0.18);
+}
+.slash__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 0.95rem;
+  border-top: 1px solid rgba(120, 210, 235, 0.07);
+  font-family: var(--f-mono);
+  font-size: 0.74rem;
+  color: var(--dim);
+}
+.slash__row b {
+  font-weight: 500;
+  color: var(--text);
+}
+.slash__row i {
+  font-style: normal;
+  font-size: 0.66rem;
+  color: var(--faint);
+  text-align: right;
+}
+.slash__row.is-on {
+  background: rgba(95, 230, 245, 0.07);
+  box-shadow: inset 2px 0 0 var(--cyan);
+}
+.slash__row.is-on b,
+.slash__row.is-on i {
+  color: var(--cyan);
+}
+.slash__cap {
+  padding: 0.6rem 0.95rem;
+  border-top: 1px solid var(--line);
+  font-family: var(--f-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+}
+.slash__cap kbd {
+  font-size: 0.6rem;
+}
+
 /* ---------- 13. CONTEXT ---------- */
 .ctx {
   display: grid;
@@ -3048,8 +3266,11 @@ main {
   }
 }
 
-@media (max-width: 1010px) {
-  /* the link bar becomes a drawer before it gets a chance to crowd the brand */
+@media (max-width: 1300px) {
+  /* the link bar becomes a drawer before it gets a chance to crowd the brand — raised from 1010
+     when Guard / MCP / Skills joined the bar. Measured: eleven links + the repo key + "Get Harny"
+     need ~1280px of viewport (the row is brand + links + 2 buttons + 2×pad) — at 1440 it fitted
+     with 76px to spare, at 1280 with 2px, and below that the CTA was being squeezed to "GE…". */
   .nav__burger {
     display: flex;
   }
@@ -3072,6 +3293,13 @@ main {
     transform: translateY(-115%);
     transition: transform 0.45s var(--ease);
     z-index: -1;
+    /* Eleven sections do not fit a landscape phone: 11 rows are 569px against a 375px-tall
+       viewport, and the last links were simply unreachable — the drawer scrolls instead, and never
+       grows past the screen it is drawn in (dv h, with vh as the fallback older engines get). */
+    max-height: calc(100vh - var(--nav-h));
+    max-height: calc(100dvh - var(--nav-h));
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
   .nav__links.is-open {
     transform: none;
@@ -3109,6 +3337,7 @@ main {
   .keys,
   .install,
   .savings__grid,
+  .skills-split,
   .steps {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -3150,6 +3379,10 @@ main {
     font-size: 0.54rem;
   }
   .bubble--checkpoint {
+    margin-left: 0;
+  }
+  .bubble--nudge,
+  .bubble--act {
     margin-left: 0;
   }
   .panel__file {

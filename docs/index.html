@@ -91,6 +91,9 @@
           <a href="#parallel">Parallel</a>
           <a href="#context">Context</a>
           <a href="#tools">Tools</a>
+          <a href="#guard">Guard</a>
+          <a href="#mcp">MCP</a>
+          <a href="#skills">Skills</a>
           <a href="#providers">Providers</a>
           <a href="#install">Install</a>
         </nav>
@@ -944,9 +947,8 @@
           <div class="keys__col">
             <h3>Guarded, not just stopped</h3>
             <p class="keys__p">
-              Degenerate loops are <em>broken</em>: reasoning loops, empty turns, repeated failing calls and error
-              streaks get a light-blue <b class="t-nudge">Nudge</b> in the transcript saying what was detected and
-              what Harny did.
+              Small models loop in their reasoning and in their tool calls. A loop is not an error to swallow: it
+              gets a <b class="t-nudge">Nudge</b> that pushes the model past it.
             </p>
             <div class="lop">
               <div><span>Off</span><b>inert</b></div>
@@ -955,14 +957,225 @@
               <div><span>High</span><b>loudest</b></div>
             </div>
             <p class="mono-sm">12 tunable parameters · persisted per session</p>
+            <p class="keys__link"><a href="#guard">The guard has a section of its own →</a></p>
           </div>
         </div>
       </section>
 
-      <!-- ============ 06 PROVIDERS ============ -->
+      <!-- ============ 06 GUARD ============ -->
+      <section class="sect" id="guard">
+        <div class="sect__head">
+          <p class="sect__idx">06 <span>/</span> THE GUARD</p>
+          <h2 class="sect__title">It never just stops.<br /><span class="grad">It steers.</span></h2>
+          <p class="sect__lede">
+            Small and local models fail in three shapes: reasoning that chases its own tail, the same tool call
+            retried verbatim, an answer that repeats itself. The guard cuts the stream and injects a
+            <b class="t-nudge">Nudge</b> — a correction aimed at the loop, so the model gets <em>out</em> of it
+            instead of being shut down.
+          </p>
+        </div>
+
+        <div class="bubbles guard__demo reveal" data-reveal>
+          <div class="bubble bubble--thinking">
+            <span class="bubble__tag">Thinking · repetition 0.83 · cut mid-stream</span>
+            Let me check the config file. I need to check the config file first. The config file is what I need to
+            check, so let me check the config file. I should check the config file…
+          </div>
+          <div class="bubble bubble--nudge">
+            <span class="bubble__tag">✦ Nudge — typed into the transcript, then sent back</span>
+            Your reasoning is <b>LOOPING</b>: the same content is repeating over and over without progress.
+            <b>STOP</b> reasoning now. Either call the next tool, or write your final answer to the user.
+          </div>
+          <div class="bubble bubble--act">
+            <span class="bubble__tag">Next turn</span>
+            <code>Read</code> <span class="mono-sm">harny.json</span> — a different action, and the run continues
+          </div>
+          <div class="bubble bubble--note">
+            the second nudge is the last · a loop that survives both is stopped, and the transcript names it
+          </div>
+        </div>
+
+        <div class="guard__grid reveal" data-reveal>
+          <div class="guard__block">
+            <p class="guard__cap"><span>Four presets</span> points inside the ranges</p>
+            <div class="lop">
+              <div><span>Off</span><b>inert</b></div>
+              <div><span>Low</span><b>permissive</b></div>
+              <div class="is-on"><span>Medium</span><b>default</b></div>
+              <div><span>High</span><b>aggressive</b></div>
+            </div>
+          </div>
+          <div class="guard__block">
+            <p class="guard__cap"><span>Twelve knobs</span> clamped · edited per session</p>
+            <div class="tools">
+              <span class="tool"><b>maxNudges</b><i>1–10</i></span>
+              <span class="tool"><b>reasoningThreshold</b><i>0.05–1</i></span>
+              <span class="tool"><b>reasoningMinTokens</b><i>10–500</i></span>
+              <span class="tool"><b>crossTurnSimilarity</b><i>0.05–1</i></span>
+              <span class="tool"><b>crossTurnMinLength</b><i>0–1000</i></span>
+              <span class="tool"><b>toolFailureRepeats</b><i>1–10</i></span>
+              <span class="tool"><b>errorStreakTurns</b><i>1–10</i></span>
+              <span class="tool"><b>toolRepeatConsecutive</b><i>1–10</i></span>
+              <span class="tool"><b>toolRepeatWindow</b><i>1–50</i></span>
+              <span class="tool"><b>toolRepeatWindowThreshold</b><i>1–10</i></span>
+              <span class="tool"><b>answerThreshold</b><i>0.05–1</i></span>
+              <span class="tool"><b>answerMinTokens</b><i>10–1000</i></span>
+            </div>
+          </div>
+        </div>
+
+        <ul class="notes reveal" data-reveal>
+          <li>
+            <b>Dedup, not just detection.</b> An identical <em>failing</em> call is refused instead of re-run and its
+            previous result comes back; the same call retried with identical arguments points the model at
+            <code>Glob</code>, <code>Grep</code> and <code>Read</code> — the classic Shell loop ends there.
+          </li>
+          <li>
+            <b>Both readings of a loop are caught:</b> back-to-back (A/A/A) and alternating (A/B/A/B, the sub-agent
+            web loop), because a rolling window counts occurrences, not just neighbours.
+          </li>
+          <li>
+            <b>The answer can be guarded too</b> — opt-in, with its own threshold, so a final reply that starts
+            repeating is cut short instead of paid for to the end.
+          </li>
+          <li>
+            <b>Sub-agents inherit the guard</b> of their session, with the same options read at each run: a flaky
+            model is flaky in every bubble.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ============ 07 MCP ============ -->
+      <section class="sect" id="mcp">
+        <div class="sect__head">
+          <p class="sect__idx">07 <span>/</span> MCP</p>
+          <h2 class="sect__title">Install once.<br /><span class="grad">Scope per conversation.</span></h2>
+          <p class="sect__lede">
+            A server is a fact about the machine; which of its tools a conversation may use is that conversation's
+            decision. Every tool arrives as <code>mcp__&lt;server&gt;__&lt;tool&gt;</code> — and none of them runs in
+            Analyze unless you say so.
+          </p>
+        </div>
+
+        <div class="cards">
+          <article class="card reveal" data-reveal>
+            <div class="card__icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M9 3v6M15 3v6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                <path
+                  d="M6 9h12v3a6 6 0 0 1-12 0V9Z"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                />
+                <path d="M12 18v3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+              </svg>
+            </div>
+            <h3>A server, not an extension</h3>
+            <p>
+              <code>stdio</code> — command, arguments, environment — or <code>http</code> — url, headers. Added from
+              the panel or straight into <code>config.json</code>, listed with its status, reconnected after a crash,
+              and switched off without being deleted.
+            </p>
+          </article>
+
+          <article class="card reveal" data-reveal>
+            <div class="card__icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="4" width="7" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6" />
+                <rect x="14" y="14" width="7" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6" />
+                <path d="M6.5 10v4.5a2 2 0 0 0 2 2h1.5M17.5 14V9.5a2 2 0 0 0-2-2H14" stroke="currentColor" stroke-width="1.6" fill="none" />
+              </svg>
+            </div>
+            <h3>Switched on per session</h3>
+            <p>
+              A new conversation starts with every MCP server <em>off</em>. Switch on the one this task needs, and
+              switch off single tools — of a server or a built-in — without touching the conversation next door.
+            </p>
+            <p class="card__foot"><span class="tag">per session</span><span class="tag">no recompile</span></p>
+          </article>
+
+          <article class="card reveal" data-reveal>
+            <div class="card__icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6l7-3Z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                <path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none" />
+              </svg>
+            </div>
+            <h3>Analyze is denied by default</h3>
+            <p>
+              Read-only in Analyze is an <em>include</em> list, not an exclusion: only the tools you declare can run
+              there. A tool the server adds tomorrow is not silently allowed to write during a preview — and the
+              declaration is per session, like everything else.
+            </p>
+            <p class="card__foot"><span class="tag">analyzeTools</span><span class="tag">read-only</span></p>
+          </article>
+        </div>
+
+        <pre class="tree mcp-json reveal" data-reveal><code><span class="t-cm">// config.json — install is machine-level, the scope is per session</span>
+{
+  <span class="t-dir">"mcpServers"</span>: {
+    <span class="t-file">"files"</span>: {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+      <span class="t-cm">// ⟵ the ONLY tools of this server allowed in Analyze</span>
+      "analyzeTools": ["read_file", "list_directory"]
+    }
+  }
+}</code></pre>
+      </section>
+
+      <!-- ============ 08 SKILLS ============ -->
+      <section class="sect" id="skills">
+        <div class="sect__head">
+          <p class="sect__idx">08 <span>/</span> SKILLS</p>
+          <h2 class="sect__title">A catalog, not a prompt.<br /><span class="grad">Read on demand.</span></h2>
+          <p class="sect__lede">
+            A skill is a folder with a <code>SKILL.md</code>, in <code>.agents/skills</code>,
+            <code>.claude/skills</code> or <code>.pi/skills</code> — project or user level. The system prompt carries
+            only its name and description; the body is read when the skill is activated, and not before.
+          </p>
+        </div>
+
+        <div class="skills-split reveal" data-reveal>
+          <figure class="slash">
+            <div class="slash__head">
+              <span class="slash__prompt">/</span>
+              <span>prompt — the menu opens on the first character</span>
+            </div>
+            <div class="slash__row is-on"><b>/skill pdf</b><i>Fill and read PDF forms</i></div>
+            <div class="slash__row"><b>/skill code-review</b><i>Review a diff against our rules</i></div>
+            <div class="slash__row"><b>/skills</b><i>List what is installed</i></div>
+            <figcaption class="slash__cap"><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>↵</kbd> insert · <kbd>Esc</kbd> close</figcaption>
+          </figure>
+
+          <ul class="notes">
+            <li>
+              <b>Called by name, at the start of the prompt.</b> <code>/skill &lt;name&gt; &lt;task&gt;</code> injects
+              that skill's instructions <em>ahead</em> of your task — the model's own activation decision is bypassed,
+              so “do it this way” is an instruction, not a hope.
+            </li>
+            <li>
+              <b>Or the model picks it up alone</b>: the catalog in the system prompt is enough to notice that a
+              skill matches the task, and the body is loaded only then. That is what keeps fifty skills from costing
+              fifty prompts.
+            </li>
+            <li>
+              <b><code>/skills</code></b> lists what is installed, with the description it was installed with.
+              A skill with <code>disable-model-invocation</code> is manual only: the model never reaches for it.
+            </li>
+            <li>
+              <b>Sub-agents inherit the catalog</b>, so delegated work can activate a skill too — and the
+              orchestrator can point a sub-task at one by name.
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- ============ 09 PROVIDERS ============ -->
       <section class="sect" id="providers">
         <div class="sect__head sect__head--left">
-          <p class="sect__idx">06 <span>/</span> ONE PROTOCOL</p>
+          <p class="sect__idx">09 <span>/</span> ONE PROTOCOL</p>
           <h2 class="sect__title">Speak one protocol.<br /><span class="grad">Talk to anything.</span></h2>
           <p class="sect__lede">
             Harny is openai-compatible by design, so anything that implements <code>/v1/chat/completions</code> works.
@@ -1003,10 +1216,10 @@
         </p>
       </section>
 
-      <!-- ============ 07 UNDER THE HOOD ============ -->
+      <!-- ============ 10 UNDER THE HOOD ============ -->
       <section class="sect" id="architecture">
         <div class="sect__head">
-          <p class="sect__idx">07 <span>/</span> UNDER THE HOOD</p>
+          <p class="sect__idx">10 <span>/</span> UNDER THE HOOD</p>
           <h2 class="sect__title">SOLID first.<br /><span class="grad">Testable to the core.</span></h2>
           <p class="sect__lede">
             The core layer has <strong>zero VS Code imports</strong> — every collaborator is created in the composition
@@ -1051,10 +1264,10 @@
         </div>
       </section>
 
-      <!-- ============ 08 INSTALL ============ -->
+      <!-- ============ 11 INSTALL ============ -->
       <section class="sect sect--install" id="install">
         <div class="sect__head">
-          <p class="sect__idx">08 <span>/</span> INSTALL</p>
+          <p class="sect__idx">11 <span>/</span> INSTALL</p>
           <h2 class="sect__title">Two minutes to<br /><span class="grad">first diff.</span></h2>
         </div>
 
