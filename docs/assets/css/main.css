@@ -2055,6 +2055,124 @@ main {
   font-size: 0.7rem;
 }
 
+/* ---------- 12c. SAVINGS (evidence) ---------- */
+/* Two console screenshots, one variable: the window. They carry the numbers the chart is actually
+   making — 95% → 44%, forecast 116% → 94% — as TEXT under each panel, because a 3446px-wide strip
+   scaled into 1164px is evidence you cannot read, and because the numbers are the message. The
+   panels are pre-cropped to an identical box so the two caption bars sit on the same line. */
+.savings {
+  margin-top: clamp(1.6rem, 3.4vw, 2.6rem);
+}
+.savings__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem clamp(1rem, 3vw, 2.4rem);
+  margin-bottom: 0.9rem;
+}
+.savings__kicker {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  font-family: var(--f-mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--tan);
+}
+.savings__kicker span {
+  color: var(--cyan);
+}
+.savings__lede {
+  max-width: 52ch;
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  color: var(--dim);
+}
+.savings__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(0.8rem, 1.6vw, 1.2rem);
+}
+.savings__card {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  background: linear-gradient(170deg, rgba(6, 26, 38, 0.55), rgba(1, 8, 15, 0.9));
+  overflow: hidden;
+}
+.savings__shot {
+  display: block;
+  width: 100%;
+  height: auto;
+  /* the screenshots are near-black: a hairline lift keeps them from merging into the page */
+  filter: brightness(1.04);
+}
+.savings__card figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.45rem;
+  margin-top: auto;
+  padding: 0.75rem clamp(0.9rem, 2vw, 1.15rem);
+  border-top: 1px solid var(--line);
+  font-family: var(--f-mono);
+  font-size: 0.7rem;
+  line-height: 1.5;
+  color: var(--faint);
+}
+.savings__tag {
+  color: var(--tan);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.savings__card--after .savings__tag {
+  color: var(--cyan);
+}
+.savings__big {
+  font-family: var(--f-display);
+  font-size: 1.05rem;
+  line-height: 1;
+  color: var(--text-hi);
+}
+.savings__card--after .savings__big {
+  color: var(--cyan);
+}
+.savings__card figcaption b {
+  color: var(--text);
+  font-weight: 600;
+}
+.savings__facts {
+  display: grid;
+  gap: 0.55rem;
+  max-width: 80ch;
+  margin: 1.05rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.savings__facts li {
+  position: relative;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+  line-height: 1.65;
+  color: var(--dim);
+}
+.savings__facts li::before {
+  content: "▸";
+  position: absolute;
+  left: 0;
+  color: var(--tan);
+}
+.savings__facts b {
+  color: var(--text);
+  font-weight: 600;
+}
+
 /* ---------- 13. CONTEXT ---------- */
 .ctx {
   display: grid;
@@ -2990,6 +3108,7 @@ main {
   .ctx__grid,
   .keys,
   .install,
+  .savings__grid,
   .steps {
     grid-template-columns: minmax(0, 1fr);
   }

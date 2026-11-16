@@ -792,6 +792,70 @@
           </div>
         </div>
 
+        <div class="savings reveal" data-reveal>
+          <div class="savings__head">
+            <p class="savings__kicker"><span>EVIDENCE</span> / TWO BILLING PERIODS</p>
+            <p class="savings__lede">
+              Two months of the same subscription, the same model, the same kind of work. The one thing
+              that changed is how much context rides on every request.
+            </p>
+          </div>
+
+          <div class="savings__grid">
+            <figure class="savings__card">
+              <img
+                class="savings__shot"
+                src="images/context-usage-before.webp"
+                alt="OpenCode Go console, earlier period: 95% of the monthly Go limit used, averaging 3.7% a day, the forecast line reaching 116% — 'on pace to hit the limit Nov 15'. Most used model: DeepSeek V4.1 Flash."
+                width="1200"
+                height="1249"
+                loading="lazy"
+                decoding="async"
+              />
+              <figcaption>
+                <span class="savings__tag">Before</span>
+                <span class="savings__big">95%</span>
+                <span>used · forecast <b>116%</b> — the limit arrives before the cycle ends</span>
+              </figcaption>
+            </figure>
+
+            <figure class="savings__card savings__card--after">
+              <img
+                class="savings__shot"
+                src="images/context-usage-after.webp"
+                alt="OpenCode Go console, later period: 44% of the monthly Go limit used, averaging 3.0% a day, forecast at 94% — 'on pace for 94%', under the limit. Most used model: DeepSeek V4.1 Flash."
+                width="1200"
+                height="1249"
+                loading="lazy"
+                decoding="async"
+              />
+              <figcaption>
+                <span class="savings__tag">After</span>
+                <span class="savings__big">44%</span>
+                <span>used · forecast <b>94%</b> — the same month lands under the limit</span>
+              </figcaption>
+            </figure>
+          </div>
+
+          <ul class="savings__facts">
+            <li>
+              <b>Not a cheaper model.</b> Both periods are ~100% <em>DeepSeek V4.1 Flash</em>: the tokens
+              went down, the model did not.
+            </li>
+            <li>
+              <b>A window that stops compounding.</b> Every turn re-sends the whole context, so the same
+              100k costs the same tokens on turn one and on turn forty. A summary in the window — instead
+              of the turns it absorbed — plus old tool output masked to one-line stubs is what makes the
+              next request smaller rather than bigger.
+            </li>
+            <li>
+              <b>The advice is the mechanism.</b> Pasted logs, whole files and re-reads are what fill a
+              window; the checkpoint keeps the facts, and the cycle closes at <b>94%</b> instead of
+              overshooting at <b>116%</b>.
+            </li>
+          </ul>
+        </div>
+
         <div class="clip reveal" data-reveal>
           <div class="clip__head">
             <p class="clip__kicker"><span>WATCH</span> / CONTEXT COMPACTION</p>
