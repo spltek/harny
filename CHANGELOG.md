@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-16
+
 ### Fixed
 
+- **The event-loop figure in the telemetry line was off by a full sampling period: an idle host read 51 ms of "lag", so the busy threshold was true forever and every stall was overstated by 50 ms.** `monitorEventLoopDelay` records the INTERVAL between two of its own callbacks (`RecordDelta`, `src/histogram-inl.h`), not the lateness of one, and `NativeLagProbe.read()` passed those intervals straight through as milliseconds of delay. Measured on the built code: an idle loop read **51.1 ms**, a 200 ms stall **249.8 ms** — exactly `lateness + RESOLUTION_MS`. Two consequences, both invisible to the tests: `BUSY_LAG_MS = 25` was true on an idle host, so the "prints nothing on an idle host" window logic printed a line every 30 s anyway; and every stall was reported a quarter too high. `read()` now subtracts the sampling period, which is exact rather than a fudge — the sampler cannot fire EARLY, so `interval - RESOLUTION_MS` is the lateness: idle reads **2.2 ms**, a 200 ms stall reads **198.2 ms**. Why 1.2.0's tests missed it: the only test touching the real probe asserted `maxMs >= RESOLUTION_MS`, a quantity the broken version returned as a constant, so it passed on macOS and Windows by a hair and landed at **49.61** on ubuntu, failing the release gate — the failure was real, it just pointed at the wrong line. That test now lets the sampler take its first sample before stalling (the FIRST callback after `start()` is a baseline, not a measurement: a stall beginning in that same turn is swallowed, which is exactly what hid this while it was being measured) and asserts late milliseconds.
 - **"Focus" now reads as LIT instead of as hovered: the armed pill wears the panel's ON light — the accent gradient and the soft halo that "Build" and "Parallel" already wear — where both states used to be the same pixels.** It carried its state with the very recipe the hover paints (accent text, accent edge, accent wash), so a Focus you had just switched on and a Focus the pointer happened to rest on were indistinguishable, and the state that matters — a mode that is armed — was the quieter of the two readings. ON now takes the light the two other modes in the panel already take: `linear-gradient(135deg, var(--accent), var(--accent-strong))`, white on top, and `0 0 12px var(--accent-glow)` around the pill, matching `#mode-btn.is-agent` (Build) and the shape `#parallel-btn.is-on` (Parallel) uses in its own hue. Hover is untouched and stays a flat wash, so "on" is a light and "hover" is a tint; when the two meet, the halo **deepens** (`0 0 16px var(--accent-glow-strong)`, the same move Parallel makes on hover) instead of washing the state away under the pointer. No transition and no pulse: a pill that breathes while you read is a distraction. Measured in a headless render, not assumed — rest, hover, on and on+hover resolve to four different computed looks in both palettes — and the markup suite pins the two halves, including that the hover rule cannot repaint an armed pill.
 
 ## [1.2.0] - 2026-11-16
@@ -1970,7 +1973,8 @@ Completions protocol.
 - **Diagnostics**: per-turn lines in _Output > Harny_, an optional request log
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
-[Unreleased]: https://github.com/spltek/harny/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/spltek/harny/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/spltek/harny/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/spltek/harny/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/spltek/harny/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/spltek/harny/compare/v1.0.3...v1.1.0
