@@ -11376,6 +11376,31 @@ describe("DB vacuum modal (webview)", () => {
     expect((document.getElementById("db-vacuum-info") as HTMLElement).textContent).toContain("10 MB");
   });
 
+  it("the modal shows the footprint BEFORE any click, not only in the report", async () => {
+    await loadView();
+    // The host sends `dbVacuumStats()`, which now carries the file size too: the line the user
+    // watches ("8.8 MB on disk, 64 KB in the WAL") must be on screen while the button is still
+    // un-clicked, or the first click has nothing to be compared with.
+    hostMessage({
+      type: "modal",
+      modalId: 7,
+      kind: "dbVacuum",
+      stats: {
+        ...stats,
+        freePages: 21,
+        bytesFree: 86_016,
+        ratio: 21 / 2224,
+        pageCount: 2224,
+        bytesTotal: 2224 * 4096,
+        bytesOnDisk: 8_800_000,
+        walBytes: 65_536,
+      },
+    });
+    const shown = (document.getElementById("db-vacuum-stats") as HTMLElement).textContent ?? "";
+    expect(shown).toContain("on disk");
+    expect(shown).toContain("in the WAL");
+  });
+
   it("Close posts modalResponse for the modal id", async () => {
     await loadView();
     hostMessage({ type: "modal", modalId: 7, kind: "dbVacuum", stats });
