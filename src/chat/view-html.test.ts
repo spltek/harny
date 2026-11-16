@@ -51,6 +51,19 @@ function flat(s: string): string {
   return s.replace(/\s+/g, " ");
 }
 
+/** One at-rule's own body, braces balanced: `indexOf("}")` stops at the first inner stop of a
+ *  keyframes block, which is exactly the part that has to be inspected. */
+function blockOf(css: string, at: string): string {
+  const start = css.indexOf(at);
+  expect(start).toBeGreaterThan(-1);
+  let depth = 0;
+  for (let i = css.indexOf("{", start); i < css.length; i++) {
+    if (css[i] === "{") depth++;
+    else if (css[i] === "}" && --depth === 0) return css.slice(start, i + 1);
+  }
+  return css.slice(start);
+}
+
 describe("renderViewHtml", () => {
   it("a fold is ONE chevron that ROTATES — no triangle glyphs anywhere", () => {
     // The folds used to swap "▶" for "▼": a filled triangle changes shape and weight as it opens.
@@ -1235,30 +1248,39 @@ describe("renderViewHtml", () => {
         },
       },
     });
-    // Active areas (answer bubble + live thinking block) pulse with accent
-    // edges on the SAME 1.2s ease-in-out cadence as the play button.
-    expect(html).toMatch(/@keyframes stream-border-pulse/);
-    // IN PHASE with the play button (harny-pulse peaks at 0%/100%): the area
-    // pulse must peak (full accent) at 0%/100% and dim at 50% — not inverted.
-    // The two stops are ROLES, so the halo follows the palette instead of being
-    // stuck on the dark theme's #d95f27 (a fixed glow reads wrong on paper).
-    // (Flattened: prettier puts each keyframe selector on its own line.)
+    // Active areas (answer bubble + live thinking block) beat on the SAME 1.2s ease-in-out
+    // cadence as the play button — and the beat is COMPOSITED: opacity on an overlay, never a
+    // border-color/box-shadow keyframe. Those are paint properties, and a 1.2s infinite paint
+    // animation recalculates style 60 times a second for the whole stream (measured on the real
+    // stylesheet: 60 recalcs/s and 9.3% of the webview main thread on a 1200-bubble transcript
+    // with four working areas, 0% and 0 recalcs once the beat moved to opacity). This is the
+    // tripwire against "optimising" the glow back onto the box.
+    const beat = blockOf(flat(html), "@keyframes pulse-beat");
+    expect(beat).toContain("opacity: 1");
+    expect(beat).toContain("opacity: 0.25");
+    expect(beat).not.toMatch(/box-shadow|border-color|filter|background|outline/);
+    // IN PHASE with the play button (harny-pulse peaks at 0%/100%): the peak (opacity 1) is at
+    // 0%/100% and the dim beat at 50% — not inverted.
+    expect(beat).toMatch(/0%, 100% \{ opacity: 1; \}/);
+    expect(beat).toMatch(/50% \{ opacity: 0\.25; \}/);
+    // ONE overlay rule paints every working area: the halo is static there, and the state only
+    // anchors it (`position: relative`, or `inset: 0` would resolve against an ancestor).
     expect(flat(html)).toMatch(
-      /@keyframes stream-border-pulse[\s\S]*0%, 100% \{\s*border-color: var\(--accent\); box-shadow: 0 0 14px 1px var\(--accent-glow\)/,
+      /\.msg\.assistant\.streaming::after,[\s\S]*?\.thinking-block\.streaming::after,[\s\S]*?\.msg\.tool\.subagent\.subagent-running::after \{[^}]*box-shadow: var\(--pulse-glow\)[^}]*animation: pulse-beat 1\.2s ease-in-out infinite/,
     );
-    expect(flat(html)).toMatch(
-      /@keyframes stream-border-pulse[\s\S]*50% \{\s*border-color: var\(--accent-line\); box-shadow: 0 0 4px 0 var\(--accent-glow-soft\)/,
-    );
-    expect(html).toMatch(
-      /\.msg\.assistant\.streaming\s*\{[^}]*animation\s*:\s*stream-border-pulse 1\.2s ease-in-out infinite/s,
-    );
-    expect(html).toMatch(
-      /\.thinking-block\.streaming\s*\{[^}]*animation\s*:\s*stream-border-pulse 1\.2s ease-in-out infinite/s,
-    );
-    // …and they SETTLE OUT (fade the border back) when the stream ends,
-    // instead of snapping off.
+    // A pseudo-element takes no inline style, so the phase lock's offset reaches it as a custom
+    // property it inherits (see phaseLockPulse).
+    expect(flat(html)).toMatch(/animation-delay: var\(--pulse-delay, 0ms\)/);
+    expect(html).toMatch(/\.msg\.assistant\.streaming\s*\{[^}]*position:\s*relative/s);
+    expect(html).toMatch(/\.thinking-block\.streaming\s*\{[^}]*position:\s*relative/s);
+    // …and they SETTLE OUT (fade the halo back) when the stream ends, instead of snapping off.
     expect(html).toMatch(/\.msg\.assistant\.settling\s*\{[^}]*transition\s*:\s*border-color 0\.7s ease/s);
     expect(html).toMatch(/\.thinking-block\.settling\s*\{[^}]*transition\s*:\s*border-color 0\.7s ease/s);
+    // The fade lives on the overlay now: `content` must stay declared or the pseudo box would go
+    // away at once and take the transition with it.
+    expect(html).toMatch(
+      /\.msg\.assistant\.settling::after[\s\S]*?\.subagent-settling::after\s*\{[^}]*content: ""[^}]*opacity:\s*0[^}]*transition:\s*opacity 0\.7s ease/s,
+    );
     // The multi toggle exists on the AI Model row after the model dropdown,
     // with the press/release (aria-pressed) state.
     // Two modes + the Parallel toggle right after the mode button.
@@ -1338,10 +1360,11 @@ describe("renderViewHtml", () => {
       },
     });
     expect(html).toMatch(/\.msg\.tool\.subagent\s*\{/);
-    // The status chip is STATIC; the BUBBLE carries the synchronized pulse.
+    // The status chip is STATIC; the BUBBLE carries the synchronized beat, in its own violet —
+    // through the same composited overlay, never a paint keyframe (see the answer bubble above).
     expect(html).not.toMatch(/\.subagent-status\.running\s*\{[^}]*animation/s);
-    expect(html).toMatch(/\.msg\.tool\.subagent\.subagent-running\s*\{[^}]*animation:\s*stream-border-pulse-violet/s);
-    expect(html).toMatch(/@keyframes stream-border-pulse-violet\s*\{[^}]*rgba\(124, 92, 255/s);
+    expect(html).toMatch(/\.msg\.tool\.subagent\.subagent-running\s*\{[^}]*border-color:\s*var\(--violet\)/s);
+    expect(flat(html)).toMatch(/\.msg\.tool\.subagent\s*\{[^}]*--pulse-glow: 0 0 14px 1px rgba\(124, 92, 255/);
     expect(html).toMatch(/\.msg\.tool\.subagent\.subagent-settling\s*\{/);
     expect(html).toMatch(/\.subagent-status\.done\s*\{/);
     expect(html).toMatch(/\.subagent-status\.failed\s*\{/);

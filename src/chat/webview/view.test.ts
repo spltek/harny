@@ -1814,6 +1814,9 @@ describe("view webview client", () => {
     // visibly out of sync with the Working bar and the play key (the reported defect).
     // phaseLockPulse() aligns it to the clock those already share.
     expect(bubble.style.animationDelay).toMatch(/^-\d+(\.\d+)?ms$/);
+    // The halo beats on the bubble's ::after, and a pseudo-element takes no inline style: the same
+    // offset has to reach it as a custom property, or the glow starts a full cycle late.
+    expect(bubble.style.getPropertyValue("--pulse-delay")).toMatch(/^-\d+(\.\d+)?ms$/);
   });
 
   it("the Working bar re-joins the cycle when the run starts (it used to keep the old one)", async () => {

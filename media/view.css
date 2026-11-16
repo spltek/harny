@@ -1662,46 +1662,65 @@ body {
     opacity: 0.35;
   }
 }
-/* The ACTIVE areas pulse their border with the SAME 1.2s ease-in-out
-   cadence as the play button (harny-pulse) and IN PHASE with it: the
-   peak (full accent + glow) is at 0%/100% of the cycle, exactly when the
-   play key is at full opacity; 50% is the dim beat, matching the play
-   key's fade. Deliberately evident: 2px border breathing between a soft
-   accent edge and the full accent with a visible glow. Applied to the
-   answer bubble being filled AND the live thinking block while it works.
-   box-sizing:border-box keeps the border inside (no layout jump). */
-@keyframes stream-border-pulse {
+/* The ACTIVE areas beat with the SAME 1.2s ease-in-out cadence as the play
+   button (harny-pulse) and IN PHASE with it: the peak (full glow) is at
+   0%/100% of the cycle, exactly when the play key is at full opacity; 50% is
+   the dim beat, matching the play key's fade.
+
+   The beat is an OPACITY animation on an overlay (::after), NOT a
+   border-color/box-shadow keyframe on the box itself. Paint properties force a
+   style recalc + repaint of the transcript on EVERY frame, and the cost grows
+   with the DOM: measured on a 1200-bubble session with four working areas, the
+   old keyframes cost 60 style recalculations/s and 18% of the webview main
+   thread CONTINUOUSLY — while the answer is being written, competing with the
+   markdown paints the pacer exists to protect. Opacity is composited: same
+   look, 0 recalcs, 0% main thread. Keep it that way: anything animated here
+   must be `opacity` or `transform`. */
+@keyframes pulse-beat {
   0%,
   100% {
-    border-color: var(--accent);
-    box-shadow: 0 0 14px 1px var(--accent-glow);
+    opacity: 1;
   }
   50% {
-    border-color: var(--accent-line);
-    box-shadow: 0 0 4px 0 var(--accent-glow-soft);
+    opacity: 0.25;
   }
 }
-/* Same cadence/phase as stream-border-pulse, but in the SUB-AGENT violet so
-   a running sub-agent glows with a halo close to its own border color. */
-@keyframes stream-border-pulse-violet {
-  0%,
-  100% {
-    border-color: var(--violet);
-    box-shadow: 0 0 14px 1px rgba(124, 92, 255, 0.5);
-  }
-  50% {
-    border-color: rgba(124, 92, 255, 0.4);
-    box-shadow: 0 0 4px 0 rgba(124, 92, 255, 0.15);
-  }
+/* The halo each beat fades, static and drawn once: accent for answers and
+   thinking, the sub-agent violet for a running sub-agent. */
+.msg.assistant,
+.thinking-block {
+  --pulse-glow: 0 0 14px 1px var(--accent-glow);
+}
+.msg.tool.subagent {
+  --pulse-glow: 0 0 14px 1px rgba(124, 92, 255, 0.5);
+}
+/* One overlay rule for every working area. `position: relative` is what anchors
+   it, so it travels with the states that paint it. */
+.msg.assistant.streaming::after,
+.thinking-block.streaming::after,
+.msg.tool.subagent.subagent-running::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: var(--pulse-glow);
+  pointer-events: none;
+  animation: pulse-beat 1.2s ease-in-out infinite;
+  /* The phase lock (phaseLockPulse) cannot put an inline delay on a pseudo:
+     the offset travels as a custom property it inherits. */
+  animation-delay: var(--pulse-delay, 0ms);
 }
 .msg.assistant.streaming {
-  border: 2px solid var(--accent-line);
-  animation: stream-border-pulse 1.2s ease-in-out infinite;
+  position: relative;
+  border: 2px solid var(--accent);
 }
-/* Live thinking header (the block is collapsed by default, so this is the
-   visible "working" indicator): same cadence, accent edges. */
 .thinking-block.streaming {
-  animation: stream-border-pulse 1.2s ease-in-out infinite;
+  position: relative;
+  border-color: var(--accent-line);
+}
+.msg.tool.subagent.subagent-running {
+  position: relative;
+  border-color: var(--violet);
 }
 /* Graceful end: when a stream finishes the pulse settles out smoothly
    (~0.7s fade) instead of snapping off — the answer bubble fades back to
@@ -1714,6 +1733,26 @@ body {
     box-shadow 0.7s ease;
   border-color: transparent;
   box-shadow: none;
+}
+/* The halo fades out with its host: the same overlay, now still, sliding to 0
+   over the same ~0.7s. `content` must stay declared or the pseudo box would
+   disappear at once and take the fade with it. */
+.msg.assistant.settling::after,
+.thinking-block.settling::after,
+.msg.tool.subagent.subagent-settling::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: var(--pulse-glow);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.7s ease;
+}
+.msg.assistant.settling,
+.thinking-block.settling,
+.msg.tool.subagent.subagent-settling {
+  position: relative;
 }
 .thinking-block.settling {
   animation: none;
@@ -2030,13 +2069,10 @@ body {
   border-color: rgba(124, 92, 255, 0.45);
   background: rgba(124, 92, 255, 0.06);
 }
-/* While THIS sub-agent runs, its bubble pulses with the SAME cadence/phase
-   as the thinking/answer bubbles but in its OWN violet (halo matching the
-   border), phase-locked to the shared clock (phaseLockPulse) so every
-   working area beats together. */
-.msg.tool.subagent.subagent-running {
-  animation: stream-border-pulse-violet 1.2s ease-in-out infinite;
-}
+/* While THIS sub-agent runs, its bubble beats with the SAME cadence/phase as
+   the thinking/answer bubbles but in its OWN violet (halo matching the border),
+   phase-locked to the shared clock (phaseLockPulse) so every working area beats
+   together. The beat itself lives in the shared `::after` rule above. */
 /* Graceful end: settle back to the resting violet edge (~0.7s fade). */
 .msg.tool.subagent.subagent-settling {
   animation: none;

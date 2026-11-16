@@ -2044,6 +2044,7 @@ function setSubAgentStatus(el: HTMLElement, status: "queued" | "running" | "done
     el.classList.remove("subagent-running");
     el.classList.add("subagent-settling");
     el.style.animationDelay = "";
+    el.style.removeProperty("--pulse-delay");
     window.setTimeout(() => el.classList.remove("subagent-settling"), 700);
   }
   // The per-sub-agent abort button is only actionable while queued/running (a
@@ -2376,6 +2377,9 @@ function settlePulse(el: HTMLElement | null): void {
   el.classList.remove("streaming");
   el.classList.add("settling");
   el.style.animationDelay = "";
+  // The halo's phase offset lives on its own property: leaving it behind would hand it to the
+  // NEXT bubble that reuses this element, out of phase with the clock.
+  el.style.removeProperty("--pulse-delay");
   window.setTimeout(() => el.classList.remove("settling"), 700);
 }
 
@@ -5472,12 +5476,18 @@ let thinkingCapable = false; // provider declares thinking control (bool/effort)
 // CSS animation would then begin mid-cycle and stay permanently out of sync
 // with the play key. phaseLockPulse() aligns each area to the SAME clock with
 // a negative animation-delay, so every border beats together with the button.
-const PULSE_MS = 1200; // must match harny-pulse / stream-border-pulse (1.2s)
+const PULSE_MS = 1200; // must match harny-pulse / pulse-beat (1.2s)
 let pulseClockStart = performance.now();
 
 function phaseLockPulse(el: HTMLElement): void {
   const elapsed = (performance.now() - pulseClockStart) % PULSE_MS;
+  // Two mechanisms, one clock. The OPACITY pulses (`.working`, the play key) animate the element
+  // itself and take the inline delay; the streaming HALO beats on the element's `::after`, and a
+  // pseudo-element cannot be given an inline style — so the same offset travels as a custom
+  // property the pseudo inherits (`animation-delay: var(--pulse-delay)` in view.css). Without
+  // this, every working area would drift out of phase with the button by up to a full cycle.
   el.style.animationDelay = "-" + elapsed + "ms";
+  el.style.setProperty("--pulse-delay", "-" + elapsed + "ms");
 }
 
 /** Return keyboard focus to the prompt after the agent finishes working. */
