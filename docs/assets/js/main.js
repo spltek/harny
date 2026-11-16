@@ -308,45 +308,107 @@
   /* ------------------------------------------------------ 09 sub-agent states */
   const agents = $$(".agent");
   if (agents.length) {
+    /* The demo can STOP a sub-agent — and stopping is all it can do. `aborted`
+     * is TERMINAL in the product: the webview hides the per-bubble abort button
+     * once a sub-agent settles, the orchestrator is told the sub-task did not
+     * finish, and only a NEW user message clears the run (`abortedDelegates`).
+     * There is no resume, so the demo must not offer one: a settled card
+     * re-arms by itself once it leaves the viewport and comes back, which keeps
+     * it playable without promising something the extension cannot do. */
+    const settled = (state) => state === "aborted" || state === "done";
+    const stopLabel = (state) =>
+      state === "aborted" ? "Aborted" : state === "done" ? "Done" : "Stop this";
+
+    const stateOf = (agent) => {
+      if (agent.classList.contains("is-aborted")) return "aborted";
+      if (agent.classList.contains("is-done")) return "done";
+      if (agent.classList.contains("is-queued")) return "queued";
+      // The badge is the card's own word for its state, so trust it when the
+      // class is missing: a card that says "queued" is queued.
+      const badge = $("[data-state]", agent);
+      return badge && /queued/i.test(badge.textContent) ? "queued" : "streaming";
+    };
+
     const setState = (agent, state, label) => {
       agent.classList.remove("is-queued", "is-aborted", "is-done");
       if (state !== "streaming") agent.classList.add(`is-${state}`);
       const badge = $("[data-state]", agent);
       if (badge) badge.textContent = label;
       const stop = $(".agent__stop", agent);
-      if (stop) stop.textContent = state === "aborted" ? "Resume" : "Stop this";
+      if (stop) {
+        stop.textContent = stopLabel(state);
+        // Actionable only while the sub-agent is live: running, or queued
+        // behind the cap (a queued one is skipped when its turn comes).
+        stop.disabled = settled(state);
+      }
     };
+
+    // Where each card rests, captured before the demo touches anything.
+    const resting = new Map();
+    agents.forEach((agent) => {
+      const badge = $("[data-state]", agent);
+      resting.set(agent, {
+        state: stateOf(agent),
+        label: badge ? badge.textContent : "streaming",
+      });
+    });
 
     agents.forEach((agent) => {
       const stop = $(".agent__stop", agent);
       if (!stop) return;
       stop.addEventListener("click", () => {
-        const aborted = agent.classList.contains("is-aborted");
-        setState(agent, aborted ? "streaming" : "aborted", aborted ? "streaming" : "aborted");
+        if (stop.disabled) return;
+        setState(agent, "aborted", "aborted");
       });
     });
 
     /* the queued agent behind the cap gets its turn */
     const queued = $('[data-agent="c"]');
+    let qo = null;
+    let kickTimer = 0;
+    let doneTimer = 0;
     if (queued && !reduce) {
       const kick = () => {
-        if (queued.classList.contains("is-aborted")) return;
+        if (stateOf(queued) !== "queued") return;
         setState(queued, "streaming", "streaming");
-        window.setTimeout(() => {
-          if (!queued.classList.contains("is-aborted")) setState(queued, "done", "done");
+        doneTimer = window.setTimeout(() => {
+          if (stateOf(queued) === "streaming") setState(queued, "done", "done");
         }, 5200);
       };
-      const qo = new IntersectionObserver(
+      qo = new IntersectionObserver(
         (entries, obs) => {
           entries.forEach((e) => {
             if (!e.isIntersecting) return;
-            window.setTimeout(kick, 2400);
+            kickTimer = window.setTimeout(kick, 2400);
             obs.unobserve(e.target);
           });
         },
         { threshold: 0.4 }
       );
       qo.observe(queued);
+    }
+
+    /* Re-arm a settled card once it is out of sight: the demo starts over on the
+     * next scroll instead of freezing on a state it cannot undo. A card that is
+     * still live is left alone — it is the user's to stop. */
+    if (!reduce) {
+      const rearm = new IntersectionObserver(
+        (entries) => {
+          for (const e of entries) {
+            if (e.isIntersecting) continue;
+            const agent = e.target;
+            if (!settled(stateOf(agent))) continue;
+            window.clearTimeout(kickTimer);
+            window.clearTimeout(doneTimer);
+            const rest = resting.get(agent);
+            if (rest) setState(agent, rest.state, rest.label);
+            // The re-armed queued card must replay its turn, not sit at rest.
+            if (agent === queued && qo) qo.observe(agent);
+          }
+        },
+        { threshold: 0 }
+      );
+      agents.forEach((a) => rearm.observe(a));
     }
   }
 

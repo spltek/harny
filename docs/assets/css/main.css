@@ -1966,6 +1966,23 @@ main {
   border-color: rgba(255, 93, 108, 0.5);
   background: rgba(255, 93, 108, 0.08);
 }
+/* A settled sub-agent has nothing left to stop: `aborted` is terminal and there
+   is no resume, so the button turns into a label instead of a lie. */
+.agent__stop:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.agent__stop:disabled:hover {
+  color: var(--faint);
+  border-color: var(--line-2);
+  background: transparent;
+}
+.agent.is-aborted .agent__stop:disabled,
+.agent.is-aborted .agent__stop:disabled:hover {
+  color: var(--alert);
+  border-color: rgba(255, 93, 108, 0.32);
+  background: transparent;
+}
 .orch__notes {
   grid-column: 1 / -1;
   display: flex;
