@@ -128,17 +128,22 @@ describe("Telemetry", () => {
   it("the real probe sees a BLOCKED loop, and reset() takes it back to zero", async () => {
     const probe = new NativeLagProbe();
     probe.start();
-    // Block the thread the way SQLite and a big tool result do. The histogram is native and needs
-    // a turn of the loop to record the late timer, hence the wait after the stall.
+    // The sampler's FIRST callback is only a baseline (`prev_` starts at 0 natively), so the stall
+    // must begin after it lands: a stall in the very turn that enables the probe is swallowed.
+    await new Promise((r) => setTimeout(r, RESOLUTION_MS * 2));
+    // Block the thread the way SQLite and a big tool result do.
     const until = Date.now() + 4 * RESOLUTION_MS;
     while (Date.now() < until) {
       // busy: no timers, no promises, nothing that could yield
     }
+    // The histogram is native and needs a turn of the loop to record the late timer.
     await new Promise((r) => setTimeout(r, RESOLUTION_MS * 2));
     const seen = probe.read();
     probe.stop();
 
-    // 200 ms of block, 50 ms of resolution: the delay recorded is at least one resolution step.
+    // 200 ms of block against a 50 ms sampler: it cannot fire early, so the interval it records is
+    // at least 200 ms and the LATE milliseconds it reports (`read` subtracts the sampling period)
+    // are at least 150 — a whole resolution above the threshold it is compared to.
     expect(seen.maxMs).toBeGreaterThanOrEqual(RESOLUTION_MS);
     expect(seen.maxMs).toBeLessThan(2_000); // …and it is a delay, not the wall clock
 

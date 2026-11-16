@@ -2,8 +2,9 @@ import { monitorEventLoopDelay } from "node:perf_hooks";
 import { debugLog } from "../logger";
 import { dbMetrics, resetDbMetrics } from "../core/sessions/store-metrics";
 
-/** Resolution of the event-loop histogram (ms): a stall shorter than this is not distinguishable
- *  from a healthy loop. Same 50 ms granularity the 20 Hz JS probe had — at 1/600th of the cost. */
+/** How often the native histogram samples the loop (ms) — and therefore how coarsely it can express
+ *  any delay. It is NOT what the log prints: the histogram reports the INTERVAL between two of its
+ *  own callbacks, so every reading carries this much offset and `read` takes it back out. */
 export const RESOLUTION_MS = 50;
 /** How often a line is emitted (only when something moved). This is ALSO the only timer telemetry
  *  owns: the probe itself runs in native code and never calls back into JavaScript. */
@@ -23,9 +24,9 @@ export interface TelemetrySnapshot {
   postBytes: number;
 }
 
-/** The lag numbers as the class needs them. An interface, not a direct call, because a native
- *  histogram cannot be advanced by a fake clock: a test that owns this seam is deterministic,
- *  while a test driving `setInterval` would measure the machine it runs on. */
+/** The lag numbers as the class needs them, already in LATE milliseconds. An interface, not a direct
+ *  call, because a native histogram cannot be advanced by a fake clock: a test that owns this seam
+ *  is deterministic, while a test driving `setInterval` would measure the machine it runs on. */
 export interface LagProbe {
   start(): void;
   stop(): void;
@@ -42,6 +43,19 @@ export interface LagProbe {
  * extension host can never escape while a panel is open. The histogram is sampled by a native timer
  * with no JavaScript callback, so a healthy loop costs nothing at all, and the p95/max (the numbers
  * that actually identify saturation) are read only when a line is about to be printed.
+ *
+ * WHAT IT MEASURES is subtler than its name: `RecordDelta` (src/histogram-inl.h) stores the INTERVAL
+ * between two of the sampler's own callbacks, not the lateness of one. A healthy loop fires exactly
+ * on schedule, so an IDLE host reads 51 ms — not 0 — and reading that number as "lag" put a full
+ * resolution of offset into every line: `BUSY_LAG_MS` was true on an idle host (a line every 30 s,
+ * and a `max` that could never fall below the threshold) and a 200 ms stall printed 250. `read`
+ * subtracts the interval it is paced by, which is exact rather than a fudge: the timer cannot fire
+ * EARLY, so `interval - RESOLUTION_MS` is the lateness, measured 200.0 for a 200 ms stall and 1.1
+ * for an idle loop.
+ *
+ * The FIRST callback after `start()` is a baseline, not a sample (`prev_` starts at 0 natively): a
+ * stall that begins in the very turn that enables the probe is what that callback would have
+ * measured, and it is dropped. Anything measuring a stall must let one sample land first.
  */
 export class NativeLagProbe implements LagProbe {
   private histogram: ReturnType<typeof monitorEventLoopDelay> | undefined;
@@ -60,8 +74,10 @@ export class NativeLagProbe implements LagProbe {
   read(): { avgMs: number; p95Ms: number; maxMs: number } {
     const h = this.histogram;
     if (!h) return { avgMs: 0, p95Ms: 0, maxMs: 0 };
-    // The histogram counts NANOSECONDS; the log speaks milliseconds.
-    return { avgMs: h.mean / 1e6, p95Ms: h.percentile(95) / 1e6, maxMs: h.max / 1e6 };
+    // The histogram counts NANOSECONDS, and every value it holds is an INTERVAL: it measures from
+    // one callback to the next, so the sampling period itself is in the number. Take it out.
+    const lateness = (intervalNs: number) => Math.max(0, intervalNs / 1e6 - RESOLUTION_MS);
+    return { avgMs: lateness(h.mean), p95Ms: lateness(h.percentile(95)), maxMs: lateness(h.max) };
   }
 
   reset(): void {
