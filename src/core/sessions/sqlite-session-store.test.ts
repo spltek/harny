@@ -481,6 +481,9 @@ describe("SqliteSessionStore — vacuum stats & maintenance", () => {
     expect(s.bytesTotal).toBe(s.pageCount * s.pageSize);
     expect(s.freePages).toBe(0);
     expect(s.ratio).toBe(0);
+    // `:memory:`: there is no file to measure, so no footprint is claimed.
+    expect(s.bytesOnDisk).toBeUndefined();
+    expect(s.walBytes).toBeUndefined();
   });
 
   it("maintain VACUUMs when free pages dominate and reports before/after", () => {
@@ -511,33 +514,63 @@ describe("SqliteSessionStore — vacuum stats & maintenance", () => {
 });
 
 describe("SqliteSessionStore — vacuum force", () => {
-  it("maintain with threshold 0 FORCES a VACUUM even with no free pages", () => {
+  it("a forced click does NOT rewrite a file that has no free page", () => {
     const { store } = makeStore();
     store.create();
     store.saveMessages("s1", [msg("user", "a")]);
     const r = store.maintain({ freeRatioThreshold: 0 });
-    expect(r.vacuumed).toBe(true);
+    // Threshold 0 means "ignore the ratio", NOT "VACUUM whatever it costs": a pass with an empty
+    // free list reclaims ZERO bytes and rewrites the whole database anyway. That is what made the
+    // panel say "Vacuumed & optimized in 0.0s" on numbers that could not possibly move, click
+    // after click, while the user read it as "it is still doing something".
+    expect(r.vacuumed).toBe(false);
+    expect(r.before.freePages).toBe(0);
+    // The free list stays empty and nothing is rewritten. (The page COUNTER may move by one: the
+    // FTS optimize can add a segment page — that is the index work, not a compaction.)
+    expect(r.after.freePages).toBe(0);
+    expect(r.error).toBeUndefined();
     // `:memory:` has no WAL to hand anything back to: nothing is ever owed, nothing to settle.
     expect(r.pendingMaintenance).toBe("none");
     expect(store.pendingMaintenance()).toBe("none");
     expect(store.settlePending()).toBeUndefined();
+  });
+
+  it("a forced click with free pages to reclaim still runs the VACUUM", () => {
+    const { store } = makeStore();
+    const id = store.create().id;
+    // Enough rows that deleting them empties whole pages: below that the free list stays 0 and
+    // there is genuinely nothing for a VACUUM to reclaim.
+    store.saveMessages(
+      id,
+      Array.from({ length: 400 }, (_, i) => msg("user", "x".repeat(2000) + i)),
+    );
+    store.remove(id);
+    expect(store.dbVacuumStats().freePages).toBeGreaterThan(0);
+
+    const r = store.maintain({ freeRatioThreshold: 0 });
+
+    expect(r.vacuumed).toBe(true);
+    expect(r.after.freePages).toBe(0);
   });
 });
 
 describe("SqliteSessionStore — vacuum also optimizes the indexes", () => {
   it("maintain runs the FTS5 optimize without breaking search", () => {
     const { store } = makeStore();
-    store.create(); // s1
-    store.saveMessages("s1", [msg("user", "hello world"), msg("assistant", "hi there")]);
-    store.remove("s1"); // free pages + FTS segments to merge
+    const s1 = store.create().id;
+    store.saveMessages(
+      s1,
+      Array.from({ length: 400 }, (_, i) => msg(i % 2 ? "assistant" : "user", "hello world " + i + "x".repeat(2000))),
+    );
+    store.remove(s1); // free pages + FTS segments to merge
 
     const r = store.maintain({ freeRatioThreshold: 0 });
     expect(r.vacuumed).toBe(true);
 
     // The full-text index survived the optimize and still matches NEW rows.
-    store.create(); // s2
-    store.saveMessages("s2", [msg("user", "hello again")]);
-    expect(store.search("hello").some((h) => h.sessionId === "s2")).toBe(true);
+    const s2 = store.create().id;
+    store.saveMessages(s2, [msg("user", "hello again")]);
+    expect(store.search("hello").some((h) => h.sessionId === s2)).toBe(true);
   });
 });
 
@@ -587,6 +620,18 @@ describe("SqliteSessionStore — a compaction that does not reach the FILE says 
     store.remove("s1"); // every page becomes free
   };
 
+  it("dbVacuumStats carries the footprint BEFORE any click (the panel opens on these numbers)", () => {
+    const { store, file } = openFile();
+    fill(store);
+    // The panel's first render used to show only page counters: the "8.8 MB on disk (64 KB in
+    // the WAL)" line appeared for the first time AFTER the click, so the number the user was
+    // watching had nothing to be compared with.
+    const s = store.dbVacuumStats();
+    expect(s.bytesOnDisk).toBe(statSync(file).size);
+    expect(typeof s.walBytes).toBe("number");
+    expect(s.bytesTotal).toBe(s.pageCount * s.pageSize);
+  });
+
   it("ONE maintain() empties the file, not just the page counters", () => {
     const { store, file } = openFile();
     fill(store);
@@ -601,6 +646,27 @@ describe("SqliteSessionStore — a compaction that does not reach the FILE says 
     expect(footprint(file)).toBeLessThan(before);
     // The report carries the number the user reads in Finder, not only the logical one.
     expect(r.after.bytesOnDisk).toBe(statSync(file).size);
+  });
+
+  it("the SECOND click on an already-compact file writes nothing (no reader needed)", () => {
+    const { store, file } = openFile();
+    fill(store);
+    const first = store.maintain({ freeRatioThreshold: 0 });
+    expect(first.vacuumed).toBe(true);
+    const emptied = footprint(file);
+
+    // Reported from the panel: "I click once and something moves, I click again and the numbers
+    // move again, then nothing ever moves". The numbers had nowhere left to go — no free page —
+    // but the click kept rewriting the whole file to reclaim zero bytes and reported "Vacuumed &
+    // optimized", so real work and no work looked exactly the same in the panel.
+    const second = store.maintain({ freeRatioThreshold: 0 });
+
+    expect(second.vacuumed).toBe(false);
+    expect(second.before.freePages).toBe(0);
+    expect(second.after.freePages).toBe(0);
+    expect(second.walCheckpointBusy).toBeUndefined();
+    expect(second.error).toBeUndefined();
+    expect(footprint(file)).toBe(emptied);
   });
 
   it("a reader pins the file: the first run cannot know, every run AFTER it writes NOTHING", () => {
@@ -815,6 +881,23 @@ describe("SqliteSessionStore — the compaction it owes is STATE, not a retry", 
     expect(store.pendingMaintenance()).toBe("none");
     expect(store.settlePending()).toBeUndefined();
     expect(footprint(file)).toBe(before);
+  });
+
+  it("a busy checkpoint on a pass that wrote NOTHING is not a debt either", () => {
+    const { store, file, db } = openFile();
+    fill(store);
+    const first = store.maintain({ freeRatioThreshold: 0 });
+    expect(first.vacuumed).toBe(true); // now the free list is empty
+
+    const reader = readSnapshot(file); // pins the WAL: the trailing checkpoint can report busy
+    const second = store.maintain({ freeRatioThreshold: 0 });
+    expect(second.vacuumed).toBe(false);
+    // `copy` here would queue a checkpoint over pages that were NEVER rebuilt, and the panel would
+    // then tell the user the compaction is queued when there was nothing left to compact.
+    expect(second.pendingMaintenance).toBe("none");
+    expect(store.pendingMaintenance()).toBe("none");
+    expect(store.settlePending()).toBeUndefined();
+    reader.exec("COMMIT");
   });
 
   it("a VACUUM that FAILS for a real reason is not a debt (retrying would fail the same way)", () => {

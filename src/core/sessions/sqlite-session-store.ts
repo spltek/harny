@@ -385,7 +385,14 @@ export class SqliteSessionStore implements SessionStore {
 
   /**
    * Cheap (O(1), DB-header only) size stats: how many pages are FREE
-   * (reclaimable holes left by ✂ cuts / session deletes) vs the total.
+   * (reclaimable holes left by ✂ cuts / session deletes) vs the total — plus the REAL
+   * footprint on disk (`sessions.db` + its `-wal`) when the store knows the path. The page
+   * counters say "how much is reclaimable", the footprint says "did it empty", and only the
+   * second one is the number the user sees in Finder.
+   *
+   * The footprint belongs HERE, not only in the compaction report: the panel OPENs on these
+   * numbers, and a figure that appears for the first time after the click is one the user has
+   * nothing to compare it with.
    */
   dbVacuumStats(): DbVacuumStats {
     let pageCount = 0;
@@ -398,7 +405,7 @@ export class SqliteSessionStore implements SessionStore {
     } catch {
       /* best effort */
     }
-    return {
+    const stats: DbVacuumStats = {
       pageCount,
       freePages,
       pageSize,
@@ -406,6 +413,18 @@ export class SqliteSessionStore implements SessionStore {
       bytesTotal: pageCount * pageSize,
       ratio: pageCount > 0 ? freePages / pageCount : 0,
     };
+    const path = this.deps.dbPath;
+    if (!path) return stats; // `:memory:` in the tests: there is no file to measure
+    try {
+      const wal = `${path}-wal`;
+      return {
+        ...stats,
+        bytesOnDisk: this.deps.fs.size(path),
+        walBytes: this.deps.fs.exists(wal) ? this.deps.fs.size(wal) : 0,
+      };
+    } catch {
+      return stats; // best effort: a vanished file is not a failed compaction
+    }
   }
 
   /**
@@ -439,13 +458,19 @@ export class SqliteSessionStore implements SessionStore {
    * second VACUUM (16 ms, same pages) only re-appended 5 MB to the WAL and changed nothing.
    * The debt is settled by an OBSERVATION, never by a stopwatch: `busy` belongs to another
    * process, and retrying N times would be guessing at an event nobody here can see.
+   *
+   * A FORCED CLICK (`freeRatioThreshold: 0`, what the modal's button sends) means "ignore the
+   * ratio", not "rewrite the file whatever it costs": the free list is re-measured after the two
+   * optimizes and a pass with no free page writes NOTHING, so the second click on an already
+   * compact database is free and says so — instead of copying every page to reclaim zero bytes
+   * and reporting it as work done.
    */
   maintain(options: { freeRatioThreshold?: number } = {}): DbVacuumResult {
     const threshold = options.freeRatioThreshold ?? 0.2;
     const startedAt = Date.now();
     // 0) The REAL state at the moment of the click: the size the user sees in Finder, before
     //    anything moves. Measured first, or the drain below would hide what was reclaimed.
-    const before = this.statsWithFootprint();
+    const before = this.dbVacuumStats();
     // 1) Drain and truncate the WAL, and BELIEVE the answer: `busy` means another connection
     //    holds a read snapshot, so no rebuilt page can reach `sessions.db` — and a VACUUM now
     //    would only append another copy of the database to a `-wal` nobody can truncate.
@@ -477,9 +502,15 @@ export class SqliteSessionStore implements SessionStore {
     // 3) Page compaction, when the free-page ratio reaches the threshold. One pass is all it
     //    takes: a VACUUM that commits rebuilds the file from scratch, so the free list is 0
     //    afterwards — verified, not assumed (a second pass changes no page counter at all).
+    //    Re-measured HERE, after the optimizes: merging FTS segments is what frees pages, and
+    //    a VACUUM that reclaims nothing rewrites the whole file for zero bytes — on a forced
+    //    click (threshold 0) that meant a full synchronous copy of the database per click,
+    //    which is the "I keep clicking and the numbers never move" the panel used to report
+    //    as "Vacuumed & optimized". No free page, no pass.
+    const reclaimable = this.dbVacuumStats();
     let vacuumed = false;
     let error: string | undefined;
-    if (before.pageCount > 0 && before.ratio >= threshold) {
+    if (reclaimable.pageCount > 0 && reclaimable.freePages > 0 && reclaimable.ratio >= threshold) {
       try {
         this.deps.db.exec("VACUUM");
         vacuumed = true;
@@ -491,12 +522,14 @@ export class SqliteSessionStore implements SessionStore {
     //    appeared meanwhile reports `busy` WITHOUT throwing: say it, so "the pages are compact
     //    but the file is not" stops being a mystery.
     const checkpoint = this.checkpoint();
-    const after = this.statsWithFootprint();
+    const after = this.dbVacuumStats();
     // A VACUUM that ran but could not be copied back leaves a debt that is a COPY, not another
     // VACUUM: the rebuilt pages are already in the `-wal`, and repeating the compaction is exactly
     // what used to append one more full copy per click. A real failure (full disk…) is not a debt
-    // — retrying it automatically would only fail again.
-    this.pending = checkpoint.busy && !error ? "copy" : "none";
+    // — retrying it automatically would only fail again. And a pass that wrote NOTHING owes
+    // nothing: a `busy` checkpoint there is another connection's business, and remembering a
+    // "copy" would queue a checkpoint over pages that were never rebuilt.
+    this.pending = vacuumed && checkpoint.busy && !error ? "copy" : "none";
     this.deps.log?.(
       `maintain: vacuumed=${vacuumed}, free pages ${before.freePages}->${after.freePages}, ` +
         `file ${before.bytesOnDisk ?? "?"}->${after.bytesOnDisk ?? "?"} bytes on disk, ` +
@@ -544,9 +577,9 @@ export class SqliteSessionStore implements SessionStore {
    */
   private drainCopiedPages(): DbVacuumResult {
     const startedAt = Date.now();
-    const before = this.statsWithFootprint();
+    const before = this.dbVacuumStats();
     const checkpoint = this.checkpoint();
-    const after = this.statsWithFootprint();
+    const after = this.dbVacuumStats();
     if (checkpoint.busy) {
       this.deps.log?.(
         `settle: the copy is still BUSY (another connection is reading ${this.deps.dbPath ?? "the database"}) — the debt stays`,
@@ -605,27 +638,6 @@ export class SqliteSessionStore implements SessionStore {
       };
     } catch {
       return { busy: false, log: 0, checkpointed: 0 };
-    }
-  }
-
-  /**
-   * The header stats plus the REAL footprint on disk (`sessions.db` + its `-wal`), when the
-   * store knows the path. The page counters say "how much is reclaimable", these say "did it
-   * empty" — and only the second one is what the user sees in Finder.
-   */
-  private statsWithFootprint(): DbVacuumStats {
-    const stats = this.dbVacuumStats();
-    const path = this.deps.dbPath;
-    if (!path) return stats;
-    try {
-      const wal = `${path}-wal`;
-      return {
-        ...stats,
-        bytesOnDisk: this.deps.fs.size(path),
-        walBytes: this.deps.fs.exists(wal) ? this.deps.fs.size(wal) : 0,
-      };
-    } catch {
-      return stats; // best effort: a vanished file is not a failed compaction
     }
   }
 

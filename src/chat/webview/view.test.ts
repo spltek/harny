@@ -11510,6 +11510,50 @@ describe("DB vacuum modal (webview)", () => {
     expect(msg).not.toContain("Nothing to reclaim");
   });
 
+  it("a click on a database with nothing free says SO, with the numbers, instead of claiming work", async () => {
+    await loadView();
+    hostMessage({ type: "modal", modalId: 7, kind: "dbVacuum", stats });
+    hostMessage({
+      type: "dbVacuumResult",
+      result: {
+        vacuumed: false,
+        before: { ...stats, freePages: 0, bytesFree: 0, ratio: 0, bytesOnDisk: 9_000_000, walBytes: 0 },
+        after: { ...stats, freePages: 0, bytesFree: 0, ratio: 0, bytesOnDisk: 9_000_000, walBytes: 0 },
+        durationMs: 0,
+        pendingMaintenance: "none",
+      },
+    });
+    const msg = (document.getElementById("db-vacuum-msg") as HTMLElement).textContent ?? "";
+    // Reported from the panel: "I click again and again and nothing changes". The click DID stop
+    // changing anything — because there was no free page left — but it used to answer "Vacuumed &
+    // optimized in 0.0s", so the user kept clicking. Say the state, with the numbers that prove it.
+    expect(msg).toContain("Nothing to reclaim");
+    expect(msg).toContain("0 free of 100 pages");
+    expect(msg).toContain("nothing was written");
+    expect(msg).not.toContain("Vacuumed");
+  });
+
+  it("a busy checkpoint on a pass that wrote nothing does NOT announce a queue", async () => {
+    await loadView();
+    hostMessage({ type: "modal", modalId: 7, kind: "dbVacuum", stats });
+    hostMessage({
+      type: "dbVacuumResult",
+      result: {
+        vacuumed: false,
+        before: { ...stats, freePages: 0, bytesFree: 0, ratio: 0, bytesOnDisk: 9_000_000, walBytes: 0 },
+        after: { ...stats, freePages: 0, bytesFree: 0, ratio: 0, bytesOnDisk: 9_000_000, walBytes: 0 },
+        durationMs: 0,
+        walCheckpointBusy: true,
+        pendingMaintenance: "none",
+      },
+    });
+    const msg = (document.getElementById("db-vacuum-msg") as HTMLElement).textContent ?? "";
+    // No free page means nothing was written, so a busy checkpoint owes nothing: promising a
+    // queued run would be the same lie as "Vacuumed & optimized".
+    expect(msg).not.toContain("QUEUED");
+    expect(msg).toContain("Nothing to reclaim");
+  });
+
   it("the All-Sessions footer renders the stats + both settings and posts the manual open", async () => {
     await loadView();
     hostMessage({

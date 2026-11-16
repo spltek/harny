@@ -127,13 +127,16 @@ describe("SqliteSessionStore — more threads on the same file", () => {
 
     let peak = start;
     let refusals = 0;
+    let vacuums = 0;
     let attempts = 0;
     while (!finished && attempts < 500) {
       attempts++;
       const r = store.maintain({ freeRatioThreshold: 0 });
-      // Every answer is one of the two honest ones: it compacted, or it refused and said so.
-      if (!r.vacuumed) expect(r.walCheckpointBusy || r.error).toBeTruthy();
+      // Every answer is one of the THREE honest ones: it compacted, it refused and said so, or it
+      // found no free page and wrote nothing (the file was already as small as it goes).
+      if (!r.vacuumed) expect(r.walCheckpointBusy || r.error || r.before.freePages === 0).toBeTruthy();
       if (r.walCheckpointBusy) refusals++;
+      if (r.vacuumed) vacuums++;
       expect(["none", "compact", "copy"]).toContain(store.pendingMaintenance());
       store.settlePending();
       peak = Math.max(peak, footprint(file));
@@ -145,6 +148,11 @@ describe("SqliteSessionStore — more threads on the same file", () => {
 
     // 1) NO PILE-UP — the regression this whole change exists for.
     expect(peak).toBeLessThanOrEqual(start);
+    // 1b) A forced click only rewrites the file when there IS something to reclaim: with the free
+    // list empty after the first pass, the remaining clicks wrote nothing (measured here: 500
+    // attempts, ONE VACUUM, the rest found no free page). Before this guard every one of those
+    // attempts rewrote the whole database for zero bytes.
+    expect(vacuums).toBeLessThanOrEqual(2);
 
     // 2) The debt is named and then paid by ONE settle: nobody clicks twice.
     expect(["none", "compact", "copy"]).toContain(store.pendingMaintenance());

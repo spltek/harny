@@ -7080,7 +7080,11 @@ window.addEventListener("message", (e) => {
         // been touched — and made the click that finally worked look like the only one that did.
         dbVacuumMsg.textContent = r.error
           ? `Compaction FAILED: ${r.error} — the database was left as it was.`
-          : r.walCheckpointBusy && !r.vacuumed
+          : r.walCheckpointBusy &&
+              !r.vacuumed &&
+              // Only a pass that owes something is queued: a busy checkpoint on a pass that wrote
+              // nothing (no free page to reclaim) has no debt behind it.
+              (r.pendingMaintenance ?? "compact") !== "none"
             ? // Nothing was written on purpose: with another connection reading the file, a VACUUM
               // only piles rebuilt pages into a `-wal` nobody can truncate (it GROWS the file).
               // The request is not lost, though: the store keeps it queued and pays it at the next
@@ -7101,7 +7105,12 @@ window.addEventListener("message", (e) => {
               : r.copied
                 ? `Finished: the pages compacted earlier were copied into sessions.db — the file went` +
                   ` from ${vacuumFootprint(r.before)} to ${vacuumFootprint(r.after)}.`
-                : "Nothing to reclaim: the database was already compact and the indexes optimal.";
+                : // A forced click on a database with nothing free used to rewrite the whole file and
+                  // report "Vacuumed & optimized", which read as "it worked" on numbers that could not
+                  // move (they were already 0). Say the state instead of the verb, with the numbers
+                  // that prove it: no page is free, so nothing was written.
+                  `Nothing to reclaim: ${r.after.freePages} free of ${r.after.pageCount} pages and the` +
+                  ` indexes already optimal — the file is ${vacuumFootprint(r.after)}, nothing was written.`;
         smVacuumStats.innerHTML = vacuumStatsHtml(r.after);
       }
       dbVacuumRun.disabled = false;
