@@ -44,6 +44,11 @@
   --r: 14px;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
 
+  /* Vertical rhythm between sections — and HALF of it is how far the protocol band sits from the
+     blocks it divides, so the band is centred in the gap instead of glued to the one above it. */
+  --sect-rhythm: clamp(5rem, 11vw, 9rem);
+  --band-gap: clamp(2.5rem, 5.5vw, 4.5rem);
+
   --nav-h: 68px;
 }
 
@@ -1110,9 +1115,16 @@ main {
 }
 
 /* ---------- 08. MARQUEE ---------- */
+/* The band is a DIVIDER, so it has to be equidistant from the two blocks it separates: the reel
+   leaves no bottom padding (its own gap is on top) and the section below carries the whole
+   `--sect-rhythm` as padding, so the strip used to sit flush against the video with the entire
+   gap underneath — the strip read as glued to the poster. Half the rhythm above, the other half
+   below (`.marquee + .sect`), and the band lands exactly in the middle of the distance between
+   the end of the video and the next heading. */
 .marquee {
   position: relative;
   z-index: 2;
+  margin: var(--band-gap) 0 0;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   background: linear-gradient(90deg, rgba(0, 5, 10, 0.9), rgba(7, 32, 46, 0.55), rgba(0, 5, 10, 0.9));
@@ -1311,9 +1323,18 @@ main {
 /* ---------- 09. SECTION SHELL ---------- */
 .sect {
   position: relative;
-  padding: clamp(5rem, 11vw, 9rem) var(--pad);
+  padding: var(--sect-rhythm) var(--pad);
   max-width: var(--max);
   margin: 0 auto;
+}
+/* The section right after the band already has the band's own margin above it: give it the same
+   amount, so the two gaps are equal. Its hairline is dropped — with the padding shortened it
+   would draw a stub line floating in the middle of the gap, under a band that is itself a rule. */
+.marquee + .sect {
+  padding-top: var(--band-gap);
+}
+.marquee + .sect::before {
+  display: none;
 }
 .sect::before {
   content: "";
