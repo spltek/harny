@@ -2748,6 +2748,54 @@ main {
   color: var(--tan);
   font-weight: 500;
 }
+.foot__credit {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.25rem 0.7rem;
+  margin-top: 0.1rem;
+  padding-top: clamp(1rem, 2.4vw, 1.5rem);
+  border-top: 1px solid var(--line);
+  font-family: var(--f-mono);
+  font-size: 0.54rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.foot__credit strong {
+  font-weight: 600;
+  color: var(--dim);
+}
+.foot__credit a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  margin-block: -6px;
+  color: var(--cyan-2);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(35, 182, 205, 0.35);
+  transition:
+    color 0.25s,
+    border-color 0.25s;
+}
+.foot__credit a:hover,
+.foot__credit a:focus-visible {
+  color: var(--cyan);
+  border-bottom-color: var(--cyan);
+}
+.foot__credit-model::before {
+  content: "/";
+  margin-right: 0.7rem;
+  color: var(--line-2);
+}
+@media (max-width: 520px) {
+  .foot__credit {
+    justify-content: flex-start;
+    letter-spacing: 0.12em;
+  }
+}
 
 /* ---------- 19. REVEAL ---------- */
 [data-reveal] {
