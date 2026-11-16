@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Windows leg's real-file tests get 60 s, not 20 — and now they say where the seconds went instead of only that they ran out.** The previous ceiling was set one measurement short: this file takes 2.3 s on `ubuntu-24.04`, 4.5 s on `macos-latest` and **14.2 s** on a healthy `windows-latest` (17.4 s with the rest of the suite running beside it, so contention is only +23%), where its heaviest test alone costs **1.3–1.7 s** — repeating within 0.3 s from run to run. What is _not_ repeatable is the host: one `windows-latest` run took the same file to **59.9 s**, with `a PINNED VACUUM owes a COPY` at **21 s** — 16× that test's own normal cost — while the CPU burnt stayed at 15–110 ms per phase, i.e. the thread was parked on the filesystem, not computing. So the 20 s was racing a degraded runner and lost the same way the 5 s default had; the assertions are untouched, because this ceiling is a hang guard, not a speed assertion (speed lives in `sqlite-store.perf.test.ts`, against p95 thresholds) and it is paid for only when a host is degraded. Two corrections to what 1.2.1 shipped: antivirus is **not** the cost — `RealTimeProtectionEnabled` is False on `windows-latest` and a flushed 1 MB write measures p50 **7.6 ms** / max **15.2 ms** there — and the worst test is 1.3–1.7 s, not 3.6 s. What costs is the VOLUME: ~34 MB of synchronous writes per case (8 MB of `fill`, 13 MB rebuilt by the VACUUM, 13 MB copied back by the checkpoint). Every phase over 1 s is now logged with **wall clock against CPU**, computed rather than asserted — `[real-file-io] maintain (VACUUM + checkpoint): 588 ms of wall clock for 94 ms of CPU — the thread was WAITING on the filesystem, not computing (degraded host, not this code)` — so the next red diagnoses itself: silence under 1 s on every platform, and a line that names the phase that ate the minute.
+
 ## [1.2.1] - 2026-11-16
 
 ### Fixed

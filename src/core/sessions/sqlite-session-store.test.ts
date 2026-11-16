@@ -8,17 +8,77 @@ import type { FileSystem } from "../tools/file-system";
 import type { ChatMessage } from "../history/types";
 
 /**
- * A `describe` for the tests that write REAL megabytes to a real file: `fill()` puts 2000 messages
- * of 2 KB on disk and deletes them, deliberately just under the WAL auto-checkpoint threshold, so
- * it cannot be made cheaper without changing what those tests prove.
+ * A `describe` for the tests that write REAL megabytes to a real file: `fill()` puts thousands of
+ * messages of 2 KB on disk and deletes them, deliberately just under the WAL auto-checkpoint
+ * threshold, so it cannot be made cheaper without changing what those tests prove.
  *
- * WHY 20 s AND NOT THE 5 s DEFAULT: 5 s is a macOS/Linux number. This file runs in 1.9 s here and
- * took 28.6 s on `windows-latest`, where its worst test alone costs 3.6 s (Defender + NTFS on
- * every page) and `dbVacuumStats carries the footprint` timed out on `main` while its neighbours
- * sat at 1.2–2.6 s — the ceiling was inside that runner's own noise. The assertions are untouched:
- * this is slack for the IO, not a licence to hang. A real hang still fails, at 20 s.
+ * WHY 60 s AND NOT THE 5 s DEFAULT: 5 s is a macOS/Linux number. Measured on the three runners,
+ * this file takes 2.3 s on `ubuntu-24.04`, 4.5 s on `macos-latest` and 14.2 s on a HEALTHY
+ * `windows-latest` (17.4 s with the rest of the suite running beside it, so contention is only
+ * +23%), where its heaviest test alone costs 1.3–1.7 s. Those numbers repeat within 0.3 s from
+ * run to run — which means the timeout is not racing the PLATFORM, it is racing a
+ * DEGRADED host: one `windows-latest` run took the same file to 59.9 s, with `a PINNED VACUUM owes
+ * a COPY` at 21 s — 16× that test's own normal cost — while the CPU burnt stayed at 15–110 ms per
+ * phase. The thread was WAITING on the filesystem, and 20 s was inside that tail, exactly as 5 s
+ * had been before it.
+ *
+ * The assertions are untouched: this ceiling is a HANG GUARD, not a speed assertion. Speed is
+ * asserted where it belongs, in `sqlite-store.perf.test.ts`, against p95 thresholds. A real hang
+ * still fails, at 60 s. Antivirus is NOT what costs, whatever this note used to claim:
+ * `RealTimeProtectionEnabled` is False on `windows-latest`, and a flushed 1 MB write measures p50
+ * 7.6 ms / max 15.2 ms there. What costs is the VOLUME — ~34 MB of synchronous writes per case:
+ * 8 MB of `fill`, 13 MB rebuilt by the VACUUM, 13 MB copied back by the checkpoint.
  */
-const describeRealFileIo = (name: string, fn: () => void) => describe(name, { timeout: 20_000 }, fn);
+const describeRealFileIo = (name: string, fn: () => void) => describe(name, { timeout: 60_000 }, fn);
+
+/**
+ * Times one phase of a real-file test and reports it ONLY when it was slow.
+ *
+ * A bare `Test timed out in 60000ms` says nothing about WHICH movement (`fill`, VACUUM, settle)
+ * ate the time, and on a degraded runner that answer is the whole difference between "the host is
+ * slow" and "someone made one click cost two VACUUMs". Wall vs CPU is what decides it: a phase
+ * that burns 15 ms of CPU in 500 ms of wall clock was WAITING on the filesystem, not computing.
+ *
+ * Silent under 1 s: every one of these tests has finished under 1.7 s on every platform, so a
+ * per-phase log line would be noise — the line exists for the day it is not.
+ */
+const SLOW_PHASE_MS = 1_000;
+function timed<T>(label: string, fn: () => T): T {
+  const wall = performance.now();
+  const cpu = process.cpuUsage();
+  try {
+    return fn();
+  } finally {
+    const wallMs = performance.now() - wall;
+    if (wallMs >= SLOW_PHASE_MS) {
+      const spent = process.cpuUsage(cpu);
+      const cpuMs = (spent.user + spent.system) / 1000;
+      // Which of the two it was is the whole point of the line, so it is computed, not asserted:
+      // more than half the wall clock spent OFF the CPU means the thread was parked on the disk.
+      const verdict =
+        wallMs - cpuMs > wallMs / 2
+          ? "the thread was WAITING on the filesystem, not computing (degraded host, not this code)"
+          : "the CPU was busy the whole time (this code, not the host)";
+      console.error(
+        `[real-file-io] ${label}: ${wallMs.toFixed(0)} ms of wall clock for ${cpuMs.toFixed(0)} ms of CPU — ${verdict}`,
+      );
+    }
+  }
+}
+
+/**
+ * Every maintenance call of a real-file store timed, wherever a test makes it.
+ *
+ * Wrapped here rather than at the ~28 call sites: `maintain()` is both the slowest phase and the
+ * one that has timed out twice, and the tests should keep reading as the assertions they are.
+ */
+function timedMaintenance(store: SqliteSessionStore): SqliteSessionStore {
+  const maintain = store.maintain.bind(store);
+  const settlePending = store.settlePending.bind(store);
+  store.maintain = (options = {}) => timed("maintain (VACUUM + checkpoint)", () => maintain(options));
+  store.settlePending = () => timed("settlePending (copy back)", () => settlePending());
+  return store;
+}
 
 /** In-memory fake filesystem: only `exists` matters (folderMissing). */
 function fakeFs(existing: string[] = []): FileSystem {
@@ -613,7 +673,7 @@ describeRealFileIo("SqliteSessionStore — a compaction that does not reach the 
     // 50 ms of busy_timeout: the point of the second test is that a BUSY checkpoint is
     // REPORTED, not that it is waited out.
     const store = new SqliteSessionStore({ db, fs, dbPath: file, busyTimeoutMs: 50, idGen: () => "s1" });
-    return { store, file };
+    return { store: timedMaintenance(store), file };
   };
   afterEach(() => {
     for (const db of dbs.splice(0))
@@ -626,11 +686,13 @@ describeRealFileIo("SqliteSessionStore — a compaction that does not reach the 
   });
   const fill = (store: SqliteSessionStore): void => {
     store.create("big");
-    store.saveMessages(
-      "s1",
-      Array.from({ length: 2000 }, (_, i) => msg("user", "x".repeat(2000) + i)),
+    timed("fill (2000 messages, 8 MB)", () =>
+      store.saveMessages(
+        "s1",
+        Array.from({ length: 2000 }, (_, i) => msg("user", "x".repeat(2000) + i)),
+      ),
     );
-    store.remove("s1"); // every page becomes free
+    timed("fill (remove, every page free)", () => store.remove("s1"));
   };
 
   it("dbVacuumStats carries the footprint BEFORE any click (the panel opens on these numbers)", () => {
@@ -765,7 +827,7 @@ describeRealFileIo("SqliteSessionStore — the compaction it owes is STATE, not 
       busyTimeoutMs: 50,
       idGen: () => `s${++n}`,
     });
-    return { store, file, db: real };
+    return { store: timedMaintenance(store), file, db: real };
   };
   afterEach(() => {
     for (const db of fileDbs.splice(0))
@@ -780,11 +842,13 @@ describeRealFileIo("SqliteSessionStore — the compaction it owes is STATE, not 
   /** A big session, then deleted: every page is free, so a VACUUM is worth real megabytes. */
   const fill = (store: SqliteSessionStore): void => {
     const id = store.create("big").id;
-    store.saveMessages(
-      id,
-      Array.from({ length: 1200 }, (_, i) => msg("user", "x".repeat(2000) + i)),
+    timed("fill (1200 messages, 5 MB)", () =>
+      store.saveMessages(
+        id,
+        Array.from({ length: 1200 }, (_, i) => msg("user", "x".repeat(2000) + i)),
+      ),
     );
-    store.remove(id);
+    timed("fill (remove, every page free)", () => store.remove(id));
   };
   /** The other VS Code window on the same sessions.db: a live read snapshot. */
   const readSnapshot = (file: string): DatabaseSync => {
