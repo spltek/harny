@@ -884,7 +884,7 @@ describe("SqliteSessionStore — the compaction it owes is STATE, not a retry", 
   });
 
   it("a busy checkpoint on a pass that wrote NOTHING is not a debt either", () => {
-    const { store, file, db } = openFile();
+    const { store, file } = openFile();
     fill(store);
     const first = store.maintain({ freeRatioThreshold: 0 });
     expect(first.vacuumed).toBe(true); // now the free list is empty
