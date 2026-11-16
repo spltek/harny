@@ -718,6 +718,13 @@ describe("SqliteSessionStore — the compaction it owes is STATE, not a retry", 
   // from 32 MB to 5 MB, while a SECOND VACUUM (16 ms, same pages) only re-appended 5 MB to the WAL
   // — which is exactly how "click again" grew the file instead of emptying it.
   const dirs: string[] = [];
+  // Every connection this block opens on a FILE, closed BEFORE the folder is removed — and the
+  // order is not cosmetic: Vitest unwinds `afterEach` hooks innermost-first, so the module-level
+  // hook that closes `dbs` runs AFTER this one. Removing the folder first left `sessions.db` open,
+  // and Windows refuses to delete an open file: `EPERM: Permission denied` in a hook, failing the
+  // seven tests of this block that had ALREADY passed. macOS and Ubuntu never see it (unlink on an
+  // open file is legal there), which is how it stayed green locally and red on `windows-latest`.
+  const fileDbs: DatabaseSync[] = [];
   /** sessions.db + its -wal: the whole footprint, which is what "did it empty" means. */
   const footprint = (file: string): number =>
     statSync(file).size + (existsSync(`${file}-wal`) ? statSync(`${file}-wal`).size : 0);
@@ -735,6 +742,7 @@ describe("SqliteSessionStore — the compaction it owes is STATE, not a retry", 
     const file = join(dir, "sessions.db");
     const real = new DatabaseSync(file);
     dbs.push(real);
+    fileDbs.push(real);
     let n = 0;
     // 50 ms of busy_timeout: `busy` must be REPORTED here, not waited out.
     const store = new SqliteSessionStore({
@@ -747,6 +755,13 @@ describe("SqliteSessionStore — the compaction it owes is STATE, not a retry", 
     return { store, file, db: real };
   };
   afterEach(() => {
+    for (const db of fileDbs.splice(0))
+      try {
+        db.close();
+      } catch {
+        /* already closed by the test */
+      }
+    // `maxRetries` is Node's own Windows remedy for a handle that is still being released.
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   });
   /** A big session, then deleted: every page is free, so a VACUUM is worth real megabytes. */
@@ -762,6 +777,7 @@ describe("SqliteSessionStore — the compaction it owes is STATE, not a retry", 
   const readSnapshot = (file: string): DatabaseSync => {
     const reader = new DatabaseSync(file);
     dbs.push(reader);
+    fileDbs.push(reader);
     reader.exec("BEGIN; SELECT count(*) FROM messages;");
     return reader;
   };
