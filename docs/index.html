@@ -581,19 +581,15 @@
             <li>Mode and Parallel are locked while a run is going.</li>
           </ul>
 
-          <div class="switch" role="tablist" aria-label="Mode">
-            <button class="switch__btn is-active" data-mode="analyze" role="tab" aria-selected="true">Analyze</button>
-            <button class="switch__btn" data-mode="build" role="tab" aria-selected="false">Build</button>
-            <span class="switch__glider" aria-hidden="true"></span>
+          <!-- The switch is a DRAWING here, not a control: this section plays itself (see the loop in
+               main.js), so a switch you can press would be a promise the page does not keep. The
+               panel above it already names the mode. -->
+          <div class="switch" aria-hidden="true">
+            <span class="switch__btn is-active" data-mode="analyze">Analyze</span>
+            <span class="switch__btn" data-mode="build">Build</span>
+            <span class="switch__glider"></span>
           </div>
 
-          <!-- The section is built around ONE click, so it asks for it: a real button (not a
-               decoration) that does what it says, and a ring on the Build half until someone does. -->
-          <button class="teaser" id="modeTeaser" type="button">
-            <span class="teaser__dot" aria-hidden="true"></span>
-            <span>Press <b>Build</b> to watch it write</span>
-            <span class="teaser__arrow" aria-hidden="true">→</span>
-          </button>
         </div>
 
         <div class="sect__panel reveal" data-reveal>
@@ -703,7 +699,7 @@
                 <span class="pn-stop is-off" aria-hidden="true"><i></i></span>
               </div>
               <div class="pn-controls">
-                <span class="pn-modebtn" role="button" tabindex="0" aria-label="Switch mode">
+                <span class="pn-modebtn">
                   <svg class="pn-ico pn-ico-analyze" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15.5 15.5 21 21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
                   <svg class="pn-ico pn-ico-build" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 14 9l6.5 2-6.5 2-2 6.5-2-6.5L3.5 11 10 9z" fill="currentColor"/></svg>
                   <span data-pn-mode>Analyze</span>

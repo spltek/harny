@@ -426,57 +426,25 @@
       show(note);
     }
 
-    btns.forEach((b) =>
-      b.addEventListener("click", () => {
-        setMode(b.dataset.mode);
-        if (b.dataset.mode === "build") playDemo();
-        else resetDemo();
-      }),
-    );
+    /* No handlers on the switch, on the mode key or on the modal's keys: this section has no
+       controls. The loop below is the only thing that changes the mode, and it calls the same
+       `setMode` a click used to call, so the drawing still moves the way a hand moved it. */
     $("#pn-modal-cancel", panel)?.addEventListener("click", resetDemo);
 
     /* ── the invitation ──
-       The switch is the only way into this section's point, and a switch nobody presses is the whole
-       demo wasted. So when the section is on screen the BUILD half gets a slow ring and a real button
-       appears under it that does exactly what it says; the first answer (switch, teaser, modal's
-       confirm) ends the invitation for the rest of the visit. */
-    const teaser = $("#modeTeaser");
-    const buildBtn = $('.switch__btn[data-mode="build"]', modeSwitch);
+       With nothing to press, the invite is drawn by the loop: the pointer walks into the modal and
+       taps the confirm, and the mode key behind the scrim breathes its ring while the question is
+       on screen. It is a picture of an answer, not a request for one. */
     const modesSection = $("#modes");
-    if (teaser && buildBtn && modesSection) {
-      let invited = false;
-      const modeKey = $(".pn-modebtn", panel);
-      const stopInvite = () => {
-        modeSwitch.classList.remove("is-inviting");
-        teaser.classList.remove("is-on");
-        panel.classList.remove("is-inviting");
-      };
-      // `force` is what the loop below uses: a cycle re-earns the invitation, so the same call has
-      // to be able to dress the window again after a click has taken it away.
-      const invite = (force) => {
-        if (invited && !force) return;
-        invited = true;
-        modeSwitch.classList.add("is-inviting");
-        teaser.classList.add("is-on");
-        panel.classList.add("is-inviting");
-      };
-      if ("IntersectionObserver" in window) {
-        const io = new IntersectionObserver(
-          (entries) => entries.forEach((e) => e.isIntersecting && invite()),
-          { threshold: 0.35 },
-        );
-        io.observe(modesSection);
-      } else {
-        invite();
-      }
-      // The teaser IS the click it advertises.
-      teaser.addEventListener("click", () => {
-        stopInvite();
-        buildBtn.click();
-        buildBtn.focus({ preventScroll: true });
-      });
-      buildBtn.addEventListener("click", stopInvite);
-      $("#pn-modal-ok", panel)?.addEventListener("click", stopInvite);
+    let invited = false;
+    const armInvite = () => {
+      invited = true;
+      panel.classList.add("is-inviting");
+    };
+    const disarmInvite = () => {
+      invited = false;
+      panel.classList.remove("is-inviting");
+    };
 
       /* ── the demo runs ITSELF ──
          This section is one question ("shall I show you Build writing?") and a question left open is
@@ -489,30 +457,30 @@
          It stops FOR GOOD on the first real interaction (`isTrusted` is false for the clicks the
          loop makes itself), it does not start at all under `prefers-reduced-motion`, and it holds
          while the section is off screen. */
-      // (`modesSection` is the one the invitation above already holds.)
+      // (`modesSection` is the one declared with the panel.)
       let looping = !reduce;
       let cycleTimer = 0;
       const after = (ms, fn) => {
         window.clearTimeout(cycleTimer);
         cycleTimer = window.setTimeout(fn, ms);
       };
-      function stopLoop() {
-        looping = false;
-        window.clearTimeout(cycleTimer);
-      }
       function beginCycle() {
         if (!looping || !modesSection) return;
-        // 1. the question, and the pointer that answers it
-        btns[0].click(); // Analyze: the modal comes back and the invitation re-arms
-        invite(true);
-        // 2. the answer — the visitor's click, played by the page
+        // 1. the question, with the pointer that answers it
+        setMode("analyze");
+        resetDemo();
+        armInvite();
+        // 2. the answer, ~3.6 s later: the panel changes mode and starts writing
         after(3600, () => {
           if (!looping) return;
-          btns[1].click(); // Build: "GO !" types itself, the turn lands, the diff streams
+          disarmInvite();
+          setMode("build");
+          playDemo();
           // 3. the turn is over (≈3.6 s of animation): leave it on screen to be read, then restart
           after(7600, () => {
             if (!looping) return;
-            btns[0].click(); // back to Analyze, the demo's turn taken away
+            setMode("analyze");
+            resetDemo();
             after(1200, beginCycle);
           });
         });
@@ -527,39 +495,8 @@
         } else {
           beginCycle();
         }
-        // A real hand on any control hands the section over to the visitor: no more cycles.
-        const handOver = (e) => {
-          if (e.isTrusted) stopLoop();
-        };
-        modesSection.addEventListener("pointerdown", handOver, true);
-        modesSection.addEventListener("keydown", handOver, true);
       }
 
-      /* …and the key under the reader's eyes does the same thing as the switch: one control, drawn in
-         two places, which is what the panel itself does with its mode button. */
-      if (modeKey) {
-        const toggleMode = () => {
-          stopInvite();
-          const next = panel.classList.contains("is-build") ? "analyze" : "build";
-          setMode(next);
-          if (next === "build") playDemo();
-          else resetDemo();
-        };
-        modeKey.addEventListener("click", toggleMode);
-        modeKey.addEventListener("keydown", (e) => {
-          if (e.key !== "Enter" && e.key !== " ") return;
-          e.preventDefault();
-          toggleMode();
-        });
-      }
-    }
-    // The modal's own answers: confirming switches the session (here: the switch), cancelling
-    // closes the question and leaves you in Analyze — exactly what declining does.
-    $("#pn-modal-ok", panel)?.addEventListener("click", () => {
-      setMode("build");
-      playDemo();
-    });
-    $("#pn-modal-cancel", panel)?.addEventListener("click", () => modal?.classList.add("is-hidden"));
     setMode("analyze");
     if (term) {
       // This transcript is not streamed in: it is HISTORY, already there when the page opens, so
