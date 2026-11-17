@@ -451,8 +451,10 @@
         teaser.classList.remove("is-on");
         panel.classList.remove("is-inviting");
       };
-      const invite = () => {
-        if (invited) return;
+      // `force` is what the loop below uses: a cycle re-earns the invitation, so the same call has
+      // to be able to dress the window again after a click has taken it away.
+      const invite = (force) => {
+        if (invited && !force) return;
         invited = true;
         modeSwitch.classList.add("is-inviting");
         teaser.classList.add("is-on");
@@ -475,6 +477,63 @@
       });
       buildBtn.addEventListener("click", stopInvite);
       $("#pn-modal-ok", panel)?.addEventListener("click", stopInvite);
+
+      /* ── the demo runs ITSELF ──
+         This section is one question ("shall I show you Build writing?") and a question left open is
+         a question nobody answers, so once the section is on screen the page answers it — with the
+         clicks a visitor would make, in the order they would make them: the invitation, the confirm
+         ~3.6 s later, the typing and the streaming turn, then back to Analyze and round again.
+         It is not a video: every step calls `btns[n].click()`, i.e. the very handler a real click
+         calls, so the switch slides to Build, the modal closes, the panel changes mode and the chat
+         scrolls — all of it as if a hand had done it.
+         It stops FOR GOOD on the first real interaction (`isTrusted` is false for the clicks the
+         loop makes itself), it does not start at all under `prefers-reduced-motion`, and it holds
+         while the section is off screen. */
+      // (`modesSection` is the one the invitation above already holds.)
+      let looping = !reduce;
+      let cycleTimer = 0;
+      const after = (ms, fn) => {
+        window.clearTimeout(cycleTimer);
+        cycleTimer = window.setTimeout(fn, ms);
+      };
+      function stopLoop() {
+        looping = false;
+        window.clearTimeout(cycleTimer);
+      }
+      function beginCycle() {
+        if (!looping || !modesSection) return;
+        // 1. the question, and the pointer that answers it
+        btns[0].click(); // Analyze: the modal comes back and the invitation re-arms
+        invite(true);
+        // 2. the answer — the visitor's click, played by the page
+        after(3600, () => {
+          if (!looping) return;
+          btns[1].click(); // Build: "GO !" types itself, the turn lands, the diff streams
+          // 3. the turn is over (≈3.6 s of animation): leave it on screen to be read, then restart
+          after(7600, () => {
+            if (!looping) return;
+            btns[0].click(); // back to Analyze, the demo's turn taken away
+            after(1200, beginCycle);
+          });
+        });
+      }
+      if (modesSection && looping) {
+        if ("IntersectionObserver" in window) {
+          new IntersectionObserver(
+            (entries) =>
+              entries.forEach((e) => (e.isIntersecting ? beginCycle() : window.clearTimeout(cycleTimer))),
+            { threshold: 0.4 },
+          ).observe(modesSection);
+        } else {
+          beginCycle();
+        }
+        // A real hand on any control hands the section over to the visitor: no more cycles.
+        const handOver = (e) => {
+          if (e.isTrusted) stopLoop();
+        };
+        modesSection.addEventListener("pointerdown", handOver, true);
+        modesSection.addEventListener("keydown", handOver, true);
+      }
 
       /* …and the key under the reader's eyes does the same thing as the switch: one control, drawn in
          two places, which is what the panel itself does with its mode button. */
