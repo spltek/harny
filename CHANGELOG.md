@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-11-17
+
+### Fixed
+
+- **Code keeps its colours inside a sub-agent, and an output that IS JSON is no longer flat.** Two places printed code-looking text in one grey. The first is a sub-agent's **Task** area: it is literally the object handed to `Delegate` (`formatArgs(args)`), and `addSubAgentCall` builds its own markup — so it never reached the one door a tool's Input goes through, and the JSON the model wrote to describe the job sat there uncoloured while the same JSON one bubble above was painted. It now takes the same road as an Input: the same JSON grammar, the same 12 000-character budget, the same escaped fallback, and the same invariant — the text is byte-identical after tokenizing, because the panel parses those arguments back. The second is an **Output** with no file behind it (an MCP call, a structured listing): it was coloured only when a path named a language, so a JSON answer was plain. It is now coloured when it _is_ JSON, and "is" is a proof rather than a shape guess: the text must open with `{` or `[` **and** `JSON.parse` must succeed — so a truncated object stays text, `null` and `42` stay text (a scalar is a value, not a document), and a file's extension still wins over the braces it happens to contain (`a.ts` holding JSON is TypeScript). The rule the feature shipped with is intact: a language nobody can prove stays plain.
+
+### Changed
+
+- **A wait is drawn, not emoji'd: the `⏳` on a running tool and on a running sub-agent is the panel's own spinner.** Both placeholders carried an hourglass, which is not a drawing but whatever each OS thinks a wait looks like (and `⌛` vs `⏳` is not even the same glyph). They now carry `.harny-spinner`, the same accent arc the session-switch card already turns — one recipe, the same keyframes, sized in `em` so it follows the text it sits in, hidden from assistive tech because the word beside it says the state, and stopped under `prefers-reduced-motion`. The hourglass inside a `TodoWrite` list is untouched: that one is the tool's DATA, read back by the model, not a placeholder.
+
 ## [1.3.0] - 2026-11-17
 
 ### Added
@@ -1983,7 +1993,8 @@ Completions protocol.
 - **Diagnostics**: per-turn lines in _Output > Harny_, an optional request log
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
-[Unreleased]: https://github.com/spltek/harny/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/spltek/harny/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/spltek/harny/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/spltek/harny/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/spltek/harny/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/spltek/harny/compare/v1.1.1...v1.2.0
