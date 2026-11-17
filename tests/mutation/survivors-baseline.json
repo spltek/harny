@@ -729,6 +729,35 @@
           "count": 3
         }
       ]
+    },
+    "find": {
+      "measured": "2026-11-17",
+      "mutants": 57,
+      "survivors": [
+        {
+          "file": "src/chat/webview/find.ts",
+          "mutator": "ArrayDeclaration",
+          "replacement": "[\"Stryker was here\"]",
+          "count": 1
+        },
+        {
+          "file": "src/chat/webview/find.ts",
+          "mutator": "OptionalChaining",
+          "replacement": "n.parentElement.closest",
+          "count": 1
+        },
+        {
+          "file": "src/chat/webview/find.ts",
+          "mutator": "StringLiteral",
+          "replacement": "\"Stryker was here!\"",
+          "count": 1
+        }
+      ]
+    },
+    "syntax": {
+      "measured": "2026-11-17",
+      "mutants": 71,
+      "survivors": []
     }
   }
 }

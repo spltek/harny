@@ -47,6 +47,42 @@ const RESCAN_MS = 300;
 /** Bounded: a one-letter query in a huge transcript must not build a million Ranges. */
 const MAX_MATCHES = 500;
 
+/**
+ * The blocks a query is searched in.
+ *
+ * A query is a PHRASE, not a word: `function foo` inside a highlighted diff lives in more than one
+ * text node (`function` is a token span of its own, the space and `foo` another), and a scan that
+ * looked at ONE TEXT NODE AT A TIME could only ever find phrases that happen to fall inside one —
+ * the coloured code was the text nobody could search. Concatenating the text nodes of a block and
+ * mapping the match back onto them is what makes a phrase searchable again.
+ *
+ * The block is the nearest one of these ancestors, so a match can never run ACROSS two bubbles
+ * (which a reader would call a wrong result) while it can still run across the inline markup of
+ * one line, or across a `<br>`. A diff LINE is a block of its own: `+new` and `-old` sit in two
+ * divs, and a query must not be able to stitch them together.
+ */
+const SEARCH_BLOCK =
+  ".msg, .fd-body, .fd-add, .fd-del, .fd-ctx, .fd-hunk, .code-block, pre, li, td, th, h1, h2, h3, h4, h5, h6";
+
+/** One searchable block: its text, and the map back to the nodes that text came from. */
+interface SearchBlock {
+  text: string;
+  /** In document order, each with the offset it starts at INSIDE `text`. */
+  parts: Array<{ node: Text; start: number; length: number }>;
+}
+
+/*
+ * THREE NAMED EQUIVALENT MUTANTS live in `blocks()` (`npm run mutate:find`, baseline 94,7 %):
+ *   - `n.parentElement?.closest(…)` → `.closest(…)`: a Text node reached by a walk of the transcript
+ *     always has a parent ELEMENT, so the optional chain has no reachable false branch.
+ *   - `text: ""` → any other literal: the prefix only shifts every part's `start` by the same
+ *     amount, and the offsets are compared against those starts.
+ *   - `parts: []` → `["…"]`: `nodeAt` resolves to the HIGHEST index whose part starts at or before
+ *     the offset, so a junk entry at index 0 can never be selected for a real character.
+ * They are recorded in tests/mutation/survivors-baseline.json, and they are listed here because a
+ * floor nobody can explain is a floor somebody turns off.
+ */
+
 /** The two highlight names, so the CSS and this file cannot drift apart. */
 export const HIGHLIGHT_ALL = "harny-find";
 export const HIGHLIGHT_CURRENT = "harny-find-current";
@@ -68,25 +104,68 @@ export function createFind(els: FindElements, opts: FindOptions = {}): Find {
   const open = (): boolean => !els.bar.classList.contains("hidden");
   const textLength = (): number => els.transcript.textContent?.length ?? 0;
 
+  /** Every block of the transcript, each with its text nodes flattened into one string. */
+  function blocks(): SearchBlock[] {
+    const out: SearchBlock[] = [];
+    const walker = els.transcript.ownerDocument.createTreeWalker(els.transcript, NodeFilter.SHOW_TEXT);
+    let current: SearchBlock | null = null;
+    let owner: Element | null = null;
+    for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) {
+      const text = n.data;
+      // No special case for an EMPTY text node: it contributes zero characters, and `nodeAt` resolves
+      // an offset to the LAST part that starts at or before it — so a zero-length part can never be
+      // selected for a character. A guard here would be a branch no test could tell from its absence.
+      // Distinct blocks are never interleaved in document order (a block's text nodes are all
+      // inside its own subtree), so "the owner changed" is exactly "a new block starts".
+      const el = n.parentElement?.closest(SEARCH_BLOCK) ?? els.transcript;
+      if (!current || el !== owner) {
+        current = { text: "", parts: [] };
+        owner = el;
+        out.push(current);
+      }
+      current.parts.push({ node: n, start: current.text.length, length: text.length });
+      current.text += text;
+    }
+    return out;
+  }
+
   function collect(query: string): Range[] {
     const out: Range[] = [];
     if (!query) return out;
     const needle = query.toLowerCase();
-    const walker = els.transcript.ownerDocument.createTreeWalker(els.transcript, NodeFilter.SHOW_TEXT);
-    for (let n = walker.nextNode(); n && out.length < MAX_MATCHES; n = walker.nextNode()) {
-      const text = n.textContent ?? "";
-      const hay = text.toLowerCase();
+    for (const block of blocks()) {
+      const hay = block.text.toLowerCase();
       let at = hay.indexOf(needle);
       while (at >= 0) {
-        const range = els.transcript.ownerDocument.createRange();
-        range.setStart(n, at);
-        range.setEnd(n, at + needle.length);
-        out.push(range);
-        if (out.length >= MAX_MATCHES) break;
+        out.push(rangeOver(block, at, needle.length));
+        if (out.length >= MAX_MATCHES) return out;
         at = hay.indexOf(needle, at + needle.length);
       }
     }
     return out;
+  }
+
+  /** The node holding the character at `offset`, and the offset INSIDE that node. */
+  function nodeAt(block: SearchBlock, offset: number): { node: Text; offset: number } {
+    let lo = 0;
+    let hi = block.parts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (block.parts[mid].start <= offset) lo = mid;
+      else hi = mid - 1;
+    }
+    const part = block.parts[lo];
+    return { node: part.node, offset: offset - part.start };
+  }
+
+  /** One Range covering `length` characters of the block, from `at` — across nodes, if it has to. */
+  function rangeOver(block: SearchBlock, at: number, length: number): Range {
+    const from = nodeAt(block, at);
+    const to = nodeAt(block, at + length - 1); // the LAST character, so `end` is exclusive of it
+    const range = els.transcript.ownerDocument.createRange();
+    range.setStart(from.node, from.offset);
+    range.setEnd(to.node, to.offset + 1);
+    return range;
   }
 
   function updateCount(): void {

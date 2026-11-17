@@ -4,6 +4,7 @@ import type { PendingViewItem } from "./pending-section";
 import { splitDiffFence, countDiff } from "./diff-fence";
 import Prism from "./prism";
 import { langIdForPath } from "./lang-map";
+import { highlightToHtml } from "./highlight";
 import {
   clampContextWindow,
   clampOutputTokens,
@@ -1929,6 +1930,12 @@ function addToolCall(name: string, args: unknown, beforeEl?: HTMLElement | null)
   if (!isToolName(name)) div.dataset.toolInvalid = "1";
   const label = toolLabel(name);
   const target = toolTargetArg(args);
+  // The Input is ALWAYS JSON (`formatArgs` stringifies), so its language is never a guess: every
+  // tool bubble gets the same colouring without asking WHICH tool it is. Over the budget
+  // (`HIGHLIGHT_MAX_CHARS`: a Write carrying a whole file) the escaped text is the answer, and it
+  // is still the same text — `extractPath` parses this back, so the bytes cannot move.
+  const argsText = formatArgs(args);
+  const argsHtml = highlightToHtml(argsText, "json") ?? escapeHtml(argsText);
   div.innerHTML =
     '<div class="tool-header">' +
     toggleMarkup("tool-toggle") +
@@ -1942,7 +1949,7 @@ function addToolCall(name: string, args: unknown, beforeEl?: HTMLElement | null)
     "</div>" +
     '<div class="tool-details collapsed">' +
     '<div class="tool-input"><span class="tool-label">Input</span><pre class="tool-args">' +
-    escapeHtml(formatArgs(args)) +
+    argsHtml +
     "</pre></div>" +
     '<div class="tool-output"><span class="tool-label">Output</span><pre class="tool-result">⏳ running…</pre></div>' +
     "</div>";
@@ -3037,12 +3044,22 @@ function populateToolDiff(pre: HTMLElement, body: string, stat: string | undefin
 }
 
 /**
+ * THE ONE TRAILER a tool output can carry: `read-tool.ts` appends it to a sliced read. It is a NOTE
+ * about the file, and colouring it would paint the last line of a truncated `Read` as if it were
+ * source (keywords and all) — so it is put back as text, after the tokens.
+ */
+const TRUNCATED_TRAILER = /\n\n\[Truncated: lines \d+-\d+ of \d+\]$/;
+
+/**
  * Fills a tool-result <pre> — PLAIN TEXT, exactly like before: the tool bubble
  * keeps its Input/Output structure and no line-prefix heuristics are applied
  * (a `ls -la` listing is never colored as a diff). The only exception: an
  * explicit ```diff fence is the signal for a file change — it is REMOVED from
  * the output and rendered instead as the Diff section of the tool bubble
  * (green + / red −).
+ *
+ * The one addition since: an output whose FILE has a language the bundle knows is tokenized
+ * (`highlightToHtml`) — same text, editor-style colours. Everything else stays plain, on purpose.
  */
 function renderToolOutput(el: HTMLElement, text: string): void {
   el.textContent = "";
@@ -3057,8 +3074,22 @@ function renderToolOutput(el: HTMLElement, text: string): void {
     el.textContent = found.rest;
     populateToolDiff(el, found.body, found.stat);
   } else {
-    el.textContent = text;
+    // Coloured only when the language is DEMONSTRABLE, and the file the tool touched is the only
+    // hint worth trusting: `ls`, `grep` and a shell's stdout are not a language, and tokenizing
+    // them invents keywords that read as a bug. No path (or an extension with no grammar) → plain
+    // text, exactly as before. The `path` comes from the Input of this same bubble.
+    const trailer = TRUNCATED_TRAILER.exec(text)?.[0] ?? "";
+    const body = trailer ? text.slice(0, text.length - trailer.length) : text;
+    const html = highlightToHtml(body, langHintOf(el));
+    if (html === null) el.textContent = text;
+    else el.innerHTML = html + (trailer ? escapeHtml(trailer) : "");
   }
+}
+
+/** The language an OUTPUT may be coloured with: the file it came from, and nothing else. */
+function langHintOf(el: HTMLElement): string | undefined {
+  const path = extractPath(el);
+  return path ? langIdForPath(path) : undefined;
 }
 
 const TODO_STATUSES = ["pending", "in_progress", "completed", "cancelled"] as const;

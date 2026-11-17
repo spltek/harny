@@ -91,6 +91,26 @@ describe("the scan", () => {
     expect(els.count.textContent).toBe("1/3");
   });
 
+  it("finds a PHRASE that runs across token spans (coloured code must stay searchable)", async () => {
+    stubHighlightApi();
+    // What a highlighted line really looks like: one span per token, so the phrase lives in
+    // several text nodes — a per-node scan could only ever find the pieces.
+    els.transcript.innerHTML =
+      '<pre><code><span class="token keyword">function</span> <span class="token function">foo</span><span class="token punctuation">(</span>)</code></pre>';
+    await type("function foo");
+    expect(els.count.textContent).toBe("1/1");
+  });
+
+  it("never matches ACROSS two blocks (each one is searched on its own)", async () => {
+    stubHighlightApi();
+    // Two BUBBLES (`.msg` is a block, exactly as in the panel) and a leading space in the second:
+    // concatenated they would read "alpha beta", so a scan that flattened the transcript into one
+    // run would find a phrase nobody wrote on one line.
+    els.transcript.innerHTML = '<div class="msg">alpha</div><div class="msg"> beta</div>';
+    await type("alpha beta");
+    expect(els.count.textContent).toBe("no match");
+  });
+
   it("CAPS the list at 500 (a one-letter query must not build a million Ranges)", async () => {
     stubHighlightApi();
     els.transcript.innerHTML = `<p>${"x ".repeat(600)}</p>`;
@@ -127,6 +147,46 @@ describe("the debounce", () => {
     await new Promise((r) => setTimeout(r, 150));
     // One scan, on the LAST query — and the count is not a per-keystroke average of stale ones.
     expect(els.count.textContent).toBe("1/2");
+  });
+});
+
+describe("where a match POINTS (a count can be right while the Range is not)", () => {
+  /** Force the selection fallback and take the focus out of our own fields. */
+  const selectNothing = () => {
+    dropHighlightApi();
+    (document.getElementById("elsewhere") as HTMLInputElement).focus();
+  };
+
+  it("covers the whole phrase that runs across token spans, not a piece of it", async () => {
+    selectNothing();
+    els.transcript.innerHTML = '<p><span class="token">foo</span> bar</p>';
+    await type("foo bar");
+    expect(window.getSelection()!.toString()).toBe("foo bar");
+  });
+
+  it("starts EXACTLY on the node boundary it was found at (offsets are not approximate)", async () => {
+    selectNothing();
+    // The match begins where the second text node begins: the offset is a part boundary, and a
+    // lookup that resolves it to the PREVIOUS part end still "finds" it — one character short.
+    els.transcript.innerHTML = "<p><span>alpha </span><span>beta</span></p>";
+    await type("beta");
+    const selection = window.getSelection()!;
+    // The NODE, not just the text: a range that starts at the end of the previous node reads
+    // almost the same and would be a highlight a pixel off for the rest of its life.
+    expect((selection.anchorNode as Text).data).toBe("beta");
+    expect(selection.toString()).toBe("beta");
+  });
+
+  it("points at the occurrence in the block it belongs to, not at the first one", async () => {
+    selectNothing();
+    els.transcript.innerHTML = "<p>needle</p><p>x needle</p>";
+    await type("needle");
+    els.next.click(); // the second match
+    expect(els.count.textContent).toBe("2/2");
+    const selection = window.getSelection()!;
+    expect(selection.toString()).toBe("needle");
+    const block = (selection.anchorNode as Text).parentElement?.closest("p");
+    expect(block?.textContent).toBe("x needle");
   });
 });
 

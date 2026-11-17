@@ -33,6 +33,13 @@ const ANCHORS: Record<string, string[]> = {
     "streaming: rt.agent.streaming,",
     "liveThinking: live.thinking",
   ],
+  "src/chat/webview/find.ts": [
+    "function blocks(): SearchBlock[] {",
+    "const el = n.parentElement?.closest(SEARCH_BLOCK) ?? els.transcript;",
+    "current.text += text;",
+    "function nodeAt(block: SearchBlock, offset: number)",
+    "range.setEnd(to.node, to.offset + 1);",
+  ],
 };
 
 type Hunk = { file: string; start: number; end: number; config: string };

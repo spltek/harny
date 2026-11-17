@@ -1,6 +1,8 @@
 import MarkdownIt from "markdown-it";
 import taskLists from "markdown-it-task-lists";
 import DOMPurify from "dompurify";
+import { highlightToHtml } from "./highlight";
+import { langIdForFence } from "./lang-map";
 
 const md = new MarkdownIt({
   html: false, // raw HTML in the source is escaped, never rendered
@@ -10,6 +12,13 @@ const md = new MarkdownIt({
   // newlines inside a paragraph (model-written) would collapse to spaces.
   breaks: true,
   typographer: false,
+  // Fenced code is tokenized HERE, where the language is still known and the body is still
+  // SOURCE — post-render it is already escaped, and re-tokenizing escaped text is how a `&lt;`
+  // ends up painted as a string. markdown-it asks for the body only and keeps its own
+  // `<pre><code class="language-x">` wrapper, so `wrapCodeBlocks` still labels the block. The
+  // empty string is markdown-it's "escape it yourself": the answer for every fence this bundle
+  // has no grammar for (```mermaid, ```diff, a bare fence), which must stay plain.
+  highlight: (code: string, lang: string): string => highlightToHtml(code, langIdForFence(lang)) ?? "",
 });
 
 md.use(taskLists, { label: true, enabled: true });
@@ -21,7 +30,10 @@ md.use(taskLists, { label: true, enabled: true });
 function wrapCodeBlocks(html: string): string {
   return html
     .replace(
-      /<pre><code class="language-(\w+)">/g,
+      // Any fence label, not just `\w+`: `c++`, `c#` and `objective-c` are real labels, and a
+      // regex that skipped them fell through to the rule below — which then matched only the
+      // closing `</code></pre>` and left a `</div>` with no opening tag behind.
+      /<pre><code class="language-([^\s"]+)">/g,
       '<div class="code-block"><div class="code-lang">$1</div><pre><code>',
     )
     .replace(/<pre><code>/g, '<div class="code-block"><pre><code>')

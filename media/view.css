@@ -2002,59 +2002,61 @@ body {
   color: inherit;
   opacity: 0.8;
 }
-/* Editor-style syntax tokens inside the diff lines (Prism classes). One-dark
-   and one-light are the two readings of the SAME roles, so a light theme gets
-   readable code instead of a washed-out one: see the code-* roles in
-   view-config.ts. */
-.fd-body .token {
+/* Editor-style syntax tokens wherever CODE is shown (Prism classes): the diff body, a fenced
+   block of an answer, a tool's Input (always JSON) and an output whose file language is known.
+   The `:is()` list IS the scope — Prism tokenizes a whole element, so any new surface must opt in
+   here or it stays plain; and no token can leak a colour onto text that was never tokenized.
+   One-dark and one-light are the two readings of the SAME roles, so a light theme gets readable
+   code instead of a washed-out one: see the code-* roles in view-config.ts. */
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token {
   color: inherit;
   opacity: 1;
 }
-.fd-body .token.comment,
-.fd-body .token.prolog,
-.fd-body .token.cdata {
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.comment,
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.prolog,
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.cdata {
   color: var(--code-comment);
   font-style: italic;
 }
-.fd-body .token.keyword,
-.fd-body .token.selector,
-.fd-body .token.atrule,
-.fd-body .token.important {
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.keyword,
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.selector,
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.atrule,
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.important {
   color: var(--code-keyword);
 }
-.fd-body .token.string,
-.fd-body .token.attr-value,
-.fd-body .token.char,
-.fd-body .token.regex {
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.string,
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.attr-value,
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.char,
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.regex {
   color: var(--code-string);
 }
-.fd-body .token.number,
-.fd-body .token.boolean,
-.fd-body .token.constant {
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.number,
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.boolean,
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.constant {
   color: var(--code-number);
 }
-.fd-body .token.function,
-.fd-body .token.function-variable {
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.function,
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.function-variable {
   color: var(--code-function);
 }
-.fd-body .token.class-name,
-.fd-body .token.maybe-class-name {
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.class-name,
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.maybe-class-name {
   color: var(--code-class);
 }
-.fd-body .token.builtin {
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.builtin {
   color: var(--code-builtin);
 }
-.fd-body .token.operator,
-.fd-body .token.punctuation {
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.operator,
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.punctuation {
   color: var(--code-operator);
 }
-.fd-body .token.property,
-.fd-body .token.attr-name,
-.fd-body .token.variable {
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.property,
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.attr-name,
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.variable {
   color: var(--code-property);
 }
-.fd-body .token.doctype,
-.fd-body .token.entity {
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.doctype,
+:is(.fd-body, .code-block, .tool-args, .tool-result) .token.entity {
   color: var(--code-property);
 }
 .tool-call-pending {

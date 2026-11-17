@@ -2,6 +2,13 @@
 import { describe, it, expect } from "vitest";
 import { renderMarkdown } from "./markdown";
 
+/** The rendered HTML's TEXT, i.e. what the reader actually gets after the tokens are unwrapped. */
+function textOf(html: string): string {
+  const holder = document.createElement("div");
+  holder.innerHTML = html;
+  return holder.textContent ?? "";
+}
+
 describe("renderMarkdown (markdown-it + DOMPurify)", () => {
   it("turns single newlines into <br> (no pre-wrap on markdown bubbles)", () => {
     const html = renderMarkdown("line one\nline two");
@@ -44,8 +51,30 @@ describe("renderMarkdown (markdown-it + DOMPurify)", () => {
     const html = renderMarkdown("```ts\nconst x = <T>(a: string) => a;\n```");
     expect(html).toContain('<div class="code-block">');
     expect(html).toContain('<div class="code-lang">ts</div>');
-    expect(html).toContain("&lt;T&gt;");
+    // The body is COLOURED now, so `<T>` can be split across token spans: what has to survive is
+    // the TEXT and the escaping of the markup inside it.
+    expect(textOf(html)).toContain("const x = <T>(a: string) => a;");
     expect(html).not.toContain("<T>");
+  });
+
+  it("colours a fenced block whose language the bundle knows", () => {
+    const html = renderMarkdown("```ts\nconst a = 1;\n```");
+    expect(html).toContain('class="token keyword"');
+  });
+
+  it("keeps a fence the bundle has no grammar for PLAIN (no invented keywords)", () => {
+    const html = renderMarkdown("```mermaid\ngraph TD; a-->b\n```");
+    expect(html).toContain('<div class="code-lang">mermaid</div>');
+    expect(html).not.toContain("token"); // a colour here would be a claim nobody can make
+    expect(textOf(html)).toContain("graph TD; a-->b");
+  });
+
+  it("labels a fence whose name is not a word (c++, c#) without unbalancing the wrapper", () => {
+    const html = renderMarkdown("```c++\nint main() {}\n```");
+    expect(html).toContain('<div class="code-lang">c++</div>');
+    // The label regex used to be `\\w+`, so `c++` fell through to the bare `<pre><code>` rule and
+    // left a closing `</div>` with no opening tag: the count is the cheapest proof it cannot.
+    expect((html.match(/<div/g) ?? []).length).toBe((html.match(/<\/div>/g) ?? []).length);
   });
 
   it("never processes markdown inside code blocks", () => {

@@ -3946,6 +3946,68 @@ describe("view webview client", () => {
     expect(document.querySelector(".msg.tool .tool-path")?.textContent).toBe("ls -la");
   });
 
+  it("colours a tool's INPUT (always JSON) and keeps the text the Diff parses", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    hostMessage({ type: "toolCall", id: "hl1", name: "Read", arguments: { path: "/w/a.ts", offset: 2 } });
+    hostMessage({ type: "toolResult", toolCallId: "hl1", output: "nothing here", isError: false });
+    const args = document.querySelector(".msg.tool .tool-args") as HTMLElement;
+    // JSON properties are tokens, so the Input reads like the data it is…
+    expect(args.querySelector(".token.property")?.textContent).toBe('"path"');
+    // …and not one character moved: this is what `extractPath` parses to find the file (and thus
+    // the language of the OUTPUT) and what the Diff section is built from.
+    expect(JSON.parse(args.textContent!)).toEqual({ path: "/w/a.ts", offset: 2 });
+    expect(document.querySelector(".msg.tool .tool-path")?.textContent).toBe("/w/a.ts");
+  });
+
+  it("colours an OUTPUT only when the file it came from has a language the bundle knows", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    hostMessage({ type: "toolCall", id: "hl2", name: "Read", arguments: { path: "/w/a.ts" } });
+    hostMessage({ type: "toolResult", toolCallId: "hl2", output: "const a = 1;", isError: false });
+    const result = document.querySelector(".msg.tool .tool-result") as HTMLElement;
+    expect(result.querySelector(".token.keyword")?.textContent).toBe("const");
+    expect(result.textContent).toBe("const a = 1;");
+  });
+
+  it("leaves a Shell output PLAIN (stdout is not a language)", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    hostMessage({ type: "toolCall", id: "hl3", name: "Shell", arguments: { command: "cat a.ts" } });
+    hostMessage({ type: "toolResult", toolCallId: "hl3", output: "const a = 1;", isError: false });
+    const result = document.querySelector(".msg.tool .tool-result") as HTMLElement;
+    // The INPUT has a language (it is JSON, always). The output does not: the command mentions a
+    // file, and a command line is not a language declaration — that would be a guess.
+    expect(result.querySelector(".token")).toBeNull();
+    expect(result.textContent).toBe("const a = 1;");
+  });
+
+  it("keeps the `[Truncated: …]` trailer of a Read as TEXT, not as code", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    hostMessage({ type: "toolCall", id: "hl4", name: "Read", arguments: { path: "/w/a.ts" } });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "hl4",
+      output: "const a = 1;\n\n[Truncated: lines 1-2 of 900]",
+      isError: false,
+    });
+    const result = document.querySelector(".msg.tool .tool-result") as HTMLElement;
+    expect(result.querySelector(".token.keyword")?.textContent).toBe("const");
+    // The note ABOUT the file is not the file: it must not come back painted as source.
+    const tokens = [...result.querySelectorAll(".token")].map((t) => t.textContent).join("");
+    expect(tokens).not.toContain("Truncated");
+    expect(result.textContent).toBe("const a = 1;\n\n[Truncated: lines 1-2 of 900]");
+  });
+
   it("shows the glob pattern after the tool name for Glob", async () => {
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
