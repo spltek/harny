@@ -1381,12 +1381,25 @@ main {
 .pn-input.is-typing .pn-ph {
   display: none;
 }
+/* The caret is the field's OWN, so it sits where a caret sits: at the START of an empty field (before
+   the placeholder), and after the text once there is text. `order` does the move, so the DOM stays
+   the order things are read in. White, like the ink the panel types with. */
 .pn-caret {
+  order: 1;
   display: inline-block;
   width: 1px;
   height: 1.05em;
-  background: var(--pn-accent);
+  background: var(--pn-fg-strong);
   animation: pn-caret 1.1s steps(1) infinite;
+}
+.pn-ph {
+  order: 2;
+}
+.pn-typed {
+  order: 3;
+}
+.pn-input.is-typing .pn-caret {
+  order: 4;
 }
 @keyframes pn-caret {
   0%,
@@ -1464,6 +1477,156 @@ main {
   font-size: 0.92em;
   font-weight: 600;
   white-space: nowrap;
+}
+/* The key INSIDE the panel is a real control here, and while nobody has touched the demo it
+   advertises itself with the same ring the switch wears — on the pill the reader is actually looking
+   at, not only on the switch outside the picture. */
+.console--sect .pn-modebtn {
+  position: relative;
+  cursor: pointer;
+}
+.console--sect .pn-modebtn::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 999px;
+  border: 1px solid var(--pn-accent);
+  pointer-events: none;
+  opacity: 0;
+}
+.console--sect.is-inviting .pn-modebtn::after {
+  animation: invite 2.6s var(--ease) infinite;
+}
+.console--sect .pn-modebtn:focus-visible {
+  outline: 1px solid var(--pn-accent);
+  outline-offset: 2px;
+}
+/* ── THE POINTER ──
+   A ring says "look here"; a cursor says "click this". So while the demo is untouched a small
+   pointer glides to the mode key, taps it (the key dips, a ripple leaves the tip) and goes away,
+   looping — the whole invitation in one gesture, drawn INSIDE the interface. It is absolutely
+   positioned against the row, so it costs no layout, and it dies with `is-inviting`. */
+/* The pointer lives in the MODAL's action row: with the question on screen, the thing to click is
+   the confirm, so that is what it points at. Measured against the row's own right edge, so it lands
+   on the button at any card width. */
+.pn-modal__actions {
+  position: relative;
+}
+.pn-cursor {
+  position: absolute;
+  right: 0;
+  top: 0;
+  z-index: 4;
+  width: 12px;
+  height: 12px;
+  color: var(--pn-fg-strong);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.85));
+  pointer-events: none;
+  opacity: 0;
+}
+.pn-cursor svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.pn-cursor__ring {
+  position: absolute;
+  left: 1px;
+  top: 1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid var(--pn-accent);
+  opacity: 0;
+  transform: scale(0.3);
+}
+.console--sect.is-inviting .pn-modal__actions .pn-cursor {
+  animation: pn-pointer 4.6s var(--ease) infinite;
+}
+.console--sect.is-inviting .pn-cursor__ring {
+  animation: pn-ripple 4.6s linear infinite;
+}
+/* the confirm dips under the tap, and wears the same breathing ring as the key behind the scrim */
+.console--sect.is-inviting .pn-modal__ok {
+  animation: pn-tap 4.6s var(--ease) infinite;
+}
+.console--sect.is-inviting .pn-modal__ok::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 8px;
+  border: 1px solid var(--pn-accent);
+  pointer-events: none;
+  opacity: 0;
+  animation: invite 2.6s var(--ease) infinite;
+}
+.pn-modal__ok {
+  position: relative;
+}
+/* travel from below-right, settle on the key (58px, 12px — the key is the first child of the row and
+   is 20px tall, so this is the same point at any panel width), tap in the middle, withdraw. */
+@keyframes pn-pointer {
+  0%,
+  6% {
+    opacity: 0;
+    transform: translate(16px, 46px) scale(0.9);
+  }
+  16% {
+    opacity: 1;
+  }
+  34% {
+    opacity: 1;
+    transform: translate(-58px, 16px) scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: translate(-62px, 13px) scale(0.94);
+  }
+  58% {
+    opacity: 1;
+    transform: translate(-62px, 13px) scale(1);
+  }
+  74% {
+    opacity: 1;
+    transform: translate(-44px, 4px);
+  }
+  86%,
+  100% {
+    opacity: 0;
+    transform: translate(-26px, -6px);
+  }
+}
+@keyframes pn-ripple {
+  0%,
+  44% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(0.6);
+  }
+  68% {
+    opacity: 0;
+    transform: scale(2.4);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.4);
+  }
+}
+@keyframes pn-tap {
+  0%,
+  44% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(0.94);
+  }
+  60%,
+  100% {
+    transform: scale(1);
+  }
 }
 .pn-modebtn .pn-ico {
   width: 10px;
@@ -2067,6 +2230,110 @@ main {
   box-shadow: 0 0 20px rgba(208, 136, 86, 0.55);
 }
 
+/* ── THE INVITATION ──
+   This section exists for one click, and a click nobody takes is the whole section wasted: so the
+   BUILD half of the switch breathes a ring until someone presses it, and a real button under the
+   switch says what the press does. Both stop for good on the first answer (the switch, the teaser,
+   or the modal's confirm) — an invitation that outlives its welcome is a nag. */
+.switch.is-inviting .switch__btn[data-mode="build"]::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 999px;
+  border: 1px solid var(--tan);
+  pointer-events: none;
+  opacity: 0;
+  animation: invite 2.6s var(--ease) infinite;
+}
+@keyframes invite {
+  0% {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  35% {
+    opacity: 0.6;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.16);
+  }
+}
+.teaser {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-top: 0.9rem;
+  padding: 0.45rem 0.9rem 0.45rem 0.75rem;
+  font-family: var(--f-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--dim);
+  border: 1px dashed rgba(208, 136, 86, 0.45);
+  border-radius: 999px;
+  background: rgba(208, 136, 86, 0.07);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(5px);
+  pointer-events: none;
+  transition:
+    opacity 0.5s var(--ease),
+    transform 0.5s var(--ease),
+    color 0.25s,
+    border-color 0.25s,
+    background 0.25s;
+}
+.teaser.is-on {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+.teaser b {
+  color: var(--tan);
+  font-weight: 700;
+}
+.teaser__dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--tan);
+  box-shadow: 0 0 10px var(--tan);
+  animation: teaser-dot 1.8s ease-in-out infinite;
+}
+@keyframes teaser-dot {
+  50% {
+    opacity: 0.3;
+    transform: scale(0.78);
+  }
+}
+.teaser__arrow {
+  transition: transform 0.25s var(--ease);
+}
+.teaser:hover {
+  color: var(--text-hi);
+  border-color: var(--tan);
+  background: rgba(208, 136, 86, 0.13);
+}
+.teaser:hover .teaser__arrow {
+  transform: translateX(3px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .switch.is-inviting .switch__btn[data-mode="build"]::after,
+  .teaser__dot {
+    animation: none;
+    opacity: 0.6;
+  }
+  .console--sect.is-inviting .pn-modal__actions .pn-cursor {
+    animation: none;
+    opacity: 1;
+    transform: translate(-62px, 13px);
+  }
+  .console--sect.is-inviting .pn-modal__ok {
+    animation: none;
+  }
+}
+
 /* ---------- 07c. THE MODE SECTION — same panel, plus the modal the mode raises ---------- */
 /* ONE component, two states. The hero's replica is this `.console`; here it is the same markup in
    ANALYZE with the `Switch to Build?` modal drawn over it — the real one (`promptSwitchToBuild` in
@@ -2085,9 +2352,11 @@ main {
    must not grow and shove the page down while it types. Past the ceiling it scrolls, as the real
    transcript does. */
 .console--sect #term-modes {
-  /* 392px is the Analyse turn MEASURED: it fits with nothing cut, so the demo's extra turn is the
-     only thing that ever scrolls this box — and the card never changes height while it types. */
-  max-height: 392px;
+  /* Deep enough that when the demo's turn lands there is still HISTORY VISIBLE above it: a prompt
+     that appears alone at the top of an empty-looking box reads as a first message, and this chat
+     arrives from a session already running. It also swallows the whole Analyse turn, so the card
+     never changes height while it types. */
+  max-height: 470px;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;

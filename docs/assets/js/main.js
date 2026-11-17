@@ -287,31 +287,40 @@
        and the Write card streams its diff. It is the ONE animation of this section, and it says
        what the copy says: in Build the tools write for real. Anything it adds can be taken away
        again by the switch (and by `prefers-reduced-motion`, which draws it all at once). */
+    /* The diff of the demo — ONE source, colour and all, for the Analyse card and for the one the
+       demo writes: the panel syntax-highlights a diff (index.html's line is tokenized by the same
+       one-dark roles the Prism bundle paints), so a flat green block would be the one thing on
+       screen that is not the app. */
     const GO_DIFF = [
-      '+import { sleep } from "./sleep"',
-      "+",
-      "+export interface RetryOptions {",
-      "+  maxRetries?: number",
-      "+  baseDelayMs?: number",
-      "+}",
-      "+",
-      "+export const isRetryable = (status: number) =>",
-      "+  status === 429 || status >= 500",
-      "+",
-      "+export async function withRetry<T>(",
-      "+  run: () => Promise<T>,",
-      "): Promise<T> {",
-      "+  for (let attempt = 0; ; attempt++) {",
-      "+    try {",
-      "+      return await run()",
-      "+    } catch (e) {",
-      "+      if (attempt >= maxRetries) throw e",
-      "+      await sleep(Math.min(2000, baseDelayMs * 2 ** attempt))",
-      "+    }",
-      "+  }",
-      "+}",
-    ];
+      '<span class="t-kw">import</span> { sleep } <span class="t-kw">from</span> <span class="t-str">"./sleep"</span>',
+      "",
+      '<span class="t-kw">export</span> <span class="t-kw">interface</span> <span class="t-cls">RetryOptions</span> {',
+      "  maxRetries?: <span class=\"t-cls\">number</span>",
+      "  baseDelayMs?: <span class=\"t-cls\">number</span>",
+      "}",
+      "",
+      '<span class="t-kw">export</span> <span class="t-kw">const</span> isRetryable = (status: <span class="t-cls">number</span>) =&gt;',
+      "  status === <span class=\"t-num\">429</span> || status &gt;= <span class=\"t-num\">500</span>",
+      "",
+      '<span class="t-kw">export</span> <span class="t-kw">async</span> <span class="t-kw">function</span> <span class="t-fn">withRetry</span>&lt;T&gt;(',
+      "  run: () =&gt; <span class=\"t-cls\">Promise</span>&lt;T&gt;,",
+      "  { maxRetries = <span class=\"t-num\">4</span>, baseDelayMs = <span class=\"t-num\">250</span> }: <span class=\"t-cls\">RetryOptions</span> = {},",
+      "): <span class=\"t-cls\">Promise</span>&lt;T&gt; {",
+      "  <span class=\"t-kw\">for</span> (<span class=\"t-kw\">let</span> attempt = <span class=\"t-num\">0</span>; ; attempt++) {",
+      "    <span class=\"t-kw\">try</span> {",
+      "      <span class=\"t-kw\">return</span> <span class=\"t-kw\">await</span> <span class=\"t-fn\">run</span>()",
+      "    } <span class=\"t-kw\">catch</span> (e) {",
+      "      <span class=\"t-kw\">if</span> (attempt &gt;= maxRetries) <span class=\"t-kw\">throw</span> e",
+      "      <span class=\"t-kw\">await</span> <span class=\"t-fn\">sleep</span>(<span class=\"t-cls\">Math</span>.<span class=\"t-fn\">min</span>(<span class=\"t-num\">2000</span>, baseDelayMs * <span class=\"t-num\">2</span> ** attempt))",
+      "    }",
+      "  }",
+      "}",
+    ].map((line) => (line === "" ? '<span class="pn-add">+</span>' : `<span class="pn-add">+${line}</span>`));
     const term = $("#term-modes", panel);
+    // The Analyse card's diff arrives already written — it is the turn that was reviewed, not one
+    // that is streaming.
+    const staticDiff = $("#mode-panel [data-diff]", document);
+    if (staticDiff) staticDiff.insertAdjacentHTML("beforeend", "\n" + GO_DIFF.join("\n"));
     const field = $(".pn-input", panel);
     const typed = $(".pn-typed", panel);
     let playing = 0; // a token, so a switch mid-animation cancels the old one
@@ -331,7 +340,8 @@
       term?.querySelectorAll("[data-demo]").forEach((n) => n.remove());
       if (typed) typed.textContent = "";
       field?.classList.remove("is-typing");
-      if (term) term.scrollTop = 0;
+      // A chat with history opens at its END, not at its beginning.
+      if (term) term.scrollTop = term.scrollHeight;
     }
 
     async function playDemo() {
@@ -372,8 +382,19 @@
         "6.4k in · 58 out · ⚡ 6.1k · elapsed 1.9s · first token 540ms</div>";
       show(turn);
 
-      // 3. the Write card, with the diff arriving line by line
-      await wait(560);
+      // 3. the turn thinks first — a real one is prompt → thinking → tool
+      await wait(420);
+      if (token !== playing) return;
+      const thinking = el("div", "pn-foldblock is-open", "");
+      thinking.dataset.demo = "1";
+      thinking.innerHTML =
+        '<div class="pn-fold"><span class="pn-chev">▸</span> Thinking…</div>' +
+        '<div class="pn-fold-body">GO means apply: the file does not exist yet, so it is one Write and ' +
+        "then the suite. Retry on 429 and 5xx only — a 4xx is an answer, not a hiccup.</div>";
+      show(thinking);
+
+      // 4. the Write card, with the diff arriving line by line
+      await wait(900);
       if (token !== playing) return;
       const card = el("div", "pn-tool", "");
       card.dataset.demo = "1";
@@ -387,13 +408,13 @@
       const pre = card.querySelector("[data-diff]");
       for (const line of GO_DIFF) {
         if (token !== playing) return;
-        pre.textContent += (pre.textContent ? "\n" : "") + line;
+        pre.insertAdjacentHTML("beforeend", (pre.childNodes.length > 1 ? "\n" : "") + line);
         pre.scrollTop = pre.scrollHeight;
         term.scrollTo({ top: term.scrollHeight, behavior: "smooth" });
         await wait(reduce ? 0 : 55);
       }
 
-      // 4. the turn's own totals, once the tool has stopped writing
+      // 5. the turn's own totals, once the tool has stopped writing
       await wait(320);
       if (token !== playing) return;
       const note = el(
@@ -413,6 +434,66 @@
       }),
     );
     $("#pn-modal-cancel", panel)?.addEventListener("click", resetDemo);
+
+    /* ── the invitation ──
+       The switch is the only way into this section's point, and a switch nobody presses is the whole
+       demo wasted. So when the section is on screen the BUILD half gets a slow ring and a real button
+       appears under it that does exactly what it says; the first answer (switch, teaser, modal's
+       confirm) ends the invitation for the rest of the visit. */
+    const teaser = $("#modeTeaser");
+    const buildBtn = $('.switch__btn[data-mode="build"]', modeSwitch);
+    const modesSection = $("#modes");
+    if (teaser && buildBtn && modesSection) {
+      let invited = false;
+      const modeKey = $(".pn-modebtn", panel);
+      const stopInvite = () => {
+        modeSwitch.classList.remove("is-inviting");
+        teaser.classList.remove("is-on");
+        panel.classList.remove("is-inviting");
+      };
+      const invite = () => {
+        if (invited) return;
+        invited = true;
+        modeSwitch.classList.add("is-inviting");
+        teaser.classList.add("is-on");
+        panel.classList.add("is-inviting");
+      };
+      if ("IntersectionObserver" in window) {
+        const io = new IntersectionObserver(
+          (entries) => entries.forEach((e) => e.isIntersecting && invite()),
+          { threshold: 0.35 },
+        );
+        io.observe(modesSection);
+      } else {
+        invite();
+      }
+      // The teaser IS the click it advertises.
+      teaser.addEventListener("click", () => {
+        stopInvite();
+        buildBtn.click();
+        buildBtn.focus({ preventScroll: true });
+      });
+      buildBtn.addEventListener("click", stopInvite);
+      $("#pn-modal-ok", panel)?.addEventListener("click", stopInvite);
+
+      /* …and the key under the reader's eyes does the same thing as the switch: one control, drawn in
+         two places, which is what the panel itself does with its mode button. */
+      if (modeKey) {
+        const toggleMode = () => {
+          stopInvite();
+          const next = panel.classList.contains("is-build") ? "analyze" : "build";
+          setMode(next);
+          if (next === "build") playDemo();
+          else resetDemo();
+        };
+        modeKey.addEventListener("click", toggleMode);
+        modeKey.addEventListener("keydown", (e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          toggleMode();
+        });
+      }
+    }
     // The modal's own answers: confirming switches the session (here: the switch), cancelling
     // closes the question and leaves you in Analyze — exactly what declining does.
     $("#pn-modal-ok", panel)?.addEventListener("click", () => {
@@ -421,6 +502,13 @@
     });
     $("#pn-modal-cancel", panel)?.addEventListener("click", () => modal?.classList.add("is-hidden"));
     setMode("analyze");
+    if (term) {
+      // This transcript is not streamed in: it is HISTORY, already there when the page opens, so
+      // every row it starts with is visible at once (the reveal belongs to the hero and to the
+      // turn the demo appends — which is the only thing that should fade in).
+      [...term.children].forEach((n) => n.classList.add("is-shown"));
+      term.scrollTop = term.scrollHeight;
+    }
   }
 
   /* ------------------------------------------------------ 09 sub-agent states */

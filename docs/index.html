@@ -586,6 +586,14 @@
             <button class="switch__btn" data-mode="build" role="tab" aria-selected="false">Build</button>
             <span class="switch__glider" aria-hidden="true"></span>
           </div>
+
+          <!-- The section is built around ONE click, so it asks for it: a real button (not a
+               decoration) that does what it says, and a ring on the Build half until someone does. -->
+          <button class="teaser" id="modeTeaser" type="button">
+            <span class="teaser__dot" aria-hidden="true"></span>
+            <span>Press <b>Build</b> to watch it write</span>
+            <span class="teaser__arrow" aria-hidden="true">→</span>
+          </button>
         </div>
 
         <div class="sect__panel reveal" data-reveal>
@@ -614,6 +622,33 @@
             <div class="pn-tabs"><span class="pn-tab">Harny Dev <b>×</b></span></div>
 
             <div class="pn-term" id="term-modes">
+              <!-- The chat does not START here: it arrives from a session already running, so the
+                   demo's "GO !" lands as the newest message of a conversation, not as the first. -->
+              <div class="pn-turn">
+                <div class="pn-user-wrap">
+                  <div class="pn-user">How does the retry guard look today?</div>
+                  <svg class="pn-avatar" viewBox="0 0 24 17.6" aria-hidden="true">
+                    <path
+                      d="M 1.91 0 H 16.09 Q 18 0 18 1.91 V 12.11 Q 18 14.02 16.09 14.02 H 8.78 L 4.15 17.45 Q 3.44 17.89 3.41 17.02 V 14.02 H 1.91 Q 0 14.02 0 12.11 V 1.91 Q 0 0 1.91 0 Z"
+                    />
+                  </svg>
+                </div>
+                <div class="pn-meta">
+                  <span class="pn-mode">Analyze</span> · deepseek-v4.1-flash · 4.1k in · 26 out · elapsed 1.1s
+                </div>
+              </div>
+
+              <div class="pn-foldblock" data-fold>
+                <div class="pn-fold">
+                  <span class="pn-chev">▸</span><span class="pn-tool-name">Read</span>
+                  <span class="pn-tool-path">src/llm/http.ts</span>
+                </div>
+                <div class="pn-fold-body">
+                  <pre class="pn-pre">  <span class="t-kw">if</span> (res.ok) <span class="t-kw">return</span> res;
+  <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-cls">Error</span>(<span class="t-str">`HTTP ${res.status}`</span>)</pre>
+                </div>
+              </div>
+
               <div class="pn-turn">
                 <div class="pn-user-wrap">
                   <div class="pn-user">Add retry-with-backoff to <code>src/llm/retry.ts</code>.</div>
@@ -643,30 +678,7 @@
   <span class="t-prop">"content"</span><span class="t-op">:</span> <span class="t-str">"export const isRetryable = …"</span>
 <span class="t-op">}</span></pre>
                   <div class="pn-label">Diff</div>
-                  <pre class="pn-pre"><span class="pn-hunk">@@ -0,0 +1,24 @@</span>
-<span class="pn-add">+import { sleep } from "./sleep"</span>
-<span class="pn-add">+</span>
-<span class="pn-add">+export interface RetryOptions {</span>
-<span class="pn-add">+  maxRetries?: number</span>
-<span class="pn-add">+  baseDelayMs?: number</span>
-<span class="pn-add">+}</span>
-<span class="pn-add">+</span>
-<span class="pn-add">+export const isRetryable = (status: number) =&gt;</span>
-<span class="pn-add">+  status === 429 || status &gt;= 500</span>
-<span class="pn-add">+</span>
-<span class="pn-add">+export async function withRetry&lt;T&gt;(</span>
-<span class="pn-add">+  run: () =&gt; Promise&lt;T&gt;,</span>
-<span class="pn-add">+  { maxRetries = 4, baseDelayMs = 250 }: RetryOptions = {},</span>
-<span class="pn-add">+): Promise&lt;T&gt; {</span>
-<span class="pn-add">+  for (let attempt = 0; ; attempt++) {</span>
-<span class="pn-add">+    try {</span>
-<span class="pn-add">+      return await run()</span>
-<span class="pn-add">+    } catch (e) {</span>
-<span class="pn-add">+      if (attempt &gt;= maxRetries) throw e</span>
-<span class="pn-add">+      await sleep(Math.min(2000, baseDelayMs * 2 ** attempt))</span>
-<span class="pn-add">+    }</span>
-<span class="pn-add">+  }</span>
-<span class="pn-add">+}</span></pre>
+                  <pre class="pn-pre" data-diff><span class="pn-hunk">@@ -0,0 +1,22 @@</span></pre>
                 </div>
               </div>
 
@@ -691,7 +703,7 @@
                 <span class="pn-stop is-off" aria-hidden="true"><i></i></span>
               </div>
               <div class="pn-controls">
-                <span class="pn-modebtn">
+                <span class="pn-modebtn" role="button" tabindex="0" aria-label="Switch mode">
                   <svg class="pn-ico pn-ico-analyze" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15.5 15.5 21 21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
                   <svg class="pn-ico pn-ico-build" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 14 9l6.5 2-6.5 2-2 6.5-2-6.5L3.5 11 10 9z" fill="currentColor"/></svg>
                   <span data-pn-mode>Analyze</span>
@@ -734,6 +746,11 @@ Tip: restart the chat — a clean Build context applies more reliably than conti
                 <div class="pn-modal__actions">
                   <button type="button" class="pn-modal__cancel" id="pn-modal-cancel">Cancel</button>
                   <button type="button" class="pn-modal__ok" id="pn-modal-ok">Switch to Build</button>
+                  <!-- the pointer that shows WHERE to click: it glides to the confirm and taps it -->
+                  <span class="pn-cursor" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M5 3.2 19.5 12l-7 1.4-3.1 6.6z" fill="currentColor" /></svg>
+                    <i class="pn-cursor__ring"></i>
+                  </span>
                 </div>
               </div>
             </div>
