@@ -886,265 +886,735 @@ main {
   }
 }
 
+/* ---------- 07b. THE PANEL — the real chrome, transcribed from the extension ---------- */
+/* There is no mock-up left in the hero: what sits in `.console` is the panel's OWN interface —
+   `#panel-head`, `#session-head`, `#tabs`, a `.msg.user` bubble with its `.msg-meta` badge, the
+   `.tool-*` card with its Input/Output blocks, `#transcript-actions`, `#insert-hint` and the
+   `#input-area` composer. Geometry comes from `media/view.css`, colours from `PALETTE_DARK` in
+   `src/chat/view-config.ts`: the site frames the app (orbit rings, reveal, glass halo), it does
+   not draw a different app. Only the WORDS are ours.
+   One scale for the whole replica: `font-size` lives here, everything inside is sized in `em`/px
+   against it, so the panel reads as one piece at any column width. */
 .console {
+  /* PALETTE_DARK, as ROLES — the names are the extension's, so a value that drifts is visible. */
+  --pn-bg: #111111;
+  --pn-card: #1e1e1e;
+  --pn-tool: #1a1a1a;
+  --pn-raise: #222222;
+  --pn-sink: rgba(0, 0, 0, 0.25);
+  --pn-fg: #e0e0e0;
+  --pn-fg-strong: #ffffff;
+  --pn-dim: #bbbbbb;
+  --pn-muted: #888888;
+  --pn-muted-2: #999999;
+  --pn-muted-3: #6f6f6f;
+  --pn-line: rgba(255, 255, 255, 0.08);
+  --pn-overlay-1: rgba(255, 255, 255, 0.06);
+  --pn-overlay-2: rgba(255, 255, 255, 0.1);
+  --pn-overlay-3: rgba(255, 255, 255, 0.16);
+  --pn-accent: #d95f27;
+  --pn-accent-strong: #c8501c;
+  --pn-accent-surface: #2c241f;
+  --pn-info: #61afef;
+
   position: relative;
-  border-radius: var(--r);
-  background: linear-gradient(160deg, rgba(6, 26, 38, 0.94), rgba(1, 8, 15, 0.96));
-  border: 1px solid var(--line-2);
-  box-shadow: 0 0 0 1px rgba(0, 5, 10, 0.9), 0 40px 90px -40px rgba(0, 0, 0, 0.95),
-    0 0 70px -20px rgba(35, 182, 205, 0.35);
+  display: flex;
+  flex-direction: column;
+  /* Tall enough that the whole turn is visible at once in the hero — prompt, thinking, the tool
+     card's Input/Output, the controls row and the context bar; past it, the transcript scrolls
+     inside the card, exactly as the real panel does. */
+  max-height: 740px;
+  border-radius: 10px;
+  /* BLACK IS BLACK: the surface is the panel's own flat anthracite, the rim is a neutral hairline and
+     the only shadow left is the black depth under the card. No coloured halos and no inner light —
+     the accent stays PIGMENT (text, fills, the bubble), never light. */
+  background: var(--pn-bg);
+  border: 1px solid var(--pn-overlay-3);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.85),
+    0 40px 90px -40px rgba(0, 0, 0, 0.95);
   overflow: hidden;
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
+  font-family: var(--f-body);
+  /* the panel is used in a SIDE BAR: this is the size a real one is read at, scaled to the hero */
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--pn-fg);
+  text-align: left;
 }
-.console::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(120deg, rgba(95, 230, 245, 0.07), transparent 40%, rgba(208, 136, 86, 0.05));
+/* Nothing glows: no hairline across the top, no radial wash behind the chrome. The card is dark and
+   the interface inside it is the only thing that lights anything. */
+.console > * {
+  position: relative;
+  z-index: 1;
 }
-.console__bar {
+
+/* ── the top strip: brand + the two keys ── */
+.pn-head {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.6rem 0.8rem;
-  border-bottom: 1px solid var(--line);
-  background: rgba(0, 8, 14, 0.6);
+  gap: 6px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--pn-line);
+  font-family: var(--f-mono);
+  font-size: 0.85em;
+  letter-spacing: 0.2em;
+  color: var(--pn-dim);
+  flex-shrink: 0;
 }
-.console__dots {
-  display: flex;
+.pn-brand {
+  display: inline-flex;
+  align-items: center;
   gap: 5px;
 }
-.console__dots i {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #1d3a48;
+.pn-mark {
+  width: 14px;
+  height: 10px;
+  fill: var(--pn-accent);
+  flex-shrink: 0;
 }
-.console__dots i:first-child {
-  background: var(--tan-dim);
+.pn-keys {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.95em;
+  color: var(--pn-muted);
 }
-.console__dots i:last-child {
-  background: var(--cyan-3);
+.pn-keys i {
+  font-style: normal;
+  line-height: 1;
 }
-.console__title {
+
+/* ── Sessions: a card, exactly like `#session-head` ── */
+.pn-sessions {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
+  gap: 5px;
+  margin: 7px 10px 0;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: var(--pn-card);
+  color: var(--pn-fg-strong);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.pn-sessions .pn-keys {
+  color: var(--pn-accent);
+}
+
+/* ── the tab strip ── */
+.pn-tabs {
+  display: flex;
+  gap: 3px;
+  padding: 6px 10px 0;
+  border-bottom: 1px solid var(--pn-line);
+  flex-shrink: 0;
+}
+.pn-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  margin-bottom: -1px;
+  border: 1px solid var(--pn-line);
+  border-top: 1px solid var(--pn-overlay-3);
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: linear-gradient(to bottom, var(--pn-overlay-3), var(--pn-overlay-1)), var(--pn-card);
+  color: var(--pn-fg);
+  white-space: nowrap;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pn-tab b {
+  color: var(--pn-muted-2);
+  font-weight: 400;
+  margin-left: 2px;
+}
+
+/* ── transcript ── */
+.pn-term {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+.pn-term::-webkit-scrollbar {
+  width: 6px;
+}
+.pn-term::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 3px;
+}
+.pn-term > * {
+  opacity: 0;
+  transform: translateY(5px);
+  transition:
+    opacity 0.45s var(--ease),
+    transform 0.45s var(--ease);
+}
+.pn-term > .is-shown,
+.no-js .pn-term > * {
+  opacity: 1;
+  transform: none;
+}
+
+/* the prompt with its sign-off: the brand mark OUTSIDE the bubble on the right, docked to the first
+   line — `view-avatar` in the real panel, same 15:11 canvas as the file */
+.pn-user-wrap {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 5px;
+}
+.pn-avatar {
+  width: 15px;
+  height: 11px;
+  margin-top: 6px;
+  flex: 0 0 auto;
+  fill: var(--pn-accent);
+}
+
+/* the prompt bubble: `--user-msg`, white ink, right-aligned — the extension's shape, the site's
+   light on it (the same gradient and halo `.btn--brand` wears) */
+.pn-user {
+  max-width: calc(100% - 20px);
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: var(--pn-accent);
+  color: #ffffff;
+  text-align: left;
+  box-shadow: 0 8px 22px -14px rgba(0, 0, 0, 0.9);
+}
+.pn-user code {
   font-family: var(--f-mono);
-  font-size: 0.66rem;
-  color: var(--dim);
-  letter-spacing: 0.04em;
+  font-size: 0.92em;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+/* the per-turn badge: mode chip in the accent, the rest quiet and tabular */
+.pn-meta {
+  align-self: flex-start;
+  max-width: 92%;
+  margin-top: 4px;
+  font-size: 0.9em;
+  color: var(--pn-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pn-meta--turn {
+  margin-top: -1px;
+}
+.pn-mode {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--pn-overlay-1);
+  color: var(--pn-accent);
+  font-weight: 600;
+}
+
+/* ── a folded row: the chevron turns, the body is only there when it is open ── */
+.pn-fold,
+.pn-tool-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  user-select: none;
+  font-weight: 600;
+  min-width: 0;
+}
+.pn-fold {
+  color: var(--pn-accent);
+}
+.pn-foldblock {
+  min-width: 0;
+}
+/* `Thinking…` is a label, not a tool: the accent belongs to the tools, this one stays quiet */
+.pn-foldblock .pn-fold:not(:has(.pn-tool-name)) {
+  color: var(--pn-muted-2);
+}
+.pn-fold-body {
+  display: none;
+  margin: 4px 0 0 13px;
+  color: var(--pn-dim);
+  text-align: left;
+}
+.pn-foldblock.is-open .pn-fold-body {
+  display: block;
+}
+.pn-chev {
+  display: inline-block;
+  flex: 0 0 auto;
+  color: var(--pn-muted);
+  font-size: 0.9em;
+  line-height: 1;
+  transition: transform 0.15s var(--ease);
+}
+.pn-foldblock.is-open > .pn-fold .pn-chev,
+.pn-tool:not(.is-collapsed) .pn-chev {
+  transform: rotate(90deg);
+}
+
+/* the tool card: a hairline outline, orange NAME, blue path — `.msg.tool` in the real sheet */
+.pn-tool {
+  border: 1px solid var(--pn-line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  min-width: 0;
+}
+.pn-tool:hover {
+  border-color: var(--pn-overlay-3);
+}
+.pn-tool-head {
+  color: var(--pn-accent);
+}
+.pn-tool-name {
+  white-space: nowrap;
+}
+.pn-tool-path {
+  color: var(--pn-info);
+  font-weight: 400;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.console__mark {
-  width: 15px;
-  height: 11px;
-  fill: var(--tan);
-  flex-shrink: 0;
+.pn-tool-body {
+  margin-top: 2px;
+  font-size: 0.95em;
 }
-.console__pills {
-  margin-left: auto;
-  display: flex;
-  gap: 3px;
-  padding: 3px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: rgba(0, 5, 10, 0.6);
-  flex-shrink: 0;
+.pn-tool.is-collapsed .pn-tool-body {
+  display: none;
 }
-.pill--mode {
-  font-family: var(--f-mono);
-  font-size: 0.6rem;
-  letter-spacing: 0.1em;
+.pn-label {
+  display: block;
+  margin: 5px 0 2px;
+  color: var(--pn-muted-2);
+  font-size: 0.85em;
   text-transform: uppercase;
-  padding: 0.22rem 0.6rem;
-  border-radius: 999px;
-  color: var(--faint);
-  transition: color 0.3s, background 0.3s, box-shadow 0.3s;
+  letter-spacing: 0.04em;
 }
-.pill--mode.is-on {
-  color: #04121c;
-  background: var(--cyan);
-  box-shadow: 0 0 14px rgba(95, 230, 245, 0.55);
-  font-weight: 700;
+/* Input/Output blocks: a SINK inside the card, which is what `--sink-1` means */
+.pn-pre {
+  margin: 0;
+  padding: 4px 6px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--pn-line);
+  border-radius: 4px;
+  font-family: var(--f-mono);
+  font-size: 0.95em;
+  line-height: 1.5;
+  white-space: pre;
+  /* The extension's own cap: a long block SCROLLS inside the card instead of growing it. */
+  max-height: 150px;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--pn-overlay-3) transparent;
+  color: var(--pn-fg);
 }
-.pill--mode.is-on[data-mode-pill="build"] {
-  background: var(--tan);
-  box-shadow: 0 0 14px rgba(208, 136, 86, 0.55);
+.pn-pre::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.pn-pre::-webkit-scrollbar-thumb {
+  background: var(--pn-overlay-3);
+  border-radius: 3px;
+}
+/* the diff, painted with the panel's own roles (`--ok`, `--del`, the accent for a hunk) */
+.pn-add {
+  color: #98c379;
+  background: rgba(152, 195, 121, 0.1);
+}
+.pn-del {
+  color: #e06c75;
+  background: rgba(224, 108, 117, 0.1);
+}
+.pn-hunk {
+  color: #d95f27;
+}
+.pn-ctx {
+  color: var(--pn-fg);
+  opacity: 0.8;
+}
+/* Prism's roles, one-dark: the same hexes `media/view.css` paints tokens with */
+.t-kw {
+  color: #c678dd;
+}
+.t-str {
+  color: #98c379;
+}
+.t-num {
+  color: #d19a66;
+}
+.t-fn {
+  color: #61afef;
+}
+.t-cls {
+  color: #e5c07b;
+}
+.t-prop {
+  color: #e06c75;
+}
+.t-op {
+  color: #abb2bf;
 }
 
-.console__body {
-  padding: 0.95rem 1rem 1.1rem;
-  font-family: var(--f-mono);
-  font-size: 0.74rem;
-  line-height: 1.85;
-  min-height: 360px;
-  color: var(--text);
-}
-.line {
+/* the two transcript pills that sit at the bottom of the real transcript */
+.pn-pills {
   display: flex;
-  gap: 0.55rem;
-  align-items: baseline;
-  opacity: 0;
-  transform: translateY(4px);
-}
-.line.is-shown,
-.no-js .line {
-  opacity: 1;
-  transform: none;
-}
-.line--sys {
-  color: var(--dim);
-}
-.line--tool .ln-text {
-  color: var(--text);
-}
-.line--nudge .ln-text {
-  color: var(--nudge);
-}
-.line--nudge {
   align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-top: 2px;
 }
-.ln-prompt {
-  color: var(--tan);
-  font-weight: 700;
+.pn-pills span {
+  height: 16px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--pn-overlay-3);
+  background: var(--pn-raise);
+  color: var(--pn-muted);
+  font-size: 0.85em;
+  font-weight: 600;
+  white-space: nowrap;
 }
-.ln-arrow {
-  color: var(--cyan);
+.pn-pills span.is-on {
+  background: linear-gradient(135deg, var(--pn-accent), var(--pn-accent-strong));
+  border-color: transparent;
+  color: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
-.ln-check {
-  color: var(--mint);
+.pn-pills span:hover {
+  color: var(--pn-fg);
+  border-color: var(--pn-overlay-3);
 }
-.ln-text {
+
+/* "Insert prompt in QUEUE" — the strip the panel shows over the composer while a run works */
+.pn-hint {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 4px 10px 0;
+  font-size: 0.88em;
+  color: var(--pn-muted);
+  flex-shrink: 0;
+}
+.pn-hint b {
+  padding: 1px 6px;
+  border: 1px solid var(--pn-line);
+  border-radius: 999px;
+  background: var(--pn-tool);
+  color: var(--pn-muted-2);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* The prompt card — `#input-area`: ONE card that holds the input row AND the AI-model row, which is
+   why the keys sit on this surface and not on the panel's black. The accent lives in the field's rim
+   and in the send key, as it does in the panel. */
+.pn-composer {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  margin: 6px 10px 10px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--pn-card);
+  flex-shrink: 0;
+}
+.pn-inputrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
-  word-break: break-word;
 }
-.ln-text b {
-  color: var(--text-hi);
-  font-weight: 500;
+.pn-attach {
+  display: inline-flex;
+  color: var(--pn-muted);
 }
-.ln-text em {
-  color: var(--cyan);
+.pn-attach svg {
+  width: 12px;
+  height: 12px;
+}
+.pn-input {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 8px;
+  border: 1px solid var(--pn-line);
+  border-radius: 6px;
+  background: var(--pn-raise);
+  color: var(--pn-muted-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pn-input i {
+  color: var(--pn-muted-3);
   font-style: normal;
-  border-bottom: 1px dotted rgba(95, 230, 245, 0.45);
 }
-.ln-meta {
-  color: var(--faint);
-  font-size: 0.68rem;
+/* The typed text: what the demo writes into the field by itself, and what hides the placeholder
+   while it does. It takes the panel's own ink, not the placeholder's grey. */
+.pn-typed {
+  color: var(--pn-fg);
+  font-weight: 500;
+  white-space: pre;
 }
-.ln-badge {
-  font-size: 0.56rem;
-  letter-spacing: 0.12em;
-  padding: 0.05rem 0.35rem;
-  border-radius: 3px;
-  background: rgba(143, 208, 255, 0.14);
-  border: 1px solid rgba(143, 208, 255, 0.3);
-  color: var(--nudge);
+.pn-input.is-typing .pn-ph {
+  display: none;
 }
-.line--metrics {
-  flex-wrap: wrap;
-  gap: 0.35rem;
-  margin-top: 0.5rem;
-}
-.ln-chip {
-  font-size: 0.6rem;
-  padding: 0.1rem 0.42rem;
-  border-radius: 4px;
-  border: 1px solid var(--line-2);
-  color: var(--dim);
-  background: rgba(6, 26, 38, 0.7);
-}
-.ln-chip--mode {
-  color: var(--tan);
-  border-color: rgba(208, 136, 86, 0.4);
-}
-.caret {
+.pn-caret {
   display: inline-block;
-  width: 6px;
-  height: 0.95em;
-  vertical-align: -0.12em;
-  margin-left: 3px;
-  background: var(--cyan);
-  animation: caret 1.05s steps(1) infinite;
+  width: 1px;
+  height: 1.05em;
+  background: var(--pn-accent);
+  animation: pn-caret 1.1s steps(1) infinite;
 }
-@keyframes caret {
-  50% {
+@keyframes pn-caret {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
     opacity: 0;
   }
 }
+/* The two keys on the right of the prompt: SEND (a play triangle on the accent) and ABORT (a stop
+   square on a neutral key, inert until a run is going). The panel draws both as SHAPES, not glyphs —
+   a font's ▶ and ⏹ drift off centre at larger sizes — so they are drawn here too, with the same
+   visual mass. */
+.pn-send,
+.pn-stop {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 20px;
+  flex: 0 0 auto;
+  border-radius: 5px;
+}
+.pn-send {
+  background: var(--pn-accent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+.pn-send i {
+  width: 0;
+  height: 0;
+  margin-left: 2px;
+  border-left: 7px solid #ffffff;
+  border-top: 4.5px solid transparent;
+  border-bottom: 4.5px solid transparent;
+}
+.pn-stop {
+  border: 1px solid var(--pn-overlay-3);
+  background: var(--pn-raise);
+}
+.pn-stop i {
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+  background: var(--pn-muted-2);
+}
+/* Nothing is streaming in the transcript above, so the stop key is inert — as it is in the panel. */
+.pn-stop.is-off {
+  opacity: 0.5;
+}
 
-.diff-mini {
-  margin: 0.5rem 0 0.5rem 1.1rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  overflow: hidden;
-  background: rgba(0, 8, 14, 0.72);
-}
-.diff-mini__head {
+/* ── the AI-model row: `#mode-select` + `#parallel-btn` + `.model-label` + `#model-btn` + the gear.
+   Elliptical keys (radius 999px, 1.85rem tall in the panel → 20px here), the mode's own icon, the
+   pressed-in inset the panel gives them. The MODEL value truncates instead of pushing the gear out. */
+.pn-controls {
   display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.3rem 0.6rem;
-  font-size: 0.62rem;
-  color: var(--cyan-2);
-  border-bottom: 1px solid var(--line);
-  background: rgba(14, 47, 64, 0.4);
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-shrink: 0;
 }
-.diff-mini__count b {
-  color: var(--mint);
-}
-.diff-mini__count i {
-  color: var(--alert);
-  font-style: normal;
-}
-.diff-mini__body {
-  margin: 0;
-  padding: 0.45rem 0.6rem;
-  font-size: 0.64rem;
-  line-height: 1.7;
-  overflow-x: auto;
-  color: var(--dim);
-}
-.d-hunk {
-  color: var(--violet);
-}
-.d-ctx {
-  color: var(--faint);
-}
-.d-add {
-  color: var(--mint);
-  background: rgba(110, 242, 176, 0.06);
-}
-.d-del {
-  color: var(--alert);
-  background: rgba(255, 93, 108, 0.07);
-}
-.console__foot {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem 0.9rem;
-  padding: 0.55rem 1rem;
-  border-top: 1px solid var(--line);
-  background: rgba(0, 5, 10, 0.6);
-}
-.key {
+.pn-modebtn,
+.pn-parallel {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  font-family: var(--f-mono);
-  font-size: 0.58rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--faint);
+  gap: 4px;
+  height: 20px;
+  padding: 0 7px;
+  flex: 0 0 auto;
+  border: 1px solid var(--pn-line);
+  border-radius: 999px;
+  background: var(--pn-raise);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+  color: var(--pn-fg);
+  font-size: 0.92em;
+  font-weight: 600;
+  white-space: nowrap;
 }
-.key kbd {
-  font-size: 0.58rem;
-  padding: 0 0.3rem;
+.pn-modebtn .pn-ico {
+  width: 10px;
+  height: 10px;
+  display: none;
+}
+/* The mode's own icon follows the mode: a magnifier in Analyze, a spark in Build. */
+.pn-modebtn.is-build .pn-ico-build,
+.pn-modebtn:not(.is-build) .pn-ico-analyze {
+  display: block;
+}
+/* One width for BOTH modes: the longest label is reserved by an in-flow, zero-height ghost, so
+   switching can never move this key — or the two beside it. `Build` is therefore as wide as
+   `Analyze`, exactly as the panel keeps it. */
+.pn-modebtn span::before {
+  content: "Analyze";
+  display: block;
+  height: 0;
+  visibility: hidden;
+}
+/* Analyze is the QUIET key: the panel's own ink on the neutral pill, no accent anywhere — the
+   orange is reserved for Build ("tools write for real" BEFORE you send), where it becomes the fill
+   and the label and both icons go white. The contrast IS the signal. */
+.pn-modebtn span {
+  color: inherit;
+}
+.pn-modebtn.is-build {
+  background: linear-gradient(135deg, var(--pn-accent), var(--pn-accent-strong));
+  border-color: transparent;
+  color: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+.pn-modebtn.is-build span,
+.pn-modebtn.is-build .pn-ico,
+.pn-modebtn.is-build .pn-chev-down {
+  color: #ffffff;
+}
+.pn-chev-down {
+  color: var(--pn-muted-2);
+  font-weight: 400;
+  line-height: 1;
+  transform: translateY(-1px);
+}
+.pn-parallel svg {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  color: var(--pn-muted-2);
+}
+.pn-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+  font-size: 0.92em;
+  color: var(--pn-muted-2);
+}
+.pn-model i {
+  font-style: normal;
+  color: var(--pn-muted);
+  flex: 0 0 auto;
+}
+.pn-model em {
+  font-style: normal;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--pn-dim);
+}
+.pn-model .pn-chev-down {
+  flex: 0 0 auto;
+}
+
+/* ── the context bar: `#metrics` in the real panel — tokens, cache, the meter, Compact ── */
+.pn-metrics {
+  margin: 0 10px 10px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--pn-card);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.pn-stats {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.9em;
+  color: var(--pn-muted-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.pn-stats b {
+  color: var(--pn-fg);
+  font-weight: 600;
+}
+.pn-stats .pn-note {
+  color: var(--pn-muted-3);
+}
+.pn-stats .pn-spacer,
+.pn-auto .pn-spacer {
+  margin-left: auto;
+}
+.pn-compact {
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--pn-overlay-3);
+  background: var(--pn-raise);
+  color: var(--pn-dim);
+  font-size: 0.85em;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.pn-meter {
+  height: 2px;
+  border-radius: 999px;
+  background: var(--pn-overlay-1);
+  overflow: hidden;
+}
+.pn-meter i {
+  display: block;
+  height: 100%;
+  width: 42%;
+  border-radius: 999px;
+  background: var(--pn-accent);
+}
+.pn-auto {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85em;
+  color: var(--pn-muted-3);
+  white-space: nowrap;
+}
+.pn-gear {
+  color: var(--pn-muted-2);
+  font-style: normal;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pn-term > * {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .pn-caret {
+    animation: none;
+  }
 }
 
 /* ---------- 08. MARQUEE ---------- */
@@ -1597,161 +2067,134 @@ main {
   box-shadow: 0 0 20px rgba(208, 136, 86, 0.55);
 }
 
-.panel {
-  border-radius: var(--r);
-  border: 1px solid var(--line-2);
-  background: linear-gradient(170deg, rgba(6, 26, 38, 0.92), rgba(1, 8, 15, 0.96));
-  overflow: hidden;
-  box-shadow: 0 40px 100px -50px #000;
+/* ---------- 07c. THE MODE SECTION — same panel, plus the modal the mode raises ---------- */
+/* ONE component, two states. The hero's replica is this `.console`; here it is the same markup in
+   ANALYZE with the `Switch to Build?` modal drawn over it — the real one (`promptSwitchToBuild` in
+   `src/chat/chat-view.ts`: same title, same body, same two answers), because a dry run in the panel
+   does not print a strip in the transcript: it asks. The site's switch below the copy drives it, and
+   the modal's own confirm drives the switch. */
+.sect__panel {
+  position: relative;
+  min-width: 0;
 }
-.panel__bar {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  padding: 0.55rem 0.85rem;
-  border-bottom: 1px solid var(--line);
+.console--sect {
+  max-height: none;
+  font-size: 10.5px;
+}
+/* The section's transcript has a ceiling of its own: the demo APPENDS a turn on Build, and the card
+   must not grow and shove the page down while it types. Past the ceiling it scrolls, as the real
+   transcript does. */
+.console--sect #term-modes {
+  /* 392px is the Analyse turn MEASURED: it fits with nothing cut, so the demo's extra turn is the
+     only thing that ever scrolls this box — and the card never changes height while it types. */
+  max-height: 392px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--pn-overlay-3) transparent;
+}
+/* the diff stat in the Write card's head: `+N` green, `−M` red — `--ok` / `--del` in the panel */
+.pn-counts {
+  margin-left: auto;
+  flex: 0 0 auto;
   font-family: var(--f-mono);
-  font-size: 0.6rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--cyan-2);
-  background: rgba(0, 8, 14, 0.6);
-}
-.panel__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--cyan);
-  box-shadow: 0 0 9px var(--cyan);
-  flex-shrink: 0;
-}
-.panel__spacer {
-  flex: 1;
-}
-.panel__file {
-  color: var(--faint);
-  letter-spacing: 0.04em;
-  text-transform: none;
-}
-.panel__body {
-  padding: 1rem;
-}
-.toolcard {
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  overflow: hidden;
-  background: rgba(0, 8, 14, 0.6);
-}
-.toolcard__head {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  padding: 0.5rem 0.7rem;
-  border-bottom: 1px solid var(--line);
-  font-family: var(--f-mono);
-  font-size: 0.68rem;
-}
-.toolcard__name {
-  color: var(--tan);
-  font-weight: 700;
-}
-.toolcard__target {
-  color: #6fb6e8;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 0.9em;
+  color: var(--pn-muted-3);
   white-space: nowrap;
 }
-.toolcard__counts {
-  margin-left: auto;
-  font-size: 0.64rem;
-  flex-shrink: 0;
+.pn-counts b {
+  color: #98c379;
+  font-weight: 600;
 }
-.toolcard__counts b {
-  color: var(--mint);
-}
-.toolcard__counts i {
-  color: var(--alert);
+.pn-counts i {
+  color: #e06c75;
   font-style: normal;
 }
-.toolcard__tabs {
-  display: flex;
-  gap: 1px;
-  background: var(--line);
-  font-family: var(--f-mono);
-  font-size: 0.6rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-.toolcard__tabs span {
-  padding: 0.3rem 0.8rem;
-  background: rgba(1, 8, 15, 0.9);
-  color: var(--faint);
-}
-.toolcard__tabs .is-on {
-  color: var(--cyan);
-  background: rgba(14, 47, 64, 0.7);
-  box-shadow: inset 0 -1px 0 var(--cyan);
-}
-.code {
-  margin: 0;
-  padding: 0.7rem 0.8rem;
-  font-size: 0.68rem;
-  line-height: 1.75;
-  overflow-x: auto;
-  max-height: 330px;
-  color: var(--dim);
-}
-.verdict {
-  display: flex;
-  gap: 0.8rem;
-  align-items: flex-start;
-  margin-top: 0.85rem;
-  padding: 0.75rem 0.85rem;
-  border-radius: 9px;
-  border: 1px solid rgba(95, 230, 245, 0.28);
-  background: rgba(95, 230, 245, 0.06);
-  transition: border-color 0.4s, background 0.4s;
-}
-.verdict__badge {
-  font-family: var(--f-mono);
-  font-size: 0.56rem;
-  letter-spacing: 0.14em;
-  padding: 0.15rem 0.4rem;
-  border-radius: 3px;
-  background: var(--cyan);
-  color: #04121c;
-  font-weight: 700;
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-.verdict p {
-  font-size: 0.84rem;
-  color: var(--text);
-}
-.panel.is-build .verdict {
-  border-color: rgba(208, 136, 86, 0.34);
-  background: rgba(208, 136, 86, 0.07);
-}
-.panel.is-build .verdict__badge {
-  background: var(--tan);
-}
-.panel__foot {
+/* The modal: the backdrop covers the PANEL ONLY (in the app it covers the panel too — it is posted
+   by the host into the webview), so the section keeps its air around it. */
+.pn-modal {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.55rem 0.85rem;
-  border-top: 1px solid var(--line);
-  background: rgba(0, 5, 10, 0.6);
-  flex-wrap: wrap;
+  justify-content: center;
+  padding: 14px;
+  border-radius: 10px;
+  overflow: hidden;
 }
-.metric-chip {
+.pn-modal.is-hidden {
+  display: none;
+}
+.pn-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.58);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+.pn-modal__card {
+  position: relative;
+  width: min(330px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 14px;
+  border-radius: 8px;
+  border: 1px solid var(--pn-overlay-3);
+  background: var(--pn-bg);
+  box-shadow: 0 24px 60px -22px rgba(0, 0, 0, 1);
+}
+.pn-modal__card h3 {
+  margin: 0;
+  font-family: var(--f-display);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--pn-fg-strong);
+}
+.pn-modal__msg {
+  margin: 0;
+  font-size: 0.9em;
+  line-height: 1.55;
+  color: var(--pn-dim);
+  white-space: pre-wrap;
+}
+.pn-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  margin-top: 2px;
+}
+.pn-modal__actions button {
   font-family: var(--f-mono);
-  font-size: 0.6rem;
-  color: var(--dim);
-  padding: 0.15rem 0.5rem;
-  border-radius: 4px;
-  border: 1px solid var(--line-2);
+  font-size: 0.85em;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 6px 11px;
+  border-radius: 6px;
+  border: 1px solid var(--pn-overlay-3);
+  background: var(--pn-raise);
+  color: var(--pn-dim);
+  cursor: pointer;
+  transition:
+    color 0.2s,
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+.pn-modal__cancel:hover {
+  color: var(--pn-fg);
+  border-color: var(--pn-overlay-3);
+}
+.pn-modal__ok {
+  border-color: transparent;
+  background: linear-gradient(135deg, #e2672c, #c8501c);
+  color: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+.pn-modal__ok:hover {
+  filter: brightness(1.08);
 }
 
 /* ---------- 12. ORCHESTRATOR ---------- */
@@ -3388,9 +3831,9 @@ main {
     grid-template-columns: minmax(0, 1fr);
     gap: 1.6rem;
   }
-  .console__body {
-    font-size: 0.68rem;
-    min-height: 300px;
+  /* The replica follows the column: at this width it is a phone-sized panel. */
+  .console {
+    font-size: 9.4px;
   }
   .lop {
     grid-template-columns: repeat(2, 1fr);

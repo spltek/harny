@@ -223,88 +223,144 @@
             </div>
 
             <div class="console" id="console">
-              <div class="console__bar">
-                <div class="console__dots" aria-hidden="true"><i></i><i></i><i></i></div>
-                <div class="console__title">
-                  <svg class="console__mark" viewBox="0 0 24 17.6" aria-hidden="true">
+              <!-- ── NOT a mock-up: the panel's OWN chrome, transcribed from the extension —
+                        `#panel-head`, `#session-head`, `#tabs`, `.msg.user` + `.msg-meta`,
+                        `.tool-header/.tool-label/.tool-details`, `#transcript-actions`,
+                        `#insert-hint`, `#input-area`. Palette and geometry are the values in
+                        `src/chat/view-config.ts` (PALETTE_DARK) and `media/view.css`. ── -->
+              <div class="pn-head">
+                <span class="pn-brand">
+                  <svg class="pn-mark" viewBox="0 0 24 17.6" aria-hidden="true">
                     <path
                       d="M 1.91 0 H 16.09 Q 18 0 18 1.91 V 12.11 Q 18 14.02 16.09 14.02 H 8.78 L 4.15 17.45 Q 3.44 17.89 3.41 17.02 V 14.02 H 1.91 Q 0 14.02 0 12.11 V 1.91 Q 0 0 1.91 0 Z"
                     />
                   </svg>
-                  harny — src/llm/http.ts
-                </div>
-                <div class="console__pills">
-                  <button class="pill pill--mode is-on" data-mode-pill="analyze" type="button">Analyze</button>
-                  <button class="pill pill--mode" data-mode-pill="build" type="button">Build</button>
-                </div>
+                  HARNY
+                </span>
+                <span class="pn-keys" aria-hidden="true"><i>?</i><i>+</i><i>⚙</i></span>
               </div>
 
-              <div class="console__body" id="term" aria-live="polite">
-                <div class="line">
-                  <span class="ln-prompt">&gt;</span>
-                  <span class="ln-text">add retry with backoff to src/llm/http.ts and cover it</span>
-                </div>
-                <div class="line line--sys">
-                  <span class="ln-arrow">▌</span>
-                  <span class="ln-text"
-                    >session opened · <b>Analyze</b> · model <b>gpt-4.1</b> · window 128k</span
-                  >
-                </div>
-                <div class="line line--tool" data-line>
-                  <span class="ln-check">✓</span>
-                  <span class="ln-text">Read <em>src/llm/http.ts</em> <span class="ln-meta">118 lines</span></span>
-                </div>
-                <div class="line line--tool" data-line>
-                  <span class="ln-check">✓</span>
-                  <span class="ln-text">Grep <em>"fetch("</em> <span class="ln-meta">3 hits</span></span>
-                </div>
-                <div class="line line--tool" data-line>
-                  <span class="ln-check">◇</span>
-                  <span class="ln-text"
-                    >Write <em>src/llm/http.ts</em> <span class="ln-meta">dry-run · nothing written</span></span
-                  >
-                </div>
-                <div class="diff-mini" data-line>
-                  <div class="diff-mini__head">
-                    <span>src/llm/http.ts</span>
-                    <span class="diff-mini__count"><b>+18</b> <i>−2</i></span>
+              <div class="pn-sessions">
+                <span class="pn-chev">▸</span>
+                <span class="pn-sessions-name">Sessions</span>
+                <span class="pn-keys" aria-hidden="true"><i>?</i><i>+</i><i>⚙</i></span>
+              </div>
+
+              <div class="pn-tabs"><span class="pn-tab">Harny Dev <b>×</b></span></div>
+
+              <div class="pn-term" id="term" aria-live="polite">
+                <div class="pn-turn">
+                  <div class="pn-user-wrap">
+                    <div class="pn-user">
+                      Retry-with-backoff in <code>src/llm/http.ts</code>, then run the suite.
+                    </div>
+                    <svg class="pn-avatar" viewBox="0 0 24 17.6" aria-hidden="true">
+                      <path
+                        d="M 1.91 0 H 16.09 Q 18 0 18 1.91 V 12.11 Q 18 14.02 16.09 14.02 H 8.78 L 4.15 17.45 Q 3.44 17.89 3.41 17.02 V 14.02 H 1.91 Q 0 14.02 0 12.11 V 1.91 Q 0 0 1.91 0 Z"
+                      />
+                    </svg>
                   </div>
-                  <pre class="diff-mini__body"><code><span class="d-hunk">@@ -42,6 +42,24 @@ export class HttpClient</span>
-<span class="d-ctx">   async request(url: string, init: RequestInit) {</span>
-<span class="d-del">-    return fetch(url, init)</span>
-<span class="d-add">+    for (let attempt = 0; ; attempt++) {</span>
-<span class="d-add">+      const res = await fetch(url, init)</span>
-<span class="d-add">+      if (res.ok || !isRetryable(res.status)) return res</span>
-<span class="d-add">+      if (attempt >= this.maxRetries) return res</span>
-<span class="d-add">+      await sleep(Math.min(2000, 250 * 2 ** attempt))</span>
-<span class="d-add">+    }</span>
-<span class="d-ctx">   }</span></code></pre>
+                  <div class="pn-meta">
+                    <span class="pn-mode">Build</span> · deepseek-v4.1-flash · 6.9k in · 74 out · ⚡ 6.1k ·
+                    elapsed 2.3s · first token 676ms
+                  </div>
                 </div>
-                <div class="line line--nudge" data-line>
-                  <span class="ln-badge">NUDGE</span>
-                  <span class="ln-text">identical read-only call served from cache</span>
+
+                <div class="pn-foldblock is-open" data-fold>
+                  <div class="pn-fold"><span class="pn-chev">▸</span> Thinking…</div>
+                  <div class="pn-fold-body">
+                    No retry on this path: a 429 or a 5xx goes straight back to the user. The loop has to
+                    stay on the client so the budget is ours, and it has to stop before the turn's deadline.
+                  </div>
                 </div>
-                <div class="line line--prompt" data-line>
-                  <span class="ln-prompt">&gt;</span>
-                  <span class="ln-text"
-                    >apply<span class="caret" aria-hidden="true"></span></span
-                  >
+
+                <div class="pn-tool">
+                  <div class="pn-tool-head">
+                    <span class="pn-chev">▾</span>
+                    <span class="pn-tool-name">Read</span>
+                    <span class="pn-tool-path">src/llm/http.ts</span>
+                  </div>
+                  <div class="pn-tool-body">
+                    <div class="pn-label">Input</div>
+                    <pre class="pn-pre"><span class="t-op">{</span>
+  <span class="t-prop">"path"</span><span class="t-op">:</span> <span class="t-str">"src/llm/http.ts"</span><span class="t-op">,</span>
+  <span class="t-prop">"offset"</span><span class="t-op">:</span> <span class="t-num">42</span><span class="t-op">,</span>
+  <span class="t-prop">"limit"</span><span class="t-op">:</span> <span class="t-num">9</span>
+<span class="t-op">}</span></pre>
+                    <div class="pn-label">Output</div>
+                    <pre class="pn-pre">  <span class="t-kw">async</span> <span class="t-fn">request</span>(url: <span class="t-cls">string</span>, init: <span class="t-cls">RequestInit</span>) {
+    <span class="t-kw">for</span> (<span class="t-kw">let</span> attempt = <span class="t-num">0</span>; ; attempt++) {
+      <span class="t-kw">const</span> res = <span class="t-kw">await</span> <span class="t-fn">fetch</span>(url, init);
+      <span class="t-kw">if</span> (res.ok || !<span class="t-fn">isRetryable</span>(res.status)) <span class="t-kw">return</span> res;
+      <span class="t-kw">await</span> <span class="t-fn">sleep</span>(<span class="t-cls">Math</span>.<span class="t-fn">min</span>(<span class="t-num">2000</span>, <span class="t-num">250</span> * <span class="t-num">2</span> ** attempt));
+    }</pre>
+                  </div>
                 </div>
-                <div class="line line--metrics" data-line>
-                  <span class="ln-chip ln-chip--mode" id="metricMode">Build</span>
-                  <span class="ln-chip">gpt-4.1</span>
-                  <span class="ln-chip">6.9k in</span>
-                  <span class="ln-chip">74 out</span>
-                  <span class="ln-chip">⚡ 800</span>
-                  <span class="ln-chip">2.3s</span>
-                  <span class="ln-chip">ttft 676ms</span>
+
+                <div class="pn-foldblock" data-fold>
+                  <div class="pn-fold">
+                    <span class="pn-chev">▸</span><span class="pn-tool-name">Shell</span>
+                    <span class="pn-tool-path">npm test</span>
+                  </div>
+                  <div class="pn-fold-body">
+                    <pre class="pn-pre">Test Files  <span class="t-num">133</span> passed (<span class="t-num">133</span>)
+     Tests  <span class="t-num">2988</span> passed (<span class="t-num">2988</span>)
+  Duration  <span class="t-num">20.39</span>s</pre>
+                  </div>
+                </div>
+                <div class="pn-meta pn-meta--turn">
+                  <span class="pn-mode">Build</span> · 257.4k in · 775 out · ⚡ 257.3k · elapsed 9.8s
+                </div>
+
+                <div class="pn-pills">
+                  <span class="is-on">Focus</span><span>Collapse all</span><span>Follow</span>
                 </div>
               </div>
 
-              <div class="console__foot">
-                <span class="key"><kbd>Enter</kbd> queue</span>
-                <span class="key"><kbd>⌘</kbd><kbd>↵</kbd> steer</span>
-                <span class="key"><kbd>Esc</kbd> stop</span>
+              <div class="pn-hint">Insert prompt in <b>QUEUE</b></div>
+
+              <div class="pn-composer">
+                <div class="pn-inputrow">
+                  <span class="pn-attach" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M4 17V7a3 3 0 0 1 6 0v11a5 5 0 0 1-10 0V8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>
+                  </span>
+                  <span class="pn-input"><span class="pn-ph">Ask Harny… <i>(Enter to send, Esc to abort)</i></span><span class="pn-typed"></span><span class="pn-caret"></span></span>
+                  <span class="pn-send" aria-hidden="true"><i></i></span>
+                  <span class="pn-stop is-off" aria-hidden="true"><i></i></span>
+                </div>
+                <div class="pn-controls">
+                  <span class="pn-modebtn is-build">
+                    <svg class="pn-ico pn-ico-analyze" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15.5 15.5 21 21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                    <svg class="pn-ico pn-ico-build" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 14 9l6.5 2-6.5 2-2 6.5-2-6.5L3.5 11 10 9z" fill="currentColor"/></svg>
+                    <span data-pn-mode>Build</span>
+                    <b class="pn-chev-down">⌄</b>
+                  </span>
+                  <span class="pn-parallel">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4v6a4 4 0 0 0 4 4h8M6 20v-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M15 11l3 3-3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    Parallel
+                  </span>
+                  <span class="pn-model"><i>AI Model:</i><em>deepseek-v4.1-flash · 1M · out 32k</em><b class="pn-chev-down">⌄</b></span>
+                  <span class="pn-gear">⚙</span>
+                </div>
+              </div>
+              <!-- the context bar: tokens, cache, the meter and the two lifelines of a long session -->
+              <div class="pn-metrics">
+                <div class="pn-stats">
+                  <span>Tokens</span>
+                  <b>259.3k</b>
+                  <span>/ 616k/1M</span>
+                  <span class="pn-note">(42%)</span>
+                  <span>⚡ <b>259.2k</b></span>
+                  <span class="pn-note">(100%)</span>
+                  <span class="pn-spacer"></span>
+                  <span class="pn-compact">Compact</span>
+                </div>
+                <div class="pn-meter"><i></i></div>
+                <div class="pn-auto">
+                  <span>Auto 80% ctx · keep 10%</span>
+                  <span class="pn-spacer"></span>
+                  <span class="pn-gear">⚙</span>
+                </div>
               </div>
             </div>
           </div>
@@ -532,60 +588,155 @@
           </div>
         </div>
 
-        <div class="panel reveal" data-reveal>
-          <div class="panel__bar">
-            <span class="panel__dot"></span>
-            <span id="modeLabel">MODE · ANALYZE (READ-ONLY PREVIEW)</span>
-            <span class="panel__spacer"></span>
-            <span class="panel__file">src/tools/write.ts</span>
-          </div>
-          <div class="panel__body">
-            <div class="toolcard">
-              <div class="toolcard__head">
-                <span class="toolcard__name" id="toolName">Write</span>
-                <span class="toolcard__target">src/llm/retry.ts</span>
-                <span class="toolcard__counts"><b>+24</b> <i>−0</i></span>
-              </div>
-              <div class="toolcard__tabs">
-                <span>Input</span><span>Output</span><span class="is-on">Diff</span>
-              </div>
-              <pre class="code"><code id="modeDiff"><span class="d-hunk">@@ -0,0 +1,24 @@</span>
-<span class="d-add">+import { sleep } from "./sleep"</span>
-<span class="d-add">+</span>
-<span class="d-add">+export interface RetryOptions {</span>
-<span class="d-add">+  maxRetries?: number</span>
-<span class="d-add">+  baseDelayMs?: number</span>
-<span class="d-add">+}</span>
-<span class="d-add">+</span>
-<span class="d-add">+export const isRetryable = (status: number) =&gt;</span>
-<span class="d-add">+  status === 429 || status &gt;= 500</span>
-<span class="d-add">+</span>
-<span class="d-add">+export async function withRetry&lt;T&gt;(</span>
-<span class="d-add">+  run: () =&gt; Promise&lt;T&gt;,</span>
-<span class="d-add">+  { maxRetries = 4, baseDelayMs = 250 }: RetryOptions = {},</span>
-<span class="d-add">+): Promise&lt;T&gt; {</span>
-<span class="d-add">+  for (let attempt = 0; ; attempt++) {</span>
-<span class="d-add">+    try {</span>
-<span class="d-add">+      return await run()</span>
-<span class="d-add">+    } catch (e) {</span>
-<span class="d-add">+      if (attempt &gt;= maxRetries) throw e</span>
-<span class="d-add">+      await sleep(Math.min(2000, baseDelayMs * 2 ** attempt))</span>
-<span class="d-add">+    }</span>
-<span class="d-add">+  }</span>
-<span class="d-add">+}</span></code></pre>
+        <div class="sect__panel reveal" data-reveal>
+          <!-- The whole panel, in ANALYZE — and over it the ONE modal the mode actually raises when
+               previews are ready (`promptSwitchToBuild` in src/chat/chat-view.ts: same title, same
+               body, same two answers). The switch under the copy drives both. -->
+          <div class="console console--sect" id="mode-panel">
+            <div class="pn-head">
+              <span class="pn-brand">
+                <svg class="pn-mark" viewBox="0 0 24 17.6" aria-hidden="true">
+                  <path
+                    d="M 1.91 0 H 16.09 Q 18 0 18 1.91 V 12.11 Q 18 14.02 16.09 14.02 H 8.78 L 4.15 17.45 Q 3.44 17.89 3.41 17.02 V 14.02 H 1.91 Q 0 14.02 0 12.11 V 1.91 Q 0 0 1.91 0 Z"
+                  />
+                </svg>
+                HARNY
+              </span>
+              <span class="pn-keys" aria-hidden="true"><i>?</i><i>+</i><i>⚙</i></span>
             </div>
 
-            <div class="verdict" id="verdict">
-              <span class="verdict__badge">DRY RUN</span>
-              <p>
-                <b>Nothing was written.</b> The exact diff is returned so you can review it. Switch to Build to
-                apply.
-              </p>
+            <div class="pn-sessions">
+              <span class="pn-chev">▸</span>
+              <span class="pn-sessions-name">Sessions</span>
+              <span class="pn-keys" aria-hidden="true"><i>?</i><i>+</i><i>⚙</i></span>
             </div>
-          </div>
-          <div class="panel__foot">
-            <span class="mono-sm">mode is per session · locked while a run is going</span>
-            <span class="metric-chip">Analyze · 6.2k in · 41 out</span>
+
+            <div class="pn-tabs"><span class="pn-tab">Harny Dev <b>×</b></span></div>
+
+            <div class="pn-term" id="term-modes">
+              <div class="pn-turn">
+                <div class="pn-user-wrap">
+                  <div class="pn-user">Add retry-with-backoff to <code>src/llm/retry.ts</code>.</div>
+                  <svg class="pn-avatar" viewBox="0 0 24 17.6" aria-hidden="true">
+                    <path
+                      d="M 1.91 0 H 16.09 Q 18 0 18 1.91 V 12.11 Q 18 14.02 16.09 14.02 H 8.78 L 4.15 17.45 Q 3.44 17.89 3.41 17.02 V 14.02 H 1.91 Q 0 14.02 0 12.11 V 1.91 Q 0 0 1.91 0 Z"
+                    />
+                  </svg>
+                </div>
+                <div class="pn-meta">
+                  <span class="pn-mode" data-pn-mode>Analyze</span> · deepseek-v4.1-flash · 6.2k in · 41 out ·
+                  elapsed 1.4s
+                </div>
+              </div>
+
+              <div class="pn-tool">
+                <div class="pn-tool-head">
+                  <span class="pn-chev">▾</span>
+                  <span class="pn-tool-name">Write</span>
+                  <span class="pn-tool-path">src/llm/retry.ts</span>
+                  <span class="pn-counts"><b>+24</b> <i>−0</i></span>
+                </div>
+                <div class="pn-tool-body">
+                  <div class="pn-label">Input</div>
+                  <pre class="pn-pre"><span class="t-op">{</span>
+  <span class="t-prop">"path"</span><span class="t-op">:</span> <span class="t-str">"src/llm/retry.ts"</span><span class="t-op">,</span>
+  <span class="t-prop">"content"</span><span class="t-op">:</span> <span class="t-str">"export const isRetryable = …"</span>
+<span class="t-op">}</span></pre>
+                  <div class="pn-label">Diff</div>
+                  <pre class="pn-pre"><span class="pn-hunk">@@ -0,0 +1,24 @@</span>
+<span class="pn-add">+import { sleep } from "./sleep"</span>
+<span class="pn-add">+</span>
+<span class="pn-add">+export interface RetryOptions {</span>
+<span class="pn-add">+  maxRetries?: number</span>
+<span class="pn-add">+  baseDelayMs?: number</span>
+<span class="pn-add">+}</span>
+<span class="pn-add">+</span>
+<span class="pn-add">+export const isRetryable = (status: number) =&gt;</span>
+<span class="pn-add">+  status === 429 || status &gt;= 500</span>
+<span class="pn-add">+</span>
+<span class="pn-add">+export async function withRetry&lt;T&gt;(</span>
+<span class="pn-add">+  run: () =&gt; Promise&lt;T&gt;,</span>
+<span class="pn-add">+  { maxRetries = 4, baseDelayMs = 250 }: RetryOptions = {},</span>
+<span class="pn-add">+): Promise&lt;T&gt; {</span>
+<span class="pn-add">+  for (let attempt = 0; ; attempt++) {</span>
+<span class="pn-add">+    try {</span>
+<span class="pn-add">+      return await run()</span>
+<span class="pn-add">+    } catch (e) {</span>
+<span class="pn-add">+      if (attempt &gt;= maxRetries) throw e</span>
+<span class="pn-add">+      await sleep(Math.min(2000, baseDelayMs * 2 ** attempt))</span>
+<span class="pn-add">+    }</span>
+<span class="pn-add">+  }</span>
+<span class="pn-add">+}</span></pre>
+                </div>
+              </div>
+
+              <div class="pn-meta pn-meta--turn" data-pn-note>
+                <span class="pn-mode" data-pn-mode>Analyze</span> · nothing written — 1 file awaits Build
+              </div>
+
+              <div class="pn-pills">
+                <span class="is-on">Focus</span><span>Collapse all</span><span>Follow</span>
+              </div>
+            </div>
+
+            <div class="pn-hint">Insert prompt in <b>QUEUE</b></div>
+
+            <div class="pn-composer">
+              <div class="pn-inputrow">
+                <span class="pn-attach" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M4 17V7a3 3 0 0 1 6 0v11a5 5 0 0 1-10 0V8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>
+                </span>
+                <span class="pn-input"><span class="pn-ph">Ask Harny… <i>(Enter to send, Esc to abort)</i></span><span class="pn-typed"></span><span class="pn-caret"></span></span>
+                <span class="pn-send" aria-hidden="true"><i></i></span>
+                <span class="pn-stop is-off" aria-hidden="true"><i></i></span>
+              </div>
+              <div class="pn-controls">
+                <span class="pn-modebtn">
+                  <svg class="pn-ico pn-ico-analyze" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15.5 15.5 21 21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                  <svg class="pn-ico pn-ico-build" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 14 9l6.5 2-6.5 2-2 6.5-2-6.5L3.5 11 10 9z" fill="currentColor"/></svg>
+                  <span data-pn-mode>Analyze</span>
+                  <b class="pn-chev-down">⌄</b>
+                </span>
+                <span class="pn-parallel">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4v6a4 4 0 0 0 4 4h8M6 20v-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M15 11l3 3-3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  Parallel
+                </span>
+                <span class="pn-model"><i>AI Model:</i><em>deepseek-v4.1-flash · 1M · out 32k</em><b class="pn-chev-down">⌄</b></span>
+                <span class="pn-gear">⚙</span>
+              </div>
+            </div>
+            <div class="pn-metrics">
+              <div class="pn-stats">
+                <span>Tokens</span>
+                <b>6.2k</b>
+                <span>/ 616k/1M (1%)</span>
+                <span class="pn-spacer"></span>
+                <span class="pn-compact">Compact</span>
+              </div>
+              <div class="pn-meter"><i style="width: 1%"></i></div>
+              <div class="pn-auto">
+                <span>Auto 80% ctx · keep 10%</span>
+                <span class="pn-spacer"></span>
+                <span class="pn-gear">⚙</span>
+              </div>
+            </div>
+
+            <!-- the modal the host raises ONCE when Analyze prepared previews -->
+            <div class="pn-modal" id="mode-modal">
+              <div class="pn-modal__backdrop"></div>
+              <div class="pn-modal__card" role="dialog" aria-modal="true" aria-labelledby="pn-modal-title">
+                <h3 id="pn-modal-title">Switch to Build?</h3>
+                <p class="pn-modal__msg">Changes were prepared as previews — nothing has been written to disk yet.
+
+Switch to Build to apply them.
+
+Tip: restart the chat — a clean Build context applies more reliably than continuing this Analyze transcript.</p>
+                <div class="pn-modal__actions">
+                  <button type="button" class="pn-modal__cancel" id="pn-modal-cancel">Cancel</button>
+                  <button type="button" class="pn-modal__ok" id="pn-modal-ok">Switch to Build</button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </section>

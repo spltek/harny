@@ -180,8 +180,6 @@
   const term = $("#term");
   if (term) {
     const rows = Array.from(term.children);
-    const modeChips = $$("[data-mode-pill]");
-    const metricMode = $("#metricMode");
     let timer = 0;
     let running = false;
 
@@ -193,6 +191,7 @@
       if (running) return;
       running = true;
       clearAll();
+      term.scrollTop = 0;
       let i = 0;
       const tickOnce = () => {
         if (i >= rows.length) {
@@ -205,6 +204,9 @@
         }
         rows[i].classList.add("is-shown");
         i += 1;
+        // The panel FOLLOWS the stream: as a row lands, the transcript keeps it in view. It is
+        // also what makes the card scroll at all when the replica is taller than the hero.
+        term.scrollTo({ top: term.scrollHeight, behavior: "smooth" });
         timer = window.setTimeout(tickOnce, 460);
       };
       tickOnce();
@@ -235,52 +237,30 @@
       play();
     }
 
-    /* mode pills inside the console */
-    modeChips.forEach((pill) => {
-      pill.addEventListener("click", () => {
-        modeChips.forEach((p) => p.classList.toggle("is-on", p === pill));
-        const mode = pill.dataset.modePill;
-        if (metricMode) {
-          metricMode.textContent = mode === "build" ? "Build" : "Analyze";
-          metricMode.style.color = mode === "build" ? "var(--tan)" : "var(--cyan)";
-          metricMode.style.borderColor =
-            mode === "build" ? "rgba(208,136,86,0.5)" : "rgba(95,230,245,0.5)";
-        }
-        window.clearTimeout(timer);
-        running = false;
-        play();
+    /* The folds ARE the panel's interactivity — in the real one every card opens and closes — so
+       the replica answers that click instead of being a painted screenshot. */
+    $$("[data-fold]").forEach((row) => {
+      row.addEventListener("click", () => {
+        row.classList.toggle("is-open");
+        row.classList.toggle("is-collapsed");
       });
     });
   }
 
   /* ------------------------------------------------------- 08 Analyze / Build */
   const modeSwitch = $(".switch");
-  const panel = $(".panel");
+  const panel = $("#mode-panel");
   if (modeSwitch && panel) {
     const btns = $$(".switch__btn", modeSwitch);
-    const modeLabel = $("#modeLabel");
-    const verdict = $("#verdict");
-    const chip = $(".panel__foot .metric-chip");
-    const counts = $(".toolcard__counts");
-    const tabs = $$(".toolcard__tabs span");
+    const note = $("[data-pn-note]", panel);
+    const modal = $("#mode-modal", panel);
 
+    /* The two states of the SAME panel. In Analyze the host has prepared previews and says so the
+       way it really does — with the `Switch to Build?` modal — and the transcript itself carries
+       "nothing written". In Build the modal is gone and the note says what landed. */
     const STATES = {
-      analyze: {
-        label: "MODE · ANALYZE (READ-ONLY PREVIEW)",
-        badge: "DRY RUN",
-        text: "<b>Nothing was written.</b> The exact diff is returned so you can review it. Switch to Build to apply.",
-        chip: "Analyze · 6.2k in · 41 out",
-        counts: "<b>+24</b> <i>−0</i>",
-        tab: "Diff",
-      },
-      build: {
-        label: "MODE · BUILD (WRITES FOR REAL)",
-        badge: "APPLIED",
-        text: "<b>src/llm/retry.ts written — 24 lines.</b> The turn is recorded with its token usage, its timings and its diff.",
-        chip: "Build · 6.4k in · 58 out · 1.9s",
-        counts: "<b>+24</b> <i>−0</i>",
-        tab: "Diff",
-      },
+      analyze: { chip: "Analyze", note: "nothing written — 1 file awaits Build", modal: true },
+      build: { chip: "Build", note: "applied — 24 lines written to src/llm/retry.ts", modal: false },
     };
 
     function setMode(mode) {
@@ -292,16 +272,154 @@
         b.setAttribute("aria-selected", String(on));
       });
       panel.classList.toggle("is-build", mode === "build");
-      if (modeLabel) modeLabel.textContent = s.label;
-      if (verdict) {
-        verdict.innerHTML = `<span class="verdict__badge">${s.badge}</span><p>${s.text}</p>`;
+      // The mode key in the controls row switches its own icon with the run.
+      $(".pn-modebtn", panel)?.classList.toggle("is-build", mode === "build");
+      if (note) {
+        note.innerHTML = `<span class="pn-mode">${s.chip}</span> · ${s.note}`;
       }
-      if (chip) chip.textContent = s.chip;
-      if (counts) counts.innerHTML = s.counts;
-      tabs.forEach((t) => t.classList.toggle("is-on", t.textContent.trim() === s.tab));
+      // The mode chip in the turn's badge follows the run, as it does in the panel.
+      $$("[data-pn-mode]", panel).forEach((c) => (c.textContent = s.chip));
+      if (modal) modal.classList.toggle("is-hidden", !s.modal);
     }
 
-    btns.forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+    /* ── the demo: switching to Build TYPES the prompt and then writes in the chat ──
+       "GO !" appears in the field one character at a time, the turn lands as if it had been sent,
+       and the Write card streams its diff. It is the ONE animation of this section, and it says
+       what the copy says: in Build the tools write for real. Anything it adds can be taken away
+       again by the switch (and by `prefers-reduced-motion`, which draws it all at once). */
+    const GO_DIFF = [
+      '+import { sleep } from "./sleep"',
+      "+",
+      "+export interface RetryOptions {",
+      "+  maxRetries?: number",
+      "+  baseDelayMs?: number",
+      "+}",
+      "+",
+      "+export const isRetryable = (status: number) =>",
+      "+  status === 429 || status >= 500",
+      "+",
+      "+export async function withRetry<T>(",
+      "+  run: () => Promise<T>,",
+      "): Promise<T> {",
+      "+  for (let attempt = 0; ; attempt++) {",
+      "+    try {",
+      "+      return await run()",
+      "+    } catch (e) {",
+      "+      if (attempt >= maxRetries) throw e",
+      "+      await sleep(Math.min(2000, baseDelayMs * 2 ** attempt))",
+      "+    }",
+      "+  }",
+      "+}",
+    ];
+    const term = $("#term-modes", panel);
+    const field = $(".pn-input", panel);
+    const typed = $(".pn-typed", panel);
+    let playing = 0; // a token, so a switch mid-animation cancels the old one
+    const wait = (ms) => new Promise((r) => window.setTimeout(r, ms));
+
+    const el = (tag, cls, html) => {
+      const node = document.createElement(tag);
+      if (cls) node.className = cls;
+      if (html !== undefined) node.innerHTML = html;
+      return node;
+    };
+    const avatar =
+      '<svg class="pn-avatar" viewBox="0 0 24 17.6" aria-hidden="true"><path d="M 1.91 0 H 16.09 Q 18 0 18 1.91 V 12.11 Q 18 14.02 16.09 14.02 H 8.78 L 4.15 17.45 Q 3.44 17.89 3.41 17.02 V 14.02 H 1.91 Q 0 14.02 0 12.11 V 1.91 Q 0 0 1.91 0 Z"/></svg>';
+
+    function resetDemo() {
+      playing += 1;
+      term?.querySelectorAll("[data-demo]").forEach((n) => n.remove());
+      if (typed) typed.textContent = "";
+      field?.classList.remove("is-typing");
+      if (term) term.scrollTop = 0;
+    }
+
+    async function playDemo() {
+      if (!term || !field || !typed) return;
+      resetDemo();
+      const token = ++playing;
+      const show = (node) => {
+        term.appendChild(node);
+        requestAnimationFrame(() => node.classList.add("is-shown"));
+        term.scrollTo({ top: term.scrollHeight, behavior: "smooth" });
+      };
+
+      // 1. the prompt types itself into the field
+      field.classList.add("is-typing");
+      if (!reduce) {
+        for (const ch of "GO !") {
+          if (token !== playing) return;
+          typed.textContent += ch;
+          await wait(95);
+        }
+        await wait(420);
+      } else {
+        typed.textContent = "GO !";
+      }
+      if (token !== playing) return;
+
+      // 2. …and is sent: the field empties, the turn lands in the transcript
+      typed.textContent = "";
+      field.classList.remove("is-typing");
+      await wait(220);
+      if (token !== playing) return;
+
+      const turn = el("div", "pn-turn", "");
+      turn.dataset.demo = "1";
+      turn.innerHTML =
+        `<div class="pn-user-wrap"><div class="pn-user">GO !</div>${avatar}</div>` +
+        '<div class="pn-meta"><span class="pn-mode">Build</span> · deepseek-v4.1-flash · ' +
+        "6.4k in · 58 out · ⚡ 6.1k · elapsed 1.9s · first token 540ms</div>";
+      show(turn);
+
+      // 3. the Write card, with the diff arriving line by line
+      await wait(560);
+      if (token !== playing) return;
+      const card = el("div", "pn-tool", "");
+      card.dataset.demo = "1";
+      card.innerHTML =
+        '<div class="pn-tool-head"><span class="pn-chev">▾</span><span class="pn-tool-name">Write</span>' +
+        '<span class="pn-tool-path">src/llm/retry.ts</span>' +
+        '<span class="pn-counts"><b>+24</b> <i>−0</i></span></div>' +
+        '<div class="pn-tool-body"><div class="pn-label">Diff</div>' +
+        '<pre class="pn-pre" data-diff></pre></div>';
+      show(card);
+      const pre = card.querySelector("[data-diff]");
+      for (const line of GO_DIFF) {
+        if (token !== playing) return;
+        pre.textContent += (pre.textContent ? "\n" : "") + line;
+        pre.scrollTop = pre.scrollHeight;
+        term.scrollTo({ top: term.scrollHeight, behavior: "smooth" });
+        await wait(reduce ? 0 : 55);
+      }
+
+      // 4. the turn's own totals, once the tool has stopped writing
+      await wait(320);
+      if (token !== playing) return;
+      const note = el(
+        "div",
+        "pn-meta pn-meta--turn",
+        '<span class="pn-mode">Build</span> · applied — 24 lines written to src/llm/retry.ts',
+      );
+      note.dataset.demo = "1";
+      show(note);
+    }
+
+    btns.forEach((b) =>
+      b.addEventListener("click", () => {
+        setMode(b.dataset.mode);
+        if (b.dataset.mode === "build") playDemo();
+        else resetDemo();
+      }),
+    );
+    $("#pn-modal-cancel", panel)?.addEventListener("click", resetDemo);
+    // The modal's own answers: confirming switches the session (here: the switch), cancelling
+    // closes the question and leaves you in Analyze — exactly what declining does.
+    $("#pn-modal-ok", panel)?.addEventListener("click", () => {
+      setMode("build");
+      playDemo();
+    });
+    $("#pn-modal-cancel", panel)?.addEventListener("click", () => modal?.classList.add("is-hidden"));
     setMode("analyze");
   }
 
