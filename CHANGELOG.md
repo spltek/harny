@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Follow stops switching itself off.** The pill's state was DERIVED from the scroll position, which made every scroll look the same: one the reader asked for and one the PAGE produced. So resizing the panel — the text re-wraps into more lines, `scrollHeight` grows, `scrollTop` does not, and a `scroll` event lands with nobody's hand behind it — was read as "the reader scrolled up" and lit the pill up on its own; opening a section did the same by the same route. Now the state changes ONLY on a scroll that follows the user's own input (a wheel, a drag on the scrollbar, a touch, a key — the intent a gesture arms lasts 250 ms, so a pointer that lands without moving the box cannot arm the NEXT reflow), and a scroll the page caused leaves the state alone and re-pins the bottom when the reader was following it. A `ResizeObserver` covers the other half of the report: a WIDER panel re-wraps into FEWER lines and the box gains room at the bottom without firing any scroll event at all.
+
 ## [1.3.1] - 2026-11-17
 
 ### Fixed

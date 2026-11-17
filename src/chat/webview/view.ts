@@ -1420,6 +1420,33 @@ function hideSwitchVeil(): void {
 const SCROLL_BOTTOM_TOLERANCE = 40;
 let autoScroll = true;
 
+/** True while the user's hand is on the transcript: a wheel, a drag on the scrollbar, a touch, a key.
+ *  ONLY one of those may turn the Follow off. A scroll the PANEL causes — the text re-wrapping
+ *  because the panel was resized, a section opening or closing, a delta landing just before the pin
+ *  — used to be indistinguishable from the user's own, so it disarmed the Follow on its own. That is
+ *  the reported behaviour: the reader resizes (or a fold opens), the box shifts as if scrolled, and
+ *  the pill lights up without anybody touching it. */
+let userScrollPending = false;
+let userScrollTimer = 0;
+const markUserScroll = (): void => {
+  userScrollPending = true;
+  window.clearTimeout(userScrollTimer);
+  // A wheel's scroll lands within a frame or two: a pointer or a key that arrives WITHOUT moving the
+  // box (clicking a fold header, typing in the prompt) must not arm the NEXT reflow. The timer draws
+  // that line, so the flag cannot outlive the gesture that set it.
+  userScrollTimer = window.setTimeout(() => {
+    userScrollPending = false;
+  }, 250);
+};
+for (const ev of ["wheel", "touchstart", "touchmove", "pointerdown", "mousedown", "keydown"] as const) {
+  messagesEl.addEventListener(ev, markUserScroll, { passive: true });
+}
+
+/** Anchored at the bottom, within the tolerance that makes a hand's rounding harmless. */
+function atBottom(): boolean {
+  return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < SCROLL_BOTTOM_TOLERANCE;
+}
+
 /** Scrolls to the last emitted line, but only while the user is anchored at
  * the bottom: scrolling UP disables auto-scroll, reaching the bottom re-enables. */
 function scrollDown(): void {
@@ -1428,11 +1455,32 @@ function scrollDown(): void {
 }
 
 messagesEl.addEventListener("scroll", () => {
-  const nearBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < SCROLL_BOTTOM_TOLERANCE;
-  autoScroll = nearBottom;
+  if (!userScrollPending) {
+    // Not the user's hand: the panel was resized and the text re-wrapped, a section opened or
+    // closed, a delta landed. The Follow keeps the state it had — and if it was on, it stays
+    // pinned, because a reader who was following still is.
+    if (autoScroll && !atBottom()) messagesEl.scrollTop = messagesEl.scrollHeight;
+    return;
+  }
+  userScrollPending = false;
+  window.clearTimeout(userScrollTimer);
+  autoScroll = atBottom();
   // Scrolling is what makes the "Autoscroll" pill applicable or not.
   updateTranscriptActions();
 });
+
+// A resize that still fits does not always fire a scroll event, and it is the other half of the
+// report: a WIDER panel re-wraps the text into FEWER lines, the box grows room at the bottom, and
+// the reader ends up above the end without having touched anything. BOTH channels, exactly like the
+// prompt's own height below: the ResizeObserver for a change driven by the content, the window for
+// the panel being resized (which is what a dragged panel is).
+const keepFollowing = (): void => {
+  if (autoScroll) messagesEl.scrollTop = messagesEl.scrollHeight;
+};
+if (typeof ResizeObserver !== "undefined") {
+  new ResizeObserver(keepFollowing).observe(messagesEl);
+}
+window.addEventListener("resize", keepFollowing);
 
 /**
  * The READING POSITION, captured before a rebuild destroys the nodes.

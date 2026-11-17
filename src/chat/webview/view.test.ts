@@ -3456,7 +3456,8 @@ describe("view webview client", () => {
     const msgs = document.getElementById("messages") as HTMLElement;
     Object.defineProperty(msgs, "scrollHeight", { configurable: true, value: 500 });
     Object.defineProperty(msgs, "scrollTop", { configurable: true, value: 10, writable: true });
-    msgs.dispatchEvent(new Event("scroll")); // user scrolled up → auto-scroll off
+    msgs.dispatchEvent(new Event("wheel")); // a hand on the wheel…
+    msgs.dispatchEvent(new Event("scroll")); // …and the scroll it produces: THAT is a user scroll
     const initTop = msgs.scrollTop;
     expect(initTop).toBeLessThan(500); // simulated scroll-up state
 
@@ -3489,7 +3490,8 @@ describe("view webview client", () => {
     Object.defineProperty(msgs, "scrollHeight", { configurable: true, value: 900 });
     Object.defineProperty(msgs, "clientHeight", { configurable: true, value: 300 });
     Object.defineProperty(msgs, "scrollTop", { configurable: true, writable: true, value: 120 });
-    msgs.dispatchEvent(new Event("scroll")); // the user scrolled UP: not following
+    msgs.dispatchEvent(new Event("wheel")); // a hand on the wheel…
+    msgs.dispatchEvent(new Event("scroll")); // …so this scroll is the user's, not a reflow
 
     const A = { id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 1 };
     const B = { id: "b", name: "B", createdAt: 1, updatedAt: 2, messageCount: 1 };
@@ -3883,11 +3885,13 @@ describe("view webview client", () => {
     Object.defineProperty(msgs, "clientHeight", { configurable: true, value: 100 });
     // user scrolls UP → autoScroll off
     Object.defineProperty(msgs, "scrollTop", { configurable: true, value: 10, writable: true });
+    msgs.dispatchEvent(new Event("wheel"));
     msgs.dispatchEvent(new Event("scroll"));
     hostMessage({ type: "thinkingDelta", content: "first line" }); // would force scroll at bottom
     expect(msgs.scrollTop).toBe(10); // NOT forced to the bottom
     // back to the bottom → autoScroll on again
     Object.defineProperty(msgs, "scrollTop", { configurable: true, value: 400, writable: true });
+    msgs.dispatchEvent(new Event("wheel"));
     msgs.dispatchEvent(new Event("scroll"));
     hostMessage({ type: "thinkingDelta", content: "new line" });
     expect(msgs.scrollTop).toBe(msgs.scrollHeight); // forced to bottom
@@ -7535,6 +7539,7 @@ describe("view webview client", () => {
     Object.defineProperty(list, "scrollHeight", { value: 5000, configurable: true });
     Object.defineProperty(list, "clientHeight", { value: 800, configurable: true });
     list.scrollTop = 1000;
+    list.dispatchEvent(new Event("wheel"));
     list.dispatchEvent(new Event("scroll")); // reading above the bottom, not following
     try {
       const input = document.getElementById("find-input") as HTMLInputElement;
@@ -7553,6 +7558,7 @@ describe("view webview client", () => {
       prompt.value = "go";
       (document.getElementById("send-btn") as HTMLButtonElement).click(); // a run starts (it may park)
       list.scrollTop = 1000; // now park the reader above the bottom…
+      list.dispatchEvent(new Event("wheel")); // (a hand, not a reflow: only that parks it for good)
       list.dispatchEvent(new Event("scroll"));
       hostMessage({ type: "textDelta", content: " and still two" });
       await new Promise((r) => setTimeout(r, 400)); // the rescan debounce
@@ -10209,6 +10215,7 @@ describe("soft steering + pending bubbles (webview)", () => {
     Object.defineProperty(list, "scrollHeight", { value: 5000, configurable: true });
     Object.defineProperty(list, "clientHeight", { value: 800, configurable: true });
     list.scrollTop = 1000;
+    list.dispatchEvent(new Event("wheel"));
     list.dispatchEvent(new Event("scroll")); // the listener derives "not following" from it
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
     input.blur();
@@ -12117,6 +12124,9 @@ describe("the reading position survives a transcript rebuild", () => {
 
   const scrollTo = (at: number) => {
     scrollTop = at;
+    // A hand on the wheel, then the scroll it produces: only THAT pair may stop the Follow, so a
+    // simulated scroll-up has to say both halves or it reads as a reflow.
+    box().dispatchEvent(new Event("wheel"));
     box().dispatchEvent(new Event("scroll"));
   };
 
@@ -12246,6 +12256,15 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
 
   const emitScroll = () => (document.getElementById("messages") as HTMLElement).dispatchEvent(new Event("scroll"));
 
+  /** A scroll the USER made: the wheel (or a drag on the scrollbar, a touch, a key) arms the intent,
+   *  and the scroll that follows is the hand's. A bare `scroll` event is what the PANEL produces on
+   *  its own when the text re-wraps — after a resize, or when a section opens. */
+  const userScroll = (setTop: (top: number) => void, top: number): void => {
+    (document.getElementById("messages") as HTMLElement).dispatchEvent(new Event("wheel"));
+    setTop(top);
+    emitScroll();
+  };
+
   it("ships all three pills present, and disabled is the only thing that changes", async () => {
     await withAllSections();
     // One of each kind, all created collapsed.
@@ -12348,29 +12367,127 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
     await loadView();
     const setTop = tetherScroll();
     // scrollHeight 1000, clientHeight 200 → 800 is the bottom.
-    setTop(800);
-    emitScroll();
+    userScroll(setTop, 800);
     expect(auto().disabled).toBe(true);
   });
 
   it("Autoscroll enables as soon as the user scrolls away from the bottom", async () => {
     await loadView();
     const setTop = tetherScroll();
-    setTop(400); // 1000 - 400 - 200 = 400px from the bottom
-    emitScroll();
+    userScroll(setTop, 400); // 1000 - 400 - 200 = 400px from the bottom
     expect(auto().disabled).toBe(false);
     // Coming back within SCROLL_BOTTOM_TOLERANCE re-arms it by itself.
-    setTop(790);
+    userScroll(setTop, 790);
+    expect(auto().disabled).toBe(true);
+  });
+
+  it("a reflow the PANEL causes never lights the Follow up (a resize, a section opening)", async () => {
+    await loadView();
+    const setTop = tetherScroll();
+    userScroll(setTop, 800); // the reader is following the bottom
+    expect(auto().disabled).toBe(true);
+    // A narrower panel (or a fold that opens) re-wraps the text into MORE lines: scrollHeight grows,
+    // scrollTop does not, and a scroll event lands with nobody's hand behind it. Read as a user
+    // scroll, that lit the pill up on its own — the reported behaviour.
+    setTop(400);
     emitScroll();
     expect(auto().disabled).toBe(true);
+  });
+
+  it("a fresh panel is FOLLOWING: a reflow before anyone touched it changes nothing", async () => {
+    await loadView();
+    const setTop = tetherScroll();
+    // No wheel, no pointer: the state must start armed and stay that way.
+    setTop(400);
+    emitScroll();
+    expect(auto().disabled).toBe(true);
+  });
+
+  it("a reader parked exactly at SCROLL_BOTTOM_TOLERANCE is NOT following", async () => {
+    await loadView();
+    const setTop = tetherScroll();
+    // 1000 - 760 - 200 = 40: the tolerance is the line, and 40 is on the far side of it.
+    userScroll(setTop, 760);
+    expect(auto().disabled).toBe(false);
+  });
+
+  it("a gesture that KEEPS scrolling renews the intent (a wheel in two bites)", async () => {
+    await loadView();
+    const setTop = tetherScroll();
+    const messages = document.getElementById("messages") as HTMLElement;
+    userScroll(setTop, 800);
+    // A second wheel 200 ms later is the same gesture continuing: the flag must be re-armed, or a
+    // slow scroll would be read as a reflow 50 ms later.
+    messages.dispatchEvent(new Event("wheel"));
+    await new Promise((r) => window.setTimeout(r, 200));
+    messages.dispatchEvent(new Event("wheel"));
+    await new Promise((r) => window.setTimeout(r, 120)); // past the FIRST timer's 250 ms
+    setTop(400);
+    emitScroll();
+    expect(auto().disabled).toBe(false);
+  });
+
+  it("a reflow does NOT drag a reader who had scrolled away back down", async () => {
+    await loadView();
+    const setTop = tetherScroll();
+    const messages = document.getElementById("messages") as HTMLElement;
+    userScroll(setTop, 400); // parked above the bottom, by hand: following is OFF
+    setTop(300); // the content grew above them and a scroll event lands with no hand behind it
+    emitScroll();
+    // Both halves of the guard: it must not re-pin, and it must not turn the Follow on either.
+    expect(messages.scrollTop).toBe(300);
+    expect(auto().disabled).toBe(false);
+  });
+
+  it("…and a reflow while following puts the reader BACK at the bottom", async () => {
+    await loadView();
+    const setTop = tetherScroll();
+    const messages = document.getElementById("messages") as HTMLElement;
+    userScroll(setTop, 800);
+    setTop(500); // the content grew under the reader
+    emitScroll();
+    // Not merely "the state survived": the transcript is pinned again, so the next delta is visible.
+    expect(messages.scrollTop).toBe(messages.scrollHeight);
+  });
+
+  it("a pointer that lands WITHOUT scrolling does not arm the next reflow", async () => {
+    await loadView();
+    const setTop = tetherScroll();
+    const messages = document.getElementById("messages") as HTMLElement;
+    userScroll(setTop, 800);
+    // Clicking a fold header arms the intent for one gesture's worth of time (250 ms). A scroll that
+    // arrives after that is not that click's, so it must not be read as "the reader scrolled up".
+    messages.dispatchEvent(new Event("pointerdown"));
+    await new Promise((r) => window.setTimeout(r, 300));
+    setTop(400);
+    emitScroll();
+    expect(auto().disabled).toBe(true);
+  });
+
+  it("a resize that fires NO scroll event still keeps the reader at the bottom", async () => {
+    await loadView();
+    const setTop = tetherScroll();
+    const messages = document.getElementById("messages") as HTMLElement;
+    userScroll(setTop, 800);
+    setTop(500); // wider panel, fewer lines, and no scroll event to notice it
+    window.dispatchEvent(new Event("resize"));
+    expect(messages.scrollTop).toBe(1000);
+  });
+
+  it("…but a resize does NOT drag a reader who had scrolled away", async () => {
+    await loadView();
+    const setTop = tetherScroll();
+    const messages = document.getElementById("messages") as HTMLElement;
+    userScroll(setTop, 400); // parked above the bottom, by hand
+    window.dispatchEvent(new Event("resize"));
+    expect(messages.scrollTop).toBe(400);
   });
 
   it("clicking Autoscroll jumps to the latest and re-disables itself", async () => {
     await loadView();
     const setTop = tetherScroll();
     const messages = document.getElementById("messages") as HTMLElement;
-    setTop(400);
-    emitScroll();
+    userScroll(setTop, 400);
     expect(auto().disabled).toBe(false);
 
     auto().click();
@@ -12383,8 +12500,7 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
   it("Autoscroll never toggles the control stack either", async () => {
     await loadView();
     const setTop = tetherScroll();
-    setTop(400);
-    emitScroll();
+    userScroll(setTop, 400);
 
     auto().click();
 

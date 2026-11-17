@@ -27,6 +27,10 @@ const ANCHORS: Record<string, string[]> = {
     "if (!currentRawText.trim()) break;",
     "settleThinkingBlock();",
     "const resultEl = ensureResult();",
+    // the Follow's intent gate — what decides whether a scroll is the reader's or the panel's
+    "let userScrollPending = false;",
+    "userScrollPending = true;",
+    "if (!userScrollPending) {",
     // the tool-output language hint — what decides whether an output is coloured at all
     "function langHintOf(el: HTMLElement, text: string): string | undefined {",
     'return looksLikeJson(text) ? "json" : undefined;',
