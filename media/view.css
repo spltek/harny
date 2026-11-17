@@ -712,6 +712,22 @@ body {
   border-top-color: var(--accent);
   animation: switch-spin 0.7s linear infinite;
 }
+/* ── THE SPINNER: the panel's ONE "something is happening" mark ──
+   The same arc the session-switch card turns (one recipe, the same `switch-spin` keyframes), sized in
+   `em` so it follows the text it sits in: a tool's Output while the call runs, a sub-agent's Report
+   while it works. It replaces the ⏳ those two placeholders carried, because an emoji is not a
+   drawing — it is whatever each OS thinks a wait looks like (and ⌛ vs ⏳ is not even the same glyph).
+   Decorative on purpose: the words beside it say the state, so assistive tech is told to skip it. */
+.harny-spinner {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.15em;
+  border-radius: 50%;
+  border: 2px solid var(--accent-line);
+  border-top-color: var(--accent);
+  animation: switch-spin 0.7s linear infinite;
+}
 @keyframes switch-spin {
   to {
     transform: rotate(360deg);
@@ -725,7 +741,8 @@ body {
 }
 /* Reduced motion: the card stays (the wait is still announced), the arc stops. */
 @media (prefers-reduced-motion: reduce) {
-  .switch-spinner {
+  .switch-spinner,
+  .harny-spinner {
     animation: none;
   }
 }

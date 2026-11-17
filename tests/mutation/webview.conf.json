@@ -5,7 +5,8 @@
   "vitest": { "configFile": "tests/vitest.config.mts" },
   "tempDirName": ".cache/stryker-tmp",
   "mutate": [
-    "src/chat/webview/view.ts:6862-6881"
+    "src/chat/webview/view.ts:6900-6919",
+    "src/chat/webview/view.ts:3111-3131"
   ],
   "coverageAnalysis": "perTest",
   "reporters": [

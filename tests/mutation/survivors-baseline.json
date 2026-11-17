@@ -349,8 +349,8 @@
       ]
     },
     "webview": {
-      "measured": "2026-11-13",
-      "mutants": 10,
+      "measured": "2026-11-17",
+      "mutants": 31,
       "survivors": []
     },
     "chat-panel": {

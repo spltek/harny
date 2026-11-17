@@ -21,11 +21,17 @@ const CONFIGS = join(ROOT, "tests", "mutation");
 /** The statements each measured range must still cover. */
 const ANCHORS: Record<string, string[]> = {
   "src/chat/webview/view.ts": [
+    // the streaming block (one range per file is not a rule: this file carries two)
     'case "textDelta": {',
     "currentRawText += msg.content;",
     "if (!currentRawText.trim()) break;",
     "settleThinkingBlock();",
     "const resultEl = ensureResult();",
+    // the tool-output language hint — what decides whether an output is coloured at all
+    "function langHintOf(el: HTMLElement, text: string): string | undefined {",
+    'return looksLikeJson(text) ? "json" : undefined;',
+    "function looksLikeJson(text: string): boolean {",
+    "JSON.parse(text);",
   ],
   "src/chat/chat-view.ts": [
     "private refreshTranscript(rt: SessionRuntime",
@@ -62,7 +68,10 @@ describe("mutation ratchet anchors", () => {
   const hunks = rangedHunks();
 
   it("finds the surgical ratchets (a config deleted is a ratchet lost)", () => {
-    expect(hunks.map((h) => h.file).sort()).toEqual(Object.keys(ANCHORS).sort());
+    // A FILE may carry more than one range (view.ts has the streaming block and the tool-output
+    // language hint), so the list is per FILE: what must never happen is a mutated file with no
+    // anchors, i.e. a floor nobody declared.
+    expect([...new Set(hunks.map((h) => h.file))].sort()).toEqual(Object.keys(ANCHORS).sort());
   });
 
   it("every range still points at CODE, not at blank lines or comments", () => {
@@ -78,13 +87,18 @@ describe("mutation ratchet anchors", () => {
   });
 
   it("every range still covers the statements its floor was measured on", () => {
-    for (const hunk of hunks) {
-      const slice = readFileSync(join(ROOT, hunk.file), "utf8")
-        .split("\n")
-        .slice(hunk.start - 1, hunk.end)
+    // A file may carry MORE than one measured range (view.ts: the streaming block, and the
+    // tool-output language hint), and an anchor belongs to one of them, not to all: what must hold
+    // is that every anchor still sits inside SOME range of that file. A range that slides off the
+    // statements it was measured on therefore still fails here, which is the point.
+    for (const file of [...new Set(hunks.map((h) => h.file))]) {
+      const source = readFileSync(join(ROOT, file), "utf8").split("\n");
+      const covered = hunks
+        .filter((h) => h.file === file)
+        .map((h) => source.slice(h.start - 1, h.end).join("\n"))
         .join("\n");
-      for (const anchor of ANCHORS[hunk.file] ?? []) {
-        expect(slice, `${hunk.config}: the range no longer covers \`${anchor}\` — move it, do not delete it`).toContain(
+      for (const anchor of ANCHORS[file] ?? []) {
+        expect(covered, `${file}: no measured range covers \`${anchor}\` — move it, do not delete it`).toContain(
           anchor,
         );
       }

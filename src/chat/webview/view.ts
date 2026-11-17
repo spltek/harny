@@ -1951,7 +1951,9 @@ function addToolCall(name: string, args: unknown, beforeEl?: HTMLElement | null)
     '<div class="tool-input"><span class="tool-label">Input</span><pre class="tool-args">' +
     argsHtml +
     "</pre></div>" +
-    '<div class="tool-output"><span class="tool-label">Output</span><pre class="tool-result">⏳ running…</pre></div>' +
+    '<div class="tool-output"><span class="tool-label">Output</span><pre class="tool-result">' +
+    SPINNER +
+    " running…</pre></div>" +
     "</div>";
   wireCollapsible(div);
   if (beforeEl && beforeEl.parentNode) beforeEl.parentNode.insertBefore(div, beforeEl);
@@ -2227,6 +2229,12 @@ const SYNTHETIC_SUMMARY_ICON = icon("history", 13, 'class="synthetic-icon"');
 /** A small robot glyph for sub-agent bubbles. */
 const SUBAGENT_ICON = icon("subagent", 13, 'class="subagent-icon"');
 
+/** The ONE "something is happening" mark: an arc in the accent, turning. It replaces the ⏳ the
+ *  placeholders used to carry — an emoji draws differently on every OS (and ⌛ vs ⏳ is not even the
+ *  same glyph), while this is the panel's own recipe and looks the same everywhere. Decorative: the
+ *  word beside it ("running…", "working…") is what says the state, so it is hidden from the ATs. */
+const SPINNER = '<span class="harny-spinner" aria-hidden="true"></span>';
+
 /** What the sub-agent's chip SAYS: the MODE it runs in, in the same words as the chat's own mode
  * button. `read` IS the analyze mode (the host maps it that way — file tools run as previews and
  * Shell is read-only), and both writing accesses run in Build. This is the fix for a chip that
@@ -2277,6 +2285,12 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
   // The bubble header must SAY WHAT the sub-agent does: use a descriptive id
   // when the model gave one, otherwise a short snippet of the goal, and always
   // keep the full goal one hover away.
+  // The Task IS the arguments object (`formatArgs` stringifies it), so it is coloured exactly like
+  // a tool's Input: same JSON, same door, same budget. A sub-agent card that printed its own
+  // request in flat grey was the one place in the panel where the code-looking thing had no code
+  // colours.
+  const taskText = formatArgs(args);
+  const taskHtml = highlightToHtml(taskText, "json") ?? escapeHtml(taskText);
   const label = subAgentLabel(id, goal);
   // The goal preview is NOT pre-truncated here: how much of it fits depends on
   // the panel width, so the CSS does it (ellipsis on `.subagent-name`), which
@@ -2328,9 +2342,11 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
       .join("") +
     "</div>" +
     '<div class="tool-input"><span class="tool-label">Task</span><pre class="tool-args">' +
-    escapeHtml(formatArgs(args)) +
+    taskHtml +
     "</pre></div>" +
-    '<div class="tool-output"><span class="tool-label">Report</span><div class="tool-result subagent-report">⏳ working…</div></div>' +
+    '<div class="tool-output"><span class="tool-label">Report</span><div class="tool-result subagent-report">' +
+    SPINNER +
+    " working…</div></div>" +
     "</div>";
   // Header toggles the WHOLE body (goal + nested stream + report).
   const subHeader = div.querySelector(".subagent-header");
@@ -3080,16 +3096,38 @@ function renderToolOutput(el: HTMLElement, text: string): void {
     // text, exactly as before. The `path` comes from the Input of this same bubble.
     const trailer = TRUNCATED_TRAILER.exec(text)?.[0] ?? "";
     const body = trailer ? text.slice(0, text.length - trailer.length) : text;
-    const html = highlightToHtml(body, langHintOf(el));
+    const html = highlightToHtml(body, langHintOf(el, body));
     if (html === null) el.textContent = text;
     else el.innerHTML = html + (trailer ? escapeHtml(trailer) : "");
   }
 }
 
-/** The language an OUTPUT may be coloured with: the file it came from, and nothing else. */
-function langHintOf(el: HTMLElement): string | undefined {
+/**
+ * The language an OUTPUT may be coloured with: the file it came from, or — when there is no file —
+ * the only other thing that can be PROVED rather than guessed: the text parses as JSON. A tool that
+ * answers with an object (an MCP call, a structured listing) used to sit there flat, and "it is
+ * JSON" is not an opinion: `JSON.parse` succeeds or it does not.
+ */
+function langHintOf(el: HTMLElement, text: string): string | undefined {
   const path = extractPath(el);
-  return path ? langIdForPath(path) : undefined;
+  const byFile = path ? langIdForPath(path) : undefined;
+  if (byFile) return byFile;
+  return looksLikeJson(text) ? "json" : undefined;
+}
+
+/** True when the text opens like a JSON value AND parses: the proof, not a shape guess. */
+function looksLikeJson(text: string): boolean {
+  const head = text.trimStart()[0];
+  if (head !== "{" && head !== "[") return false;
+  // No value out of the try: the LAST line is the answer, so an emptied catch block cannot pass
+  // silently. (`try { … return true } catch { return false }` reads the same and leaves a mutant
+  // that no test can tell from the original: a hole nothing would guard.)
+  try {
+    JSON.parse(text);
+  } catch {
+    return false;
+  }
+  return true;
 }
 
 const TODO_STATUSES = ["pending", "in_progress", "completed", "cancelled"] as const;

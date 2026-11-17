@@ -3962,6 +3962,91 @@ describe("view webview client", () => {
     expect(document.querySelector(".msg.tool .tool-path")?.textContent).toBe("/w/a.ts");
   });
 
+  it("colours an OUTPUT that IS JSON, even when no file is involved (an MCP call, a listing)", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    hostMessage({ type: "toolCall", id: "js1", name: "mcp__demo__list", arguments: { query: "x" } });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "js1",
+      output: '{\n  "items": [\n    { "id": 1, "name": "a" }\n  ]\n}',
+      isError: false,
+    });
+    const result = document.querySelector(".msg.tool .tool-result") as HTMLElement;
+    // No path anywhere on this bubble: the PROOF that it is JSON is the parse, and it is enough.
+    expect(result.querySelector(".token.property")?.textContent).toBe('"items"');
+    expect(JSON.parse(result.textContent!)).toMatchObject({ items: [{ id: 1, name: "a" }] });
+  });
+
+  it("colours a JSON ARRAY output too (the other half of what `JSON.parse` accepts)", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    hostMessage({ type: "toolCall", id: "js3", name: "mcp__demo__rows", arguments: {} });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "js3",
+      output: '[\n  { "id": 1 },\n  { "id": 2 }\n]',
+      isError: false,
+    });
+    const result = document.querySelector(".msg.tool .tool-result") as HTMLElement;
+    expect(result.querySelector(".token.property")?.textContent).toBe('"id"');
+  });
+
+  it("sees JSON behind LEADING whitespace (a shell answers with a blank line first)", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    hostMessage({ type: "toolCall", id: "js5", name: "mcp__demo__list", arguments: {} });
+    hostMessage({ type: "toolResult", toolCallId: "js5", output: '\n  { "items": [] }', isError: false });
+    const result = document.querySelector(".msg.tool .tool-result") as HTMLElement;
+    expect(result.querySelector(".token.property")?.textContent).toBe('"items"');
+  });
+
+  it("does NOT colour a bare JSON SCALAR: `null` or `42` is a value, not a document", async () => {
+    // `null` and `42` are valid JSON — which is exactly why the brace check exists: the rule is
+    // "an object or an array", and a single token has nothing to paint.
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    hostMessage({ type: "toolCall", id: "js6", name: "mcp__demo__scalar", arguments: {} });
+    hostMessage({ type: "toolResult", toolCallId: "js6", output: "null", isError: false });
+    const result = document.querySelector(".msg.tool .tool-result") as HTMLElement;
+    expect(result.querySelector(".token")).toBeNull();
+    expect(result.textContent).toBe("null");
+  });
+
+  it("gives the FILE's language priority over the JSON it happens to contain", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    hostMessage({ type: "toolCall", id: "js4", name: "Read", arguments: { path: "a.ts" } });
+    // A .ts file whose body is JSON: the FILE says TypeScript, and a file's extension is the
+    // stronger fact — `tsconfig.json` is read as a .ts file, not guessed from its braces.
+    hostMessage({ type: "toolResult", toolCallId: "js4", output: '{ "a": 1 }', isError: false });
+    const result = document.querySelector(".msg.tool .tool-result") as HTMLElement;
+    // Painted as TS (no JSON `property` token), and the text is intact either way.
+    expect(result.textContent).toBe('{ "a": 1 }');
+  });
+
+  it("leaves an output that only LOOKS like JSON plain (a truncated object parses for nobody)", async () => {
+    await loadView();
+    const input = document.getElementById("user-input") as HTMLTextAreaElement;
+    input.value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    hostMessage({ type: "toolCall", id: "js2", name: "mcp__demo__stream", arguments: {} });
+    hostMessage({ type: "toolResult", toolCallId: "js2", output: '{"items": [{"id": 1', isError: false });
+    const result = document.querySelector(".msg.tool .tool-result") as HTMLElement;
+    expect(result.querySelector(".token")).toBeNull();
+    expect(result.textContent).toBe('{"items": [{"id": 1');
+  });
+
   it("colours an OUTPUT only when the file it came from has a language the bundle knows", async () => {
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
@@ -4710,6 +4795,12 @@ describe("view webview client", () => {
 
     const bubble = document.querySelector(".msg.tool.subagent") as HTMLElement;
     expect(bubble.querySelector(".sa-thinking")?.textContent).toContain("reasoning");
+    // The TASK area is the Delegate's arguments: coloured as JSON, like a tool's Input — and the
+    // text is untouched (Prism escapes what it emits), because the panel parses these args back.
+    const task = bubble.querySelector(".tool-args") as HTMLElement;
+    expect(task.querySelector(".token.property")?.textContent).toBe('"id"'); // the first key, coloured
+    expect(JSON.parse(task.textContent!)).toMatchObject({ id: "A", goal: "g", access: "read" });
+
     const tool = bubble.querySelector(".sa-tool") as HTMLElement;
     expect(tool.textContent).toContain("Read");
     expect(tool.classList.contains("ok")).toBe(true);
