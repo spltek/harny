@@ -4,6 +4,15 @@ export interface ToolCall {
   arguments: Record<string, unknown>;
   /** True when no valid JSON arguments could be parsed from the stream (malformed/empty). */
   malformed?: boolean;
+  /** True when the arguments had to be REBUILT from an incomplete JSON fragment (see
+   * tool-call-accumulator). On its own it is not a fault — models emit sloppy or fenced JSON, and
+   * reconstructing it is deliberate — but combined with {@link truncated} it means half an
+   * argument. */
+  repaired?: boolean;
+  /** True when the turn that emitted this call was cut by the output-token limit
+   * (`finish_reason: "length"`), i.e. the stream stopped mid-emission. A FACT ABOUT THE CALL, not
+   * agent state: it cannot go stale between turns and every consumer reads the same value. */
+  truncated?: boolean;
 }
 
 export interface ToolResult {

@@ -43,6 +43,7 @@ import { BUILD_SWITCH_HINT, type SystemPromptBuilder } from "./system-prompt";
 import type { AttachmentPart } from "../../chat/attachment-types";
 import { LoopGuard, DEFAULT_LOOP_GUARD_OPTIONS, type LoopDecision, type LoopGuardOptions } from "./loop-guard";
 import { ToolCallAccumulator } from "./tool-call-accumulator";
+import { argumentIntegrityRefusal, markTruncatedCalls } from "./tool-call-integrity";
 import { ThinkingTagParser } from "./thinking-parser";
 import type { AgentEvent } from "./types";
 
@@ -1325,7 +1326,10 @@ export class Agent implements ChatController {
     );
     return {
       content,
-      toolCalls,
+      // A turn stopped by the output budget leaves HALF an argument on the wire: the fact is
+      // stamped on each call here, where `finishReason` is known, so the executor can refuse it
+      // without the agent carrying any state (see tool-call-integrity.ts).
+      toolCalls: markTruncatedCalls(toolCalls, finishReason),
       thinking,
       reasoningDetails,
       finishReason,
@@ -1360,6 +1364,15 @@ export class Agent implements ChatController {
   }
 
   private async executeToolSafely(tc: ToolCall): Promise<ToolResult> {
+    // FIRST, before anything else can act on them: a call whose arguments were cut by the
+    // output-token limit never runs. Not even a Delegate — a truncated `goal` would start a
+    // sub-agent on half a task. Checked here because this is the ONE choke point every caller
+    // goes through (session agent, sub-agents, delegated children), and because the result must
+    // exist regardless: a call with no result is a wire-rule violation that rejects the NEXT
+    // request (see conversation-validity). The rule and its wording live in
+    // tool-call-integrity.ts.
+    const integrity = argumentIntegrityRefusal(tc);
+    if (integrity) return { content: integrity, isError: true };
     // Delegate is executed by the orchestrator (not the generic tool path):
     // it owns the session's sub-agent runner and the depth-1 policy — and it is where
     // Parallel OFF is refused (see executeDelegate), the execution-side layer behind

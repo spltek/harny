@@ -1805,7 +1805,7 @@ describe("ToolCallAccumulator", () => {
 
     expect(call).toBeUndefined();
     const completed = acc.handle({ type: "tool_call_end", index: 0 });
-    expect(completed).toEqual({ id: "c1", name: "Read", arguments: { path: "/x" }, malformed: false });
+    expect(completed).toEqual({ id: "c1", name: "Read", arguments: { path: "/x" }, malformed: false, repaired: false });
   });
 
   it("ignores duplicate ends and deltas without a start", () => {
@@ -1836,8 +1836,8 @@ describe("ToolCallAccumulator", () => {
     const b = acc.handle({ type: "tool_call_end", index: 1 });
     const a = acc.handle({ type: "tool_call_end", index: 0 });
 
-    expect(a).toEqual({ id: "a", name: "Read", arguments: {}, malformed: false });
-    expect(b).toEqual({ id: "b", name: "Write", arguments: { path: "p" }, malformed: false });
+    expect(a).toEqual({ id: "a", name: "Read", arguments: {}, malformed: false, repaired: false });
+    expect(b).toEqual({ id: "b", name: "Write", arguments: { path: "p" }, malformed: false, repaired: false });
   });
 });
 
@@ -4843,5 +4843,205 @@ describe("tool-call pairing on an interrupted run", () => {
     // twice, and the stored history is valid.
     expect(factory.requests).toHaveLength(2);
     expect(conversationFaults(history.all())).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A tool call cut in half by the output budget.
+//
+// The OpenAI adapter surfaces `finish` BEFORE closing pending calls, and closes them at the end
+// of the stream even when the reason is `length` (openai-chat-provider.ts): so on a cut turn a
+// tool call REACHES the executor with half its arguments, and before this rule it ran with the
+// reconstructed fragment — a Write that truncated the file it was writing. The fixtures below are
+// written in the real chunk order (`finish`, then the trailing `tool_call_end`).
+describe("Agent — a tool call cut by the output-token limit never runs", () => {
+  const cutCall = (id: string, name: string, partialJson: string, index = 0): StreamChunk[] => [
+    { type: "tool_call_start", index, id, name },
+    { type: "tool_call_delta", index, delta: partialJson },
+    { type: "finish", reason: "length" },
+    { type: "tool_call_end", index },
+  ];
+
+  it("refuses a Write whose arguments had to be rebuilt, and tells the model why", async () => {
+    const write = makeTool("Write", { content: "written", isError: false }, { analyzePolicy: "preview" });
+    const { agent, events, history } = buildHarness({
+      tools: [write],
+      // the `contents` string never closes: this is half a file
+      chunks: [cutCall("c1", "Write", '{"path":"index.html","contents":"<h1>half a fil'), textChunks("ok")],
+    });
+    agent.setMode("agent");
+
+    await agent.send("write the page");
+
+    expect(write.called).toBe(false); // ← the whole point
+    const result = events.find((e) => e.type === "tool_result");
+    expect(result && result.type === "tool_result" ? result.toolResult.isError : false).toBe(true);
+    expect(result && result.type === "tool_result" ? result.toolResult.output : "").toContain("output-token limit");
+    expect(result && result.type === "tool_result" ? result.toolResult.output : "").toContain(
+      "rebuilt from an incomplete fragment",
+    );
+    // the refused call still has its result: the conversation stays sendable
+    expect(conversationFaults(history.all())).toEqual([]);
+    expect(history.all().map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant"]);
+  });
+
+  it("stamps the fact ON the call, so the stored transcript says it too", async () => {
+    const { agent, history } = buildHarness({
+      tools: [makeTool("Write")],
+      chunks: [cutCall("c1", "Write", '{"path":"a.txt","contents":"hal'), textChunks("ok")],
+    });
+
+    await agent.send("go");
+
+    const assistantCall = history.all().find((m) => m.role === "assistant" && m.toolCalls?.length);
+    expect(assistantCall?.toolCalls?.[0]).toMatchObject({
+      name: "Write",
+      truncated: true,
+      repaired: true,
+      // the reconstructed arguments are still kept: the transcript shows what arrived
+      arguments: { path: "a.txt", contents: "hal" },
+    });
+  });
+
+  it("RUNS a cut turn whose arguments closed before the cut (no false refusal)", async () => {
+    const read = makeTool("Read", { content: "file content", isError: false });
+    const { agent, events } = buildHarness({
+      tools: [read],
+      chunks: [cutCall("c1", "Read", '{"path":"a.txt"}'), textChunks("done")],
+    });
+
+    await agent.send("read it");
+
+    expect(read.called).toBe(true);
+    const result = events.find((e) => e.type === "tool_result");
+    expect(result && result.type === "tool_result" ? result.toolResult.isError : true).toBe(false);
+  });
+
+  it("keeps repairing sloppy JSON on a turn that was NOT cut (the regression guard)", async () => {
+    const write = makeTool("Write", { content: "written", isError: false }, { analyzePolicy: "preview" });
+    const { agent } = buildHarness({
+      tools: [write],
+      chunks: [
+        toolCallChunksFromJson("c1", "Write", '{"path":"a.txt","contents":"sloppy but complete'),
+        textChunks("done"),
+      ],
+    });
+    agent.setMode("agent");
+
+    await agent.send("write");
+
+    expect(write.called).toBe(true); // finish_reason was never "length": nothing to refuse
+  });
+
+  it("refuses the cut call and runs the whole one in the SAME turn, leaving no orphan result", async () => {
+    const read = makeTool("Read", { content: "file content", isError: false });
+    const write = makeTool("Write", { content: "written", isError: false }, { analyzePolicy: "preview" });
+    const { agent, events, history } = buildHarness({
+      tools: [read, write],
+      chunks: [
+        [
+          { type: "tool_call_start", index: 0, id: "c1", name: "Read" },
+          { type: "tool_call_delta", index: 0, delta: '{"path":"a.txt"}' },
+          { type: "tool_call_end", index: 0 },
+          { type: "tool_call_start", index: 1, id: "c2", name: "Write" },
+          { type: "tool_call_delta", index: 1, delta: '{"path":"b.txt","contents":"hal' },
+          { type: "finish", reason: "length" },
+          { type: "tool_call_end", index: 1 },
+        ],
+        textChunks("done"),
+      ],
+    });
+    agent.setMode("agent");
+
+    await agent.send("read then write");
+
+    expect(read.called).toBe(true);
+    expect(write.called).toBe(false);
+    const results = events.filter((e) => e.type === "tool_result");
+    expect(results).toHaveLength(2); // one per call: the wire rule needs both
+    expect(conversationFaults(history.all())).toEqual([]);
+  });
+
+  it("refuses a truncated Delegate too (the check runs before delegation)", async () => {
+    const { agent, events } = buildHarness({
+      chunks: [cutCall("c1", "Delegate", '{"access":"read-only","goal":"find every place that'), textChunks("done")],
+    });
+
+    await agent.send("delegate");
+
+    const result = events.find((e) => e.type === "tool_result");
+    const output = result && result.type === "tool_result" ? result.toolResult.output : "";
+    // The integrity refusal wins over anything delegation would have said: a half `goal` must not
+    // start a sub-agent on half a task.
+    expect(output).toContain("output-token limit");
+    expect(events.some((e) => e.type === "subagent_start")).toBe(false);
+  });
+
+  it("prefers the CUT diagnosis over the generic malformed one (same call, better remedy)", async () => {
+    const { agent, events } = buildHarness({
+      tools: [makeTool("Write")],
+      chunks: [cutCall("c1", "Write", "nothing parseable here"), textChunks("ok")],
+    });
+
+    await agent.send("go");
+
+    const result = events.find((e) => e.type === "tool_result");
+    const output = result && result.type === "tool_result" ? result.toolResult.output : "";
+    expect(output).toContain("nothing parseable arrived");
+    expect(output).not.toContain("malformed tool arguments");
+  });
+
+  it("leaves a cut turn WITHOUT tool calls exactly as it was (partial answer + note)", async () => {
+    const { agent, history } = buildHarness({
+      chunks: [
+        [
+          { type: "text", content: "Here is the beginning of the answer" },
+          { type: "finish", reason: "length" },
+        ],
+      ],
+    });
+
+    await agent.send("explain");
+
+    const final = history.all().at(-1);
+    expect(final?.role).toBe("assistant");
+    expect(final?.content).toContain("Here is the beginning of the answer");
+    expect(final?.content).toContain("Output truncated by the token limit"); // unchanged behaviour
+  });
+
+  it("holds INSIDE a sub-agent too (it builds its own Agent, so the choke point is the same)", async () => {
+    const write = makeTool("Write", { content: "written", isError: false }, { analyzePolicy: "preview" });
+    const events: SubAgentEvent[] = [];
+    const cutFactory: LLMProviderFactory = {
+      create: () => ({
+        protocol: "chat" as const,
+        async *stream() {
+          yield { type: "tool_call_start", index: 0, id: "s1", name: "Write" } as StreamChunk;
+          yield { type: "tool_call_delta", index: 0, delta: '{"path":"a.txt","contents":"hal' } as StreamChunk;
+          yield { type: "finish", reason: "length" } as StreamChunk;
+          yield { type: "tool_call_end", index: 0 } as StreamChunk;
+        },
+      }),
+    };
+    const runner = new SubAgentRunner({
+      config: new StaticConfigProvider(VALID_CONFIG),
+      llmFactory: cutFactory,
+      tools: new ToolRegistry([write]),
+      cwd: () => "/w",
+    });
+
+    const result = await runner.run(
+      { id: "A", goal: "write it", access: "write", resources: ["a.txt"] } as DelegateSpec,
+      (event) => events.push(event),
+    );
+
+    expect(write.called).toBe(false);
+    // The refusal reached the SUB-AGENT's own transcript (it builds its own Agent, so it goes
+    // through the same choke point)…
+    const refusal = events.find((e) => e.type === "tool_result");
+    expect(refusal && refusal.type === "tool_result" ? refusal.toolResult.output : "").toContain("output-token limit");
+    // …and the host keeps re-emitting the same cut call, so the loop guard stops the run instead of
+    // letting it write the same truncated file three times: the two protections compose.
+    expect(result.content).toContain("Loop not resolved");
   });
 });

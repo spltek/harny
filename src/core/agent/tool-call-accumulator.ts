@@ -23,7 +23,13 @@ export class ToolCallAccumulator {
         // parallel calls survive as N calls.
         if (existing) {
           const res = parseToolArgs(existing.args);
-          return { id: existing.id, name: existing.name, arguments: res.args, malformed: res.malformed };
+          return {
+            id: existing.id,
+            name: existing.name,
+            arguments: res.args,
+            malformed: res.malformed,
+            repaired: res.repaired,
+          };
         }
         return undefined;
       }
@@ -42,6 +48,7 @@ export class ToolCallAccumulator {
           name: entry.name,
           arguments: res.args,
           malformed: res.malformed,
+          repaired: res.repaired,
         };
       }
       default:
@@ -54,6 +61,11 @@ interface ParsedToolArgs {
   args: Record<string, unknown>;
   /** True when no valid JSON could be produced (malformed/truncated/empty). */
   malformed: boolean;
+  /** True when the arguments only exist because {@link repairJsonObject} rebuilt them. The agent
+   * reads it TOGETHER with the turn's `finish_reason`: alone it is the normal, tolerated sloppiness
+   * of a model, but on a CUT turn it means the fragment we parsed was half of an argument (see
+   * tool-call-integrity.ts). */
+  repaired: boolean;
 }
 
 /**
@@ -63,8 +75,10 @@ interface ParsedToolArgs {
  *  1. direct JSON.parse of the whole text,
  *  2. extract the first {...} block (models often wrap args in prose/fences),
  *  3. repair truncated/incomplete JSON (unterminated strings / unbalanced
- *     braces/brackets) so a call cut off by a low reasoning budget still runs
- *     with its partial valid arguments instead of silently becoming {}.
+ *     braces/brackets) so a call cut off by a LOW reasoning budget still arrives with its partial
+ *     valid arguments instead of silently becoming {} — the decision whether that fragment may
+ *     RUN belongs to the caller (see tool-call-integrity): on a healthy turn it is a sloppy model,
+ *     on a cut turn it is half a write.
  * Only when nothing parseable/repairable exists do we mark the call malformed
  * (arguments = {} + malformed = true), so the agent can give an explicit error
  * or a corrective hint instead of executing a tool with bogus empty args.
@@ -73,7 +87,7 @@ function parseToolArgs(raw: string): ParsedToolArgs {
   // A truly empty emission is a VALID call with no arguments (tools with no
   // required params), not a malformed one. Only non-empty, unparseable and
   // unrepairable content is flagged malformed.
-  if (!raw || !raw.trim()) return { args: {}, malformed: false };
+  if (!raw || !raw.trim()) return { args: {}, malformed: false, repaired: false };
 
   const tryParse = (s: string): Record<string, unknown> | undefined => {
     const t = s.trim();
@@ -94,17 +108,17 @@ function parseToolArgs(raw: string): ParsedToolArgs {
   // Direct + first-{...} parse.
   for (const cand of [raw, block].filter((s): s is string => !!s)) {
     const direct = tryParse(cand);
-    if (direct) return { args: direct, malformed: false };
+    if (direct) return { args: direct, malformed: false, repaired: false };
   }
 
   // Truncated/repairable JSON.
   for (const cand of [raw, block].filter((s): s is string => !!s)) {
     const repaired = repairJsonObject(cand);
     const p = repaired ? tryParse(repaired) : undefined;
-    if (p) return { args: p, malformed: false };
+    if (p) return { args: p, malformed: false, repaired: true };
   }
 
-  return { args: {}, malformed: true };
+  return { args: {}, malformed: true, repaired: false };
 }
 
 /**

@@ -98,3 +98,46 @@ describe("ToolCallAccumulator", () => {
     expect(last).toMatchObject({ id: "c", arguments: { id: "C" } });
   });
 });
+
+describe("ToolCallAccumulator — `repaired` says HOW the arguments arrived", () => {
+  // The agent pairs this flag with the turn's finish reason: repaired alone is a sloppy model
+  // (tolerated, deliberate), repaired on a CUT turn is half an argument (refused). The parser is
+  // the only place that knows which one happened, so it has to say it.
+
+  const call = (raw: string): { repaired?: boolean; malformed?: boolean; arguments: Record<string, unknown> } =>
+    feed(new ToolCallAccumulator(), raw) as never;
+
+  it("is false when the JSON arrived complete", () => {
+    expect(call('{"path":"a.txt"}')).toMatchObject({ malformed: false, repaired: false });
+  });
+
+  it("is false for an empty emission (a valid call with no arguments)", () => {
+    expect(call("")).toMatchObject({ malformed: false, repaired: false });
+  });
+
+  it("is false for JSON wrapped in prose, which needs extraction but no rebuilding", () => {
+    expect(call('Here you go:\n```json\n{"path":"a.txt"}\n```')).toMatchObject({ malformed: false, repaired: false });
+  });
+
+  it("is true when the fragment had to be rebuilt (unterminated string)", () => {
+    expect(call('{"path":"a.txt","contents":"half a sen')).toMatchObject({ malformed: false, repaired: true });
+  });
+
+  it("is true when the fragment had to be rebuilt (missing closing brace)", () => {
+    expect(call('{"path":"a.txt","contents":"b"')).toMatchObject({ malformed: false, repaired: true });
+  });
+
+  it("is false when nothing could be parsed at all (that is `malformed`, a different fact)", () => {
+    expect(call("no object here")).toMatchObject({ malformed: true, repaired: false });
+  });
+
+  it("survives the flush path (a provider that REUSES the index)", () => {
+    const acc = new ToolCallAccumulator();
+    acc.handle({ type: "tool_call_start", index: 0, id: "a", name: "Write" });
+    acc.handle({ type: "tool_call_delta", index: 0, delta: '{"path":"a.txt","contents":"half' });
+
+    const flushed = acc.handle({ type: "tool_call_start", index: 0, id: "b", name: "Write" });
+
+    expect(flushed).toMatchObject({ id: "a", repaired: true, malformed: false });
+  });
+});
