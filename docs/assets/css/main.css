@@ -566,7 +566,11 @@ main {
   overflow: hidden;
 }
 .hero__grid {
-  max-width: var(--max);
+  /* Same CONTENT column as the menu row and every `.sect`, which are a `--max` BOX with `--pad`
+     inside them: their content is `--max - 2*--pad`, and the hero's own `--pad` is already paid by
+     `.hero` above — so a `--max` cap here made the top of the page stick out past the menu (and
+     past every section under it) by exactly one `--pad` per side. */
+  max-width: calc(var(--max) - 2 * var(--pad));
   margin: 0 auto;
   width: 100%;
   display: grid;
@@ -728,10 +732,30 @@ main {
   font-size: 0.94rem;
 }
 .hero__cta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.8rem;
+  /* The three actions used to be three pills of three DIFFERENT widths in a wrapping flex row, so
+     where the third one landed depended on the text inside the others: it dropped alone under a
+     ragged left edge. Now the block is a two-cell grid — every action is as wide as its cell, so
+     the widths do not depend on the labels, nothing is ever "left over", and the whole block ends
+     flush with the column's right edge like the stats under it. */
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
   padding-top: 0.5rem;
+}
+/* A grid cell has to be allowed to be narrower than its label, or `white-space: nowrap` would push
+   the button past the column instead of centring the text inside it. The inline padding is trimmed
+   from 1.5rem to 1rem for the three of them: `VS CODE MARKETPLACE` is the widest label of the two
+   halves and at a ~1200px window it used to fill its cell to the last pixel — a clip waiting for
+   the next font, zoom level or OS. */
+.hero__cta .btn {
+  min-width: 0;
+  justify-content: center;
+  padding-inline: 1rem;
+}
+/* The install CTA IS the hero's action: it takes the whole row, so the hierarchy reads before a
+   single label is read, and the two secondaries line up under it as one pair. */
+.hero__cta .btn--brand {
+  grid-column: 1 / -1;
 }
 .hero__stats {
   display: flex;
@@ -3107,10 +3131,22 @@ main {
   gap: 2rem;
   align-items: center;
   padding: clamp(2.2rem, 5vw, 3.4rem) var(--pad);
-  border-top: 1px solid var(--line);
   background: linear-gradient(180deg, rgba(1, 8, 15, 0.6), rgba(0, 5, 10, 0.98));
   max-width: var(--max);
   margin: 0 auto;
+}
+/* The closing rule is drawn INSET like every `.sect::before`, not as a `border-top` on a `--max`
+   box: a border spans the whole box, so the last hairline of the page used to be one `--pad` wider
+   per side than all the ones above it — the bottom of the page read as a different width than the
+   middle. Same geometry, same gradient, so it is literally the same rule. */
+.foot::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: var(--pad);
+  right: var(--pad);
+  height: 1px;
+  background: linear-gradient(90deg, var(--line-2), transparent 55%);
 }
 .foot__brand {
   display: flex;
@@ -3365,9 +3401,10 @@ main {
 }
 
 @media (max-width: 520px) {
-  .hero__cta .btn {
-    flex: 1 1 100%;
-    justify-content: center;
+  /* One column, one action per row: at this width a half-cell cannot hold `VS CODE MARKETPLACE`
+     without shrinking the type, and a squeezed pair reads as a defect. */
+  .hero__cta {
+    grid-template-columns: minmax(0, 1fr);
   }
   .wordmark {
     font-size: clamp(3.2rem, 20vw, 5rem);
