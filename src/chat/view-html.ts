@@ -273,7 +273,7 @@ ${VIEW_CSS}
            run has left behind (see the Focus block in webview/view.ts). -->
       <button id="focus-mode" type="button" aria-pressed="false" data-tip="transcript.focus">Focus</button>
       <button id="collapse-all" type="button" disabled data-tip="transcript.collapse">Collapse all</button>
-      <button id="autoscroll" type="button" disabled data-tip="transcript.follow">Follow</button>
+      <button id="autoscroll" type="button" aria-pressed="false" data-tip="transcript.follow">Follow</button>
     </div>
   </div>
   <div id="input-area">

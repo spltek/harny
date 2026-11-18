@@ -561,8 +561,12 @@ function clearComposition(id: string | undefined): void {
  */
 interface ViewMemory {
   scrollTop: number;
-  /** True when the transcript was FOLLOWING the stream (pinned to the bottom):
-   * those sessions must keep following it, the others go back where they were. */
+  /** True when the box was AT THE END when you left it: such a session comes back at its end (and,
+   *  if a run is live there, following it), the others go back exactly where they were.
+   *  A POSITION MEASURED AT STASH TIME, deliberately not `autoScroll`: off the clock the switch is
+   *  always false, so storing it would say "parked mid-read" about every idle session you were
+   *  simply sitting at the bottom of — and the next visit would restore an offset that is no longer
+   *  the end because the session has grown since. */
   pinned: boolean;
   /** Indexes (document order) of the EXPANDED sections. Appends only ADD sections
    * at the end, so the indexes of an existing transcript stay valid. */
@@ -581,7 +585,9 @@ function stashViewMemory(id: string | undefined): void {
   transcriptSections().forEach((body, i) => {
     if (!body.classList.contains("collapsed")) open.push(i);
   });
-  viewMemory.set(draftKey(id), { scrollTop: messagesEl.scrollTop, pinned: autoScroll, open });
+  // `gapFromEnd()` and not the switch (see the field's note): at the end is the end, whoever put you
+  // there, and the epsilon is the same rounding guard the pin uses.
+  viewMemory.set(draftKey(id), { scrollTop: messagesEl.scrollTop, pinned: gapFromEnd() <= BOTTOM_EPS, open });
 }
 
 /**
@@ -625,9 +631,11 @@ function restoreViewMemory(id: string | undefined, withScroll = true): void {
     setBodyFold(body, wantOpen);
   });
   if (withScroll && !mem.pinned) {
+    // The position that comes back is this session's own, and so is the Follow: restoring a parked
+    // reader and then pinning on the next delta is the drag-back this design exists to avoid.
     messagesEl.scrollTop = mem.scrollTop;
-    autoScroll = false; // still parked above the bottom: do not chase the stream
-    updateTranscriptActions();
+    paintPin = false; // the opening paint's allowance is withdrawn: this offset was chosen, not defaulted
+    setFollow(false);
   }
 }
 
@@ -697,9 +705,6 @@ function makeThrottledMd(minIntervalMs = 16) {
     e.innerHTML = renderMarkdown(g());
     lastCost = performance.now() - started;
     last = performance.now();
-    // The render grows the section BELOW the current scroll anchor: re-pin to
-    // the bottom (auto-scroll guarded) or streaming appears below the fold.
-    scrollDown();
   }
 
   /** Minimum gap between two paints: the nominal frame time, or what the last
@@ -756,8 +761,8 @@ function makeThrottledMd(minIntervalMs = 16) {
     push(e: Element, g: () => string): void {
       // Rule 1 is justified by a MEASUREMENT, never by the character count alone: `FAST_PAINT_CHARS`
       // is a proxy, and 4 KB of log or a fenced block Prism has to highlight can cost as much as a
-      // long one on a slow engine — repeated per delta, which is precisely the freeze rule 2 exists
-      // to prevent. So the fast path is taken while the last render actually WAS cheap (the common
+      // long one on a slow engine — repeated per delta, which is precisely the freeze the coalescer
+      // exists to prevent. So the fast path is taken while the last render actually WAS cheap (the common
       // case by orders of magnitude: a few hundred microseconds) and given up as soon as one was
       // not; the very next render goes through the coalescer and re-measures.
       //
@@ -1470,52 +1475,207 @@ function hideSwitchVeil(): void {
 }
 
 // ── Chat rendering engine ──
-const SCROLL_BOTTOM_TOLERANCE = 40;
+// ── Following the live edge: ONE switch, and it exists only while the session WORKS ──
+//
+// A stopped session has no live edge, so the Follow has no meaning there: the pill is DISABLED and
+// dark whenever the session on screen is not working, and the working state is both its PERMISSION
+// and its GRANT — entering `working` lights it and takes the end, leaving it puts it out and locks
+// it. The reader never has to switch on the obvious, and can never be left holding a switch that
+// has nothing to move.
+//
+// WORKING, ON  — the end is where the box lives. It may leave only while a hand is HOLDING it (a
+//                press on the scrollbar or in the transcript, a finger on the glass): the release
+//                brings it back on the spot. Content arriving, a resize, a card that grows, a fold,
+//                a rebuild — all of it re-takes the end.
+// WORKING, OFF — the reader switched it off mid-run, so the box is parked until the run ends:
+//                nothing moves it — not a delta, not a resize, not a rebuild. The next run grants
+//                it again, because that is the moment the live edge means something again.
+//
+// Who flips it: the pill (while a run is live), and the places where the reader says what they are
+// looking at — a message typed about the run, a `⌘F` jump that parks it back. Only EDGES of
+// `working` are acted on, so a park chosen mid-run survives every status message the host sends.
+// No gesture and no position decides anything.
+//
+// The version this replaces deduced "the reader has moved" from a scroll offset, and a position has
+// a dozen authors we do not control: our own pin, an anchor restore, scroll anchoring when a card
+// above the viewport grows, the browser nudging a fractional offset. Every one of them looks like a
+// hand leaving — that is the race that kept eating the Follow, and the way to end it is to stop
+// playing: the reader declares, the code obeys.
+/** "At the end", allowing for a fractional offset. A rounding guard, NOT a threshold: it decides
+ * nothing, and it is what keeps the enforcement from fighting the browser's own rounding (a write
+ * that changes nothing still fires a scroll event, so a sub-pixel gap would ping-pong). */
+const BOTTOM_EPS = 2;
+/**
+ * The switch. It is only ever TRUE while the session works (see `setFollow`), and not observable
+ * from outside: the first message (`init`) grants it outright — opening a session is a NEW CONTEXT
+ * with no reader in place to keep — which is why a mutant that flips it SURVIVES and is baselined
+ * instead of chased.
+ */
 let autoScroll = true;
+/** A hand is ON the box, so it may move it. ONE flag for every kind of hold — a press on the bar, a
+ * drag over a message, a finger on the glass — because they all end the same way: at the end. */
+let handHeld = false;
 
-/** True while a pointer is down on the CONTAINER — the scrollbar, the empty area under the last
- * bubble — and false the instant it is released anywhere (heard on the window, in the capture
- * phase, so a control that swallows the event cannot leave the box held forever).
- *
- * A drag is ONE gesture and MANY scroll events, and the first ones travel a few pixels — well
- * inside the tolerance — so a delta landing mid-drag would pin the transcript back under the
- * reader's hand: the reported "going up slowly with the scrollbar makes it go crazy". The flag
- * decides NOTHING about the Follow: it only says that this instant is not ours to pin.
- *
- * A press on anything INSIDE it is a header, a chevron, a link — a click: it moves nothing, and
- * `===` rather than `contains` is what draws that line. */
-let transcriptHeld = false;
+/** The reader's word about the run IN FLIGHT: `null` = they have not said anything, so the run
+ * starting IS the answer. Wiped the instant the session stops working — a choice about a turn that
+ * is over is not a choice, and carrying it into the next run would silently turn "no objection"
+ * into "parked" for a run nobody has seen yet. */
+let followChoice: boolean | null = null;
 
-/** Scrolls to the last emitted line, but only while the reader is anchored at the bottom:
- * scrolling UP lets go, reaching the bottom picks it back up. */
-function scrollDown(): void {
-  if (!autoScroll || transcriptHeld) return;
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-}
-
-messagesEl.addEventListener("scroll", () => {
-  const nearBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < SCROLL_BOTTOM_TOLERANCE;
-  autoScroll = nearBottom;
-  // Scrolling is what makes the "Autoscroll" pill applicable or not.
+/** The pill, written in ONE place: the flag, the beat's phase lock and the attribute together, so a
+ * lit pill with a dead animation (or a dark one still breathing) is not a state a call site can
+ * produce. Idempotent, so any pass may call it. */
+function setFollowState(lit: boolean): void {
+  autoScroll = lit;
+  if (lit) {
+    // THE BEAT STARTS HERE, so the phase lock belongs here too: the pill's `harny-pulse` begins the
+    // instant `updateTranscriptActions` below makes it `aria-pressed`, and a CSS animation starts
+    // from zero unless it is told where in the shared cycle it is. Locking on the GRANT only was not
+    // enough — a reader who parks and re-follows mid-run re-starts the animation with the offset of
+    // the moment the run began — and writing it on every pass costs nothing: the offset is derived
+    // from a clock, so the value written is the one the animation is already at, and re-setting it is
+    // not a restart. (A branch saying "only if it is missing" was the same write with a condition
+    // nothing could tell apart: the mutation run said so.)
+    phaseLockPulse(autoscrollBtn);
+  } else {
+    // Dark: the offset describes a cycle this pill is no longer in, and the next light recomputes it.
+    autoscrollBtn.style.animationDelay = "";
+    autoscrollBtn.style.removeProperty("--pulse-delay");
+  }
   updateTranscriptActions();
-});
-
-// Neither a new section nor a delta may pin while the reader's pointer is on the box.
-messagesEl.addEventListener("pointerdown", (e) => {
-  if (e.target === messagesEl) transcriptHeld = true;
-});
-messagesEl.addEventListener("mousedown", (e) => {
-  if (e.target === messagesEl) transcriptHeld = true;
-});
-for (const ev of ["pointerup", "mouseup", "pointercancel", "blur"]) {
-  window.addEventListener(
-    ev,
-    () => {
-      transcriptHeld = false;
-    },
-    true,
-  );
 }
+
+/** The switch's ONE writer: the pill in the action row reads it, so a flip anywhere else would
+ * leave the pill describing a state that is no longer true. Writing it also asks the one question
+ * it cannot answer itself — is there an edge to follow? — so `ON` off the clock is not a state, it
+ * is a no-op, and no caller can light a switch that has nothing to move. */
+function setFollow(on: boolean): void {
+  const busy = sessionBusy();
+  // A choice about nothing is not a choice: off the clock the pill cannot be lit at all (permission),
+  // so recording "off" here would disarm the grant of the run that has not started yet.
+  followChoice = busy ? on : null;
+  // An explicit flip decides the position, so the opening paint's allowance is spent: the switch is
+  // the reader (or the grant) talking, and nothing is waiting for a layout to say where to land.
+  paintPin = false;
+  setFollowState(on && busy);
+}
+
+/** Nothing below calls `preventDefault`: these listeners OBSERVE a gesture the browser is already
+ * performing, so they never need to be able to hold the scroll back. Named once, out of the
+ * measured hunks, because a mutator inside them can only produce the option that means the same
+ * thing — a mutant no test could ever kill, guarding a rule nobody needs. */
+const PASSIVE = { passive: true } as const;
+
+/** The distance between the box and the end, in px. Zero (or a fraction, or a negative from an
+ * overscroll) means it IS at the end. Deliberately NOT clamped: clamped, "parked just above the end"
+ * and "at the end" become indistinguishable. */
+function gapFromEnd(): number {
+  return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
+}
+
+/** Take the end — but only while the switch is ON and there is an edge to take. Every caller goes
+ * through here, and the guard lives INSIDE it, so a parked reader can never be moved by a call site
+ * that forgot to ask, and a stopped session can never be dragged to an end it does not have. */
+function pinToBottom(): void {
+  if (!autoScroll || !sessionBusy()) return;
+  landOnEnd();
+}
+
+/** The end, unconditionally. Two callers only, and neither is a follow: a pin that already asked its
+ * questions, and the PAINT of a fresh context (see `paintPin`). */
+function landOnEnd(): void {
+  messagesEl.scrollTop = Math.max(0, messagesEl.scrollHeight - messagesEl.clientHeight);
+}
+
+/** Set by a session being OPENED, cleared by the first geometry delivery or scroll it gets: a fresh
+ * context lands on its END, and that is a paint, not a follow — an idle session has no live edge to
+ * follow and still has to open on its last message, because the alternative is opening it at
+ * whatever offset the previous session happened to leave behind. It is a WIDTH OF ONE SETTLE and not
+ * a mode: once the rebuilt bubbles have reported their height, the reader owns the position again
+ * (and `restoreViewMemory` withdraws it for a session you were reading). */
+let paintPin = false;
+
+// ── The switch, ENFORCED ──
+//
+// While it is ON the box cannot REST away from the end: a scroll that ends anywhere else is taken
+// back in the same event, before the paint, so a wheel notch or a key does nothing at all. A hold is
+// the one exception — that is a hand dragging, and the drag is answered on release, not fought
+// mid-flight. Nothing here decides anything: it reads the switch and obeys it.
+messagesEl.addEventListener(
+  "scroll",
+  () => {
+    // Any scroll ends the opening paint's allowance: on an idle session we write nothing, so a
+    // movement there is the reader's, and it is not to be yanked back later.
+    paintPin = false;
+    if (handHeld) return;
+    if (gapFromEnd() > BOTTOM_EPS) pinToBottom();
+  },
+  PASSIVE,
+);
+
+/** The release brings the box back. The listener is on the WINDOW because a scrollbar drag that
+ * ends outside the panel never reaches a listener on the box — and that is exactly the case where
+ * the box would otherwise be left parked with the switch ON. */
+function releaseHand(): void {
+  if (!handHeld) return;
+  handHeld = false;
+  pinToBottom();
+}
+messagesEl.addEventListener(
+  "pointerdown",
+  () => {
+    handHeld = true;
+  },
+  PASSIVE,
+);
+messagesEl.addEventListener(
+  "touchstart",
+  () => {
+    handHeld = true;
+  },
+  PASSIVE,
+);
+messagesEl.addEventListener("touchend", releaseHand, PASSIVE);
+messagesEl.addEventListener("touchcancel", releaseHand, PASSIVE);
+window.addEventListener("pointerup", releaseHand, PASSIVE);
+window.addEventListener("pointercancel", releaseHand, PASSIVE);
+
+// ── The net: the end is a POSITION, not an event ──
+//
+// Pinning at every call site that MIGHT grow the transcript means every one of them has to
+// remember — a delta, a coalesced markdown paint, a fold, a rebuild, an image that decodes a
+// second later, a font that swaps, the panel getting narrower — and the one that forgets is
+// invisible.
+//
+// So nothing in the rendering code pins. We watch the GEOMETRY: the box and every bubble in it.
+// Anything that changes the height resizes one of them, and the notification arrives AFTER layout
+// and BEFORE paint — exactly when the end can be re-taken. The mutation observer is not a pin: it
+// only keeps the watch list current, and its first delivery subscribes everything at once — the
+// box included — so there is deliberately no separate initial call (the mutation run proved a line
+// nothing could tell apart from its absence). A parked reader is untouched either way: the guard
+// lives inside the pin.
+const geometry = new ResizeObserver(() => {
+  if (handHeld) return; // a drag in progress: the release pins, pinning now would fight it
+  if (paintPin) {
+    // The opening context has just been laid out, so this is where its end really is. It IS the
+    // end: `pinToBottom` below would only repeat the write or refuse it for being off the clock.
+    paintPin = false;
+    landOnEnd();
+    return;
+  }
+  pinToBottom();
+});
+const watchedGeometry = new WeakSet<Element>();
+function watchGeometry(el: Element): void {
+  if (watchedGeometry.has(el)) return;
+  watchedGeometry.add(el);
+  geometry.observe(el);
+}
+function watchTranscript(): void {
+  watchGeometry(messagesEl);
+  for (const child of Array.from(messagesEl.children)) watchGeometry(child);
+}
+new MutationObserver(watchTranscript).observe(messagesEl, { childList: true });
 
 /**
  * The READING POSITION, captured before a rebuild destroys the nodes.
@@ -1558,7 +1718,7 @@ function restoreScrollAnchor(anchor: ScrollAnchor | null): void {
   // the bottom would be exactly the jump this exists to prevent.
   if (!el) return;
   const edge = messagesEl.getBoundingClientRect().top;
-  messagesEl.scrollTop += el.getBoundingClientRect().top - edge + anchor.above;
+  messagesEl.scrollTop = messagesEl.scrollTop + el.getBoundingClientRect().top - edge + anchor.above;
 }
 
 /**
@@ -1584,9 +1744,6 @@ function addCompactedHint(): void {
   });
   wrap.appendChild(btn);
   messagesEl.appendChild(wrap);
-  // Only when the reader is following: appending while they are mid-transcript must not
-  // move their view (they will see the line when they get there).
-  scrollDown();
   updateTranscriptActions();
 }
 
@@ -1609,7 +1766,6 @@ function addHarnessMessage(content: string): HTMLDivElement {
     renderMarkdown(content || "") +
     "</div>";
   messagesEl.appendChild(div);
-  scrollDown();
   return div;
 }
 
@@ -1678,7 +1834,6 @@ function addMessage(role: string, content: string, attachments?: ViewAttachment[
     }
   }
   messagesEl.appendChild(div);
-  scrollDown();
   return div;
 }
 
@@ -1752,7 +1907,6 @@ function appendTurnBadge(meta: MessageMeta | undefined): void {
   const badge = metaBadge(meta);
   if (!badge) return;
   messagesEl.appendChild(badge);
-  scrollDown();
 }
 
 /**
@@ -1778,7 +1932,6 @@ function addSwitchToBuildBanner(): void {
   text.textContent = "Prepared as previews in Analyze — switch to Build to apply.";
   el.appendChild(text);
   messagesEl.appendChild(el);
-  scrollDown();
 }
 
 /** Large, per-type icon for a non-image attachment: the category picks the
@@ -2040,7 +2193,6 @@ function addToolCall(name: string, args: unknown, beforeEl?: HTMLElement | null)
   wireCollapsible(div);
   if (beforeEl && beforeEl.parentNode) beforeEl.parentNode.insertBefore(div, beforeEl);
   else messagesEl.appendChild(div);
-  scrollDown();
   return div;
 }
 
@@ -2106,28 +2258,26 @@ function updateTranscriptActions(): void {
     (el) => !el.classList.contains("collapsed"),
   );
   collapseAllBtn.disabled = !anyOpen;
-  // "Autoscroll": only while the user is parked above the bottom. autoScroll is
-  // DERIVED from the scroll position (see the scroll listener), so reaching the
-  // bottom re-arms it by itself — this pill only has to carry you there.
-  autoscrollBtn.disabled = autoScroll;
+  // The "Follow" pill IS the switch, and it only exists while the session WORKS: lit (and now
+  // breathing, see view.css) while the box follows the live edge, dark while the reader has parked
+  // it mid-run, and DISABLED — by the lock table, with its reason in the card — while nothing is
+  // running, because a stopped session has no live edge for a Follow to follow.
+  autoscrollBtn.setAttribute("aria-pressed", autoScroll && sessionBusy() ? "true" : "false");
 }
 
 /** Collapse every expanded section and reset its arrow. Returns how many were
  * open, so tests can assert on the effect instead of on the DOM. */
 function collapseAllSections(): number {
   let collapsed = 0;
-  // ONE re-assertion for the whole batch, never one per section: `transcriptHeld` already means
-  // "nothing may pin this instant", so the loop borrows it — and the single `scrollDown()` after
-  // it is the reader's own gesture putting the Follow back, once.
-  const wasHeld = transcriptHeld;
-  transcriptHeld = true;
+  // ONE fold for the whole batch, never a re-assertion per section: the three fold changes land in
+  // the same task, so the geometry net reports them in a single notification and the pin runs once
+  // for all of them. Nothing has to be suppressed for that — a hold would only be a way of telling
+  // the pin to stop doing what it is here to do.
   document.querySelectorAll<HTMLElement>(TRANSCRIPT_SECTIONS).forEach((body) => {
     if (body.classList.contains("collapsed")) return;
     setBodyFold(body, false);
     collapsed += 1;
   });
-  transcriptHeld = wasHeld;
-  scrollDown();
   return collapsed;
 }
 
@@ -2172,11 +2322,6 @@ function setBodyFold(body: Element, open: boolean): void {
   if (!open) releaseSelectionWithin(body);
   body.classList.toggle("collapsed", !open);
   setFold(body.previousElementSibling, open);
-  // A fold moves everything below it, so if the reader was following, the bottom is re-asserted
-  // HERE, in the same task as the change — which is also why the scroll event the change may
-  // produce reads the box as already at the bottom, and leaves the Follow on. One funnel: the
-  // header click, a tool card, Focus opening a section and "Collapse all" all land here.
-  scrollDown();
 }
 
 /** "The agent works HERE now": open the section, and leave it open. */
@@ -2402,7 +2547,6 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
     vscode.postMessage({ type: "abortSubAgent", toolCallId: tcId });
   });
   messagesEl.appendChild(div);
-  scrollDown();
   return div;
 }
 
@@ -2480,7 +2624,6 @@ function handleSubAgentEvent(parentId: string, event: SubAgentStreamEvent): void
       (target ? " " + escapeHtml(target) : "");
     log.appendChild(line);
     subAgentToolEls.set(parentId + ":" + id, line);
-    scrollDown();
   } else if (event.type === "tool_result" && event.toolResult) {
     const line = subAgentToolEls.get(parentId + ":" + event.toolResult.toolCallId);
     if (line) {
@@ -2516,7 +2659,6 @@ function ensureCompactionBubble(): void {
   // with everything already on screen — the reported defect.
   phaseLockPulse(compactionEl);
   messagesEl.appendChild(compactionEl);
-  scrollDown();
 }
 
 function addWorking(): HTMLDivElement {
@@ -2526,7 +2668,6 @@ function addWorking(): HTMLDivElement {
   // The bar can appear MID-turn (a sub-agent, a resumed run): join the cycle where the
   // play button already is instead of restarting it from zero.
   phaseLockPulse(workingBar);
-  scrollDown();
   return workingBar;
 }
 
@@ -2935,10 +3076,6 @@ function renderMessages(msgs: ChatMsg[]): boolean {
       if (m.role === "user") attachTruncateAt(el, i);
     }
   }
-  // The per-message `addMessage` already scrolled, but the metrics badge is
-  // appended AFTER the last bubble: scroll once more so auto-scroll includes
-  // its height (otherwise the badge is left just below the fold).
-  if (hasVisible) scrollDown();
   // A rebuild always starts from collapsed sections, so nothing is left to
   // collapse (or nothing is there at all after a switch/clear).
   updateTranscriptActions();
@@ -3495,7 +3632,6 @@ function send(): void {
     // A LOCAL refusal, not a host round-trip: the run never starts, and the note goes
     // away on the next refresh because it is not part of the conversation.
     addMessage("assistant", `❌ Re-attach "${stuck.name}": it was too large to keep across a reload.`);
-    scrollDown();
     return;
   }
   if (!text && attachments.length === 0) return;
@@ -3536,9 +3672,8 @@ function send(): void {
   attachTruncateAt(userEl, historyLength);
   historyLength += 1;
   workingEl = addWorking();
-  scrollDown();
   vscode.postMessage({ type: "send", text, ...(attachments.length > 0 ? { attachments } : {}) });
-  setStreaming(true);
+  setStreaming(true); // the run starts where the reader is looking: the Follow grants itself
 }
 
 // ── Custom hover tooltip removed: native title attributes are used instead ──
@@ -3974,7 +4109,7 @@ const find = createFind(
     close: document.getElementById("find-close") as HTMLButtonElement,
     transcript: messagesEl,
   },
-  { reveal: revealForMatch },
+  { reveal: revealForMatch, onJump: () => setFollow(false) },
 );
 
 // ── The transcript's own context menu (Copy / Select all) ──
@@ -4233,16 +4368,14 @@ focusModeBtn.addEventListener("click", (e) => {
   e.stopPropagation();
   setFocusMode(!focusMode);
 });
-// "Autoscroll": jump back to the latest message. There is NO separate
-// autoscroll state to switch on — the scroll listener above re-derives it from
-// the position, so landing at the bottom resuming following is automatic.
-// autoScroll is set here too so the pill disables itself immediately, without
-// waiting for the scroll event to land.
+// The "Follow" pill IS the switch, in BOTH directions — the only thing a reader can use to take the
+// Follow back, and the only thing that gives it up. Turning it ON also takes the end, so "on" can
+// never mean "following from somewhere up the transcript"; turning it OFF moves nothing at all —
+// the reader stays exactly where they were, which is what "parked" means.
 autoscrollBtn.addEventListener("click", (e) => {
   e.stopPropagation();
-  autoScroll = true;
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-  updateTranscriptActions();
+  setFollow(!autoScroll);
+  pinToBottom();
 });
 // Any click inside the transcript can change what is expanded: the section
 // headers toggle themselves and their event bubbles here AFTER their own
@@ -5820,7 +5953,7 @@ let thinkingCapable = false; // provider declares thinking control (bool/effort)
 // CSS animation would then begin mid-cycle and stay permanently out of sync
 // with the play key. phaseLockPulse() aligns each area to the SAME clock with
 // a negative animation-delay, so every border beats together with the button.
-const PULSE_MS = 1200; // must match harny-pulse / pulse-beat (1.2s)
+const PULSE_MS = 1200; // must match harny-pulse (1.2s) — the panel has ONE beat, see view.css
 let pulseClockStart = performance.now();
 
 function phaseLockPulse(el: HTMLElement): void {
@@ -5847,12 +5980,39 @@ function focusPrompt(): void {
  * they scrolled away — so the view returns to following, and the caret returns where the
  * next keystroke belongs. */
 function followAndFocus(): void {
-  autoScroll = true;
-  scrollDown();
-  updateTranscriptActions();
+  setFollow(true); // the reader just acted ON this run: the live edge is where they are looking
+  pinToBottom();
   focusPrompt();
 }
 
+/** A TURN IS OVER — the panel's own knowledge, and the strongest fact it will ever get.
+ *
+ * `done`, `interrupted`, `denied` and `error` all mean the same thing about the session on screen:
+ * it is not working any more. `sessionBusy()` ORs the panel's flag with the host's set, so a message
+ * that ends the turn has to release BOTH — otherwise a set that outlived the run (`workingIds`
+ * listing this session while our own flag was already false, which is exactly the state a panel
+ * opened on a queued run is in) keeps `sessionBusy()` true: the Working bar disappears and the
+ * Follow stays attached to nothing, with every locked control inert for a run that ended.
+ *
+ * `setStreaming` releases the id on its FALLING edge, which is not the same sentence: there is no
+ * edge to fall when the flag was never true. Termination is not a transition to be observed — it is
+ * a statement, so this release is unconditional. */
+function endTurn(): void {
+  releaseActive();
+  setStreaming(false);
+}
+
+/** "The session on screen is not working" — the ONE sentence the whole panel says in three places
+ * (a run ending, a terminal message, a status that drops the list), so it is written once. Deleting
+ * an id we do not have is not an error and not a case: the guard is for the type, not for a state. */
+function releaseActive(): void {
+  if (activeId) workingIds.delete(activeId);
+}
+
+/** The panel's own clock for "a run is live". The Follow is NOT granted here: `syncFollowToWork`
+ * owns that (via applyLocks, which this calls), because the working state has two sources — this
+ * flag and the host's `workingIds` — and a grant per call site is exactly the class of bug the
+ * switch exists to delete. */
 function setStreaming(active: boolean): void {
   const rising = active && !streamingActive;
   const falling = !active && streamingActive;
@@ -5869,7 +6029,7 @@ function setStreaming(active: boolean): void {
   // session that is still running in the background. Beware: only a TRANSITION releases. The first
   // paint answers `setStreaming(false)` with a set that legitimately lists this session, because a
   // run was already in flight (a send preamble) when the panel was built.
-  if (falling && activeId) workingIds.delete(activeId);
+  if (falling) releaseActive();
   // ONE choke point for the locks that follow "this session streams": the optimistic send path
   // (clicking Play) never passes through a `status` message, so calling the lock at that message
   // only left the models gear clickable for a run started from this panel.
@@ -5895,15 +6055,14 @@ function setStreaming(active: boolean): void {
     // without this the bar and a bubble born later beat on different phases — exactly what
     // "compacting and working pulse out of sync" looked like.
     for (const el of document.querySelectorAll<HTMLElement>(
-      ".working, #working-bar, .msg.assistant.streaming, .thinking-block.streaming, .subagent-running",
+      ".working, #working-bar, #autoscroll, .msg.assistant.streaming, .thinking-block.streaming, .subagent-running",
     )) {
       phaseLockPulse(el);
     }
-    // Entering working always pins the transcript at the bottom with
-    // auto-scroll ON: the reply is arriving below, even if the user had
-    // scrolled up to re-read older content.
-    autoScroll = true;
-    scrollDown();
+    // Nothing grants the Follow HERE any more: the grant belongs to `syncFollowToWork`, which sees
+    // the working state itself (this flag is only one of the two it reads, the other being the
+    // host's `workingIds`) and acts on its EDGES. One owner for "a run is live, so the Follow is
+    // on", instead of a grant per call site — the class of bug this rule exists to delete.
   }
   sendBtn.classList.toggle("blinking", active);
   // The prompt STAYS usable while working: Enter queues, Ctrl/Cmd+Enter steers.
@@ -7035,8 +7194,8 @@ window.addEventListener("message", (e) => {
       settleThinkingBlock();
       const resultEl = ensureResult();
       if (resultEl) {
-        // `push`/`paint` scrolls: scrolling HERE would force one extra layout
-        // per delta, even when the coalescer did not paint at all.
+        // `push` schedules a paint; the geometry net takes the end after that paint, once. A scroll
+        // HERE would be one forced layout per delta, even when the coalescer never painted.
         answerMd.push(resultEl, () => currentRawText);
       }
       break;
@@ -7179,11 +7338,10 @@ window.addEventListener("message", (e) => {
       flushStreamingMd();
       aborted = true;
       terminalShown = true;
-      setStreaming(false);
+      endTurn();
       hideWorking();
       const stopEl = addMessage("assistant", "❌ ⏹ Processing interrupted.");
       stopEl.classList.add("error");
-      scrollDown();
       focusPrompt();
       break;
     }
@@ -7220,7 +7378,6 @@ window.addEventListener("message", (e) => {
       clearStreamingBubble();
       const el = addMessage("assistant", `🔁 **Loop guard** [${msg.loopType}] — ${msg.message}`);
       el.classList.add("loop");
-      scrollDown();
       break;
     }
     case "harnessNudge": {
@@ -7229,7 +7386,6 @@ window.addEventListener("message", (e) => {
       flushStreamingMd();
       clearStreamingBubble();
       addHarnessMessage(String(msg.content || ""));
-      scrollDown();
       break;
     }
     case "pending": {
@@ -7250,7 +7406,6 @@ window.addEventListener("message", (e) => {
       // that list, so the host tells the view to show it now. No cut key here:
       // the end-of-run refresh rebuilds the transcript and attaches it.
       addMessage("user", String(msg.content || ""), msg.attachments, msg.images);
-      scrollDown();
       break;
     }
     case "steerApplied": {
@@ -7260,13 +7415,12 @@ window.addEventListener("message", (e) => {
       // the bubble showed the text only.
       const el = addMessage("user", String(msg.content || ""), msg.attachments, msg.images);
       el.classList.add("steer-msg");
-      scrollDown();
       break;
     }
     case "done":
       flushStreamingMd();
       finishStream();
-      setStreaming(false);
+      endTurn();
       focusPrompt();
       break;
     case "denied": {
@@ -7274,7 +7428,7 @@ window.addEventListener("message", (e) => {
       // bubble and its "Working…" bar). Undo the paint, then say why in the TRANSCRIPT — the
       // surface the user is looking at — instead of a dialog on top of it.
       flushStreamingMd();
-      setStreaming(false);
+      endTurn();
       hideWorking();
       resetStreamState();
       optimisticUserEl?.remove();
@@ -7283,13 +7437,12 @@ window.addEventListener("message", (e) => {
       whyEl.classList.add("error");
       // The run never started: no "(empty response)" fallback if a `done` follows.
       terminalShown = true;
-      scrollDown();
       focusPrompt();
       break;
     }
     case "error": {
       flushStreamingMd();
-      setStreaming(false);
+      endTurn();
       hideWorking();
       if (currentResultEl) {
         currentResultEl.classList.add("error");
@@ -7540,14 +7693,18 @@ window.addEventListener("message", (e) => {
     }
     case "status":
       if (Array.isArray(msg.workingIds)) workingIds = new Set(msg.workingIds as string[]);
+      // …and when the host says THIS session is not streaming while sending no list at all, the list
+      // we are holding is the previous one: a set that outlives the turn keeps `sessionBusy()` true
+      // and the Follow lit over nothing (see `endTurn`, the same sentence from the other side). The
+      // host's word about the session on screen beats a bulk answer it did not repeat.
+      else if (msg.active === false) releaseActive();
       // The rows and the tab × read this set: patched in one place (applyWorkingRows), the same one
       // `setStreaming` uses when a turn ends — so no surface can be left showing the previous state.
       applyWorkingRows();
-      // The streaming flag FIRST: the gears below read it, and the models gear is locked with
-      // it. Called in the other order, the gear kept the previous state for one status message.
+      // The streaming flag LAST and ALONE: it is the choke point the whole panel derives from, and
+      // it already re-patches the locks (see applyLocks), so a second call here was a no-op — the
+      // mutation run said so ("call removed: survived"). One state, one pass, in flow order.
       setStreaming(!!msg.active);
-      // While ANY session works, the managers stay reachable, the per-session gear goes inert.
-      applyWorkingLock();
       break;
     case "switching":
       // The host is loading/activating a session right now. The name is resolved from
@@ -7802,6 +7959,16 @@ const LOCKS: readonly LockRule[] = [
     lock: never,
     tip: (s) => (s.anyBusy ? "sessions.manageBusy" : "sessions.manage"),
   },
+  // ── the Follow: the ONE control that is inert the other way round ──
+  // It is the light of a LIVE edge, so it exists only while the session on screen works: locked
+  // when idle (and its card says why), and an `aria-pressed` switch for as long as a run is writing
+  // into the box. Every other lock protects the request a run already sent; this one protects a
+  // state that would otherwise describe an edge nobody is writing to.
+  {
+    el: autoscrollBtn,
+    lock: (s) => !s.activeBusy,
+    tip: (_s, locked) => (locked ? "transcript.follow.idle" : "transcript.follow"),
+  },
 ];
 
 /** Apply the table. Called from the ONE point every way of starting a run passes through (see
@@ -7814,6 +7981,39 @@ function applyLocks(): void {
     (rule.el as HTMLButtonElement).disabled = locked;
     if (rule.tip) setTip(rule.el, rule.tip(snap, locked));
   }
+  // The Follow rides the same snapshot, and this is the only place that sees every EDGE of it: the
+  // host's `status`, the optimistic send, a run ending, a session opened. Anything else would be a
+  // copy of the condition, and a copy is how the same bug landed four times.
+  syncFollowToWork(snap.activeBusy);
+}
+
+/**
+ * The working state is the Follow's permission AND its grant.
+ *
+ * Permission: off the clock there is no live edge, so `setFollow` refuses to light and `pinToBottom`
+ * refuses to move. Grant: a run starting is "show me the live edge" — the reader acted on the run
+ * itself, which is the one thing the switch means — so it lights itself and takes the end in the
+ * same breath, and a run ending puts it out and locks it, because from that instant there is nothing
+ * left to follow. In between, the reader owns it.
+ *
+ * AND IT IS DERIVED, not edged: lit = working AND the reader has not parked THIS run. An edge cache
+ * was the fragile version of the same sentence — it remembered a transition instead of reading the
+ * two facts it is about, so a pass that arrived while the panel's own flag was already false (a
+ * `done` with the session still listed, a status that never carried the set) left the pill lit over
+ * a run that was over: attached Follow, detached working. Reading the facts cannot do that, and the
+ * park survives every status message of the run for free, because `followChoice === false` is a
+ * sentence about the run in flight, not about a transition.
+ */
+function syncFollowToWork(busy: boolean): void {
+  if (!busy) followChoice = null;
+  const wasLit = autoScroll;
+  setFollowState(busy && followChoice !== false);
+  // The grant takes the end; a reader who was already following is left where the deliveries put
+  // them, because a status message is not a reason to move somebody who is reading. It does NOT
+  // spend the opening paint's allowance: if the box cannot be measured yet, that allowance is the
+  // only thing that will land the reader on the last message once it can, and burning it here would
+  // trade "on the living edge" for "at the top of a context I cannot measure".
+  if (autoScroll && !wasLit) pinToBottom();
 }
 
 /** Kept as the name the call sites already use: the lock pass, nothing else. */
@@ -7940,15 +8140,18 @@ function renderViewState(state: {
   } else {
     renderEmptyShell();
   }
-  // Selecting/opening a session always pins the transcript to the bottom with
-  // auto-scroll ON: the freshly shown (possibly still working) session starts
-  // from its END, so the live streaming is visible without manual scrolling.
-  autoScroll = true;
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-  // …unless you had left THIS session mid-read: then its scroll offset and its
-  // open sections come back instead of being thrown away (see stashViewMemory).
-  restoreViewMemory(activeId);
+  // Selecting/opening a session is a new CONTEXT, not a position to preserve: there is no reader
+  // to keep in place yet, so the freshly shown (possibly still working) session starts from its
+  // end. The locks come FIRST, because they are also what tells the Follow whether a run is live
+  // here (and lights it when one is); the end itself is taken by setFollow/the net, when the
+  // rebuilt bubbles report their size.
   applyWorkingLock();
+  setFollow(true);
+  // …unless you had left THIS session mid-read: then its scroll offset and its
+  // open sections come back instead of being thrown away (see stashViewMemory), and the park wins
+  // over the grant — a session you were reading is not one to yank to the end.
+  paintPin = true; // a fresh context opens at its end: a paint, not a follow (see the flag)
+  restoreViewMemory(activeId);
   // The accent fill under every knob follows its value, and a config push is what moves them
   // without an `input` event (renderContextWindow & co. write `.value` directly).
   syncRangeFills();
@@ -7995,11 +8198,6 @@ function restoreLiveStream(state: {
     clearThinkingBlock();
   }
   if (!textFirst) appendLiveText(thinking, answer);
-  // Re-pin to the TRUE bottom: renderViewState anchored the scroll BEFORE this
-  // function added the working bar and the replayed content below it. Without
-  // this, the viewport sits above "Working…" and the stream seems to continue
-  // below the fold.
-  scrollDown();
 }
 
 /** Append the current segment's thinking + answer text as live bubbles. */

@@ -27,9 +27,33 @@ const ANCHORS: Record<string, string[]> = {
     "if (!currentRawText.trim()) break;",
     "settleThinkingBlock();",
     "const resultEl = ensureResult();",
-    // the Follow and the reader's pointer — what decides whether a delta pins at all
-    "if (!autoScroll || transcriptHeld) return;",
-    "if (e.target === messagesEl) transcriptHeld = true;",
+    // the SWITCH and the reader's own hand — what decides whether the end is taken at all
+    "function setFollowState(lit: boolean): void {",
+    "followChoice = busy ? on : null;",
+    "function setFollow(on: boolean): void {",
+    "setFollowState(on && busy);",
+    "phaseLockPulse(autoscrollBtn);",
+    "if (!autoScroll || !sessionBusy()) return;",
+    "messagesEl.scrollTop = Math.max(0, messagesEl.scrollHeight - messagesEl.clientHeight);",
+    // the rule, in three parts: the switch is the only author, the enforcement obeys it, and a HOLD
+    // is the one thing it must not fight
+    "function gapFromEnd(): number {",
+    "if (gapFromEnd() > BOTTOM_EPS) pinToBottom();",
+    "if (handHeld) return;",
+    "function releaseHand(): void {",
+    'window.addEventListener("pointerup", releaseHand, PASSIVE);',
+    // the state is DERIVED, and every message that ends the turn releases the session it was
+    // working on: the two sentences that keep the Follow from outliving its own run
+    "function syncFollowToWork(busy: boolean): void {",
+    "if (!busy) followChoice = null;",
+    "if (autoScroll && !wasLit) pinToBottom();",
+    "function endTurn(): void {",
+    "function releaseActive(): void {",
+    "if (activeId) workingIds.delete(activeId);",
+    "else if (msg.active === false) releaseActive();",
+    // the geometry net — what decides whether the end is taken at all
+    "const geometry = new ResizeObserver(() => {",
+    "new MutationObserver(watchTranscript).observe(messagesEl, { childList: true });",
     // the tool-output language hint — what decides whether an output is coloured at all
     "function langHintOf(el: HTMLElement, text: string): string | undefined {",
     'return looksLikeJson(text) ? "json" : undefined;',

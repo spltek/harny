@@ -662,6 +662,9 @@ body {
   flex: 1;
   overflow-y: auto;
   scrollbar-gutter: stable;
+  /* Scroll anchoring stays ON here: the pin runs after layout (see the geometry net), so there is
+     nothing for the browser to compensate — and a reader who parked mid-transcript keeps the
+     pixel they were reading when a bubble ABOVE them grows. */
   /* Top padding leaves room for the action tabs that slide UP out of the
      first bubble (see .branch-at/.truncate-at); too little clips them. */
   padding: 24px 0 0 10px;
@@ -1670,36 +1673,31 @@ body {
 .msg.user.steer-msg {
   border-left: 2px solid var(--accent);
 }
+/* ── THE ONE BEAT ──
+   Everything that says "a run is live" breathes on THESE keyframes and no others: the play key
+   (`#send-btn.blinking`), the Working bar, the halo of every streaming area, and the Follow pill.
+   A peak (opacity 1) at 0%/100%, the dim beat at 50% — one amplitude, because a second keyframes
+   with a different dip is what made the blue pill look out of step with the key it is supposed to
+   beat with: same clock, same easing, and still "not the same pulse" to the eye. The dip is HALF of
+   what it was (1 → 0.675, not 1 → 0.35): at full depth the light blinked, which is a lot of motion
+   for something a reader watches for the whole length of a turn. Halving it keeps the beat legible
+   and the panel calm; the halving is in ONE place, so it is still one amplitude.
+
+   The beat is always an OPACITY animation — on the element itself (the key, the bar, the pill) or
+   on an overlay (a streaming area's halo) — NEVER a border-color/box-shadow keyframe on the box.
+   Paint properties force a style recalc + repaint of the transcript on EVERY frame, and the cost
+   grows with the DOM: measured on a 1200-bubble session with four working areas, the old keyframes
+   cost 60 style recalculations/s and 18% of the webview main thread CONTINUOUSLY — while the answer
+   is being written, competing with the markdown paints the pacer exists to protect. Opacity is
+   composited: same look, 0 recalcs, 0% main thread. Keep it that way: anything animated here must
+   be `opacity` or `transform`. */
 @keyframes harny-pulse {
   0%,
   100% {
     opacity: 1;
   }
   50% {
-    opacity: 0.35;
-  }
-}
-/* The ACTIVE areas beat with the SAME 1.2s ease-in-out cadence as the play
-   button (harny-pulse) and IN PHASE with it: the peak (full glow) is at
-   0%/100% of the cycle, exactly when the play key is at full opacity; 50% is
-   the dim beat, matching the play key's fade.
-
-   The beat is an OPACITY animation on an overlay (::after), NOT a
-   border-color/box-shadow keyframe on the box itself. Paint properties force a
-   style recalc + repaint of the transcript on EVERY frame, and the cost grows
-   with the DOM: measured on a 1200-bubble session with four working areas, the
-   old keyframes cost 60 style recalculations/s and 18% of the webview main
-   thread CONTINUOUSLY — while the answer is being written, competing with the
-   markdown paints the pacer exists to protect. Opacity is composited: same
-   look, 0 recalcs, 0% main thread. Keep it that way: anything animated here
-   must be `opacity` or `transform`. */
-@keyframes pulse-beat {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.25;
+    opacity: 0.675;
   }
 }
 /* The halo each beat fades, static and drawn once: accent for answers and
@@ -1722,7 +1720,7 @@ body {
   border-radius: inherit;
   box-shadow: var(--pulse-glow);
   pointer-events: none;
-  animation: pulse-beat 1.2s ease-in-out infinite;
+  animation: harny-pulse 1.2s ease-in-out infinite;
   /* The phase lock (phaseLockPulse) cannot put an inline delay on a pseudo:
      the offset travels as a custom property it inherits. */
   animation-delay: var(--pulse-delay, 0ms);
@@ -2878,6 +2876,94 @@ body.drag-over {
   box-shadow:
     0 1px 3px var(--key-shadow),
     0 0 16px var(--accent-glow-strong);
+}
+/* ── THE FOLLOW SWITCH'S OWN LIGHT: BLUE, not the accent. ──
+   It is the one pill that stays lit for as long as a run writes into the box, so it wears the
+   colour of a run in progress rather than the accent (terracotta), which is the colour of an ARMED
+   ACTION — Play, the mode pills, a prompt bubble — and a follow switch is not an action, it is a
+   state of the transcript. Same recipe as the accent light (saturated fill, white on top, soft
+   halo) so "on" stays one idea in two colours. The fill runs DARK → HALF LIGHT: the gradient's light
+   end is the mid blue, one step below the bright step this pill started on, so the pill reads as a
+   dark switch that is lit rather than a bright one that blinks — and the light-to-dark span across
+   the gradient is half of what it was.
+   Literals, NOT `var(--ok)`: that token is referenced all over this sheet and DECLARED NOWHERE
+   (like the --fs-* scale), so a var() here would resolve to nothing and drop the declaration
+   silently. */
+#transcript-actions > #autoscroll[aria-pressed="true"] {
+  background: linear-gradient(135deg, #2563eb, #1e3a8a);
+  border-color: transparent;
+  color: #ffffff;
+  box-shadow:
+    0 1px 2px var(--key-shadow),
+    0 0 12px rgba(37, 99, 235, 0.45);
+}
+#transcript-actions > #autoscroll[aria-pressed="true"]:hover {
+  background: linear-gradient(135deg, #2563eb, #1e3a8a);
+  border-color: transparent;
+  color: #ffffff;
+  box-shadow:
+    0 1px 3px var(--key-shadow),
+    0 0 16px rgba(37, 99, 235, 0.6);
+}
+/* A DARK Follow pill hovers BLUE too. Parked mid-run it is enabled and unlit, so the strip's
+   generic hover recipe answered for it — accent text, accent edge, accent wash — and the one pill
+   of the three that is about a live run lit up terracotta under the pointer, i.e. in the colour of
+   an ARMED ACTION, which is exactly what "parked" is not. Same shape as the generic recipe (flat
+   wash, no glow) in this pill's own colour — one step LIGHTER than the lit fill, because a blue at
+   the fill's depth reads as grey text on a dark surface and the tint still has to be read. */
+#transcript-actions > #autoscroll:not([aria-pressed="true"]):not(:disabled):hover {
+  background: rgba(96, 165, 250, 0.12);
+  border-color: rgba(96, 165, 250, 0.55);
+  color: #60a5fa;
+  filter: none;
+}
+/* …and while the run writes, the pill does not merely STAY lit: THE LIGHT MOVES — with the very
+   same beat as the Play key. Same `harny-pulse` verbatim, on the BUTTON and not on an inner
+   overlay: an element's opacity fades its own background, its halo and its label in one go, which
+   is what the key does and what "the same pulse" means. The previous version animated a white
+   radial gradient inside the pill down to 25% while the blue body stayed at full strength, so the
+   pill dipped shallower and looked faster than the key beside it — same clock, same duration, and
+   still visibly out of step.
+   The GLOW still comes from inside (an overlay with a radial gradient at the bottom edge, so it
+   reads as a light behind the label rather than a ring outside the border), but it is now a static
+   drawing: the button's own opacity carries the beat, so there is one animation to keep in phase
+   instead of two.
+   `z-index: -1` over the button's own background keeps the glyph crisp on top of it, which needs
+   `isolation` to give the button a stacking context of its own (otherwise the negative layer drops
+   behind the panel and the light disappears).
+   OPACITY ONLY, never a box-shadow keyframe: shadows are paint properties and animating them here
+   would repaint the transcript 60 times a second for the whole turn (see the one-beat note). */
+#transcript-actions > #autoscroll[aria-pressed="true"] {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  animation: harny-pulse 1.2s ease-in-out infinite;
+  /* Phase lock: an inline `animation-delay` on the element lands here (phaseLockPulse), and the
+     custom property is the fallback for the copies that arrive through a lock pass. */
+  animation-delay: var(--pulse-delay, 0ms);
+}
+/* LIGHT FROM BELOW, kept low: the gradient's centre sits past the bottom edge and the white is
+   held at 0.3, so the pill reads as lit from underneath instead of carrying a bright smear along its
+   lower half — at 0.75 the glow swallowed the fill and made the pill look varnished. */
+#transcript-actions > #autoscroll[aria-pressed="true"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: radial-gradient(circle at 50% 135%, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0) 62%);
+  pointer-events: none;
+}
+/* Off the clock there is nothing to follow, so the pill goes properly inert (the lock table owns the
+   `disabled`, this owns the look): the dimming of a control that is not applicable — the same 0.3 the
+   global rule gives every disabled key, kept explicit here because the pill also has to lose its
+   hover recipe, and a dimmed BLUE would still read as "on, just faded". */
+#transcript-actions > #autoscroll:disabled {
+  opacity: 0.3;
+  background: var(--surface-2);
+  color: var(--muted);
+  border-color: var(--overlay-3);
+  animation: none;
 }
 /* Insert-in hint: the LEFT slot of this same strip, mirroring #transcript-actions on
    the right. It replaces the old Queue/Steer pill that lived in the model row:

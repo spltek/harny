@@ -28,6 +28,10 @@ export interface FindElements {
 interface FindOptions {
   /** Open every folded section containing `node`, so the match is actually visible. */
   reveal?: (node: Node) => void;
+  /** Called when a match is scrolled into view. The bar moves the transcript itself, so it is the one
+   * place that has to SAY it took the reader away from the live edge: the Follow is turned off by
+   * declared intent, never guessed from the position it leaves behind. */
+  onJump?: () => void;
 }
 
 export interface Find {
@@ -102,7 +106,11 @@ export function createFind(els: FindElements, opts: FindOptions = {}): Find {
   let observer: MutationObserver | null = null;
 
   const open = (): boolean => !els.bar.classList.contains("hidden");
-  const textLength = (): number => els.transcript.textContent?.length ?? 0;
+  // `textContent` is `string | null` on the NODE type and never null on an ELEMENT — an empty
+  // transcript answers "". The `?.length ?? 0` this replaces was a branch no input could reach (a
+  // mutant that deleted the chaining survived for exactly that reason), so the assertion is the
+  // honest form: the null arm does not exist.
+  const textLength = (): number => (els.transcript.textContent as string).length;
 
   /** Every block of the transcript, each with its text nodes flattened into one string. */
   function blocks(): SearchBlock[] {
@@ -232,6 +240,7 @@ export function createFind(els: FindElements, opts: FindOptions = {}): Find {
       sel.addRange(m);
     }
     if (scroll) {
+      opts.onJump?.();
       const node = m.startContainer;
       const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
       el?.scrollIntoView?.({ block: "center", inline: "nearest" });

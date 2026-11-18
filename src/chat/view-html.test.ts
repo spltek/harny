@@ -1280,18 +1280,51 @@ describe("renderViewHtml", () => {
     // stylesheet: 60 recalcs/s and 9.3% of the webview main thread on a 1200-bubble transcript
     // with four working areas, 0% and 0 recalcs once the beat moved to opacity). This is the
     // tripwire against "optimising" the glow back onto the box.
-    const beat = blockOf(flat(html), "@keyframes pulse-beat");
+    const beat = blockOf(flat(html), "@keyframes harny-pulse");
     expect(beat).toContain("opacity: 1");
-    expect(beat).toContain("opacity: 0.25");
+    expect(beat).toContain("opacity: 0.675");
     expect(beat).not.toMatch(/box-shadow|border-color|filter|background|outline/);
-    // IN PHASE with the play button (harny-pulse peaks at 0%/100%): the peak (opacity 1) is at
-    // 0%/100% and the dim beat at 50% — not inverted.
+    // Peaks at 0%/100% and dips at 50% — not inverted.
     expect(beat).toMatch(/0%, 100% \{ opacity: 1; \}/);
-    expect(beat).toMatch(/50% \{ opacity: 0\.25; \}/);
+    expect(beat).toMatch(/50% \{ opacity: 0\.675; \}/);
+    // The dip is HALF of the full-depth one this sheet used to carry (1 → 0.35): the halving lives
+    // here, once, so no light can drift to a depth of its own.
+    expect(beat).not.toMatch(/opacity: 0\.35;/);
+    // ONE KEYFRAMES FOR EVERY LIVE LIGHT: the play key, the Working bar, the streaming halos and the
+    // Follow pill all name `harny-pulse`. A second set with a different dip is what made the blue
+    // pill dip shallower — same clock, same duration, visibly not the same pulse.
+    expect(flat(html)).not.toMatch(/@keyframes (?!harny-pulse)\w*-?(pulse|beat)/);
+    expect(flat(html)).toMatch(/#send-btn\.blinking \{[^}]*animation: harny-pulse 1\.2s ease-in-out infinite/);
+    expect(flat(html)).toMatch(/#working-bar \{[^}]*animation: harny-pulse 1\.2s ease-in-out infinite/s);
+    expect(flat(html)).toMatch(
+      /#transcript-actions > #autoscroll\[aria-pressed="true"\] \{[^}]*animation: harny-pulse 1\.2s ease-in-out infinite/s,
+    );
+    //…and the pill takes the SHARED amplitude from that one keyframes: it must not carry an
+    //`animation-delay`-only copy, a local `opacity`, nor a second keyframes — that is how it drifted
+    //out of step with the key beside it in the first place.
+    const litPill = cssRule(html, '#transcript-actions > #autoscroll[aria-pressed="true"]');
+    expect(litPill).not.toMatch(/opacity:/);
+    expect(litPill).not.toContain("linear-gradient(135deg, #3b82f6");
+    // The Follow pill never borrows the ACCENT for its pointer: lit or dark it hovers in its own
+    // blue, because terracotta is the colour of an armed action and a follow switch is a state of
+    // the transcript. Without the second rule the strip's generic hover answered for the parked
+    // pill and the only live-run control in the row lit up orange.
+    const litHover = cssRule(html, '#transcript-actions > #autoscroll[aria-pressed="true"]:hover');
+    expect(litHover).toContain("linear-gradient(135deg, #2563eb, #1e3a8a)");
+    // DARK → HALF LIGHT: the gradient's light end is the mid step, one below the bright `#3b82f6`
+    // this pill first wore, and the dark end is the deep one.
+    expect(litHover).toContain("#2563eb, #1e3a8a");
+    const darkHover = cssRule(
+      html,
+      '#transcript-actions > #autoscroll:not([aria-pressed="true"]):not(:disabled):hover',
+    );
+    expect(darkHover).toContain("color: #60a5fa");
+    expect(darkHover).toContain("rgba(96, 165, 250, 0.12)");
+    expect(darkHover).not.toContain("accent");
     // ONE overlay rule paints every working area: the halo is static there, and the state only
     // anchors it (`position: relative`, or `inset: 0` would resolve against an ancestor).
     expect(flat(html)).toMatch(
-      /\.msg\.assistant\.streaming::after,[\s\S]*?\.thinking-block\.streaming::after,[\s\S]*?\.msg\.tool\.subagent\.subagent-running::after \{[^}]*box-shadow: var\(--pulse-glow\)[^}]*animation: pulse-beat 1\.2s ease-in-out infinite/,
+      /\.msg\.assistant\.streaming::after,[\s\S]*?\.thinking-block\.streaming::after,[\s\S]*?\.msg\.tool\.subagent\.subagent-running::after \{[^}]*box-shadow: var\(--pulse-glow\)[^}]*animation: harny-pulse 1\.2s ease-in-out infinite/,
     );
     // A pseudo-element takes no inline style, so the phase lock's offset reaches it as a custom
     // property it inherits (see phaseLockPulse).

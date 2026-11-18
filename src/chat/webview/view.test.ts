@@ -155,7 +155,7 @@ function setupDom(initOverrides: Record<string, unknown> = {}, savedState: Recor
         <button id="providers-cancel" class="secondary">Cancel</button>
       </div>
     </div>
-    <div id="ctl-toggle"><span id="insert-hint">Insert in <span id="insert-hint-word"><span class="mode-pill-sizer" aria-hidden="true"><span>Queue</span><span>Steer</span></span><span class="mode-pill-label">Queue</span></span></span><button id="ctl-toggle-btn"></button><div id="transcript-actions"><button id="focus-mode" aria-pressed="false"></button><button id="collapse-all" disabled></button><button id="autoscroll" disabled></button></div></div>
+    <div id="ctl-toggle"><span id="insert-hint">Insert in <span id="insert-hint-word"><span class="mode-pill-sizer" aria-hidden="true"><span>Queue</span><span>Steer</span></span><span class="mode-pill-label">Queue</span></span></span><button id="ctl-toggle-btn"></button><div id="transcript-actions"><button id="focus-mode" aria-pressed="false"></button><button id="collapse-all" disabled></button><button id="autoscroll" aria-pressed="false"></button></div></div>
     <div id="mcp-modal" class="hidden">
       <div class="mcp-backdrop"></div>
       <select id="mcp-select"></select>
@@ -2625,7 +2625,10 @@ describe("view webview client", () => {
       const msgs = document.getElementById("messages") as HTMLElement;
       Object.defineProperty(msgs, "scrollHeight", { configurable: true, value: 500 });
       Object.defineProperty(msgs, "scrollTop", { configurable: true, value: 0, writable: true });
-      hostMessage({ type: "thinkingDelta", content: "**one**" }); // leading render → pinned bottom
+      // A run must be live: following is the one thing this panel does not do off the clock.
+      hostMessage({ type: "status", workingIds: ["a"], active: true });
+      hostMessage({ type: "thinkingDelta", content: "**one**" }); // leading render → laid out below
+      nextFrame();
       expect(msgs.scrollTop).toBe(500);
 
       // The viewport drifts up during the trailing window (rendered content
@@ -2633,6 +2636,7 @@ describe("view webview client", () => {
       Object.defineProperty(msgs, "scrollTop", { configurable: true, value: 100, writable: true });
       hostMessage({ type: "thinkingDelta", content: " **two**" }); // queued trailing render
       vi.advanceTimersByTime(200);
+      nextFrame(); // the trailing render landed and was laid out: the end comes back
       expect(msgs.scrollTop).toBe(500);
     } finally {
       vi.useRealTimers();
@@ -3614,8 +3618,7 @@ describe("view webview client", () => {
     const msgs = document.getElementById("messages") as HTMLElement;
     Object.defineProperty(msgs, "scrollHeight", { configurable: true, value: 500 });
     Object.defineProperty(msgs, "scrollTop", { configurable: true, value: 10, writable: true });
-    msgs.dispatchEvent(new Event("wheel")); // a hand on the wheel…
-    msgs.dispatchEvent(new Event("scroll")); // …and the scroll it produces: THAT is a user scroll
+    (document.getElementById("autoscroll") as HTMLButtonElement).click(); // the reader parks: no gesture is read any more
     const initTop = msgs.scrollTop;
     expect(initTop).toBeLessThan(500); // simulated scroll-up state
 
@@ -3635,10 +3638,12 @@ describe("view webview client", () => {
       },
       streaming: false,
     });
+    nextFrame(); // the rebuilt bubbles report their size: the end is taken
     // The selected session starts pinned at the bottom.
     expect(msgs.scrollTop).toBe(500);
     // A subsequent delta stays at the bottom (auto-scroll was re-enabled).
     hostMessage({ type: "thinkingDelta", content: "thinking" });
+    nextFrame();
     expect(msgs.scrollTop).toBe(500);
   });
 
@@ -3648,8 +3653,7 @@ describe("view webview client", () => {
     Object.defineProperty(msgs, "scrollHeight", { configurable: true, value: 900 });
     Object.defineProperty(msgs, "clientHeight", { configurable: true, value: 300 });
     Object.defineProperty(msgs, "scrollTop", { configurable: true, writable: true, value: 120 });
-    msgs.dispatchEvent(new Event("wheel")); // a hand on the wheel…
-    msgs.dispatchEvent(new Event("scroll")); // …so this scroll is the user's, not a reflow
+    (document.getElementById("autoscroll") as HTMLButtonElement).click(); // the reader parks
 
     const A = { id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 1 };
     const B = { id: "b", name: "B", createdAt: 1, updatedAt: 2, messageCount: 1 };
@@ -3667,10 +3671,12 @@ describe("view webview client", () => {
       });
 
     go("b", 1); // leave A…
-    expect(msgs.scrollTop).toBe(900); // B is a first visit: pinned to its end
+    nextFrame();
+    expect(msgs.scrollTop).toBe(600); // B is a first visit: pinned to its end (900 - 300)
     go("a", 2); // …and come back
 
-    // Back where the reader was, not yanked to the end.
+    // Back where the reader was, not yanked to the end. The net cannot steal this: its notification
+    // is a LATER task, and by the time it arrives the restore has already disarmed the Follow.
     expect(msgs.scrollTop).toBe(120);
   });
 
@@ -3699,7 +3705,60 @@ describe("view webview client", () => {
 
     go("b", 1);
     go("a", 2);
-    expect(msgs.scrollTop).toBe(900); // still pinned: the live turn keeps growing
+    nextFrame();
+    expect(msgs.scrollTop).toBe(600); // still pinned: the live turn keeps growing
+  });
+
+  it("a rebuild puts the box back where the reader was — and NOTHING arms the Follow", async () => {
+    await loadView(); // activeId "a"
+    const auto = () => document.getElementById("autoscroll") as HTMLButtonElement;
+    const msgs = document.getElementById("messages") as HTMLElement;
+    Object.defineProperty(msgs, "scrollHeight", { configurable: true, value: 900 });
+    Object.defineProperty(msgs, "clientHeight", { configurable: true, value: 300 });
+    Object.defineProperty(msgs, "scrollTop", { configurable: true, writable: true, value: 120 });
+
+    const A = { id: "a", name: "A", createdAt: 1, updatedAt: 2, messageCount: 1 };
+    const B = { id: "b", name: "B", createdAt: 1, updatedAt: 2, messageCount: 1 };
+    const go = (id: string, seq: number) =>
+      hostMessage({
+        type: "switchView",
+        switchSeq: seq,
+        sessions: [A, B],
+        openIds: ["a", "b"],
+        activeId: id,
+        messages: [{ role: "user", content: "go", timestamp: 1 }],
+        config: {},
+        workingIds: [],
+        streaming: false,
+      });
+
+    auto().click(); // the reader parks: no gesture is read any more
+    msgs.dispatchEvent(new Event("scroll"));
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+
+    // The box moves with NO event behind it — a rebuild, an anchor shift, a memory restore — and
+    // lands near the end. It STAYS there and the switch STAYS off: a position is not an intent, so
+    // parking thirty pixels short of the end is parking. The old rule armed the Follow from exactly
+    // here, which is the reported "it came back on by itself while I was reading".
+    msgs.scrollTop = 570;
+    go("b", 1);
+    nextFrame();
+    go("a", 2);
+    nextFrame();
+    expect(msgs.scrollTop).toBe(570);
+    msgs.dispatchEvent(new Event("scroll")); // the delivery of the restore
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+
+    // …and 300px short is somewhere else, and there it STAYS — no event needed to defend it.
+    msgs.scrollTop = 300;
+    go("b", 3);
+    nextFrame();
+    go("a", 4);
+    nextFrame();
+    expect(msgs.scrollTop).toBe(300);
+    msgs.dispatchEvent(new Event("scroll"));
+    expect(msgs.scrollTop).toBe(300);
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
   });
 
   it("keeps the sections you had opened across a tab switch (and the ones you had not)", async () => {
@@ -4035,24 +4094,181 @@ describe("view webview client", () => {
     expect(bBody().classList.contains("collapsed")).toBe(false);
   });
 
-  it("disables auto-scroll when scrolled up and re-enables at the bottom", async () => {
+  it("the switch decides: parked it is not moved, following it takes the end back", async () => {
     await loadView();
+    // ON THE CLOCK first: the Follow only exists while a run writes into the box (see the block
+    // "transcript action pills"), and the metrics are faked AFTER so the grant's pin cannot decide
+    // the positions this test is about.
+    hostMessage({ type: "status", workingIds: ["a"], active: true });
+    const auto = () => document.getElementById("autoscroll") as HTMLButtonElement;
     const msgs = document.getElementById("messages") as HTMLElement;
-    // mock a scrollable container: emulate big content so positions are meaningful
     Object.defineProperty(msgs, "scrollHeight", { configurable: true, value: 500 });
     Object.defineProperty(msgs, "clientHeight", { configurable: true, value: 100 });
-    // user scrolls UP → autoScroll off
     Object.defineProperty(msgs, "scrollTop", { configurable: true, value: 10, writable: true });
-    msgs.dispatchEvent(new Event("wheel"));
-    msgs.dispatchEvent(new Event("scroll"));
-    hostMessage({ type: "thinkingDelta", content: "first line" }); // would force scroll at bottom
+
+    auto().click(); // parked
+    hostMessage({ type: "thinkingDelta", content: "first line" }); // a pin would move it
+    nextFrame();
     expect(msgs.scrollTop).toBe(10); // NOT forced to the bottom
-    // back to the bottom → autoScroll on again
-    Object.defineProperty(msgs, "scrollTop", { configurable: true, value: 400, writable: true });
-    msgs.dispatchEvent(new Event("wheel"));
-    msgs.dispatchEvent(new Event("scroll"));
+
+    msgs.scrollTop = 400; // back to the end by hand
+    auto().click(); // following again
+    expect(msgs.scrollTop).toBe(400); // already at the end: the pin has nothing to move
     hostMessage({ type: "thinkingDelta", content: "new line" });
-    expect(msgs.scrollTop).toBe(msgs.scrollHeight); // forced to bottom
+    nextFrame();
+    expect(msgs.scrollTop).toBe(msgs.scrollHeight - msgs.clientHeight); // forced to the end
+  });
+
+  it("the pill beats on the Play key's clock: lit it carries the shared offset, parked it drops it", async () => {
+    await loadView();
+    const auto = () => document.getElementById("autoscroll") as HTMLButtonElement;
+    hostMessage({ type: "status", workingIds: ["a"], active: true });
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+    // Lit mid-cycle is lit IN PHASE: the animation starts the moment the attribute lands, so the
+    // offset is what puts it into the shared 1.2s beat instead of at its own zero (jsdom runs no
+    // animations — what is asserted is the delay handed to the compositor).
+    expect(auto().style.animationDelay).toMatch(/^-\d+(\.\d+)?ms$/);
+    expect(auto().style.getPropertyValue("--pulse-delay")).toMatch(/^-\d+(\.\d+)?ms$/);
+
+    auto().click(); // parked: the pill goes dark and the offset describes a cycle it left
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+    expect(auto().style.animationDelay).toBe("");
+    expect(auto().style.getPropertyValue("--pulse-delay")).toBe("");
+
+    auto().click(); // re-followed MID-RUN: it must re-join the clock now, not keep the grant's offset
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+    expect(auto().style.animationDelay).toMatch(/^-\d+(\.\d+)?ms$/);
+  });
+
+  it("the FLOW, in the order it arrives: one run, one light, and nothing left lit at the end", async () => {
+    // The whole point of the derived state: the pill is not asked to remember anything, so walking
+    // the real message order — the click, the host's ack, the deltas, the end, the trailing status —
+    // has to come out as one light that follows the run and then goes out.
+    await loadView();
+    const auto = () => document.getElementById("autoscroll") as HTMLButtonElement;
+    const mode = () => document.getElementById("mode-btn") as HTMLButtonElement;
+    // 1. Idle: dark and inert. Nothing to follow, so nothing to press.
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+    expect(auto().disabled).toBe(true);
+    // 2. Play. The panel lights the run it is starting WITHOUT waiting for the host — the reader
+    //    acted on a run, and the run starts where they are looking.
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+    expect(mode().disabled).toBe(true); // the mode is the run's, so it is locked
+    // 3. The host's ack, then four chunks: the light stays where it is, and every pass is a
+    //    re-derivation of the same two facts, so nothing drifts.
+    hostMessage({ type: "status", active: true, workingIds: ["a"] });
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+    for (const chunk of ["one ", "two ", "three ", "four"]) hostMessage({ type: "textDelta", content: chunk });
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+    // 4. The turn ends. `done` is the panel's own word: light out, controls back.
+    hostMessage({ type: "done" });
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+    expect(auto().disabled).toBe(true);
+    expect(mode().disabled).toBe(false);
+    // 5. The trailing status says the same thing again. Idempotent: the same answer, not a flip.
+    hostMessage({ type: "status", active: false, workingIds: [] });
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+    expect(auto().disabled).toBe(true);
+  });
+
+  it("a turn that ENDS releases the working set, so the Follow cannot outlive what it was following", async () => {
+    await loadView();
+    const auto = () => document.getElementById("autoscroll") as HTMLButtonElement;
+    // A panel opened on a run the HOST dispatched (a queue, another window) holds a working set
+    // while its own streaming flag is still false — that is what the set is for. The Follow is lit:
+    // something is writing, and `sessionBusy()` is the honest answer to "is anything writing".
+    hostMessage({ type: "status", active: false, workingIds: ["a"] });
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+    // It ends. `done` is the panel's OWN knowledge that this turn is over, and it does NOT arrive as
+    // a transition of the streaming flag — there is no edge to fall here, which is how a set that
+    // outlived its run left the pill attached to nothing. Termination is a statement, not an edge.
+    hostMessage({ type: "done" });
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+    // …and the pill goes back to being what it is off the clock: dark AND inert.
+    expect(auto().disabled).toBe(true);
+  });
+
+  it("the host's `active:false` is the specific word: it drops a set the panel was still holding", async () => {
+    await loadView();
+    const auto = () => document.getElementById("autoscroll") as HTMLButtonElement;
+    const closeB = () => document.querySelector('.tab[data-id="b"] .close') as HTMLElement;
+    // A list naming BOTH the session on screen and a background one, with the flag still false: a run
+    // the HOST dispatched, which is the whole reason `sessionBusy()` ORs the two sources.
+    hostMessage({ type: "status", active: false, workingIds: ["a", "b"] });
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+    // A status that carries no list at all (the compaction's "status out") is not a bulk answer: the
+    // one we hold is the PREVIOUS one. The specific `active:false` about the session on screen is the
+    // fresher fact, so the set cannot keep the Follow lit over a turn that is over…
+    hostMessage({ type: "status", active: false });
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+    // …and it says nothing about "b", so nothing about "b" is withdrawn: the answer was not
+    // repeated, not retracted (an omitted list is not an empty one).
+    expect(closeB().classList.contains("disabled")).toBe(true);
+  });
+
+  it("a `status` with no list that says active:true withdraws nothing at all", async () => {
+    await loadView();
+    const closeA = () => document.querySelector('.tab[data-id="a"] .close') as HTMLElement;
+    hostMessage({ type: "status", active: false, workingIds: ["a"] }); // the set alone holds it
+    expect(closeA().classList.contains("disabled")).toBe(true);
+    // The specific word here is "working": only `active:false` releases the session on screen, so a
+    // message without a list cannot empty the set either way — the id stays working.
+    hostMessage({ type: "status", active: true });
+    expect(closeA().classList.contains("disabled")).toBe(true);
+  });
+
+  it("a park is about ONE run: the next run lights itself again", async () => {
+    await loadView();
+    const auto = () => document.getElementById("autoscroll") as HTMLButtonElement;
+    hostMessage({ type: "status", workingIds: ["a"], active: true });
+    auto().click(); // the reader parks THIS run
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+    hostMessage({ type: "done" }); // …which then ends: there is nothing left to have chosen
+    expect(auto().disabled).toBe(true);
+    // A new run is a new question, and nobody has answered it: off the clock the park was wiped with
+    // the run it belonged to, so the Following comes back on its own instead of inheriting a "no"
+    // about a turn the reader never saw.
+    hostMessage({ type: "status", workingIds: ["a"], active: true });
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("a `status` message is not a reason to move a reader who is following: only the GRANT takes the end", async () => {
+    // The grant (a run starting) takes the end. Every later pass of the same run re-derives the same
+    // answer and must leave the box alone: a status message is bookkeeping, and a reader who moved
+    // between two deliveries is reading, not waiting to be dragged back.
+    await loadView();
+    const msgs = document.getElementById("messages") as HTMLElement;
+    Object.defineProperty(msgs, "scrollHeight", { configurable: true, value: 500 });
+    Object.defineProperty(msgs, "clientHeight", { configurable: true, value: 100 });
+    Object.defineProperty(msgs, "scrollTop", { configurable: true, value: 10, writable: true });
+    hostMessage({ type: "status", workingIds: ["a"], active: true }); // the GRANT: it takes the end
+    expect(msgs.scrollTop).toBe(400);
+    msgs.scrollTop = 10; // the reader moves, and no delivery follows
+    hostMessage({ type: "status", workingIds: ["a"], active: true }); // a pass, not a grant
+    expect(msgs.scrollTop).toBe(10);
+  });
+
+  it("a parked box stays parked delivery after delivery: a layout may not arm the pin", async () => {
+    // The opening paint has an allowance of exactly ONE layout (see `paintPin`): it lands on the
+    // end once and is then SPENT. A later delivery must ask the switch like any other — the mutant
+    // that re-arms the flag inside the observer would land on the end on the delivery AFTER the
+    // opening one, which is why this test fires two and moves the reader in between.
+    await loadView();
+    const msgs = document.getElementById("messages") as HTMLElement;
+    Object.defineProperty(msgs, "scrollHeight", { configurable: true, value: 500 });
+    Object.defineProperty(msgs, "clientHeight", { configurable: true, value: 100 });
+    Object.defineProperty(msgs, "scrollTop", { configurable: true, value: 400, writable: true });
+
+    nextFrame(); // the opening layout: the allowance is spent here, on the end
+    expect(msgs.scrollTop).toBe(400);
+
+    // The session is idle, so the switch is OFF and nothing may take the end. Written directly, not
+    // scrolled: the scroll listener clears the flag itself, and clearing it is not what is under test.
+    msgs.scrollTop = 10;
+    nextFrame(); // a second layout must not be treated as another opening
+    expect(msgs.scrollTop).toBe(10); // never moved
   });
 
   it("renders the diff as a third section (Diff) inside the tool bubble", async () => {
@@ -7697,8 +7913,7 @@ describe("view webview client", () => {
     Object.defineProperty(list, "scrollHeight", { value: 5000, configurable: true });
     Object.defineProperty(list, "clientHeight", { value: 800, configurable: true });
     list.scrollTop = 1000;
-    list.dispatchEvent(new Event("wheel"));
-    list.dispatchEvent(new Event("scroll")); // reading above the bottom, not following
+    (document.getElementById("autoscroll") as HTMLButtonElement).click(); // reading above the bottom: parked
     try {
       const input = document.getElementById("find-input") as HTMLInputElement;
       const count = document.getElementById("find-count") as HTMLElement;
@@ -7714,10 +7929,9 @@ describe("view webview client", () => {
       // the scan follows the DOM — the count grows, and the reader is NOT dragged to the bottom.
       const prompt = document.getElementById("user-input") as HTMLTextAreaElement;
       prompt.value = "go";
-      (document.getElementById("send-btn") as HTMLButtonElement).click(); // a run starts (it may park)
-      list.scrollTop = 1000; // now park the reader above the bottom…
-      list.dispatchEvent(new Event("wheel")); // (a hand, not a reflow: only that parks it for good)
-      list.dispatchEvent(new Event("scroll"));
+      (document.getElementById("send-btn") as HTMLButtonElement).click(); // sending takes the Follow with it
+      list.scrollTop = 1000; // so the reader parks again, on purpose…
+      (document.getElementById("autoscroll") as HTMLButtonElement).click(); // …by the only switch there is
       hostMessage({ type: "textDelta", content: " and still two" });
       await new Promise((r) => setTimeout(r, 400)); // the rescan debounce
       expect(count.textContent).toBe("1/2");
@@ -8832,6 +9046,17 @@ function messagesElLastContent(): string {
 function hostMessage(data: unknown): void {
   window.dispatchEvent(new MessageEvent("message", { data }));
 }
+
+/** Delivers a geometry notification to the observers watching `el` (all of them when it is omitted).
+ * The stub in tests/helpers/prism.test-setup.ts records every observer and never fires by itself. */
+const fireResize = (el?: Element): void =>
+  (globalThis as unknown as { __fireResize: (target?: Element) => void }).__fireResize(el);
+
+/** The browser's frame, for the tests. Nothing in the panel pins synchronously any more: the Follow
+ * is a GEOMETRY notification, delivered after layout and before paint (see the net in view.ts), so a
+ * test that adds content and then asserts the position is the one that says "the box has now been
+ * laid out". Nothing pins before this — which is why every assertion about the end goes after it. */
+const nextFrame = (): void => fireResize(document.getElementById("messages") as HTMLElement);
 
 describe("context metrics line", () => {
   it("shows tokens, percent and bar, and posts compact", async () => {
@@ -10373,8 +10598,8 @@ describe("soft steering + pending bubbles (webview)", () => {
     Object.defineProperty(list, "scrollHeight", { value: 5000, configurable: true });
     Object.defineProperty(list, "clientHeight", { value: 800, configurable: true });
     list.scrollTop = 1000;
-    list.dispatchEvent(new Event("wheel"));
-    list.dispatchEvent(new Event("scroll")); // the listener derives "not following" from it
+    (document.getElementById("autoscroll") as HTMLButtonElement).click(); // the reader parks
+    list.dispatchEvent(new Event("scroll"));
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
     input.blur();
 
@@ -12282,9 +12507,9 @@ describe("the reading position survives a transcript rebuild", () => {
 
   const scrollTo = (at: number) => {
     scrollTop = at;
-    // A hand on the wheel, then the scroll it produces: only THAT pair may stop the Follow, so a
-    // simulated scroll-up has to say both halves or it reads as a reflow.
-    box().dispatchEvent(new Event("wheel"));
+    // Parking is the SWITCH now: no gesture is read at all, so a simulated scroll-up that does not
+    // flip the pill is just a position the enforcement would take back.
+    (document.getElementById("autoscroll") as HTMLButtonElement).click();
     box().dispatchEvent(new Event("scroll"));
   };
 
@@ -12342,7 +12567,8 @@ describe("the reading position survives a transcript rebuild", () => {
 
     hostMessage({ type: "refresh", messages: MSGS });
 
-    expect(box().scrollTop).toBe(1000); // scrollHeight — unchanged behaviour
+    nextFrame();
+    expect(box().scrollTop).toBe(800); // the END (scrollHeight - clientHeight), not the height
   });
 
   it("survives an empty transcript", async () => {
@@ -12425,7 +12651,10 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
     // rides on aria-pressed (its own tests are in the Focus block below).
     expect(document.querySelectorAll("#transcript-actions > button").length).toBe(3);
     expect(tab().disabled).toBe(true);
+    // The Follow pill exists only ON THE CLOCK: this session is idle, so it is disabled and dark.
+    // (Its own states are the block just below.)
     expect(auto().disabled).toBe(true);
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
     expect(tab().classList.contains("hidden")).toBe(false);
     expect(auto().classList.contains("hidden")).toBe(false);
   });
@@ -12512,47 +12741,123 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
     expect(tab().disabled).toBe(true);
   });
 
-  it("Autoscroll is disabled while the user follows the bottom", async () => {
+  /** ON THE CLOCK: the host's status is the cheapest honest run, and it is the one message the
+   *  Follow's permission is read from. */
+  const live = () => hostMessage({ type: "status", workingIds: ["a"], active: true });
+  /** …and the run ends. */
+  const idle = () => hostMessage({ type: "status", workingIds: [], active: false });
+
+  it("the pill is INERT and dark while the session is stopped: nothing is writing, nothing to follow", async () => {
     await loadView();
     const setTop = tetherScroll();
-    // scrollHeight 1000, clientHeight 200 → 800 is the bottom.
-    setTop(800);
-    emitScroll();
+    const messages = document.getElementById("messages") as HTMLElement;
+
+    // Not enabled, and its card says why instead of leaving the reader guessing.
     expect(auto().disabled).toBe(true);
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+    expect(tipTextOf(auto())).toContain("nothing is running");
+
+    // And it means it: stopped, the box is not dragged anywhere no matter where the reader goes.
+    setTop(400);
+    emitScroll();
+    expect(messages.scrollTop).toBe(400);
   });
 
-  it("Autoscroll enables as soon as the user scrolls away from the bottom", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    setTop(400); // 1000 - 400 - 200 = 400px from the bottom
-    emitScroll();
-    expect(auto().disabled).toBe(false);
-    // Coming back within SCROLL_BOTTOM_TOLERANCE re-arms it by itself.
-    setTop(790);
-    emitScroll();
-    expect(auto().disabled).toBe(true);
-  });
-
-  it("clicking Autoscroll jumps to the latest and re-disables itself", async () => {
+  it("a run STARTING lights it and takes the end by itself — the reader asks for nothing", async () => {
     await loadView();
     const setTop = tetherScroll();
     const messages = document.getElementById("messages") as HTMLElement;
     setTop(400);
-    emitScroll();
+
+    live();
+
     expect(auto().disabled).toBe(false);
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+    expect(messages.scrollTop).toBe(800); // …and the end is already taken
 
-    auto().click();
-
-    expect(messages.scrollTop).toBe(1000);
-    expect(messages.scrollTop).toBe(messages.scrollHeight);
+    // The run ENDING puts it back where it was: off, and properly inert.
+    idle();
     expect(auto().disabled).toBe(true);
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("a park chosen MID-RUN survives the status messages the run keeps sending", async () => {
+    await loadView();
+    tetherScroll();
+    live();
+    auto().click(); // the reader parks while it works
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+    expect(auto().disabled).toBe(false); // still on the clock: still switchable
+
+    live(); // the host says it again: no EDGE, so no grant
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("the pill is the switch BOTH ways while a run is live: a click parks, the next takes the end back", async () => {
+    await loadView();
+    const setTop = tetherScroll();
+    const messages = document.getElementById("messages") as HTMLElement;
+    live();
+
+    setTop(400);
+    emitScroll();
+    expect(messages.scrollTop).toBe(800); // ON: the end is taken back in the same event
+
+    auto().click(); // ON -> OFF
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+    expect(messages.scrollTop).toBe(800); // turning it OFF moves nothing: it is a switch, not a jump
+
+    setTop(400);
+    emitScroll();
+    expect(messages.scrollTop).toBe(400); // parked stays parked
+
+    auto().click(); // OFF -> ON takes the end with it
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+    expect(messages.scrollTop).toBe(800);
+  });
+
+  it("PARKED, a scroll is left alone: the reader stays exactly where they put themselves", async () => {
+    await loadView();
+    const setTop = tetherScroll();
+    const messages = document.getElementById("messages") as HTMLElement;
+    live();
+    auto().click(); // parked
+    setTop(400);
+    emitScroll();
+    expect(messages.scrollTop).toBe(400);
+  });
+
+  it("FOLLOWING, the box cannot REST away from the end: a scroll is taken back in the same event", async () => {
+    await loadView();
+    const setTop = tetherScroll();
+    const messages = document.getElementById("messages") as HTMLElement;
+    live();
+    setTop(400);
+    emitScroll();
+    // No gesture is read any more: with the switch ON the box simply does not stay up there.
+    expect(messages.scrollTop).toBe(800);
+  });
+
+  it("…a HOLD is the one exception, and the release brings the end back: the bar is not fought mid-drag", async () => {
+    await loadView();
+    const setTop = tetherScroll();
+    const messages = document.getElementById("messages") as HTMLElement;
+    live();
+
+    messages.dispatchEvent(new Event("pointerdown"));
+    setTop(400);
+    emitScroll();
+    expect(messages.scrollTop).toBe(400); // the hand is dragging: it may
+
+    window.dispatchEvent(new Event("pointerup"));
+    expect(messages.scrollTop).toBe(800); // let go: back to the end
   });
 
   it("Autoscroll never toggles the control stack either", async () => {
     await loadView();
-    const setTop = tetherScroll();
-    setTop(400);
-    emitScroll();
+    tetherScroll();
+    live();
+    expect(auto().disabled).toBe(false); // positive control: there is a pill to press
 
     auto().click();
 
@@ -12591,15 +12896,39 @@ describe("Focus: the transcript follows the run", () => {
   const auto = () => document.getElementById("autoscroll") as HTMLButtonElement;
   const messagesEl = () => document.getElementById("messages") as HTMLElement;
 
-  /** jsdom does no layout: fake the metrics, and COUNT the pins (`scrollTop` writes) so "once" and
-   *  "never" are assertions instead of a hope. `at` moves the reader, `scroll` lets the listener
-   *  read that position — exactly what a wheel does. */
-  function tetherScroll(): { at: (top: number) => void; scroll: () => void; pins: () => number } {
+  /** jsdom does no layout, so the COST of the Follow is faked and counted instead of assumed:
+   *  `reads()` is how many times the box had to measure itself (one forced layout each — the only
+   *  thing a pin actually costs) and `pins()` how many times it was moved. `at` puts the reader
+   *  somewhere, `scroll` lets the listener read that position (what a wheel does), `grow` lets the
+   *  content settle AFTER the write (what a tool card does: markdown, a diff, an image). */
+  function tetherScroll(): {
+    at: (top: number) => void;
+    scroll: () => void;
+    deliver: () => void;
+    park: (by?: number) => void;
+    up: () => void;
+    grow: (by: number) => void;
+    drift: (by: number) => void;
+    pins: () => number;
+    reads: () => number;
+  } {
     const messages = messagesEl();
-    let top = 800;
+    let top = 790; // 10px short of the end: following, but a pin that moves stays OBSERVABLE
+    let height = 1000;
+    const end = () => Math.max(0, height - 200);
     let pins = 0;
-    Object.defineProperty(messages, "scrollHeight", { get: () => 1000, configurable: true });
+    let reads = 0;
+    Object.defineProperty(messages, "scrollHeight", {
+      get: () => {
+        reads += 1;
+        return height;
+      },
+      configurable: true,
+    });
     Object.defineProperty(messages, "clientHeight", { get: () => 200, configurable: true });
+    // The CONTENT width, so "the press landed on the scrollbar" is a computable fact here too: the
+    // band the browser reserves for the bar is exactly what lies past it.
+    Object.defineProperty(messages, "clientWidth", { get: () => 300, configurable: true });
     Object.defineProperty(messages, "scrollTop", {
       get: () => top,
       set: (v: number) => {
@@ -12613,9 +12942,154 @@ describe("Focus: the transcript follows the run", () => {
         top = v;
       },
       scroll: () => messages.dispatchEvent(new Event("scroll")),
+      // The reader sits just short of the end — still following, but with somewhere to go: AT the
+      // end a pin has nothing to move, which is the point of the guard inside it.
+      park: (by = 10) => {
+        top = Math.max(0, end() - by);
+        messages.dispatchEvent(new Event("scroll"));
+      },
+      grow: (by) => {
+        height += by;
+      },
+      /** The reader's own way out: the SWITCH, and nothing else. No gesture takes the Follow away
+       * any more, so a test that parks the box without flipping the pill is testing a reader no
+       * browser has. */
+      up: () => (document.getElementById("autoscroll") as HTMLButtonElement).click(),
+      drift: (by) => {
+        top += by;
+      },
+      // The delivery of a move WE made. A real box reports it back as a `scroll` event, and it always
+      // arrives BEFORE the reader can move again — a test where a hand acts right after a pin has to
+      // let this land first, or the model would be swallowing a move no browser swallows.
+      deliver: () => messages.dispatchEvent(new Event("scroll")),
       pins: () => pins,
+      reads: () => reads,
     };
   }
+
+  it("a card that lands takes the end back at once, before any delta arrives", async () => {
+    await startRun();
+    const box = tetherScroll(); // scrollHeight 1000, clientHeight 200 → the end is 800
+    box.at(790);
+    box.scroll(); // 10px up: still following, and NOT already at the end
+
+    hostMessage({ type: "toolCall", id: "t1", name: "Read", arguments: { path: "a.ts" } });
+
+    // The card grows the transcript, the box is laid out, the notification arrives: the end is
+    // taken back before the frame is painted — not "at the next delta", which for a tool bubble
+    // that lands off-screen would be the Follow already lost.
+    nextFrame();
+    expect(messagesEl().scrollTop).toBe(800);
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("a card that grows AFTER the pin keeps the Follow: the box's own report is not a gesture", async () => {
+    await startRun();
+    const box = tetherScroll();
+    box.at(790); // following, ten pixels short — so the pin has somewhere to GO
+    box.scroll();
+
+    // The reported bug, in miniature: the card lands and the box is laid out (the notification pins
+    // the end), THEN its height settles and the scroll event the write produced is delivered against
+    // the grown box. Read as a movement it said "800px from the end": the Follow died with the view
+    // sitting at the end. It is a position, so it decides nothing.
+    for (const msg of [
+      { type: "toolCall", id: "t1", name: "Read", arguments: { path: "a.ts" } },
+      { type: "toolResult", toolCallId: "t1", output: "the file body", isError: false },
+    ]) {
+      hostMessage(msg);
+      nextFrame(); // the card was laid out: the end comes back
+      box.grow(1000); // …and only now does the box grow under the write
+      box.scroll(); // the late delivery
+      expect(auto().getAttribute("aria-pressed")).toBe("true");
+    }
+
+    // An `error` ENDS the run, and a run that ends takes the Follow with it: there is no live edge
+    // left to follow, so the pill goes dark and inert (its own contract, in the pills block).
+    hostMessage({ type: "error", error: "boom" });
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+    expect(auto().disabled).toBe(true);
+
+    // Positive control: the same grown box, moved by a HAND, still detaches.
+    await startRun();
+    tetherScroll();
+    box.at(300);
+    box.up();
+    box.scroll();
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("an echo that comes back ONE pixel off is still ours: rounding, not a gesture", async () => {
+    await startRun();
+    const box = tetherScroll();
+    box.park();
+
+    hostMessage({ type: "toolCall", id: "t1", name: "Read", arguments: { path: "a.ts" } });
+    nextFrame(); // pins
+    box.grow(1000); // the card settles…
+    box.drift(1); // …and the box reports 801 where it holds the 800 we wrote
+    box.scroll();
+
+    // A fractional device pixel ratio reports a whole pixel off what we asked for. Judged as a
+    // gesture it would put the reader 799px from the end of a transcript that is AT the end.
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("a box that changes SHAPE brings the end back: a resize fires no scroll event at all", async () => {
+    await startRun();
+    const box = tetherScroll();
+    box.park();
+
+    // The window, the panel split, the control stack opening: the transcript gets a different
+    // clientHeight and nothing scrolls, so no listener of ours can ever hear about it — the
+    // geometry notification is the only channel that carries it.
+    fireResize(messagesEl());
+    expect(messagesEl().scrollTop).toBe(800); // the end, re-taken against the new shape
+    box.deliver(); // …and the box reports that move back, as it always does before a hand can act
+
+    // A parked reader is not dragged into it: the guard lives INSIDE the pin…
+    box.at(300);
+    box.up();
+    box.scroll(); // …so it has to be a gesture that parks them, not merely a position
+    fireResize(messagesEl());
+    expect(messagesEl().scrollTop).toBe(300);
+  });
+
+  /** Every box the panel watches, across every observer it created (see the setup stub). */
+  const observedBoxes = (): Element[] => (globalThis as unknown as { __observed: () => Element[] }).__observed();
+
+  it("watches the box itself, not only the bubbles inside it", async () => {
+    await loadView();
+    // The box reports growth that no bubble owns (a gap, a fold, an expanded card). It is a target of
+    // its own: watching only the children would miss all of it.
+    expect(observedBoxes()).toContain(messagesEl());
+  });
+
+  it("watches the bubbles a rebuild lands: an unwatched bubble is a Follow that dies silently", async () => {
+    await startRun();
+    // A rebuild REPLACES the children: the bubbles that were watched are gone, and the ones that
+    // took their place have to be subscribed. Nothing else in the panel would notice if they were
+    // not — the view would just stop following on the next delta, which is the original bug with a
+    // different cause. This is the one point of failure the net has, so it is pinned here.
+    hostMessage({
+      type: "refresh",
+      messages: [
+        { role: "user", content: "go", timestamp: 1 },
+        { role: "assistant", content: "done", timestamp: 2 },
+      ],
+    });
+    await Promise.resolve(); // the mutation observer's microtask: the new bubbles subscribe
+
+    const watched = observedBoxes();
+    const messages = messagesEl();
+    expect(watched).toContain(messages);
+    expect(messages.children.length).toBeGreaterThan(0);
+    for (const child of Array.from(messages.children)) expect(watched).toContain(child);
+    // Subscribing is not idempotent in cost: a box observed twice is reported twice, so a rebuild
+    // that re-added them would grow the watch list for the life of the panel.
+    const inTranscript = watched.filter((el) => el === messages || Array.from(messages.children).includes(el));
+    expect(new Set(inTranscript).size).toBe(inTranscript.length);
+  });
 
   it("arms from the pill, stays armed, and is never disabled", async () => {
     await loadView();
@@ -12862,17 +13336,35 @@ describe("Focus: the transcript follows the run", () => {
     expect(bodies().filter(isOpen).length).toBe(3);
 
     const box = tetherScroll();
-    box.at(800);
-    box.scroll();
-    expect(auto().disabled).toBe(true); // following, and it has nothing to press
+    box.park(); // 10px short of the end: a pin that re-asserts it is a MOVE
+    expect(auto().getAttribute("aria-pressed")).toBe("true"); // following, and it has nothing to press
 
     const before = box.pins();
     collapseAll().click(); // three sections in ONE gesture
+    nextFrame(); // …and ONE geometry notification for the batch
 
     expect(anyOpen()).toBe(false);
     // One re-assertion for the batch: closing three sections must not read layout three times.
     expect(box.pins() - before).toBe(1);
-    expect(auto().disabled).toBe(true); // …and the Follow is still on, as it was
+    expect(auto().getAttribute("aria-pressed")).toBe("true"); // …and the Follow is still on, as it was
+  });
+
+  it("…and it MEASURES the box once: the layout it forces is the only thing a pin costs", async () => {
+    await startRun();
+    focusBtn().click();
+    hostMessage({ type: "thinkingDelta", content: "reasoning" });
+    hostMessage({ type: "toolCall", id: "t1", name: "Read", arguments: { path: "a.ts" } });
+    hostMessage({ type: "toolCall", id: "t2", name: "Grep", arguments: { pattern: "x" } });
+    const box = tetherScroll();
+    box.park();
+
+    const measured = box.reads();
+    collapseAll().click(); // three sections in one gesture
+    nextFrame();
+
+    // `scrollHeight` is the whole bill: reading it after a DOM change forces a synchronous layout,
+    // and the old code paid for it in every bubble, every rebuild and every section.
+    expect(box.reads() - measured).toBe(1);
   });
 
   it("a fold the reader makes while following re-asserts the bottom", async () => {
@@ -12880,15 +13372,15 @@ describe("Focus: the transcript follows the run", () => {
     focusBtn().click();
     hostMessage({ type: "thinkingDelta", content: "reasoning" });
     const box = tetherScroll();
-    box.at(800);
-    box.scroll();
+    box.park(); // 10px short of the end: a pin that re-asserts it is a MOVE
 
     const before = box.pins();
     (document.querySelector(".thinking-header") as HTMLElement).click();
+    nextFrame();
 
     expect(isOpen(thinkingBody())).toBe(false);
     expect(box.pins() - before).toBe(1);
-    expect(auto().disabled).toBe(true);
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
   });
 
   it("…and a fold does NOT drag a reader who had scrolled away", async () => {
@@ -12897,115 +13389,201 @@ describe("Focus: the transcript follows the run", () => {
     hostMessage({ type: "thinkingDelta", content: "reasoning" });
     const box = tetherScroll();
     box.at(300);
+    box.up();
     box.scroll();
-    expect(auto().disabled).toBe(false); // parked, halfway up
+    expect(auto().getAttribute("aria-pressed")).toBe("false"); // parked, halfway up
 
     const before = box.pins();
     (document.querySelector(".thinking-header") as HTMLElement).click();
 
     expect(box.pins() - before).toBe(0);
     expect(messagesEl().scrollTop).toBe(300); // exactly where the reader left it
-    expect(auto().disabled).toBe(false);
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("a drag on the scrollbar is the reader's: a delta does not pin under the hand", async () => {
+  it("nothing but the pill takes the Follow away: no wheel, no key, no touch, no drag", async () => {
     await startRun();
-    focusBtn().click();
-    hostMessage({ type: "thinkingDelta", content: "reasoning" });
     const box = tetherScroll();
-    box.at(800);
-    box.scroll();
+    const messages = messagesEl();
 
-    // A press that lands on the CONTAINER is the thumb: the box is the reader's from there on.
-    messagesEl().dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
-    box.at(780);
-    box.scroll(); // a few pixels: still inside the tolerance
-    const before = box.pins();
-
-    hostMessage({ type: "thinkingDelta", content: " and more" });
-    expect(box.pins() - before).toBe(0); // nothing may pin mid-drag
-
-    window.dispatchEvent(new MouseEvent("pointerup"));
-    hostMessage({ type: "thinkingDelta", content: " and more" });
-    expect(box.pins() - before).toBe(1); // the hand let go: the Follow takes over again
-  });
-  it("the bottom is a strict 40 pixels: exactly there is already parked", async () => {
-    await startRun();
-    focusBtn().click();
-    hostMessage({ type: "thinkingDelta", content: "reasoning" });
-    const box = tetherScroll(); // scrollHeight 1000, clientHeight 200 → the bottom is 800
-
-    box.at(760); // exactly SCROLL_BOTTOM_TOLERANCE away
-    box.scroll();
-    const pinned = box.pins();
-    hostMessage({ type: "thinkingDelta", content: " and more" });
-    expect(box.pins()).toBe(pinned); // 40 away is NOT the bottom
-
-    box.at(761);
-    box.scroll();
-    hostMessage({ type: "thinkingDelta", content: " and more" });
-    expect(box.pins()).toBe(pinned + 1); // 39 is
-  });
-
-  it("…and every release the window can hear lets go", async () => {
-    await startRun();
-    focusBtn().click();
-    hostMessage({ type: "thinkingDelta", content: "reasoning" });
-    const box = tetherScroll();
-    box.at(800);
-    box.scroll();
-
-    // A press does not always arrive as a pointer, and a release gets lost in every way there is
-    // (`blur` is the one that saves a drag whose button was let go over another app): each pair
-    // must hold the box and then give it back.
-    for (const [press, release] of [
-      ["pointerdown", "pointerup"],
-      ["mousedown", "mouseup"],
-      ["pointerdown", "pointercancel"],
-      ["mousedown", "blur"],
-    ] as const) {
-      const pinned = box.pins();
-      messagesEl().dispatchEvent(new MouseEvent(press, { bubbles: true }));
-      hostMessage({ type: "thinkingDelta", content: " and more" });
-      expect(box.pins()).toBe(pinned); // nothing pins under the hand
-
-      window.dispatchEvent(new MouseEvent(release));
-      hostMessage({ type: "thinkingDelta", content: " and more" });
-      expect(box.pins()).toBe(pinned + 1); // the hand let go: the Follow takes over again
+    // Every gesture a hand can make over the box…
+    messages.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true }));
+    for (const key of ["PageUp", "ArrowUp", "Home"]) {
+      messages.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
     }
+    messages.dispatchEvent(new Event("touchstart"));
+    messages.dispatchEvent(new Event("touchend"));
+    window.dispatchEvent(new Event("pointerup")); // a release with no press behind it: harmless
+    box.at(300);
+    box.scroll();
 
-    // The capture phase is what makes that unbreakable: a control that swallows the release must
-    // not be able to leave the box held. On window, capture runs before the target can stop it.
-    const swallow = document.createElement("button");
-    swallow.addEventListener("pointerup", (e) => e.stopPropagation());
-    messagesEl().appendChild(swallow);
-    messagesEl().dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
-    const pinned = box.pins();
-    hostMessage({ type: "thinkingDelta", content: " and more" });
-    expect(box.pins()).toBe(pinned);
-
-    swallow.dispatchEvent(new MouseEvent("pointerup", { bubbles: true })); // swallowed on the way up
-    hostMessage({ type: "thinkingDelta", content: " and more" });
-    expect(box.pins()).toBe(pinned + 1);
+    // …none of them is an INTENT. The switch is still on and the box is still at the end: that is
+    // the whole rewrite — a hand can no longer detach by accident, and the only thing that detaches
+    // is the control that says so out loud.
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+    expect(messages.scrollTop).toBe(800);
   });
 
-  it("a press INSIDE the transcript is a click: it holds nothing", async () => {
+  it("at the end a scroll is FREE: the guard answers before the pin, so nothing is written", async () => {
+    await startRun();
+    const box = tetherScroll(); // the end is 800
+    box.at(800);
+    const atEnd = box.pins();
+    box.scroll();
+    expect(box.pins()).toBe(atEnd); // no write: already there
+
+    // …and BOTTOM_EPS is a ROUNDING guard, not a threshold: two pixels short is still the end, and
+    // a fractional offset the browser reports back must not be "corrected" forever.
+    box.at(798);
+    const twoShort = box.pins();
+    box.scroll();
+    expect(box.pins()).toBe(twoShort);
+  });
+
+  it("a release with no hold behind it costs nothing: a click that ended inside the panel", async () => {
+    await startRun();
+    const box = tetherScroll();
+    box.at(300); // moved by nobody: the switch decides, and no hand was ever down
+    const pins = box.pins();
+    window.dispatchEvent(new Event("pointerup"));
+    expect(box.pins()).toBe(pins); // no hold to drop, no write to make
+  });
+
+  it("a touch drag is a hold like any other: free under the finger, at the end when it lifts", async () => {
+    await startRun();
+    const box = tetherScroll();
+    const messages = messagesEl();
+
+    messages.dispatchEvent(new Event("touchstart"));
+    box.at(300);
+    box.scroll();
+    expect(messages.scrollTop).toBe(300); // the finger is dragging: it may
+
+    box.grow(200); // and content landing under the finger does not yank it either
+    nextFrame();
+    expect(messages.scrollTop).toBe(300);
+
+    messages.dispatchEvent(new Event("touchend"));
+    expect(messages.scrollTop).toBe(1000); // let go: the end, where the grown box now ends
+  });
+
+  it("…and a CANCEL releases it too: a gesture the browser took away leaves no hand behind", async () => {
+    await startRun();
+    const box = tetherScroll();
+    messagesEl().dispatchEvent(new Event("touchstart"));
+    box.at(300);
+    box.scroll();
+    expect(messagesEl().scrollTop).toBe(300); // held
+    messagesEl().dispatchEvent(new Event("touchcancel"));
+    expect(messagesEl().scrollTop).toBe(800); // released by the browser, not by the reader
+  });
+
+  it("…and a POINTER cancel, which lands on the window: the drag ended outside the panel", async () => {
+    await startRun();
+    const box = tetherScroll();
+    messagesEl().dispatchEvent(new Event("pointerdown"));
+    box.at(300);
+    box.scroll();
+    expect(messagesEl().scrollTop).toBe(300); // held
+    window.dispatchEvent(new Event("pointercancel"));
+    expect(messagesEl().scrollTop).toBe(800); // let go, wherever the pointer was
+  });
+
+  it("is born following: the panel takes the end before any event has happened", async () => {
+    // `let autoScroll = true` is the module's first decision, and the one message that precedes every
+    // other — `init` — GRANTS the Follow outright (opening a session is a new context: there is no
+    // reader in place yet to keep). So the born value is not observable from outside, only the
+    // behaviour it stands for: the end is taken with no wheel, no press and no scroll event behind it.
+    await startRun();
+    focusBtn().click();
+    hostMessage({ type: "thinkingDelta", content: "reasoning" });
+    const box = tetherScroll();
+    box.at(300); // a position, with nothing behind it: no gesture, no event
+    hostMessage({ type: "thinkingDelta", content: " and more" });
+    nextFrame();
+    expect(messagesEl().scrollTop).toBe(800);
+  });
+
+  it("no scroll event can take the Follow away: the switch is the only author", async () => {
+    // THE reported bug, as a rule. After Play, with the mouse resting on the blinking button, the
+    // Follow kept letting go: the box arrives with an event for every card, every frame of a pulse
+    // animation that reflows a sibling, every restore — and every one of those is a POSITION. Now
+    // nothing but a gesture disarms, so none of them can.
     await startRun();
     focusBtn().click();
     hostMessage({ type: "thinkingDelta", content: "reasoning" });
     const box = tetherScroll();
     box.at(800);
     box.scroll();
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
 
-    // The press that folds a card lands on the CARD: the reader is reading, not dragging, and a
-    // delta must keep reaching the bottom. One word decides this (`===`, not `contains`) and
-    // flipping it would leave every other test green.
-    const header = document.querySelector(".thinking-header") as HTMLElement;
-    header.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
-    header.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    // An event that lands 400px from the end with no hand behind it: layout, not a reader.
+    box.drift(-400);
+    box.scroll();
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+
+    // …and the next delta takes the end back, because the Follow was never lost.
     const pinned = box.pins();
     hostMessage({ type: "thinkingDelta", content: " and more" });
+    nextFrame();
     expect(box.pins()).toBe(pinned + 1);
+    expect(messagesEl().scrollTop).toBe(800);
+  });
+
+  it("Play from a parked view takes the END at once, so the churn it causes cannot read as a gesture", async () => {
+    await loadView();
+    const box = tetherScroll(); // scrollHeight 1000, clientHeight 200 → the end is 800
+    box.at(400); // the reader is reading, 400px from the live edge
+    box.up();
+    box.scroll();
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+    hostMessage({ type: "status", active: false }); // and the agent is idle
+
+    (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
+    (document.getElementById("send-btn") as HTMLButtonElement).click();
+
+    // The grant is ATOMIC: the box is on the end before the click returns, so the scroll event that
+    // the Working row and the bubbles produce is judged against the end. Set the flag alone and that
+    // event read the PARKED gap — 400 away — as a movement, and the Follow let go a moment after it
+    // was granted (reported: "I press play, it takes the Follow, and then it lets go almost at once").
+    expect(messagesEl().scrollTop).toBe(800);
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+    box.scroll(); // the late delivery, against the grown box
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("a run STARTING takes the Follow; a session switch leaves the parked position alone", async () => {
+    await startRun();
+    focusBtn().click();
+    hostMessage({ type: "thinkingDelta", content: "reasoning" });
+    const box = tetherScroll();
+    box.deliver(); // whatever the start of the run may have written, its delivery has landed
+    hostMessage({ type: "status", active: false }); // the run ended: the panel is idle
+    box.at(400);
+    box.up();
+    box.scroll();
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+
+    // Play, and the host announcing a run: somebody ASKED for this, and where they look is the live
+    // edge. The gesture rule is intact — this is an event (a press), never a proximity.
+    hostMessage({ type: "status", active: true });
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+    box.deliver(); // the pin that took the end back reports itself, as always
+
+    // But a session switch asks for nothing: the position that comes back is that session's own.
+    box.at(400);
+    box.up();
+    box.scroll();
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+    hostMessage({
+      type: "switchSession",
+      id: "a",
+      messages: [{ role: "user", content: "again", timestamp: 3 }],
+      streaming: true, // the session is busy, and that still does not grant
+      workingIds: ["a"],
+      pending: [],
+    } as never);
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
   });
 });
 

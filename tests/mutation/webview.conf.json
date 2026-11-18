@@ -2,18 +2,23 @@
   "$schema": "../../node_modules/@stryker-mutator/core/schema/stryker-schema.json",
   "tsconfigFile": "tests/mutation/no-tsconfig-rewrite.json",
   "testRunner": "vitest",
-  "vitest": { "configFile": "tests/vitest.config.mts" },
+  "vitest": {
+    "configFile": "tests/vitest.config.mts"
+  },
   "tempDirName": ".cache/stryker-tmp",
   "mutate": [
-    "src/chat/webview/view.ts:7017-7036",
-    "src/chat/webview/view.ts:3157-3177",
-    "src/chat/webview/view.ts:1484-1515"
+    "src/chat/webview/view.ts:7176-7199",
+    "src/chat/webview/view.ts:3294-3311",
+    "src/chat/webview/view.ts:1528-1561",
+    "src/chat/webview/view.ts:1572-1588",
+    "src/chat/webview/view.ts:1596-1641",
+    "src/chat/webview/view.ts:1657-1678",
+    "src/chat/webview/view.ts:6000-6009",
+    "src/chat/webview/view.ts:7694-7708",
+    "src/chat/webview/view.ts:7976-8018"
   ],
   "coverageAnalysis": "perTest",
-  "reporters": [
-    "clear-text",
-    "json"
-  ],
+  "reporters": ["clear-text", "json"],
   "jsonReporter": {
     "fileName": ".cache/mutation/mutation.json"
   },
