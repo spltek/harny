@@ -27,6 +27,9 @@ const ANCHORS: Record<string, string[]> = {
     "if (!currentRawText.trim()) break;",
     "settleThinkingBlock();",
     "const resultEl = ensureResult();",
+    // the Follow and the reader's pointer — what decides whether a delta pins at all
+    "if (!autoScroll || transcriptHeld) return;",
+    "if (e.target === messagesEl) transcriptHeld = true;",
     // the tool-output language hint — what decides whether an output is coloured at all
     "function langHintOf(el: HTMLElement, text: string): string | undefined {",
     'return looksLikeJson(text) ? "json" : undefined;',

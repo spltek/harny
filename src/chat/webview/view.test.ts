@@ -12588,6 +12588,35 @@ describe("Focus: the transcript follows the run", () => {
     (document.getElementById("send-btn") as HTMLButtonElement).click();
   }
 
+  const auto = () => document.getElementById("autoscroll") as HTMLButtonElement;
+  const messagesEl = () => document.getElementById("messages") as HTMLElement;
+
+  /** jsdom does no layout: fake the metrics, and COUNT the pins (`scrollTop` writes) so "once" and
+   *  "never" are assertions instead of a hope. `at` moves the reader, `scroll` lets the listener
+   *  read that position — exactly what a wheel does. */
+  function tetherScroll(): { at: (top: number) => void; scroll: () => void; pins: () => number } {
+    const messages = messagesEl();
+    let top = 800;
+    let pins = 0;
+    Object.defineProperty(messages, "scrollHeight", { get: () => 1000, configurable: true });
+    Object.defineProperty(messages, "clientHeight", { get: () => 200, configurable: true });
+    Object.defineProperty(messages, "scrollTop", {
+      get: () => top,
+      set: (v: number) => {
+        top = v;
+        pins += 1;
+      },
+      configurable: true,
+    });
+    return {
+      at: (v) => {
+        top = v;
+      },
+      scroll: () => messages.dispatchEvent(new Event("scroll")),
+      pins: () => pins,
+    };
+  }
+
   it("arms from the pill, stays armed, and is never disabled", async () => {
     await loadView();
     expect(focusBtn().getAttribute("aria-pressed")).toBe("false");
@@ -12610,67 +12639,65 @@ describe("Focus: the transcript follows the run", () => {
     expect(persistedState.focusMode).toBe(true);
   });
 
-  it("opens the section the agent starts in, and folds the one it left behind", async () => {
+  it("opens the section the agent starts in, and never takes it away", async () => {
     await startRun();
     focusBtn().click();
 
     hostMessage({ type: "thinkingDelta", content: "I have to read the store first" });
     expect(isOpen(thinkingBody())).toBe(true);
 
-    // The tool is where the work is now: it opens, the reasoning folds.
+    // The work moves on: the tool opens…
     hostMessage({ type: "toolCall", id: "t1", name: "Read", arguments: { path: "a.ts" } });
     expect(isOpen(toolBodies()[0])).toBe(true);
-    expect(isOpen(thinkingBody())).toBe(false);
+    // …and the reasoning STAYS open. Focus closes nothing, so the run is read top to bottom.
+    expect(isOpen(thinkingBody())).toBe(true);
 
-    // …and the output is NOT taken away when it lands: the fold waits for the next step, which is
-    // the whole reason the rule is "left behind", not "finished".
+    // Nor is it taken away when its output lands: it stays open for good.
     hostMessage({ type: "toolResult", toolCallId: "t1", output: "the file body", isError: false });
     expect(isOpen(toolBodies()[0])).toBe(true);
 
-    // The next step is what closes it.
     hostMessage({ type: "toolCall", id: "t2", name: "Grep", arguments: { pattern: "x" } });
-    expect(isOpen(toolBodies()[0])).toBe(false);
-    expect(isOpen(toolBodies()[1])).toBe(true);
+    expect(bodies().filter(isOpen)).toHaveLength(3);
   });
 
-  it("keeps ONE open at a time, even with parallel calls", async () => {
+  it("parallel calls open side by side: nothing is hidden behind the newest", async () => {
     await startRun();
     focusBtn().click();
 
     hostMessage({ type: "toolCall", id: "p1", name: "Read", arguments: { path: "a.ts" } });
     hostMessage({ type: "toolCall", id: "p2", name: "Grep", arguments: { pattern: "x" } });
 
-    // Two calls running at once must not build the wall of cards the mode exists to avoid.
-    expect(bodies().filter(isOpen).length).toBe(1);
-    expect(isOpen(toolBodies()[1])).toBe(true);
+    expect(bodies().filter(isOpen).length).toBe(2);
   });
 
-  it("closes what it left open when the run ends — the answer is the only thing left open", async () => {
+  it("the run comes to rest on the answer, with the steps still open above it", async () => {
     await startRun();
     focusBtn().click();
     hostMessage({ type: "thinkingDelta", content: "I need the file first." });
     hostMessage({ type: "toolCall", id: "t1", name: "Read", arguments: { path: "a.ts" } });
     hostMessage({ type: "toolResult", toolCallId: "t1", output: "body", isError: false });
     hostMessage({ type: "textDelta", content: "The file says hi." });
-    // Still open here: the fold waits for the NEXT step, so the output is readable as it lands.
-    expect(anyOpen()).toBe(true);
 
     hostMessage({ type: "done" });
-    // A turn now ends on the ANSWER, which has no fold of its own: it is open by nature, so the
-    // transcript comes to rest with that — and nothing else — on screen. Without the release the
-    // last tool card would stay open UNDER the answer, in a run that is already finished.
-    expect(anyOpen()).toBe(false);
+    // `done` closes nothing: every fold being taken away at the end of a turn is exactly the
+    // compression the mode does not do. "Collapse all" is the reader's word for the opposite.
+    expect(isOpen(toolBodies()[0])).toBe(true);
     expect(document.querySelector(".msg.assistant")?.textContent).toContain("The file says hi.");
   });
 
-  it("closes what it opened when it is disarmed, so the mode leaves no state behind", async () => {
+  it("disarming closes nothing: the mode simply stops opening", async () => {
     await startRun();
     focusBtn().click();
     hostMessage({ type: "thinkingDelta", content: "reasoning about the store" });
     expect(isOpen(thinkingBody())).toBe(true);
 
+    // What it opened is the transcript of a run the reader is still reading: it stays.
     focusBtn().click();
-    expect(anyOpen()).toBe(false);
+    expect(isOpen(thinkingBody())).toBe(true);
+
+    // The NEXT section is the one that comes back folded — that is what disarming means.
+    hostMessage({ type: "toolCall", id: "t1", name: "Read", arguments: { path: "a.ts" } });
+    expect(isOpen(toolBodies()[0])).toBe(false);
   });
 
   it("opens what is live RIGHT NOW when armed mid-run", async () => {
@@ -12683,13 +12710,12 @@ describe("Focus: the transcript follows the run", () => {
     // No waiting for the next step: the running tool is the section the agent is inside.
     expect(isOpen(toolBodies()[0])).toBe(true);
 
-    // A call whose result already landed is NOT where the agent is: arming again opens nothing,
-    // instead of resurrecting the last card of the step before.
+    // A call whose result already landed is NOT where the agent is: arming opens nothing, instead
+    // of resurrecting the last card of the step before — and the one already open stays open.
     hostMessage({ type: "toolResult", toolCallId: "t1", output: "the file body", isError: false });
     focusBtn().click();
-    expect(anyOpen()).toBe(false);
     focusBtn().click();
-    expect(anyOpen()).toBe(false);
+    expect(bodies().filter(isOpen).length).toBe(1);
   });
 
   it("never opens a sub-agent log: that one is opened by hand", async () => {
@@ -12709,21 +12735,22 @@ describe("Focus: the transcript follows the run", () => {
     expect(isOpen(log)).toBe(false); // …and stays closed, armed or not
   });
 
-  it("lets go of a section the reader toggles by hand — in both directions", async () => {
+  it("a section the reader folds by hand is never re-opened behind their back", async () => {
     await startRun();
     focusBtn().click();
     hostMessage({ type: "thinkingDelta", content: "reasoning about the store" });
     expect(isOpen(thinkingBody())).toBe(true);
 
-    // Folded by hand: it stays folded even while the agent is still inside it, and the next step
-    // does not resurrect it either.
+    // Folded by hand: it stays folded while the agent is still inside it, and the next step does
+    // not resurrect it. No mark, no exception: Focus only opens what is BORN.
     (document.querySelector(".thinking-header") as HTMLElement).click();
     expect(isOpen(thinkingBody())).toBe(false);
+    hostMessage({ type: "thinkingDelta", content: " and the plan" });
     hostMessage({ type: "toolCall", id: "t1", name: "Read", arguments: { path: "a.ts" } });
     expect(isOpen(thinkingBody())).toBe(false);
     expect(isOpen(toolBodies()[0])).toBe(true);
 
-    // The other way round: a section the reader OPENED by hand is not folded behind their back.
+    // The other way round is just as true: a section the reader OPENED stays open.
     (document.querySelector(".thinking-header") as HTMLElement).click();
     hostMessage({ type: "toolCall", id: "t2", name: "Grep", arguments: { pattern: "x" } });
     expect(isOpen(thinkingBody())).toBe(true);
@@ -12822,6 +12849,163 @@ describe("Focus: the transcript follows the run", () => {
     // a detached node — this is the same guard, seen from the other side.)
     expect(thinkingBody()).not.toBeNull();
     expect(anyOpen()).toBe(false);
+  });
+
+  // ── the Follow, driven by the reader's gestures instead of by inference ──
+
+  it("Collapse all puts the Follow back — ONCE, after the last section, not one per section", async () => {
+    await startRun();
+    focusBtn().click();
+    hostMessage({ type: "thinkingDelta", content: "reasoning" });
+    hostMessage({ type: "toolCall", id: "t1", name: "Read", arguments: { path: "a.ts" } });
+    hostMessage({ type: "toolCall", id: "t2", name: "Grep", arguments: { pattern: "x" } });
+    expect(bodies().filter(isOpen).length).toBe(3);
+
+    const box = tetherScroll();
+    box.at(800);
+    box.scroll();
+    expect(auto().disabled).toBe(true); // following, and it has nothing to press
+
+    const before = box.pins();
+    collapseAll().click(); // three sections in ONE gesture
+
+    expect(anyOpen()).toBe(false);
+    // One re-assertion for the batch: closing three sections must not read layout three times.
+    expect(box.pins() - before).toBe(1);
+    expect(auto().disabled).toBe(true); // …and the Follow is still on, as it was
+  });
+
+  it("a fold the reader makes while following re-asserts the bottom", async () => {
+    await startRun();
+    focusBtn().click();
+    hostMessage({ type: "thinkingDelta", content: "reasoning" });
+    const box = tetherScroll();
+    box.at(800);
+    box.scroll();
+
+    const before = box.pins();
+    (document.querySelector(".thinking-header") as HTMLElement).click();
+
+    expect(isOpen(thinkingBody())).toBe(false);
+    expect(box.pins() - before).toBe(1);
+    expect(auto().disabled).toBe(true);
+  });
+
+  it("…and a fold does NOT drag a reader who had scrolled away", async () => {
+    await startRun();
+    focusBtn().click();
+    hostMessage({ type: "thinkingDelta", content: "reasoning" });
+    const box = tetherScroll();
+    box.at(300);
+    box.scroll();
+    expect(auto().disabled).toBe(false); // parked, halfway up
+
+    const before = box.pins();
+    (document.querySelector(".thinking-header") as HTMLElement).click();
+
+    expect(box.pins() - before).toBe(0);
+    expect(messagesEl().scrollTop).toBe(300); // exactly where the reader left it
+    expect(auto().disabled).toBe(false);
+  });
+
+  it("a drag on the scrollbar is the reader's: a delta does not pin under the hand", async () => {
+    await startRun();
+    focusBtn().click();
+    hostMessage({ type: "thinkingDelta", content: "reasoning" });
+    const box = tetherScroll();
+    box.at(800);
+    box.scroll();
+
+    // A press that lands on the CONTAINER is the thumb: the box is the reader's from there on.
+    messagesEl().dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    box.at(780);
+    box.scroll(); // a few pixels: still inside the tolerance
+    const before = box.pins();
+
+    hostMessage({ type: "thinkingDelta", content: " and more" });
+    expect(box.pins() - before).toBe(0); // nothing may pin mid-drag
+
+    window.dispatchEvent(new MouseEvent("pointerup"));
+    hostMessage({ type: "thinkingDelta", content: " and more" });
+    expect(box.pins() - before).toBe(1); // the hand let go: the Follow takes over again
+  });
+  it("the bottom is a strict 40 pixels: exactly there is already parked", async () => {
+    await startRun();
+    focusBtn().click();
+    hostMessage({ type: "thinkingDelta", content: "reasoning" });
+    const box = tetherScroll(); // scrollHeight 1000, clientHeight 200 → the bottom is 800
+
+    box.at(760); // exactly SCROLL_BOTTOM_TOLERANCE away
+    box.scroll();
+    const pinned = box.pins();
+    hostMessage({ type: "thinkingDelta", content: " and more" });
+    expect(box.pins()).toBe(pinned); // 40 away is NOT the bottom
+
+    box.at(761);
+    box.scroll();
+    hostMessage({ type: "thinkingDelta", content: " and more" });
+    expect(box.pins()).toBe(pinned + 1); // 39 is
+  });
+
+  it("…and every release the window can hear lets go", async () => {
+    await startRun();
+    focusBtn().click();
+    hostMessage({ type: "thinkingDelta", content: "reasoning" });
+    const box = tetherScroll();
+    box.at(800);
+    box.scroll();
+
+    // A press does not always arrive as a pointer, and a release gets lost in every way there is
+    // (`blur` is the one that saves a drag whose button was let go over another app): each pair
+    // must hold the box and then give it back.
+    for (const [press, release] of [
+      ["pointerdown", "pointerup"],
+      ["mousedown", "mouseup"],
+      ["pointerdown", "pointercancel"],
+      ["mousedown", "blur"],
+    ] as const) {
+      const pinned = box.pins();
+      messagesEl().dispatchEvent(new MouseEvent(press, { bubbles: true }));
+      hostMessage({ type: "thinkingDelta", content: " and more" });
+      expect(box.pins()).toBe(pinned); // nothing pins under the hand
+
+      window.dispatchEvent(new MouseEvent(release));
+      hostMessage({ type: "thinkingDelta", content: " and more" });
+      expect(box.pins()).toBe(pinned + 1); // the hand let go: the Follow takes over again
+    }
+
+    // The capture phase is what makes that unbreakable: a control that swallows the release must
+    // not be able to leave the box held. On window, capture runs before the target can stop it.
+    const swallow = document.createElement("button");
+    swallow.addEventListener("pointerup", (e) => e.stopPropagation());
+    messagesEl().appendChild(swallow);
+    messagesEl().dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    const pinned = box.pins();
+    hostMessage({ type: "thinkingDelta", content: " and more" });
+    expect(box.pins()).toBe(pinned);
+
+    swallow.dispatchEvent(new MouseEvent("pointerup", { bubbles: true })); // swallowed on the way up
+    hostMessage({ type: "thinkingDelta", content: " and more" });
+    expect(box.pins()).toBe(pinned + 1);
+  });
+
+  it("a press INSIDE the transcript is a click: it holds nothing", async () => {
+    await startRun();
+    focusBtn().click();
+    hostMessage({ type: "thinkingDelta", content: "reasoning" });
+    const box = tetherScroll();
+    box.at(800);
+    box.scroll();
+
+    // The press that folds a card lands on the CARD: the reader is reading, not dragging, and a
+    // delta must keep reaching the bottom. One word decides this (`===`, not `contains`) and
+    // flipping it would leave every other test green.
+    const header = document.querySelector(".thinking-header") as HTMLElement;
+    header.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    header.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    const pinned = box.pins();
+    hostMessage({ type: "thinkingDelta", content: " and more" });
+    expect(box.pins()).toBe(pinned + 1);
   });
 });
 
@@ -13707,23 +13891,23 @@ describe("a repaint the panel refused cannot come back and blank a section", () 
     });
     try {
       step = 0;
-      hostMessage({ type: "thinkingDelta", content: "prima" }); // cheap: fast path, painted now
+      hostMessage({ type: "thinkingDelta", content: "first" }); // cheap: fast path, painted now
       const body = thinkingBody();
-      expect(body.textContent).toContain("prima");
+      expect(body.textContent).toContain("first");
 
       step = 40; // the next render is measured as SLOW
-      hostMessage({ type: "thinkingDelta", content: " costosa" });
-      expect(body.textContent).toContain("costosa");
+      hostMessage({ type: "thinkingDelta", content: " expensive" });
+      expect(body.textContent).toContain("expensive");
 
       step = 0; // the clock now stands still, as it does within one frame
       clock -= 40; // …and the next chunk arrives 0ms later (the last read is one step behind)
-      hostMessage({ type: "thinkingDelta", content: " dopo" });
-      expect(body.textContent).not.toContain("dopo"); // paced: the fast path is gone
+      hostMessage({ type: "thinkingDelta", content: " later" });
+      expect(body.textContent).not.toContain("later"); // paced: the fast path is gone
 
       clock += 100; // the pace is satisfiable again
       await new Promise<void>((r) => requestAnimationFrame(() => r()));
       await new Promise<void>((r) => requestAnimationFrame(() => r()));
-      expect(body.textContent).toContain(" dopo");
+      expect(body.textContent).toContain(" later");
     } finally {
       now.mockRestore();
     }
