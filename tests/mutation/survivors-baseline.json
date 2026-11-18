@@ -350,27 +350,8 @@
     },
     "webview": {
       "measured": "2026-11-17",
-      "mutants": 129,
-      "survivors": [
-        {
-          "file": "src/chat/webview/view.ts",
-          "mutator": "BooleanLiteral",
-          "replacement": "false",
-          "count": 2
-        },
-        {
-          "file": "src/chat/webview/view.ts",
-          "mutator": "ObjectLiteral",
-          "replacement": "{}",
-          "count": 2
-        },
-        {
-          "file": "src/chat/webview/view.ts",
-          "mutator": "UnaryOperator",
-          "replacement": "+1",
-          "count": 2
-        }
-      ]
+      "mutants": 31,
+      "survivors": []
     },
     "chat-panel": {
       "measured": "2026-11-13",

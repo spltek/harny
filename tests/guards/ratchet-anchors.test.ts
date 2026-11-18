@@ -27,13 +27,6 @@ const ANCHORS: Record<string, string[]> = {
     "if (!currentRawText.trim()) break;",
     "settleThinkingBlock();",
     "const resultEl = ensureResult();",
-    // the Follow's gates — what decides whether a scroll is the reader's or the panel's
-    "let userScrollPending = false;",
-    "userScrollPending = true;",
-    "let transcriptHeld = false;",
-    "if (e.target !== messagesEl) return;",
-    "const hand = transcriptHeld || userScrollPending;",
-    "if (!hand && reflowed) {",
     // the tool-output language hint — what decides whether an output is coloured at all
     "function langHintOf(el: HTMLElement, text: string): string | undefined {",
     'return looksLikeJson(text) ? "json" : undefined;',

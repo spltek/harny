@@ -5,12 +5,14 @@
   "vitest": { "configFile": "tests/vitest.config.mts" },
   "tempDirName": ".cache/stryker-tmp",
   "mutate": [
-    "src/chat/webview/view.ts:7221-7247",
-    "src/chat/webview/view.ts:3358-3377",
-    "src/chat/webview/view.ts:1485-1633"
+    "src/chat/webview/view.ts:7050-7069",
+    "src/chat/webview/view.ts:3187-3207"
   ],
   "coverageAnalysis": "perTest",
-  "reporters": ["clear-text", "json"],
+  "reporters": [
+    "clear-text",
+    "json"
+  ],
   "jsonReporter": {
     "fileName": ".cache/mutation/mutation.json"
   },

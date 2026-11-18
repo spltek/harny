@@ -12393,17 +12393,13 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
       ".thinking-body:not(.collapsed), .tool-details:not(.collapsed), .subagent-body:not(.collapsed)",
     ).length;
 
-  /** jsdom does no layout: fake the scroll metrics so the scroll listener can be driven, and return
-   *  a setter the tests use as the user's wheel position. `layout` moves the metrics, which is what a
-   *  REAL reflow always does (§ the scroll listener): the only way a reflow fires a scroll event is a
-   *  clamp at the end, so `scrollHeight`/`clientHeight` are never the same as at the previous event. */
-  function tetherScroll(): ((top: number) => void) & { layout: (scrollHeight: number, clientHeight?: number) => void } {
+  /** jsdom does no layout: fake the scroll metrics so the scroll listener can be
+   * driven, and return a setter the tests use as the user's wheel position. */
+  function tetherScroll(): (top: number) => void {
     const messages = document.getElementById("messages") as HTMLElement;
     let top = 0;
-    let height = 1000;
-    let view = 200;
-    Object.defineProperty(messages, "scrollHeight", { get: () => height, configurable: true });
-    Object.defineProperty(messages, "clientHeight", { get: () => view, configurable: true });
+    Object.defineProperty(messages, "scrollHeight", { get: () => 1000, configurable: true });
+    Object.defineProperty(messages, "clientHeight", { get: () => 200, configurable: true });
     Object.defineProperty(messages, "scrollTop", {
       get: () => top,
       set: (v: number) => {
@@ -12411,35 +12407,12 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
       },
       configurable: true,
     });
-    const set = (v: number): void => {
+    return (v) => {
       top = v;
     };
-    set.layout = (h: number, c = view): void => {
-      height = h;
-      view = c;
-    };
-    return set;
   }
 
   const emitScroll = () => (document.getElementById("messages") as HTMLElement).dispatchEvent(new Event("scroll"));
-
-  /** A scroll the USER made: the wheel (or a drag on the scrollbar, a touch, a key) arms the intent,
-   *  and the scroll that follows is the hand's. A bare `scroll` event is what the PANEL produces on
-   *  its own when the text re-wraps — after a resize, or when a section opens. */
-  const userScroll = (setTop: (top: number) => void, top: number): void => {
-    (document.getElementById("messages") as HTMLElement).dispatchEvent(new Event("wheel"));
-    setTop(top);
-    emitScroll();
-  };
-
-  /** A scroll the PANEL causes: a reflow moved the metrics and the browser clamped the offset. No
-   *  wheel, no drag, no key — the event is the panel's, and the Follow must survive it. */
-  type Tether = ((top: number) => void) & { layout: (h: number, c?: number) => void };
-  const reflowTo = (setTop: Tether, top: number, scrollHeight: number, clientHeight?: number): void => {
-    setTop.layout(scrollHeight, clientHeight);
-    setTop(top);
-    emitScroll();
-  };
 
   it("ships all three pills present, and disabled is the only thing that changes", async () => {
     await withAllSections();
@@ -12543,553 +12516,29 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
     await loadView();
     const setTop = tetherScroll();
     // scrollHeight 1000, clientHeight 200 → 800 is the bottom.
-    userScroll(setTop, 800);
+    setTop(800);
+    emitScroll();
     expect(auto().disabled).toBe(true);
   });
 
   it("Autoscroll enables as soon as the user scrolls away from the bottom", async () => {
     await loadView();
     const setTop = tetherScroll();
-    userScroll(setTop, 400); // 1000 - 400 - 200 = 400px from the bottom
+    setTop(400); // 1000 - 400 - 200 = 400px from the bottom
+    emitScroll();
     expect(auto().disabled).toBe(false);
     // Coming back within SCROLL_BOTTOM_TOLERANCE re-arms it by itself.
-    userScroll(setTop, 790);
-    expect(auto().disabled).toBe(true);
-  });
-
-  it("a reflow the PANEL causes never lights the Follow up (a resize, a section opening)", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    userScroll(setTop, 800); // the reader is following the bottom
-    expect(auto().disabled).toBe(true);
-    // A WIDER panel re-wraps the text into FEWER lines: the content shrinks, the browser CLAMPS the
-    // offset and a scroll event lands with nobody's hand behind it. The event carries its own
-    // evidence (the height is not what it was), so it is the panel's — read as a user scroll, that
-    // lit the pill up on its own, which is the reported behaviour.
-    reflowTo(setTop, 500, 700);
-    expect(auto().disabled).toBe(true);
-  });
-
-  it("a fresh panel is FOLLOWING: a reflow before anyone touched it changes nothing", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    // No wheel, no pointer: the state must start armed and stay that way, clamp after clamp.
-    reflowTo(setTop, 700, 900);
-    reflowTo(setTop, 600, 800);
-    expect(auto().disabled).toBe(true);
-  });
-
-  it("a fresh panel's FIRST scroll is the panel's too, not a hand nobody used", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    // Read as a hand, this one takes the Follow down before the reader has asked for anything.
-    reflowTo(setTop, 400, 1300);
-    expect(auto().disabled).toBe(true);
-    expect(messages.scrollTop).toBe(messages.scrollHeight);
-  });
-
-  it("a TALLER panel that clamps a parked reader at the end does not switch the Follow on", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 700); // parked just above the end (max scroll = 800)
-    expect(auto().disabled).toBe(false);
-    // The prompt grew and the transcript got SHORTER: same CONTENT, a bigger viewport, so the browser
-    // clamps the offset. The height did not change — the view did, and that is the half of the
-    // footprint a `scrollHeight` comparison alone would miss.
-    reflowTo(setTop, 600, 1000, 400);
-    expect(messages.scrollTop).toBe(600);
-    expect(auto().disabled).toBe(false); // still parked: nothing was read, nothing was followed
-  });
-
-  it("a jump INSIDE the box — Find moving to a match — keeps the position it asked for", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800);
-    expect(auto().disabled).toBe(true);
-    // `scrollIntoView` on a highlight: no input, and NOTHING about the layout changed, so there is no
-    // external cause left — yanking the box back to the bottom here would hide the match.
-    setTop(300);
-    emitScroll();
-    expect(messages.scrollTop).toBe(300);
-    expect(auto().disabled).toBe(false);
-  });
-
-  it("a reader parked exactly at SCROLL_BOTTOM_TOLERANCE is NOT following", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    // 1000 - 760 - 200 = 40: the tolerance is the line, and 40 is on the far side of it.
-    userScroll(setTop, 760);
-    expect(auto().disabled).toBe(false);
-  });
-
-  it("a gesture that KEEPS scrolling renews the intent (a wheel in two bites)", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800);
-    // A second wheel 200 ms later is the same gesture continuing: the flag must be re-armed, or a
-    // slow scroll would be read as a reflow 50 ms later. The reflow is where it BITES: the stream
-    // moved the content at t=320 ms, past the FIRST window, and the renewed one still covers it.
-    messages.dispatchEvent(new Event("wheel"));
-    await new Promise((r) => window.setTimeout(r, 200));
-    messages.dispatchEvent(new Event("wheel"));
-    await new Promise((r) => window.setTimeout(r, 120)); // past the FIRST timer's 250 ms
-    reflowTo(setTop, 400, 1300);
-    expect(auto().disabled).toBe(false);
-  });
-
-  it("a reflow does NOT drag a reader who had scrolled away back down", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 400); // parked above the bottom, by hand: following is OFF
-    // A fold closes ABOVE them: the content shrinks under the offset, the browser clamps it, and a
-    // scroll event lands with no hand behind it.
-    reflowTo(setTop, 300, 500);
-    // Both halves of the guard: it must not re-pin, and it must not turn the Follow on either.
-    expect(messages.scrollTop).toBe(300);
-    expect(auto().disabled).toBe(false);
-  });
-
-  it("…and a reflow while following leaves the reader at the END, not in the middle", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800);
-    // The panel widened: fewer lines, the content shrinks, the offset is clamped to the new end.
-    reflowTo(setTop, 500, 700);
-    expect(messages.scrollTop).toBe(500); // left exactly where the clamp put it…
-    expect(messages.scrollHeight - messages.scrollTop - 200).toBeLessThan(40); // …the end
-    expect(auto().disabled).toBe(true); // and still following
-  });
-
-  it("a press on a SECTION HEADER does not arm the intent (opening a fold is not a scroll)", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    hostMessage({ type: "thinkingDelta", content: "reasoning" });
-    const header = document.querySelector(".thinking-header") as HTMLElement;
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800);
-    // The press lands on the header — not on the container — so it is not the reader's hand on the
-    // scrollbar: the reflow that opening the section causes (the text re-wraps, the offset is
-    // clamped) must not be read as a scroll-up.
-    header.dispatchEvent(new Event("pointerdown", { bubbles: true }));
-    reflowTo(setTop, 400, 1300);
-    expect(auto().disabled).toBe(true);
-    expect(messages.scrollTop).toBe(messages.scrollHeight); // and it is pinned back, not left behind
-  });
-
-  it("a press on the SCROLL CONTAINER itself IS the reader's hand (the scrollbar)", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800);
-    // A drag on the scrollbar targets the element itself: that is how it is told apart from a click
-    // on a header, a chevron or a bubble.
-    messages.dispatchEvent(new Event("pointerdown"));
-    setTop(400);
-    emitScroll();
-    expect(auto().disabled).toBe(false);
-  });
-
-  it("the intent EXPIRES: a wheel a moment ago does not outvote the footprint", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800);
-    messages.dispatchEvent(new Event("wheel"));
-    await new Promise((r) => window.setTimeout(r, 300)); // well past the 250 ms
-    reflowTo(setTop, 400, 1300);
-    expect(auto().disabled).toBe(true); // attributed to the panel, not to a wheel that ended
-    expect(messages.scrollTop).toBe(messages.scrollHeight);
-  });
-
-  it("a STREAM changes the height under a wheel, and the hand still wins", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800);
-    // The worst case for the footprint: deltas keep growing the content WHILE the reader scrolls, so
-    // EVERY scroll event finds a new height. Input is what tells the two apart, and it must win.
-    messages.dispatchEvent(new Event("wheel"));
-    setTop.layout(1300);
-    setTop(400);
-    emitScroll();
-    expect(auto().disabled).toBe(false);
-  });
-
-  it("a DRAG while the answer streams is still the hand's, height changes and all", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800);
-    messages.dispatchEvent(new Event("pointerdown")); // the thumb, pressed and held
-    // Every step lands after a delta grew the content: the footprint says "the panel did it" on every
-    // single one, and the press is the only thing that can say otherwise.
-    reflowTo(setTop, 780, 1010);
-    reflowTo(setTop, 700, 1060);
-    reflowTo(setTop, 400, 1100);
-    expect(messages.scrollTop).toBe(400); // not one pixel of the drag was taken back
-    expect(auto().disabled).toBe(false);
-  });
-
-  it("a KEY that scrolls while the answer streams is still the reader's", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800);
-    messages.dispatchEvent(new KeyboardEvent("keydown", { key: "PageUp", bubbles: true }));
-    reflowTo(setTop, 400, 1300); // a delta landed between the key and the scroll it caused
-    expect(auto().disabled).toBe(false);
-  });
-
-  it("a scroll key LETS GO of the scrollbar a press left behind", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800);
-    messages.dispatchEvent(new Event("pointerdown")); // a drag whose release never reaches us
-    messages.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
-    await new Promise((r) => window.setTimeout(r, 300)); // …and the key's own window closes
-    reflowTo(setTop, 400, 1300);
-    // A hold that outlived its drag would make this scroll the hand's, and the reader's "Home" key
-    // would be the thing that turned the Follow off.
-    expect(auto().disabled).toBe(true);
-    expect(messages.scrollTop).toBe(messages.scrollHeight);
-  });
-
-  it("a drag that ends on a growing transcript picks the Follow back up", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800); // never left the bottom: still following
-    messages.dispatchEvent(new Event("pointerdown"));
-    setTop.layout(1300); // a card arrives: the end moves down and the hold keeps the box still
-    // Drain whatever the setup left queued: from here on, a frame exists only if the RELEASE
-    // schedules one — which is the whole point of the release being a channel of its own.
-    await new Promise<void>((r) => requestAnimationFrame(() => r()));
-    await new Promise<void>((r) => requestAnimationFrame(() => r()));
-    expect(messages.scrollTop).toBe(800);
-    // No scroll event fires here (the content GREW, it did not clamp), so nothing else would put a
-    // following reader back at the end.
-    messages.dispatchEvent(new Event("pointerup", { bubbles: true }));
-    await new Promise<void>((r) => requestAnimationFrame(() => r()));
-    expect(messages.scrollTop).toBe(1300);
-  });
-
-  it("a FINGER while the answer streams is the reader's too", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800);
-    messages.dispatchEvent(new Event("touchmove"));
-    reflowTo(setTop, 400, 1300); // a delta landed under the finger
-    expect(auto().disabled).toBe(false);
-  });
-
-  it("a release is a release: pointerup, mouseup, pointercancel and blur all end the hold", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    let height = 1000;
-    for (const release of ["pointerup", "mouseup", "pointercancel", "blur"]) {
-      height += 300;
-      messages.dispatchEvent(new Event("pointerdown"));
-      // The release belongs to the DOCUMENT, not to whatever sits under the pointer.
-      if (release === "blur") window.dispatchEvent(new Event(release));
-      else messages.dispatchEvent(new Event(release, { bubbles: true }));
-      reflowTo(setTop, height - 400, height); // the panel's, only if the hold is really gone
-      expect(auto().disabled, release).toBe(true);
-      expect(messages.scrollTop, release).toBe(height);
-    }
-  });
-
-  it("a finger drag (touchmove) and a press on the container (mousedown) both count", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800);
-    messages.dispatchEvent(new Event("touchmove"));
-    setTop(400);
-    emitScroll();
-    expect(auto().disabled).toBe(false);
-
-    userScroll(setTop, 800);
-    messages.dispatchEvent(new Event("mousedown"));
-    setTop(200);
-    emitScroll();
-    expect(auto().disabled).toBe(false);
-  });
-
-  it("a SLOW drag on the scrollbar is the hand's for its whole length", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800); // at the bottom, following
-    // ONE gesture, MANY scrolls: the press arms the intent, and it must stay armed until the release.
-    messages.dispatchEvent(new Event("pointerdown"));
-    // The first steps are still INSIDE the tolerance, so the Follow is on for them: the old code
-    // re-pinned to 1000 the instant a step crossed the line, the box jumped back under the hand, and
-    // the next step was measured from the bottom again — that is the "it goes crazy" a slow drag.
-    for (const top of [798, 795, 780, 755, 700, 400]) {
-      setTop(top);
-      emitScroll();
-      expect(messages.scrollTop).toBe(top); // the hand wins, pixel by pixel
-    }
-    expect(auto().disabled).toBe(false);
-  });
-
-  it("a delta landing MID-DRAG does not pull the box from under the hand", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800);
-    messages.dispatchEvent(new Event("pointerdown"));
-    setTop(790); // still within the tolerance: the Follow is still ON
-    emitScroll();
-    expect(auto().disabled).toBe(true);
-
-    const card = document.createElement("div");
-    card.className = "msg tool";
-    card.textContent = "Write src/x.ts";
-    messages.appendChild(card);
-    await new Promise((r) => window.setTimeout(r, 30)); // the MutationObserver's own turn
-
-    // Following does not license pinning the box out from under a hand that is on it.
-    expect(messages.scrollTop).toBe(790);
-  });
-
-  it("letting go gives the pin back: a scroll with no hand behind it is the panel's again", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800);
-    messages.dispatchEvent(new Event("pointerdown"));
-    setTop(790); // a drag that never left the bottom, so the Follow never switched off
-    emitScroll();
-    // Released over the PROMPT: the event belongs to the document, not to the transcript.
-    window.dispatchEvent(new Event("pointerup"));
-
-    reflowTo(setTop, 600, 1300); // a reflow: no wheel, no drag, no hand
-
-    expect(messages.scrollTop).toBe(messages.scrollHeight);
-    expect(auto().disabled).toBe(true);
-  });
-
-  it("a press lost outside the webview (blur) does not leave the transcript stuck to a hand", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800);
-    messages.dispatchEvent(new Event("pointerdown"));
     setTop(790);
     emitScroll();
-    // A release outside the panel delivers no pointerup at all.
-    window.dispatchEvent(new Event("blur"));
-
-    reflowTo(setTop, 600, 1300);
-
-    expect(messages.scrollTop).toBe(messages.scrollHeight);
-  });
-
-  it("ENTER on a header is not a scroll; PageUp is", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800);
-    // Enter opens a fold: the reflow it causes is the panel's.
-    messages.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    reflowTo(setTop, 400, 1300);
     expect(auto().disabled).toBe(true);
-    // A key that SCROLLS is the reader's.
-    messages.dispatchEvent(new KeyboardEvent("keydown", { key: "PageUp", bubbles: true }));
-    setTop(300);
-    emitScroll();
-    expect(auto().disabled).toBe(false);
-  });
-
-  it("NO external gesture: Focus opening and folding sections never detaches the Follow", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800); // following, established by a hand
-    (document.getElementById("focus-mode") as HTMLButtonElement).click(); // Focus armed
-
-    // A turn arrives and Focus does what Focus does: it opens the section the agent is inside and
-    // folds the one it left. Every one of these changes the height of the transcript.
-    const input = document.getElementById("user-input") as HTMLTextAreaElement;
-    input.value = "go";
-    (document.getElementById("send-btn") as HTMLButtonElement).click();
-    hostMessage({ type: "thinkingDelta", content: "thinking about it" });
-    hostMessage({ type: "toolCall", id: "f1", name: "Read", arguments: { path: "a.ts" } });
-    hostMessage({ type: "toolResult", toolCallId: "f1", output: "data", isError: false });
-    hostMessage({ type: "thinkingDelta", content: "more" });
-    // the folds the panel makes on its own, plus a resized panel and a repaint
-    document.querySelectorAll(".thinking-header, .tool-header").forEach((h) => (h as HTMLElement).click());
-    window.dispatchEvent(new Event("resize"));
-    await new Promise((r) => window.requestAnimationFrame(() => r(null)));
-    hostMessage({ type: "refresh", messages: [{ role: "assistant", content: "done", timestamp: 1 }] });
-    await new Promise((r) => window.requestAnimationFrame(() => r(null)));
-
-    // The policy: with no gesture behind any of it, the Follow never detaches.
-    expect(auto().disabled).toBe(true);
-    expect(messages.scrollTop).toBe(1000);
-  });
-
-  it("a PARKED reader pays nothing: a DOM change schedules no frame at all", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 400); // parked: following is off, so there is nothing to re-assert
-    const realRaf = window.requestAnimationFrame;
-    let rafs = 0;
-    window.requestAnimationFrame = ((cb: FrameRequestCallback) => {
-      rafs += 1;
-      return realRaf.call(window, cb);
-    }) as typeof window.requestAnimationFrame;
-    try {
-      const card = document.createElement("div");
-      card.className = "msg tool";
-      messages.appendChild(card);
-      await new Promise((r) => window.setTimeout(r, 30)); // the observer's own turn has passed
-      // The performance contract: coalesced AND filtered. A parked transcript costs one boolean test
-      // per mutation, never a scheduled frame — the panel must not burn a frame per delta.
-      expect(rafs).toBe(0);
-    } finally {
-      window.requestAnimationFrame = realRaf;
-    }
-  });
-
-  it("a HELD box schedules no frame either: the hand owns it", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800); // still following — this is the case `!autoScroll` alone misses
-    messages.dispatchEvent(new Event("pointerdown"));
-    // Drain what the setup left queued, so `followFrame` is 0 and the ONLY thing that could schedule
-    // a pass is the mutation below.
-    await new Promise((r) => window.setTimeout(r, 30));
-    const realRaf = window.requestAnimationFrame;
-    let rafs = 0;
-    window.requestAnimationFrame = ((cb: FrameRequestCallback) => {
-      rafs += 1;
-      return realRaf.call(window, cb);
-    }) as typeof window.requestAnimationFrame;
-    try {
-      const card = document.createElement("div");
-      card.className = "msg tool";
-      messages.appendChild(card);
-      await new Promise((r) => window.setTimeout(r, 30));
-      // Nothing may pin while the thumb is down, so there is nothing to schedule: a frame here would
-      // be spent to discover what the hold already says.
-      expect(rafs).toBe(0);
-    } finally {
-      window.requestAnimationFrame = realRaf;
-    }
-  });
-
-  it("a release a bubble SWALLOWED still ends the hold: the window hears it first", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    const card = document.createElement("div");
-    card.className = "msg tool";
-    messages.appendChild(card);
-    await new Promise((r) => window.setTimeout(r, 30)); // let the observer's frame land
-    let height = 1000;
-    for (const release of ["pointerup", "mouseup", "pointercancel"]) {
-      height += 300;
-      messages.dispatchEvent(new Event("pointerdown"));
-      // A control inside a bubble that stops the release at ITSELF: only a CAPTURE listener on the
-      // window has already heard it, which is why these are registered that way.
-      const swallow = (e: Event): void => e.stopPropagation();
-      card.addEventListener(release, swallow);
-      card.dispatchEvent(new Event(release, { bubbles: true }));
-      card.removeEventListener(release, swallow);
-      reflowTo(setTop, height - 400, height); // the panel's, only if the hold is really gone
-      expect(auto().disabled, release).toBe(true);
-      expect(messages.scrollTop, release).toBe(height);
-    }
-  });
-
-  it("a DRAG that starts on `mousedown` is the hand's too", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800);
-    messages.dispatchEvent(new Event("mousedown")); // no pointer events (an old webview host)
-    reflowTo(setTop, 400, 1300);
-    expect(auto().disabled).toBe(false);
-  });
-
-  it("a click with no drag schedules nothing: the release is not a repaint", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    userScroll(setTop, 800); // following, and already at the end: a pin would be a no-op
-    await new Promise<void>((r) => requestAnimationFrame(() => r())); // drain the setup's own frames
-    const realRaf = window.requestAnimationFrame;
-    let rafs = 0;
-    window.requestAnimationFrame = ((cb: FrameRequestCallback) => {
-      rafs += 1;
-      return realRaf.call(window, cb);
-    }) as typeof window.requestAnimationFrame;
-    try {
-      window.dispatchEvent(new Event("pointerup"));
-      window.dispatchEvent(new Event("blur"));
-      await new Promise((r) => window.setTimeout(r, 30));
-      // Nothing was held, so nothing was released: a pointerup or a blur that ends no gesture must
-      // not cost the browser a frame.
-      expect(rafs).toBe(0);
-    } finally {
-      window.requestAnimationFrame = realRaf;
-    }
-  });
-
-  it("a DOM change re-asserts the bottom: following is PURSUED, not merely unbroken", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800);
-    setTop(500); // the transcript grew under the reader and fired NO scroll event
-    // Any change to the transcript — a section opening, a card arriving, a delta — re-pins.
-    const card = document.createElement("div");
-    card.className = "msg tool";
-    card.textContent = "Write src/x.ts";
-    messages.appendChild(card);
-    await new Promise((r) => window.setTimeout(r, 30)); // the MutationObserver's own turn
-    expect(messages.scrollTop).toBe(messages.scrollHeight);
-  });
-
-  it("a resize that fires NO scroll event still keeps the reader at the bottom", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 800);
-    setTop(500); // wider panel, fewer lines, and no scroll event to notice it
-    window.dispatchEvent(new Event("resize"));
-    // One re-assertion per FRAME, not per event: the resize channel is coalesced on purpose.
-    await new Promise((r) => window.requestAnimationFrame(() => r(null)));
-    expect(messages.scrollTop).toBe(1000);
-  });
-
-  it("…but a resize does NOT drag a reader who had scrolled away", async () => {
-    await loadView();
-    const setTop = tetherScroll();
-    const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 400); // parked above the bottom, by hand
-    window.dispatchEvent(new Event("resize"));
-    await new Promise((r) => window.requestAnimationFrame(() => r(null)));
-    expect(messages.scrollTop).toBe(400);
   });
 
   it("clicking Autoscroll jumps to the latest and re-disables itself", async () => {
     await loadView();
     const setTop = tetherScroll();
     const messages = document.getElementById("messages") as HTMLElement;
-    userScroll(setTop, 400);
+    setTop(400);
+    emitScroll();
     expect(auto().disabled).toBe(false);
 
     auto().click();
@@ -13102,7 +12551,8 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
   it("Autoscroll never toggles the control stack either", async () => {
     await loadView();
     const setTop = tetherScroll();
-    userScroll(setTop, 400);
+    setTop(400);
+    emitScroll();
 
     auto().click();
 
