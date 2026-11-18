@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { writeFileSync, mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AttachmentService } from "./attachment-service";
@@ -141,6 +141,42 @@ describe("AttachmentService", () => {
     expect(files).toHaveLength(1);
     expect(files[0]).toMatchObject({ name: "a.txt", path: txt, size: 2, isImage: false });
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("fromPaths refuses a DIRECTORY, and says which of the two it was", () => {
+    dir = mkdtempSync(join(tmpdir(), "harny-att-"));
+    const sub = join(dir, "src");
+    const txt = join(dir, "a.txt");
+    mkdirSync(sub);
+    writeFileSync(txt, "hi");
+    const service = makeService(async () => []);
+
+    // A folder dragged from the Explorer is a real gesture. It used to come back as a CHIP named
+    // after the directory (exists() is true for dirs) whose only payload, one turn later, was a
+    // note saying the content was not available.
+    expect(service.fromPaths([sub])).toEqual([]);
+    expect(service.refusalReason(sub)).toBe("folder");
+    expect(service.refusalReason(join(dir, "gone.txt"))).toBe("missing");
+    expect(service.refusalReason(txt)).toBe("unreadable"); // readable, but fromPaths took it
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("fromPaths survives a path whose stat() throws instead of failing the whole gesture", () => {
+    const service = new AttachmentService(
+      {
+        ...nodeFileSystem,
+        exists: () => true,
+        isDirectory: () => false,
+        size: () => {
+          throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+        },
+      },
+      async () => [],
+    );
+    // Unguarded, `fs.size` threw straight out of the webview message handler: the reader got
+    // nothing at all, not even the message they were already owed.
+    expect(service.fromPaths(["/secret/x.txt"])).toEqual([]);
+    expect(service.refusalReason("/secret/x.txt")).toBe("unreadable");
   });
 
   it("fromPaths includes an inline data URI for image files (for previews)", () => {

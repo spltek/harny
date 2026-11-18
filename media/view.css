@@ -2644,6 +2644,22 @@ button.secondary {
 #attachment-chips.hidden {
   display: none;
 }
+/* A drop that carried nothing to attach (view.ts showAttachNotice). It reports a FAILED GESTURE, so
+   it belongs under the composer — beside the chips it did not produce — and not in the transcript:
+   as a bubble it broke into a live answer, read as something the assistant had said, and vanished
+   on the next rebuild of the transcript. Quiet and short-lived on purpose: the reader is told why
+   the drop did nothing, and the line leaves on its own. The WARN role, not `--error`: nothing is
+   broken (a drop can only carry what the host gave the panel), and not `--info` either — that role
+   explains, this one reports a miss. */
+#attach-notice {
+  margin-top: 6px;
+  font-size: var(--fs-sm);
+  line-height: 1.35;
+  color: var(--warn);
+}
+#attach-notice.hidden {
+  display: none;
+}
 .attach-chip {
   display: inline-flex;
   align-items: center;

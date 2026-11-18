@@ -4,7 +4,7 @@
   "testRunner": "vitest",
   "vitest": { "configFile": "tests/vitest.config.mts" },
   "tempDirName": ".cache/stryker-tmp",
-  "mutate": ["src/chat/chat-view.ts:4325-4344"],
+  "mutate": ["src/chat/chat-view.ts:4337-4356"],
   "coverageAnalysis": "perTest",
   "reporters": ["clear-text", "json"],
   "jsonReporter": {

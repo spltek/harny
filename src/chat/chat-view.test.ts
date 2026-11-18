@@ -1580,6 +1580,46 @@ describe("ChatViewProvider", () => {
     expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "attachments", files: picked });
   });
 
+  it("attachPath refuses a path it cannot attach, on its own message", async () => {
+    // `attachments: []` is ALSO what a cancelled picker sends, and the panel ignores an empty list
+    // so a cancel cannot clear a selection — so a refusal travelling on that message was silence.
+    const attachments = {
+      fromPaths: vi.fn(() => []),
+      refusalReason: vi.fn(() => "folder"),
+    } as unknown as AttachmentService;
+    const { provider } = buildHarness({ attachments });
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew();
+    view.webview.postMessage.mockClear();
+
+    await handler({ type: "attachPath", path: "/tmp/some-folder" });
+
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "attachments", files: [] });
+    expect(view.webview.postMessage).toHaveBeenCalledWith({
+      type: "attachRefused",
+      path: "/tmp/some-folder",
+      reason: "folder",
+    });
+  });
+
+  it("attachPath attaches a real file and says nothing", async () => {
+    const file = { name: "a.txt", path: "/tmp/a.txt", size: 2, isImage: false };
+    const attachments = {
+      fromPaths: vi.fn(() => [file]),
+      refusalReason: vi.fn(() => "missing"),
+    } as unknown as AttachmentService;
+    const { provider } = buildHarness({ attachments });
+    const { handler, view } = resolveWith(provider);
+    await provider.createNew();
+    view.webview.postMessage.mockClear();
+
+    await handler({ type: "attachPath", path: "/tmp/a.txt" });
+
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ type: "attachments", files: [file] });
+    expect(view.webview.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "attachRefused" }));
+    expect(attachments.refusalReason).not.toHaveBeenCalled();
+  });
+
   it("renameSession renames via the in-panel modal", async () => {
     const { store, provider } = buildHarness();
     const { handler, view } = resolveWith(provider);

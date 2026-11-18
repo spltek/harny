@@ -68,7 +68,6 @@ function sentTypes(): Map<string, string> {
 /** Handlers no test drives today. An entry here is a decision, not a rubber stamp: the assertion
  *  below fails if one gets a test (the list went stale) or disappears (the handler moved away). */
 const KNOWN_GAPS = [
-  "attachPath", // attaching a pasted / dropped path: not covered yet
   "dragDebug", // diagnostics only (logging), nothing to assert
 ];
 

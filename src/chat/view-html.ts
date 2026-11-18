@@ -329,6 +329,10 @@ ${VIEW_CSS}
     <div id="attach-row">
       <div id="attachment-chips" class="hidden"></div>
     </div>
+    <!-- A drop that carried nothing to attach reports it HERE, under the composer: where the
+         chips appear and where the gesture happened. Never in the transcript (see
+         showAttachNotice in view.ts). -->
+    <div id="attach-notice" class="hidden" role="status" aria-live="polite"></div>
   </div>
   <div id="status">
     <div id="ctl-cards" class="ctl-cards">

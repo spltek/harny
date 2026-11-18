@@ -45,19 +45,37 @@ export class AttachmentService {
   }
 
   /** Metadata for known paths (used by the file dialog AND a pasted path/URI).
-   * Non-existent paths are dropped. */
+   *  Missing paths are dropped, and so is anything that is not a FILE: a directory has no content
+   *  to attach, and keeping it meant a chip named after the folder whose only payload, one turn
+   *  later, was a note saying its content was not available. `refusalReason` says WHICH of the two
+   *  happened, so the panel can refuse out loud (a folder dragged from the Explorer is a real
+   *  gesture, not a typo). */
   fromPaths(paths: readonly string[]): AttachmentInfo[] {
-    return paths
-      .map((p) => (typeof p === "string" ? p.trim() : ""))
-      .filter((p) => p.length > 0 && this.fs.exists(p))
-      .map((path) => {
-        const size = this.fs.size(path);
-        const isImage = isImagePath(path);
-        // Images carry an inline data URI so the webview can preview them
-        // (thumbnail + lightbox) without any host round-trip.
-        const dataUri = isImage ? this.imageDataUri(path, size) : undefined;
-        return { name: basename(path), path, size, isImage, ...(dataUri ? { dataUri } : {}) };
-      });
+    const out: AttachmentInfo[] = [];
+    for (const raw of paths) {
+      const path = typeof raw === "string" ? raw.trim() : "";
+      if (path.length === 0 || !this.fs.exists(path) || this.fs.isDirectory(path)) continue;
+      let size: number;
+      try {
+        size = this.fs.size(path);
+      } catch {
+        continue; // exists but cannot be stat'ed (permissions): same as missing, and said out loud
+      }
+      const isImage = isImagePath(path);
+      // Images carry an inline data URI so the webview can preview them
+      // (thumbnail + lightbox) without any host round-trip.
+      const dataUri = isImage ? this.imageDataUri(path, size) : undefined;
+      out.push({ name: basename(path), path, size, isImage, ...(dataUri ? { dataUri } : {}) });
+    }
+    return out;
+  }
+
+  /** Why `fromPaths` refuses a path, as a REASON and not a sentence: the prose belongs to the
+   *  webview, which is where the reader is looking (and where every other line of it lives). */
+  refusalReason(path: string): "missing" | "folder" | "unreadable" {
+    if (!this.fs.exists(path)) return "missing";
+    if (this.fs.isDirectory(path)) return "folder";
+    return "unreadable"; // a real file that `fromPaths` still could not take (size/read failed)
   }
 
   async buildContext(files: AttachmentInfo[]): Promise<AttachmentContext> {

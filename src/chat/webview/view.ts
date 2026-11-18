@@ -316,6 +316,7 @@ const insertHintLabel = insertHintWord.querySelector(".mode-pill-label") as HTML
 const abortBtn = document.getElementById("abort-btn") as HTMLButtonElement;
 const attachBtn = document.getElementById("attach-btn") as HTMLButtonElement;
 const attachmentChips = document.getElementById("attachment-chips") as HTMLDivElement;
+const attachNotice = document.getElementById("attach-notice") as HTMLDivElement;
 const modelBtn = document.getElementById("model-btn") as HTMLButtonElement;
 const modelBtnLabel = document.getElementById("model-btn-label") as HTMLSpanElement;
 const modelWarn = document.getElementById("model-warn") as HTMLSpanElement;
@@ -621,9 +622,7 @@ function restoreViewMemory(id: string | undefined, withScroll = true): void {
   transcriptSections().forEach((body, i) => {
     if (body === currentThinkingBlock) return;
     const wantOpen = open.has(i);
-    if (!body.classList.contains("collapsed") === wantOpen) return;
-    body.classList.toggle("collapsed", !wantOpen);
-    setFold(body.previousElementSibling, wantOpen);
+    setBodyFold(body, wantOpen);
   });
   if (withScroll && !mem.pinned) {
     messagesEl.scrollTop = mem.scrollTop;
@@ -655,7 +654,9 @@ const MAX_PASTE_IMAGE_BYTES = 15 * 1024 * 1024;
  *
  * 1. SHORT text paints immediately: under `FAST_PAINT_CHARS` a render costs a
  *    few hundred microseconds, so the leading chunks of every segment stay
- *    perfectly live (this is also what keeps the stream feeling instant).
+ *    perfectly live (this is also what keeps the stream feeling instant). The
+ *    condition is the MEASURED cost of the last render, not the count: a short
+ *    render that was still slow goes through the coalescer like a long one.
  * 2. ADAPTIVE PACING: the next paint waits at least as long as the previous
  *    render took. One markdown render of a long log can cost as much as a whole
  *    frame — repeated 60×/s it pins the webview's main thread, and every layout
@@ -753,9 +754,16 @@ function makeThrottledMd(minIntervalMs = 16) {
   const api = {
     /** Schedule a render of getText() into el (leading edge + per-frame flush). */
     push(e: Element, g: () => string): void {
-      // Cheap render: paint it straight away (the common case for the first
-      // chunks of a segment, and for short answers/tool reports).
-      if (g().length <= FAST_PAINT_CHARS) {
+      // Rule 1 is justified by a MEASUREMENT, never by the character count alone: `FAST_PAINT_CHARS`
+      // is a proxy, and 4 KB of log or a fenced block Prism has to highlight can cost as much as a
+      // long one on a slow engine — repeated per delta, which is precisely the freeze rule 2 exists
+      // to prevent. So the fast path is taken while the last render actually WAS cheap (the common
+      // case by orders of magnitude: a few hundred microseconds) and given up as soon as one was
+      // not; the very next render goes through the coalescer and re-measures.
+      //
+      // It deliberately reads no clock: wall-time pacing belongs to `tick`, and duplicating it here
+      // meant that with a frozen clock (the fake timers in the tests) nothing was ever painted.
+      if (g().length <= FAST_PAINT_CHARS && lastCost <= minIntervalMs) {
         unschedule();
         el = null;
         getText = null;
@@ -775,12 +783,20 @@ function makeThrottledMd(minIntervalMs = 16) {
       }
       schedule();
     },
-    /** Render the final text immediately (done/error/interrupt/refresh). */
+    /** Render the final text immediately (done/error/interrupt/refresh).
+     *
+     *  `e` is resolved by the CALLER from a live reference (`flushStreamingMd` reads
+     *  `currentThinkingBlock`), and a segment boundary CLEARS that reference before the flush
+     *  arrives — a reasoning block is settled by the answer's first delta, and the `toolCall`
+     *  that follows then asks for a flush with no element at all. Throwing the pending render
+     *  away there left the block at its last painted frame FOR EVER (one chunk, then silence).
+     *  The pending target is the honest one: it is the node that asked for the paint. */
     flush(e: Element | null, g: () => string): void {
+      const target = e ?? el;
       unschedule();
       el = null;
       getText = null;
-      if (e) paint(e, g);
+      if (target && target.isConnected) paint(target, g);
     },
     reset(): void {
       unschedule();
@@ -822,11 +838,48 @@ function selectionWithin(node: Element): boolean {
   if (!sel || sel.isCollapsed || sel.rangeCount === 0) return false;
   for (let i = 0; i < sel.rangeCount; i++) {
     const r = sel.getRangeAt(i);
+    // A range that PAINTS NOTHING is not a copy in progress. A selection whose text sits in a
+    // folded body (`display: none`) stays alive for the DOM — Chromium keeps the Range — but
+    // shows no highlight and fires no `selectionchange` ever again. Honouring it deferred every
+    // repaint of these nodes FOR EVER: a live reasoning block froze on its first chunk while the
+    // stream kept growing behind it (and the answer bubble born meanwhile stayed empty).
+    if (paintsNothing(r)) continue;
     if (node.contains(r.startContainer) || node.contains(r.endContainer)) return true;
     // A range that WRAPS the node (select-all, or a drag from above) also covers it.
     if (r.intersectsNode?.(node)) return true;
   }
   return false;
+}
+
+/** Does this range put anything on screen? Read through a guard: an engine without
+ *  `Range.getClientRects` (jsdom) has no information, and the caller keeps the conservative
+ *  behaviour instead of treating every selection as invisible. */
+function paintsNothing(range: Range): boolean {
+  if (typeof range.getClientRects !== "function") return false;
+  try {
+    return range.getClientRects().length === 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Release the selection if it lives inside `node`, and commit what it was holding back.
+ *
+ *  Used when a body is about to be HIDDEN: its text cannot be copied any more (nothing of it is
+ *  on screen), so keeping the range armed only buys the freeze described in `selectionWithin`. */
+function releaseSelectionWithin(node: Element): void {
+  const sel = window.getSelection?.();
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+  let inside = false;
+  for (let i = 0; i < sel.rangeCount && !inside; i++) {
+    const r = sel.getRangeAt(i);
+    inside = node.contains(r.startContainer) || node.contains(r.endContainer) || r.intersectsNode?.(node) === true;
+  }
+  if (!inside) return;
+  sel.removeAllRanges();
+  // `selectionchange` is dispatched asynchronously — and not at all in every engine: commit the
+  // deferred paints NOW, so the text that arrived while the selection was held lands with the fold.
+  for (const p of [...mdPainters]) p.flushDeferred();
 }
 
 /** Above this many characters a markdown render stops being "cheap": the
@@ -1426,8 +1479,29 @@ let autoScroll = true;
  *  — used to be indistinguishable from the user's own, so it disarmed the Follow on its own. That is
  *  the reported behaviour: the reader resizes (or a fold opens), the box shifts as if scrolled, and
  *  the pill lights up without anybody touching it. */
+const SCROLL_KEYS = new Set([
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "PageUp",
+  "PageDown",
+  "Home",
+  "End",
+  " ",
+  "Spacebar",
+]);
 let userScrollPending = false;
 let userScrollTimer = 0;
+/** True from the press on the transcript's OWN surface until the button comes back up.
+ *  A scrollbar drag is ONE gesture that produces a STREAM of scroll events and lasts as long as the
+ *  reader keeps the thumb moving. The 250 ms intent above is right for a wheel — one event per
+ *  notch, re-armed on each — and WRONG for a drag: a slow drag outlives it, so from the second
+ *  scroll on the events read as the panel's own and `keepFollowing` pins the transcript back to the
+ *  bottom UNDER THE READER'S HAND, at every pixel (a fast drag crosses the tolerance in one event
+ *  and escapes; a slow one can never escape, so it just fights: "going up slowly with the scrollbar
+ *  makes it go crazy"). While held, EVERY scroll is the hand's and nothing may pin. */
+let transcriptHeld = false;
 const markUserScroll = (): void => {
   userScrollPending = true;
   window.clearTimeout(userScrollTimer);
@@ -1438,32 +1512,129 @@ const markUserScroll = (): void => {
     userScrollPending = false;
   }, 250);
 };
-for (const ev of ["wheel", "touchstart", "touchmove", "pointerdown", "mousedown", "keydown"] as const) {
-  messagesEl.addEventListener(ev, markUserScroll, { passive: true });
-}
+
+/**
+ * The intent may only be armed by something that MOVES the viewport, and this is the list that
+ * decides it. Three sources used to arm on things that do not move anything — a `pointerdown` on a
+ * section header, a `touchstart` on the same header, an `Enter` that opens a fold — and the reflow
+ * those actions cause then arrived inside the 250 ms window and was attributed to the reader: the
+ * Follow switched itself off on an `Enter`. So:
+ *  · `wheel` and `touchmove` (a TAP produces no touchmove) are always the reader's hand;
+ *  · a drag on the SCROLLBAR is told apart by its TARGET — the scrollbar and the empty gutter belong
+ *    to the container itself, while a header, a chevron or a bubble has one of THEM as the target;
+ *  · keys count only when they are the keys that scroll.
+ */
+const onScrollKey = (e: KeyboardEvent): void => {
+  if (!SCROLL_KEYS.has(e.key)) return;
+  // A key that scrolls is a NEW gesture: it supersedes a hold that was never released (a drag that
+  // ended outside the panel sends no `pointerup` we can see).
+  transcriptHeld = false;
+  markUserScroll();
+};
+/** A wheel or a finger: a fresh gesture, and one that cannot be in progress while a drag is — so it
+ *  also clears a hold that was left behind. */
+const onHandMoves = (): void => {
+  transcriptHeld = false;
+  markUserScroll();
+};
+const onPress = (e: Event): void => {
+  if (e.target !== messagesEl) return;
+  // The scrollbar and the empty gutter belong to the container itself, and the press STAYS: the drag
+  // it starts is the reader's hand until they let go, however many scroll events it takes. The hold
+  // says everything a 250 ms intent could — and says it for as long as the drag lasts — so nothing
+  // here arms a timer.
+  transcriptHeld = true;
+};
+/** The hand is off the box. `pointerup`/`mouseup` on the WINDOW, in the CAPTURE phase, because the
+ *  release belongs to the document and not to whatever sits under the pointer (a drag that ends over
+ *  the prompt still ended); `pointercancel` and `blur` are the other two ways a press is lost — the
+ *  panel losing focus means a release outside the webview, which never reaches us. */
+const releaseTranscript = (): void => {
+  if (!transcriptHeld) return;
+  transcriptHeld = false;
+  // The drag is over: if the reader never left the bottom, the Follow picks the transcript back up
+  // (nothing else would, because the content that arrived under the hand fired no scroll event).
+  scheduleFollow();
+};
+window.addEventListener("pointerup", releaseTranscript, true);
+window.addEventListener("mouseup", releaseTranscript, true);
+window.addEventListener("pointercancel", releaseTranscript, true);
+window.addEventListener("blur", releaseTranscript);
+// `passive` only where it buys something — these two can block a scroll; a press cannot.
+messagesEl.addEventListener("wheel", onHandMoves, { passive: true });
+messagesEl.addEventListener("touchmove", onHandMoves, { passive: true });
+messagesEl.addEventListener("keydown", onScrollKey);
+messagesEl.addEventListener("pointerdown", onPress);
+messagesEl.addEventListener("mousedown", onPress);
 
 /** Anchored at the bottom, within the tolerance that makes a hand's rounding harmless. */
 function atBottom(): boolean {
   return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < SCROLL_BOTTOM_TOLERANCE;
 }
 
-/** Scrolls to the last emitted line, but only while the user is anchored at
- * the bottom: scrolling UP disables auto-scroll, reaching the bottom re-enables. */
-function scrollDown(): void {
-  if (!autoScroll) return;
+/** The transcript's ONE way of BEING at the bottom, called from every place that can move the end:
+ *  a scroll nobody asked for, a resize, a change to the transcript. It does nothing when the reader
+ *  is parked: `autoScroll` is the whole contract, and only the reader's own gesture clears it. The
+ *  FIRST test is the boolean, so a parked panel costs one comparison and never touches layout. */
+function keepFollowing(): void {
+  // `transcriptHeld` first: while the reader holds the scrollbar the box must not move under it,
+  // even if the Follow is still on because they have not left the bottom yet.
+  if (transcriptHeld || !autoScroll || atBottom()) return;
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+/** One re-assertion per FRAME, for the channels that can fire in bursts.
+ *  `keepFollowing` READS layout (`scrollHeight`) to decide, and a `MutationObserver` delivers a batch
+ *  per task: called straight from there, a streaming run would pay a forced layout flush per delta —
+ *  the one cost this panel must not add. Coalesced, the work is one read and at most one write per
+ *  painted frame, and a parked reader pays a boolean test and nothing else. */
+let followFrame = 0;
+function scheduleFollow(): void {
+  if (followFrame || transcriptHeld || !autoScroll) return;
+  followFrame = window.requestAnimationFrame(() => {
+    followFrame = 0;
+    keepFollowing();
+  });
+}
+
+/** Scrolls to the last emitted line, but only while the user is anchored at
+ * the bottom: scrolling UP disables auto-scroll, reaching the bottom re-enables. */
+function scrollDown(): void {
+  // A delta that lands mid-drag must not drag the box away from the reader's hand: the Follow resumes
+  // (or not) when the button comes back up.
+  if (transcriptHeld || !autoScroll) return;
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+/** The layout the last scroll event found. A SCROLL THE PANEL CAUSES ALWAYS LEAVES A FOOTPRINT:
+ *  a scroll event fires on a reflow only when the offset is CLAMPED at the end — the content shrank
+ *  (a fold closed, the Find bar takes a row, a compaction) or the viewport grew — so the event itself
+ *  carries the evidence, `scrollHeight`/`clientHeight` no longer being what they were at the previous
+ *  one. `-1` = never sampled: the first scroll has nothing to compare against and is read as the
+ *  panel's, which is the safe side (the state stays, the Follow re-pins). */
+let lastScrollHeight = -1;
+let lastScrollView = -1;
+
 messagesEl.addEventListener("scroll", () => {
-  if (!userScrollPending) {
-    // Not the user's hand: the panel was resized and the text re-wrapped, a section opened or
-    // closed, a delta landed. The Follow keeps the state it had — and if it was on, it stays
-    // pinned, because a reader who was following still is.
-    if (autoScroll && !atBottom()) messagesEl.scrollTop = messagesEl.scrollHeight;
+  const height = messagesEl.scrollHeight;
+  const view = messagesEl.clientHeight;
+  const reflowed = height !== lastScrollHeight || view !== lastScrollView;
+  lastScrollHeight = height;
+  lastScrollView = view;
+  // The reader's hand: a LIVE drag — which has no per-event intent to spend, because a drag on the
+  // scrollbar is ONE gesture and MANY scrolls — or input inside the last 250 ms. The intent wins over
+  // the footprint because a stream changing the height WHILE the reader wheels is still the reader.
+  const hand = transcriptHeld || userScrollPending;
+  if (!hand && reflowed) {
+    // The panel's own: the text re-wrapped after a resize, a section opened or closed, a delta landed.
+    // The Follow keeps the state it had — and if it was on, it stays pinned, because a reader who was
+    // following still is.
+    keepFollowing();
     return;
   }
+  // The hand's — or a scroll nothing external explains at all (a jump INSIDE the box, like Find
+  // moving to a match: no input, no layout change). Either way the position is the reader's.
   userScrollPending = false;
-  window.clearTimeout(userScrollTimer);
   autoScroll = atBottom();
   // Scrolling is what makes the "Autoscroll" pill applicable or not.
   updateTranscriptActions();
@@ -1474,13 +1645,27 @@ messagesEl.addEventListener("scroll", () => {
 // the reader ends up above the end without having touched anything. BOTH channels, exactly like the
 // prompt's own height below: the ResizeObserver for a change driven by the content, the window for
 // the panel being resized (which is what a dragged panel is).
-const keepFollowing = (): void => {
-  if (autoScroll) messagesEl.scrollTop = messagesEl.scrollHeight;
-};
 if (typeof ResizeObserver !== "undefined") {
-  new ResizeObserver(keepFollowing).observe(messagesEl);
+  new ResizeObserver(scheduleFollow).observe(messagesEl);
 }
-window.addEventListener("resize", keepFollowing);
+window.addEventListener("resize", scheduleFollow);
+// …and the third channel, which is the one that makes the Follow ACTIVELY pursued rather than
+// merely unbroken: any change to the transcript itself — a section opening or closing, a card
+// arriving — re-asserts the bottom when the reader is following. Following is not "the absence of a
+// reason to stop": it is a state this box is put back into after every change, which is what makes
+// a reflow incapable of leaving a following reader behind.
+// `characterData` is deliberately NOT observed: a streamed delta changes text on every tick and the
+// streaming path already pins (`scrollDown`), so subscribing to it would buy nothing and cost a
+// layout read per delta. What this catches is the rest — a fold opening, a card arriving — and it
+// hands the work to `scheduleFollow`, i.e. one per frame.
+if (typeof MutationObserver !== "undefined") {
+  new MutationObserver(scheduleFollow).observe(messagesEl, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["class"],
+  });
+}
 
 /**
  * The READING POSITION, captured before a rebuild destroys the nodes.
@@ -1934,8 +2119,9 @@ function makeThinkingBlock(
     if (!b || !header) return;
     // The reader is driving this fold now: Focus lets go of it for good (see the Focus block).
     markFocusManual(b);
-    const collapsed = b.classList.toggle("collapsed");
-    setFold(header, !collapsed);
+    // Through `setBodyFold` (not a bare class toggle): closing must release the selection it
+    // hides, or the hidden text blocks every later paint of this block.
+    setBodyFold(b, b.classList.contains("collapsed"));
   });
   if (!host) {
     if (beforeEl && beforeEl.parentNode) beforeEl.parentNode.insertBefore(block, beforeEl);
@@ -2020,8 +2206,8 @@ function wireCollapsible(div: HTMLElement): void {
     if (!details || !tog) return;
     // Same rule as the thinking header: a hand-opened (or hand-closed) card is the reader's.
     markFocusManual(details);
-    const collapsed = details.classList.toggle("collapsed");
-    setFold(div.querySelector(".tool-header"), !collapsed);
+    // …and the same fold helper, so closing releases the selection it is about to hide.
+    setBodyFold(details, details.classList.contains("collapsed"));
   });
 }
 
@@ -2091,8 +2277,7 @@ function collapseAllSections(): number {
     // and behaves normally. Marking the already-collapsed ones instead would disarm the mode for
     // every section of the transcript the moment the pill is pressed once.
     markFocusManual(body);
-    body.classList.add("collapsed");
-    setFold(body.previousElementSibling, false);
+    setBodyFold(body, false);
     collapsed += 1;
   });
   return collapsed;
@@ -2139,9 +2324,13 @@ let focusOpened: HTMLElement | null = null;
 /** Armed or not. A MODE, so the pill is never `disabled`: `aria-pressed` carries the state. */
 let focusMode = false;
 
-/** Fold `body` exactly as its own header would: body class, arrow and announced state together. */
-function setBodyFold(body: HTMLElement, open: boolean): void {
+/** Fold `body` exactly as its own header would: body class, arrow and announced state together.
+ *  Closing also RELEASES a selection inside it: the text is about to be `display: none`, so it
+ *  cannot be copied any more — and an invisible range left armed is a permanent freeze (see
+ *  `selectionWithin`). EVERY hand-driven fold goes through here for exactly that reason. */
+function setBodyFold(body: Element, open: boolean): void {
   if (open === !body.classList.contains("collapsed")) return;
+  if (!open) releaseSelectionWithin(body);
   body.classList.toggle("collapsed", !open);
   setFold(body.previousElementSibling, open);
 }
@@ -2402,8 +2591,7 @@ function addSubAgentCall(args: unknown): HTMLDivElement {
   subHeader?.addEventListener("click", () => {
     const body = div.querySelector(".subagent-body");
     if (!body) return;
-    const collapsed = body.classList.toggle("collapsed");
-    setFold(subHeader, !collapsed);
+    setBodyFold(body, body.classList.contains("collapsed"));
   });
   // Per-sub-agent abort: stop ONLY this sub-agent. The host forwards it to the
   // runner; the orchestrator still receives this Delegate's tool result
@@ -2619,7 +2807,18 @@ function hasMeaningfulThinking(text: string): boolean {
 /** Close the live streaming bubble: stop its border pulse before it becomes
  * a permanent transcript entry (final flush / new segment / reset). */
 function clearStreamingBubble(): void {
-  settlePulse(currentResultEl);
+  const el = currentResultEl;
+  if (el) {
+    // The bubble still OWNS the render in flight (`answerMd` was asked to paint it and has not
+    // yet, or the paint was deferred by a selection): commit it HERE, before the reference goes
+    // away. Otherwise the pending render is dropped and an EMPTY blue bubble stays in the
+    // transcript for ever — the answer was written, and the reader sees a blank bar.
+    answerMd.flush(el, () => currentRawText);
+    // What the thinking surface already does (`hasMeaningfulThinking`): a bubble that never said
+    // anything is not a message. Nothing is lost — the next delta opens a fresh one.
+    if (!el.textContent?.trim()) el.remove();
+  }
+  settlePulse(el);
   currentResultEl = null;
 }
 
@@ -2628,6 +2827,11 @@ function clearStreamingBubble(): void {
  * reasoning belongs in the same block, in the same place (see `settledThinkingBlock`). */
 function settleThinkingBlock(): void {
   if (!currentThinkingBlock) return;
+  // Commit what this block already owns: the reasoning phase is over, and the reference is
+  // cleared below (the `toolCall`/`done` flush that follows then has no element to aim at —
+  // `flush` falls back to the pending target, but only if the pending render is still there).
+  const liveBody = currentThinkingBlock.querySelector(".thinking-body");
+  if (liveBody) thinkingMd.flush(liveBody, () => currentThinkingText);
   // The reasoning is over — the answer streams now, or the next step starts. Focus folds the
   // block it opened here: `focusOff` is a no-op unless the tracked body is this one, so a block
   // the reader took over, or one that was never Focus's, is left exactly as it is.
@@ -2999,10 +3203,14 @@ function finishStream(): void {
 
 function resetStreamState(): void {
   terminalShown = false;
-  thinkingMd.reset();
-  answerMd.reset();
+  // Close the surfaces BEFORE the coalescers are reset: closing is what commits the renders
+  // still in flight (see `clearStreamingBubble`/`settleThinkingBlock`), and `reset()` destroys
+  // them. Reset first and every run end left the transcript one chunk short — the last of a
+  // reasoning block, the last of an answer.
   clearStreamingBubble();
   clearThinkingBlock();
+  thinkingMd.reset();
+  answerMd.reset();
   currentThinkingText = "";
   pendingThinking = "";
   currentRawText = "";
@@ -3550,7 +3758,11 @@ sendBtn.addEventListener("click", (e) => {
   steerModifierHeld = steerModifierHeld || holdsSteerModifier(e);
   send();
 });
-attachBtn.addEventListener("click", () => vscode.postMessage({ type: "pickFiles" }));
+attachBtn.addEventListener("click", () => {
+  // A new attempt supersedes the old verdict: the notice reports the last GESTURE, and this is one.
+  showAttachNotice("");
+  vscode.postMessage({ type: "pickFiles" });
+});
 // The insert-in hint is an INDICATOR only (no click handler); its state is
 // driven purely by Ctrl/Cmd below. Ctrl/Cmd forces Steer while held; keyup may
 // be missed when the
@@ -3668,12 +3880,37 @@ function uniqueClipboardImageName(): string {
   return `${base} ${n}`;
 }
 
+/** The host refused a path this gesture pointed at (a folder, a file that moved mid-drag, one it
+ * cannot read). The reason travels as a code and the SENTENCE lives here: the panel is where the
+ * reader is looking, and a message the host wrote would land in the transcript's voice. */
+function attachRefusalText(path: string, reason: unknown): string {
+  const name =
+    path
+      .split(/[\\/]/)
+      .filter((p) => p.length > 0)
+      .pop() ?? path;
+  if (reason === "folder") {
+    return `Nothing to attach: “${name}” is a folder. Open it and drop the files inside.`;
+  }
+  if (reason === "missing") {
+    return `Nothing to attach: “${name}” is not there any more. It may have moved since the drag started.`;
+  }
+  return `Nothing to attach: “${name}” could not be read.`;
+}
+
 /** Attach one pasted/dropped File: images inline as a data URI, text files
- * inline as text; binary files (e.g. PDF) are attached with a clear note. */
-async function attachPastedFile(file: File, source: "clipboard" | "drop" = "clipboard"): Promise<void> {
+ * inline as text; binary files (e.g. PDF) are attached with a clear note.
+ *
+ * Returns TRUE when something was actually attached. The caller needs the difference: a gesture can
+ * be HANDLED and still have attached nothing (a file over the limit, an image whose bytes cannot be
+ * read), and it used to count those as successes, so the one line that said why was wiped by the
+ * same gesture that produced it. The refusal wording belongs here, next to the test that decides it. */
+async function attachPastedFile(file: File, source: "clipboard" | "drop" = "clipboard"): Promise<boolean> {
   if (file.size > MAX_PASTE_IMAGE_BYTES) {
-    addMessage("assistant", `⚠️ File is too large (${formatBytes(file.size)}); max 15 MB.`).classList.add("loop");
-    return;
+    // A rejected paste/drop reports itself beside the chips too: it is the same gesture, and a
+    // bubble in the transcript would interrupt a live answer to say no.
+    showAttachNotice(`That file is too large (${formatBytes(file.size)}): the limit is 15 MB.`);
+    return false;
   }
   if (file.type.startsWith("image/")) {
     // Clipboard images have no meaningful file name: call them
@@ -3681,10 +3918,13 @@ async function attachPastedFile(file: File, source: "clipboard" | "drop" = "clip
     const name = source === "clipboard" ? uniqueClipboardImageName() : file.name || `image.${extFromMime(file.type)}`;
     try {
       attachedFiles.push({ name, path: "", size: file.size, isImage: true, dataUri: await readAsDataUrl(file) });
+      return true;
     } catch {
-      /* unreadable image */
+      // A file the reader handed us that cannot be read is a REFUSAL, not silence: before, the chip
+      // simply never appeared and nothing said why (byte order, a truncated download, a locked file).
+      showAttachNotice(`That image could not be read: “${name}” was not attached.`);
+      return false;
     }
-    return;
   }
   let content: string | undefined;
   if (isTextLikeFile(file.type, file.name)) {
@@ -3695,6 +3935,7 @@ async function attachPastedFile(file: File, source: "clipboard" | "drop" = "clip
     }
   }
   attachedFiles.push({ name: file.name || "file", path: "", size: file.size, isImage: false, content });
+  return true;
 }
 
 /** Drag & drop: VS Code explorer drags arrive as text/uri-list; OS drags as
@@ -3718,6 +3959,9 @@ async function handleDrop(e: DragEvent): Promise<void> {
     .map((l) => l.trim())
     .filter((l) => l.length > 0 && !l.startsWith("#"));
   let attached = false;
+  /** A file the gesture brought that we could NOT take: the notice already names it, and it must
+   *  outlive the gesture (see the verdict below). */
+  let refused = false;
   for (const uri of uriList) {
     vscode.postMessage({ type: "attachPath", path: uri });
     attached = true;
@@ -3735,7 +3979,7 @@ async function handleDrop(e: DragEvent): Promise<void> {
   for (const f of fromItems) {
     const p = (f as unknown as { path?: string }).path;
     if (p && looksLikePath(p)) vscode.postMessage({ type: "attachPath", path: p });
-    else await attachPastedFile(f, "drop");
+    else if (!(await attachPastedFile(f, "drop"))) refused = true;
     attached = true;
   }
 
@@ -3747,9 +3991,38 @@ async function handleDrop(e: DragEvent): Promise<void> {
   }
 
   if (fromItems.length > 0) renderAttachmentChips();
-  if (!attached) {
-    addMessage("assistant", "⚠️ Drop received, but VS Code provided no file path or content.").classList.add("loop");
+  // ONE gesture, one verdict — and a refusal keeps the line that names the file. Clearing on
+  // `attached` alone wiped it: `attached` says the gesture was HANDLED (a path was posted, a file
+  // was tried), not that every file made it, so a lone 20 MB drop said nothing at all.
+  if (!refused) {
+    if (attached) showAttachNotice("");
+    else showAttachNotice("Nothing to attach: the drop carried no file path and no content. Use + to pick a file.");
   }
+}
+
+/** The pending expiry of the attach notice (see showAttachNotice). */
+let attachNoticeTimer: number | undefined;
+
+/**
+ * Say that a drop carried nothing to attach — under the COMPOSER, for a few seconds.
+ *
+ * This is feedback on a GESTURE, not a message of the conversation, and it used to be a
+ * transcript bubble (`addMessage("assistant", …)`). That was wrong three ways: it landed between
+ * the blocks of a still-streaming answer (the reader was mid-turn and the notice had nothing to
+ * do with what surrounded it), it wore the assistant's clothes so a warning about a DROP read as
+ * something the model had said, and it lived in the DOM only — the next rebuild of the transcript
+ * erased it without a trace, so it was either noise or a lie about durability. The place a failed
+ * attachment is meaningful is the row the chips land on, so it lives there and it expires on its
+ * own; a drop that DOES attach something clears it.
+ */
+function showAttachNotice(text: string): void {
+  if (attachNoticeTimer !== undefined) {
+    clearTimeout(attachNoticeTimer);
+    attachNoticeTimer = undefined;
+  }
+  attachNotice.textContent = text;
+  attachNotice.classList.toggle("hidden", text === "");
+  if (text !== "") attachNoticeTimer = window.setTimeout(() => showAttachNotice(""), 8000);
 }
 
 /** Install window-capture drag & drop handlers (works over the whole panel). */
@@ -3807,11 +4080,14 @@ async function handlePaste(e: ClipboardEvent): Promise<void> {
   const fileItems = items.filter((i) => i.kind === "file");
   if (fileItems.length > 0) {
     e.preventDefault();
+    let refused = false;
     for (const item of fileItems) {
       const file = item.getAsFile();
-      if (file) await attachPastedFile(file, "clipboard");
+      if (file && !(await attachPastedFile(file, "clipboard"))) refused = true;
     }
     renderAttachmentChips();
+    // Same verdict as a drop: a refusal keeps its own line, a clean paste retires the old one.
+    if (!refused) showAttachNotice("");
     return;
   }
   const rawText = data && typeof data.getData === "function" ? data.getData("text/plain") : "";
@@ -6928,6 +7204,12 @@ window.addEventListener("message", (e) => {
       find.open();
       break;
     }
+    case "attachRefused": {
+      // The host took a path from a drag/paste and could NOT attach it (see attachRefusalText):
+      // separate from `attachments: []`, which is also a cancelled picker and must stay silent.
+      showAttachNotice(attachRefusalText(String(msg.path ?? ""), (msg as { reason?: unknown }).reason));
+      break;
+    }
     case "attachments": {
       // Host response to "pickFiles": APPEND the picked files (several picks
       // accumulate), de-duplicated by path, shown as chips and sent together.
@@ -7941,7 +8223,9 @@ function appendLiveText(thinking: string, answer: string): void {
     currentThinkingText = thinking;
     currentThinkingBlock = addThinkingBlock(thinking);
   }
-  if (answer) {
+  // Trimmed: a whitespace-only live answer is nothing to show, and painting it would leave an
+  // empty bubble that no delta ever fills (the rebuilds are the only thing that would create it).
+  if (answer.trim()) {
     currentRawText = answer;
     currentResultEl = document.createElement("div");
     currentResultEl.className = "msg assistant streaming";

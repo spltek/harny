@@ -2440,6 +2440,18 @@ export class ChatViewProvider implements WebviewViewProvider {
         const local = toLocalPath(String(msg.path ?? ""));
         const files = local ? this.attachments.fromPaths([local]) : [];
         this.view?.webview.postMessage({ type: "attachments", files });
+        // A gesture that pointed at something we cannot attach is REFUSED OUT LOUD, on its own
+        // message: `attachments: []` is also what a cancelled picker sends, and the panel ignores
+        // an empty list on purpose (a cancel must not clear a selection it did not make). Sharing
+        // that message meant a folder dragged from the Explorer — or a file that moved while the
+        // drag was in flight — got no answer at all.
+        if (local && files.length === 0) {
+          this.view?.webview.postMessage({
+            type: "attachRefused",
+            path: local,
+            reason: this.attachments.refusalReason(local),
+          });
+        }
         break;
       }
       case "dragDebug": {
