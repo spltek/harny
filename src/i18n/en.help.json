@@ -135,6 +135,7 @@
     "tabs.locked.close": "Session is working — stop it before closing the tab.",
     "thinking.level": "Thinking level / reasoning effort (per session).",
     "thinking.unsupported": "This provider/model does not declare thinking control (add \"thinking\": \"bool\", \"effort\" or \"type\" to its config entry).",
+    "todo.dismiss": "Hide this row for this session. Nothing is deleted: the list stays in the tool's output, and the next list the model writes brings the row back.",
     "tools.all": "Include every tool of this server.",
     "tools.analyzeInert": "Hidden from the model, so there is nothing to allow in Analyze — switch the tool on first.",
     "tools.analyzeInherited": "The server declares every tool of it read-only: this one runs in Analyze by the server's statement, not this conversation's.",

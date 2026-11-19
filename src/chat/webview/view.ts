@@ -433,6 +433,10 @@ let aborted = false;
  * `done` must NOT append a bogus "(empty response)" fallback. */
 let terminalShown = false;
 const pendingToolCalls = new Map<string, HTMLDivElement>();
+/** Which TOOL a running call belongs to, kept apart from its bubble: a result must be understood
+ *  even when the element is already gone (a rebuild raced it), and the task row cannot afford to
+ *  miss an update just because the DOM did. */
+const pendingToolNames = new Map<string, string>();
 
 // ── Pending attachments: files picked via the "+" button and queued for the
 // next send. Per session (they belong to that session's draft) and PERSISTED across a
@@ -1540,6 +1544,26 @@ function syncLedger(): void {
   lastMax = messagesEl.scrollHeight - messagesEl.clientHeight;
 }
 
+/** Set for ONE frame, by `boxMovedByUs`: the scroll event the browser is about to emit is our own
+ * doing and must not be read as a hand. */
+let ourResize = false;
+
+/** The panel just changed the TRANSCRIPT box's height — the task list opening or closing — which is
+ * us, not the reader. Two things follow, and they are one function for that reason: the ledger is
+ * read back (so nobody has to prove anything with arithmetic that cannot answer), and the ONE
+ * scroll event this can emit is swallowed. That event exists only on CLOSING: the box gets taller,
+ * the browser clamps the offset down to the new ceiling, and the clamp LANDS EXACTLY ON THE END,
+ * which is the fixed point that turns the Follow back on — for a reader who never asked. Cleared on
+ * the next frame, so a real scroll a moment later is untouched (and the wheel listener, the strong
+ * proof, is never affected at all). */
+function boxMovedByUs(): void {
+  syncLedger();
+  ourResize = true;
+  requestAnimationFrame(() => {
+    ourResize = false;
+  });
+}
+
 /** The reader's word about the run IN FLIGHT: `null` = they have not said anything, so the run
  * starting IS the answer. Wiped the instant the session stops working — a choice about a turn that
  * is over is not a choice, and carrying it into the next run would silently turn "no objection"
@@ -1680,6 +1704,13 @@ messagesEl.addEventListener(
 messagesEl.addEventListener(
   "scroll",
   () => {
+    // The panel changed the box's height a frame ago and the ledger already knows: this event is
+    // ours (see `boxMovedByUs`). Sync and leave — `settle` would re-light the Follow over a clamp.
+    if (ourResize) {
+      ourResize = false;
+      syncLedger();
+      return;
+    }
     const offset = messagesEl.scrollTop;
     // A HAND went back: the offset fell. That alone is not enough, because the browser lowers it too
     // — a fold closing above the viewport, an image removed, a rebuild, and the box getting TALLER —
@@ -3149,11 +3180,14 @@ function renderMessages(msgs: ChatMsg[]): boolean {
             if (tc.name === "Delegate") out.innerHTML = renderMarkdown((text ?? "").slice(0, 12000));
             else renderToolOutput(out as HTMLPreElement, text !== undefined ? text.slice(0, 12000) : "");
           }
-          // A todo list is a LIST: rendered under the header so it survives a reload
-          // the same way it appeared live (same renderer, same single block).
+          // The ROW is what shows the list now (the pinned footer, above the transcript); the
+          // bubble keeps Input and Output. The row is derived from the transcript we are
+          // rebuilding — the tool's RESULT, not a copy kept somewhere else — so after a reload or a
+          // tab switch it shows the list the tool last wrote. History does not TOUCH the list: that
+          // is what makes it stale instead of live.
           if (tc.name === "TodoWrite") {
             const todoText = outputs.get(id);
-            if (todoText !== undefined) renderTodoBlock(el, todoText);
+            if (todoText !== undefined && adoptTodo(todoText)) renderTodoPanel();
           }
           if (tc.name === "Delegate") {
             const report = outputs.get(id) ?? "";
@@ -3268,6 +3302,7 @@ function resetStreamState(): void {
   hideWorking();
   aborted = false;
   pendingToolCalls.clear();
+  pendingToolNames.clear();
   // The compaction bubble is DOM-only state pointing at a node that is about to be
   // thrown away: keeping it would make `compactStart` skip re-creating it, so the
   // bubble never came back after a tab switch.
@@ -3453,31 +3488,6 @@ function parseTodoList(text: string): Array<{ status: TodoStatusKey; content: st
   return items;
 }
 
-/**
- * A TodoWrite result is a TASK LIST, not a log line — and inside the collapsed
- * `.tool-details` it was invisible in practice: one closed bubble per update, and the
- * tool is called once per change. So the list gets its own block under the header,
- * readable without expanding, and there is only ever ONE in the transcript: the
- * newest state. The raw output stays in the details, where it belongs.
- */
-function renderTodoBlock(bubble: HTMLElement, text: string): void {
-  const items = parseTodoList(text);
-  if (!items.length) return;
-  // The newest list WINS: five copies of the same thing, each behind a click, is
-  // exactly what made the list invisible in the first place.
-  document.querySelectorAll(".todo-block").forEach((old) => old.remove());
-  const block = document.createElement("div");
-  block.className = "todo-block";
-  block.append(todoHead(items), todoList(items));
-
-  const header = bubble.querySelector(".tool-header");
-  if (header) header.insertAdjacentElement("afterend", block);
-  else bubble.prepend(block);
-  // A MOVE, not an edit: what left was above the viewport and what arrived is below it, so the box
-  // is not where it was any more — and no hand did it (`syncLedger`).
-  syncLedger();
-}
-
 /** `<count>/<total> Tasks` — the header both views share. */
 function todoHead(items: Array<{ status: TodoStatusKey; content: string }>): HTMLElement {
   const head = document.createElement("div");
@@ -3517,6 +3527,147 @@ function todoList(items: Array<{ status: TodoStatusKey; content: string }>): HTM
   });
   return list;
 }
+
+// ── The task list, outside the transcript ──
+// The list belongs to the SESSION — TodoWrite has no way to clear it: `merge:true` cannot remove an
+// item, `merge:false` replaces the list, and an empty one is forbidden by the schema — but the CLAIM
+// "this is what I am doing" belongs to the RUN. So the row is `live` only while the run in progress
+// has touched it, and quiet (`stale`) otherwise: a leftover list is shown, never dressed up as
+// fresh. Source of truth is the tool's own RESULT, which always carries the WHOLE list already
+// merged, so nothing here re-implements merge and the row can never disagree with the list the
+// tool returned: one parser, one text.
+let todoItems: Array<{ status: TodoStatusKey; content: string }> = [];
+/** Touched by the run that is running NOW: what turns the row from stale to live. */
+let todoTouched = false;
+/** The list died with the run that owned it (never touched, or finished) and must NOT come back
+ *  from the transcript on the next rebuild: without this flag the `refresh` that ends every run
+ *  would resurrect what the end of the run just took away — a row that flickers off and on. */
+let todoDead = false;
+/** Sessions where the row was closed with ✕. LOCAL only — nothing is deleted and no reset is sent
+ *  (a reset would have to tell the MODEL, which this click cannot do) — and a list the model writes
+ *  again brings the row back: a dismissal is about this screen, not about the work. */
+const todoDismissed = new Set<string>();
+
+const todoPanelEl = document.getElementById("todo-panel") as HTMLElement;
+const todoRowEl = document.getElementById("todo-row") as HTMLElement;
+const todoCountEl = document.getElementById("todo-count") as HTMLElement;
+const todoNowEl = document.getElementById("todo-now") as HTMLElement;
+const todoOverlayEl = document.getElementById("todo-overlay") as HTMLElement;
+
+/** Nothing left to do: every item is done (a fully CANCELLED list is not settled — it says the plan
+ *  was dropped, which is worth knowing, not worth forgetting). */
+function todoSettled(items: Array<{ status: TodoStatusKey; content: string }>): boolean {
+  return items.length > 0 && items.every((item) => item.status === "completed");
+}
+
+function renderTodoPanel(): void {
+  const done = todoItems.filter((item) => item.status === "completed").length;
+  const current = todoItems.find((item) => item.status === "in_progress");
+  const left = todoItems.filter((item) => item.status === "pending").length;
+  todoCountEl.textContent = done + "/" + todoItems.length;
+  // ONE subject per row: what is being done now, else what is left. The words in full are one click
+  // away — the row is a status, not the document.
+  todoNowEl.textContent = current ? current.content : left > 0 ? left + " left" : done > 0 ? "done" : "cancelled";
+  const hidden = todoItems.length === 0 || todoDismissed.has(activeId || "");
+  todoPanelEl.classList.toggle("hidden", hidden);
+  todoPanelEl.classList.toggle("live", todoTouched && !hidden);
+  if (hidden) setTodoOverlayOpen(false);
+}
+
+/** The plan's ORDER of interest, read off the classes the stylesheet already distinguishes: what is
+ *  being done, then what is still to do (`pending` is the unmarked default — an item with neither
+ *  of the other two marks), then everything closed. */
+function todoRank(el: HTMLElement): number {
+  if (el.classList.contains("status-in_progress")) return 0;
+  if (el.classList.contains("status-completed") || el.classList.contains("status-cancelled")) return 2;
+  return 1;
+}
+
+/** What the list is ABOUT, in the reader's terms: what is being done now, else the first item still
+ *  to do (a list whose plan is settled falls back to its first line: something has to be on screen). */
+function todoSubjectEl(): HTMLElement | null {
+  const items = [...todoOverlayEl.querySelectorAll<HTMLElement>(".todo-item")];
+  if (!items.length) return null;
+  let best = items[0];
+  for (const el of items) if (todoRank(el) < todoRank(best)) best = el;
+  return best;
+}
+
+/** The subject the list was last CENTRED on, so it is centred once and not once per rebuild. */
+let todoRevealed: string | null = null;
+
+/** Opened ON the item in progress, centred — a row pressed against the edge of the port reads as a
+ *  glitch, and its neighbours above and below are the context that makes the list usable. Two rules,
+ *  both about not being a nuisance: no `scrollIntoView` (it scrolls every scrollable ancestor, and
+ *  the transcript is one — it would move the reader for a task list; this is our own port's
+ *  `scrollTop`), and no re-centring while the list stays open on the SAME task (a list that jumps
+ *  under the cursor is the transcript's sin, committed in a smaller box). */
+function revealTodoSubject(): void {
+  const subject = todoSubjectEl();
+  if (!subject) return;
+  const key = subject.textContent ?? "";
+  if (key === todoRevealed) return;
+  todoRevealed = key;
+  todoOverlayEl.scrollTop = Math.max(0, subject.offsetTop - (todoOverlayEl.clientHeight - subject.offsetHeight) / 2);
+}
+
+function setTodoOverlayOpen(open: boolean): void {
+  const was = !todoOverlayEl.classList.contains("hidden");
+  todoOverlayEl.classList.toggle("hidden", !open);
+  todoRowEl.setAttribute("aria-expanded", String(open));
+  todoRowEl.querySelector(".toggle")?.classList.toggle("is-open", open);
+  if (!open) {
+    todoRevealed = null; // the next open centres again, even on the same task
+    if (was) boxMovedByUs(); // the panel gave the height back: the transcript grew, by our hand
+    return;
+  }
+  // Built WHEN OPENED, with the same two builders the transcript uses (`todoHead` + `todoList`):
+  // one renderer for a task list, so the list and the block cannot look different.
+  todoOverlayEl.replaceChildren(todoHead(todoItems), todoList(todoItems));
+  revealTodoSubject();
+  if (!was) boxMovedByUs(); // the panel took the height: the transcript got shorter, by our hand
+}
+
+/** Adopt a list without claiming it for the current run. False = the text holds no list at all
+ *  (an error result, a different shape) or the session's list already died: "no list" must never
+ *  empty the row, and a dead list must not be resurrected by a rebuild. */
+function adoptTodo(text: string): boolean {
+  if (todoDead) return false;
+  const items = parseTodoList(text);
+  if (!items.length) return false;
+  todoItems = items;
+  return true;
+}
+
+/** The model just WROTE a list: it belongs to this run, it revives a dead one, it re-opens a ✕. */
+function feedTodo(text: string): void {
+  todoDead = false;
+  if (!adoptTodo(text)) return;
+  todoTouched = true;
+  if (activeId) todoDismissed.delete(activeId);
+  renderTodoPanel();
+  // An open list follows the list it is showing (a stale page of items would be a second lie).
+  if (!todoOverlayEl.classList.contains("hidden")) setTodoOverlayOpen(true);
+}
+
+todoRowEl.addEventListener("click", (event) => {
+  // ✕ closes the ROW, not the list: the two clicks are a few pixels apart.
+  if ((event.target as HTMLElement | null)?.closest("#todo-close")) return;
+  setTodoOverlayOpen(todoOverlayEl.classList.contains("hidden"));
+});
+todoRowEl.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  setTodoOverlayOpen(todoOverlayEl.classList.contains("hidden"));
+});
+// No "click outside" and no Esc: the list is IN FLOW, so it covers nothing and there is nothing to
+// fold it from a distance — the row that opened it is right under it, and closing is one click.
+// (Esc already means "stop the run", and one key cannot mean both.)
+(document.getElementById("todo-close") as HTMLElement | null)?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  if (activeId) todoDismissed.add(activeId);
+  renderTodoPanel();
+});
 
 // ── Actions ──
 const MAX_INPUT_HEIGHT = 240; // must match #user-input max-height in view-html.ts
@@ -6164,7 +6315,25 @@ function setStreaming(active: boolean): void {
   // The MCP switches dim the moment a run starts (a mid-run toggle only lands on the next
   // turn) and come back when it stops: the guard is now VISIBLE, not just enforced.
   mcpCardUi.refreshSwitches(active);
+  // The task list wears the tone of the RUN, never of the session: a run starts owning nothing (a
+  // list it has not touched is stale, not live) and takes with it a list it never touched, or one
+  // it finished. This is the only place that sees BOTH edges — `endTurn()` funnels every terminal
+  // message here (`done`, `interrupted`, `denied`, `error`), so no per-message hook can disagree.
+  if (falling) {
+    const touched = todoTouched;
+    todoTouched = false;
+    // Gone with the run that owned it: never touched, or finished. A list left half done stays —
+    // quietly — because that is the truth, and hiding it would be the lie.
+    if (!touched || todoSettled(todoItems)) {
+      todoItems = [];
+      todoDead = true;
+    }
+    renderTodoPanel();
+  }
   if (rising) {
+    // A run starts owning nothing: a list it has not touched yet is stale, not live.
+    todoTouched = false;
+    renderTodoPanel();
     // The policies of THIS run are the ones on screen at this instant (see Agent.runMode).
     // This snapshot is the safety net: the two pills are disabled below, so a change can only
     // arrive from OUTSIDE the panel (a config push, another window) — and when it does, the
@@ -7301,13 +7470,11 @@ window.addEventListener("message", (e) => {
       // Ignore empty chunks (some providers emit a trailing/leading empty
       // content delta).
       if (!msg.content) break;
-      // The bubble is no longer at the live edge: a boundary was written after it (a steer bubble, a
-      // badge, a banner) and the host already has the continuation as a new message. This text
-      // belongs to a NEW bubble, below — and `currentRawText` goes with the old one, or the new
-      // bubble would repaint everything the old one already says.
-      if (currentResultEl && !atLiveEdge(currentResultEl)) {
-        clearStreamingBubble();
-      }
+      // No `atLiveEdge` guard here, and the mutation run is what proved it: every boundary that can
+      // be written after the bubble (a steer bubble, a badge, a nudge) closes the segment ITSELF, so
+      // `currentResultEl` is already null when this line runs — the guard could not be entered, and
+      // `clearStreamingBubble()` is also what releases `currentRawText` (a new bubble that kept the
+      // old text would repaint the finished answer on top of itself).
       // Accumulate ALWAYS, but only CREATE the bubble once the segment has
       // MEANINGFUL text: a whitespace-only chunk (e.g. a lone newline after a
       // thinking/tool phase) must not create an empty bubble.
@@ -7412,6 +7579,7 @@ window.addEventListener("message", (e) => {
       // only caused a race that rendered it as a plain tool.
       const toolEl = msg.name === "Delegate" ? addSubAgentCall(msg.arguments) : addToolCall(msg.name, msg.arguments);
       pendingToolCalls.set(msg.id, toolEl);
+      pendingToolNames.set(msg.id, msg.name);
       toolEl.dataset.toolCallId = msg.id;
       // Focus: this bubble is where the agent works now, so it opens and the previous one folds
       // (one step late, so a tool's output is still readable when it lands). No name test here:
@@ -7439,6 +7607,11 @@ window.addEventListener("message", (e) => {
       // The call is over whatever became of its bubble: the map decides which tool the bar names,
       // so an id with no element (a rebuild raced it) must not stay "pending" for ever.
       pendingToolCalls.delete(msg.toolCallId);
+      // The NAME outlives the element: an id with no bubble (a rebuild raced it) still tells us
+      // which tool produced this result, so the task row is not one update behind because of it.
+      const toolName = pendingToolNames.get(msg.toolCallId);
+      pendingToolNames.delete(msg.toolCallId);
+      if (toolName === "TodoWrite") feedTodo(String(msg.output));
       if (el) {
         el.classList.remove("tool-call-pending");
         const isSubAgent = el.classList.contains("subagent");
@@ -7460,9 +7633,8 @@ window.addEventListener("message", (e) => {
           else renderToolOutput(resultEl as HTMLPreElement, String(msg.output).slice(0, 12000));
           resultEl.classList.toggle("tool-result-error", !!msg.isError);
         }
-        // A todo list is a LIST: rendered under the header, so it is readable
-        // without opening the (still collapsed) details.
-        if (el.dataset.tool === "TodoWrite") renderTodoBlock(el, String(msg.output));
+        // The list itself lives in the pinned footer, out of the transcript: this bubble keeps
+        // Input and Output like every other tool.
       }
       // Another call may still be running (Parallel, or a sub-agent's tools): the bar keeps a name
       // until the LAST one lands, then goes back to plain "Working…".
@@ -8269,6 +8441,13 @@ function renderViewState(state: {
   // a folder opened while this page is alive), and a body class that is only ever ADDED
   // would keep the control stack hidden for good.
   document.body.classList.remove("no-workspace");
+  // The transcript is about to be rebuilt, and the row is derived FROM it (`adoptTodo`, in the
+  // history path). Emptying it first is what makes a session with no list show no row at all,
+  // instead of keeping the previous session's on screen. `todoDead` is cleared too: opening a
+  // session shows the list it has, whatever the run that ended here took away.
+  todoItems = [];
+  todoTouched = false;
+  todoDead = false;
   messagesEl.innerHTML = "";
   resetStreamState();
   if (showHome) {
@@ -8284,6 +8463,7 @@ function renderViewState(state: {
   // end. The locks come FIRST, because they are also what tells the Follow whether a run is live
   // here (and lights it when one is); the end itself is taken by setFollow/the net, when the
   // rebuilt bubbles report their size.
+  renderTodoPanel();
   applyWorkingLock();
   setFollow(true);
   // …unless you had left THIS session mid-read: then its scroll offset and its

@@ -537,11 +537,6 @@ describe("renderViewHtml", () => {
         },
       },
     });
-    // The block hangs off the tool header with a rule on the left: it reads as a
-    // continuation of the tool, not as another tool.
-    const block = cssRule(html, ".todo-block");
-    expect(block).toContain("border-left: 2px solid var(--border)");
-    expect(block).toContain("padding-left: 8px");
     // The two ways a list like this breaks: the leading box shrinking under a long task, and
     // the text refusing to wrap. Both are pinned here.
     expect(cssRule(html, ".todo-check")).toContain("flex: none");
@@ -559,6 +554,41 @@ describe("renderViewHtml", () => {
     expect(cssRule(html, ".todo-item.status-completed .todo-check")).toContain("background: var(--ok)");
     expect(cssRule(html, ".todo-item.status-cancelled .todo-text")).toContain("line-through");
     expect(cssRule(html, ".todo-item.status-in_progress .todo-check")).toContain("border-color: var(--accent)");
+  });
+
+  it("the task list opens ABOVE the row and pushes the transcript, capped at five rows", () => {
+    const html = renderViewHtml({
+      ...base,
+      state: {
+        sessions: [],
+        openIds: [],
+        messages: [],
+        config: {
+          provider: "openai",
+          model: "gpt-4o",
+          hasKey: true,
+          models: [],
+          providerModels: [],
+          contextWindow: 128000,
+        },
+      },
+    });
+    // IN FLOW, above the row: the panel grows into the transcript (which therefore gets SHORTER)
+    // instead of laying a sheet over it. One direction, no z-index, and no "click outside" to
+    // explain — which is why the CSS must not earn its position back.
+    expect(cssRule(html, "#todo-panel")).toContain("flex-direction: column-reverse");
+    const list = cssRule(html, "#todo-overlay");
+    expect(list).not.toContain("position: absolute");
+    expect(list).not.toContain("box-shadow");
+    expect(list).toContain("position: relative"); // the offsetParent its own items are measured in
+    // Five rows or 40% of the panel: a short list needs no scrolling, a long one cannot eat the
+    // session — and the gutter is reserved so the text does not shift when the bar appears.
+    expect(list).toContain("max-height: min(9.5rem, 40vh)");
+    expect(list).toContain("scrollbar-gutter: stable");
+    expect(cssRule(html, "#todo-overlay .todo-head")).toContain("position: sticky");
+    // Closed `>`, open tip-up: the arrow says which way the press moves the list, and it is the only
+    // chevron in the panel that is not the shared one (`.toggle` right-when-folded, down-when-open).
+    expect(cssRule(html, "#todo-row .toggle.is-open > .toggle-chevron")).toContain("rotate(-90deg)");
   });
 
   it("renders sessions, tabs, messages and input containers", () => {

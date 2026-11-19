@@ -349,25 +349,49 @@
       ]
     },
     "webview": {
-      "measured": "2026-11-18",
-      "mutants": 151,
+      "measured": "2026-11-19",
+      "mutants": 180,
       "survivors": [
+        {
+          "file": "src/chat/webview/view.ts",
+          "mutator": "ArithmeticOperator",
+          "replacement": "messagesEl.scrollHeight + messagesEl.clientHeight",
+          "count": 1
+        },
+        {
+          "file": "src/chat/webview/view.ts",
+          "mutator": "BlockStatement",
+          "replacement": "{}",
+          "count": 1
+        },
         {
           "file": "src/chat/webview/view.ts",
           "mutator": "BooleanLiteral",
           "replacement": "true",
-          "count": 1
+          "count": 2
         },
         {
           "file": "src/chat/webview/view.ts",
-          "mutator": "ConditionalExpression",
-          "replacement": "false",
-          "count": 1
+          "mutator": "CallExpression",
+          "replacement": ";",
+          "count": 2
         },
         {
           "file": "src/chat/webview/view.ts",
           "mutator": "ConditionalExpression",
           "replacement": "true",
+          "count": 2
+        },
+        {
+          "file": "src/chat/webview/view.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "lastMax - max < BOTTOM_EPS",
+          "count": 1
+        },
+        {
+          "file": "src/chat/webview/view.ts",
+          "mutator": "EqualityOperator",
+          "replacement": "lastOffset - offset >= BOTTOM_EPS",
           "count": 1
         }
       ]
