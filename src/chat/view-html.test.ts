@@ -586,9 +586,19 @@ describe("renderViewHtml", () => {
     expect(list).toContain("max-height: min(9.5rem, 40vh)");
     expect(list).toContain("scrollbar-gutter: stable");
     expect(cssRule(html, "#todo-overlay .todo-head")).toContain("position: sticky");
-    // Closed `>`, open tip-up: the arrow says which way the press moves the list, and it is the only
-    // chevron in the panel that is not the shared one (`.toggle` right-when-folded, down-when-open).
-    expect(cssRule(html, "#todo-row .toggle.is-open > .toggle-chevron")).toContain("rotate(-90deg)");
+    // Closed `>`, open tip-UP — the one fold in the panel that is not the shared `.toggle`
+    // grammar (right-when-folded, down-when-open), because this list sits ABOVE the row and grows
+    // upward out of it: the arrow says which way the press moves the list. From the base glyph
+    // (chevron-down) that is 180°, written −180deg so the turn interpolates a quarter COUNTER-
+    // clockwise from the folded −90° instead of sweeping three quarters the other way.
+    // Two versions of this rule were wrong in opposite ways and both shipped: `rotate(-90deg)`
+    // (the same angle as the closed state, so the arrow never changed) and no rule at all (open
+    // inherited the base `v`, pointing away from where the list goes). Both are why the assertion
+    // below exists on the ANGLE and not just on "is-open is styled".
+    expect(cssRule(html, "#todo-row .toggle.is-open > .toggle-chevron")).toContain("rotate(-180deg)");
+    // …and the folded state still has NO rule of its own: its `>` is the shared −90°, and a second
+    // angle here is exactly the bug above.
+    expect(cssRule(html, "#todo-row .toggle > .toggle-chevron")).toBe("");
   });
 
   it("renders sessions, tabs, messages and input containers", () => {

@@ -1472,11 +1472,25 @@ body {
 #todo-row .toggle {
   font-size: var(--fs-xs);
 }
-/* The list grows UPWARD, so the chevron turns from `>` to tip-up once the list is up — the arrow
-   says which way the press moves the list. Scoped to the row, so the shared `.toggle` grammar
-   (right when folded, down when open) is untouched. */
+/* ── THE ONE FOLD THAT DOES NOT USE THE SHARED CHEVRON ──
+   The list sits ABOVE this row and grows UPWARD out of it, so the arrow says which way the press
+   moves the list: folded `>` (the shared −90°), open `^` (one more quarter turn COUNTER-clockwise,
+   i.e. −180°). The shared grammar would turn it down (`rotate(0deg)`, the base glyph), which in this
+   one place points at the row it opens away from.
+   Both wrong answers have already shipped, so read before editing:
+   · `rotate(-90deg)` here — the same angle the folded state has — made the arrow point `>` whether
+     the list was up or down: a fold whose arrow never changes.
+   · deleting this rule — inherited `v` for open — is what the two comments around it argued for, and
+     it reads as "the list is going away", the opposite of what happens.
+   A chevron-down rotated 180° is a chevron-up: the glyph is one svg and the state is one class, so
+   the box never moves and the 0.15s turn is the same as every other fold. The angle is written
+   −180deg, not 180deg: the two paint the same picture, but `transform` is interpolated NUMERICALLY
+   from the folded −90°, so 180deg sweeps three quarters of a turn CLOCKWISE (down → /> → up) while
+   −180deg sweeps the quarter it should, counter-clockwise (`>` → `^`).
+   Pinned by view-html.test.ts (this selector MUST contain rotate(-180deg), and the folded selector
+   MUST stay empty so the `>` comes from the shared rule). */
 #todo-row .toggle.is-open > .toggle-chevron {
-  transform: rotate(-90deg);
+  transform: rotate(-180deg);
 }
 #todo-count {
   flex: none;
