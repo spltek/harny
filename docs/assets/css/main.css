@@ -648,6 +648,16 @@ main {
   margin-top: 0.7rem;
   text-shadow: 0 0 60px rgba(95, 230, 245, 0.28), 0 0 140px rgba(35, 182, 205, 0.18);
   isolation: isolate;
+  /* the ink splits for the same 300ms the ghosts are on — cyan left, tan right, the registration error
+     of a three-strip print. The resting frames repeat the glow above verbatim, so the last frame of a
+     `steps(1)` animation — and the single frame `prefers-reduced-motion` leaves behind — is the calm
+     wordmark. */
+  /* PHASE: the burst sits at 84% of the cycle, so the delay is set to −(84% × 9s − 1.2s). The hero is
+     read in the first seconds — a tear whose first act lands at 7.6s happens to someone who has already
+     scrolled past it, and the whole point is that you SAW something wrong with the word before the page
+     settled. 1.2s is after the fonts and the first paint, early enough to be part of the arrival. */
+  animation: split-ink 9s steps(1) infinite;
+  animation-delay: -6.36s;
 }
 .wordmark::before,
 .wordmark::after {
@@ -656,56 +666,161 @@ main {
   inset: 0;
   z-index: -1;
   opacity: 0;
+  will-change: clip-path, transform, opacity;
 }
+/* Two ghosts on ONE 9s period, so the tear reads as a single event: the tan one fires twice — once
+   alone, quietly, at 56%, and again together with the cyan at 84%, where the hit lands. `clip-path` is
+   a POLYGON with disjoint slices, not one `inset()`: a single band looks like a fade, four bands look
+   like the word was cut and put back slightly wrong. Blocks are 90ms apart at this cadence — long
+   enough to see, short enough to be a discharge rather than an animation. */
 .wordmark::before {
   color: var(--cyan);
-  animation: glitch-a 7s steps(1) infinite;
+  animation: tear-cyan 9s steps(1) infinite;
+  animation-delay: -6.36s;
 }
 .wordmark::after {
   color: var(--tan);
-  animation: glitch-b 7s steps(1) infinite;
+  animation: tear-tan 9s steps(1) infinite;
+  animation-delay: -6.36s;
 }
-@keyframes glitch-a {
+@keyframes tear-cyan {
   0%,
-  88%,
+  83%,
+  89%,
   100% {
-    transform: none;
     opacity: 0;
-  }
-  89% {
-    transform: translate(-4px, 1px);
-    opacity: 0.85;
-    clip-path: inset(12% 0 62% 0);
-  }
-  91% {
-    transform: translate(3px, -2px);
-    opacity: 0.7;
-    clip-path: inset(58% 0 18% 0);
-  }
-  93% {
     transform: none;
+    clip-path: none;
+  }
+  84% {
+    opacity: 0.9;
+    transform: translate(-6px, 1px);
+    clip-path: polygon(
+      0 4%,
+      100% 4%,
+      100% 18%,
+      0 18%,
+      0 46%,
+      100% 46%,
+      100% 54%,
+      0 54%,
+      0 76%,
+      100% 76%,
+      100% 88%,
+      0 88%
+    );
+  }
+  85% {
+    opacity: 0.5;
+    transform: translate(5px, -4px);
+    clip-path: polygon(0 22%, 100% 22%, 100% 30%, 0 30%, 0 62%, 100% 62%, 100% 71%, 0 71%);
+  }
+  86% {
+    opacity: 0.95;
+    transform: translate(-9px, 2px);
+    clip-path: polygon(0 36%, 100% 36%, 100% 43%, 0 43%, 0 80%, 100% 80%, 100% 97%, 0 97%);
+  }
+  87% {
+    opacity: 0.4;
+    transform: translate(3px, 0);
+    clip-path: polygon(0 0, 100% 0, 100% 12%, 0 12%, 0 66%, 100% 66%, 100% 74%, 0 74%);
+  }
+  88% {
     opacity: 0;
+    transform: translate(-2px, 1px);
+    clip-path: none;
   }
 }
-@keyframes glitch-b {
+@keyframes tear-tan {
   0%,
+  55%,
+  58%,
+  83%,
   90%,
   100% {
+    opacity: 0;
     transform: none;
-    opacity: 0;
+    clip-path: none;
   }
-  91% {
-    transform: translate(4px, -1px);
+  56% {
+    opacity: 0.35;
+    transform: translate(3px, 0);
+    clip-path: polygon(0 58%, 100% 58%, 100% 66%, 0 66%);
+  }
+  57% {
+    opacity: 0.2;
+    transform: translate(-2px, 1px);
+    clip-path: polygon(0 30%, 100% 30%, 100% 40%, 0 40%);
+  }
+  84% {
     opacity: 0.8;
-    clip-path: inset(30% 0 40% 0);
+    transform: translate(6px, -1px);
+    clip-path: polygon(
+      0 12%,
+      100% 12%,
+      100% 26%,
+      0 26%,
+      0 52%,
+      100% 52%,
+      100% 58%,
+      0 58%,
+      0 84%,
+      100% 84%,
+      100% 94%,
+      0 94%
+    );
   }
-  94% {
-    transform: translate(-3px, 2px);
-    opacity: 0.6;
-    clip-path: inset(70% 0 8% 0);
+  85% {
+    opacity: 0.45;
+    transform: translate(-4px, 3px);
+    clip-path: polygon(0 8%, 100% 8%, 100% 20%, 0 20%, 0 48%, 100% 48%, 100% 56%, 0 56%);
   }
-  96% {
+  86% {
+    opacity: 0.85;
+    transform: translate(8px, -2px);
+    clip-path: polygon(0 28%, 100% 28%, 100% 38%, 0 38%, 0 72%, 100% 72%, 100% 86%, 0 86%);
+  }
+  87% {
+    opacity: 0.3;
+    transform: translate(-3px, 1px);
+    clip-path: polygon(0 44%, 100% 44%, 100% 50%, 0 50%, 0 90%, 100% 90%, 100% 100%, 0 100%);
+  }
+  88% {
+    opacity: 0.55;
+    transform: translate(2px, -3px);
+    clip-path: polygon(0 16%, 100% 16%, 100% 24%, 0 24%);
+  }
+  89% {
     opacity: 0;
+    transform: none;
+    clip-path: none;
+  }
+}
+@keyframes split-ink {
+  0%,
+  83%,
+  89%,
+  100% {
+    text-shadow:
+      0 0 60px rgba(95, 230, 245, 0.28),
+      0 0 140px rgba(35, 182, 205, 0.18);
+  }
+  84% {
+    text-shadow:
+      -7px 0 0 rgba(95, 230, 245, 0.75),
+      6px 0 0 rgba(216, 178, 128, 0.6),
+      0 0 70px rgba(95, 230, 245, 0.45);
+  }
+  86% {
+    text-shadow:
+      -4px 1px 0 rgba(216, 178, 128, 0.6),
+      5px -1px 0 rgba(95, 230, 245, 0.7),
+      0 0 70px rgba(95, 230, 245, 0.4);
+  }
+  88% {
+    text-shadow:
+      0 0 60px rgba(95, 230, 245, 0.28),
+      0 0 140px rgba(35, 182, 205, 0.18);
   }
 }
 
@@ -3042,6 +3157,207 @@ main {
 }
 .slash__cap kbd {
   font-size: 0.6rem;
+}
+
+/* ---------- 12e. WATCH IT WORK — the task list, transcribed from the panel ---------- */
+/* The panel's OWN chrome again — `.console` carries the scale and `PALETTE_DARK` as `--pn-*` roles —
+   rather than a drawing of it: `#todo-panel`, `#todo-row`, `#todo-overlay` and the `.todo-*` list are
+   transcribed from `media/view.css`, the geometry is the extension's and only the WORDS are ours.
+   The one thing the real sheet does not have is the lit Follow pill: the strip's switch is blue in
+   the panel, and the site's `.pn-pills` knew only the accent of an armed one. */
+.watch__demo {
+  margin-top: clamp(1.4rem, 3vw, 2.2rem);
+  /* the same ceiling as `.notes` under it: a plate wider than its own text leaves a ragged right edge */
+  max-width: 78ch;
+}
+.console--watch {
+  /* a FRAGMENT of the panel, not a screen: no ceiling of its own, and the size the hero is read at */
+  max-height: none;
+}
+/* A still, not the hero's demo: `main.js` reveals each turn it APPENDS, and nothing here is appended. */
+.console--watch .pn-term > * {
+  opacity: 1;
+  transform: none;
+}
+.console--watch .pn-term {
+  overflow: visible;
+}
+/* the answer above the list — `.msg .content` in the panel, the body at the panel's own size */
+.pn-answer {
+  margin: 0;
+  font-size: 1em;
+  line-height: 1.55;
+  color: var(--pn-fg);
+}
+/* ── `#todo-panel`: the band, in flow, under the transcript and above the controls ──
+   `column-reverse` is the panel's own trick: `#todo-overlay` is written AFTER `#todo-row` and painted
+   ABOVE it, so the markup reads row-first while the list grows upward out of the row. */
+.pn-todo {
+  display: flex;
+  flex-direction: column-reverse;
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border-top: 1px dashed var(--pn-line);
+  color: var(--pn-muted-2);
+}
+/* ── `#todo-row`: the chevron, the count, the subject, the close key ── */
+.pn-todorow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+.pn-todorow .pn-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  flex: none;
+  color: var(--pn-muted);
+}
+.pn-todorow .pn-toggle svg {
+  display: block;
+  width: 11px;
+  height: 11px;
+  transform: rotate(-90deg);
+  transform-origin: center;
+}
+/* THE ONE FOLD THAT DOES NOT USE THE SHARED GRAMMAR: the list sits ABOVE this row, so open is the
+   quarter turn PAST −90 — `>` folded, `^` open. Written −180deg and not 180deg: the two paint the
+   same picture, but `transform` interpolates NUMERICALLY from −90°, and 180 sweeps three quarters of
+   a turn clockwise instead of the one quarter counter-clockwise. In the panel these two rules live in
+   `#todo-row .toggle.is-open > .toggle-chevron`, with the folded half coming from the shared
+   `.toggle > .toggle-chevron`. */
+.pn-todorow .pn-toggle.is-open svg {
+  transform: rotate(-180deg);
+}
+.pn-todocount {
+  flex: none;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--pn-fg-strong);
+}
+/* one line, ellipsised: the full words are in the list, and in the panel the row is a summary */
+.pn-todonow {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.pn-todoclose {
+  display: inline-flex;
+  flex: none;
+  padding: 0 2px;
+  color: var(--pn-muted);
+}
+.pn-todoclose svg {
+  width: 11px;
+  height: 11px;
+}
+/* ── `#todo-overlay`: in flow, capped at five rows, its count pinned to its own scroll ── */
+.pn-todolist {
+  position: relative;
+  max-height: min(9.5rem, 40vh);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding-bottom: 3px;
+  border-bottom: 1px dashed var(--pn-line);
+}
+.todo-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0 1px;
+  background: var(--pn-bg);
+  font-size: 0.92em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--pn-muted-2);
+}
+.todo-count {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--pn-fg-strong);
+}
+.todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  color: var(--pn-fg);
+}
+/* the state is a BOX — 12px, square-ish, ticked by the panel's own icon — not a glyph: the tasks
+   belong to the model, so this is a span and never an input promising a toggle nobody can make */
+.todo-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-top: 1px;
+  border: 1px solid var(--pn-muted-2);
+  border-radius: 3px;
+  color: var(--pn-bg);
+}
+.todo-check svg {
+  width: 10px;
+  height: 10px;
+}
+.todo-item.status-completed .todo-check {
+  border-color: #98c379;
+  background: #98c379;
+}
+/* in progress: a filled dot inside an accent box — “being done”, between empty and ticked */
+.todo-item.status-in_progress .todo-check {
+  border-color: var(--pn-accent);
+}
+.todo-item.status-in_progress .todo-check::after {
+  content: "";
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--pn-accent);
+}
+/* DONE reads as DONE, not as deleted: the green box and BOLD words — no strikethrough, because a line
+   through the words is the universal sign of “gone”, and no dimming either */
+.todo-item.status-completed .todo-text {
+  font-weight: 600;
+  color: var(--pn-fg-strong);
+}
+.todo-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* `#working-bar`: the bottom-most footer, muted and italic. Still on a marketing page — the panel is
+   the one that pulses, at the pace of its own key. */
+.pn-working {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  color: var(--pn-muted-2);
+  font-style: italic;
+}
+/* the strip: the panel pads its own, and the switch ON is BLUE — the colour of a run in progress */
+.console--watch .pn-pills {
+  padding: 2px 10px 8px;
+}
+.pn-pills span.is-follow {
+  background: linear-gradient(135deg, #2563eb, #1e3a8a);
+  border-color: transparent;
+  color: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 
 /* ---------- 13. CONTEXT ---------- */

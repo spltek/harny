@@ -91,6 +91,7 @@
           <a href="#parallel">Parallel</a>
           <a href="#context">Context</a>
           <a href="#tools">Tools</a>
+          <a href="#watch">Watch</a>
           <a href="#guard">Guard</a>
           <a href="#mcp">MCP</a>
           <a href="#skills">Skills</a>
@@ -1126,10 +1127,120 @@ Tip: restart the chat — a clean Build context applies more reliably than conti
         </div>
       </section>
 
-      <!-- ============ 06 GUARD ============ -->
+      <!-- ============ 06 WATCH IT WORK ============ -->
+      <section class="sect" id="watch">
+        <div class="sect__head">
+          <p class="sect__idx">06 <span>/</span> WATCH IT WORK</p>
+          <h2 class="sect__title">The plan is on the page.<br /><span class="grad">Not over it.</span></h2>
+          <p class="sect__lede">
+            Harny tells you what it is about to do, then does it in front of you. The answer, the plan and
+            the controls share one column, top to bottom: nothing floats over the lines you are reading,
+            and the panel never jumps under your hand.
+          </p>
+        </div>
+
+        <div class="watch__demo reveal" data-reveal>
+          <div class="console console--watch">
+            <div class="pn-term">
+              <div class="pn-turn">
+                <div class="pn-meta">
+                  <span class="pn-mode">Build</span> · 73.1k in · 29 out · elapsed 8.7s · first token 812ms
+                </div>
+                <p class="pn-answer">
+                  The retry is in and the parser takes it now. Running the suite, then the changelog entry.
+                </p>
+              </div>
+            </div>
+
+            <!-- #todo-panel: `column-reverse`, so `#todo-overlay` is painted ABOVE `#todo-row` although
+                 it comes after it in the markup — the list grows upward out of the row it belongs to. -->
+            <div class="pn-todo">
+              <div class="pn-todorow">
+                <span class="pn-toggle is-open">
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </span>
+                <span class="pn-todocount">2/5</span>
+                <span class="pn-todonow">wrap the parser call in a retry</span>
+                <span class="pn-todoclose" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none"><path d="M18 6 6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                </span>
+              </div>
+              <div class="pn-todolist">
+                <div class="todo-head"><span class="todo-count">2/5</span><span>Tasks</span></div>
+                <ul class="todo-list">
+                  <li class="todo-item status-completed">
+                    <span class="todo-check" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M5 12l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                    <span class="todo-text">Read the failing parser test</span>
+                  </li>
+                  <li class="todo-item status-in_progress">
+                    <span class="todo-check" aria-hidden="true"></span>
+                    <span class="todo-text">Wrap the parser call in a retry</span>
+                  </li>
+                  <li class="todo-item status-pending">
+                    <span class="todo-check" aria-hidden="true"></span>
+                    <span class="todo-text">Run the suite</span>
+                  </li>
+                  <li class="todo-item status-pending">
+                    <span class="todo-check" aria-hidden="true"></span>
+                    <span class="todo-text">Write the changelog entry</span>
+                  </li>
+                  <li class="todo-item status-pending">
+                    <span class="todo-check" aria-hidden="true"></span>
+                    <span class="todo-text">Commit and push</span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="pn-working">● Working...</div>
+
+            <div class="pn-pills">
+              <span class="is-on">Focus</span><span>Collapse all</span><span class="is-follow">Follow</span>
+            </div>
+          </div>
+        </div>
+
+        <ul class="notes reveal" data-reveal>
+          <li>
+            <b>The plan sits in the column, not on top of it.</b> Before, the list floated over the
+            corner of the panel: it covered the last lines of the answer — the ones you read <em>while</em>
+            a plan runs — and it took the scroll wheel with it, so scrolling over the list moved the list
+            and the conversation above was out of reach. Now it is a strip of the panel like any other. It
+            gives back the space it takes: the conversation slides up, it is never hidden, and the page
+            never moves under your hand.
+          </li>
+          <li>
+            <b>Five tasks at a time, and the count stays with you.</b> A long plan cannot swallow the
+            session: past five items the list scrolls inside itself, and <b>2/5</b> stays at the top of
+            it, so you always know how far along you are. The task being worked on is always the one on
+            screen. A finished task gets a filled box and <b>bold</b> words — no strikethrough: a line
+            through a word means “deleted” everywhere else, and something you finished is not gone.
+          </li>
+          <li>
+            <b>The arrow points up, because the list opens upwards.</b> Every fold in the panel opens
+            downwards; this is the one that opens above its own line, so the arrow turns right and then
+            <b>up</b>. It took three attempts to get it right — two of them shipped pointing somewhere
+            else.
+          </li>
+          <li>
+            <b>Follow only exists while Harny is working.</b> When nothing is running it is off and dark:
+            nothing is arriving, so there is nothing to follow. During a run, on, it keeps the newest
+            line in view; off, it stays where you left it and never pulls you back. The only thing that
+            can hold it is your finger on the conversation — let go, and it comes home. One switch, one
+            behaviour, no surprise jumps.
+          </li>
+          <li>
+            <b>Focus opens sections — it never closes them.</b> The section Harny walks into opens on its
+            own and stays open: nothing shuts under your cursor, and turning Focus on folds nothing away.
+            To close the lot there is one word, <b>Collapse all</b>.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ============ 07 GUARD ============ -->
       <section class="sect" id="guard">
         <div class="sect__head">
-          <p class="sect__idx">06 <span>/</span> THE GUARD</p>
+          <p class="sect__idx">07 <span>/</span> THE GUARD</p>
           <h2 class="sect__title">It never just stops.<br /><span class="grad">It steers.</span></h2>
           <p class="sect__lede">
             Small and local models fail in three shapes: reasoning that chases its own tail, the same tool call
@@ -1212,7 +1323,7 @@ Tip: restart the chat — a clean Build context applies more reliably than conti
       <!-- ============ 07 MCP ============ -->
       <section class="sect" id="mcp">
         <div class="sect__head">
-          <p class="sect__idx">07 <span>/</span> MCP</p>
+          <p class="sect__idx">08 <span>/</span> MCP</p>
           <h2 class="sect__title">Install once.<br /><span class="grad">Scope per conversation.</span></h2>
           <p class="sect__lede">
             A server is a fact about the machine; which of its tools a conversation may use is that conversation's
@@ -1292,7 +1403,7 @@ Tip: restart the chat — a clean Build context applies more reliably than conti
       <!-- ============ 08 SKILLS ============ -->
       <section class="sect" id="skills">
         <div class="sect__head">
-          <p class="sect__idx">08 <span>/</span> SKILLS</p>
+          <p class="sect__idx">09 <span>/</span> SKILLS</p>
           <h2 class="sect__title">A catalog, not a prompt.<br /><span class="grad">Read on demand.</span></h2>
           <p class="sect__lede">
             A skill is a folder with a <code>SKILL.md</code>, in <code>.agents/skills</code>,
@@ -1339,7 +1450,7 @@ Tip: restart the chat — a clean Build context applies more reliably than conti
       <!-- ============ 09 PROVIDERS ============ -->
       <section class="sect" id="providers">
         <div class="sect__head sect__head--left">
-          <p class="sect__idx">09 <span>/</span> ONE PROTOCOL</p>
+          <p class="sect__idx">10 <span>/</span> ONE PROTOCOL</p>
           <h2 class="sect__title">Speak one protocol.<br /><span class="grad">Talk to anything.</span></h2>
           <p class="sect__lede">
             Harny is openai-compatible by design, so anything that implements <code>/v1/chat/completions</code> works.
@@ -1383,7 +1494,7 @@ Tip: restart the chat — a clean Build context applies more reliably than conti
       <!-- ============ 10 UNDER THE HOOD ============ -->
       <section class="sect" id="architecture">
         <div class="sect__head">
-          <p class="sect__idx">10 <span>/</span> UNDER THE HOOD</p>
+          <p class="sect__idx">11 <span>/</span> UNDER THE HOOD</p>
           <h2 class="sect__title">SOLID first.<br /><span class="grad">Testable to the core.</span></h2>
           <p class="sect__lede">
             The core layer has <strong>zero VS Code imports</strong> — every collaborator is created in the composition
@@ -1431,7 +1542,7 @@ Tip: restart the chat — a clean Build context applies more reliably than conti
       <!-- ============ 11 INSTALL ============ -->
       <section class="sect sect--install" id="install">
         <div class="sect__head">
-          <p class="sect__idx">11 <span>/</span> INSTALL</p>
+          <p class="sect__idx">12 <span>/</span> INSTALL</p>
           <h2 class="sect__title">Two minutes to<br /><span class="grad">first diff.</span></h2>
         </div>
 
