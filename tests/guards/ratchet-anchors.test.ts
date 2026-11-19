@@ -21,7 +21,7 @@ const CONFIGS = join(ROOT, "tests", "mutation");
 /** The statements each measured range must still cover. */
 const ANCHORS: Record<string, string[]> = {
   "src/chat/webview/view.ts": [
-    // the streaming block (one range per file is not a rule: this file carries two)
+    // the streaming block (one range per file is not a rule: this file carries several)
     'case "textDelta": {',
     "currentRawText += msg.content;",
     "if (!currentRawText.trim()) break;",
@@ -34,11 +34,18 @@ const ANCHORS: Record<string, string[]> = {
     "setFollowState(on && busy);",
     "phaseLockPulse(autoscrollBtn);",
     "if (!autoScroll || !sessionBusy()) return;",
-    "messagesEl.scrollTop = Math.max(0, messagesEl.scrollHeight - messagesEl.clientHeight);",
+    "const max = Math.max(0, height - messagesEl.clientHeight);",
+    // the LEDGER: the two numbers that are the only thing allowed to tell a hand from a reflow
+    "let lastOffset = messagesEl.scrollTop;",
+    // …and OUR own restructures re-read it: a node that moves is not a hand either
+    "function syncLedger(): void {",
+    "let back = lastOffset - offset > BOTTOM_EPS;",
+    "back = lastMax - max <= BOTTOM_EPS;",
+    "if (e.deltaY < 0) setFollow(false);",
     // the rule, in three parts: the switch is the only author, the enforcement obeys it, and a HOLD
     // is the one thing it must not fight
     "function gapFromEnd(): number {",
-    "if (gapFromEnd() > BOTTOM_EPS) pinToBottom();",
+    "settle(back);",
     "if (handHeld) return;",
     "function releaseHand(): void {",
     'window.addEventListener("pointerup", releaseHand, PASSIVE);',

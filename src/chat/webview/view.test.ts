@@ -2105,6 +2105,95 @@ describe("view webview client", () => {
     expect(marker.compareDocumentPosition(answers[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  describe("a boundary the host WROTE closes the segment", () => {
+    const before = (a: Node, b: Node): boolean => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    const start = async (): Promise<void> => {
+      await loadView();
+      (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
+      (document.getElementById("send-btn") as HTMLButtonElement).click();
+    };
+    const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 40));
+
+    it("a nudge closes the reasoning: what comes after is a block of its own, BELOW it", async () => {
+      // The host keeps ONE `thinking` string per SEGMENT (commit 280c155), and a nudge is written to
+      // history as a message of its own: the next turn's reasoning is a NEW segment. Continuing the
+      // old block would file the new thought above the nudge, where the end-of-run refresh will never
+      // draw it.
+      await start();
+      hostMessage({ type: "thinkingDelta", content: "primo ragionamento" });
+      await settle();
+      hostMessage({ type: "harnessNudge", content: "**Stop** repeating and act." });
+      hostMessage({ type: "thinkingDelta", content: "secondo ragionamento" });
+      await settle();
+
+      const blocks = [...document.querySelectorAll("#messages .thinking-block")] as HTMLElement[];
+      expect(blocks).toHaveLength(2);
+      expect(blocks[0].textContent).toContain("primo ragionamento");
+      expect(blocks[1].textContent).toContain("secondo ragionamento");
+      expect(blocks[1].textContent).not.toContain("primo ragionamento");
+      const nudge = document.querySelector("#messages .msg.harness") as HTMLElement;
+      expect(nudge).toBeTruthy();
+      expect(before(blocks[0], nudge)).toBe(true); // what was thought before the nudge stays above it
+      expect(before(nudge, blocks[1])).toBe(true); // …and the new segment lands below it
+    });
+
+    it("the answer after a nudge is a NEW bubble, and does not repaint what it already said", async () => {
+      // `currentRawText` holds the whole answer of the segment. Releasing it with the bubble is the
+      // point: reopening a bubble while it still held the text painted the finished answer AGAIN, on
+      // top of the new one.
+      await start();
+      hostMessage({ type: "textDelta", content: "prima parte" });
+      await settle();
+      hostMessage({ type: "harnessNudge", content: "**Stop** repeating and act." });
+      hostMessage({ type: "textDelta", content: "seconda parte" });
+      await settle();
+
+      const answers = [...document.querySelectorAll("#messages .msg.assistant")] as HTMLElement[];
+      expect(answers).toHaveLength(2);
+      expect(answers[0].textContent).toContain("prima parte");
+      expect(answers[1].textContent).toContain("seconda parte");
+      expect(answers[1].textContent).not.toContain("prima parte");
+    });
+
+    it("the reasoning after a turn badge opens a new block instead of growing above the bubble", async () => {
+      // The badge is the END of a turn: the next turn's reasoning is another `thinking` string, so a
+      // block of its own — below the badge — even though the previous block was still the one the
+      // answer interrupted ("Thought during this answer").
+      await start();
+      hostMessage({ type: "thinkingDelta", content: "prima ipotesi" });
+      hostMessage({ type: "textDelta", content: "risposta uno" });
+      await settle();
+      hostMessage({ type: "turnMeta", meta: { inputTokens: 1500, outputTokens: 30, durationMs: 1200 } });
+      hostMessage({ type: "thinkingDelta", content: "seconda ipotesi" });
+      await settle();
+
+      const blocks = [...document.querySelectorAll("#messages .thinking-block")] as HTMLElement[];
+      expect(blocks).toHaveLength(2);
+      expect(blocks[0].textContent).toContain("prima ipotesi");
+      expect(blocks[1].textContent).toContain("seconda ipotesi");
+      expect(blocks[1].textContent).not.toContain("prima ipotesi");
+      const badge = document.querySelector("#messages .msg-meta") as HTMLElement;
+      expect(badge).toBeTruthy();
+      expect(before(badge, blocks[1])).toBe(true);
+    });
+
+    it("the Analyze banner is a NOTE, not a segment: the answer keeps ONE bubble across it", async () => {
+      // The banner is text the transcript shows but the host does not keep as a message: the answer
+      // that was streaming keeps streaming in the SAME bubble. Splitting there would show two
+      // bubbles for one message, and the refresh would fold them back into one.
+      await start();
+      hostMessage({ type: "textDelta", content: "prima parte della risposta" });
+      hostMessage({ type: "previewReady" });
+      hostMessage({ type: "textDelta", content: " e seconda parte" });
+      await settle();
+
+      const answers = [...document.querySelectorAll("#messages .msg.assistant")] as HTMLElement[];
+      expect(answers).toHaveLength(1);
+      expect(answers[0].textContent).toContain("prima parte della risposta e seconda parte");
+      expect(document.querySelector("#messages .build-cta-static")).toBeTruthy();
+    });
+  });
+
   it("a host refusal takes back the optimistic paint and says why (the `denied` event)", async () => {
     // The panel paints the user bubble and "Working…" BEFORE the host answers, to feel instant.
     // A refusal must undo that paint: a message shown as sent that never left, plus a working
@@ -12793,7 +12882,7 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
     expect(auto().getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("the pill is the switch BOTH ways while a run is live: a click parks, the next takes the end back", async () => {
+  it("the pill is the switch BOTH ways while a run is live: a hand going back parks, the pill takes the end back", async () => {
     await loadView();
     const setTop = tetherScroll();
     const messages = document.getElementById("messages") as HTMLElement;
@@ -12801,19 +12890,20 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
 
     setTop(400);
     emitScroll();
-    expect(messages.scrollTop).toBe(800); // ON: the end is taken back in the same event
-
-    auto().click(); // ON -> OFF
+    // A HAND went back — the offset fell, the height did not — so the switch goes out and the box is
+    // left where the hand put it. Being fought back to an end the reader just refused is the drag
+    // this design exists to avoid.
     expect(auto().getAttribute("aria-pressed")).toBe("false");
-    expect(messages.scrollTop).toBe(800); // turning it OFF moves nothing: it is a switch, not a jump
-
-    setTop(400);
-    emitScroll();
-    expect(messages.scrollTop).toBe(400); // parked stays parked
+    expect(messages.scrollTop).toBe(400);
 
     auto().click(); // OFF -> ON takes the end with it
     expect(auto().getAttribute("aria-pressed")).toBe("true");
     expect(messages.scrollTop).toBe(800);
+
+    setTop(400); // …and a hand still wins: the switch is the reader's, not the box's
+    emitScroll();
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+    expect(messages.scrollTop).toBe(400);
   });
 
   it("PARKED, a scroll is left alone: the reader stays exactly where they put themselves", async () => {
@@ -12827,15 +12917,16 @@ describe("transcript action pills (collapse all + autoscroll)", () => {
     expect(messages.scrollTop).toBe(400);
   });
 
-  it("FOLLOWING, the box cannot REST away from the end: a scroll is taken back in the same event", async () => {
+  it("FOLLOWING, a hand that goes back is answered on the spot: the switch goes out, the box stays", async () => {
     await loadView();
     const setTop = tetherScroll();
     const messages = document.getElementById("messages") as HTMLElement;
     live();
     setTop(400);
     emitScroll();
-    // No gesture is read any more: with the switch ON the box simply does not stay up there.
-    expect(messages.scrollTop).toBe(800);
+    // The offset fell and the height did not: a hand, and the only move we are allowed to call one.
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+    expect(messages.scrollTop).toBe(400);
   });
 
   it("…a HOLD is the one exception, and the release brings the end back: the bar is not fought mid-drag", async () => {
@@ -12909,6 +13000,7 @@ describe("Focus: the transcript follows the run", () => {
     up: () => void;
     grow: (by: number) => void;
     drift: (by: number) => void;
+    shrink: (by: number) => void;
     pins: () => number;
     reads: () => number;
   } {
@@ -12951,12 +13043,19 @@ describe("Focus: the transcript follows the run", () => {
       grow: (by) => {
         height += by;
       },
-      /** The reader's own way out: the SWITCH, and nothing else. No gesture takes the Follow away
-       * any more, so a test that parks the box without flipping the pill is testing a reader no
-       * browser has. */
+      /** The reader's own way out: a CLICK on the pill. The gestures that take it away now are only
+       * the ones we can prove (a wheel back, an offset that fell with the height unchanged), so a test
+       * that parks the box by writing `top` is testing a hand, not a click. */
       up: () => (document.getElementById("autoscroll") as HTMLButtonElement).click(),
       drift: (by) => {
         top += by;
+      },
+      /** Content ABOVE the viewport gets shorter — a fold closing, an image removed, a rebuild — and
+       * the browser takes the same amount off the offset so the reader stays on the same line. This
+       * is the move that used to be read as a hand: the offset falls, and the height falls WITH it. */
+      shrink: (by) => {
+        height -= by;
+        top -= by;
       },
       // The delivery of a move WE made. A real box reports it back as a `scroll` event, and it always
       // arrives BEFORE the reader can move again — a test where a hand acts right after a pin has to
@@ -12981,6 +13080,60 @@ describe("Focus: the transcript follows the run", () => {
     nextFrame();
     expect(messagesEl().scrollTop).toBe(800);
     expect(auto().getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("a segment SPLIT (a nudge mid-answer) keeps the Follow: the box ends on the new block too", async () => {
+    // Splitting is a change of SHAPE, and the Follow is a POSITION: the transcript becomes four
+    // nodes (answer, nudge, reasoning, answer) instead of two, and none of that may read as a hand.
+    // The old block is closed and the new one grows BELOW it, so the ceiling only ever grows — the
+    // one direction the ledger already knows is not a gesture (it is the reflow case, inverted).
+    await startRun();
+    const box = tetherScroll();
+    box.park(); // following, ten pixels short — somewhere for a pin to go
+
+    hostMessage({ type: "textDelta", content: "prima parte della risposta" });
+    nextFrame();
+    hostMessage({ type: "harnessNudge", content: "**Stop** repeating and act." });
+    hostMessage({ type: "thinkingDelta", content: "ci ripenso" });
+    hostMessage({ type: "textDelta", content: "seconda parte della risposta" });
+    nextFrame();
+
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+    expect(messagesEl().scrollTop).toBe(messagesEl().scrollHeight - messagesEl().clientHeight);
+    // …and the split is real, or this would be a test of nothing.
+    expect(document.querySelectorAll("#messages .msg.assistant").length).toBe(2);
+  });
+
+  it("a todo list that MOVES (out of one card, into the next) is not a hand: the Follow stays", async () => {
+    await startRun();
+    const box = tetherScroll();
+    box.park(); // following, short of the end
+    hostMessage({ type: "toolCall", id: "td1", name: "TodoWrite", arguments: { todos: [], merge: false } });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "td1",
+      output: "## Task List\n\n⏳ [pending] one\n⏳ [pending] two",
+      isError: false,
+    });
+    nextFrame();
+
+    // The newest list WINS: the block in the card ABOVE is removed and a same-sized one lands in this
+    // card, below. The ceiling comes out where it was and the browser lowers the offset to keep the
+    // reader on his line — the one movement the arithmetic cannot tell from a hand, because it is not
+    // a hand but our own move. It took the Follow out on every TodoWrite update.
+    box.at(760); // what the browser did: 40px down, the ceiling untouched
+    hostMessage({ type: "toolCall", id: "td2", name: "TodoWrite", arguments: { todos: [], merge: true } });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "td2",
+      output: "## Task List\n\n✅ [completed] one\n⏳ [pending] two",
+      isError: false,
+    });
+    box.scroll(); // …and its delivery
+
+    expect(document.querySelectorAll(".todo-block")).toHaveLength(1); // it really MOVED
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+    expect(messagesEl().scrollTop).toBe(messagesEl().scrollHeight - messagesEl().clientHeight);
   });
 
   it("a card that grows AFTER the pin keeps the Follow: the box's own report is not a gesture", async () => {
@@ -13401,25 +13554,33 @@ describe("Focus: the transcript follows the run", () => {
     expect(auto().getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("nothing but the pill takes the Follow away: no wheel, no key, no touch, no drag", async () => {
+  it("a wheel that goes BACK is the one proof: a key, a touch, a click are not", async () => {
     await startRun();
-    const box = tetherScroll();
+    tetherScroll();
     const messages = messagesEl();
 
-    // Every gesture a hand can make over the box…
+    // No code of ours can emit a wheel, and the sign is the whole message: a hand is on the
+    // transcript and it is going back. A mouse notch, two fingers and a trackball are the same
+    // event — which is exactly why the device is never asked for.
     messages.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true }));
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+
+    // The same wheel the other way, a pinch-zoom and a sideways swipe are NOT that message.
+    auto().click();
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+    messages.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, bubbles: true }));
+    messages.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, ctrlKey: true, bubbles: true }));
+    messages.dispatchEvent(new WheelEvent("wheel", { deltaY: 0, deltaX: -100, bubbles: true }));
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+
+    // A key, a finger and a release with no press behind it are hands, but not PROOF: nothing is
+    // written that says where they land, so the switch stays where the reader put it.
     for (const key of ["PageUp", "ArrowUp", "Home"]) {
       messages.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
     }
     messages.dispatchEvent(new Event("touchstart"));
     messages.dispatchEvent(new Event("touchend"));
-    window.dispatchEvent(new Event("pointerup")); // a release with no press behind it: harmless
-    box.at(300);
-    box.scroll();
-
-    // …none of them is an INTENT. The switch is still on and the box is still at the end: that is
-    // the whole rewrite — a hand can no longer detach by accident, and the only thing that detaches
-    // is the control that says so out loud.
+    window.dispatchEvent(new Event("pointerup"));
     expect(auto().getAttribute("aria-pressed")).toBe("true");
     expect(messages.scrollTop).toBe(800);
   });
@@ -13504,21 +13665,24 @@ describe("Focus: the transcript follows the run", () => {
     expect(messagesEl().scrollTop).toBe(800);
   });
 
-  it("no scroll event can take the Follow away: the switch is the only author", async () => {
+  it("a box that gets SHORTER is not a hand: the Follow survives a fold, an image, a rebuild", async () => {
     // THE reported bug, as a rule. After Play, with the mouse resting on the blinking button, the
-    // Follow kept letting go: the box arrives with an event for every card, every frame of a pulse
-    // animation that reflows a sibling, every restore — and every one of those is a POSITION. Now
-    // nothing but a gesture disarms, so none of them can.
+    // Follow kept letting go: the transcript rearranges itself under the reader — a fold closing, a
+    // card settling, a rebuild — and the browser lowers the offset to keep them on the same line.
+    // That move and a hand are the same NUMBER; they are not the same EVENT, because the height goes
+    // down with it and a hand never touches the height.
     await startRun();
     focusBtn().click();
     hostMessage({ type: "thinkingDelta", content: "reasoning" });
     const box = tetherScroll();
+    nextFrame(); // the box as it IS: the pin reads these numbers into the ledger
     box.at(800);
     box.scroll();
     expect(auto().getAttribute("aria-pressed")).toBe("true");
 
-    // An event that lands 400px from the end with no hand behind it: layout, not a reader.
-    box.drift(-400);
+    // 400px of the transcript disappear above the viewport, and the browser compensates: the offset
+    // falls by 400 with the height. No hand, so no switch.
+    box.shrink(400);
     box.scroll();
     expect(auto().getAttribute("aria-pressed")).toBe("true");
 
@@ -13527,6 +13691,43 @@ describe("Focus: the transcript follows the run", () => {
     hostMessage({ type: "thinkingDelta", content: " and more" });
     nextFrame();
     expect(box.pins()).toBe(pinned + 1);
+    expect(messagesEl().scrollTop).toBe(400); // 600 of content in a 200 box: the new end
+  });
+
+  it("an offset that fell with the height UNCHANGED is a hand with no wheel behind it: the drag", async () => {
+    // The scrollbar sends no `wheel` and no pointer events at all — during a thumb drag the browser
+    // keeps the gesture to itself. What it cannot hide is the arithmetic: only the offset moves.
+    await startRun();
+    focusBtn().click();
+    hostMessage({ type: "thinkingDelta", content: "reasoning" });
+    const box = tetherScroll();
+    box.at(800);
+    box.scroll();
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+
+    box.drift(-300); // the reader drags the thumb up: the height does not care
+    box.scroll();
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+    expect(messagesEl().scrollTop).toBe(500); // left where the hand put it
+  });
+
+  it("a HOLD on the box is not a drag of the bar: the press means the hand is on content", async () => {
+    // A selection that auto-scrolls at the edge is a press plus a movement, and it is NOT an intent
+    // to leave the Follow: the reader is dragging over text. The scrollbar never sends a press, so
+    // the press is exactly what tells the two apart.
+    await startRun();
+    focusBtn().click();
+    hostMessage({ type: "thinkingDelta", content: "reasoning" });
+    const box = tetherScroll();
+    box.at(800);
+    box.scroll();
+
+    messagesEl().dispatchEvent(new Event("pointerdown"));
+    box.drift(-300); // the edge of the selection drags the box with it
+    box.scroll();
+    expect(auto().getAttribute("aria-pressed")).toBe("true");
+
+    window.dispatchEvent(new Event("pointerup")); // let go: back to the end, as any hold
     expect(messagesEl().scrollTop).toBe(800);
   });
 

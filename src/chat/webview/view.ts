@@ -634,6 +634,7 @@ function restoreViewMemory(id: string | undefined, withScroll = true): void {
     // The position that comes back is this session's own, and so is the Follow: restoring a parked
     // reader and then pinning on the next delta is the drag-back this design exists to avoid.
     messagesEl.scrollTop = mem.scrollTop;
+    syncLedger(); // OUR write, so not a hand: the ledger moves with it
     paintPin = false; // the opening paint's allowance is withdrawn: this offset was chosen, not defaulted
     setFollow(false);
   }
@@ -1516,6 +1517,29 @@ let autoScroll = true;
  * drag over a message, a finger on the glass — because they all end the same way: at the end. */
 let handHeld = false;
 
+/** The two numbers as we last knew them, and the ONLY way to tell a hand from a reflow: a hand moves
+ * the offset and leaves the CEILING alone, while everything that lowers the offset without a hand
+ * lowers the ceiling with it — a fold closing or an image removed (the content gets shorter), a
+ * rebuild, and equally the box getting TALLER, which clamps the offset down just the same. Testing
+ * the CONTENT height alone left that second case unanswerable: the box grew, the offset came down,
+ * the height had not moved, and a reflow was read as a hand — the Follow going out under a reader
+ * who had touched nothing. `lastOffset` is also moved by OUR writes, because they are not hands.
+ */
+let lastOffset = messagesEl.scrollTop;
+let lastMax = messagesEl.scrollHeight - messagesEl.clientHeight;
+
+/** The ledger, re-read: OUR writes and OUR surgery are not hands, and both are only known to us.
+ * A write has its own number (`landOnEnd`), but a RESTRUCTURE does not: moving a node — the todo list
+ * migrates from the card it was in into the newest one, a diff is rebuilt in place — removes content
+ * ABOVE and inserts it BELOW, so the ceiling comes out unchanged while the browser lowers the offset
+ * to keep the reader on his line. That is arithmetic's blind spot: "offset fell, ceiling did not" is
+ * exactly what a hand looks like. Read back here, once, where we already paid for the layout (the
+ * node we just built), and the event that follows arrives with nothing to prove. */
+function syncLedger(): void {
+  lastOffset = messagesEl.scrollTop;
+  lastMax = messagesEl.scrollHeight - messagesEl.clientHeight;
+}
+
 /** The reader's word about the run IN FLIGHT: `null` = they have not said anything, so the run
  * starting IS the answer. Wiped the instant the session stops working — a choice about a turn that
  * is over is not a choice, and carrying it into the next run would silently turn "no objection"
@@ -1584,7 +1608,35 @@ function pinToBottom(): void {
 /** The end, unconditionally. Two callers only, and neither is a follow: a pin that already asked its
  * questions, and the PAINT of a fresh context (see `paintPin`). */
 function landOnEnd(): void {
-  messagesEl.scrollTop = Math.max(0, messagesEl.scrollHeight - messagesEl.clientHeight);
+  const height = messagesEl.scrollHeight;
+  const max = Math.max(0, height - messagesEl.clientHeight);
+  messagesEl.scrollTop = max;
+  // OUR write: it is not a hand, so the ledger starts here — read back, because the box clamps. The
+  // height was measured once, above: measuring is the only thing a pin costs.
+  lastOffset = messagesEl.scrollTop;
+  lastMax = max;
+}
+
+/** The END is following, and nothing is asked about who brought the box there — a drag, the wheel, a
+ * fold, a reflow. At the end there is nothing to park FROM and nothing to move, so the switch has
+ * ONE fixed point instead of a latch that outlives the geometry: a reader who comes back to the end
+ * has taken the refusal back, and the next delta follows again. Asked BEFORE the proof, because a
+ * hand that ends AT the end is not a hand going back.
+ *
+ * Shared with the release, where no proof exists at all: a hold suppresses the EVENTS, never the
+ * position, so a drag that ends on the end has to be answered here too — otherwise the bar dragged
+ * to the bottom leaves a dark pill on a box that is already at the end. */
+function settle(handWentBack: boolean): void {
+  if (gapFromEnd() <= BOTTOM_EPS) {
+    // Only during a run: that is when there is a Follow to take back. Off the clock the switch is
+    // inert anyway, and this would be a DOM pass for nothing.
+    if (!autoScroll && sessionBusy()) setFollow(true);
+    return;
+  }
+  // Away from the end the reader asked to look back: the switch goes off and the box stays where the
+  // hand left it, instead of being fought back to an end they just refused.
+  if (handWentBack) return setFollow(false);
+  pinToBottom(); // following: the end comes back. Parked: the guard inside refuses, and that is right.
 }
 
 /** Set by a session being OPENED, cleared by the first geometry delivery or scroll it gets: a fresh
@@ -1598,17 +1650,55 @@ let paintPin = false;
 // ── The switch, ENFORCED ──
 //
 // While it is ON the box cannot REST away from the end: a scroll that ends anywhere else is taken
-// back in the same event, before the paint, so a wheel notch or a key does nothing at all. A hold is
-// the one exception — that is a hand dragging, and the drag is answered on release, not fought
-// mid-flight. Nothing here decides anything: it reads the switch and obeys it.
+// back in the same event, before the paint. A HOLD is the one exception — a press on the content
+// dragging a selection — because that is not the reader leaving, and it is answered on release
+// rather than fought mid-flight.
+//
+// The reader IS the other one, but only when they can be PROVEN: the panel is not allowed to guess
+// "something went back, must have been a hand", because a reflow goes back too — a fold closing
+// above the viewport, an image removed, a rebuild — and that guess is what kept switching the Follow
+// off under a reader who had touched nothing. There are exactly two proofs: a wheel, which nothing
+// of ours can emit, and the arithmetic below, where a hand moves the offset and a reflow moves the
+// offset AND the CEILING — the room to fall, which shrinks both when the content gets shorter and
+// when the box gets taller.
+//
+// And the END is not a proof but a FIXED POINT: arriving there is following, whatever brought the
+// box — a drag, a wheel, a fold, a reflow. At the end there is nothing to park FROM and nothing to
+// move, so a park cannot outlive the geometry that justified it: the switch reads "at the end, or
+// the reader has not refused", and a refusal expires the moment they come back to the end.
+messagesEl.addEventListener(
+  "wheel",
+  (e) => {
+    // A wheel is the one thing no code of ours can emit: a hand is on the transcript, and it is
+    // going back. The sign decides, not the device — a mouse notch, two fingers and a trackball are
+    // the same event, and trying to tell them apart is a guess we do not need to make.
+    if (e.ctrlKey) return; // pinch-zoom, not a scroll
+    if (e.deltaY < 0) setFollow(false);
+  },
+  PASSIVE,
+);
 messagesEl.addEventListener(
   "scroll",
   () => {
+    const offset = messagesEl.scrollTop;
+    // A HAND went back: the offset fell. That alone is not enough, because the browser lowers it too
+    // — a fold closing above the viewport, an image removed, a rebuild, and the box getting TALLER —
+    // to keep the reader on the same line. Every one of those takes the CEILING down by the same
+    // amount, and a hand never touches it: the ceiling is the content height MINUS the viewport, so
+    // a shorter transcript and a taller window say the same thing. One comparison settles who did
+    // it. Measured only when the offset fell, because measuring is the only thing a scroll costs.
+    let back = lastOffset - offset > BOTTOM_EPS;
+    if (back) {
+      const max = messagesEl.scrollHeight - messagesEl.clientHeight;
+      back = lastMax - max <= BOTTOM_EPS;
+      lastMax = max;
+    }
+    lastOffset = offset;
     // Any scroll ends the opening paint's allowance: on an idle session we write nothing, so a
     // movement there is the reader's, and it is not to be yanked back later.
     paintPin = false;
     if (handHeld) return;
-    if (gapFromEnd() > BOTTOM_EPS) pinToBottom();
+    settle(back);
   },
   PASSIVE,
 );
@@ -1619,7 +1709,7 @@ messagesEl.addEventListener(
 function releaseHand(): void {
   if (!handHeld) return;
   handHeld = false;
-  pinToBottom();
+  settle(false); // the gesture was the HOLD, so there is no proof here — only the position
 }
 messagesEl.addEventListener(
   "pointerdown",
@@ -1719,6 +1809,9 @@ function restoreScrollAnchor(anchor: ScrollAnchor | null): void {
   if (!el) return;
   const edge = messagesEl.getBoundingClientRect().top;
   messagesEl.scrollTop = messagesEl.scrollTop + el.getBoundingClientRect().top - edge + anchor.above;
+  // OUR write, so not a hand — even when it goes BACK, which it does whenever the rebuild above the
+  // anchor came out shorter.
+  syncLedger();
 }
 
 /**
@@ -2756,6 +2849,10 @@ function clearStreamingBubble(): void {
   }
   settlePulse(el);
   currentResultEl = null;
+  // The text goes with the bubble it was written for: a closer owns what it closes, so no call site
+  // has to remember (`clearStreamingBubble(); currentRawText = ""` was written at seven of them, and
+  // the one that forgot repainted a finished answer into a new bubble).
+  currentRawText = "";
 }
 
 /** Stop the live thinking block's pulse and keep it EXTENDABLE (`settledThinkingBlock`):
@@ -2783,6 +2880,32 @@ function settleThinkingBlock(): void {
 function clearThinkingBlock(): void {
   settleThinkingBlock();
   settledThinkingBlock = null;
+  // Same rule as the bubble above: the text is the block's, and leaves with it.
+  currentThinkingText = "";
+}
+
+/** Is this the block the next delta belongs to? A block that is being written must be at the LIVE
+ * EDGE: nothing after it but NOTES, or the answer bubble it interrupted (the "Thought during this
+ * answer" line, see `thinkingDelta` — one thought per segment, commit 280c155).
+ *
+ * A note is text the transcript shows but the host does not keep as a message of its own (the
+ * Analyze banner): the answer keeps streaming in the SAME bubble across it. Everything else — a
+ * nudge, a loop-guard notice, a steer bubble, a metrics badge, an error — is a history entry the host
+ * already wrote, and the end-of-run refresh files the continuation in a block of its OWN, BELOW it.
+ * So a block that is no longer at the edge is not this text's block: it is closed and the delta opens
+ * a fresh one where the refresh will put it. Moving it there instead would show one block for what
+ * the host keeps as two (the divergence 280c155 exists to prevent), and would carry the text written
+ * BEFORE the boundary under it. */
+function atLiveEdge(node: HTMLElement | null): boolean {
+  if (!node) return false;
+  for (let next = node.nextElementSibling; next; next = next.nextElementSibling) {
+    // The bubble this block interrupted is still the edge for IT ("Thought during this answer"), but
+    // it is skipped over, not accepted: a badge BELOW the bubble is a turn end, and the reasoning
+    // that comes after it belongs to the next turn, in a block of its own.
+    if (next === currentResultEl) continue;
+    if (!next.classList.contains("build-cta-static")) return false;
+  }
+  return true;
 }
 
 /** Empty-session greeting. The brand mark is the REAL media/icons/harny.svg (served
@@ -3141,9 +3264,7 @@ function resetStreamState(): void {
   clearThinkingBlock();
   thinkingMd.reset();
   answerMd.reset();
-  currentThinkingText = "";
   pendingThinking = "";
-  currentRawText = "";
   hideWorking();
   aborted = false;
   pendingToolCalls.clear();
@@ -3189,8 +3310,10 @@ function extractPath(pre: HTMLElement): string | undefined {
 function populateToolDiff(pre: HTMLElement, body: string, stat: string | undefined): void {
   const details = pre.closest(".tool-details");
   if (!details) return;
-  // Defensive: a re-render into the same bubble must not stack diff sections.
+  // Defensive: a re-render into the same bubble must not stack diff sections. That removal — and
+  // the (possibly taller) section appended below — moves the box without a hand (`syncLedger`).
   details.querySelector(".tool-diff")?.remove();
+  syncLedger();
   const langId = extractPath(pre) ? langIdForPath(extractPath(pre)!) : undefined;
   const grammar = langId ? Prism.languages[langId] : undefined;
 
@@ -3350,6 +3473,9 @@ function renderTodoBlock(bubble: HTMLElement, text: string): void {
   const header = bubble.querySelector(".tool-header");
   if (header) header.insertAdjacentElement("afterend", block);
   else bubble.prepend(block);
+  // A MOVE, not an edit: what left was above the viewport and what arrived is below it, so the box
+  // is not where it was any more — and no hand did it (`syncLedger`).
+  syncLedger();
 }
 
 /** `<count>/<total> Tasks` — the header both views share. */
@@ -3655,9 +3781,7 @@ function send(): void {
   }
   clearStreamingBubble();
   clearThinkingBlock();
-  currentThinkingText = "";
   pendingThinking = "";
-  currentRawText = "";
   aborted = false;
   terminalShown = false;
   pendingToolCalls.clear();
@@ -7177,6 +7301,13 @@ window.addEventListener("message", (e) => {
       // Ignore empty chunks (some providers emit a trailing/leading empty
       // content delta).
       if (!msg.content) break;
+      // The bubble is no longer at the live edge: a boundary was written after it (a steer bubble, a
+      // badge, a banner) and the host already has the continuation as a new message. This text
+      // belongs to a NEW bubble, below — and `currentRawText` goes with the old one, or the new
+      // bubble would repaint everything the old one already says.
+      if (currentResultEl && !atLiveEdge(currentResultEl)) {
+        clearStreamingBubble();
+      }
       // Accumulate ALWAYS, but only CREATE the bubble once the segment has
       // MEANINGFUL text: a whitespace-only chunk (e.g. a lone newline after a
       // thinking/tool phase) must not create an empty bubble.
@@ -7203,7 +7334,13 @@ window.addEventListener("message", (e) => {
     case "thinkingDelta": {
       // Empty thinking chunks must not create an empty thinking block.
       if (!msg.content) break;
-      if (!currentThinkingBlock && settledThinkingBlock?.isConnected) {
+      // The open block is no longer at the live edge: a boundary was written after it (a nudge, a
+      // loop-guard notice, a badge) and the host already saved that as one `thinking` segment. This
+      // text is the NEXT segment — a block of its own, below, exactly as a tool call leaves it.
+      if (currentThinkingBlock && !atLiveEdge(currentThinkingBlock)) {
+        clearThinkingBlock();
+      }
+      if (!currentThinkingBlock && settledThinkingBlock?.isConnected && atLiveEdge(settledThinkingBlock)) {
         // Reasoning RESUMED while the answer streams: extend the segment's own block (it is
         // still on screen, just above the bubble) instead of opening a second one that the
         // next repaint would fold away. The "must say something" rule still applies, or a
@@ -7235,7 +7372,7 @@ window.addEventListener("message", (e) => {
         // that lost its beginning (the model reasoned mid-sentence). So the answer
         // keeps ONE bubble and the reasoning becomes a collapsible line just ABOVE
         // it — where the model actually paused — with the text continuing below.
-        const duringAnswer = Boolean(currentResultEl && currentRawText.trim());
+        const duringAnswer = Boolean(currentResultEl && currentRawText.trim() && atLiveEdge(currentResultEl));
         flushStreamingMd();
         if (duringAnswer) {
           currentThinkingBlock = addThinkingBlock(openingText, currentResultEl, {
@@ -7248,7 +7385,6 @@ window.addEventListener("message", (e) => {
           currentThinkingBlock = addThinkingBlock(openingText);
           currentThinkingText = openingText;
           clearStreamingBubble();
-          currentRawText = "";
         }
       } else {
         currentThinkingText += msg.content;
@@ -7260,7 +7396,10 @@ window.addEventListener("message", (e) => {
     }
     case "turnMeta":
       // A turn just ended: append its REAL metrics badge at the end of the
-      // transcript (no re-render).
+      // transcript (no re-render). Nothing is closed here on purpose: the badge
+      // belongs AFTER this turn's answer, and closing the segment would leave
+      // `currentResultEl` empty for `finishStream` (a stray "(empty response)").
+      // The next delta closes the segment itself, through `atLiveEdge`.
       appendTurnBadge(msg.meta);
       break;
     case "toolCall": {
@@ -7280,9 +7419,7 @@ window.addEventListener("message", (e) => {
       focusOn(toolEl);
       setWorkingPhase(msg.name);
       clearThinkingBlock();
-      currentThinkingText = "";
       clearStreamingBubble();
-      currentRawText = "";
       break;
     }
     case "subagentStart": {
@@ -7367,13 +7504,14 @@ window.addEventListener("message", (e) => {
       break;
     }
     case "previewReady": {
-      // Analyze prepared changes that are not applied: prominent CTA.
+      // Analyze prepared changes that are not applied: prominent CTA. It is a NOTE, not a
+      // segment: the answer keeps streaming in the same bubble across it (`atLiveEdge`).
       addSwitchToBuildBanner();
       break;
     }
     case "loopIntervention": {
-      // The loop guard broke a degenerate loop and the run CONTINUES: settle
-      // the interrupted segment and show an amber notice (not a red error).
+      // The loop guard broke a degenerate loop and the run CONTINUES: settle the
+      // interrupted segment and show an amber notice (not a red error).
       flushStreamingMd();
       clearStreamingBubble();
       const el = addMessage("assistant", `🔁 **Loop guard** [${msg.loopType}] — ${msg.message}`);
@@ -7433,6 +7571,7 @@ window.addEventListener("message", (e) => {
       resetStreamState();
       optimisticUserEl?.remove();
       optimisticUserEl = null;
+      syncLedger(); // the bubble left ABOVE and the reason lands below — not a hand
       const whyEl = addMessage("assistant", "❌ " + (msg.reason || "The action was refused."));
       whyEl.classList.add("error");
       // The run never started: no "(empty response)" fallback if a `done` follows.
