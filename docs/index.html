@@ -1624,6 +1624,279 @@ Tip: restart the chat — a clean Build context applies more reliably than conti
           <span>Node <b>22.5+</b> for <code>node:sqlite</code></span>
           <span>License <b>MIT</b></span>
         </div>
+
+        <!-- Step 03, three times over. Cropped to the dialog on purpose: the chat behind it is in every
+             other section. Same dialog for every host — local, gateway, aggregator. -->
+        <div class="pconf">
+          <div class="pconf__head">
+            <p class="pconf__idx">STEP 03 <span>/</span> THREE REAL SETUPS</p>
+            <h3 class="pconf__title">The same dialog,<br /><span class="grad">three very different hosts.</span></h3>
+            <p class="pconf__lede">
+              A local llama.cpp server with no key, an OpenCode Go gateway that wants a session header,
+              OpenRouter with its own reasoning switch. One form every time: name, base URL, optional key,
+              and how to ask that host for reasoning.
+            </p>
+          </div>
+
+          <div class="pconf__grid">
+            <figure class="provfig reveal" data-reveal>
+              <div class="pm" aria-hidden="true">
+                <div class="pm__head">
+                  <b>Providers &amp; Models</b>
+                  <span>Every provider is active: pick a model from the chat's model dropdown.</span>
+                </div>
+                <div class="pm__body">
+                  <div class="pm__list-col">
+                    <div class="pm__list-head"><span>Providers</span><span class="pm__new">+ New</span></div>
+                    <div class="pm__list">
+                      <span class="is-on">local llama-cpp</span>
+                      <span>opencode-go</span>
+                      <span>openrouter</span>
+                    </div>
+                  </div>
+                  <div class="pm__form">
+                    <div class="pm__row">
+                      <span class="pm__label">Name</span>
+                      <span class="pm__input"><span>local llama-cpp</span></span>
+                    </div>
+                    <div class="pm__row">
+                      <span class="pm__label">Base URL</span>
+                      <span class="pm__input"><span>http://localhost:8090/v1</span></span>
+                    </div>
+                    <div class="pm__row">
+                      <span class="pm__label">API Key <i>(optional — leave empty for local hosts)</i></span>
+                      <span class="pm__input pm__input--key">
+                        <span>•••••••</span>
+                        <span class="pm__ico">
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path
+                              d="M2 12s3.7-6 10-6 10 6 10 6-3.7 6-10 6S2 12 2 12Z"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.7"
+                            />
+                            <circle cx="12" cy="12" r="2.7" fill="none" stroke="currentColor" stroke-width="1.7" />
+                          </svg>
+                        </span>
+                      </span>
+                    </div>
+                    <div class="pm__row">
+                      <span class="pm__label">Reasoning</span>
+                      <span class="pm__input">
+                        <span>Unspecified (provider default)</span>
+                        <span class="pm__ico">
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path
+                              d="m6 9 6 6 6-6"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            />
+                          </svg>
+                        </span>
+                      </span>
+                    </div>
+                    <div class="pm__row">
+                      <span class="pm__label">Session header <i>(optional)</i></span>
+                      <span class="pm__input is-ph"><span>e.g. x-opencode-session</span></span>
+                    </div>
+                    <div class="pm__actions">
+                      <span class="pm__btn">Test connection</span>
+                      <span class="pm__btn pm__btn--danger">Delete</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="pm__foot">
+                  <span class="pm__btn">Cancel</span>
+                  <span class="pm__btn pm__btn--save">Save</span>
+                </div>
+              </div>
+              <figcaption class="provfig__cap">
+                <span class="provfig__tag">LOCAL</span>
+                <b>llama.cpp / MLX</b>
+                <p>
+                  <b>http://localhost:8090/v1</b> — the key stays empty: the model runs on this machine,
+                  so nothing leaves it.
+                </p>
+              </figcaption>
+            </figure>
+
+            <figure class="provfig reveal" data-reveal>
+              <div class="pm" aria-hidden="true">
+                <div class="pm__head">
+                  <b>Providers &amp; Models</b>
+                  <span>Every provider is active: pick a model from the chat's model dropdown.</span>
+                </div>
+                <div class="pm__body">
+                  <div class="pm__list-col">
+                    <div class="pm__list-head"><span>Providers</span><span class="pm__new">+ New</span></div>
+                    <div class="pm__list">
+                      <span>local llama-cpp</span>
+                      <span class="is-on">opencode-go</span>
+                      <span>openrouter</span>
+                    </div>
+                  </div>
+                  <div class="pm__form">
+                    <div class="pm__row">
+                      <span class="pm__label">Name</span>
+                      <span class="pm__input"><span>opencode-go</span></span>
+                    </div>
+                    <div class="pm__row">
+                      <span class="pm__label">Base URL</span>
+                      <span class="pm__input"><span>https://opencode.ai/zen/go/v1</span></span>
+                    </div>
+                    <div class="pm__row">
+                      <span class="pm__label">API Key <i>(optional — leave empty for local hosts)</i></span>
+                      <span class="pm__input pm__input--key">
+                        <span>•••••••••••••••••••••••••••••••••••••</span>
+                        <span class="pm__ico">
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path
+                              d="M2 12s3.7-6 10-6 10 6 10 6-3.7 6-10 6S2 12 2 12Z"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.7"
+                            />
+                            <circle cx="12" cy="12" r="2.7" fill="none" stroke="currentColor" stroke-width="1.7" />
+                          </svg>
+                        </span>
+                      </span>
+                    </div>
+                    <div class="pm__row">
+                      <span class="pm__label">Reasoning</span>
+                      <span class="pm__input">
+                        <span>Type (DeepSeek / Anthropic toggle)</span>
+                        <span class="pm__ico">
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path
+                              d="m6 9 6 6 6-6"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            />
+                          </svg>
+                        </span>
+                      </span>
+                    </div>
+                    <div class="pm__row">
+                      <span class="pm__label">Session header <i>(optional)</i></span>
+                      <span class="pm__input"><span>x-opencode-session</span></span>
+                    </div>
+                    <div class="pm__actions">
+                      <span class="pm__btn">Test connection</span>
+                      <span class="pm__btn pm__btn--danger">Delete</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="pm__foot">
+                  <span class="pm__btn">Cancel</span>
+                  <span class="pm__btn pm__btn--save">Save</span>
+                </div>
+              </div>
+              <figcaption class="provfig__cap">
+                <span class="provfig__tag">GATEWAY</span>
+                <b>OpenCode Go</b>
+                <p>
+                  <b>https://opencode.ai/zen/go/v1</b> — reasoning as a type (on / off), and a session
+                  header so routing and the prompt cache survive the turn.
+                </p>
+              </figcaption>
+            </figure>
+
+            <figure class="provfig reveal" data-reveal>
+              <div class="pm" aria-hidden="true">
+                <div class="pm__head">
+                  <b>Providers &amp; Models</b>
+                  <span>Every provider is active: pick a model from the chat's model dropdown.</span>
+                </div>
+                <div class="pm__body">
+                  <div class="pm__list-col">
+                    <div class="pm__list-head"><span>Providers</span><span class="pm__new">+ New</span></div>
+                    <div class="pm__list">
+                      <span>local llama-cpp</span>
+                      <span>opencode-go</span>
+                      <span class="is-on">openrouter</span>
+                    </div>
+                  </div>
+                  <div class="pm__form">
+                    <div class="pm__row">
+                      <span class="pm__label">Name</span>
+                      <span class="pm__input"><span>openrouter</span></span>
+                    </div>
+                    <div class="pm__row">
+                      <span class="pm__label">Base URL</span>
+                      <span class="pm__input"><span>https://openrouter.ai/api/v1</span></span>
+                    </div>
+                    <div class="pm__row">
+                      <span class="pm__label">API Key <i>(optional — leave empty for local hosts)</i></span>
+                      <span class="pm__input pm__input--key">
+                        <span>••••••••••••••••••••••••••••••••••••••••••••••••••••••••••</span>
+                        <span class="pm__ico">
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path
+                              d="M2 12s3.7-6 10-6 10 6 10 6-3.7 6-10 6S2 12 2 12Z"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.7"
+                            />
+                            <circle cx="12" cy="12" r="2.7" fill="none" stroke="currentColor" stroke-width="1.7" />
+                          </svg>
+                        </span>
+                      </span>
+                    </div>
+                    <div class="pm__row">
+                      <span class="pm__label">Reasoning</span>
+                      <span class="pm__input">
+                        <span>Reasoning (OpenRouter)</span>
+                        <span class="pm__ico">
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path
+                              d="m6 9 6 6 6-6"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            />
+                          </svg>
+                        </span>
+                      </span>
+                    </div>
+                    <div class="pm__row">
+                      <span class="pm__label">Session header <i>(optional)</i></span>
+                      <span class="pm__input is-ph"><span>e.g. x-opencode-session</span></span>
+                    </div>
+                    <div class="pm__actions">
+                      <span class="pm__btn">Test connection</span>
+                      <span class="pm__btn pm__btn--danger">Delete</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="pm__foot">
+                  <span class="pm__btn">Cancel</span>
+                  <span class="pm__btn pm__btn--save">Save</span>
+                </div>
+              </div>
+              <figcaption class="provfig__cap">
+                <span class="provfig__tag">AGGREGATOR</span>
+                <b>OpenRouter</b>
+                <p>
+                  <b>https://openrouter.ai/api/v1</b> — its own <code>reasoning</code> object, passed through
+                  as declared: one provider, every model behind it.
+                </p>
+              </figcaption>
+            </figure>
+          </div>
+
+          <p class="pconf__foot">
+            Keys sit in Harny's data folder, never in the project. <em>Export models configuration</em> writes the
+            whole set to one JSON file — key included — and <em>Import</em> merges it back on another machine.
+          </p>
+        </div>
       </section>
     </main>
 

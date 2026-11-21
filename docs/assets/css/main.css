@@ -1009,8 +1009,11 @@ main {
    `src/chat/view-config.ts`: the site frames the app (orbit rings, reveal, glass halo), it does
    not draw a different app. Only the WORDS are ours.
    One scale for the whole replica: `font-size` lives here, everything inside is sized in `em`/px
-   against it, so the panel reads as one piece at any column width. */
-.console {
+   against it, so the panel reads as one piece at any column width.
+   `.pm` (the Providers & Models dialog, shown at the end of SETUP) is the same app in another crop,
+   so it shares the palette and the type scale from here and only overrides its own box. */
+.console,
+.pm {
   /* PALETTE_DARK, as ROLES — the names are the extension's, so a value that drifts is visible. */
   --pn-bg: #111111;
   --pn-card: #1e1e1e;
@@ -4065,6 +4068,272 @@ main {
 .reqs b {
   color: var(--text);
   font-weight: 500;
+}
+
+/* ---------- 17b. SETUP — THREE REAL PROVIDER CONFIGS ---------- */
+/* What step 03 actually looks like, once per host: local, gateway, aggregator. The screenshots are
+   cropped to the DIALOG — the chat behind it is already in every other section — and rebuilt in the
+   app's own tokens, so they stay sharp at any density and carry no key that could be read off a PNG. */
+.pconf {
+  margin-top: clamp(2.4rem, 5vw, 3.6rem);
+}
+.pconf__head {
+  display: grid;
+  gap: 0.65rem;
+  max-width: 64ch;
+}
+.pconf__idx {
+  font-family: var(--f-mono);
+  font-size: 0.56rem;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--tan);
+}
+.pconf__idx span {
+  color: var(--faint);
+}
+.pconf__title {
+  font-family: var(--f-display);
+  font-size: clamp(1.3rem, 2.4vw, 1.75rem);
+  font-weight: 600;
+  line-height: 1.18;
+  color: var(--text-hi);
+}
+.pconf__lede {
+  font-size: 0.86rem;
+  line-height: 1.7;
+  color: var(--dim);
+}
+.pconf__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
+  gap: 1rem;
+  margin-top: clamp(1.4rem, 3vw, 2rem);
+}
+.pconf__foot {
+  margin-top: 1.1rem;
+  font-size: 0.78rem;
+  line-height: 1.7;
+  color: var(--faint);
+  max-width: 72ch;
+}
+.pconf__foot em {
+  font-style: normal;
+  color: var(--dim);
+}
+
+.provfig {
+  /* a <figure>: the UA margin would eat 80px of a 378px column */
+  margin: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 0.85rem 0.85rem 1rem;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  background: linear-gradient(160deg, rgba(6, 26, 38, 0.86), rgba(1, 8, 15, 0.96));
+  transition: transform 0.4s var(--ease), border-color 0.4s, box-shadow 0.4s;
+}
+.provfig:hover {
+  transform: translateY(-3px);
+  border-color: rgba(208, 136, 86, 0.5);
+  box-shadow: 0 34px 70px -46px rgba(208, 136, 86, 0.85);
+}
+.provfig__cap {
+  display: grid;
+  gap: 0.3rem;
+  padding-top: 0.15rem;
+}
+.provfig__tag {
+  font-family: var(--f-mono);
+  font-size: 0.54rem;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--tan);
+}
+.provfig__cap b {
+  font-family: var(--f-display);
+  font-size: 0.98rem;
+  font-weight: 600;
+  color: var(--text-hi);
+}
+.provfig__cap p {
+  font-size: 0.76rem;
+  line-height: 1.6;
+  color: var(--faint);
+}
+.provfig__cap p b {
+  font-family: var(--f-mono);
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: var(--dim);
+  word-break: break-all;
+}
+
+/* ── the dialog itself (`.pm` inherits the palette + 11px base from `.console`, above) ── */
+.pm {
+  max-height: none;
+  gap: 0.75em;
+  padding: 0.95em 1em 1em;
+  border-radius: 9px;
+  box-shadow: 0 30px 60px -40px rgba(0, 0, 0, 1);
+}
+.pm__head {
+  display: grid;
+  gap: 0.22em;
+}
+.pm__head b {
+  font-family: var(--f-display);
+  font-size: 1.3em;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--pn-fg-strong);
+}
+.pm__head span {
+  font-size: 0.86em;
+  line-height: 1.5;
+  color: var(--pn-muted-2);
+}
+.pm__body {
+  display: flex;
+  gap: 0.85em;
+  align-items: stretch;
+}
+.pm__list-col {
+  flex: 0 0 8.8em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4em;
+  min-width: 0;
+}
+.pm__list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4em;
+  font-size: 0.86em;
+  color: var(--pn-dim);
+}
+.pm__new {
+  font-size: 0.86em;
+  line-height: 1.4;
+  padding: 0.05em 0.45em;
+  border: 1px solid var(--pn-overlay-2);
+  border-radius: 3px;
+  background: var(--pn-raise);
+  color: var(--pn-fg);
+}
+.pm__list {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 1px;
+  min-height: 7.6em;
+  border: 1px solid rgba(90, 170, 235, 0.6);
+  border-radius: 3px;
+  background: var(--pn-tool);
+}
+.pm__list > span {
+  font-size: 0.95em;
+  line-height: 1.5;
+  padding: 0.25em 0.4em;
+  border-radius: 2px;
+  color: var(--pn-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pm__list > span.is-on {
+  background: #2f6ea8;
+  color: #ffffff;
+}
+.pm__form {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 0.5em;
+  align-content: start;
+}
+.pm__row {
+  display: grid;
+  gap: 0.12em;
+}
+.pm__label {
+  font-size: 0.8em;
+  line-height: 1.3;
+  color: var(--pn-dim);
+}
+.pm__label i {
+  font-style: normal;
+  color: var(--pn-muted-3);
+}
+.pm__input {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35em;
+  min-height: 2.05em;
+  padding: 0.24em 0.45em;
+  font-size: 0.9em;
+  line-height: 1.3;
+  border: 1px solid var(--pn-overlay-2);
+  border-radius: 3px;
+  background: var(--pn-raise);
+  color: var(--pn-fg-strong);
+  overflow: hidden;
+}
+.pm__input > span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.pm__input.is-ph > span,
+.pm__input.is-ph {
+  color: var(--pn-muted-3);
+}
+.pm__input--key > span {
+  letter-spacing: 0.14em;
+}
+.pm__ico {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--pn-muted-2);
+}
+.pm__ico svg {
+  width: 1.25em;
+  height: 1.25em;
+}
+.pm__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45em;
+  margin-top: 0.15em;
+}
+.pm__btn {
+  font-size: 0.82em;
+  line-height: 1.4;
+  padding: 0.2em 0.5em;
+  border: 1px solid var(--pn-overlay-2);
+  border-radius: 3px;
+  background: var(--pn-raise);
+  color: var(--pn-fg);
+}
+.pm__btn--danger {
+  color: #ff6b78;
+}
+.pm__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5em;
+}
+.pm__btn--save {
+  border-color: transparent;
+  background: linear-gradient(135deg, #e2672c, #c8501c);
+  color: #ffffff;
+  font-weight: 600;
 }
 
 /* ---------- 18. FOOTER ---------- */
