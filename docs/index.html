@@ -9,13 +9,36 @@
       content="Harny is a full AI coding agent that lives in your Activity Bar. Preview in Analyze, apply in Build, bring your own model — cloud or local. One protocol: OpenAI Chat Completions."
     />
     <meta name="theme-color" content="#00050a" />
+    <link rel="canonical" href="https://harny.dev/" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
+    <meta name="author" content="SPLTek" />
+    <meta
+      name="keywords"
+      content="AI coding agent, VSCodium, VS Code, OpenAI compatible, local model, BYOK, MIT"
+    />
     <meta property="og:title" content="Harny — AI Coding Agent" />
     <meta
       property="og:description"
       content="Preview, then apply. Bring your own model. Real parallelism. Never locked out."
     />
     <meta property="og:type" content="website" />
-    <meta property="og:image" content="https://spltek.github.io/harny/assets/img/harny_wall.jpg" />
+    <meta property="og:url" content="https://harny.dev/" />
+    <meta property="og:site_name" content="Harny" />
+    <meta property="og:locale" content="en_US" />
+    <meta
+      property="og:image"
+      content="https://harny.dev/assets/img/harny_wall.jpg"
+    />
+    <meta property="og:image:alt" content="Harny — AI coding harness for VSCodium and VS Code" />
+    <meta property="og:image:width" content="1600" />
+    <meta property="og:image:height" content="643" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Harny — AI Coding Agent" />
+    <meta
+      name="twitter:description"
+      content="Preview, then apply. Bring your own model. Real parallelism. Never locked out."
+    />
+    <meta name="twitter:image" content="https://harny.dev/assets/img/harny_wall.jpg" />
     <link
       rel="preload"
       href="assets/fonts/chakra-petch-700.woff2"
@@ -48,6 +71,38 @@
         }
       </style>
     </noscript>
+    <!-- Structured data: helps Google/Bing render a rich result for the extension.
+         Deliberately no softwareVersion — it would go stale on every release. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Harny",
+        "alternateName": "Harny - AI Coding Harness",
+        "applicationCategory": "DeveloperApplication",
+        "applicationSubCategory": "AI coding agent",
+        "operatingSystem": "Windows, macOS, Linux",
+        "description": "Harny is a full AI coding agent that lives in your Activity Bar. Preview in Analyze, apply in Build, bring your own model — cloud or local. One protocol: OpenAI Chat Completions.",
+        "url": "https://harny.dev/",
+        "license": "https://github.com/spltek/harny/blob/main/LICENSE",
+        "isAccessibleForFree": true,
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "SPLTek",
+          "url": "https://github.com/spltek"
+        },
+        "sameAs": [
+          "https://github.com/spltek/harny",
+          "https://marketplace.visualstudio.com/items?itemName=spltek.harny",
+          "https://open-vsx.org/extension/spltek/harny"
+        ]
+      }
+    </script>
   </head>
   <body>
     <!-- ============ ATMOSPHERE ============ -->

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  harny.dev is a deliberate one-pager: every section is an in-page anchor
+  (#why, #setup, …) and fragments cannot be listed in a sitemap, so there is
+  exactly one URL to declare. <lastmod> is honest — bump it when the page's
+  copy changes materially, not on every deploy. Google ignores <priority> and
+  <changefreq>, so they are omitted on purpose.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://harny.dev/</loc>
+    <lastmod>2026-11-21</lastmod>
+  </url>
+</urlset>

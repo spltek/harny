@@ -1,0 +1,15 @@
+# harny.dev — Harny, the AI coding harness for VSCodium and VS Code.
+#
+# One public page, no private sections: everything is crawlable, so a single
+# wildcard group is all the search engines need. Googlebot, Bingbot,
+# DuckDuckBot, Yandex, Baidu and friends all inherit it — no per-robot groups,
+# which would only be a second place to drift out of sync.
+#
+# AI crawlers (GPTBot, ClaudeBot, CCBot, Google-Extended, …) are allowed too,
+# by inheritance. To opt out of one, add an explicit group above the wildcard,
+# e.g. `User-agent: GPTBot` + `Disallow: /`.
+
+User-agent: *
+Allow: /
+
+Sitemap: https://harny.dev/sitemap.xml
