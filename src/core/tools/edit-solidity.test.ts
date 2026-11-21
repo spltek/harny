@@ -185,4 +185,23 @@ describe("EditTool — end-to-end robustness", () => {
     expect(r2.isError).toBe(false);
     expect(readFileSync(f, "utf8")).toBe("set(a);\napply(b);\nset(c);\n");
   });
+
+  it("points at the ONE recovery that works: beforeText does not disambiguate a replacement", () => {
+    // The tool description, the beforeText parameter and both engine details used to
+    // offer beforeText/afterText as the remedy for a duplicate oldText — but applyOne
+    // takes the oldText+newText branch FIRST and never reads them, so a model that
+    // obeyed re-sent the same call and got the IDENTICAL error back: the loop the
+    // system prompt forbids. Pinned here so the advice cannot regress into it.
+    const f = join(dir, "dup-hint.js");
+    writeFileSync(f, "set(a);\nset(b);\n");
+    const r = tool().execute({
+      path: f,
+      edits: [{ oldText: "set(", newText: "apply(", beforeText: "set(b);" }],
+    });
+
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain("extend oldText");
+    expect(r.content).not.toContain("add beforeText");
+    expect(readFileSync(f, "utf8")).toBe("set(a);\nset(b);\n"); // and nothing was written
+  });
 });

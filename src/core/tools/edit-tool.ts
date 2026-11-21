@@ -22,7 +22,7 @@ export class EditTool implements Tool {
     description:
       "Applies one or more surgical edits to a file atomically. " +
       "Each edit is { oldText, newText } (oldText must exactly match a UNIQUE region; " +
-      "if it appears more than once, add beforeText/afterText context) or " +
+      "if it appears more than once, extend oldText until it is unique) or " +
       "{ beforeText, newText } to insert a line before an anchor. " +
       "If two edits touch the same block, merge them into ONE edit. " +
       "The result shows the applied diff.",
@@ -40,9 +40,17 @@ export class EditTool implements Tool {
               newText: { type: "string", description: "Replacement text (empty deletes oldText)" },
               beforeText: {
                 type: "string",
-                description: "Anchor line to insert BEFORE (or to disambiguate duplicates)",
+                description: "Anchor line: the new text is inserted BEFORE this line",
               },
-              afterText: { type: "string", description: "Anchor line to insert before, when beforeText is absent" },
+              // NOT "insert after": the engine inserts BEFORE whatever anchor it
+              // finds (beforeText ?? afterText), so the name only means "the line
+              // that follows the insertion". It is also NOT a way to disambiguate a
+              // replacement — beforeText/afterText are never read on the
+              // oldText+newText branch; extend oldText instead.
+              afterText: {
+                type: "string",
+                description: "Fallback anchor when beforeText is absent — the text still lands BEFORE this line",
+              },
             },
           },
         },

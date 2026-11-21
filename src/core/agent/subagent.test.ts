@@ -45,7 +45,6 @@ function spec(partial: Partial<DelegateSpec>): DelegateSpec {
     goal: "do the thing",
     access: "read",
     resources: ["src/a.ts"],
-    parallel: false,
     after: [],
     ...partial,
   };

@@ -20,9 +20,6 @@ export interface DelegateSpec {
   access: DelegateAccess;
   /** Files/dirs the sub-agent will touch (drives the parallel decision). */
   resources: string[];
-  /** Whether this read-only sub-task may run alongside other reads. Undefined
-   * = default (read-only tasks ARE parallelizable); `false` = force serial. */
-  parallel?: boolean;
   /** Ids of sibling sub-tasks that must finish first. */
   after: string[];
   /** Numbers (1-based) of the user's attachments this sub-task needs. Omitted
@@ -63,7 +60,6 @@ export function parseDelegateSpec(args: Record<string, unknown>): { spec?: Deleg
   const id = typeof args.id === "string" && args.id.trim() ? args.id.trim() : "";
   const role = typeof args.role === "string" && args.role.trim() ? args.role.trim() : undefined;
   const context = typeof args.context === "string" && args.context.trim() ? args.context.trim() : undefined;
-  const parallel = args.parallel === "yes" ? true : args.parallel === "no" ? false : undefined;
   const after = Array.isArray(args.after)
     ? args.after.filter((a): a is string => typeof a === "string" && a.trim().length > 0).map((a) => a.trim())
     : [];
@@ -79,7 +75,6 @@ export function parseDelegateSpec(args: Record<string, unknown>): { spec?: Deleg
       role,
       access,
       resources,
-      parallel,
       after,
       ...(attachments && attachments.length > 0 ? { attachments } : {}),
     },

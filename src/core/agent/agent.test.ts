@@ -2349,7 +2349,7 @@ describe("Orchestration (Delegate)", () => {
   it("intercepts Delegate and hands the parsed spec to the runner", async () => {
     const seen: DelegateSpec[] = [];
     const { agent } = build({
-      calls: [{ id: "A", goal: "analyze x", access: "read", resources: ["src/a.ts"], parallel: "yes" }],
+      calls: [{ id: "A", goal: "analyze x", access: "read", resources: ["src/a.ts"] }],
       spawn: async (spec) => {
         seen.push(spec);
         return { content: "🔁 report A", isError: false };
@@ -2364,7 +2364,6 @@ describe("Orchestration (Delegate)", () => {
       goal: "analyze x",
       access: "read",
       resources: ["src/a.ts"],
-      parallel: true,
     });
   });
 
@@ -2803,8 +2802,8 @@ describe("Orchestration (Delegate)", () => {
     };
     const { agent } = build({
       calls: [
-        { id: "A", goal: "a", access: "read", resources: ["a.ts"], parallel: "yes" },
-        { id: "B", goal: "b", access: "read", resources: ["b.ts"], parallel: "yes" },
+        { id: "A", goal: "a", access: "read", resources: ["a.ts"] },
+        { id: "B", goal: "b", access: "read", resources: ["b.ts"] },
       ],
       spawn,
     });
@@ -2829,9 +2828,9 @@ describe("Orchestration (Delegate)", () => {
     };
     const { agent } = build({
       calls: [
-        { id: "A", goal: "a", access: "read", resources: ["a.ts"], parallel: "yes" },
-        { id: "B", goal: "b", access: "read", resources: ["b.ts"], parallel: "yes" },
-        { id: "C", goal: "c", access: "read", resources: ["c.ts"], parallel: "yes" },
+        { id: "A", goal: "a", access: "read", resources: ["a.ts"] },
+        { id: "B", goal: "b", access: "read", resources: ["b.ts"] },
+        { id: "C", goal: "c", access: "read", resources: ["c.ts"] },
       ],
       maxParallel: 2,
       spawn,
@@ -2858,9 +2857,9 @@ describe("Orchestration (Delegate)", () => {
     };
     const { agent } = build({
       calls: [
-        { id: "A", goal: "a", access: "read", resources: ["a.ts"], parallel: "yes" },
-        { id: "B", goal: "b", access: "read", resources: ["b.ts"], parallel: "yes" },
-        { id: "C", goal: "c", access: "read", resources: ["c.ts"], parallel: "yes" },
+        { id: "A", goal: "a", access: "read", resources: ["a.ts"] },
+        { id: "B", goal: "b", access: "read", resources: ["b.ts"] },
+        { id: "C", goal: "c", access: "read", resources: ["c.ts"] },
       ],
       maxParallel: 2,
       spawn,
@@ -2899,8 +2898,8 @@ describe("Orchestration (Delegate)", () => {
     };
     const { agent, eventLog, history } = build({
       calls: [
-        { id: "A", goal: "a", access: "read", resources: ["a.ts"], parallel: "yes" },
-        { id: "B", goal: "b", access: "read", resources: ["b.ts"], parallel: "yes" },
+        { id: "A", goal: "a", access: "read", resources: ["a.ts"] },
+        { id: "B", goal: "b", access: "read", resources: ["b.ts"] },
       ],
       spawn,
     });
@@ -2924,8 +2923,8 @@ describe("Orchestration (Delegate)", () => {
   it("routes each sub-agent's live events to its OWN Delegate call", async () => {
     const { agent, eventLog } = build({
       calls: [
-        { id: "A", goal: "a", access: "read", resources: ["a.ts"], parallel: "yes" },
-        { id: "B", goal: "b", access: "read", resources: ["b.ts"], parallel: "yes" },
+        { id: "A", goal: "a", access: "read", resources: ["a.ts"] },
+        { id: "B", goal: "b", access: "read", resources: ["b.ts"] },
       ],
       spawn: async (spec, onEvent) => {
         onEvent?.({ type: "text_delta", content: "from " + spec.id });
@@ -3047,8 +3046,8 @@ describe("Orchestration (Delegate)", () => {
     };
     const { agent, eventLog } = build({
       calls: [
-        { id: "A", goal: "a", access: "read", resources: ["a.ts"], parallel: "yes" },
-        { id: "B", goal: "b", access: "read", resources: ["b.ts"], parallel: "yes" },
+        { id: "A", goal: "a", access: "read", resources: ["a.ts"] },
+        { id: "B", goal: "b", access: "read", resources: ["b.ts"] },
       ],
       spawn,
     });
@@ -3070,8 +3069,8 @@ describe("Orchestration (Delegate)", () => {
     };
     const { agent } = build({
       calls: [
-        { id: "A", goal: "a", access: "read", resources: ["a.ts"], parallel: "yes" },
-        { id: "B", goal: "b", access: "read", resources: ["b.ts"], parallel: "yes" },
+        { id: "A", goal: "a", access: "read", resources: ["a.ts"] },
+        { id: "B", goal: "b", access: "read", resources: ["b.ts"] },
       ],
       maxParallel: 1,
       spawn,
@@ -3150,7 +3149,7 @@ describe("Orchestration (Delegate)", () => {
     const spawned: string[] = [];
     const { agent, history } = build({
       calls: [
-        { id: "A", goal: "read a", access: "read", resources: ["a.ts"], parallel: "yes" },
+        { id: "A", goal: "read a", access: "read", resources: ["a.ts"] },
         { id: "B", goal: "write b", access: "write", resources: ["b.ts"] },
       ],
       mode: "analyze",
@@ -3229,7 +3228,6 @@ describe("Orchestration (Delegate)", () => {
       goal: id,
       access: "read",
       resources: [`${i}.ts`],
-      parallel: "yes",
     }));
     const { agent } = build({ calls, maxParallel: 2, spawn });
 
@@ -3253,7 +3251,6 @@ describe("Orchestration (Delegate)", () => {
       goal: id,
       access: "read",
       resources: [`${i}.ts`],
-      parallel: "yes",
     }));
     // Config says 2, but the session override serializes to 1.
     const { agent } = build({ calls, maxParallel: 2, spawn });
@@ -3279,7 +3276,6 @@ describe("Orchestration (Delegate)", () => {
       goal: id,
       access: "read",
       resources: [`${i}.ts`],
-      parallel: "yes",
     }));
     const { agent } = build({ calls, spawn }); // no maxParallel in the config
 
@@ -3303,7 +3299,6 @@ describe("Orchestration (Delegate)", () => {
       goal: id,
       access: "read",
       resources: [`${i}.ts`],
-      parallel: "yes",
     }));
     const { agent } = build({ calls, maxParallel: 2, spawn });
     agent.setMaxParallelSubAgents(0); // explicit no cap
@@ -3327,7 +3322,6 @@ describe("Orchestration (Delegate)", () => {
       goal: id,
       access: "read",
       resources: [`${i}.ts`],
-      parallel: "yes",
     }));
     const { agent, history, eventLog } = build({ calls, maxParallel: 1, spawn });
     agentRef = agent;

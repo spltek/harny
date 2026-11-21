@@ -28,10 +28,10 @@ export class DelegateTool implements Tool {
       "DECLARE EXACTLY what the sub-agent will touch so the system can parallelize safely:\n" +
       "- resources: the files/dirs it will read or write (paths relative to the working directory).\n" +
       '- access: "read" (inspect only), "write" (modify existing files) or "create" (new files).\n' +
-      "- parallel: IGNORED. Read-only sub-agents ALWAYS run in parallel with the others from the SAME turn; " +
+      "- after: ids of sibling sub-tasks that must finish first (use it when a sub-agent needs another's output).\n" +
+      "HOW THEY BATCH: read-only sub-agents ALWAYS run in parallel with the others from the SAME turn; " +
       "WRITE/CREATE sub-agents on DIFFERENT files also run in parallel. Two writers that touch the SAME file " +
-      "(or overlapping dirs) are serialized automatically (use `after` to order them).\n" +
-      "- after: ids of sibling sub-tasks that must finish first (use it when a sub-agent needs another's output).\n\n" +
+      "(or overlapping dirs) are serialized automatically (use `after` to order them).\n\n" +
       "RULES:\n" +
       "- FIRST, CLASSIFY the work: PARALLELIZABLE (N ≥ 2 independent items — the SAME operation over different " +
       "targets) → ONE Delegate per item in the SAME turn; NOT parallelizable (a single small or sequential task) " +
@@ -79,12 +79,6 @@ export class DelegateTool implements Tool {
           description:
             'Files/dirs the sub-agent will touch (relative paths). REQUIRED for access "write"/"create"; ' +
             "may be empty for read-only tasks that do not touch the filesystem (e.g. web research).",
-        },
-        parallel: {
-          type: "string",
-          enum: ["yes", "no"],
-          description:
-            "Advisory only — read-only sub-agents always run in parallel with the others from the same turn; use `after` to order them.",
         },
         after: {
           type: "array",

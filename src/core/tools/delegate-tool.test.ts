@@ -10,7 +10,6 @@ describe("DelegateTool", () => {
     expect(d.parameters.required).toEqual(["goal", "access"]);
     const props = d.parameters.properties as Record<string, { type?: string; enum?: string[]; minItems?: number }>;
     expect(props.access.enum).toEqual(["read", "write", "create"]);
-    expect(props.parallel.enum).toEqual(["yes", "no"]);
     expect(props.resources.type).toBe("array");
     expect(props.resources.minItems).toBeUndefined(); // empty allowed for read-only
     expect(props.after?.type).toBe("array");

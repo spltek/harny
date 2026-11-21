@@ -6,9 +6,11 @@ export interface EditOp {
   oldText?: string;
   /** Replacement text (required with oldText; empty = deletion). */
   newText?: string;
-  /** Anchor line to insert BEFORE / to disambiguate duplicates. */
+  /** Anchor line: the new text is inserted BEFORE this line. */
   beforeText?: string;
-  /** Anchor line to insert before when beforeText is absent. */
+  /** Fallback anchor when beforeText is absent — still BEFORE it, never after.
+   * Neither field disambiguates a replacement: {@link applyOne} takes the
+   * oldText+newText branch first and never looks at these. */
   afterText?: string;
 }
 
@@ -169,7 +171,9 @@ function replaceText(content: string, oldText: string, newText: string): OneResu
       ok: false,
       mode: "invalid",
       reason: `${exactCount} occurrences of oldText.`,
-      detail: "oldText must be unique — add beforeText/afterText context or extend oldText to cover more of the file.",
+      detail:
+        "oldText must be unique — extend oldText to cover this occurrence only " +
+        "(beforeText/afterText do NOT disambiguate a replacement).",
     };
   }
 
@@ -182,7 +186,7 @@ function replaceText(content: string, oldText: string, newText: string): OneResu
       ok: false,
       mode: "invalid",
       reason: "multiple lines match oldText (after normalization).",
-      detail: "oldText must be unique — add beforeText/afterText context to disambiguate.",
+      detail: "oldText must be unique — extend oldText to the full line, or merge the duplicate into the edit.",
     };
   }
 

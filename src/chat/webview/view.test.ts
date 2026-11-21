@@ -5209,6 +5209,10 @@ describe("view webview client", () => {
         goal: "Analyze src/fetch.ts",
         access: "read",
         resources: ["src/fetch.ts"],
+        // `parallel` is RETIRED from the schema (nothing in the host ever read it;
+        // batching is decided from resources + after). The panel still renders it
+        // when a model sends it, because the argument block is a faithful
+        // transcript of what the model wrote — this fixture keeps that path alive.
         parallel: "yes",
         role: "analyst",
       },

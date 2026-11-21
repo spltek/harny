@@ -20,7 +20,6 @@ function spec(partial: Partial<DelegateSpec>): DelegateSpec {
     goal: "do it",
     access: "read",
     resources: ["src/a.ts"],
-    parallel: false,
     after: [],
     ...partial,
   };
@@ -34,7 +33,6 @@ describe("parseDelegateSpec", () => {
       goal: "analyze",
       access: "read",
       resources: ["src/a.ts"],
-      parallel: undefined,
       after: [],
     });
   });
@@ -54,16 +52,18 @@ describe("parseDelegateSpec", () => {
     expect(parseDelegateSpec({ goal: "x", access: "read" }).error).toBeUndefined();
   });
 
-  it("accepts parallel:'yes' and after ids; ignores garbage", () => {
+  it("accepts after ids; trims role and ignores garbage in resources", () => {
     const { spec: s } = parseDelegateSpec({
       goal: "x",
       access: "read",
       resources: ["a", 3, "  "],
+      // `parallel` was a DECLARED-BUT-IGNORED argument (nothing ever read
+      // spec.parallel) and is gone: a model sending it changes nothing.
       parallel: "yes",
       after: ["B", 7],
       role: " analyst ",
     });
-    expect(s).toMatchObject({ resources: ["a"], parallel: true, after: ["B"], role: "analyst" });
+    expect(s).toMatchObject({ resources: ["a"], after: ["B"], role: "analyst" });
   });
 });
 
@@ -84,7 +84,7 @@ describe("planToolExecution", () => {
   const nonDelegate: PlannedCall = { isDelegate: false };
   const par = (id: string, res = "a.ts"): PlannedCall => ({
     isDelegate: true,
-    spec: spec({ id, parallel: true, resources: [res] }),
+    spec: spec({ id, resources: [res] }),
   });
 
   it("groups consecutive parallel read-delegates into one batch", () => {
@@ -124,7 +124,7 @@ describe("planToolExecution", () => {
   });
 
   it("serializes a delegate with a dependency (after) even if read+parallel", () => {
-    const dependent: PlannedCall = { isDelegate: true, spec: spec({ parallel: true, after: ["A"] }) };
+    const dependent: PlannedCall = { isDelegate: true, spec: spec({ after: ["A"] }) };
     expect(planToolExecution([par("A"), dependent])).toEqual([
       { kind: "single", index: 0 },
       { kind: "single", index: 1 },
