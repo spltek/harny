@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-11-21
+
 ### Changed
 
 - **`Delegate.parallel` is gone: it was a declared-but-never-read argument.** `parseDelegateSpec` turned `"yes"`/`"no"` into `spec.parallel`, and nothing ever read it — `planToolExecution` batches from resource overlap plus `after` — so the knob described control it did not have. Both descriptions admitted as much (`"- parallel: IGNORED"` in the tool text, `"Advisory only"` on the parameter), which is a token cost per request and an invitation to reason about a lever that is not connected. Removed from the schema, from `DelegateSpec` and from the parser; the paragraph explaining how calls actually batch is kept, so the useful part of that bullet survives. The panel still draws the `⫽ parallel` chip when a model emits the retired argument, because the argument block is a faithful transcript of what the model wrote.
@@ -2025,7 +2027,8 @@ Completions protocol.
 - **Diagnostics**: per-turn lines in _Output > Harny_, an optional request log
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
-[Unreleased]: https://github.com/spltek/harny/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/spltek/harny/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/spltek/harny/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/spltek/harny/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/spltek/harny/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/spltek/harny/compare/v1.2.1...v1.3.0
