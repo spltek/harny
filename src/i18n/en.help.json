@@ -148,7 +148,7 @@
     "tools.none": "Expose no tool of this server.",
     "tools.save": "Apply to this conversation: which tools the model sees, and which run in Analyze.",
     "transcript.collapse": "Fold every expanded section — thinking, tool calls, sub-agents — back to one line.",
-    "transcript.focus": "Arm Focus: the section the agent is working in opens as it starts and folds when the run moves on. A section you toggle by hand is yours — Focus never touches it again.",
+    "transcript.focus": "Arm Focus: the section the agent is working in opens as it starts. A section you toggle by hand is yours — Focus never touches it again. Armed per session, never saved: a new one starts OFF.",
     "transcript.follow": "Follow: while a run is writing, the newest message stays in view and a box that drifts is pulled back. Switched off mid-run, the box stays where you leave it — and switches back on when the next run starts.",
     "transcript.follow.idle": "Follow: nothing is running, so there is no live edge to follow. It switches itself on, already green, the moment this session starts working."
   },

@@ -13000,6 +13000,29 @@ describe("Focus: the transcript follows the run", () => {
     (document.getElementById("send-btn") as HTMLButtonElement).click();
   }
 
+  /** A tab switch, as the host answers the click: the whole view state in place, no page reload. */
+  const switchTo = (id: string, extra: Record<string, unknown> = {}): void =>
+    hostMessage({
+      type: "switchView",
+      sessions: [
+        { id: "a", name: "Refactor", createdAt: 1, updatedAt: 2, messageCount: 3 },
+        { id: "b", name: "Debug", createdAt: 2, updatedAt: 1, messageCount: 1 },
+      ],
+      openIds: ["a", "b"],
+      activeId: id,
+      messages: [],
+      config: {
+        provider: "openai",
+        model: "gpt-4o",
+        hasKey: true,
+        models: [],
+        providerModels: [],
+        contextWindow: 128000,
+      },
+      workingIds: [],
+      ...extra,
+    });
+
   const auto = () => document.getElementById("autoscroll") as HTMLButtonElement;
   const messagesEl = () => document.getElementById("messages") as HTMLElement;
 
@@ -13441,11 +13464,74 @@ describe("Focus: the transcript follows the run", () => {
     expect(document.body.classList.contains("controls-collapsed")).toBe(true);
   });
 
-  it("survives a reload, because it is a mode", async () => {
-    setupFixture({}, { focusMode: true });
+  it("is the arming of a SESSION: a reload brings back the one you armed", async () => {
+    setupFixture({}, { focusModeBySession: { a: true } });
     await loadView();
     expect(focusBtn().getAttribute("aria-pressed")).toBe("true");
-    expect(persistedState.focusMode).toBe(true);
+    expect(persistedState.focusModeBySession).toEqual({ a: true });
+  });
+
+  it("a NEW session starts OFF, and going back restores the one you armed", async () => {
+    await loadView(); // on session a
+    focusBtn().click();
+    expect(persistedState.focusModeBySession).toEqual({ a: true });
+
+    switchTo("b");
+    expect(focusBtn().getAttribute("aria-pressed")).toBe("false");
+    // …and it BEHAVES as disarmed: the next section is born folded, like any new session's.
+    hostMessage({ type: "toolCall", id: "t1", name: "Read", arguments: { path: "a.ts" } });
+    expect(isOpen(toolBodies()[0])).toBe(false);
+
+    switchTo("a");
+    expect(focusBtn().getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("a closed tab takes its arming with it", async () => {
+    await loadView();
+    focusBtn().click(); // a armed
+    expect(persistedState.focusModeBySession).toEqual({ a: true });
+
+    // a is gone from the strip: its preference must not outlive it (nor come back if the session
+    // is opened again tomorrow, which starts folded like any other).
+    switchTo("b", {
+      sessions: [{ id: "b", name: "Debug", createdAt: 2, updatedAt: 1, messageCount: 1 }],
+      openIds: ["b"],
+    });
+    expect(persistedState.focusModeBySession).toEqual({});
+  });
+
+  it("switching back to a WORKING session re-opens the section it is inside", async () => {
+    // The ordering pin: the arming of the session being entered must be applied BEFORE the switch
+    // replays its live stream — that replay is what re-opens the running tool, and it asks the
+    // mode. Applied after, you would land on an armed session with nothing open.
+    setupFixture({}, { focusModeBySession: { a: true } });
+    await loadView();
+    // Leave the armed session first: with the mode still on screen, the assertion below would hold
+    // for free and pin nothing.
+    switchTo("b");
+    expect(focusBtn().getAttribute("aria-pressed")).toBe("false");
+
+    switchTo("a", {
+      workingIds: ["a"],
+      streaming: true,
+      liveTurn: {
+        thinking: "",
+        answer: "",
+        textAfterTools: false,
+        toolCalls: [{ id: "t1", name: "Read", args: { path: "a.ts" }, done: false, isError: false }],
+        subAgents: {},
+      },
+    });
+
+    expect(isOpen(toolBodies()[0])).toBe(true);
+  });
+
+  it("never tells the host: nothing of it reaches the session record", async () => {
+    await loadView();
+    focusBtn().click();
+    // The whole point of keeping the map in the webview state: there is no message, no
+    // `saveSettings`, nothing to restore from the store.
+    expect((posted as { type?: unknown }[]).filter((m) => /focus/i.test(String(m?.type)))).toEqual([]);
   });
 
   it("opens the section the agent starts in, and never takes it away", async () => {

@@ -2434,8 +2434,33 @@ function focusTargetOf(el: HTMLElement | null): HTMLElement | null {
   return el.querySelector<HTMLElement>(".thinking-body, .tool-details");
 }
 
-/** Armed or not. A MODE, so the pill is never `disabled`: `aria-pressed` carries the state. */
+/** Armed or not for the session ON SCREEN. A MODE, so the pill is never `disabled`: `aria-pressed`
+ *  carries the state, and the state belongs to a SESSION (see `armedIn`). */
 let focusMode = false;
+
+/**
+ * Where each session's arming is kept: one flag per session id, in the webview state.
+ *
+ * PER SESSION, not per panel. The mode is about the run you were reading, so a NEW session starts
+ * with Focus OFF — its transcript is born folded, like any other — and going back to a session you
+ * armed restores it, mid-stream included. What it is NOT is part of the session: nothing of this
+ * ever reaches the store, so reopening that session tomorrow starts it folded, exactly like one you
+ * never armed. That is the line between a reading convenience and a property of the conversation,
+ * and it is why this is not `saveSettings` the way Parallel is.
+ */
+const FOCUS_STATE_KEY = "focusModeBySession";
+
+/** The whole map, as the last write left it (an unreadable one reads as empty — never as "armed"). */
+function focusStates(): Record<string, boolean> {
+  const raw = (vscode.getState() as Record<string, unknown> | undefined)?.[FOCUS_STATE_KEY];
+  return raw && typeof raw === "object" ? (raw as Record<string, boolean>) : {};
+}
+
+/** Was the session `id` left armed? The key follows the drafts' convention (`draftKey`): the panel
+ *  with no session on screen is one more bucket, and it inherits nothing from the one you left. */
+function armedIn(id: string | undefined): boolean {
+  return focusStates()[draftKey(id)] === true;
+}
 
 /** Fold `body` exactly as its own header would: body class, arrow and announced state together.
  *  Closing also RELEASES a selection inside it: the text is about to be `display: none`, so it
@@ -2469,21 +2494,65 @@ function liveToolEl(): HTMLElement | null {
 }
 
 /**
- * Arm or disarm the mode. Turning it OFF closes nothing: what it opened is the transcript of a run
- * the reader is still reading, and the next section is born folded — which IS the mode.
+ * Arm or disarm the mode for the session on screen. Turning it OFF closes nothing: what it opened is
+ * the transcript of a run the reader is still reading, and the next section is born folded — which
+ * IS the mode.
  */
 function setFocusMode(on: boolean): void {
   const changed = focusMode !== on;
   focusMode = on;
   focusModeBtn.setAttribute("aria-pressed", String(on));
   if (changed) {
-    // A preference, like the control stack: it survives a webview reload.
+    // A preference OF THIS SESSION, kept in the webview state: it survives a reload of the panel (a
+    // run you were following comes back armed) and goes with the tab when it is closed (see
+    // `pruneFocusStates`). Never written into the session itself.
     const prev = vscode.getState() as Record<string, unknown> | undefined;
-    vscode.setState({ ...(prev ?? {}), focusMode: on });
+    vscode.setState({ ...(prev ?? {}), [FOCUS_STATE_KEY]: { ...focusStates(), [draftKey(activeId)]: on } });
   }
   // Arming mid-run opens the section the agent is in right now, instead of waiting for the next
   // step: reasoning first (it is the live phase), otherwise the tool that is still running.
   if (on) focusOn(currentThinkingBlock ?? liveToolEl());
+}
+
+/**
+ * Put the pill — and the mode — where session `id` left them.
+ *
+ * Split from `setFocusMode` on purpose: a TAB SWITCH may not run that function's side effects.
+ * Arming opens what is live, and at this point the transcript of the session being entered is not
+ * drawn yet. The switch replays it right after (`restoreLiveStream`), and THAT replay re-opens the
+ * live tool on its own by asking `focusMode` — so the one ordering serves both.
+ */
+function applyFocusFor(id: string | undefined): void {
+  const armed = armedIn(id);
+  focusMode = armed;
+  focusModeBtn.setAttribute("aria-pressed", String(armed));
+}
+
+/** A closed tab takes its arming with it: the map must not outlive the sessions it describes. The
+ *  session on screen is kept even when a switch does not re-send the open list (see the caller). */
+function pruneFocusStates(openIds: string[]): void {
+  const states = focusStates();
+  const keys = Object.keys(states);
+  const kept = keys.filter((key) => !key || key === draftKey(activeId) || openIds.includes(key));
+  if (kept.length === keys.length) return;
+  const prev = vscode.getState() as Record<string, unknown> | undefined;
+  const next: Record<string, boolean> = {};
+  for (const key of kept) next[key] = states[key] === true;
+  vscode.setState({ ...(prev ?? {}), [FOCUS_STATE_KEY]: next });
+}
+
+/**
+ * A panel from the version that kept ONE switch for the whole window (`state.focusMode: boolean`)
+ * brings that switch along: it seeds the session it was left in — the one on screen now — and no
+ * other, which is what keeps the upgrade from arming every session at once. The old key is dropped
+ * in the same write: left behind, it would seed the NEXT panel too (another workspace, a new window).
+ */
+function seedLegacyFocus(id: string | undefined): void {
+  const state = vscode.getState() as Record<string, unknown> | undefined;
+  if (!state || state[FOCUS_STATE_KEY] !== undefined || state.focusMode !== true) return;
+  const rest = { ...state };
+  delete rest.focusMode;
+  vscode.setState({ ...rest, [FOCUS_STATE_KEY]: { [draftKey(id)]: true } });
 }
 
 /** Update a sub-agent bubble's status chip. */
@@ -8398,6 +8467,12 @@ function renderViewState(state: {
   for (const key of [...transcriptSize.keys()]) {
     if (key && !openIds.includes(key)) transcriptSize.delete(key);
   }
+  // Focus is per session too: a closed tab's arming goes with it (see `pruneFocusStates`)…
+  pruneFocusStates(openIds);
+  // …and the mode on screen is THIS session's, applied before anything is drawn: a switch back to
+  // a working session re-opens the section it is inside in `restoreLiveStream` right after, and
+  // that replay asks `focusMode` — so the value must already be the new session's.
+  applyFocusFor(activeId);
   // The HOME state is decided per RENDER: the same list selects sessions with a root and
   // chooses a WORKSPACE without one (see renderHomeRow).
   workspaceFolderCount = state.config?.workspaceFolderCount ?? workspaceFolderCount;
@@ -8636,15 +8711,18 @@ if (savedDraftFiles) {
 const collapsedDefault = savedCollapsed ?? true;
 document.body.classList.toggle("controls-collapsed", collapsedDefault);
 ctlToggle.setAttribute("aria-expanded", String(!collapsedDefault));
-// Focus is a MODE, not a one-shot action: it is restored like the collapsed stack above, and
-// BEFORE the first transcript render — so the first live section of a run that resumes with the
-// panel reopening (a reload mid-stream) opens exactly as it would have without the reload.
-if ((vscode.getState() as { focusMode?: boolean } | undefined)?.focusMode) setFocusMode(true);
+// Focus is a MODE, and what it is armed for is the SESSION on screen: restored like the collapsed
+// stack above, and BEFORE the first transcript render — so the first live section of a run that
+// resumes with the panel reopening (a reload mid-stream) opens exactly as it would have without
+// the reload.
+seedLegacyFocus(activeId);
+applyFocusFor(activeId);
 // The HOST is authoritative for mode + Parallel: the panel reflects
-// `init.config` and must NOT reset them to defaults on load. The webview is
-// recreated whenever the view is hidden/shown (no retainContextWhenHidden), so
-// force-posting setParallel(false)/setMode("analyze") here would silently turn
-// Parallel off on the host while the toggle still shows ON.
+// `init.config` and must NOT reset them to defaults on load. A webview can also be
+// recreated under us (a window reload, an extension update — the view is registered
+// with retainContextWhenHidden, so NOT on a simple hide/show), so force-posting
+// setParallel(false)/setMode("analyze") here would silently turn Parallel off on the
+// host while the toggle still shows ON.
 renderViewState({
   sessions: init.sessions || [],
   openIds: init.openIds || [],
