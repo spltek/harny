@@ -11,20 +11,37 @@ interface TodoItem {
  * the whole extension lifetime. */
 const MAX_OWNER_STATES = 200;
 
+/** Single source of truth for the tool name, so the system prompt can gate the
+ * TASK LIST section on the tool actually being offered. */
+export const TODO_TOOL_NAME = "TodoWrite";
+
 export class TodoTool implements Tool {
-  readonly name = "TodoWrite";
+  readonly name = TODO_TOOL_NAME;
   /** Read-only for Analyze (it changes nothing on disk) but NOT cacheable: it mutates
   // this conversation's todo list. */
   readonly analyzePolicy = "read-only" as const;
   readonly definition: ToolDefinition = {
     name: "TodoWrite",
-    description: "Use this tool to create and manage a structured task list for your current coding session.",
+    // Kept a LITERAL on purpose: icons.test.ts reads each tool's own name from
+    // this line to check every wired tool has its mark (a constant is accepted
+    // for Skill ONLY), and it looks no further than 160 chars past `definition`.
+    // todo-tool.test.ts asserts this equals TODO_TOOL_NAME, so the two cannot
+    // drift.
+    // First line only (max 120 chars) reaches the model's tool list —
+    // DefaultSystemPromptBuilder.summarize() truncates — so line 1 states the
+    // narrow trigger and line 2 the update rule.
+    description:
+      "Create and maintain the task list for this session — only when the work has several distinct goals.\n" +
+      "Keep it true: one task in_progress at a time; set a task completed the moment it is done (merge:true with only the changed items); nothing in_progress at the end.",
     parameters: {
       type: "object",
       properties: {
         todos: {
           type: "array",
-          minItems: 2,
+          // minItems MUST be 1, not 2: the canonical incremental update is
+          // merge:true with the ONE item whose status changed. minItems:2 made
+          // that call schema-invalid, so statuses were silently left stale.
+          minItems: 1,
           items: {
             type: "object",
             properties: {

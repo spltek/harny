@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DefaultSystemPromptBuilder, SubAgentSystemPromptBuilder } from "./system-prompt";
 import { toolDefinitionsForMode } from "../tools/mode-policy";
 import { DELEGATE_TOOL_NAME } from "./orchestration";
+import { TODO_TOOL_NAME } from "../tools/todo-tool";
 import type { Tool } from "../tools/tool";
 
 function tools(): Tool[] {
@@ -143,6 +144,50 @@ describe("DefaultSystemPromptBuilder mode awareness", () => {
     expect(listSection).toContain("- Write:");
   });
 
+  describe("TASK LIST guidance (TodoWrite)", () => {
+    const withTodo = () =>
+      new DefaultSystemPromptBuilder(
+        (m) => toolDefinitionsForMode(toolsWithTodo(), m),
+        () => "/w",
+      );
+    const withoutTodo = () =>
+      new DefaultSystemPromptBuilder(
+        (m) => toolDefinitionsForMode(tools(), m),
+        () => "/w",
+      );
+
+    it("appears only when TodoWrite is actually offered (both modes)", () => {
+      for (const mode of ["analyze", "agent"] as const) {
+        expect(withTodo().build(mode)).toContain("TASK LIST — TodoWrite");
+        expect(withoutTodo().build(mode)).not.toContain("TASK LIST");
+      }
+    });
+
+    it("carries a NARROW trigger and the anti-overuse line", () => {
+      const prompt = withTodo().build("agent");
+      // Only when it pays off: several distinct goals, or progress worth seeing…
+      expect(prompt).toContain("several DISTINCT goals");
+      // …and explicitly NOT on every request that happens to take a few calls.
+      expect(prompt).toContain("Skip it for a quick task");
+    });
+
+    it("carries the merge:true rule that fixes late status updates", () => {
+      const prompt = withTodo().build("agent");
+      expect(prompt).toContain("merge:true");
+      expect(prompt).toContain("never batch the updates");
+      expect(prompt).toContain('nothing is left "in_progress"');
+    });
+
+    it("stays a short nudge, not a second PARALLELISM block", () => {
+      // A length guard ON PURPOSE: the earlier draft (20 lines, HARD RULE,
+      // numbered phases) pushed the tool on every single request. Past ~130
+      // words this section has turned into that again.
+      const prompt = withTodo().build("agent");
+      const section = prompt.slice(prompt.indexOf("TASK LIST")).split("\n\n")[0];
+      expect(section.split(/\s+/).filter(Boolean).length).toBeLessThan(130);
+    });
+  });
+
   it("tells the orchestrator to STEER a sub-agent (naming tool/skill) when Parallel is ON", () => {
     const withDelegate = new DefaultSystemPromptBuilder(
       (mode) => toolDefinitionsForMode(toolsWithDelegate(), mode),
@@ -242,6 +287,21 @@ function toolsWithDelegate(): Tool[] {
   ];
 }
 
+function toolsWithTodo(): Tool[] {
+  return [
+    ...tools(),
+    {
+      name: TODO_TOOL_NAME,
+      definition: {
+        name: TODO_TOOL_NAME,
+        description: "Manage the task list.",
+        parameters: { type: "object", properties: {} },
+      },
+      execute: async () => ({ content: "ok", isError: false }),
+    },
+  ];
+}
+
 describe("SubAgentSystemPromptBuilder", () => {
   const build = (
     opts: { role?: string; access: "read" | "write" | "create"; resources: string[] },
@@ -290,6 +350,25 @@ describe("SubAgentSystemPromptBuilder", () => {
     const prompt = build({ access: "read", resources: ["a"] }, "analyze");
     expect(prompt).toContain("NEVER repeat the same tool call");
     expect(prompt).toContain("Prefer Glob/Grep/Read");
+  });
+
+  it("forbids a sub-agent from keeping its own task list", () => {
+    // Its todo state is keyed by its own ownerId, so the orchestrator never sees
+    // it: a list here only burns turns from the sub-agent's budget.
+    const opts = { access: "read" as const, resources: ["a"] };
+    const withTodo = new SubAgentSystemPromptBuilder(
+      (m) => toolDefinitionsForMode(toolsWithTodo(), m),
+      () => "/w",
+      opts,
+    ).build("analyze");
+    expect(withTodo).toContain("Do NOT use TodoWrite");
+
+    const withoutTodo = new SubAgentSystemPromptBuilder(
+      (m) => toolDefinitionsForMode(tools(), m),
+      () => "/w",
+      opts,
+    ).build("analyze");
+    expect(withoutTodo).not.toContain("TodoWrite");
   });
 
   it("gives the sub-agent the SAME skills catalog as the orchestrator", () => {

@@ -5,6 +5,7 @@ import type { SkillMeta } from "../skills/types";
 import { SKILL_TOOL_NAME } from "../tools/skill-tool";
 import { defaultShell, isWindows } from "../platform";
 import { DELEGATE_TOOL_NAME } from "./orchestration";
+import { TODO_TOOL_NAME } from "../tools/todo-tool";
 
 /** The sentence the model must end with after preparing changes in Analyze
  * (read-only preview) mode, so the user knows to switch to Build to apply. */
@@ -49,6 +50,23 @@ export class DefaultSystemPromptBuilder implements SystemPromptBuilder {
           installedSkills.map((s) => `- ${s.name}: ${s.description}`).join("\n")
         : "";
     const hasDelegate = definitions.some((d) => d.name === DELEGATE_TOOL_NAME);
+    // Task list: deliberately SHORT and gated on a narrow trigger. The goal is a
+    // list where it pays off (several distinct goals, visible progress), not
+    // TodoWrite on every request — and the one line that fixes the real failure
+    // (statuses updated late or never) is the merge:true rule.
+    const hasTodo = definitions.some((d) => d.name === TODO_TOOL_NAME);
+    const todoRule = hasTodo
+      ? `
+
+TASK LIST — ${TODO_TOOL_NAME}, only when it genuinely helps.
+- Use it when the request has several DISTINCT goals, or is long enough that the user benefits from seeing progress. Skip it for a quick task, even one that takes a few tool calls.
+- Keep it true: one task "in_progress" at a time; the moment a task is done, set it "completed" with merge:true (only the items that changed) — never batch the updates at the end. A dropped task becomes "cancelled", and before your final answer nothing is left "in_progress".`
+      : "";
+    // Same gate for the Guidelines bullet: the prompt must never name a tool the
+    // model was not actually offered.
+    const todoGuideline = hasTodo
+      ? `- Use ${TODO_TOOL_NAME} for work with several distinct goals: create the list, then update it as you go (see TASK LIST).\n`
+      : "";
     // The sub-agent read-only note is only meaningful when Delegate is actually
     // available (Parallel ON); with Parallel OFF the model must not even know
     // that sub-tasks exist.
@@ -144,10 +162,9 @@ Guidelines:
 - Edit: surgical, atomic multi-edits. Each edit's oldText must match a UNIQUE region exactly (trailing-space/Unicode tolerated). The result shows the applied diff — always re-check it. StrReplace is the strict single-edit variant.
 - Use Shell for running commands (tests, builds, git operations).
 - Use Grep/Glob to search and explore the codebase.
-- Use TodoWrite to track progress on complex multi-step tasks.
-- Use ReadLints only on files you've edited or are about to edit.
+${todoGuideline}- Use ReadLints only on files you've edited or are about to edit.
 - When broadly exploring the codebase, prefer Grep and Glob over Shell find/grep.
-- Never repeat the same tool call with identical arguments: if it failed or returned nothing, change approach (Glob/Grep/Read or different arguments) instead of retrying it.${delegateRules}${analyzeRules}${skillsSection}`;
+- Never repeat the same tool call with identical arguments: if it failed or returned nothing, change approach (Glob/Grep/Read or different arguments) instead of retrying it.${todoRule}${delegateRules}${analyzeRules}${skillsSection}`;
   }
 
   private summarize(description: string): string {
@@ -199,6 +216,11 @@ export class SubAgentSystemPromptBuilder implements SystemPromptBuilder {
     const budgetRule = this.options.turnBudget
       ? `\n- BUDGET: you have about ${this.options.turnBudget} tool turns. Work efficiently, do not over-explore, and STOP calling tools to write your report well within the budget.`
       : "";
+    // A sub-agent owns ONE task and its todo state is private to its own ownerId
+    // (the orchestrator never sees it), so a list here is pure turn-burn.
+    const todoRule = definitions.some((d) => d.name === TODO_TOOL_NAME)
+      ? `\n- Do NOT use ${TODO_TOOL_NAME}: you have ONE focused task; the orchestrator owns the plan.`
+      : "";
     // SAME progressive disclosure as the orchestrator (see DefaultSystemPromptBuilder):
     // only names + descriptions here; the Skill tool loads the full SKILL.md on demand.
     // `disable-model-invocation` skills are EXCLUDED (the orchestrator can still force
@@ -217,7 +239,7 @@ ${resourceRule}
 
 Rules:
 - Complete ONLY the task in the user message. Do not ask questions or make conversation.
-- Be concise and get to the point.${readOnlyRules}${budgetRule}
+- Be concise and get to the point.${readOnlyRules}${budgetRule}${todoRule}
 - NEVER repeat the same tool call with identical arguments. If it errors or returns nothing, change approach (Glob/Grep/Read, or different arguments) — retrying verbatim wastes turns and gets you stopped.
 - Prefer Glob/Grep/Read to explore and read files; use Shell only when no dedicated tool fits (and never the same command twice).
 - A turn with NO tool call counts as your final answer: when the task is done, reply with your REPORT.
