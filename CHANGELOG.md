@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-22
+
 ### Removed
 
 - **The task list is gone — the tool, the panel and everything that existed for it.** `TodoWrite` is no longer offered, and with it went the pinned row above the control strip, the overlay list, its parse/render/centring code, the `#todo-panel` markup, the `#todo-*` and `.todo-*` stylesheet, the `todowrite` artwork and its contact-sheet row, the `TASK LIST` block of the system prompt (plus the sub-agent rule that forbade it), the `todo.dismiss` tip, and the whole `ownerId` plumbing in `ToolContext` — that identity existed so a stateful tool could keep one list per session, and it had no other user. The reasons are in the shape of it: the panel's single line could show ONE task in progress, so "one `in_progress` at a time" had to be enforced or the row lied; that rule contradicted the PARALLELISM block the moment sub-agents ran at once; and a long run is already anchored by the transcript, the compactor, the sub-agent reports and the harness nudges. The plan a `Delegate` fan-out carries (`id`, `goal`, `resources`, `after`) is structured and host-checked — a better plan than a list of strings. **A session's transcript replays unchanged**: `TodoWrite` calls and their results stay in the history, the wire rules validate the call/result PAIRING by id and never the tool's existence (the same path that covers a tool vanishing mid-run), and those turns render as ordinary tool bubbles. **No database migration**: no table or column ever stored a task list, and a stored `toolScope.off` naming the removed tool is filtered on READ against the live registry (`toolScopeFor`), so the dead name in the row changes nothing. **Three tests came back for the code that survived** — the Follow's re-light on coming home, "our own write is not a hand, and does not blunt the next one", and the diff landing in a card being our restructure — because the deleted suites were the only thing covering them; the `webview` mutation baseline was re-measured (180 → 170 mutants, one known hole belonged to the removed `ourResize` branch) and its nine line ranges realigned to the same statements. `Thirteen tools` in the README and on the site, `REFERENCE_TOOLS.json` down to thirteen, and the site's WATCH section loses its mockup of the list with the notes that described it.
@@ -2039,7 +2041,8 @@ Completions protocol.
 - **Diagnostics**: per-turn lines in _Output > Harny_, an optional request log
   (`HARNY_DEBUG=1`), per-turn metrics badges and real context accounting.
 
-[Unreleased]: https://github.com/spltek/harny/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/spltek/harny/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/spltek/harny/compare/v1.4.1...v2.0.0
 [1.4.1]: https://github.com/spltek/harny/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/spltek/harny/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/spltek/harny/compare/v1.3.0...v1.3.1
