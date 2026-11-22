@@ -105,8 +105,8 @@ const written = MODULES.flatMap((m) => [...writtenClasses(webview(m))].map((cls)
  * Both sides are read the way the code actually spells them, or the test would lie:
  *   · COMMENTS are prose, not selectors (`.logoUri` lived in a CSS comment);
  *   · only SELECTOR positions count (before a `{`), so `--ctl-row` and property values are out;
- *   · a class can be PRODUCED by a literal, by a template, or by CONCATENATION (`"status-" + status`,
- *     `'class="subagent-chip access-' + kind`): a literal ending in `-` is a prefix, not a class.
+ *   · a class can be PRODUCED by a literal, by a template, or by CONCATENATION (`'class="subagent-chip
+ *     access-' + kind`, `"access-" + kind`): a literal ending in `-` is a prefix, not a class.
  */
 const STYLE = (() => {
   const open = CSS_TEXT.indexOf("<style>");
@@ -270,9 +270,9 @@ describe("the DOM contract between the modules and view-html", () => {
     // ever. They are pinned on real names the page ships.
     expect(styled.size).toBeGreaterThan(300);
     expect(styled.has("msg")).toBe(true);
-    expect(styled.has("todo-check")).toBe(true);
-    expect(produced.names.has("todo-check")).toBe(true);
-    expect(produced.prefixes.has("status-")).toBe(true);
+    expect(styled.has("fd-add")).toBe(true);
+    expect(produced.names.has("fd-add")).toBe(true);
+    expect(produced.prefixes.has("access-")).toBe(true);
     // …and the allowlist stays a list of FAMILIES, not a dumping ground.
     expect(CSS_HOOKS.size).toBeLessThan(60);
   });

@@ -56,7 +56,6 @@ describe("createDefaultTools", () => {
       Glob: "read-only",
       ReadLints: "read-only",
       Skill: "read-only",
-      TodoWrite: "read-only",
       WebSearch: "read-only",
       WebFetch: "read-only",
     });
@@ -94,7 +93,6 @@ describe("createDefaultTools", () => {
       "Grep",
       "Glob",
       "Skill",
-      "TodoWrite",
       "WebSearch",
       "WebFetch",
       "ReadLints",

@@ -36,7 +36,7 @@ file and one line there — nothing else.
 | ---------------------------------------- | ----------------------------------------------------------------------------------- |
 | Read · Write · StrReplace · Edit         | `read` · `write` · `strreplace` · `edit`                                            |
 | Shell · Grep · Glob · ReadLints          | `shell` · `grep` · `glob` · `readlints`                                             |
-| Skill · TodoWrite · WebSearch · WebFetch | `skill` · `todowrite` · `websearch` · `webfetch`                                    |
+| Skill · WebSearch · WebFetch          | `skill` · `websearch` · `webfetch`                                                  |
 | Delete                                   | **`trash`** — the same drawing as the session trash, one file, so they cannot drift |
 | every MCP tool (`mcp__server__tool`)     | `mcp` — one plug for all of them                                                    |
 | a name that matches NO tool              | `unknown` — a question badge                                                        |

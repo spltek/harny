@@ -313,7 +313,6 @@ describe("icon registry", () => {
     // The registry spells tools in TitleCase; the mapping does not care.
     expect(toolIcon("Read")).toBe(icon("read", 13));
     expect(toolIcon("StrReplace")).toBe(icon("strreplace", 13));
-    expect(toolIcon("TodoWrite")).toBe(icon("todowrite", 13));
     expect(toolIcon("ReadLints", 16)).toBe(icon("readlints", 16));
     expect(toolIcon("Shell")).toBe(icon("shell", 13));
   });
@@ -412,10 +411,9 @@ describe("icon registry", () => {
 
 describe("the contact sheet", () => {
   it("never lists a file that is not there", () => {
-    // The one place a DEAD row can survive: nothing imports the sheet, so when the
-    // four `todo-*` marks went with the old Tasks block, their rows stayed behind
-    // and the sheet kept drawing four broken images. It is opened by hand, which is
-    // exactly why a test has to read it.
+    // The one place a DEAD row can survive: nothing imports the sheet, so when a family of marks was
+    // retired, its rows stayed behind and the sheet kept drawing broken images. It is opened by hand,
+    // which is exactly why a test has to read it.
     const dir = join(process.cwd(), "media", "icons");
     const sheet = readFileSync(join(dir, "icon-sheet.html"), "utf8");
     const rows = sheet.match(/\["[a-z0-9-]+\.svg"/g) ?? [];

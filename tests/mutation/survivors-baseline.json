@@ -349,8 +349,8 @@
       ]
     },
     "webview": {
-      "measured": "2026-11-19",
-      "mutants": 180,
+      "measured": "2026-11-22",
+      "mutants": 170,
       "survivors": [
         {
           "file": "src/chat/webview/view.ts",
@@ -368,12 +368,6 @@
           "file": "src/chat/webview/view.ts",
           "mutator": "BooleanLiteral",
           "replacement": "true",
-          "count": 2
-        },
-        {
-          "file": "src/chat/webview/view.ts",
-          "mutator": "CallExpression",
-          "replacement": ";",
           "count": 2
         },
         {

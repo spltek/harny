@@ -1434,114 +1434,6 @@ body {
   font-style: italic;
   animation: harny-pulse 1.2s ease-in-out infinite;
 }
-/* The task list, outside the transcript: one line glued ABOVE the Working bar, so the
-   "what" sits over the "working". A real footer, like its two neighbours — it keeps its
-   place while the transcript scrolls — and the whole list sits ABOVE the row, in FLOW:
-   opening it takes its height from the transcript, so the conversation slides up and is
-   never covered (`column-reverse`, nothing absolute, nothing to click outside of).
-   The tool can NEVER clear the list (no delete, no abandon, and an empty one is forbidden
-   by the schema), so "a leftover from an earlier run" is a real state and it is the
-   RESTING one: only a list touched by the run in progress is painted loud (.live). */
-#todo-panel {
-  display: flex;
-  flex-direction: column-reverse;
-  flex-shrink: 0;
-  padding: 3px 10px;
-  background: var(--bg);
-  border-top: 1px dashed var(--border);
-  color: var(--muted-2);
-  font-size: var(--fs-md);
-}
-#todo-panel.hidden {
-  display: none;
-}
-#todo-panel.live {
-  color: var(--fg-strong);
-}
-/* Same shape as #pending-head (arrow + text, whole row clickable), one line tall. */
-#todo-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  user-select: none;
-}
-#todo-row:hover {
-  color: var(--accent);
-}
-#todo-row .toggle {
-  font-size: var(--fs-xs);
-}
-/* ── THE ONE FOLD THAT DOES NOT USE THE SHARED CHEVRON ──
-   The list sits ABOVE this row and grows UPWARD out of it, so the arrow says which way the press
-   moves the list: folded `>` (the shared −90°), open `^` (one more quarter turn COUNTER-clockwise,
-   i.e. −180°). The shared grammar would turn it down (`rotate(0deg)`, the base glyph), which in this
-   one place points at the row it opens away from.
-   Both wrong answers have already shipped, so read before editing:
-   · `rotate(-90deg)` here — the same angle the folded state has — made the arrow point `>` whether
-     the list was up or down: a fold whose arrow never changes.
-   · deleting this rule — inherited `v` for open — is what the two comments around it argued for, and
-     it reads as "the list is going away", the opposite of what happens.
-   A chevron-down rotated 180° is a chevron-up: the glyph is one svg and the state is one class, so
-   the box never moves and the 0.15s turn is the same as every other fold. The angle is written
-   −180deg, not 180deg: the two paint the same picture, but `transform` is interpolated NUMERICALLY
-   from the folded −90°, so 180deg sweeps three quarters of a turn CLOCKWISE (down → /> → up) while
-   −180deg sweeps the quarter it should, counter-clockwise (`>` → `^`).
-   Pinned by view-html.test.ts (this selector MUST contain rotate(-180deg), and the folded selector
-   MUST stay empty so the `>` comes from the shared rule). */
-#todo-row .toggle.is-open > .toggle-chevron {
-  transform: rotate(-180deg);
-}
-#todo-count {
-  flex: none;
-  font-variant-numeric: tabular-nums;
-}
-/* The SUBJECT of the row: the item in progress, else what is left. One line, ellipsised —
-   the words are read in full in the overlay. */
-#todo-now {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-#todo-close {
-  flex: none;
-  padding: 0 2px;
-  background: transparent;
-  border: none;
-  color: var(--muted);
-  font-size: var(--fs-xs);
-  cursor: pointer;
-}
-#todo-close:hover {
-  color: var(--fg-strong);
-}
-/* IN FLOW, above the row (see `column-reverse` on the panel): the height it needs it TAKES from the
-   transcript, so the panel grows and what you were reading slides up — never under something.
-   Nothing absolute, nothing stacked: which is also why there is no "click outside" to fold it.
-   The cap is five rows or 40% of the panel, whichever comes first — a short list scrolls not at
-   all, a long one cannot eat the session. `position: relative` makes it the offsetParent of its own
-   items, which is the coordinate system the centring arithmetic reads. */
-#todo-overlay {
-  position: relative;
-  max-height: min(9.5rem, 40vh);
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-  padding-bottom: 3px;
-  border-bottom: 1px dashed var(--border);
-}
-#todo-overlay.hidden {
-  display: none;
-}
-/* A scrolled list must still say WHERE in it you are: `n/m Tasks` rides the top of the port. */
-#todo-overlay .todo-head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: var(--bg);
-  padding: 2px 0 1px;
-}
 /* The working bar is a REAL footer glued below the transcript (NOT a bubble
    in the flow): always visible in realtime while it exists. It lives
    outside #messages, so sections are never inserted below it. The text
@@ -1950,89 +1842,6 @@ body {
 }
 .tool-details.collapsed {
   display: none;
-}
-/* TodoWrite: a task LIST, not a log line. Its home is the pinned footer (#todo-panel), outside
-   the transcript; the bubble keeps Input and Output like every other tool. What is left here is
-   the LOOK of a list — one renderer, used by the footer's overlay and by nothing else. */
-.todo-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--fs-sm);
-  color: var(--muted-2);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.todo-count {
-  color: var(--fg-strong);
-  font-weight: 700;
-}
-.todo-list {
-  list-style: none;
-  margin: 4px 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.todo-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  min-width: 0;
-  font-size: var(--fs-md);
-  color: var(--fg);
-}
-/* The checkbox: a BOX, not a glyph — 12px, square-ish, with the tick drawn by an icon in the
-   panel's own ink. It is a span (aria-hidden): the tasks belong to the model, so a real input
-   would promise a toggle nobody can make. */
-.todo-check {
-  flex: none;
-  width: 12px;
-  height: 12px;
-  margin-top: 1px;
-  border: 1px solid var(--muted-2);
-  border-radius: 3px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--bg);
-}
-.todo-item.status-completed .todo-check {
-  background: var(--ok);
-  border-color: var(--ok);
-}
-/* In progress: a filled dot inside an accent box — "being done", between empty and ticked. */
-.todo-item.status-in_progress .todo-check {
-  border-color: var(--accent);
-}
-.todo-item.status-in_progress .todo-check::after {
-  content: "";
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-.todo-item.status-cancelled .todo-check {
-  border-color: var(--muted);
-  color: var(--muted);
-}
-.todo-text {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-/* DONE reads as DONE, not as deleted: the green box at the start and BOLD text — no strikethrough
-   (a line through the words is the universal sign of "gone") and no dimming, because a finished
-   task is an accomplishment, not a footnote. */
-.todo-item.status-completed .todo-text {
-  font-weight: 600;
-  color: var(--fg-strong);
-}
-.todo-item.status-cancelled {
-  color: var(--muted);
-}
-.todo-item.status-cancelled .todo-text {
-  text-decoration: line-through;
 }
 .tool-label {
   display: block;
@@ -4636,7 +4445,6 @@ body.help-on [data-tip][data-tip-cursor="help"] {
 body.no-session #input-area,
 body.no-session #status,
 body.no-session #pending-section,
-body.no-session #todo-panel,
 body.no-session #metrics {
   display: none;
 }
@@ -4649,7 +4457,6 @@ body.no-workspace #tabs,
 body.no-workspace #input-area,
 body.no-workspace #status,
 body.no-workspace #pending-section,
-body.no-workspace #todo-panel,
 body.no-workspace #metrics {
   display: none;
 }

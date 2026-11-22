@@ -198,9 +198,6 @@ export interface AgentDeps {
    * "nobody told me" must never silently downgrade a real session.
    */
   workspaceTrusted?: () => boolean;
-  /** Identity of this agent, passed to tools that keep per-conversation state
-   * (e.g. TodoWrite): each session and each sub-agent gets its OWN state. */
-  ownerId?: string;
   /** Called when a SUB-AGENT prepared an Analyze preview (dry-run). */
   onPreviewPrepared?: (change: PreparedChange) => void;
   /** Called when a tool ACTUALLY changed a file (Build mode, not a preview):
@@ -1415,12 +1412,9 @@ export class Agent implements ChatController {
       };
     }
     try {
-      // `ownerId` lets stateful tools (TodoWrite) keep PER-conversation state,
-      // so concurrent sub-agents never clobber each other's list. `signal` lets
-      // long-running tools (Shell) be cancelled by a user Stop.
+      // `signal` lets long-running tools (Shell) be cancelled by a user Stop.
       const ctx: import("../tools/tool").ToolContext = {
         ...(dryRun ? { dryRun: true } : {}),
-        ...(this.deps.ownerId ? { ownerId: this.deps.ownerId } : {}),
         ...(this.abortController ? { signal: this.abortController.signal } : {}),
         // The session's usable window, so a tool that emits large output sizes its
         // cap against THIS model instead of a constant (see output-budget.ts).

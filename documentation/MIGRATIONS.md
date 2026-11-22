@@ -123,7 +123,7 @@ These do **not** touch the database directly:
 ### New table
 
 ```ts
-{ version: 3, name: "session_todos", up: (db) => db.exec(`CREATE TABLE session_todos (…)`) }
+{ version: 3, name: "session_layout", up: (db) => db.exec(`CREATE TABLE session_layout (…)`) }
 ```
 
 Add its columns to the snapshot test.

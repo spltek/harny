@@ -9,7 +9,6 @@ describe("toolArgTarget", () => {
     expect(toolArgTarget({ search_term: "vitest config" })).toBe("vitest config");
     expect(toolArgTarget({ url: "https://example.com" })).toBe("https://example.com");
     expect(toolArgTarget({ paths: ["a.ts", "b.ts"] })).toBe("a.ts, b.ts");
-    expect(toolArgTarget({ todos: [{ id: "1", content: "do it", status: "pending" }] })).toBe("1 - do it - pending");
   });
 
   it("prefers the glob over the path (Glob carries both)", () => {
@@ -20,7 +19,6 @@ describe("toolArgTarget", () => {
     expect(toolArgTarget(undefined)).toBeUndefined();
     expect(toolArgTarget({})).toBeUndefined();
     expect(toolArgTarget({ paths: [] })).toBeUndefined();
-    expect(toolArgTarget({ todos: [] })).toBeUndefined();
   });
 });
 
@@ -68,7 +66,7 @@ describe("describeToolCall", () => {
     expect(line.split("\n")).toHaveLength(1);
   });
 
-  it("caps the subject, so a 40-path or 50-todo dump cannot fill the span", () => {
+  it("caps the subject, so a 40-path dump cannot fill the span", () => {
     const paths = Array.from({ length: 40 }, (_, i) => `src/some/long/path/file-${i}.ts`);
     const line = describeToolCall("ReadLints", { paths });
     expect(line.length).toBeLessThan(140);

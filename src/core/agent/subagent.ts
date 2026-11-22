@@ -213,9 +213,6 @@ export class SubAgentRunner {
             },
           }
         : {}),
-      // Each sub-agent has its OWN tool state (TodoWrite): concurrent sub-agents
-      // must never clobber each other's list.
-      ownerId: `sub-${key}`,
       // Bubble an Analyze preview up to the orchestrator (CTA for delegated work).
       onPreviewPrepared: forwardPreview,
       // Track the files it actually wrote (Build), for the report footer.

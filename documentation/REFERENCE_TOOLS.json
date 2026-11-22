@@ -2,7 +2,7 @@
   "comment": "REFERENCE ONLY — the Cursor agent tool set (schema and behaviour), used as the reference for the parameter schemas. NOT read at runtime: the definitions the extension actually ships live in src/core/tools/ (one per file, with their own descriptions). This file is NOT a mirror of src/core/tools/: it defines only the subset of the Cursor set that Harny modelled itself on, so Edit / Skill / Delegate have no definition here (they exist in code alone). The two lists below are the only part to keep in sync.",
   "implemented": [
     "Shell", "Read", "Write", "StrReplace", "Edit", "Delete", "Grep", "Glob",
-    "TodoWrite", "WebSearch", "WebFetch", "ReadLints", "Skill", "Delegate"
+    "WebSearch", "WebFetch", "ReadLints", "Skill", "Delegate"
   ],
   "planned": ["AwaitShell", "SetActiveBranch", "GenerateImage"],
   "renamed": {
@@ -167,36 +167,6 @@
             }
           },
           "required": ["glob_pattern"]
-        }
-      }
-    },
-    {
-      "type": "function",
-      "function": {
-        "name": "TodoWrite",
-        "description": "Use this tool to create and manage a structured task list for your current coding session.",
-        "parameters": {
-          "type": "object",
-          "properties": {
-            "todos": {
-              "type": "array",
-              "minItems": 2,
-              "items": {
-                "type": "object",
-                "properties": {
-                  "id": { "type": "string", "description": "Unique identifier for the TODO item" },
-                  "content": { "type": "string", "description": "The description/content of the TODO item" },
-                  "status": { "type": "string", "enum": ["pending", "in_progress", "completed", "cancelled"] }
-                },
-                "required": ["id", "content", "status"]
-              }
-            },
-            "merge": {
-              "type": "boolean",
-              "description": "Whether to merge the todos with the existing todos based on the id field. If true, the todos will be merged into the existing todos based on the id field. If false, the new todos will replace the existing todos."
-            }
-          },
-          "required": ["todos", "merge"]
         }
       }
     },

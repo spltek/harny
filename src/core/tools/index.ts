@@ -16,7 +16,6 @@ export { EditTool } from "./edit-tool";
 export { ShellTool } from "./shell-tool";
 export { GrepTool } from "./grep-tool";
 export { GlobTool } from "./glob-tool";
-export { TodoTool } from "./todo-tool";
 export { WebSearchTool } from "./web-search-tool";
 export { WebFetchTool } from "./web-fetch-tool";
 export { ReadLintsTool } from "./read-lints-tool";

@@ -45,10 +45,6 @@ export interface ToolDefinition {
  */
 export interface ToolContext {
   dryRun?: boolean;
-  /** Identity of the calling agent/conversation. Tools that keep
-   * per-conversation state (e.g. TodoWrite) key their state by it, so
-   * concurrent sessions/sub-agents never clobber each other. */
-  ownerId?: string;
   /** The run's abort signal: long-running tools (Shell) cancel their work when
    * the user presses Stop. Absent in contexts that have no run. */
   signal?: AbortSignal;
@@ -95,8 +91,8 @@ export interface Tool {
    * knows how to unblock itself (an MCP server) says it better than any generic text. */
   readonly analyzeRefusal?: string;
   /** True when an identical call may be REUSED verbatim (loop guard cache). A tool that
-   * is read-only may still be time-varying (WebSearch) or stateful (TodoWrite), so this
-   * is a separate fact from {@link Tool.analyzePolicy}. Default: never cached. */
+   * is read-only may still be time-varying (WebSearch), so this is a separate fact from
+   * {@link Tool.analyzePolicy}. Default: never cached. */
   readonly cacheable?: boolean;
   execute(args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolResult> | ToolResult;
 }

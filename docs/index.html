@@ -1132,7 +1132,7 @@ Tip: restart the chat — a clean Build context applies more reliably than conti
       <section class="sect" id="tools">
         <div class="sect__head">
           <p class="sect__idx">05 <span>/</span> THE HARNESS</p>
-          <h2 class="sect__title">Fourteen tools.<br /><span class="grad">Zero magic.</span></h2>
+          <h2 class="sect__title">Thirteen tools.<br /><span class="grad">Zero magic.</span></h2>
           <p class="sect__lede">
             Every tool is a class in its own file behind a small interface. Adding one is registering it — the agent
             and the providers never change. MCP servers arrive as <code>mcp__&lt;server&gt;__&lt;tool&gt;</code>.
@@ -1149,7 +1149,6 @@ Tip: restart the chat — a clean Build context applies more reliably than conti
           <span class="tool"><b>Grep</b><i>search</i></span>
           <span class="tool"><b>Glob</b><i>search</i></span>
           <span class="tool"><b>Skill</b><i>skills</i></span>
-          <span class="tool"><b>TodoWrite</b><i>plan</i></span>
           <span class="tool"><b>WebSearch</b><i>web</i></span>
           <span class="tool"><b>WebFetch</b><i>web</i></span>
           <span class="tool"><b>ReadLints</b><i>diag</i></span>
@@ -1186,9 +1185,9 @@ Tip: restart the chat — a clean Build context applies more reliably than conti
       <section class="sect" id="watch">
         <div class="sect__head">
           <p class="sect__idx">06 <span>/</span> WATCH IT WORK</p>
-          <h2 class="sect__title">The plan is on the page.<br /><span class="grad">Not over it.</span></h2>
+          <h2 class="sect__title">The work is on the page.<br /><span class="grad">Not over it.</span></h2>
           <p class="sect__lede">
-            Harny tells you what it is about to do, then does it in front of you. The answer, the plan and
+            Harny tells you what it is about to do, then does it in front of you. The answer, the tools and
             the controls share one column, top to bottom: nothing floats over the lines you are reading,
             and the panel never jumps under your hand.
           </p>
@@ -1207,46 +1206,6 @@ Tip: restart the chat — a clean Build context applies more reliably than conti
               </div>
             </div>
 
-            <!-- #todo-panel: `column-reverse`, so `#todo-overlay` is painted ABOVE `#todo-row` although
-                 it comes after it in the markup — the list grows upward out of the row it belongs to. -->
-            <div class="pn-todo">
-              <div class="pn-todorow">
-                <span class="pn-toggle is-open">
-                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                </span>
-                <span class="pn-todocount">2/5</span>
-                <span class="pn-todonow">wrap the parser call in a retry</span>
-                <span class="pn-todoclose" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none"><path d="M18 6 6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-                </span>
-              </div>
-              <div class="pn-todolist">
-                <div class="todo-head"><span class="todo-count">2/5</span><span>Tasks</span></div>
-                <ul class="todo-list">
-                  <li class="todo-item status-completed">
-                    <span class="todo-check" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M5 12l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-                    <span class="todo-text">Read the failing parser test</span>
-                  </li>
-                  <li class="todo-item status-in_progress">
-                    <span class="todo-check" aria-hidden="true"></span>
-                    <span class="todo-text">Wrap the parser call in a retry</span>
-                  </li>
-                  <li class="todo-item status-pending">
-                    <span class="todo-check" aria-hidden="true"></span>
-                    <span class="todo-text">Run the suite</span>
-                  </li>
-                  <li class="todo-item status-pending">
-                    <span class="todo-check" aria-hidden="true"></span>
-                    <span class="todo-text">Write the changelog entry</span>
-                  </li>
-                  <li class="todo-item status-pending">
-                    <span class="todo-check" aria-hidden="true"></span>
-                    <span class="todo-text">Commit and push</span>
-                  </li>
-                </ul>
-              </div>
-            </div>
-
             <div class="pn-working">● Working...</div>
 
             <div class="pn-pills">
@@ -1256,27 +1215,6 @@ Tip: restart the chat — a clean Build context applies more reliably than conti
         </div>
 
         <ul class="notes reveal" data-reveal>
-          <li>
-            <b>The plan sits in the column, not on top of it.</b> Before, the list floated over the
-            corner of the panel: it covered the last lines of the answer — the ones you read <em>while</em>
-            a plan runs — and it took the scroll wheel with it, so scrolling over the list moved the list
-            and the conversation above was out of reach. Now it is a strip of the panel like any other. It
-            gives back the space it takes: the conversation slides up, it is never hidden, and the page
-            never moves under your hand.
-          </li>
-          <li>
-            <b>Five tasks at a time, and the count stays with you.</b> A long plan cannot swallow the
-            session: past five items the list scrolls inside itself, and <b>2/5</b> stays at the top of
-            it, so you always know how far along you are. The task being worked on is always the one on
-            screen. A finished task gets a filled box and <b>bold</b> words — no strikethrough: a line
-            through a word means “deleted” everywhere else, and something you finished is not gone.
-          </li>
-          <li>
-            <b>The arrow points up, because the list opens upwards.</b> Every fold in the panel opens
-            downwards; this is the one that opens above its own line, so the arrow turns right and then
-            <b>up</b>. It took three attempts to get it right — two of them shipped pointing somewhere
-            else.
-          </li>
           <li>
             <b>Follow only exists while Harny is working.</b> When nothing is running it is off and dark:
             nothing is arriving, so there is nothing to follow. During a run, on, it keeps the newest
@@ -1567,7 +1505,7 @@ Tip: restart the chat — a clean Build context applies more reliably than conti
 │  ├─ <span class="t-dir">agent/</span>   <span class="t-cm"># loop, LoopGuard, orchestration</span>
 │  ├─ <span class="t-dir">sessions/</span><span class="t-cm"># sqlite + FTS5, Compactor</span>
 │  ├─ <span class="t-dir">skills/</span>  <span class="t-dir">mcp/</span>    <span class="t-dir">storage/</span>
-│  └─ <span class="t-dir">tools/</span>   <span class="t-cm"># 14 tools, one file each</span>
+│  └─ <span class="t-dir">tools/</span>   <span class="t-cm"># 13 tools, one file each</span>
 ├─ <span class="t-dir">chat/</span>                 <span class="t-cm"># webview provider + client</span>
 └─ <span class="t-file">logger.ts</span>
 <span class="t-dir">tests/</span>                    <span class="t-cm"># vitest, guards, mutation matrices</span></code></pre>

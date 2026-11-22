@@ -249,21 +249,6 @@ ${VIEW_CSS}
     </div>
     <div id="pending-area" class="hidden"></div>
   </div>
-  <!-- The task list, OUTSIDE the transcript: a real footer sitting right above
-       #working-bar, so the "what is being worked on" (the row) is directly over
-       the "that it is working" (the bar). Not in #messages: it keeps its place
-       while the transcript streams and scrolls. The full list sits ABOVE the row
-       (the panel is column-reverse) and in FLOW, so opening it takes its height
-       from the transcript — the conversation slides up, it is never covered. -->
-  <div id="todo-panel" class="hidden">
-    <div id="todo-row" role="button" tabindex="0" aria-expanded="false">
-      <span class="toggle">${icon("chevronDown", 11, 'class="toggle-chevron"')}</span>
-      <span id="todo-count"></span>
-      <span id="todo-now"></span>
-      <button id="todo-close" data-tip="todo.dismiss" aria-label="Hide the task list">${icon("close", 11)}</button>
-    </div>
-    <div id="todo-overlay" class="hidden"></div>
-  </div>
   <!-- Working indicator: the BOTTOM-most footer, always BELOW the transcript
        and the pending bubbles. -->
   <div id="working-bar" class="hidden">● Working...</div>

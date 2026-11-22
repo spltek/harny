@@ -40,7 +40,6 @@ import grep from "../../media/icons/grep.svg";
 import glob from "../../media/icons/glob.svg";
 import unknown from "../../media/icons/unknown.svg";
 import skill from "../../media/icons/skill.svg";
-import todowrite from "../../media/icons/todowrite.svg";
 import websearch from "../../media/icons/websearch.svg";
 import webfetch from "../../media/icons/webfetch.svg";
 import readlints from "../../media/icons/readlints.svg";
@@ -86,7 +85,6 @@ const ARTWORK = {
   glob,
   unknown,
   skill,
-  todowrite,
   websearch,
   webfetch,
   readlints,
@@ -127,7 +125,6 @@ const TOOL_ARTWORK: Record<string, IconName> = {
   grep: "grep",
   glob: "glob",
   skill: "skill",
-  todowrite: "todowrite",
   websearch: "websearch",
   webfetch: "webfetch",
   readlints: "readlints",

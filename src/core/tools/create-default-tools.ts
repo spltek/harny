@@ -13,7 +13,6 @@ import { ReadTool } from "./read-tool";
 import { ShellTool } from "./shell-tool";
 import { SkillTool } from "./skill-tool";
 import { StrReplaceTool } from "./str-replace-tool";
-import { TodoTool } from "./todo-tool";
 import type { Tool } from "./tool";
 import { WebFetchTool } from "./web-fetch-tool";
 import { WebSearchTool } from "./web-search-tool";
@@ -42,7 +41,6 @@ export function createDefaultTools(deps: DefaultToolsDeps): Tool[] {
     new GrepTool(deps.fs, deps.cwd),
     new GlobTool(deps.fs, deps.cwd),
     new SkillTool(deps.skills),
-    new TodoTool(),
     new WebSearchTool(deps.http),
     new WebFetchTool(deps.http),
     new ReadLintsTool(deps.diagnostics, deps.cwd),

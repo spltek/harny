@@ -77,15 +77,6 @@ function setupDom(initOverrides: Record<string, unknown> = {}, savedState: Recor
       <div id="pending-head" role="button" tabindex="0" aria-expanded="true"><span class="toggle is-open"><svg class="toggle-chevron"></svg></span><span id="pending-head-text"></span></div>
       <div id="pending-area" class="hidden"></div>
     </div>
-    <div id="todo-panel" class="hidden">
-      <div id="todo-row" role="button" tabindex="0" aria-expanded="false">
-        <span class="toggle"><svg class="toggle-chevron"></svg></span>
-        <span id="todo-count"></span>
-        <span id="todo-now"></span>
-        <button id="todo-close" data-tip="todo.dismiss" aria-label="Hide the task list"></button>
-      </div>
-      <div id="todo-overlay" class="hidden"></div>
-    </div>
     <div id="working-bar" class="hidden">● Working...</div>
     <div id="input-area">
       <div id="input-main">
@@ -4584,53 +4575,30 @@ describe("view webview client", () => {
     expect(document.querySelector(".msg.tool .tool-path")?.textContent).toBe("**/*.ts");
   });
 
-  it("a task row is a checkbox and its text — no number, no index column", async () => {
-    // A checklist, not a table: the order of the rows IS the plan, and an index adds a column nobody
-    // reads (it was there for one day). The count in the header carries the progress.
-    await loadView();
-    hostMessage({ type: "status", active: true });
-    hostMessage({ type: "toolCall", id: "t1", name: "TodoWrite", arguments: { todos: [], merge: false } });
-    hostMessage({
-      type: "toolResult",
-      toolCallId: "t1",
-      output: "## Task List\n\n⏳ [pending] one\n✅ [completed] two",
-      isError: false,
-    });
-    (document.getElementById("todo-row") as HTMLElement).click(); // the list lives in the overlay
-    const rows = [...document.querySelectorAll("#todo-overlay .todo-item")];
-    expect(rows).toHaveLength(2);
-    for (const row of rows) {
-      expect([...row.children].map((c) => c.className)).toEqual(["todo-check", "todo-text"]);
-    }
-    expect(document.querySelector(".todo-num")).toBeNull();
-    expect(document.querySelector("#todo-overlay .todo-head")!.textContent).toBe("1/2Tasks");
-  });
-
-  it("a SUB-AGENT's TodoWrite never touches the pinned footer (the plan pinned is the orchestrator's)", async () => {
-    // Sub-agents get TodoWrite (their tool list is everything but Delegate), and their events arrive
-    // as `subagent_event` — a nested log line, not a tool result. That is the right ownership, but it
-    // was ACCIDENTAL: this test makes it a rule, so a future refactor that funnels sub-agent results
-    // through the common path cannot silently hand the footer to a sub-agent's plan.
+  it("a SUB-AGENT's tool calls live in its own log, not in the transcript", async () => {
+    // A sub-agent's events arrive as `subagent_event` — nested lines in the Delegate's bubble — and
+    // never as tool results of this conversation. That is the right ownership, and it was ACCIDENTAL
+    // once: this test makes it a rule, so a refactor that funnels sub-agent results through the
+    // common path cannot silently adopt a sub-agent's work as the orchestrator's own.
     await loadView();
     hostMessage({ type: "status", active: true });
     hostMessage({ type: "toolCall", id: "d1", name: "Delegate", arguments: { goal: "do things" } });
     hostMessage({
       type: "subagentEvent",
       toolCallId: "d1",
-      event: { type: "tool_call", toolCall: { id: "s1", name: "TodoWrite", arguments: {} } },
+      event: { type: "tool_call", toolCall: { id: "s1", name: "Read", arguments: { path: "a.ts" } } },
     });
     hostMessage({
       type: "subagentEvent",
       toolCallId: "d1",
       event: {
         type: "tool_result",
-        toolResult: { toolCallId: "s1", output: "## Task List\n\n⏳ [pending] sub task", isError: false },
+        toolResult: { toolCallId: "s1", output: "const a = 1;", isError: false },
       },
     });
-    // Not a list anywhere: no row in the footer, and nothing in the transcript that could claim to
-    // be "the plan of this conversation".
-    expect(document.getElementById("todo-panel")!.classList.contains("hidden")).toBe(true);
-    // …and it is not lost either: the call is visible as a nested line in the sub-agent log.
+    // Not a bubble of its own in the transcript…
+    expect(document.querySelectorAll("#messages .msg.tool:not(.subagent)")).toHaveLength(0);
+    // …and not lost either: the call is a nested line in the sub-agent log.
     expect(document.querySelector(".sa-tool")).toBeTruthy();
   });
 
@@ -4869,18 +4837,11 @@ describe("view webview client", () => {
     expect(posted).toContainEqual({ type: "modalResponse", id: 10, value: true });
   });
 
-  it("shows chips for TodoWrite / WebSearch / WebFetch / ReadLints", async () => {
+  it("shows a chip for the subject of a web search, a fetched URL and a linter check", async () => {
     await loadView();
     const input = document.getElementById("user-input") as HTMLTextAreaElement;
     input.value = "go";
     (document.getElementById("send-btn") as HTMLButtonElement).click();
-    hostMessage({
-      type: "toolCall",
-      id: "tdo",
-      name: "TodoWrite",
-      arguments: { todos: [{ id: "1", content: "fix parser", status: "pending" }], merge: false },
-    });
-    hostMessage({ type: "toolResult", toolCallId: "tdo", output: "## Task List", isError: false });
     hostMessage({ type: "toolCall", id: "ws", name: "WebSearch", arguments: { search_term: "harny vs code" } });
     hostMessage({ type: "toolResult", toolCallId: "ws", output: "results", isError: false });
     hostMessage({ type: "toolCall", id: "wf", name: "WebFetch", arguments: { url: "https://example.com" } });
@@ -4889,142 +4850,7 @@ describe("view webview client", () => {
     hostMessage({ type: "toolResult", toolCallId: "rl", output: "No linter errors found.", isError: false });
 
     const chips = [...document.querySelectorAll(".msg.tool .tool-path")].map((c) => c.textContent);
-    expect(chips).toEqual(["1 - fix parser - pending", "harny vs code", "https://example.com", "a.ts, b.ts"]);
-  });
-
-  it("renders a TodoWrite result as a readable task list — one row, the newest state", async () => {
-    await loadView();
-    const input = document.getElementById("user-input") as HTMLTextAreaElement;
-    input.value = "go";
-    (document.getElementById("send-btn") as HTMLButtonElement).click();
-
-    hostMessage({
-      type: "toolCall",
-      id: "td1",
-      name: "TodoWrite",
-      arguments: { todos: [{ id: "1", content: "fix parser", status: "pending" }], merge: false },
-    });
-    hostMessage({
-      type: "toolResult",
-      toolCallId: "td1",
-      output: "## Task List\n\n⏳ [pending] fix parser",
-      isError: false,
-    });
-
-    // The BUBBLE keeps Input and Output and nothing else: the list moved out, into the footer.
-    expect(document.querySelector("#messages .todo-head")).toBeNull();
-    expect(document.querySelector(".msg.tool .tool-details")?.classList.contains("collapsed")).toBe(true);
-
-    (document.getElementById("todo-row") as HTMLElement).click();
-    const first = document.getElementById("todo-overlay") as HTMLElement;
-    expect(first.querySelector(".todo-count")?.textContent).toBe("0/1");
-    expect(first.querySelectorAll(".todo-item")).toHaveLength(1);
-    expect(first.querySelector(".todo-item")?.classList.contains("status-pending")).toBe(true);
-    expect(first.querySelector(".todo-check")).toBeTruthy();
-    expect(first.querySelector(".todo-text")?.textContent).toBe("fix parser");
-
-    // A second update REPLACES it: an open list follows the state it is showing.
-    hostMessage({ type: "toolCall", id: "td2", name: "TodoWrite", arguments: { todos: [], merge: true } });
-    hostMessage({
-      type: "toolResult",
-      toolCallId: "td2",
-      output: "## Task List\n\n✅ [completed] fix parser\n🔄 [in_progress] ship it",
-      isError: false,
-    });
-
-    expect(document.querySelectorAll("#todo-overlay")).toHaveLength(1);
-    const second = document.getElementById("todo-overlay") as HTMLElement;
-    expect(second.querySelector(".todo-count")?.textContent).toBe("1/2");
-    expect(second.querySelectorAll(".todo-item")).toHaveLength(2);
-    expect(second.querySelectorAll(".todo-item.status-completed")).toHaveLength(1);
-    expect(second.querySelectorAll(".todo-item.status-in_progress")).toHaveLength(1);
-    // The task text is MODEL data: it lands as text, never as markup.
-    expect(second.querySelectorAll(".todo-text")[0].textContent).toBe("fix parser");
-    expect(second.querySelectorAll(".todo-check")).toHaveLength(2);
-    // Ticked only where it is completed; the in-progress box stays empty (its dot is CSS).
-    expect(second.querySelectorAll(".todo-check svg")).toHaveLength(1);
-  });
-
-  it("does not turn another tool's output into a task list", async () => {
-    await loadView();
-    const input = document.getElementById("user-input") as HTMLTextAreaElement;
-    input.value = "go";
-    (document.getElementById("send-btn") as HTMLButtonElement).click();
-    // The text LOOKS like a list: only the tool NAME decides.
-    hostMessage({ type: "toolCall", id: "rd1", name: "Read", arguments: { path: "a.ts" } });
-    hostMessage({ type: "toolResult", toolCallId: "rd1", output: "## Task List\n\n✅ [completed] x", isError: false });
-    expect(document.getElementById("todo-panel")!.classList.contains("hidden")).toBe(true);
-  });
-
-  it("rebuilds ONE task list from a replayed transcript (the newest call wins)", async () => {
-    await loadView();
-    hostMessage({
-      type: "refresh",
-      messages: [
-        {
-          role: "assistant",
-          content: "🔧 Tools: TodoWrite",
-          timestamp: 1,
-          toolCalls: [
-            {
-              id: "td1",
-              name: "TodoWrite",
-              arguments: { todos: [{ id: "1", content: "fix parser", status: "pending" }] },
-            },
-          ],
-        },
-        { role: "tool", toolCallId: "td1", content: "## Task List\n\n⏳ [pending] fix parser", timestamp: 2 },
-        {
-          role: "assistant",
-          content: "🔧 Tools: TodoWrite",
-          timestamp: 3,
-          toolCalls: [{ id: "td2", name: "TodoWrite", arguments: { todos: [], merge: true } }],
-        },
-        {
-          role: "tool",
-          toolCallId: "td2",
-          content: "## Task List\n\n✅ [completed] fix parser\n⏳ [pending] ship it",
-          timestamp: 4,
-        },
-      ],
-    });
-    // The list is re-read from the replayed transcript, and there is only ever ONE of it: the row.
-    expect(document.querySelectorAll("#messages .todo-head")).toHaveLength(0);
-    expect(document.getElementById("todo-count")?.textContent).toBe("1/2");
-    (document.getElementById("todo-row") as HTMLElement).click();
-    const overlay = document.getElementById("todo-overlay") as HTMLElement;
-    expect(overlay.querySelectorAll(".todo-item")).toHaveLength(2);
-    expect(overlay.querySelectorAll(".todo-item.status-completed")).toHaveLength(1);
-  });
-
-  it("keeps a task's text as TEXT — a todo is model data, never markup", async () => {
-    await loadView();
-    const input = document.getElementById("user-input") as HTMLTextAreaElement;
-    input.value = "go";
-    (document.getElementById("send-btn") as HTMLButtonElement).click();
-    hostMessage({ type: "toolCall", id: "td5", name: "TodoWrite", arguments: { todos: [] } });
-    hostMessage({
-      type: "toolResult",
-      toolCallId: "td5",
-      output: '## Task List\n\n[pending] <img src=x onerror="boom()"> **not bold**',
-      isError: false,
-    });
-    (document.getElementById("todo-row") as HTMLElement).click();
-    const list = document.getElementById("todo-overlay") as HTMLElement;
-    expect(list.querySelector("img")).toBeNull();
-    expect(list.querySelector("strong")).toBeNull();
-    expect(list.querySelector(".todo-text")?.textContent).toBe('<img src=x onerror="boom()"> **not bold**');
-  });
-
-  it("shows no task list when the result has no recognisable status", async () => {
-    await loadView();
-    const input = document.getElementById("user-input") as HTMLTextAreaElement;
-    input.value = "go";
-    (document.getElementById("send-btn") as HTMLButtonElement).click();
-    // A changed result shape must degrade to "no list", never to a broken one.
-    hostMessage({ type: "toolCall", id: "td6", name: "TodoWrite", arguments: { todos: [] } });
-    hostMessage({ type: "toolResult", toolCallId: "td6", output: "## Task List\n\nnothing to do", isError: false });
-    expect(document.getElementById("todo-panel")!.classList.contains("hidden")).toBe(true);
+    expect(chips).toEqual(["harny vs code", "https://example.com", "a.ts, b.ts"]);
   });
 
   it("renders a Write preview as an all-additions diff bubble", async () => {
@@ -13040,14 +12866,13 @@ describe("Focus: the transcript follows the run", () => {
     grow: (by: number) => void;
     drift: (by: number) => void;
     shrink: (by: number) => void;
-    resize: (by: number) => void;
     pins: () => number;
     reads: () => number;
   } {
     const messages = messagesEl();
     let top = 790; // 10px short of the end: following, but a pin that moves stays OBSERVABLE
     let height = 1000;
-    let view = 200; // the BOX, not the content: the task list opening changes exactly this
+    const view = 200; // the BOX, not the content: the geometry net is what answers a change here
     const end = () => Math.max(0, height - view);
     let pins = 0;
     let reads = 0;
@@ -13102,12 +12927,6 @@ describe("Focus: the transcript follows the run", () => {
       // arrives BEFORE the reader can move again — a test where a hand acts right after a pin has to
       // let this land first, or the model would be swallowing a move no browser swallows.
       deliver: () => messages.dispatchEvent(new Event("scroll")),
-      /** The BOX itself changes height while the content does not: the task list opening (shorter) or
-       * closing (taller, and the browser clamps the offset down to the new ceiling — pair it with
-       * `at()` if the test needs that clamp). Nothing moved the reader; the geometry did. */
-      resize: (by) => {
-        view += by;
-      },
       pins: () => pins,
       reads: () => reads,
     };
@@ -13151,103 +12970,6 @@ describe("Focus: the transcript follows the run", () => {
     expect(document.querySelectorAll("#messages .msg.assistant").length).toBe(2);
   });
 
-  // --- The task list: the BOX changes height, the reader does not ---
-  // The list is a footer IN FLOW above the row, so opening it takes its height from #messages: the
-  // box gets shorter (the end moves down, nothing clamps) and closing gives it back (the box gets
-  // taller, the browser clamps the offset DOWN to the new ceiling). Both changes are ours, and the
-  // question is only whether the ledger can tell.
-  const TASKS = "## Task List\n\n✅ [completed] read the code\n🔄 [in_progress] write the row";
-  const showTasks = (): void => {
-    hostMessage({ type: "toolCall", id: "td1", name: "TodoWrite", arguments: { todos: [] } });
-    hostMessage({ type: "toolResult", toolCallId: "td1", output: TASKS });
-  };
-  const toggleTasks = (): void => (document.getElementById("todo-row") as HTMLElement).click();
-  // A REAL frame: `boxMovedByUs` arms its token for one frame only, and a test that never lets one
-  // pass would be swallowing the next scroll for the wrong reason.
-  const flushFrame = (): Promise<void> => new Promise((r) => requestAnimationFrame(() => r()));
-  const atEnd = (): number => messagesEl().scrollHeight - messagesEl().clientHeight;
-
-  it("the list opening SHORTENS the box, and the Follow takes the new end after the layout", async () => {
-    await startRun();
-    const box = tetherScroll();
-    showTasks();
-    box.park(); // following, ten pixels short of the end
-    box.resize(-120); // the list opens: #messages is 120px shorter, the CONTENT is untouched
-    toggleTasks();
-    nextFrame(); // the resize observer fires after the layout
-    // The end moved DOWN by 120 and nothing clamped, so there is no event to misread — and a box
-    // that gets shorter is exactly what the net exists for: the new end comes back, same frame.
-    expect(auto().getAttribute("aria-pressed")).toBe("true");
-    expect(messagesEl().scrollTop).toBe(atEnd());
-  });
-
-  it("the list opening under a parked reader moves nothing at all", async () => {
-    await startRun();
-    const box = tetherScroll();
-    showTasks();
-    box.park(); // following, ten pixels short — and the pin takes the end, as it should
-    box.at(700); // then the reader walks up the transcript…
-    box.scroll(); // …which is a proven hand, so the Follow goes out
-    box.resize(-120); // the list opens: the box is shorter
-    toggleTasks();
-    nextFrame();
-    expect(messagesEl().scrollTop).toBe(700); // the exact pixel they were reading
-    expect(auto().getAttribute("aria-pressed")).toBe("false");
-  });
-
-  it("closing the list does not re-light the Follow: that clamp is ours, not a hand", async () => {
-    await startRun();
-    const box = tetherScroll();
-    showTasks();
-    box.resize(-120);
-    toggleTasks(); // the list is open, so the box is the shorter one
-    await flushFrame();
-    box.park(20); // the reader scrolls: twenty pixels short of the shorter end…
-    box.up(); // …and says so
-    box.resize(+120); // closing: the box gets its height back
-    box.at(atEnd()); // …and the browser clamps the offset down to the new ceiling
-    toggleTasks(); // the close itself: our hand, read back into the ledger
-    box.deliver(); // the scroll event the clamp emits, in the same frame
-    // At the end is normally following, and `settle` would take a Follow nobody asked for — for a
-    // reader who never touched anything. This move was ours, so it is not evidence about them.
-    expect(auto().getAttribute("aria-pressed")).toBe("false");
-
-    // And the token is spent on that ONE event: the reader asks for the Follow again, walks up, and
-    // the switch goes out — a flag that stayed armed would swallow the next event too, for ever.
-    auto().click();
-    expect(auto().getAttribute("aria-pressed")).toBe("true");
-    box.at(300);
-    box.scroll();
-    expect(auto().getAttribute("aria-pressed")).toBe("false");
-  });
-
-  it("opening the list re-reads the ceiling, so a hand after it is still a hand", async () => {
-    // The other half of the same coin: an OPEN takes height away with nothing to clamp, so no event
-    // arrives to clear the token — and the ledger has to be read back at the change all the same.
-    // The hand rule is arithmetic (`lastMax - max`, the CEILING did not move), so a ledger still
-    // holding the taller box reads every hand as a reflow, and the switch can never be turned off
-    // again for the rest of the session.
-    await startRun();
-    const box = tetherScroll();
-    showTasks();
-    box.park(); // following, ten pixels short
-    box.at(700); // the reader walks up…
-    box.scroll(); // …a proven hand: the Follow goes out
-    expect(auto().getAttribute("aria-pressed")).toBe("false");
-    box.resize(-120); // the list opens: our own change to the box's height
-    toggleTasks();
-    await flushFrame(); // no clamp, so no event: only the frame can retire the token
-    auto().click(); // and the reader asks to follow again, from here
-    expect(auto().getAttribute("aria-pressed")).toBe("true");
-    box.at(560);
-    box.scroll();
-    expect(auto().getAttribute("aria-pressed")).toBe("false");
-  });
-
-  // (The test that pinned "a list that MOVES out of one card into the next is not a hand" went with
-  // the block: there is no block in the transcript any more, so nothing moves. The pinned row is a
-  // footer, outside the scroll box entirely.)
-
   it("the opening paint's allowance dies at the first scroll: a card below does not yank a reader", async () => {
     // A fresh context opens AT its end, and that first landing is a PAINT, not a Follow: it is written
     // before the switch has an owner. The allowance is for that one landing — once the reader moves,
@@ -13288,24 +13010,58 @@ describe("Focus: the transcript follows the run", () => {
     expect(messagesEl().scrollTop).toBe(700); // …and the next frame takes the end it still owns
   });
 
-  it("closing the list spends the clamp event on the LEDGER: the next hand is still a hand", async () => {
-    // The event the clamp emits is the only chance to re-read the ceiling, and the swallow branch is
-    // where that happens. Miss it and the ledger keeps the taller box's ceiling: every hand after a
-    // close compares against a number 120px off, reads as a reflow, and is answered with a pin.
+  it("OUR OWN write is not a hand — and it does not blunt the NEXT hand", async () => {
+    // `syncLedger` re-reads the ceiling after a write of OURS (a card landing below takes the end).
+    // If it stored the wrong numbers, the very next hand would be read as a reflow and the Follow
+    // would stay on over a reader who had walked away — so both halves are asserted here.
     await startRun();
     const box = tetherScroll();
-    showTasks();
-    box.at(800); // at the end, following
+    box.park(); // following, ten px short
+    box.grow(200); // content lands below: the end moves down
+    nextFrame(); // the net takes the new end — OUR write, and the ledger moves with it
+    expect(box.pins()).toBeGreaterThan(0);
+
+    box.at(700); // then the reader walks up, the ceiling unchanged
+    box.scroll();
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("a DIFF landing in a card is OUR restructure, not a hand — and the next hand still counts", async () => {
+    // `populateToolDiff` appends a section BELOW the bubble: the box moves without a hand, so the
+    // ledger is re-read right there (`syncLedger`). Store the wrong numbers and the very next hand is
+    // read as a reflow instead: the box gets yanked back to the end over a reader who walked away.
+    await startRun();
+    const box = tetherScroll();
+    box.park(); // following, ten px short
+    hostMessage({ type: "toolCall", id: "w1", name: "Write", arguments: { path: "/w/a.ts" } });
+    hostMessage({
+      type: "toolResult",
+      toolCallId: "w1",
+      output: "Wrote 2 bytes to /w/a.ts\n\nDiff (+1/-0):\n```diff\n@@ -0,0 +1 @@\n+x\n```",
+      isError: false,
+    });
+
+    box.at(700); // the reader walks up afterwards, the ceiling unchanged
+    box.scroll();
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+    expect(messagesEl().scrollTop).toBe(700); // and the box is NOT fought back
+  });
+
+  it("a hand that goes back to the END during a run re-lights the Follow", async () => {
+    // The counterpart of the reflow rule below: an offset that RISES to the end is the reader coming
+    // home, and home during a run is what the Follow is for. Only a run can light it (off the clock
+    // there is nothing to follow), so this needs `sessionBusy()`.
+    await startRun();
+    const box = tetherScroll();
+    box.park(); // following, ten px short: the ledger now holds this box
+    box.at(300); // the reader walks up…
+    box.scroll(); // …a proven hand
+    expect(auto().getAttribute("aria-pressed")).toBe("false");
+
+    box.at(800); // back to the end, still by hand
     box.scroll();
     expect(auto().getAttribute("aria-pressed")).toBe("true");
-    box.resize(+120); // closing: the box gets its height back, the end falls to 680
-    box.at(680); // …and the browser clamps the offset down to it
-    toggleTasks();
-    box.deliver(); // the event that clamp emits: ours, so it is spent on the ledger, not on `settle`
-    box.at(500); // then the reader walks up
-    box.scroll();
-    expect(auto().getAttribute("aria-pressed")).toBe("false"); // a hand, recognized as one
-    expect(messagesEl().scrollTop).toBe(500); // left where the hand put it
+    expect(messagesEl().scrollTop).toBe(800);
   });
 
   it("a two-pixel twitch is ROUNDING, not a hand: the ceiling did not move at all", async () => {
@@ -15011,226 +14767,5 @@ describe("a repaint the panel refused cannot come back and blank a section", () 
     });
     await frame();
     expect(document.querySelectorAll(".msg.assistant")).toHaveLength(0);
-  });
-});
-
-describe("the pinned task row: the list outside the transcript", () => {
-  // The row is derived from the tool's RESULT (the same text the overlay's list is built from), and
-  // its TONE comes from the run: `live` only while the run in progress touched it, `stale` once it
-  // is history. These tests pin the four edges that decide its life: a result fills it, a result
-  // that is not a list leaves it alone, the end of a run takes away a list it never touched (or
-  // one it finished), and a tab switch re-reads it from the transcript as history.
-  const row = (): HTMLElement => document.getElementById("todo-panel") as HTMLElement;
-  const overlay = (): HTMLElement => document.getElementById("todo-overlay") as HTMLElement;
-  const count = (): string => document.getElementById("todo-count")?.textContent ?? "";
-  const now = (): string => document.getElementById("todo-now")?.textContent ?? "";
-  const shown = (): boolean => !row().classList.contains("hidden");
-  const live = (): boolean => row().classList.contains("live");
-  const isOpen = (): boolean => !overlay().classList.contains("hidden");
-
-  const LIST =
-    "## Task List\n\n✅ [completed] read the code\n🔄 [in_progress] write the row\n⏳ [pending] run the tests";
-
-  async function startWorking(): Promise<void> {
-    await loadView();
-    (document.getElementById("user-input") as HTMLTextAreaElement).value = "go";
-    (document.getElementById("send-btn") as HTMLButtonElement).click();
-  }
-  const sendAgain = (): void => {
-    (document.getElementById("user-input") as HTMLTextAreaElement).value = "ancora";
-    (document.getElementById("send-btn") as HTMLButtonElement).click();
-  };
-  function write(id: string, output: string, isError = false): void {
-    hostMessage({ type: "toolCall", id, name: "TodoWrite", arguments: { todos: [], merge: true } });
-    hostMessage({ type: "toolResult", toolCallId: id, output, isError });
-  }
-  const transcript = (output: string): unknown[] => [
-    {
-      role: "assistant",
-      content: "🔧 Tools: TodoWrite",
-      timestamp: 1,
-      toolCalls: [{ id: "td1", name: "TodoWrite", arguments: { todos: [] } }],
-    },
-    { role: "tool", toolCallId: "td1", content: output, timestamp: 2 },
-  ];
-
-  /** jsdom has no layout, so every offset is 0 and the centring arithmetic would be a statement about
-   *  nothing. For the ONE test that asserts WHERE the list lands, the numbers go on the PROTOTYPE —
-   *  the items are rebuilt on every write, so per-element stubs would be gone by the time the maths
-   *  runs — and come straight back off, because a global offset would be a lie for every other test.
-   *  Twenty pixels a row, the first at 20, each 18 tall. */
-  function withTaskLayout<T>(fn: () => T): T {
-    const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
-    const savedTop = Object.getOwnPropertyDescriptor(proto, "offsetTop");
-    const savedHeight = Object.getOwnPropertyDescriptor(proto, "offsetHeight");
-    const rowOf = (el: HTMLElement): number => [...overlay().querySelectorAll<HTMLElement>(".todo-item")].indexOf(el);
-    Object.defineProperty(proto, "offsetTop", {
-      configurable: true,
-      get(this: HTMLElement) {
-        return 20 + rowOf(this) * 20;
-      },
-    });
-    Object.defineProperty(proto, "offsetHeight", { configurable: true, get: () => 18 });
-    try {
-      return fn();
-    } finally {
-      if (savedTop) Object.defineProperty(proto, "offsetTop", savedTop);
-      else delete proto.offsetTop;
-      if (savedHeight) Object.defineProperty(proto, "offsetHeight", savedHeight);
-      else delete proto.offsetHeight;
-    }
-  }
-
-  it("fills from the result the tool returned, and says what is being done", async () => {
-    await startWorking();
-    expect(shown()).toBe(false); // nothing yet: no row, no empty frame
-    write("td1", LIST);
-    expect(shown()).toBe(true);
-    expect(document.getElementById("todo-count")?.textContent).toBe("1/3");
-    expect(now()).toBe("write the row");
-    expect(live()).toBe(true);
-    // ONE list, one place: the transcript keeps the tool's raw output and no list of its own.
-    expect(document.querySelector("#messages .todo-head")).toBeNull();
-  });
-
-  it("an error, or any output that is not a list, leaves the list alone", async () => {
-    await startWorking();
-    write("td1", LIST);
-    write("td2", "Error: no such todo", true);
-    expect(shown()).toBe(true);
-    expect(count()).toBe("1/3"); // {"no list" is not "no tasks"}
-    write("td3", "No linter errors found.");
-    expect(count()).toBe("1/3");
-  });
-
-  it("when the run ends the list stays — quiet, not gone (stale)", async () => {
-    await startWorking();
-    write("td1", LIST);
-    hostMessage({ type: "done" });
-    expect(shown()).toBe(true);
-    expect(live()).toBe(false);
-    // A NEW run does not inherit the claim: it has touched nothing yet.
-    sendAgain();
-    expect(shown()).toBe(true);
-    expect(live()).toBe(false);
-  });
-
-  it("a run that never touches the list takes it away with itself", async () => {
-    await startWorking();
-    write("td1", LIST);
-    hostMessage({ type: "done" });
-    expect(shown()).toBe(true); // left half done by run 1: it stays
-    sendAgain();
-    hostMessage({ type: "done" }); // run 2 wrote no list at all
-    expect(shown()).toBe(false);
-    // …and the `refresh` that closes the run must NOT read it back from the transcript: that is
-    // the flicker this flag exists for.
-    hostMessage({ type: "refresh", messages: transcript(LIST) });
-    expect(shown()).toBe(false);
-  });
-
-  it("a finished list is done with the run that finished it", async () => {
-    await startWorking();
-    write("td1", "## Task List\n\n✅ [completed] read the code\n✅ [completed] write the row");
-    expect(count()).toBe("2/2");
-    hostMessage({ type: "done" });
-    expect(shown()).toBe(false);
-  });
-
-  it("✕ closes the row, and only a NEW list brings it back", async () => {
-    await startWorking();
-    write("td1", LIST);
-    (document.getElementById("todo-close") as HTMLButtonElement).click();
-    expect(shown()).toBe(false);
-    // Still closed when the run ends: the dismissal is not undone by the run itself.
-    hostMessage({ type: "done" });
-    expect(shown()).toBe(false);
-    // …until the model writes again: a dismissal is about this screen, not about the work.
-    write("td2", LIST);
-    expect(shown()).toBe(true);
-  });
-
-  it("a tab switch re-reads the list from the transcript, as history", async () => {
-    await loadView();
-    hostMessage({
-      type: "switchView",
-      activeId: "b",
-      openIds: ["a", "b"],
-      messages: transcript(LIST),
-      config: {
-        provider: "openai",
-        model: "gpt-4o",
-        hasKey: true,
-        models: [],
-        providerModels: [],
-        contextWindow: 128000,
-      },
-    });
-    expect(shown()).toBe(true);
-    expect(count()).toBe("1/3");
-    expect(live()).toBe(false); // history does not claim to be doing anything
-    // The transcript keeps no list of its own: the row IS the list.
-    expect(document.querySelectorAll("#messages .todo-head")).toHaveLength(0);
-  });
-
-  it("the full list opens ABOVE the row, and a click anywhere else means nothing to it", async () => {
-    await startWorking();
-    write("td1", LIST);
-    const rowEl = document.getElementById("todo-row") as HTMLElement;
-    expect(isOpen()).toBe(false);
-    rowEl.click();
-    expect(isOpen()).toBe(true);
-    expect(rowEl.getAttribute("aria-expanded")).toBe("true");
-    // The chevron the CSS turns the other way round (closed `>`, open tip-up): the class is the only
-    // thing CSS reads, so it is the only thing this side must get right.
-    expect(rowEl.querySelector(".toggle")?.classList.contains("is-open")).toBe(true);
-    // The list is the SAME markup as a task list anywhere else (one renderer, one look).
-    expect(overlay().querySelectorAll(".todo-item")).toHaveLength(3);
-    expect(overlay().querySelector(".todo-item.status-in_progress .todo-text")?.textContent).toBe("write the row");
-    // IN FLOW: it covers nothing, so there is no "click outside" to fold it — the row that opened it
-    // is right under it, and a click on the page must not close a list the reader is still reading.
-    document.body.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
-    expect(isOpen()).toBe(true);
-    rowEl.click();
-    expect(isOpen()).toBe(false);
-    expect(rowEl.getAttribute("aria-expanded")).toBe("false");
-    // ✕ closes the row AND the list it may have opened: a closed row cannot keep a list open.
-    rowEl.click();
-    expect(isOpen()).toBe(true);
-    (document.getElementById("todo-close") as HTMLButtonElement).click();
-    expect(isOpen()).toBe(false);
-    expect(shown()).toBe(false);
-  });
-
-  it("opens CENTRED on the task in progress, and only re-centres when that task changes", async () => {
-    await startWorking();
-    const list = (running: number, extra?: string): string => {
-      const lines = ["## Task List", ""];
-      for (let i = 0; i < 8; i++) lines.push(`${i === running ? "🔄 [in_progress]" : "⏳ [pending]"} task ${i}`);
-      if (extra) lines.push(extra);
-      return lines.join("\n");
-    };
-    write("td1", list(4));
-    // jsdom has no layout: the port's own numbers are what the arithmetic reads, so they are given.
-    let top = 0;
-    Object.defineProperty(overlay(), "clientHeight", { get: () => 100, configurable: true });
-    Object.defineProperty(overlay(), "scrollTop", {
-      get: () => top,
-      set: (v: number) => {
-        top = v;
-      },
-      configurable: true,
-    });
-    const rowEl = document.getElementById("todo-row") as HTMLElement;
-    rowEl.click();
-    expect(isOpen()).toBe(true);
-    // A rebuild while the SAME task is running: nothing moves (a list that jumps under the cursor is
-    // the transcript's sin, committed in a smaller box).
-    withTaskLayout(() => write("td2", list(4, "⏳ [pending] task 8")));
-    expect(top).toBe(0);
-    // A DIFFERENT task running: that is the one moment a jump is worth it — and it is a CENTRED one,
-    // 20 + 6·20 − (100 − 18) / 2 = 99, not the row pressed against the top edge of the port.
-    withTaskLayout(() => write("td3", list(6)));
-    expect(top).toBe(99);
   });
 });

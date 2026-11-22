@@ -1607,6 +1607,12 @@ export class ChatViewProvider implements WebviewViewProvider {
    * The READ path already filters them (see the host's toolScopeFor), so behaviour is correct
    * without this; what this adds is not leaving a decision about a deleted server in the row for
    * ever. No write when nothing changes: a config edit would otherwise rewrite every session.
+   *
+   * A BUILT-IN tool this build no longer ships is the one case that stays in the row: the read path
+   * filters `off` against the live registry (`toolScopeFor`), so nothing behaves differently — and
+   * sweeping it here would mean handing this layer the registry, which it deliberately does not have
+   * (it knows the config, not the tools). A dead name in one JSON column is cheaper than that
+   * dependency.
    */
   reconcileToolScopes(): number {
     const servers = Object.keys(this.providers.readMcpServers?.() ?? {});

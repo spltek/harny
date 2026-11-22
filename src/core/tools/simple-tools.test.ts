@@ -1,90 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { TodoTool } from "./todo-tool";
 import { WebSearchTool } from "./web-search-tool";
 import { WebFetchTool } from "./web-fetch-tool";
 import { ReadLintsTool } from "./read-lints-tool";
 import type { HttpClient, HttpResponse } from "../llm/http-client";
 import type { DiagnosticsProvider } from "./diagnostics-provider";
-
-describe("TodoTool", () => {
-  it("creates a task list", () => {
-    const tool = new TodoTool();
-    const result = tool.execute({
-      todos: [
-        { id: "1", content: "fix bug", status: "pending" },
-        { id: "2", content: "ship", status: "in_progress" },
-      ],
-      merge: false,
-    });
-
-    expect(result.isError).toBe(false);
-    expect(result.content).toContain("⏳ [pending] fix bug");
-    expect(result.content).toContain("🔄 [in_progress] ship");
-  });
-
-  it("merges by id when merge is true", () => {
-    const tool = new TodoTool();
-    tool.execute({ todos: [{ id: "1", content: "a", status: "pending" }], merge: false });
-    const result = tool.execute({
-      todos: [{ id: "1", content: "a", status: "completed" }],
-      merge: true,
-    });
-
-    expect(result.content).toContain("✅ [completed] a");
-  });
-
-  it("errors when todos is missing", () => {
-    const tool = new TodoTool();
-    expect(tool.execute({}).isError).toBe(true);
-  });
-
-  it("keeps PER-owner lists: concurrent sub-agents never clobber each other", () => {
-    const tool = new TodoTool();
-    const a = tool.execute(
-      { todos: [{ id: "1", content: "alpha", status: "pending" }], merge: false },
-      { ownerId: "sub-a" },
-    );
-    expect(a.content).toContain("alpha");
-    // A different owner (another sub-agent / session) has its OWN list.
-    const b = tool.execute(
-      { todos: [{ id: "1", content: "beta", status: "pending" }], merge: false },
-      { ownerId: "sub-b" },
-    );
-    expect(b.content).toContain("beta");
-    // Updating A's list leaves B's untouched.
-    const a2 = tool.execute(
-      { todos: [{ id: "1", content: "alpha", status: "completed" }], merge: true },
-      { ownerId: "sub-a" },
-    );
-    expect(a2.content).toContain("✅ [completed] alpha");
-    expect(a2.content).not.toContain("beta");
-    const b2 = tool.execute(
-      { todos: [{ id: "1", content: "beta", status: "pending" }], merge: true },
-      { ownerId: "sub-b" },
-    );
-    expect(b2.content).toContain("beta");
-    expect(b2.content).not.toContain("alpha");
-  });
-
-  it("bounds the per-owner state map (LRU) so long sessions do not leak", () => {
-    const tool = new TodoTool();
-    // Seed the FIRST owner's list, then touch many later owners to evict it.
-    tool.execute(
-      { todos: [{ id: "1", content: "first-item", status: "pending" }], merge: false },
-      { ownerId: "first" },
-    );
-    for (let i = 0; i < 250; i++) {
-      tool.execute({ todos: [{ id: "x", content: "x", status: "pending" }], merge: false }, { ownerId: `o${i}` });
-    }
-    // "first" was evicted: a merge starts from an EMPTY list (no stale "first-item").
-    const res = tool.execute(
-      { todos: [{ id: "2", content: "second-item", status: "pending" }], merge: true },
-      { ownerId: "first" },
-    );
-    expect(res.content).not.toContain("first-item");
-    expect(res.content).toContain("second-item");
-  });
-});
 
 function httpResponse(body: string, headers: Record<string, string> = {}): HttpResponse {
   return {

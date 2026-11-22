@@ -27,8 +27,8 @@ function countLines(text: string): number {
 
 /**
  * The SUBJECT of a tool call: the file path (file tools), the glob pattern
- * (Glob), the command (Shell), the search term (WebSearch), the url (WebFetch),
- * the paths (ReadLints) or the list summary (TodoWrite).
+ * (Glob), the command (Shell), the search term (WebSearch), the url (WebFetch)
+ * or the paths (ReadLints).
  */
 export function toolArgTarget(args: unknown): string | undefined {
   if (!args || typeof args !== "object") return undefined;
@@ -41,12 +41,6 @@ export function toolArgTarget(args: unknown): string | undefined {
   if (Array.isArray(rec.paths)) {
     const list = rec.paths.filter((p): p is string => typeof p === "string");
     if (list.length > 0) return list.join(", ");
-  }
-  if (Array.isArray(rec.todos)) {
-    const items = rec.todos
-      .filter((t): t is Record<string, unknown> => !!t && typeof t === "object")
-      .map((t) => `${String(t.id ?? "?")} - ${String(t.content ?? "")} - ${String(t.status ?? "?")}`);
-    if (items.length > 0) return items.join(" · ");
   }
   return undefined;
 }
@@ -80,7 +74,7 @@ export function toolCallDetail(name: string, args: unknown): string | undefined 
   return undefined;
 }
 
-/** The subject is capped so a TodoWrite dump or a 40-path ReadLints cannot fill the span. */
+/** The subject is capped so a 40-path ReadLints cannot fill the span. */
 const TARGET_MAX_CHARS = 120;
 
 /**

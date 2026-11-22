@@ -323,8 +323,6 @@ export async function activate(context: ExtensionContext) {
       // Which tools THIS session may use (MCP servers on, built-ins off): read per turn, so a
       // toggle takes effect on the next one. Sub-agents inherit it (see SubAgentRunnerDeps).
       toolScope: () => toolScopeFor(sessionId),
-      // Per-session identity: stateful tools (TodoWrite) keep separate state.
-      ownerId: sessionId,
     });
   };
 
