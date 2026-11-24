@@ -71,7 +71,7 @@ Example: a per-session `reasoningBudget`.
 - `up` receives the raw `DatabaseSync`: use `db.exec` for DDL and prepared
   statements for data.
 - Leave the column **nullable** unless you have a constant default (see
-  [SQLite ALTER TABLE limits](#sqlite-alter-table-limits)).
+  [SQLite ALTER TABLE limits](#renaming--dropping-a-column--sqlite-limits)).
 
 ### 2. The four store touch points
 

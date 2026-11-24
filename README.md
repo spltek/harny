@@ -63,6 +63,24 @@ It speaks one protocol, the **OpenAI Chat Completions API**. That single choice 
 
 **Your history lives outside your project.** Sessions are stored in a central SQLite database — not in your repo. Agent tools can never read or corrupt transcripts, and cleaning your project never deletes your chat history.
 
+### Feature index
+
+Where this README covers each capability. The exhaustive list is under [Features](#features).
+
+| Capability | Covered in |
+|---|---|
+| Run transparency, per-turn usage | [How every step is tracked](#how-every-step-is-tracked) |
+| Analyze & Build, dry-run diffs | [Analyze & Build](#analyze--build) |
+| Parallel, sub-agents, orchestration | [Parallel: sub-agents](#parallel-sub-agents) |
+| Queue, steer, stop mid-run | [Queue & Steer](#queue--steer) |
+| Compaction, masking, long sessions | [Long sessions](#long-sessions) |
+| Loop guard, nudges, sensitivity presets | [When it gets stuck](#when-it-gets-stuck) |
+| Images, attachments, multimodal input | [Attachments](#attachments) |
+| Inference parameters, per session | [Tuning the model parameters](#tuning-the-model-parameters) |
+| Sessions, branches, cut, full-text search | [Sessions](#sessions) |
+| 13 tools, MCP servers, Agent Skills | [Features](#features) |
+| Configuration, settings, data folder | [Configuration reference](#configuration-reference) |
+
 ## Supported providers
 
 Harny is **openai-compatible by design**, so anything that implements `/v1/chat/completions` works. Tested configurations:
@@ -612,7 +630,7 @@ Below the model dropdown, two cards let you tune the session. Every numeric cont
 
 #### Sensitivity presets
 
-| | **High** (aggressive) | **Normal** (default) | **Low** (permissive) |
+| | **High** (aggressive) | **Medium** (default) | **Low** (permissive) |
 |---|---|---|---|
 | `maxNudges` | 3 | 2 | 2 |
 | `reasoningThreshold` | 0.45 | 0.5 | 0.65 |
