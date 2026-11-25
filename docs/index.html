@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Harny — AI Coding Agent inside VSCodium &amp; VS Code</title>
+    <title>Harny — VS Code AI coding agent, local LLM or cloud</title>
     <meta
       name="description"
-      content="Harny is a full AI coding agent that lives in your Activity Bar. Preview in Analyze, apply in Build, bring your own model — cloud or local. One protocol: OpenAI Chat Completions."
+      content="AI coding agent for VS Code &amp; VSCodium: preview in Analyze, apply in Build, and point it at a local LLM (Ollama, LM Studio, llama.cpp) or any OpenAI-compatible API."
     />
     <meta name="theme-color" content="#00050a" />
     <link rel="canonical" href="https://harny.dev/" />
@@ -14,12 +14,12 @@
     <meta name="author" content="SPLTek" />
     <meta
       name="keywords"
-      content="AI coding agent, VSCodium, VS Code, OpenAI compatible, local model, BYOK, MIT"
+      content="VS Code AI coding agent, AI coding agent, local LLM coding agent, local LLM, Ollama, LM Studio, llama.cpp, Model Context Protocol, MCP, VSCodium, OpenAI compatible, BYOK, MIT"
     />
-    <meta property="og:title" content="Harny — AI Coding Agent" />
+    <meta property="og:title" content="Harny — VS Code AI coding agent, local LLM or cloud" />
     <meta
       property="og:description"
-      content="Preview, then apply. Bring your own model. Real parallelism. Never locked out."
+      content="Preview, then apply. A local LLM or any OpenAI-compatible cloud model. Real parallelism. Never locked out."
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://harny.dev/" />
@@ -33,10 +33,10 @@
     <meta property="og:image:width" content="1600" />
     <meta property="og:image:height" content="643" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Harny — AI Coding Agent" />
+    <meta name="twitter:title" content="Harny — VS Code AI coding agent, local LLM or cloud" />
     <meta
       name="twitter:description"
-      content="Preview, then apply. Bring your own model. Real parallelism. Never locked out."
+      content="Preview, then apply. A local LLM or any OpenAI-compatible cloud model. Real parallelism. Never locked out."
     />
     <meta name="twitter:image" content="https://harny.dev/assets/img/harny_wall.jpg" />
     <link
@@ -81,8 +81,26 @@
         "alternateName": "Harny - AI Coding Harness",
         "applicationCategory": "DeveloperApplication",
         "applicationSubCategory": "AI coding agent",
+        "keywords": "AI coding agent, VS Code AI coding agent, local LLM coding agent, Ollama, LM Studio, llama.cpp, OpenAI-compatible, BYOK, MIT",
+        "featureList": [
+          "Analyze mode: every file-modifying tool runs as a dry run and returns the diff",
+          "Build mode: the same tools write to disk",
+          "Parallel sub-agents behind one orchestrator",
+          "Loop guard that nudges a looping model instead of only stopping it",
+          "Automatic context compaction on long sessions",
+          "13 built-in tools: Read, Write, StrReplace, Edit, Delete, Shell, Grep, Glob, Skill, WebSearch, WebFetch, ReadLints, Delegate",
+          "MCP servers, scoped per session",
+          "Agent skills loaded on demand",
+          "Local LLM support through Ollama, LM Studio, llama.cpp and MLX",
+          "Any OpenAI-compatible provider, with the key held outside the project",
+          "Session history in a central SQLite database, never in the repository",
+          "Restricted Mode: read-only until the folder is trusted"
+        ],
+        "softwareRequirements": "VS Code 1.101+ or VSCodium 1.101+; Node 22.5+ for node:sqlite",
+        "screenshot": "https://harny.dev/assets/img/harny_wall.jpg",
+        "downloadUrl": "https://marketplace.visualstudio.com/items?itemName=spltek.harny",
         "operatingSystem": "Windows, macOS, Linux",
-        "description": "Harny is a full AI coding agent that lives in your Activity Bar. Preview in Analyze, apply in Build, bring your own model — cloud or local. One protocol: OpenAI Chat Completions.",
+        "description": "Harny is an AI coding agent for VS Code and VSCodium: it previews changes in Analyze, applies them in Build, and drives either a local LLM (Ollama, LM Studio, llama.cpp) or any OpenAI-compatible cloud model.",
         "url": "https://harny.dev/",
         "license": "https://github.com/spltek/harny/blob/main/LICENSE",
         "isAccessibleForFree": true,
@@ -100,6 +118,92 @@
           "https://github.com/spltek/harny",
           "https://marketplace.visualstudio.com/items?itemName=spltek.harny",
           "https://open-vsx.org/extension/spltek/harny"
+        ]
+      }
+    </script>
+    <!-- FAQPage: the nine answers below are also visible text on the page, word for word.
+         Google no longer shows FAQ rich results for sites like this one, so this block is not
+         here for a decoration in the SERP — it is here because AI answer engines read JSON-LD
+         far more reliably than they read a rendered page. Visible text and schema must stay
+         in sync: editing one without the other is a bug. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "@id": "https://harny.dev/#faq",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "What is Harny, in one sentence?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "An AI coding agent for VS Code and VSCodium: a chat panel in the Activity Bar that reads your project, edits files, runs commands and keeps one conversation per folder. Free, MIT licensed, and the model it drives is your choice."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can I use a local LLM as the coding agent?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. Harny talks to any OpenAI-compatible endpoint, so a model running on your own machine is a provider like any other: no API key, no account, no per-token bill — and nothing about your code leaves the laptop."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Which local servers does it support?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Ollama, LM Studio, llama.cpp and MLX, plus anything else serving /v1/chat/completions on localhost. Reasoning is requested per host — a toggle, a type or an object — so a thinking model reasons the way it expects to."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does it run in VSCodium, Cursor and Windsurf?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. Those editors use Open VSX instead of the Microsoft Marketplace, and Harny is published on both. VSCodium 1.101+ is supported directly; Cursor, Windsurf and Theia install from Open VSX."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Which cloud models can I use?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "OpenAI, Anthropic through its compatible endpoint, OpenRouter and OpenCode Go — or any other gateway. Models are declared by hand or discovered from the server, including each model's real context window."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does it write to my files without asking?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "A new session starts in Analyze, where every file-modifying tool is a dry run: it returns the exact diff and writes nothing. Build is the mode that applies changes, and it is one click away when the previews are ready."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Is it actually free?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "The extension is MIT licensed and costs nothing. With a local model the whole loop is free; with a cloud provider you pay that provider, with your own key, kept in Harny's own data folder."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Where do my chats and API keys live?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Outside the project. Sessions go into a central SQLite database, keys into Harny's configuration — neither is readable by the agent's tools, and deleting a repository never deletes the history."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How is it different from Copilot or Cursor?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No subscription and no fixed model: Harny is a harness, and the model is a setting — local or cloud. It also shows the run, not only the result: every tool call with its input, its output and its diff, before anything is written."
+            }
+          }
         ]
       }
     </script>
@@ -200,13 +304,13 @@
             <p class="hero__sub">AI CODING AGENT</p>
 
             <p class="hero__lede">
-              A full agent that lives in your <strong>Activity Bar</strong>. It reads your project, edits files,
-              runs commands, searches the web and keeps one persistent conversation per folder — with tool calling
-              and live streaming.
+              A full <strong>AI coding agent for VS Code and VSCodium</strong> that lives in your Activity Bar. It
+              reads your project, edits files, runs commands, searches the web and keeps one persistent
+              conversation per folder — with tool calling and live streaming.
             </p>
             <p class="hero__lede hero__lede--dim">
-              Bring your own model. Cloud, or a model on your laptop. One protocol: the
-              <code>OpenAI Chat Completions</code> API.
+              Bring your own model. Cloud, or a <strong>local LLM</strong> on your laptop through Ollama, LM Studio
+              or llama.cpp. One protocol: the <code>OpenAI Chat Completions</code> API.
             </p>
 
             <div class="hero__cta">
@@ -455,7 +559,7 @@
             <img
               class="reel__poster"
               src="https://i.ytimg.com/vi/DKJm4pCaEIs/maxresdefault.jpg"
-              alt=""
+              alt="Harny demo session: the AI coding agent builds the harny.dev website inside VS Code"
               width="1280"
               height="720"
               loading="lazy"
@@ -493,14 +597,43 @@
         </div>
       </section>
 
+      <!-- ============ 00 WHAT ============ -->
+      <section class="sect" id="what">
+        <div class="sect__head">
+          <p class="sect__idx">00 <span>/</span> WHAT HARNY IS</p>
+          <h2 class="sect__title">An AI coding agent<br /><span class="grad">for the editor you already run.</span></h2>
+          <p class="sect__lede">
+            Harny is an AI coding agent for <strong>VS Code</strong> and <strong>VSCodium</strong>. It runs as an
+            extension: a chat panel in the Activity Bar with a real agent loop behind it. It reads your project,
+            writes and edits files, runs shell commands, greps, globs, reads diagnostics, searches the web and
+            keeps one persistent conversation per folder. Tool calls and the model's answer stream into the
+            transcript as they happen, so a run is something you watch rather than something you wait for.
+          </p>
+          <p class="sect__lede">
+            It is a <strong>local LLM coding agent</strong> as much as a cloud one. The model is a row in a
+            settings dialog, not a subscription: point Harny at Ollama, LM Studio or a llama.cpp server on
+            <code>localhost</code> and nothing leaves the machine — no key, no account, no per-token bill. Point it
+            at OpenAI, Anthropic, OpenRouter or any host that speaks <code>/v1/chat/completions</code> and the same
+            panel drives a frontier model. Keys live in Harny's own data folder, never in your repository.
+          </p>
+          <p class="sect__lede">
+            What the harness adds on top is the part an API does not give you: an <b class="t-cyan">Analyze</b> mode
+            where every write is a dry run, parallel sub-agents that declare the files they touch, a loop guard that
+            steers a stuck model instead of only stopping it, and context compaction that keeps a long session —
+            and its token bill — from compounding. Harny is free and MIT licensed.
+          </p>
+        </div>
+      </section>
+
       <!-- ============ 01 WHY ============ -->
       <section class="sect" id="why">
         <div class="sect__head">
           <p class="sect__idx">01 <span>/</span> WHY HARNY</p>
           <h2 class="sect__title">Built like a tool,<br /><span class="grad">not a demo.</span></h2>
           <p class="sect__lede">
-            Every design decision in Harny answers a failure mode of agents that write into your repo without
-            asking. Here is what that buys you.
+            Every design decision in Harny answers a failure mode of coding agents that write into your repo without
+            asking. Here is what that buys you — and why a small local model can drive it as safely as a frontier
+            one.
           </p>
         </div>
 
@@ -627,7 +760,8 @@
           <h2 class="sect__title">Look before<br /><span class="grad">you leap.</span></h2>
           <p class="sect__lede">
             A run is born with its mode and keeps it to its last tool result. The pills explain why instead of
-            swallowing the click — <b>Stop</b> is the way to interrupt.
+            swallowing the click — <b>Stop</b> is the way to interrupt. Analyze is a dry run of every
+            file-modifying tool: the diff, without the write.
           </p>
 
           <ul class="ticks">
@@ -817,7 +951,8 @@ Tip: restart the chat — a clean Build context applies more reliably than conti
           <h2 class="sect__title">One orchestrator.<br /><span class="grad">Many hands.</span></h2>
           <p class="sect__lede">
             Disjoint files run in parallel. Overlapping writers — or a writer and a reader of the same resource — are
-            serialized automatically, because every <code>Delegate</code> declares its resources honestly.
+            serialized automatically, because every <code>Delegate</code> declares its resources honestly. One
+            orchestrator, many parallel sub-agents, and no interleaved writes.
           </p>
         </div>
 
@@ -895,7 +1030,7 @@ Tip: restart the chat — a clean Build context applies more reliably than conti
               <img
                 class="reel__poster"
                 src="https://i.ytimg.com/vi/9kIBUJJz9v0/maxresdefault.jpg"
-                alt=""
+                alt="Harny Parallel Analysis: one orchestrator driving three sub-agents in the chat panel"
                 width="1280"
                 height="720"
                 loading="lazy"
@@ -929,7 +1064,8 @@ Tip: restart the chat — a clean Build context applies more reliably than conti
           <h2 class="sect__title">The window is a ceiling.<br /><span class="grad">Not a cliff.</span></h2>
           <p class="sect__lede">
             The context window is visible in the transcript: a divider marks where the context begins, and the
-            checkpoint is one card with its summary attached.
+            checkpoint is one card with its summary attached. Compaction is what keeps a long coding session alive
+            in a fixed window, and what keeps the token bill from compounding.
           </p>
         </div>
 
@@ -1101,7 +1237,7 @@ Tip: restart the chat — a clean Build context applies more reliably than conti
               <img
                 class="reel__poster"
                 src="https://i.ytimg.com/vi/GAhicfHRmxg/maxresdefault.jpg"
-                alt=""
+                alt="Harny Context Compaction: the context meter filling and a checkpoint card in the transcript"
                 width="1280"
                 height="720"
                 loading="lazy"
@@ -1320,8 +1456,8 @@ Tip: restart the chat — a clean Build context applies more reliably than conti
           <h2 class="sect__title">Install once.<br /><span class="grad">Scope per conversation.</span></h2>
           <p class="sect__lede">
             A server is a fact about the machine; which of its tools a conversation may use is that conversation's
-            decision. Every tool arrives as <code>mcp__&lt;server&gt;__&lt;tool&gt;</code> — and none of them runs in
-            Analyze unless you say so.
+            decision. MCP — the Model Context Protocol — brings the server in; the scope stays here. Every tool
+            arrives as <code>mcp__&lt;server&gt;__&lt;tool&gt;</code> — and none of them runs in Analyze unless you say so.
           </p>
         </div>
 
@@ -1446,9 +1582,10 @@ Tip: restart the chat — a clean Build context applies more reliably than conti
           <p class="sect__idx">10 <span>/</span> ONE PROTOCOL</p>
           <h2 class="sect__title">Speak one protocol.<br /><span class="grad">Talk to anything.</span></h2>
           <p class="sect__lede">
-            Harny is openai-compatible by design, so anything that implements <code>/v1/chat/completions</code> works.
-            Model lists can be declared by hand or discovered from the server — including each model's real context
-            window.
+            Point Harny at a local LLM server — Ollama, LM Studio, llama.cpp, MLX — or at OpenAI, Anthropic and
+            OpenRouter: it is openai-compatible by design, so anything that implements
+            <code>/v1/chat/completions</code> works. Model lists can be declared by hand or discovered from the
+            server — including each model's real context window.
           </p>
         </div>
 
@@ -1537,6 +1674,10 @@ Tip: restart the chat — a clean Build context applies more reliably than conti
         <div class="sect__head">
           <p class="sect__idx">12 <span>/</span> INSTALL</p>
           <h2 class="sect__title">Two minutes to<br /><span class="grad">first diff.</span></h2>
+          <p class="sect__lede">
+            Install the extension in VS Code or VSCodium, open one folder, add a provider — cloud or a local LLM —
+            and your first run lands in Analyze, as a preview.
+          </p>
         </div>
 
         <div class="install">
@@ -1889,6 +2030,98 @@ Tip: restart the chat — a clean Build context applies more reliably than conti
             Keys sit in Harny's data folder, never in the project. <em>Export models configuration</em> writes the
             whole set to one JSON file — key included — and <em>Import</em> merges it back on another machine.
           </p>
+        </div>
+      </section>
+
+      <!-- ============ 13 QUESTIONS ============ -->
+      <section class="sect" id="faq">
+        <div class="sect__head">
+          <p class="sect__idx">13 <span>/</span> QUESTIONS</p>
+          <h2 class="sect__title">The short answers.<br /><span class="grad">Before you install.</span></h2>
+          <p class="sect__lede">
+            Nine questions that come up before the first session: what Harny is, where it runs, which model it
+            drives, and what it writes. Each answer stands on its own — no earlier context needed.
+          </p>
+        </div>
+
+        <div class="cards">
+          <article class="card">
+            <h3>What is Harny, in one sentence?</h3>
+            <p>
+              An AI coding agent for <b>VS Code</b> and <b>VSCodium</b>: a chat panel in the Activity Bar that reads
+              your project, edits files, runs commands and keeps one conversation per folder. Free, MIT licensed,
+              and the model it drives is your choice.
+            </p>
+          </article>
+
+          <article class="card">
+            <h3>Can I use a local LLM as the coding agent?</h3>
+            <p>
+              Yes. Harny talks to any <code>OpenAI-compatible endpoint</code>, so a model running on your own
+              machine is a provider like any other: no API key, no account, no per-token bill — and nothing about
+              your code leaves the laptop.
+            </p>
+          </article>
+
+          <article class="card">
+            <h3>Which local servers does it support?</h3>
+            <p>
+              Ollama, LM Studio, llama.cpp and MLX, plus anything else serving
+              <code>/v1/chat/completions</code> on localhost. Reasoning is requested per host — a toggle, a type or
+              an object — so a thinking model reasons the way it expects to.
+            </p>
+          </article>
+
+          <article class="card">
+            <h3>Does it run in VSCodium, Cursor and Windsurf?</h3>
+            <p>
+              Yes. Those editors use Open VSX instead of the Microsoft Marketplace, and Harny is published on both.
+              VSCodium 1.101+ is supported directly; Cursor, Windsurf and Theia install from Open VSX.
+            </p>
+          </article>
+
+          <article class="card">
+            <h3>Which cloud models can I use?</h3>
+            <p>
+              OpenAI, Anthropic through its compatible endpoint, OpenRouter and OpenCode Go — or any other gateway.
+              Models are declared by hand or discovered from the server, including each model's real context
+              window.
+            </p>
+          </article>
+
+          <article class="card">
+            <h3>Does it write to my files without asking?</h3>
+            <p>
+              A new session starts in <b>Analyze</b>, where every file-modifying tool is a dry run: it returns the
+              exact diff and writes nothing. <b>Build</b> is the mode that applies changes, and it is one click
+              away when the previews are ready.
+            </p>
+          </article>
+
+          <article class="card">
+            <h3>Is it actually free?</h3>
+            <p>
+              The extension is MIT licensed and costs nothing. With a local model the whole loop is free; with a
+              cloud provider you pay that provider, with your own key, kept in Harny's own data folder.
+            </p>
+          </article>
+
+          <article class="card">
+            <h3>Where do my chats and API keys live?</h3>
+            <p>
+              Outside the project. Sessions go into a central SQLite database, keys into Harny's configuration —
+              neither is readable by the agent's tools, and deleting a repository never deletes the history.
+            </p>
+          </article>
+
+          <article class="card">
+            <h3>How is it different from Copilot or Cursor?</h3>
+            <p>
+              No subscription and no fixed model: Harny is a harness, and the model is a setting — local or cloud.
+              It also shows the <em>run</em>, not only the result: every tool call with its input, its output and
+              its diff, before anything is written.
+            </p>
+          </article>
         </div>
       </section>
     </main>

@@ -1,15 +1,80 @@
 # harny.dev — Harny, the AI coding harness for VSCodium and VS Code.
 #
-# One public page, no private sections: everything is crawlable, so a single
-# wildcard group is all the search engines need. Googlebot, Bingbot,
-# DuckDuckBot, Yandex, Baidu and friends all inherit it — no per-robot groups,
-# which would only be a second place to drift out of sync.
+# One public page, no private sections: everything is crawlable.
+
+# ── AI answer engines and assistants ─────────────────────────────────────────────
+# A group named here SUPERSEDES the wildcard group for that user agent, so every group
+# repeats `Allow: /` on purpose: omit it and the bot would inherit nothing at all.
 #
-# AI crawlers (GPTBot, ClaudeBot, CCBot, Google-Extended, …) are allowed too,
-# by inheritance. To opt out of one, add an explicit group above the wildcard,
-# e.g. `User-agent: GPTBot` + `Disallow: /`.
+# These groups exist to make the permission explicit and auditable — the wildcard below
+# already allows them by inheritance. Naming them means a future tightening of the
+# wildcard cannot silently shut an assistant out.
+#
+# Google-Extended is the exception in this list, and the one easiest to get wrong: it
+# controls whether Google may use the page to TRAIN Gemini and ground its answers. It
+# does NOT gate AI Overviews — those are built from ordinary Googlebot indexing. Turning
+# it on in either direction does not change whether the page can appear in an AI Overview.
+
+# OpenAI: training crawler, ChatGPT search index, and on-demand fetch when a user asks
+User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+# Anthropic
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
+# Perplexity
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /
+
+# Common Crawl: the corpus most open models are trained on
+User-agent: CCBot
+Allow: /
+
+# Google Gemini training / grounding (NOT AI Overviews — see the note above)
+User-agent: Google-Extended
+Allow: /
+
+# Apple Intelligence / Siri grounding
+User-agent: Applebot-Extended
+Allow: /
+
+# Meta AI
+User-agent: meta-externalagent
+Allow: /
+
+# DuckDuckGo assist, You.com
+User-agent: DuckAssistBot
+Allow: /
+
+User-agent: YouBot
+Allow: /
+
+# ── Everything else ──────────────────────────────────────────────────────────────
+# Googlebot, Bingbot, DuckDuckBot, Yandex, Baidu and friends all inherit this group —
+# no per-robot duplicates, which would only be a second place to drift out of sync.
+# To opt a bot out, add an explicit group above with `Disallow: /`.
 
 User-agent: *
 Allow: /
+
+# Plain-text summary of the product, for tools that read text better than HTML.
+# Not a Google/Bing directive: it is the llms.txt convention, honoured by assistants.
+# https://harny.dev/llms.txt
 
 Sitemap: https://harny.dev/sitemap.xml

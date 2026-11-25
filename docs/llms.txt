@@ -1,0 +1,74 @@
+# Harny
+
+> Harny is an AI coding agent for VS Code and VSCodium. It previews every change in an Analyze
+> mode, applies them in Build, and drives either a local LLM on your own machine (Ollama, LM Studio,
+> llama.cpp, MLX) or any OpenAI-compatible cloud model. Free, MIT licensed, no subscription.
+
+Harny is a VS Code extension, not a service: the agent loop runs on your machine, the conversation
+lives in a central SQLite database outside your repository, and API keys never enter the project.
+The page at https://harny.dev/ is the canonical description of the product; this file is the same
+information in plain text, for tools that read text more reliably than they read HTML.
+
+## What it is
+
+- An AI coding agent that runs as a chat panel in the VS Code / VSCodium Activity Bar.
+- It reads the project, writes and edits files, runs shell commands, searches with grep and glob,
+  reads diagnostics, searches the web, and keeps one persistent conversation per folder.
+- Tool calls, reasoning and the final answer stream into the transcript as they happen.
+- It is OpenAI-compatible by design: anything implementing `/v1/chat/completions` works.
+
+## Local LLM
+
+- A local model is a provider like any other: base URL `http://localhost:<port>/v1`, no API key.
+- Supported servers: Ollama, LM Studio, llama.cpp, MLX — plus any other host speaking the protocol.
+- Nothing leaves the machine, and there is no per-token bill.
+- Reasoning is requested per host (a toggle, a type, or an object), including `reasoning_effort`.
+
+## Cloud
+
+- OpenAI, Anthropic through its OpenAI-compatible endpoint, OpenRouter, OpenCode Go, or any gateway.
+- Model lists are declared by hand or discovered from the server, including each model's real
+  context window. The model is chosen per session from one dropdown.
+
+## Safety
+
+- New sessions start in Analyze: every file-modifying tool is a dry run that returns the exact diff
+  and writes nothing. Reads, greps and searches still run.
+- Build is the mode that applies changes; the host asks once when previews are ready.
+- Restricted Mode keeps a folder read-only until it is trusted.
+- Session history and keys live outside the project: agent tools cannot read them.
+
+## Features
+
+- Parallel sub-agents: one orchestrator splits a task into independent sub-tasks; overlapping
+  writers are serialized automatically because every `Delegate` declares its resources.
+- Loop guard: detects reasoning loops, repeated tool calls and repeated answers, then injects a
+  "Nudge" correction aimed at the loop instead of only stopping the run. Four presets, 12 knobs.
+- Context compaction on long sessions: cut at turn boundaries, keep the recent part verbatim, carry
+  the previous summary forward, and mask old tool output as one-line stubs.
+- 13 built-in tools: Read, Write, StrReplace, Edit, Delete, Shell, Grep, Glob, Skill, WebSearch,
+  WebFetch, ReadLints, Delegate.
+- MCP (Model Context Protocol) servers, installed once and scoped per conversation, with an
+  `analyzeTools` allow-list that denies writes during previews by default.
+- Agent skills: a folder with a `SKILL.md` under `.agents/skills`, `.claude/skills` or `.pi/skills`;
+  called by name with `/skill <name> <task>`, or activated by the model from the catalog.
+
+## Install
+
+- [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=spltek.harny): Visual Studio Code.
+- [Open VSX](https://open-vsx.org/extension/spltek/harny): VSCodium, Cursor, Windsurf, Theia.
+- [Source code](https://github.com/spltek/harny): MIT licensed.
+
+## Facts
+
+- License: MIT. Price: free; you pay only the model provider, and nothing for a local model.
+- Requirements: VS Code 1.101+ or VSCodium 1.101+; Node 22.5+ for `node:sqlite`.
+- Publisher: SPLTek. Extension id: `spltek.harny`.
+- Canonical URL: https://harny.dev/
+
+## Optional
+
+- [Changelog](https://github.com/spltek/harny/blob/main/CHANGELOG.md)
+- [Demo video: Harny builds its own website](https://youtu.be/DKJm4pCaEIs)
+- [Demo video: parallel analysis](https://youtu.be/9kIBUJJz9v0)
+- [Demo video: context compaction](https://youtu.be/GAhicfHRmxg)
